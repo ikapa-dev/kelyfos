@@ -17,6 +17,13 @@ ARCH      ?= $(HOST_ARCH)
 # Image flavor: base, dev, (browser later).
 FLAVOR ?= base
 
+# Go's name for the same architectures.
+ifeq ($(ARCH),aarch64)
+GOARCH := arm64
+else
+GOARCH := amd64
+endif
+
 # Where artifacts land, and where the heavy Buildroot trees live. BUILD_DIR is
 # deliberately overridable: on macOS the repo sits on a virtiofs mount, and
 # Buildroot must not build there (device nodes, hardlinks, fakeroot, IO volume).
@@ -34,6 +41,14 @@ BUILD_DIR     ?= $(KELYFOS_CACHE)/build/$(ARCH)
 LINUX_SERIES    := $(word 1,$(subst ., ,$(LINUX_VERSION))).$(word 2,$(subst ., ,$(LINUX_VERSION)))
 LINUX_SERIES_US := $(subst .,_,$(LINUX_SERIES))
 
+# Guest image artifacts live on local disk, never on the macOS virtiofs mount:
+# Firecracker reads the rootfs as a block device on every boot, and P1-7 measures
+# that boot in milliseconds.
+IMAGE_DIR      ?= $(KELYFOS_CACHE)/out/$(ARCH)
+FLAVOR_OVERLAY := $(CURDIR)/image/flavors/$(FLAVOR)/overlay
+GUEST_OVERLAY  := $(BUILD_DIR)/kelyfos-overlay
+OVERLAY_DIRS   := $(FLAVOR_OVERLAY) $(GUEST_OVERLAY)
+
 BR_EXTERNAL  := $(CURDIR)/image/buildroot
 BR_FRAGMENTS := $(BR_EXTERNAL)/configs/kelyfos_common.fragment \
                 $(BR_EXTERNAL)/configs/kelyfos_$(ARCH).fragment
@@ -49,7 +64,7 @@ KERNEL_ARTIFACT := vmlinux
 endif
 
 .DEFAULT_GOAL := help
-.PHONY: help versions toolchain kernel image run clean test linux-only fetch-kernel
+.PHONY: help versions toolchain kernel supervisor image run clean test linux-only fetch-kernel
 
 help: ## Show this target list
 	@echo "KelyfOS — targets (ARCH=$(ARCH), FLAVOR=$(FLAVOR))"
@@ -89,6 +104,7 @@ $(BUILD_DIR)/.config: $(BR_SRC)/Makefile $(BR_FRAGMENTS)
 	@cat $(BR_FRAGMENTS) \
 	  | sed -e 's/@LINUX_VERSION@/$(LINUX_VERSION)/g' \
 	        -e 's/@LINUX_SERIES_US@/$(LINUX_SERIES_US)/g' \
+	        -e 's|@OVERLAY_DIRS@|$(OVERLAY_DIRS)|g' \
 	  > $(BUILD_DIR)/kelyfos_defconfig
 	$(BR_MAKE) defconfig BR2_DEFCONFIG=$(BUILD_DIR)/kelyfos_defconfig
 	@$(CURDIR)/image/check-config.sh $(BUILD_DIR)/kelyfos_defconfig $(BUILD_DIR)/.config
@@ -111,11 +127,24 @@ linux-only:
 	  exit 1; \
 	fi
 
-image: ## Build the guest kernel + rootfs.ext4 for ARCH/FLAVOR
-	@echo "[stub] image: build linux $(LINUX_VERSION) as $(KERNEL_ARTIFACT) (uncompressed)"
-	@echo "              and rootfs.ext4 for"
-	@echo "              ARCH=$(ARCH) FLAVOR=$(FLAVOR), rootfs under 200 MB,"
-	@echo "              output to $(OUT_DIR). (P1-2, P1-4)"
+# The guest supervisor, cross-compiled into the generated rootfs overlay.
+# CGO_ENABLED=0 makes it static: it must run as the first userspace process on a
+# machine where nothing else is loaded yet, and it must not care that the rest of
+# the image is musl.
+supervisor: ## Cross-compile the guest supervisor into the rootfs overlay
+	@mkdir -p $(GUEST_OVERLAY)/sbin $(GUEST_OVERLAY)/.oldroot
+	CGO_ENABLED=0 GOOS=linux GOARCH=$(GOARCH) \
+	  go build -trimpath -ldflags="-s -w" \
+	    -o $(GUEST_OVERLAY)/sbin/kelyfos-supervisor ./supervisor
+	@file $(GUEST_OVERLAY)/sbin/kelyfos-supervisor
+
+image: linux-only supervisor fetch-kernel $(BUILD_DIR)/.config ## Build the guest kernel + rootfs.ext4 for ARCH/FLAVOR
+	+$(BR_MAKE)
+	@$(CURDIR)/image/check-kernel.sh "$(ARCH)" "$(BUILD_DIR)" "$(BR_EXTERNAL)"
+	@mkdir -p $(IMAGE_DIR)
+	@cp -f $(BUILD_DIR)/images/$(KERNEL_ARTIFACT) $(IMAGE_DIR)/
+	@cp -f $(BUILD_DIR)/images/rootfs.ext4        $(IMAGE_DIR)/
+	@$(CURDIR)/image/check-image.sh "$(ARCH)" "$(IMAGE_DIR)" "$(KERNEL_ARTIFACT)"
 
 run: ## Boot a microVM from the built image under Firecracker
 	@echo "[stub] run: build the kelyfos CLI, write the Firecracker machine config"

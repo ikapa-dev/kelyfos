@@ -261,7 +261,7 @@ The first thing the supervisor does once mounts are up. The host is listening on
 frame arrives is the definition of **boot-to-ready** measured in P1-7.
 
 ```json
-{"v":1,"type":"ready","boot_id":"7f3a…","arch":"aarch64","kernel":"6.18.45","supervisor":"0.1.0","monotonic_ns":41233000}
+{"v":1,"type":"ready","boot_id":"7f3a…","arch":"arm64","kernel":"6.18.45","supervisor":"0.1.0","monotonic_ns":41233000,"overlay":true}
 ```
 
 then, every 5 s:
@@ -269,6 +269,12 @@ then, every 5 s:
 ```json
 {"v":1,"type":"heartbeat","uptime_ms":5041}
 ```
+
+`overlay` reports whether the writable overlay was established over the
+read-only root. `false` means the guest booted degraded on a read-only
+filesystem: still reachable, still diagnosable, but writes will fail. A host
+that logs this turns a whole class of confusing `EROFS` reports into one obvious
+line at boot.
 
 `monotonic_ns` is the guest's own `CLOCK_MONOTONIC` at the moment of sending —
 useful for splitting boot time into kernel time and supervisor time. The host

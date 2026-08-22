@@ -1,0 +1,6 @@
+NAME="KelyfOS"
+ID=kelyfos
+PRETTY_NAME="KelyfOS (base)"
+VERSION="0.1.0-dev"
+VERSION_ID=0.1.0
+HOME_URL="https://github.com/p4r4n0rm4l/KelyfOS"

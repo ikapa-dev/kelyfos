@@ -35,6 +35,15 @@ BR2_ROOTFS_DEVICE_CREATION_DYNAMIC_DEVTMPFS=y
 BR2_TARGET_ROOTFS_EXT2=y
 BR2_TARGET_ROOTFS_EXT2_4=y
 BR2_TARGET_ROOTFS_TAR=n
+# Deliberately sized rather than left to Buildroot's default. The file is sparse,
+# so this is a ceiling on what the guest may write to disk, not a cost.
+BR2_TARGET_ROOTFS_EXT2_SIZE="64M"
+
+# --- rootfs overlay --------------------------------------------------------
+# Two directories, templated by the Makefile: the flavor's tracked overlay
+# (/init, /etc/os-release) and a generated one holding the cross-compiled
+# supervisor and the pre-created directories /init needs on a read-only root.
+BR2_ROOTFS_OVERLAY="@OVERLAY_DIRS@"
 
 # --- kernel --------------------------------------------------------------
 # Version pinned in versions.mk. The tarball is fetched and checksum-verified by

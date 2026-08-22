@@ -1,0 +1,85 @@
+#!/bin/sh
+#
+# KelyfOS PID 1 — phase 1 (P1-3).
+#
+# Brings up the pseudo-filesystems, puts a writable tmpfs overlay over the
+# read-only root, and hands control to the supervisor. From P2-1 the supervisor
+# is PID 1 itself and this script goes away; until then it is the smallest thing
+# that can produce a machine the host can talk to.
+#
+# Two rules govern everything below:
+#
+#   1. PID 1 must never exit. A dead init is a kernel panic, which turns any
+#      small mistake into an unreadable failure. So there is no `set -e`, every
+#      step is checked, and the last line of the fallback path is an idle loop.
+#   2. Degrade loudly, never silently. If the overlay cannot be established the
+#      machine still boots, still talks to the host, and reports overlay=false
+#      in its ready frame — a diagnosable sandbox beats a mysterious one.
+
+PATH=/sbin:/usr/sbin:/bin:/usr/bin
+export PATH
+
+SUPERVISOR=/sbin/kelyfos-supervisor
+
+log() { echo "[kelyfos-init] $*"; }
+
+# The kernel mounts devtmpfs on /dev before running init (CONFIG_DEVTMPFS_MOUNT),
+# which is also why this script has a console to talk to at all.
+mount -t proc  -o nosuid,nodev,noexec proc  /proc || log "warning: /proc mount failed"
+mount -t sysfs -o nosuid,nodev,noexec sysfs /sys  || log "warning: /sys mount failed"
+grep -q ' /dev ' /proc/mounts 2>/dev/null || \
+	mount -t devtmpfs -o nosuid,mode=0755 devtmpfs /dev || log "warning: /dev mount failed"
+
+# Writable overlay over the read-only root.
+#
+# /mnt and /.oldroot already exist in the image: the root is mounted read-only,
+# so nothing here can create a directory until the tmpfs is in place.
+setup_overlay() {
+	mount -t tmpfs -o nosuid,nodev,mode=0755 tmpfs /mnt || return 1
+	mkdir -p /mnt/upper /mnt/work /mnt/merged || return 1
+	mount -t overlay overlay \
+		-o lowerdir=/,upperdir=/mnt/upper,workdir=/mnt/work \
+		/mnt/merged || return 1
+
+	# Carry the pseudo-filesystems across before the root changes underneath
+	# them, or the new root has no /proc, /sys or /dev — including the console
+	# this script is talking to.
+	for d in dev proc sys; do
+		mount -o move "/$d" "/mnt/merged/$d" || return 1
+	done
+
+	cd /mnt/merged || return 1
+	pivot_root . .oldroot || return 1
+	cd / || return 1
+
+	# The old read-only root stays mounted at /.oldroot. Detaching it would mean
+	# lazily unmounting the filesystem holding this overlay's upper and work
+	# directories, which is a class of subtlety phase 1 does not need to buy.
+	return 0
+}
+
+if setup_overlay; then
+	log "writable overlay established over the read-only root"
+else
+	log "warning: overlay setup failed — continuing on a read-only root"
+	mount -t tmpfs -o nosuid,nodev,mode=1777 tmpfs /tmp || log "warning: /tmp mount failed"
+	mount -t tmpfs -o nosuid,nodev,mode=0755 tmpfs /run || log "warning: /run mount failed"
+fi
+
+mkdir -p /dev/pts /dev/shm 2>/dev/null
+mount -t devpts -o nosuid,noexec,gid=5,mode=0620 devpts /dev/pts 2>/dev/null
+mount -t tmpfs  -o nosuid,nodev,mode=1777        tmpfs  /dev/shm 2>/dev/null
+
+# Somewhere for work to happen. P3-10 replaces this with a real block device.
+mkdir -p /work 2>/dev/null
+
+if [ -x "$SUPERVISOR" ]; then
+	log "starting supervisor"
+	exec "$SUPERVISOR"
+fi
+
+# Reached only if the supervisor is missing or exec failed. Do not exit.
+log "FATAL: $SUPERVISOR is missing or not executable; the sandbox has no interface"
+while true; do
+	sleep 3600
+done
