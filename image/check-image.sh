@@ -22,12 +22,13 @@ printf '==> %-14s %10s bytes  %s\n' "$kernel" "$(stat -c %s "$dir/$kernel")" "$(
 printf '==> %-14s %10s bytes  (%s on disk, sparse) — under the 200 MB budget\n' \
   "rootfs.ext4" "$size" "$(du -h "$rootfs" | cut -f1)"
 
-# The image is useless without an init and an interface; catch that here rather
-# than as a kernel panic three minutes into a boot test.
-for path in /init /sbin/kelyfos-supervisor; do
+# The image is useless without its PID 1; catch that here rather than as a kernel
+# panic three minutes into a boot test. Since P2-1 the supervisor *is* init —
+# there is no /init script any more.
+for path in /sbin/kelyfos-supervisor; do
   if ! debugfs -R "stat $path" "$rootfs" >/dev/null 2>&1; then
     echo "rootfs is missing $path" >&2
     exit 1
   fi
 done
-echo "==> rootfs contains /init and /sbin/kelyfos-supervisor"
+echo "==> rootfs contains /sbin/kelyfos-supervisor (PID 1)"

@@ -220,15 +220,20 @@ func (s *Sandbox) Wait() error { <-s.done; return s.waitErr }
 // Shutdown stops the microVM and removes everything it created. It is safe to
 // call more than once.
 //
-// Phase 1 has no in-guest shutdown path, so this is a signal: SIGTERM, then
-// SIGKILL if the VM has not gone within the grace period. P2-1 adds the polite
-// version — a shutdown RPC on the control channel — and this becomes the
-// fallback rather than the only move.
+// It asks first and insists afterwards: a shutdown RPC on the control channel
+// lets the guest stop its children, flush its filesystems and power the machine
+// off itself (docs/protocol.md §5.4). Only if that does not land does this fall
+// back to signalling Firecracker — SIGTERM, then SIGKILL. Killing the VMM
+// outright is a power cut, and a sandbox that is always power-cut can never
+// promise a workspace was written back cleanly (P3-10).
 func (s *Sandbox) Shutdown(grace time.Duration) error {
 	if s.cmd != nil && s.cmd.Process != nil {
 		select {
 		case <-s.done:
 		default:
+			if err := s.requestShutdown(grace); err == nil {
+				break
+			}
 			_ = s.cmd.Process.Signal(syscall.SIGTERM)
 			select {
 			case <-s.done:
@@ -250,6 +255,36 @@ func (s *Sandbox) Shutdown(grace time.Duration) error {
 		}
 	}
 	return nil
+}
+
+// requestShutdown asks the guest to power itself off and waits for the VM to
+// exit. An error means the guest could not be asked, or did not go.
+func (s *Sandbox) requestShutdown(grace time.Duration) error {
+	conn, err := Connect(s.State.UDSPath, proto.PortControl, 2*time.Second)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	if err := proto.NewWriter(conn).Write(proto.ControlRequest{
+		V: proto.Version, ID: "shutdown", Op: proto.OpShutdown,
+	}); err != nil {
+		return err
+	}
+	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	var resp proto.ControlResponse
+	if err := proto.NewReader(conn).Read(&resp); err != nil {
+		return err
+	}
+	if !resp.OK {
+		return fmt.Errorf("guest refused shutdown: %v", resp.Error)
+	}
+	select {
+	case <-s.done:
+		return nil
+	case <-time.After(grace):
+		return fmt.Errorf("guest acknowledged shutdown but the microVM is still running")
+	}
 }
 
 func (s *Sandbox) cleanup() {

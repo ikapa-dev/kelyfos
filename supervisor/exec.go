@@ -30,9 +30,8 @@ var defaultEnv = []string{
 // exactly one exit frame — including on every error path. A caller that gets a
 // valid exit frame knows what happened; a caller that gets a closed socket
 // cannot tell a finished command from a crashed supervisor.
-func serveExecConn(conn net.Conn) {
+func serveExecConn(conn net.Conn, rp *reaper) {
 	defer conn.Close()
-
 	w := &syncWriter{w: proto.NewWriter(conn)}
 
 	var req proto.ExecRequest
@@ -44,29 +43,41 @@ func serveExecConn(conn net.Conn) {
 		}
 		return
 	}
-	if req.V != proto.Version {
-		w.exit(req.ID, -1, "", &proto.Error{
-			Kind: proto.ErrBadRequest, Message: "unsupported protocol version",
-		})
+	switch {
+	case req.V != proto.Version:
+		w.exit(req.ID, -1, "", &proto.Error{Kind: proto.ErrBadRequest, Message: "unsupported protocol version"})
 		return
-	}
-	if len(req.Cmd) == 0 {
-		w.exit(req.ID, -1, "", &proto.Error{
-			Kind: proto.ErrBadRequest, Message: "cmd must not be empty",
-		})
+	case len(req.Cmd) == 0:
+		w.exit(req.ID, -1, "", &proto.Error{Kind: proto.ErrBadRequest, Message: "cmd must not be empty"})
 		return
 	}
 
 	var stdin []byte
 	if req.Stdin != "" {
 		var err error
-		stdin, err = base64.StdEncoding.DecodeString(req.Stdin)
-		if err != nil {
-			w.exit(req.ID, -1, "", &proto.Error{
-				Kind: proto.ErrBadRequest, Message: "stdin is not valid base64",
-			})
+		if stdin, err = base64.StdEncoding.DecodeString(req.Stdin); err != nil {
+			w.exit(req.ID, -1, "", &proto.Error{Kind: proto.ErrBadRequest, Message: "stdin is not valid base64"})
 			return
 		}
+	}
+
+	// Pipes are built by hand rather than with StdoutPipe/StderrPipe, because
+	// those are wired to Cmd.Wait — and in PID 1 the reaper owns every wait
+	// (see reaper.go). Owning the pipes means owning when they close.
+	inR, inW, err := os.Pipe()
+	if err != nil {
+		w.exit(req.ID, -1, "", &proto.Error{Kind: proto.ErrInternal, Message: err.Error()})
+		return
+	}
+	outR, outW, err := os.Pipe()
+	if err != nil {
+		w.exit(req.ID, -1, "", &proto.Error{Kind: proto.ErrInternal, Message: err.Error()})
+		return
+	}
+	errR, errW, err := os.Pipe()
+	if err != nil {
+		w.exit(req.ID, -1, "", &proto.Error{Kind: proto.ErrInternal, Message: err.Error()})
+		return
 	}
 
 	cmd := exec.Command(req.Cmd[0], req.Cmd[1:]...)
@@ -76,107 +87,88 @@ func serveExecConn(conn net.Conn) {
 	}
 	cmd.Env = defaultEnv
 	if req.Env != nil {
-		cmd.Env = cmd.Env[:0]
+		cmd.Env = make([]string, 0, len(req.Env))
 		for k, v := range req.Env {
 			cmd.Env = append(cmd.Env, k+"="+v)
 		}
 	}
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = inR, outW, errW
 	// Its own process group, so a timeout kills the whole tree rather than just
 	// the shell that spawned it.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
-	stdinPipe, err := cmd.StdinPipe()
-	if err != nil {
-		w.exit(req.ID, -1, "", &proto.Error{Kind: proto.ErrInternal, Message: err.Error()})
-		return
-	}
-	stdoutPipe, err := cmd.StdoutPipe()
-	if err != nil {
-		w.exit(req.ID, -1, "", &proto.Error{Kind: proto.ErrInternal, Message: err.Error()})
-		return
-	}
-	stderrPipe, err := cmd.StderrPipe()
-	if err != nil {
-		w.exit(req.ID, -1, "", &proto.Error{Kind: proto.ErrInternal, Message: err.Error()})
-		return
-	}
-
 	if err := cmd.Start(); err != nil {
+		for _, f := range []*os.File{inR, inW, outR, outW, errR, errW} {
+			f.Close()
+		}
 		kind := proto.ErrInternal
-		if errors.Is(err, os.ErrNotExist) || errors.Is(err, exec.ErrNotFound) {
+		switch {
+		case errors.Is(err, exec.ErrNotFound), errors.Is(err, os.ErrNotExist):
 			kind = proto.ErrNotFound
-		} else if errors.Is(err, os.ErrPermission) {
+		case errors.Is(err, os.ErrPermission):
 			kind = proto.ErrDenied
 		}
 		w.exit(req.ID, -1, "", &proto.Error{Kind: kind, Message: err.Error()})
 		return
 	}
+	status := rp.register(cmd.Process.Pid)
+	defer rp.forget(cmd.Process.Pid)
 
-	// stdin is written and closed regardless: a command reading to EOF must see
-	// one, and an empty or absent stdin means an immediately-closed pipe.
+	// The child holds its own copies now; ours would otherwise keep the pipes
+	// from ever reaching EOF.
+	inR.Close()
+	outW.Close()
+	errW.Close()
+
 	go func() {
 		if len(stdin) > 0 {
-			_, _ = stdinPipe.Write(stdin)
+			_, _ = inW.Write(stdin)
 		}
-		_ = stdinPipe.Close()
+		_ = inW.Close()
 	}()
 
 	var pump sync.WaitGroup
 	pump.Add(2)
-	go func() { defer pump.Done(); w.stream(req.ID, proto.StreamStdout, stdoutPipe) }()
-	go func() { defer pump.Done(); w.stream(req.ID, proto.StreamStderr, stderrPipe) }()
+	go func() { defer pump.Done(); defer outR.Close(); w.stream(req.ID, proto.StreamStdout, outR) }()
+	go func() { defer pump.Done(); defer errR.Close(); w.stream(req.ID, proto.StreamStderr, errR) }()
 
-	// Set by the timer goroutine, read here after the wait — hence atomic.
 	var timedOut atomic.Bool
 	var timer *time.Timer
 	if req.TimeoutMS > 0 {
 		timer = time.AfterFunc(time.Duration(req.TimeoutMS)*time.Millisecond, func() {
 			timedOut.Store(true)
-			killGroup(cmd)
+			killGroup(cmd.Process.Pid)
 		})
 	}
 
-	// Drain both streams to EOF before reaping. Reaping first would race the
-	// pumps and could truncate the tail of a command's output.
+	// Drain both streams to EOF before taking the status. Taking it first would
+	// race the pumps and could truncate the tail of a command's output.
 	pump.Wait()
-	waitErr := cmd.Wait()
+	ws := <-status
 	if timer != nil {
 		timer.Stop()
 	}
 
-	code, signal := exitStatus(cmd, waitErr)
+	code, signal := exitStatus(ws)
 	var perr *proto.Error
-	switch {
-	case timedOut.Load():
+	if timedOut.Load() {
 		perr = &proto.Error{Kind: proto.ErrTimeout, Message: "command exceeded timeout_ms"}
 		code = -1
-	case waitErr != nil && code < 0:
-		perr = &proto.Error{Kind: proto.ErrInternal, Message: waitErr.Error()}
 	}
 	w.exit(req.ID, code, signal, perr)
 }
 
-func killGroup(cmd *exec.Cmd) {
-	if cmd.Process == nil {
-		return
-	}
-	// Negative pid targets the whole process group (see Setpgid above). Fall
-	// back to the single process if the group is gone.
-	if err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL); err != nil {
-		_ = cmd.Process.Kill()
+// killGroup targets the whole process group (negative pid), falling back to the
+// single process if the group is already gone.
+func killGroup(pid int) {
+	if err := syscall.Kill(-pid, syscall.SIGKILL); err != nil {
+		_ = syscall.Kill(pid, syscall.SIGKILL)
 	}
 }
 
-// exitStatus maps a finished command onto the protocol's code/signal pair: the
-// exit status normally, and 128+N with the signal named when a signal killed it.
-func exitStatus(cmd *exec.Cmd, waitErr error) (int, string) {
-	if cmd.ProcessState == nil {
-		return -1, ""
-	}
-	ws, ok := cmd.ProcessState.Sys().(syscall.WaitStatus)
-	if !ok {
-		return cmd.ProcessState.ExitCode(), ""
-	}
+// exitStatus maps a wait status onto the protocol's code/signal pair: the exit
+// status normally, and 128+N with the signal named when a signal killed it.
+func exitStatus(ws syscall.WaitStatus) (int, string) {
 	if ws.Signaled() {
 		return 128 + int(ws.Signal()), ws.Signal().String()
 	}

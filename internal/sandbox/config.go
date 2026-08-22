@@ -52,13 +52,13 @@ type Vsock struct {
 // to see why a guest failed before the supervisor is up.
 func bootArgs(arch string, quiet bool) string {
 	args := []string{
-		"reboot=k",        // no BIOS to reboot through; ask KVM to reset
-		"panic=1",         // a panicked sandbox should die, not sit there
-		"nomodule",        // belt to the kernel config's braces: no modules exist
-		"swiotlb=noforce", // no bounce buffers; there is no real DMA here
-		"console=ttyS0",   // ns16550a on both arches — see docs/protocol.md
-		"pci=off",         // Firecracker exposes virtio over MMIO, not PCI
-		"init=/init",      // the image has no /sbin/init: BR2_INIT_NONE
+		"reboot=k",                      // no BIOS to reboot through; ask KVM to reset
+		"panic=1",                       // a panicked sandbox should die, not sit there
+		"nomodule",                      // belt to the kernel config's braces: no modules exist
+		"swiotlb=noforce",               // no bounce buffers; there is no real DMA here
+		"console=ttyS0",                 // ns16550a on both arches — see docs/protocol.md
+		"pci=off",                       // Firecracker exposes virtio over MMIO, not PCI
+		"init=/sbin/kelyfos-supervisor", // PID 1 is the supervisor itself (P2-1)
 	}
 	if arch == "x86_64" {
 		// Stop the kernel probing a PS/2 controller Firecracker does not

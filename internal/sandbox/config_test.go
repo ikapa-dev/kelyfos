@@ -14,7 +14,8 @@ func TestBootArgsOmitRootAndReadOnly(t *testing.T) {
 				t.Errorf("%s boot args must not contain %q: %s", arch, forbidden, args)
 			}
 		}
-		for _, required := range []string{"console=ttyS0", "init=/init", "nomodule", "pci=off"} {
+		// PID 1 is the supervisor itself since P2-1 — there is no /init script.
+		for _, required := range []string{"console=ttyS0", "init=/sbin/kelyfos-supervisor", "nomodule", "pci=off"} {
 			if !strings.Contains(args, required) {
 				t.Errorf("%s boot args missing %q: %s", arch, required, args)
 			}
