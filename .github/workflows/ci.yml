@@ -1,0 +1,158 @@
+# KelyfOS — the pipeline that has to be green on main (P3-6).
+#
+# Three things, in the order they fail fastest:
+#   1. checks   — vet, unit tests, gofmt. Seconds, catches most mistakes.
+#   2. build    — both architectures from source, in parallel.
+#   3. boot     — x86_64 actually boots on the runner's KVM and answers a
+#                 command. aarch64 is build-only here and boot-verified on the
+#                 dev machine, because GitHub's arm64 runners do not expose KVM.
+#
+# The benchmark lives in bench.yml and stays manual: it takes an hour and its
+# numbers are a claim about hardware, not a regression gate.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: gofmt
+        run: |
+          unformatted="$(gofmt -l . || true)"
+          if [ -n "$unformatted" ]; then
+            echo "these files are not gofmt-clean:"; echo "$unformatted"; exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      # The integration tests skip themselves without KVM and an image, so this
+      # runs the unit tests and proves the integration ones at least compile.
+      - name: unit tests
+        run: go test -count=1 ./...
+
+      - name: the plan is still coherent
+        run: python3 tools/check-plan.py
+
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x86_64, aarch64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache Buildroot downloads
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/kelyfos/dl
+          key: kelyfos-dl-${{ hashFiles('versions.mk') }}
+          restore-keys: kelyfos-dl-
+
+      # The toolchain is the expensive half and depends only on the pinned
+      # versions and the fragments that configure it.
+      - name: Cache the Buildroot tree
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/kelyfos/build/${{ matrix.arch }}-base
+          key: kelyfos-tree-${{ matrix.arch }}-${{ hashFiles('versions.mk', 'image/buildroot/configs/*', 'image/buildroot/kernel/*') }}
+          restore-keys: kelyfos-tree-${{ matrix.arch }}-
+
+      - name: Install build dependencies
+        run: bash dev/install-build-deps.sh
+
+      - name: Build the guest image
+        run: make image ARCH=${{ matrix.arch }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: image-${{ matrix.arch }}
+          path: |
+            ~/.cache/kelyfos/out/${{ matrix.arch }}/vmlinux
+            ~/.cache/kelyfos/out/${{ matrix.arch }}/Image
+            ~/.cache/kelyfos/out/${{ matrix.arch }}/rootfs.ext4
+          if-no-files-found: error
+          retention-days: 7
+
+  boot:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # Standard Linux runners expose /dev/kvm as root:kvm 0660 with the runner
+      # user outside the group; without this every boot fails with a permission
+      # error that looks like a Firecracker bug.
+      - name: Grant access to /dev/kvm
+        run: |
+          set -eux
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -l /dev/kvm
+
+      - name: Install Firecracker
+        run: bash dev/install-firecracker.sh
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: image-x86_64
+          path: ~/.cache/kelyfos/out/x86_64
+
+      - name: Smoke test — boot and run a command
+        run: |
+          set -o pipefail
+          make cli
+          ./bin/kelyfos doctor --arch x86_64
+          ./bin/kelyfos run --arch x86_64 --image base > run.log 2>&1 &
+          RUN_PID=$!
+          for i in $(seq 1 150); do grep -q "ready in" run.log && break; sleep 0.2; done
+          cat run.log
+          grep -q "ready in" run.log || { echo "the guest never became ready"; exit 1; }
+
+          out="$(./bin/kelyfos exec 'uname -a')"
+          echo "$out"
+          echo "$out" | grep -q "Linux kelyfos" || { echo "unexpected uname output"; exit 1; }
+          echo "$out" | grep -q "x86_64"       || { echo "wrong architecture"; exit 1; }
+
+          ./bin/kelyfos exec 'cat /etc/os-release' | grep -q 'ID=kelyfos' \
+            || { echo "the guest does not identify as KelyfOS"; exit 1; }
+
+          # The audit record has to survive its own session.
+          SID="$(./bin/kelyfos log --list | awk 'NR==1{print $1}')"
+          ./bin/kelyfos log --session "$SID" --verify
+
+          kill -INT $RUN_PID; wait $RUN_PID || true
+          test -z "$(ls ~/.cache/kelyfos/run 2>/dev/null)" \
+            || { echo "teardown left run directories behind"; exit 1; }
+          echo "smoke test passed"
+
+      - name: Integration tests against a real microVM
+        run: go test -count=1 -timeout 20m -run 'TestConcurrent|TestOrphans|TestExec|TestMCP' ./internal/sandbox/
