@@ -5,7 +5,8 @@ A minimal, agent-native guest operating system image for microVM sandboxes.
 One command runs an AI agent inside a hardware-isolated VM with deny-all egress,
 injected secrets, full audit replay, and millisecond forking.
 
-> **Status: pre-v0.1, under construction.** Nothing here works end to end yet.
+> **Status: pre-v0.1, under construction.** Early development, building in the
+> open — v0.3 will be the first announced release. Nothing here works end to end yet.
 > [`PLAN.html`](PLAN.html) is the living source of truth for scope, architecture,
 > decisions and progress — read it first. The user-facing quickstart lands with
 > the public launch (P3-7).

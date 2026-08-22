@@ -68,7 +68,7 @@ KERNEL_ARTIFACT := vmlinux
 endif
 
 .DEFAULT_GOAL := help
-.PHONY: help versions toolchain kernel supervisor cli image run clean test linux-only fetch-kernel
+.PHONY: help versions toolchain kernel supervisor cli image run bench clean test linux-only fetch-kernel
 
 help: ## Show this target list
 	@echo "KelyfOS — targets (ARCH=$(ARCH), FLAVOR=$(FLAVOR))"
@@ -156,6 +156,14 @@ cli: linux-only ## Build the kelyfos host CLI into bin/
 	  -ldflags="-s -w -X main.Version=$(KELYFOS_VERSION)" \
 	  -o $(OUT_DIR)/kelyfos ./host
 	@$(OUT_DIR)/kelyfos version
+
+# Reproducible boot-to-ready timing. The same code path `kelyfos run` uses, so a
+# local number and a CI number are the same measurement (decision D15). The
+# binding numbers come from the bare-KVM reference runner, not from a laptop.
+BENCH_RUNS ?= 10
+
+bench: cli ## Measure cold boot-to-ready (BENCH_RUNS cold boots)
+	$(OUT_DIR)/kelyfos bench --runs $(BENCH_RUNS) --arch $(ARCH) --image $(FLAVOR)
 
 run: cli ## Boot a microVM from the built image under Firecracker
 	$(OUT_DIR)/kelyfos run --image $(FLAVOR) --arch $(ARCH)

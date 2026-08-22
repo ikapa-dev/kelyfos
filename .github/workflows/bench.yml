@@ -1,0 +1,131 @@
+# KelyfOS — boot-to-ready benchmark on the reference environment.
+#
+# This is the embryo of P3-6, not a throwaway: decision D15 makes a bare-KVM
+# x86_64 runner the environment that *defines* whether the boot-time targets are
+# met. Numbers from the Lima/vz dev machine are informational only, because
+# nested virtualisation makes the virtualised device path expensive in a way the
+# real deployment target is not.
+#
+# Manual for now (workflow_dispatch). P3-6 extends this into the full pipeline:
+# both architectures, boot tests, Buildroot toolchain caching per arch, and a run
+# on every commit to main.
+name: bench
+
+on:
+  workflow_dispatch:
+    inputs:
+      runs:
+        description: "Cold boots to measure"
+        required: false
+        default: "10"
+      arch:
+        description: "Guest architecture"
+        required: false
+        default: "x86_64"
+
+permissions:
+  contents: read
+
+jobs:
+  boot-to-ready:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      ARCH: ${{ github.event.inputs.arch || 'x86_64' }}
+      BENCH_RUNS: ${{ github.event.inputs.runs || '10' }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Standard Linux runners expose /dev/kvm, but as root:kvm 0660 with the
+      # runner user outside the group. Without this every boot fails with a
+      # permission error that looks like a Firecracker bug.
+      - name: Grant access to /dev/kvm
+        run: |
+          set -eux
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -l /dev/kvm
+
+      - name: Fail early if KVM is unusable
+        run: |
+          python3 - <<'PY'
+          import fcntl, os, sys
+          try:
+              fd = os.open("/dev/kvm", os.O_RDWR | os.O_CLOEXEC)
+          except OSError as e:
+              sys.exit(f"cannot open /dev/kvm: {e} — this runner has no usable KVM")
+          print("KVM_GET_API_VERSION =", fcntl.ioctl(fd, 0xAE00, 0))
+          PY
+
+      # Buildroot downloads are large and identical between runs. The build tree
+      # itself is not cached here — per-arch toolchain caching is P3-6's job.
+      - name: Cache Buildroot downloads
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/kelyfos/dl
+          key: kelyfos-dl-${{ hashFiles('versions.mk') }}
+          restore-keys: kelyfos-dl-
+
+      - name: Install build dependencies
+        run: bash dev/install-build-deps.sh
+
+      - name: Install Firecracker
+        run: bash dev/install-firecracker.sh
+
+      - name: Record the environment
+        run: |
+          {
+            echo "### Reference environment"
+            echo
+            echo '```'
+            echo "runner    : $(uname -srm)"
+            echo "cpu       : $(nproc) x $(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2- | xargs)"
+            echo "firecracker: $(firecracker --version 2>&1 | head -1)"
+            echo "go        : $(go version)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Build the guest image
+        run: make image ARCH="$ARCH"
+
+      - name: Measure boot-to-ready
+        id: bench
+        run: |
+          set -o pipefail
+          make cli
+          ./bin/kelyfos bench --runs "$BENCH_RUNS" --arch "$ARCH" --json | tee bench.json
+
+      - name: Publish the result
+        run: |
+          python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json, os
+          r = json.load(open("bench.json"))
+          med, p95 = r["median_ms"], r["p95_ms"]
+          if med <= 300:
+              verdict = "**≤ 300 ms — the v1.0 cold-boot claim is validated on reference hardware.**"
+          elif med <= 500:
+              verdict = ("**300–500 ms — the Phase 1 target is met on reference hardware.** "
+                         "The ≤ 300 ms v1.0 claim remains Phase 3 work.")
+          else:
+              verdict = ("**> 500 ms — the Phase 1 target is NOT met even on bare KVM.** "
+                         "This needs investigating, but nothing in Phase 2 depends on boot time.")
+          print("### Boot-to-ready — provisional bare-KVM reference\n")
+          print(f"| runs | min | median | p95 | max | mean |")
+          print(f"|---|---|---|---|---|---|")
+          print(f"| {r['runs']} | {r['min_ms']} ms | **{med} ms** | {p95} ms | {r['max_ms']} ms | {r['mean_ms']:.1f} ms |\n")
+          print(f"`{r['arch']}` / `{r['flavor']}` / {r['vcpus']} vcpu / {r['mem_mib']} MiB\n")
+          print(verdict + "\n")
+          print("<details><summary>samples (ms)</summary>\n")
+          print("`" + ", ".join(str(s) for s in r["samples_ms"]) + "`\n")
+          print("</details>")
+          PY
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bench-${{ env.ARCH }}
+          path: bench.json
+          if-no-files-found: warn
