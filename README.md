@@ -92,6 +92,16 @@ route to the network except the proxy. Whatever it does is in
 `kelyfos log`, and `kelyfos log --verify` will tell you if that record has been
 edited since.
 
+## Security
+
+KelyfOS is **not hardened yet** — the Firecracker jailer (P4-1) and guest
+seccomp/Landlock profiles (P4-2) are not done. The accurate description today is
+*isolation-first architecture*, not *hardened*.
+
+Read [`docs/threat-model.md`](docs/threat-model.md) before trusting it with
+anything. It is explicit about what is defended, what is not, and the trade-off
+that TLS termination represents.
+
 ## License
 
 Apache-2.0. Contributions require a DCO `Signed-off-by` line — see

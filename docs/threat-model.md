@@ -1,0 +1,151 @@
+# KelyfOS threat model
+
+**Status:** current as of v0.2. This document is a launch gate (P3-5) and is
+meant to be read before anyone trusts KelyfOS with anything.
+
+Its job is to be honest about the shape of the protection, including where it
+stops. **KelyfOS is not hardened yet.** Host hardening (the Firecracker jailer)
+is P4-1 and guest hardening (seccomp, Landlock) is P4-2, and neither is done.
+Until they are, the accurate description is *isolation-first architecture*, not
+*hardened*.
+
+---
+
+## 1. What KelyfOS is for
+
+Running code you did not write and cannot fully predict — code an AI agent
+generated, or a repository an agent was pointed at — with a boundary you can
+reason about and a record you can check afterwards.
+
+The design assumption is that **anything inside the guest may be hostile**.
+Not "might have a bug": actively working against you, because a prompt-injected
+agent is an attacker with your tools in its hands.
+
+## 2. Assets, in the order they matter
+
+1. **Credentials.** A token that reaches an agent is a token that can be
+   exfiltrated. This is the asset the architecture is bent around.
+2. **The host.** Your laptop or server, and everything else on it.
+3. **Other sandboxes.** One compromised sandbox must not reach another.
+4. **The audit record.** If it can be edited, it proves nothing.
+5. **Your source code.** Whatever is in `--workspace`.
+
+## 3. What KelyfOS defends against
+
+### Agent-generated code doing damage
+The guest is a Firecracker microVM: a separate kernel behind hardware
+virtualisation, not a namespace. Escaping it means a hypervisor break, not a
+container misconfiguration. The root filesystem is read-only with a tmpfs
+overlay, so changes die with the sandbox unless they were made in `/work`.
+
+### Exfiltration over the network
+Egress is **off by default** — a sandbox with no `--allow` has no network
+interface at all. Not a firewalled one: none. There is no rule that has to hold
+for the guarantee to be true.
+
+With `--allow`, the guest gets a point-to-point TAP whose nftables rules permit
+exactly one destination: a proxy on the host. No NAT, no forwarding. The proxy
+enforces a hostname allowlist and ports 80/443, and **the guest has no DNS at
+all** (decision D16) — the proxy resolves. That last point closes DNS
+tunnelling, which otherwise defeats any hostname allowlist completely, because
+the data leaves inside query names to a resolver you explicitly permitted.
+
+### Credential theft from the guest
+With `--secret NAME@domain`, the value stays on the host. The proxy terminates
+TLS for that domain only, attaches the credential, and forwards. `env` in the
+guest shows nothing; there is no file to find. An agent that is fully
+compromised can still *use* the credential against the domain it is bound to —
+that is what binding it means — but it cannot read it, keep it, or send it
+anywhere else.
+
+### Tampering with the record
+Every event is written by the **host**, never the guest, and each carries the
+previous event's hash. A guest that could write its own audit trail could write
+a flattering one, so it cannot write one at all.
+
+## 4. What KelyfOS does NOT defend against
+
+This section matters more than the one above.
+
+### Host-side attacks before the jailer (P4-1)
+Firecracker currently runs as your user, unconfined. A Firecracker
+vulnerability, or a bug in the KelyfOS CLI, gets the attacker your user account.
+The jailer — chroot, cgroups, dropped privileges, seccomp on the VMM — is
+Phase 4 and is not done. **This is the largest open gap.**
+
+### A compromised guest is unconfined *inside* the guest
+There is no seccomp or Landlock profile yet (P4-2). Code in the sandbox runs as
+root in its own machine and can do anything a root user can do to that machine.
+That is contained by the VM boundary, not by anything inside it.
+
+### TLS termination is a real trade-off (decision D6)
+For a domain with a secret bound to it, the proxy decrypts. Consequences you are
+accepting:
+
+- **the proxy sees that traffic in plaintext**, so a compromised host process
+  sees it too;
+- **certificate pinning breaks** for those domains — a client that pins will
+  fail, correctly, because there genuinely is something in the middle;
+- the ephemeral CA is trusted inside the guest, so anything that can act as that
+  proxy address can impersonate the bound domain to the guest.
+
+It is scoped as tightly as the feature allows: the CA is minted per run, lives
+only in memory, is never written to disk, and only domains you deliberately
+bound a credential to are terminated. Everything else is tunnelled untouched,
+and `kelyfos log` records `terminated` versus `tunnelled` per connection so you
+can always prove which traffic the proxy could read.
+
+### Side channels
+No defence is claimed against Spectre-class attacks, cache timing, or any other
+microarchitectural channel. Firecracker's own guidance on host configuration
+(microcode, mitigations, SMT) applies and KelyfOS does not check it for you.
+
+### Denial of service
+A sandbox can spin the CPU, fill its own memory, and exhaust its own disk.
+`--vcpus` and `--mem` bound what it gets, but there is no rate limiting, no
+cgroup enforcement (that arrives with the jailer) and no protection against a
+guest wedging its own kernel.
+
+### The supply chain of what you run *inside*
+`--allow github.com` means the agent can fetch and execute whatever is at
+github.com. KelyfOS controls *where* it can reach, not *what comes back*. There
+is no package pinning, no signature checking, no content inspection.
+
+### The host's own tooling
+Creating a TAP and loading nftables rules requires `sudo`. On a machine where
+your user can escalate, so can anything running as your user.
+
+### Data at rest
+Snapshots and workspace images are ordinary files on the host with no
+encryption. A snapshot contains the guest's entire memory — including anything
+the agent was holding at the time.
+
+### Multi-tenancy
+KelyfOS is a single-host developer tool. It has no accounts, no authorisation
+and no isolation between users of the same machine. Anyone who can run `kelyfos`
+can read every session record and attach to every running sandbox.
+
+## 5. Trust boundaries
+
+| Boundary | Enforced by | Status |
+| --- | --- | --- |
+| guest → host | Firecracker + KVM | active; VMM unconfined until P4-1 |
+| guest → network | no NIC, or TAP + nftables + proxy | active |
+| guest → credentials | injection at the proxy | active |
+| guest → audit record | host-side, hash-chained | active |
+| host process → host | the jailer | **not yet** (P4-1) |
+| in-guest process → guest | seccomp / Landlock | **not yet** (P4-2) |
+
+## 6. If you are evaluating KelyfOS
+
+Reasonable today: running untrusted agent code on a machine where you accept
+that a Firecracker escape reaches your user account; keeping credentials out of
+agent reach; producing a checkable record of what an agent did.
+
+Not reasonable today: multi-tenant hosting; anything where a VMM compromise is
+unacceptable; regulated workloads needing encryption at rest; anything relying
+on a hardened guest.
+
+## 7. Reporting a vulnerability
+
+Do not open a public issue. See [`CONTRIBUTING.md`](../CONTRIBUTING.md).
