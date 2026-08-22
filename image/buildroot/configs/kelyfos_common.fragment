@@ -11,6 +11,33 @@
 BR2_TOOLCHAIN_BUILDROOT_MUSL=y
 BR2_TOOLCHAIN_BUILDROOT_CXX=n
 
+# --- compiler cache --------------------------------------------------------
+# ccache in front of both the host compiler and the cross toolchain. It changes
+# nothing about the image — the same sources compile to the same objects — it
+# only makes compiling them a second time cheap, which is what turns an edit to
+# a kernel fragment from a half-hour CI wait into a short one.
+#
+# Buildroot never invalidates this cache itself; its own help text says the user
+# is responsible for purging it when the compiler changes. So every place the
+# cache is persisted keys it on versions.mk: bumping Buildroot, the kernel or Go
+# starts a fresh cache rather than trusting objects built by a compiler that no
+# longer exists.
+#
+# Needs a host gcc >= 8 (BR2_CCACHE's own dependency) and a host cmake >= 3.18
+# to avoid building one; both are in dev/install-build-deps.sh. If gcc is too
+# old Kconfig drops the symbol silently and image/check-config.sh then fails
+# loudly, which is the behaviour this project wants: a build that quietly stops
+# honouring its configuration is the failure mode the checker exists to catch.
+BR2_CCACHE=y
+BR2_CCACHE_DIR="@CCACHE_DIR@"
+# 2 GiB holds both architectures with room to spare. ccache's own default is
+# 5 GiB, which is more than a CI cache entry should be carrying around.
+BR2_CCACHE_INITIAL_SETUP="-M 2G"
+# Rewrite absolute paths inside the output directory into relative ones, so a
+# cache filled under one BUILD_DIR still hits under another. Already the
+# Buildroot default; stated because this configuration verifies what it asks for.
+BR2_CCACHE_USE_BASEDIR=y
+
 # --- init ------------------------------------------------------------------
 # No init system from Buildroot. PID 1 is the KelyfOS init script in phase 1
 # (P1-3) and the Go supervisor from phase 2 (P2-1), both delivered by the rootfs

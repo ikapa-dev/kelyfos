@@ -37,6 +37,13 @@ DL_DIR        ?= $(KELYFOS_CACHE)/dl
 BR_SRC        ?= $(KELYFOS_CACHE)/buildroot-$(BUILDROOT_VERSION)
 BUILD_DIR     ?= $(KELYFOS_CACHE)/build/$(ARCH)-$(FLAVOR)
 
+# Compiler cache, shared by both architectures and every flavor (ccache keys on
+# the compiler binary, so the two toolchains simply never collide). Named
+# BR_CCACHE_DIR rather than CCACHE_DIR because the latter is ccache's own
+# environment variable and Buildroot deliberately renames it to BR_CACHE_DIR to
+# keep the two apart. Templated into BR2_CCACHE_DIR by the .config rule below.
+BR_CCACHE_DIR ?= $(KELYFOS_CACHE)/ccache
+
 # Buildroot invocation. BR2_EXTERNAL must be absolute: Buildroot resolves a
 # relative one against its own source directory, not ours. BR2_DL_DIR is shared
 # across architectures — the source tarballs are identical.
@@ -111,6 +118,7 @@ $(BUILD_DIR)/.config: $(BR_SRC)/Makefile $(BR_FRAGMENTS)
 	  | sed -e 's/@LINUX_VERSION@/$(LINUX_VERSION)/g' \
 	        -e 's/@LINUX_SERIES_US@/$(LINUX_SERIES_US)/g' \
 	        -e 's|@OVERLAY_DIRS@|$(OVERLAY_DIRS)|g' \
+	        -e 's|@CCACHE_DIR@|$(BR_CCACHE_DIR)|g' \
 	  > $(BUILD_DIR)/kelyfos_defconfig
 	$(BR_MAKE) defconfig BR2_DEFCONFIG=$(BUILD_DIR)/kelyfos_defconfig
 	@$(CURDIR)/image/check-config.sh $(BUILD_DIR)/kelyfos_defconfig $(BUILD_DIR)/.config
@@ -212,4 +220,5 @@ test-integration: linux-only cli ## Boot a real microVM and exercise the guest
 clean: ## Remove build output (keeps the downloaded Buildroot toolchain)
 	rm -rf $(OUT_DIR) $(IMAGE_DIR) $(GUEST_OVERLAY)
 	@echo "removed CLI, images and the generated overlay for ARCH=$(ARCH)"
-	@echo "kept the Buildroot tree and download cache under $(KELYFOS_CACHE)"
+	@echo "kept the Buildroot tree, the download cache and the compiler cache"
+	@echo "under $(KELYFOS_CACHE)"
