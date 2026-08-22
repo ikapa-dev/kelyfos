@@ -1231,6 +1231,33 @@ failures: 40 / 40      &lt;- a tunnel's record waits for the client to hang up
 after closing the client connection before waiting:
 $ for i in $(seq 1 60); do go test -count=1 ./internal/egress/; done
 failures: 0 / 60</pre></td></tr>
+        <tr><td class="mono">2026-08-23</td><td class="mono">P3-6</td>
+        <td><b>The concurrency fix did not fix it, and the second attempt is the real one.</b> Turning
+        <code>cancel-in-progress</code> off for <code>main</code> was necessary and insufficient: GitHub cancels a
+        <i>pending</i> run when a newer one queues behind the same in-progress run, so with one shared group per ref a rapid
+        three-push sequence still loses the middle commit. That is precisely the sequence this project's protocol produces
+        &mdash; the work, then <code>STATUS.md</code> &mdash; and it cost the E1-4 commit its build twice for two different
+        reasons. Every commit on <code>main</code> now gets a concurrency group keyed on its own sha, so main's runs never
+        queue behind each other and none of them can be superseded; branches keep one group per ref and keep cancelling,
+        because there only the tip matters. Recorded rather than quietly amended because the first attempt looked correct,
+        passed its own CI run, and was wrong &mdash; the failure mode it leaves behind is a commit that appears verified.</td>
+        <td class="mono"><pre>$ gh run list
+32605075831  success    862aa172   STATUS.md only   &lt;- queued, took the slot
+32605058898  CANCELLED  0e700232   E1-4             &lt;- cancelled while pending
+32605028200  success    c0fd19da   flake fix        &lt;- in progress at the time
+
+  no jobs ran in 32605058898 at all: it was cancelled before it started, which
+  is the pending-run rule rather than cancel-in-progress.
+
+- group: ci-${{ github.ref }}-${{ github.event_name }}
++ group: ci-${{ github.event_name }}-${{ github.ref }}-${{ github.ref ==
++          'refs/heads/main' &amp;&amp; github.sha || 'tip' }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+after the fix, both commits build on their own:
+32605058898  success  0e700232  E1-4              (re-run)
+32605299543  success  9c197ac1  the fix itself
+  — and they ran at the same time rather than one queueing behind the other</pre></td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
