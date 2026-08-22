@@ -32,6 +32,7 @@
   .meta{margin-top:18px;font:13px/1.8 var(--mono);color:var(--muted)}
   .meta b{color:var(--text);font-weight:600}
   .meta .amber{color:var(--amber)}
+  .blocked{color:var(--amber);font-weight:600}
 
   /* ---------- boot-log dashboard (signature) ---------- */
   .bootlog{background:var(--panel);border:1px solid var(--line);border-radius:6px;
@@ -126,8 +127,8 @@
      injected secrets, full audit replay, and millisecond forking.</p>
   <div class="meta">
     owner: <b>John</b> &nbsp;·&nbsp; developer: <b>Claude Code</b> &nbsp;·&nbsp;
-    status: <b class="amber" id="meta-status">v0.3 tagged &amp; public — phases 0–3 done, 36/43</b> &nbsp;·&nbsp;
-    last updated: <b id="meta-updated">2026-08-22</b><br>
+    status: <b class="amber" id="meta-status">v0.3 released — phases 0–3 done, 36/43; P4 backlog (2 blocked)</b> &nbsp;·&nbsp;
+    last updated: <b id="meta-updated">2026-08-23</b><br>
     repo file: <b>PLAN.html</b> (commit this document at the repository root — it is the single source of truth)<br>
     <span class="quiet">KelyfOS — from κέλυφος (kélyfos), "shell": the guest OS wrapped around the agent. Formerly working-titled "agos" (D4 → D10).</span>
   </div>
@@ -166,7 +167,7 @@
     <span class="bl-name">Overall</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">Phase 4 is an unordered backlog; feature work continues in PLAN-FEATURES.html< 200 MB</b></div>
+  <div class="focusline">Current focus: <b id="focus">Paused. Build plan complete to §1; feature work continues in PLAN-FEATURES.html (Epic E1, next E1-3)< 200 MB</b></div>
 </div>
 
 <!-- ====================================================== 1. END GOAL -->
@@ -505,9 +506,9 @@
     <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">P4-3</span><span class="tk">Compliance groundwork: reproducible builds, signed images, SBOM per release — the substrate of the EU angle. Extend signing to session exports: <code>kelyfos log --export --sign</code> produces a report whose event chain and signature verify offline (<code>kelyfos verify report.html</code>).</span></li>
     <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
-        <span class="tid">P4-4</span><span class="tk"><code>browser</code> flavor (headless Chromium) if users ask for it.</span></li>
+        <span class="tid">P4-4</span><span class="tk"><code>browser</code> flavor (headless Chromium) if users ask for it. <b class="blocked">[BLOCKED: conditional on demand — the task says &ldquo;if users ask for it&rdquo;, and the repo went public today. Nothing to build against until someone asks; implementing it anyway would tick a box whose own condition is unmet.]</b></span></li>
     <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
-        <span class="tid">P4-5</span><span class="tk">Decision gate: is there real pull for a paid EU-compliance pack (audit retention, hardened images, support)? Decide with evidence; record in the decision log.</span></li>
+        <span class="tid">P4-5</span><span class="tk">Decision gate: is there real pull for a paid EU-compliance pack (audit retention, hardened images, support)? Decide with evidence; record in the decision log. <b class="blocked">[BLOCKED: no evidence to decide on — the task requires deciding &ldquo;with evidence&rdquo; whether there is real pull for a paid EU-compliance pack. There are no users yet, so any decision recorded today would be a guess wearing a decision's clothes.]</b></span></li>
     <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">P4-6</span><span class="tk">Multi-lane <code>kelyfos watch</code>: one lane per running sandbox/fork, k9s-style, so <code>kelyfos fork -n 4</code> shows four agents working side by side. Still a reader of the flight recorder only — no management actions beyond kill/stop passthrough to the CLI.</span></li>
     <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
@@ -1071,6 +1072,24 @@ PLAN.html is coherent: 43 tasks, 36 checked, 23 decisions
 
 phase status: p0 done 7/7 | p1 done 9/9 | p2 done 8/8 | p3 done 12/12 | p4 active 0/7
 tags: v0.0 v0.1 v0.2 v0.3</pre></td></tr>
+        <tr><td class="mono">2026-08-23</td><td class="mono">P4</td>
+        <td><b>Two Phase 4 tasks marked <code>[BLOCKED]</code>, and the reason is worth stating plainly: this plan cannot honestly reach 43/43 today.</b> P4-4 is conditional by its own wording &mdash; a browser flavor &ldquo;if users ask for it&rdquo; &mdash; and the repository went public today, so there is nobody to have asked. P4-5 requires deciding &ldquo;with evidence&rdquo; whether there is real pull for a paid EU-compliance pack; with no users there is no evidence, and a decision recorded now would be a guess wearing a decision's clothes. Both could be made to look done &mdash; build the flavor, write the decision &mdash; but ticking a box whose own condition is unmet is exactly what this plan's rules exist to prevent. They are marked rather than quietly skipped so the next session does not go hunting for a 100% that is not available yet. The remaining five (P4-1 jailer, P4-2 seccomp/Landlock, P4-3 reproducible builds and signing, P4-6 multi-lane watch, P4-7 one-command host integration) are unblocked and doable whenever they are wanted; P4-1 and P4-2 are the two that would let the README stop saying &ldquo;not hardened yet&rdquo;.</td>
+        <td class="mono"><pre>P4-4  browser flavor &mdash; task text: &ldquo;if users ask for it&rdquo;
+P4-5  EU-compliance pack &mdash; task text: &ldquo;Decide with evidence&rdquo;
+
+$ gh repo view --json visibility  -&gt; PUBLIC   (published 2026-08-22)
+$ gh api repos/p4r4n0rm4l/KelyfOS --jq .stargazers_count -&gt; 0
+no issues, no discussions, no requests: nothing to decide against</pre></td></tr>
+        <tr><td class="mono">2026-08-23</td><td class="mono">—</td>
+        <td><b>Build plan complete against its own definition of done; work paused here at the owner's direction.</b> Section 1's six criteria are all met and evidenced above: clone-to-working-command in 9.4&nbsp;s on a stock Linux/KVM machine (151.0&nbsp;s including building the macOS Linux layer), the full <code>--secret</code> invocation with the value absent from the guest and from the record, 90&nbsp;ms cold boot and 29&nbsp;ms restore on the bare-KVM reference with <code>fork -n 4</code> diverging, a hash-chained audit log live and exportable standalone, the E2B SDK smoke test, and publication with README, quickstart, demo and real Claude Code dogfooding. Phases 0&ndash;3 are done and tagged v0.0&ndash;v0.3; Phase 4 remains an unordered backlog with no exit checkpoint, two of its seven items blocked as above. Continuing feature work lives in <code>PLAN-FEATURES.html</code>, where Epic E1 is three tasks in and paused at E1-3. Nothing is in flight: the working tree is clean, <code>origin/main</code> matches <code>HEAD</code>, and both plan files describe the repository as it actually is.</td>
+        <td class="mono"><pre>$ git status --porcelain      (empty)
+$ git rev-parse --short HEAD  -&gt; 3db8807f  == origin/main
+$ git tag                     -&gt; v0.0 v0.1 v0.2 v0.3 v0.3-rc1
+$ gh release view v0.3 --json url --jq .url
+https://github.com/p4r4n0rm4l/KelyfOS/releases/tag/v0.3
+
+PLAN.html            36/43   (phases 0-3 done; P4 backlog, 2 blocked)
+PLAN-FEATURES.html    3/42   (Epic E1 active, paused at E1-3)</pre></td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>

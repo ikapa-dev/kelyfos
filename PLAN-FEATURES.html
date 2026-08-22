@@ -126,7 +126,7 @@
      improvements to the existing product land here as epics. Inert until its gate opens.</p>
   <div class="meta">
     owner: <b>John</b> &nbsp;&middot;&nbsp; developer: <b>Claude Code</b> &nbsp;&middot;&nbsp;
-    status: <b class="ok" id="meta-status">Epic E1 — active</b> &nbsp;&middot;&nbsp;
+    status: <b class="ok" id="meta-status">Epic E1 — active, paused at 3/9 (next: E1-3)</b> &nbsp;&middot;&nbsp;
     last updated: <b id="meta-updated">2026-08-23</b><br>
     repo file: <b>PLAN-FEATURES.html</b> (lives at the repository root next to <code>PLAN.html</code>)<br>
     <span class="quiet">Companion to PLAN.html — same protocol, same rules, later timeline.</span>
@@ -166,7 +166,7 @@
     <span class="bl-name">All epics</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">E1-3 — I/O throttling via Firecracker rate limiters</b></div>
+  <div class="focusline">Current focus: <b id="focus">Paused — resume at E1-3 (I/O throttling via Firecracker rate limiters)</b></div>
 </div>
 
 <!-- ====================================================== 1. ACTIVATION GATE -->
@@ -1082,6 +1082,36 @@ $ go test ./internal/sandbox/ -run "CPUMax|NewCPUSlice|WrapArgv"
 --- PASS: TestNewCPUSliceRejectsNonPositiveQuota
 --- PASS: TestWrapArgvBuildsTheScopeRequest
 $ go test ./...   -&gt; all packages ok</pre></td></tr>
+        <tr><td class="mono">2026-08-23</td><td class="mono">E1</td>
+        <td><b>Paused at the owner's direction, 3 of 9 tasks in.</b> Epic E1 stays <code>active</code> because it genuinely is
+        mid-flight, not queued &mdash; this row exists so the next session can pick it up without re-deriving where it stopped.
+        <i>Done and verified:</i> E1-0 established that the resource-caps amendment had shipped by halves and implemented the
+        missing half (F-D10); E1-1 wrote <code>docs/resources.md</code> and turned <code>[resources]</code> into hard ceilings
+        that refuse rather than clamp; E1-2 added the host CPU-time quota, which required F-D11 after
+        <code>clone3(CLONE_INTO_CGROUP)</code> proved impossible unprivileged from a login session.
+        <i>Next is E1-3</i> &mdash; Firecracker's native token-bucket rate limiters on the network and both block devices,
+        which is configuration of an existing Firecracker feature rather than new machinery.
+        <i>One measurement debt to carry forward, deliberately not hidden:</i> E1-2's quota is proven at 50%, where the cap sits
+        below available demand, but this dev box cannot distinguish 150% from uncapped because the guest only generates about
+        one core of demand under nested virtualisation. That is D15 territory &mdash; the measuring environment, not the
+        mechanism &mdash; and <b>E1-8 is the task that settles it</b> with stress-ng against the bare-KVM reference. Anyone
+        resuming should treat E1-8 as load-bearing rather than a formality.
+        The four remaining after E1-3 are E1-4 (OOM visibility), E1-5 (scratch cap), E1-6 (time budgets) and E1-7 (usage
+        receipt); <code>[resources]</code> already refuses each of their keys by name, so none can be silently skipped.</td>
+        <td class="mono"><pre>PLAN-FEATURES.html   3/42   Epic E1 active, paused
+  [x] E1-0  baseline reconcile          (F-D10)
+  [x] E1-1  docs/resources.md + ceilings
+  [x] E1-2  cgroup v2 CPU quota         (F-D11)
+  [ ] E1-3  I/O rate limiters      &lt;- next
+  [ ] E1-4  OOM visibility
+  [ ] E1-5  scratch cap
+  [ ] E1-6  time budgets
+  [ ] E1-7  usage receipt
+  [ ] E1-8  enforcement proof (stress-ng, bare KVM)
+
+$ git status --porcelain   (empty)
+$ git rev-parse --short HEAD -&gt; 3db8807f == origin/main
+$ go test ./...            -&gt; all packages ok</pre></td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
