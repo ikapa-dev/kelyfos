@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/p4r4n0rm4l/KelyfOS/internal/config"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/egress"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/sandbox"
@@ -41,6 +42,48 @@ func runCmd(argv []string) error {
 	}
 	if err := fs.Parse(argv); err != nil {
 		return err
+	}
+
+	// A committed policy file supplies the defaults; an explicit flag always
+	// wins. Knowing which flags the user actually typed is the whole trick —
+	// otherwise a default is indistinguishable from a choice, and the file
+	// could never override anything.
+	typed := map[string]bool{}
+	fs.Visit(func(f *flag.Flag) { typed[f.Name] = true })
+
+	cfg, cfgErr := loadPolicy()
+	if cfgErr != nil {
+		return cfgErr
+	}
+	if cfg != nil {
+		fmt.Printf("policy: %s\n", cfg.Path)
+		if cfg.Image != "" && !typed["image"] {
+			*flavor = cfg.Image
+		}
+		if cfg.Arch != "" && !typed["arch"] {
+			*arch = cfg.Arch
+		}
+		if len(cfg.Allow) > 0 && !typed["allow"] {
+			*allow = strings.Join(cfg.Allow, ",")
+		}
+		if len(cfg.Secrets) > 0 && len(secrets) == 0 {
+			secrets = append(secrets, cfg.Secrets...)
+		}
+		if cfg.Workspace != "" && !typed["workspace"] {
+			// Relative to the policy file, not the working directory: the file
+			// describes its own project, wherever it is invoked from.
+			ws := cfg.Workspace
+			if !filepath.IsAbs(ws) {
+				ws = filepath.Join(filepath.Dir(cfg.Path), ws)
+			}
+			*wsDir = ws
+		}
+		if cfg.Vcpus > 0 && !typed["vcpus"] {
+			*vcpus = cfg.Vcpus
+		}
+		if cfg.MemMiB > 0 && !typed["mem"] {
+			*memMiB = cfg.MemMiB
+		}
 	}
 
 	var consoleOut io.Writer
@@ -306,4 +349,19 @@ func containsDomain(allow []string, domain string) bool {
 		}
 	}
 	return false
+}
+
+// loadPolicy finds and reads a project's kelyfos.toml, if it has one. Absence
+// is normal and silent; a file that exists but is wrong is an error, because a
+// policy that fails to apply is worse than no policy at all.
+func loadPolicy() (*config.Config, error) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return nil, nil
+	}
+	path, found := config.Find(cwd)
+	if !found {
+		return nil, nil
+	}
+	return config.Load(path)
 }
