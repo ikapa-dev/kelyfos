@@ -98,8 +98,11 @@ Closes the file.
 
 | Field | Type | Meaning |
 | --- | --- | --- |
-| `reason` | string | `shutdown`, `interrupted`, `vm_exited`, `error`. |
+| `reason` | string | `shutdown`, `interrupted`, `vm_exited`, `command_exited`, `error`. |
 | `duration_ms` | integer | Session length. |
+
+`command_exited` is the `kelyfos run [flags] -- <command>` form (D23): the
+sandbox's lifetime was that command's, and the command finished.
 
 ### `command.start`
 A command was submitted, before it runs.
@@ -174,6 +177,26 @@ hashed. A hash of a short credential is a credential. The whole point of
 injecting at the proxy is that the value exists in one place; writing it to an
 audit log would put it in two.
 
+### `resource.oom`
+The guest's OOM killer ran. Written from E1-4, and the first event type with
+`"source": "guest"` — the supervisor watches `/dev/kmsg`, reports what the
+kernel said, and the host writes it (§1).
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `pid` | integer | The killed process, as the guest numbered it. |
+| `comm` | string | Its name, from the kernel's own line. |
+| `rss_kib` | integer | Its anonymous resident set at the moment it was killed. |
+| `mem_mib` | integer | The machine's RAM cap, added by the host so the pair reads without cross-referencing. |
+
+`rss_kib` is `anon-rss` and deliberately not `total-vm`: address space a process
+reserved and never touched says nothing about the memory that ran out.
+
+One of these means the `mem` cap was reached. The cap is the VM's hardware and
+did not need help holding — what this event adds is that hitting it is legible
+instead of a process that silently vanished. `kelyfos run` exits **137** when a
+session saw one and would otherwise have exited 0.
+
 ---
 
 ## 5. Reading the file
@@ -192,6 +215,7 @@ a reader should present the session as open rather than truncated.
 | Events written host-side, chained, with the types in §4 | P2-4 |
 | `kelyfos log`, `--follow`, `--verify` | P2-4 |
 | `egress.attempt` with `mode`, `secret.use` by name | P2-5, P2-6 |
+| `resource.oom` reported by the guest, written by the host | E1-4 |
 | HTML session export built only from this file | P3-8 |
 | Live TUI built only from this file | P3-9 |
 | Signed exports verifiable offline | P4-3 |

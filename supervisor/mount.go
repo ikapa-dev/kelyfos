@@ -22,6 +22,7 @@ func setupRoot() (overlay bool) {
 
 	mountOrWarn("proc", "/proc", "proc", nodev, "")
 	mountOrWarn("sysfs", "/sys", "sysfs", nodev, "")
+	protectFromOOMKiller()
 	// The kernel mounts devtmpfs on /dev before starting PID 1
 	// (CONFIG_DEVTMPFS_MOUNT), which is also why this process has a console.
 	if !isMounted("/dev") {
@@ -101,6 +102,47 @@ func applyHostname() {
 	}
 	if err := unix.Sethostname([]byte(name)); err != nil {
 		logf("warning: could not set hostname: %v", err)
+	}
+}
+
+// protectFromOOMKiller takes PID 1 off the OOM killer's list of candidates.
+//
+// This limits nothing — the RAM cap is the VM's hardware and stands whatever
+// this process does (F-D2). What it buys is that the machine survives its own
+// memory exhaustion long enough to report it. Without it the killer is free to
+// pick the supervisor, and killing PID 1 is a kernel panic: the sandbox would
+// die at exactly the moment E1-4 exists to make legible, and the user would see
+// a VM that vanished rather than a named process that was killed.
+//
+// -1000 is the floor, and the same value systemd and container runtimes give
+// their own init. Written after /proc is mounted, since that is where it lives;
+// a failure here is worth a line on the console and nothing more, because the
+// supervisor still works, it is just no longer immortal.
+func protectFromOOMKiller() {
+	if err := os.WriteFile("/proc/self/oom_score_adj", []byte("-1000\n"), 0o644); err != nil {
+		logf("warning: could not exempt PID 1 from the OOM killer: %v", err)
+	}
+}
+
+// restoreOOMScore undoes, for one child, the exemption PID 1 gave itself.
+//
+// oom_score_adj is inherited across fork, so without this every process the
+// supervisor starts inherits -1000 and the OOM killer ends up with no candidate
+// at all. That is not a safer machine, it is a worse one: the kernel prints
+// "Out of memory and no killable processes" and panics, which is precisely the
+// vanished-sandbox outcome E1-4 exists to replace. Measured directly — with the
+// exemption inherited, a guest that should have killed one Python process
+// instead died with nothing in its log.
+//
+// There is a window here and it is worth naming: between fork and this write the
+// child is still exempt. It is the time it takes to exec, and a process cannot
+// allocate its way to an OOM in it — measured, a command that reads its own
+// oom_score_adj as its very first act already reads 0. The alternative designs
+// are an unkillable machine or a killable PID 1, and neither is better.
+func restoreOOMScore(pid int) {
+	path := fmt.Sprintf("/proc/%d/oom_score_adj", pid)
+	if err := os.WriteFile(path, []byte("0\n"), 0o644); err != nil {
+		logf("warning: could not restore the OOM score of pid %d: %v", pid, err)
 	}
 }
 

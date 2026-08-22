@@ -86,8 +86,59 @@ func main() {
 
 	go announceReady(start)
 
+	// Guest-originated events. The queue is small and bounded on purpose: this
+	// is PID 1, and a full queue must cost a dropped report rather than a
+	// blocked init. A drop is logged to the console, which is the one place
+	// left that cannot itself be starved.
+	events := make(chan proto.GuestEvent, 64)
+	go pumpEvents(events)
+	go watchKmsg(func(ev proto.GuestEvent) {
+		select {
+		case events <- ev:
+		default:
+			logf("dropped a %s event: the host events channel is not keeping up", ev.Type)
+		}
+	})
+
 	<-shutdown
 	halt(shutdownGrace)
+}
+
+// pumpEvents keeps the events channel connected and drains the queue into it.
+//
+// Same retry discipline as the ready channel and for the same two reasons: the
+// host may not have bound its end yet, and a snapshot restore severs every
+// connection with only the guest able to re-dial (docs/protocol.md §1.6). An
+// event taken off the queue while the connection is down is held rather than
+// dropped, so a reconnect does not cost the report that provoked it.
+func pumpEvents(queue <-chan proto.GuestEvent) {
+	var pending *proto.GuestEvent
+	backoff := dialBackoffMin
+	for {
+		conn, err := vsock.Dial(proto.CIDHost, proto.PortEvents)
+		if err != nil {
+			time.Sleep(backoff)
+			if backoff < dialBackoffMax {
+				backoff *= 2
+			}
+			continue
+		}
+		backoff = dialBackoffMin
+		w := proto.NewWriter(conn)
+		for {
+			ev := pending
+			if ev == nil {
+				next := <-queue
+				ev = &next
+			}
+			if err := w.Write(ev); err != nil {
+				pending = ev
+				break
+			}
+			pending = nil
+		}
+		conn.Close()
+	}
 }
 
 // serveExec answers the exec channel, one command per connection

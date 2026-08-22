@@ -114,6 +114,30 @@ type Heartbeat struct {
 	UptimeMS int64  `json:"uptime_ms"`
 }
 
+// GuestEvent is one guest-originated report on the events channel (§5.5).
+//
+// The guest reports facts and nothing else: it does not number these, stamp
+// them, or chain them. The host writes the flight recorder, because a guest
+// that could forge chain links could forge its own audit trail (docs/events.md
+// §1). MonotonicNS is the guest's own clock and is carried for ordering within
+// the guest, never as the event's timestamp.
+type GuestEvent struct {
+	V           int    `json:"v"`
+	Type        string `json:"type"`
+	MonotonicNS int64  `json:"monotonic_ns,omitempty"`
+
+	// resource.oom
+	PID    int    `json:"pid,omitempty"`
+	Comm   string `json:"comm,omitempty"`
+	RSSKiB int64  `json:"rss_kib,omitempty"`
+}
+
+// Guest event types. Deliberately the same strings the flight recorder uses:
+// the guest is reporting an event of that type, not a private encoding of one.
+const (
+	GuestEventOOM = "resource.oom"
+)
+
 // ControlRequest and ControlResponse are the lifecycle RPCs (§5.4).
 type ControlRequest struct {
 	V          int    `json:"v"`

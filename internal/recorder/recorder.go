@@ -37,6 +37,7 @@ const (
 	TypeFileWrite     = "file.write"
 	TypeEgressAttempt = "egress.attempt"
 	TypeSecretUse     = "secret.use"
+	TypeResourceOOM   = "resource.oom"
 )
 
 // Sources.
@@ -102,6 +103,14 @@ type Event struct {
 
 	// secret.use
 	Name string `json:"name,omitempty"`
+
+	// resource.oom. Appended at the end of the struct on purpose: the field
+	// order here is the canonical order the hash is computed over, so adding a
+	// field anywhere else would change the digest of every event that has one.
+	PID    int    `json:"pid,omitempty"`
+	Comm   string `json:"comm,omitempty"`
+	RSSKiB int64  `json:"rss_kib,omitempty"`
+	MemMiB int    `json:"mem_mib,omitempty"`
 }
 
 type EvError struct {

@@ -78,6 +78,7 @@ func (r *reaper) startAndRegister(cmd *exec.Cmd) (chan syscall.WaitStatus, error
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
+	restoreOOMScore(cmd.Process.Pid)
 	c := make(chan syscall.WaitStatus, 1)
 	r.waiters[cmd.Process.Pid] = c
 	return c, nil

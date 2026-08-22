@@ -72,6 +72,10 @@ type Options struct {
 	// token-bucket limiters (E1-3). The zero value leaves every device
 	// unthrottled.
 	IO IOLimits
+	// OnGuestEvent receives what the guest reports on the events channel
+	// (docs/protocol.md §5.5). The caller decides what to record; the guest
+	// never writes the flight recorder itself (docs/events.md §1).
+	OnGuestEvent func(proto.GuestEvent)
 }
 
 // State is the on-disk description of a running sandbox, written into the run
@@ -105,14 +109,15 @@ type State struct {
 
 // Sandbox is a running microVM.
 type Sandbox struct {
-	State   State
-	api     *api
-	opts    Options
-	cmd     *exec.Cmd
-	readyLn net.Listener
-	ready   chan proto.Ready
-	done    chan struct{}
-	waitErr error
+	State    State
+	api      *api
+	opts     Options
+	cmd      *exec.Cmd
+	readyLn  net.Listener
+	eventsLn net.Listener
+	ready    chan proto.Ready
+	done     chan struct{}
+	waitErr  error
 }
 
 const stateFile = "sandbox.json"
@@ -220,9 +225,65 @@ func New(opts Options) (*Sandbox, error) {
 	}
 	s.readyLn = ln
 	go s.serveReady()
+	if err := s.listenEvents(); err != nil {
+		s.cleanup()
+		return nil, err
+	}
 	s.api = newAPI(s.State.APIPath)
 
 	return s, nil
+}
+
+// listenEvents binds the guest's events channel. It has to exist before the VM
+// starts: the guest dials it as soon as the supervisor is up, and a host that is
+// not listening yet turns the guest's first connect into a reset it can only
+// recover from by retrying (docs/protocol.md §2).
+func (s *Sandbox) listenEvents() error {
+	ln, err := net.Listen("unix", fmt.Sprintf("%s_%d", s.State.UDSPath, proto.PortEvents))
+	if err != nil {
+		return fmt.Errorf("bind events channel: %w", err)
+	}
+	s.eventsLn = ln
+	go s.serveEvents()
+	return nil
+}
+
+// serveEvents reads guest-reported events and hands them to the caller. The
+// guest reconnects after a drop, so this keeps accepting; nothing here trusts
+// the frames beyond their shape, because the guest runs untrusted code and this
+// is a report, not a record.
+func (s *Sandbox) serveEvents() {
+	for {
+		conn, err := s.eventsLn.Accept()
+		if err != nil {
+			return
+		}
+		go func() {
+			defer conn.Close()
+			r := proto.NewReader(conn)
+			for {
+				var ev proto.GuestEvent
+				if err := r.Read(&ev); err != nil {
+					// A frame that will not parse is skipped rather than fatal.
+					// Framing is newline-delimited, so a bad line cannot
+					// desynchronise the stream — and letting one malformed
+					// frame silence every later report would hand an untrusted
+					// guest a way to go quiet on purpose. A frame past the
+					// length limit is different: docs/protocol.md §3 makes that
+					// fatal for the connection, and the guest will re-dial.
+					var syntax *json.SyntaxError
+					var typ *json.UnmarshalTypeError
+					if errors.As(err, &syntax) || errors.As(err, &typ) {
+						continue
+					}
+					return
+				}
+				if s.opts.OnGuestEvent != nil {
+					s.opts.OnGuestEvent(ev)
+				}
+			}
+		}()
+	}
 }
 
 // Start launches Firecracker and returns once the process is running. It does
@@ -543,6 +604,10 @@ func Restore(snapDir string, opts Options) (*Sandbox, time.Duration, error) {
 	}
 	s.readyLn = ln
 	go s.serveReady()
+	if err := s.listenEvents(); err != nil {
+		s.cleanup()
+		return nil, 0, err
+	}
 	s.api = newAPI(s.State.APIPath)
 
 	started := time.Now()
@@ -685,6 +750,9 @@ func (s *Sandbox) Shutdown(grace time.Duration) error {
 	}
 	if s.readyLn != nil {
 		_ = s.readyLn.Close()
+	}
+	if s.eventsLn != nil {
+		_ = s.eventsLn.Close()
 	}
 	s.opts.Net.Down()
 	s.cleanup()

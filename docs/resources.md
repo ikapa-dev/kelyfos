@@ -94,7 +94,7 @@ happens at the limit and how hard the limit is.
 | cap | enforced by | at the limit |
 | --- | --- | --- |
 | `cpus` | KVM machine config (`vcpu_count`) | absolute — the cores do not exist |
-| `mem` | KVM machine config (`mem_size_mib`) | absolute — the RAM does not exist; the guest OOM-kills (see E1-4) |
+| `mem` | KVM machine config (`mem_size_mib`) | absolute — the RAM does not exist; the guest OOM-kills, and says so |
 | `cpu_quota` | cgroup v2 `cpu.max` on the Firecracker process's own cgroup | throttled — work slows, nothing fails |
 | `disk` | size of the packed workspace block device | `ENOSPC` on writes to `/work` |
 | `scratch` | `size=` on the tmpfs backing the overlay upper layer | `ENOSPC` on writes outside `/work` |
@@ -153,6 +153,32 @@ Either way the percentage is translated in the CLI, and the resulting `cpu.max`
 is **read back and checked** after launch. If the quota did not land, the
 sandbox refuses to start rather than running unlimited while claiming a cap.
 If neither path is available, `--cpu-quota` fails with the reason.
+
+### When the RAM cap is reached
+
+The `mem` cap is the VM's hardware: the guest cannot allocate a byte the machine
+was not built with, and nothing on the host has to police it. What E1-4 adds is
+that reaching it is *legible*. The supervisor watches `/dev/kmsg` for the
+kernel's OOM-killer line and reports it; the host records a `resource.oom` event
+naming the process, its pid and its resident size, and prints:
+
+```
+kelyfos: the guest ran out of memory and killed python3 (pid 57, 224 MiB resident
+         of a 256 MiB machine)
+         raise --mem, or lower what the agent is asked to hold
+```
+
+`kelyfos run` then exits **137** — the shell's convention for death by SIGKILL,
+which is literally what the OOM killer sent — where it would otherwise have
+exited 0. That is the difference between "the agent was killed for using too
+much memory" and "the agent crashed", and it is the difference a CI log needs to
+show.
+
+PID 1 exempts itself from the OOM killer (`oom_score_adj = -1000`). That limits
+nothing; it means the machine survives its own memory exhaustion long enough to
+report it. Killing PID 1 is a kernel panic, and a sandbox that vanishes at
+exactly the moment it ran out of memory is the least diagnosable outcome
+available.
 
 ### How the I/O throttles are applied
 

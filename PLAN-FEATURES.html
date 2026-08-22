@@ -126,7 +126,7 @@
      improvements to the existing product land here as epics. Inert until its gate opens.</p>
   <div class="meta">
     owner: <b>John</b> &nbsp;&middot;&nbsp; developer: <b>Claude Code</b> &nbsp;&middot;&nbsp;
-    status: <b class="ok" id="meta-status">Epic E1 — active, 4/9 (next: E1-4)</b> &nbsp;&middot;&nbsp;
+    status: <b class="ok" id="meta-status">Epic E1 — active, 5/9 (next: E1-5)</b> &nbsp;&middot;&nbsp;
     last updated: <b id="meta-updated">2026-08-23</b><br>
     repo file: <b>PLAN-FEATURES.html</b> (lives at the repository root next to <code>PLAN.html</code>)<br>
     <span class="quiet">Companion to PLAN.html — same protocol, same rules, later timeline.</span>
@@ -166,7 +166,7 @@
     <span class="bl-name">All epics</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">E1-4 — OOM visibility: <code>resource.oom</code> from the supervisor, and an exit status that says so</b></div>
+  <div class="focusline">Current focus: <b id="focus">E1-5 — scratch cap: an explicit <code>size=</code> on the tmpfs behind the overlay</b></div>
 </div>
 
 <!-- ====================================================== 1. ACTIVATION GATE -->
@@ -260,7 +260,7 @@
         device and both block devices — configuration of an existing Firecracker feature, no new machinery. Toml keys:
         <code>net_mbps_rx</code>, <code>net_mbps_tx</code>, <code>disk_iops</code>, <code>disk_mbps</code> &rarr; <code>rate_limiter</code>
         objects in the drive / network-interface API config.</span></li>
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">E1-4</span><span class="tk">OOM visibility: the RAM cap is already absolute (VM hardware) — make hitting it legible.
         The supervisor (PID 1) watches <code>/dev/kmsg</code> for guest OOM-killer events and emits a
         <code>resource.oom</code> flight-recorder event naming the killed process; <code>kelyfos run</code>&rsquo;s exit
@@ -765,6 +765,20 @@
             the consuming agent confidently writes around features that exist. Generated parts are already enforced by CI
             drift-failure (F-D4); this closes the hand-written half and makes &ldquo;updated&rdquo; mean <i>proven usable</i>,
             with the docs-only exam as the standard of proof.</td></tr>
+        <tr><td class="mono">F-D12</td><td class="mono">2026-08-23</td>
+        <td>PID 1 exempts itself from the guest OOM killer (<code>oom_score_adj = -1000</code>), and the supervisor
+        writes <code>0</code> to every child's <code>oom_score_adj</code> immediately after starting it. Both halves are
+        required; neither is optional and neither may be simplified away.</td>
+        <td>The first half is not the guest policing itself, which F-D2 forbids &mdash; it limits nothing, and the RAM cap
+        is the VM's hardware either way. It is about surviving long enough to report: killing PID 1 is a kernel panic, so a
+        supervisor the OOM killer may choose turns "the agent was killed for using 224 MiB of a 256 MiB machine" into
+        "the sandbox vanished", which is the exact outcome E1-4 exists to remove. The second half is the trap, found by
+        running it: <code>oom_score_adj</code> is <b>inherited across fork</b>, so the exemption alone makes every process
+        in the guest unkillable and the kernel prints "Out of memory and no killable processes" instead of naming a victim.
+        Measured directly &mdash; a guest that had correctly killed one Python process before the exemption produced no OOM
+        event at all after it, and no kill line on the console either. Restoring the score per child costs one small write
+        and leaves a window between fork and that write; the window is an exec long, and a command that reads its own
+        <code>oom_score_adj</code> as its very first act already reads 0.</td></tr>
     <!-- Claude Code: append rows above this line. -->
       <tr><td class="mono">F-D10</td><td class="mono">2026-08-22</td>
         <td>The resource knobs E1-0 goes looking for shipped <b>partly</b>: <code>--vcpus</code>/<code>--mem</code> and
@@ -1167,6 +1181,69 @@ $ go test ./internal/...
 --- PASS: TestUnlimitedConfigHasNoLimiterFields
 --- PASS: TestIORatesParse / TestIORateZeroAndNegativeRefused
 ok  internal/config   ok  internal/sandbox</pre></td></tr>
+        <tr><td class="mono">2026-08-23</td><td class="mono">E1-4</td>
+        <td>OOM visibility, and the first use of a channel the protocol has specified since P2-4 without anyone building it.
+        The supervisor watches <code>/dev/kmsg</code> for the OOM killer's own line &mdash; matched against the kernel's
+        format string from <code>mm/oom_kill.c</code> in the 6.18.45 tree this image is built from, not a loose
+        &ldquo;killed&rdquo; keyword, because a looser pattern would send someone tuning <code>--mem</code> after a problem
+        that has nothing to do with memory &mdash; and reports it on the events channel (port 10101, docs/protocol.md §5.5),
+        which is now implemented at both ends. The guest reports; the <b>host</b> writes the flight recorder and computes the
+        chain, exactly as docs/events.md §1 has always said, and the frame carries no sequence number and no
+        <code>prev</code> so it cannot be otherwise. <code>resource.oom</code> is the first event type with
+        <code>"source": "guest"</code>; it names the process, its pid and its resident size, and the host adds the machine's
+        RAM cap so the pair reads without cross-referencing. <code>kelyfos run</code> prints a line that says what to do
+        about it and exits <b>137</b> &mdash; 128 + SIGKILL, which is literally what the OOM killer sent &mdash; where it
+        would otherwise have exited 0. Both viewers render the new type rather than falling through to raw JSON, and the
+        HTML export gains an OOM-kills card next to egress-blocked.
+        <b>The part that had to be measured rather than reasoned about is F-D12.</b> Exempting PID 1 from the OOM killer is
+        necessary, because killing PID 1 is a kernel panic and a sandbox that vanishes is the least diagnosable outcome
+        available. But <code>oom_score_adj</code> is inherited across fork, so the exemption alone left the kernel with no
+        killable process at all: the same guest that had named its victim before the change reported nothing after it. The
+        supervisor now restores each child's score at start. Two smaller decisions worth recording: a guest frame that will
+        not parse is skipped rather than fatal to the connection, since newline framing means a bad line cannot
+        desynchronise anything and letting one malformed frame silence every later report would hand an untrusted guest a
+        way to go quiet on purpose; and an unrecognised event type is dropped rather than recorded, because the guest is
+        untrusted and the hash chain is not a place to let it write arbitrary strings.</td>
+        <td class="mono"><pre>$ kelyfos run --image dev --mem 256M -- sh -c 'kelyfos exec "python3 -c ..."'
+sandbox 7f896e9f ready in 732 ms
+
+kelyfos: the guest ran out of memory and killed python3 (pid 55, 224 MiB
+         resident of a 256 MiB machine)
+         raise --mem, or lower what the agent is asked to hold
+sh exited 137; stopping the sandbox
+kelyfos run exit status: 137          # the same command at --mem 1G exits 0
+
+$ kelyfos log --session 7f896e9f
+23:12:44.427  $ /bin/sh -c python3 -c "b=[bytearray(1048576) for _ in range(400)]..."
+23:12:48.539  OOM-killed      python3 (pid 55) holding 224 MiB of a 256 MiB machine
+23:12:48.544  exit 137        4117 ms
+$ kelyfos log --session 7f896e9f --verify
+session 7f896e9f: chain intact, 5 events verified
+
+the recorded event, written by the host:
+{"v":1,"seq":4,"ts":"2026-08-22T23:12:48.539Z","sandbox":"7f896e9f",
+ "type":"resource.oom","source":"guest","prev":"2d39a9f6...","hash":"cdf5ca85...",
+ "pid":55,"comm":"python3","rss_kib":229888,"mem_mib":256}
+
+the kernel's own line, which is what the parser matches:
+Out of memory: Killed process 55 (python3) total-vm:236952kB, anon-rss:229888kB,
+  file-rss:1488kB, shmem-rss:0kB, UID:0 pgtables:500kB oom_score_adj:0
+
+F-D12, measured both ways:
+  PID 1 unprotected      -> victim named, guest survives  (but PID 1 is killable)
+  PID 1 exempt only      -> no kill line at all, nothing reported  (inherited)
+  exempt + child restore -> victim named, PID 1 -1000, children 0
+
+$ kelyfos exec "cat /proc/1/oom_score_adj"     -> -1000
+$ kelyfos exec "cat /proc/self/oom_score_adj"  ->     0
+
+$ go test ./...
+--- PASS: TestParsesARealOOMLine / TestParsesTheOtherOOMShapes
+--- PASS: TestIgnoresLinesThatAreNotOOMKills / TestStripsTheKmsgRecordHeader
+--- PASS: TestEventsChannelDeliversGuestReports
+--- PASS: TestEventsChannelSurvivesRubbish / TestEventsChannelToleratesNoHandler
+ok  internal/config  internal/egress  internal/proto  internal/recorder
+ok  internal/sandbox  supervisor</pre></td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>

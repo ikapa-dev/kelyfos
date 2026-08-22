@@ -47,6 +47,7 @@ type Summary struct {
 	EgressOK     int
 	EgressBlock  int
 	Terminated   int
+	OOMKills     int
 	Secrets      []string
 }
 
@@ -164,9 +165,33 @@ func Render(w io.Writer, sessionID string, events []recorder.Event, verifyErr er
 			}
 			v.Rows = append(v.Rows, Row{ts, "secret", "secret " + e.Name,
 				"sent to " + e.Host + " · the value is not recorded anywhere", "", false})
+		case recorder.TypeResourceOOM:
+			// Flagged the way a blocked egress attempt is: this is a limit
+			// firing, and a reader skimming the transcript should not have to
+			// hunt for it.
+			v.Summary.OOMKills++
+			detail := fmt.Sprintf("pid %d · %s resident", e.PID, HumanKiB(e.RSSKiB))
+			if e.MemMiB > 0 {
+				detail += fmt.Sprintf(" · the machine had %d MiB", e.MemMiB)
+			}
+			v.Rows = append(v.Rows, Row{ts, "oom", "OOM-killed " + e.Comm, detail, "", true})
 		}
 	}
 	return tmpl.Execute(w, v)
+}
+
+// HumanKiB renders a kernel-reported size the way a person reads it. Exported
+// because the CLI's own renderers want the same words for the same number, and
+// two copies of a formatter is two ways for the same event to read differently.
+func HumanKiB(kib int64) string {
+	switch {
+	case kib >= 1<<20:
+		return fmt.Sprintf("%.1f GiB", float64(kib)/(1<<20))
+	case kib >= 1<<10:
+		return fmt.Sprintf("%d MiB", kib>>10)
+	default:
+		return fmt.Sprintf("%d KiB", kib)
+	}
 }
 
 func short(h string) string {

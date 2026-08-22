@@ -343,6 +343,27 @@ is defined in `docs/events.md` at P2-4, and the host is responsible for the hash
 chain — the guest never computes it, because a guest that could forge chain
 links could forge its own audit trail.
 
+Implemented at E1-4. The frame is deliberately thin:
+
+```json
+{"v":1,"type":"resource.oom","monotonic_ns":4941890000,"pid":57,"comm":"python3","rss_kib":230016}
+```
+
+- `type` is a flight-recorder event type from `docs/events.md` §4. The host
+  ignores a type it does not recognise rather than recording it: an unknown type
+  is either version skew or an attempt to write something arbitrary into the
+  audit trail, and neither belongs in the chain.
+- `monotonic_ns` is the *guest's* clock, carried for ordering inside the guest
+  and never used as the event's timestamp. The host stamps every event with its
+  own clock, for the same reason it times boot-to-ready itself (§5.3).
+- There is no sequence number and no `prev`. Numbering and chaining are the
+  host's, always.
+
+The guest queues these and reconnects after a drop, the way it does for `ready`.
+The queue is bounded: this is PID 1, so a host that stops reading must cost a
+dropped report rather than a blocked init, and a drop is announced on the
+console.
+
 ---
 
 ## 6. MCP over vsock

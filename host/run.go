@@ -11,12 +11,15 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
 	"github.com/p4r4n0rm4l/KelyfOS/internal/config"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/egress"
+	"github.com/p4r4n0rm4l/KelyfOS/internal/proto"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
+	"github.com/p4r4n0rm4l/KelyfOS/internal/report"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/sandbox"
 )
 
@@ -197,9 +200,20 @@ status. This is how you hand an agent a sandbox and nothing else:
 		cpuSlice = slice
 	}
 
+	// The guest reports; the host records. onGuestEvent is late-bound because
+	// the flight recorder is opened after the sandbox is built, and a guest that
+	// managed to report before then must not take the process down with a nil
+	// call (docs/events.md §1).
+	var onGuestEvent atomic.Pointer[func(proto.GuestEvent)]
+
 	opts := sandbox.Options{
-		CPUSlice:  cpuSlice,
-		IO:        ioLimits,
+		CPUSlice: cpuSlice,
+		IO:       ioLimits,
+		OnGuestEvent: func(ev proto.GuestEvent) {
+			if fn := onGuestEvent.Load(); fn != nil {
+				(*fn)(ev)
+			}
+		},
 		Arch:      *arch,
 		Flavor:    *flavor,
 		ImageDir:  *imgDir,
@@ -304,6 +318,32 @@ status. This is how you hand an agent a sandbox and nothing else:
 		})
 		_ = rec.Close()
 	}()
+
+	// An OOM kill is the RAM cap being reached. The cap itself is the VM's
+	// hardware and needs no help holding; what needed building is the part that
+	// makes hitting it legible instead of a process that silently vanished
+	// (E1-4). oomKills is read once, at the end, to decide the exit status.
+	var oomKills atomic.Int32
+	handler := func(ev proto.GuestEvent) {
+		switch ev.Type {
+		case proto.GuestEventOOM:
+			oomKills.Add(1)
+			_ = rec.Append(recorder.Event{
+				Type: recorder.TypeResourceOOM, Source: recorder.SourceGuest,
+				PID: ev.PID, Comm: ev.Comm, RSSKiB: ev.RSSKiB, MemMiB: *memMiB,
+			})
+			fmt.Fprintf(os.Stderr,
+				"\nkelyfos: the guest ran out of memory and killed %s (pid %d, %s resident "+
+					"of a %d MiB machine)\n         raise --mem, or lower what the agent is asked to hold\n",
+				ev.Comm, ev.PID, report.HumanKiB(ev.RSSKiB), *memMiB)
+		default:
+			// Unknown guest event types are ignored rather than recorded: the
+			// guest is untrusted, and an unrecognised type is either a version
+			// skew or an attempt to write something arbitrary into the audit
+			// trail. Neither belongs in the chain.
+		}
+	}
+	onGuestEvent.Store(&handler)
 
 	// Teardown must happen on every path out of this function, including the
 	// signal path — a sandbox left running with its run directory deleted, or a
@@ -449,6 +489,14 @@ status. This is how you hand an agent a sandbox and nothing else:
 			}
 		}
 		fmt.Printf("\n%s exited %d; stopping the sandbox\n", command[0], code)
+		if code == 0 && oomKills.Load() > 0 {
+			// The command finished, but something in the sandbox was killed for
+			// running the machine out of memory. Reporting success would hide
+			// exactly the failure the user most needs to see, so `run` exits
+			// 137 — the shell's convention for death by SIGKILL, which is
+			// literally what the OOM killer sent.
+			code = exitOOMKilled
+		}
 		if code != 0 {
 			// Deferred teardown still runs; the status is the child's.
 			defer os.Exit(code)
@@ -467,8 +515,16 @@ status. This is how you hand an agent a sandbox and nothing else:
 		reason = "vm_exited"
 		return fmt.Errorf("the microVM exited unexpectedly")
 	}
+	if oomKills.Load() > 0 {
+		defer os.Exit(exitOOMKilled)
+	}
 	return nil
 }
+
+// exitOOMKilled is 128 + SIGKILL, the shell's convention for a process killed by
+// signal 9 — which is what the OOM killer sends. A user who greps for 137 in a
+// CI log to find "the box ran out of memory" finds it here too.
+const exitOOMKilled = 137
 
 type prefixWriter struct {
 	w      io.Writer
