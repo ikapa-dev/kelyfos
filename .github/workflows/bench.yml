@@ -98,6 +98,23 @@ jobs:
           make cli
           ./bin/kelyfos bench --runs "$BENCH_RUNS" --arch "$ARCH" --json | tee bench.json
 
+      - name: Measure snapshot restore
+        id: restore
+        run: |
+          set -o pipefail
+          # A restore needs something to restore from: boot a sandbox, put a
+          # little state in it, snapshot it, then stop it.
+          ./bin/kelyfos run --arch "$ARCH" --image base > run.log 2>&1 &
+          RUN_PID=$!
+          for i in $(seq 1 150); do grep -q "ready in" run.log && break; sleep 0.2; done
+          grep "ready in" run.log || { cat run.log; exit 1; }
+          ./bin/kelyfos exec "echo prepared > /work/marker"
+          ./bin/kelyfos snapshot save --name bench
+          kill -INT $RUN_PID; wait $RUN_PID 2>/dev/null || true
+
+          ./bin/kelyfos bench --runs "$BENCH_RUNS" --arch "$ARCH" --image base \
+            --restore bench --json | tee restore.json
+
       - name: Publish the result
         run: |
           python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
@@ -121,11 +138,32 @@ jobs:
           print("<details><summary>samples (ms)</summary>\n")
           print("`" + ", ".join(str(s) for s in r["samples_ms"]) + "`\n")
           print("</details>")
+
+          # Restore, measured through the resync round trip so it means the same
+          # thing boot-to-ready does: the guest is answering, not merely running.
+          if os.path.exists("restore.json"):
+              q = json.load(open("restore.json"))
+              qmed, qp95 = q["median_ms"], q["p95_ms"]
+              if qmed <= 100:
+                  qv = "**<= 100 ms — the Phase 3 restore target is met on reference hardware.**"
+              else:
+                  qv = ("**> 100 ms — the Phase 3 restore target is NOT met on reference hardware.** "
+                        "Worth investigating before the v0.3 claim.")
+              print("\n### Snapshot restore — provisional bare-KVM reference\n")
+              print("| runs | min | median | p95 | max | mean |")
+              print("|---|---|---|---|---|---|")
+              print(f"| {q['runs']} | {q['min_ms']} ms | **{qmed} ms** | {qp95} ms | {q['max_ms']} ms | {q['mean_ms']:.1f} ms |\n")
+              print(qv + "\n")
+              print("<details><summary>samples (ms)</summary>\n")
+              print("`" + ", ".join(str(s) for s in q["samples_ms"]) + "`\n")
+              print("</details>")
           PY
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: bench-${{ env.ARCH }}
-          path: bench.json
+          path: |
+            bench.json
+            restore.json
           if-no-files-found: warn

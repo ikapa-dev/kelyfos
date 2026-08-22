@@ -7,6 +7,7 @@ import (
 	"bufio"
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -72,6 +73,7 @@ type State struct {
 	Arch        string    `json:"arch"`
 	Flavor      string    `json:"flavor"`
 	UDSPath     string    `json:"uds_path"`
+	APIPath     string    `json:"api_path"`
 	TAP         string    `json:"tap,omitempty"`
 	Allow       []string  `json:"allow,omitempty"`
 	RunDir      string    `json:"run_dir"`
@@ -82,6 +84,7 @@ type State struct {
 // Sandbox is a running microVM.
 type Sandbox struct {
 	State   State
+	api     *api
 	opts    Options
 	cmd     *exec.Cmd
 	readyLn net.Listener
@@ -149,6 +152,7 @@ func New(opts Options) (*Sandbox, error) {
 			Arch:      opts.Arch,
 			Flavor:    opts.Flavor,
 			UDSPath:   filepath.Join(runDir, "v.sock"),
+			APIPath:   filepath.Join(runDir, "fc.sock"),
 			RunDir:    runDir,
 			StartedAt: time.Now(),
 		},
@@ -194,6 +198,7 @@ func New(opts Options) (*Sandbox, error) {
 	}
 	s.readyLn = ln
 	go s.serveReady()
+	s.api = newAPI(s.State.APIPath)
 
 	return s, nil
 }
@@ -201,7 +206,12 @@ func New(opts Options) (*Sandbox, error) {
 // Start launches Firecracker and returns once the process is running. It does
 // not wait for the guest — use WaitReady for that.
 func (s *Sandbox) Start(ctx context.Context) error {
-	cmd := exec.Command("firecracker", "--no-api",
+	// The API socket is always present now, even for a machine that will never
+	// be snapshotted: pause, create and load all go through it, and a sandbox
+	// that cannot be snapshotted later because of how it was started is a
+	// surprise nobody wants at the moment they need it.
+	cmd := exec.Command("firecracker",
+		"--api-sock", s.State.APIPath,
 		"--config-file", filepath.Join(s.State.RunDir, "config.json"))
 	// Its own process group, so a Ctrl-C delivered to the whole foreground
 	// group does not race our orderly shutdown.
@@ -268,6 +278,194 @@ func (s *Sandbox) InstallTrustAnchor(pemData []byte) error {
 		return fmt.Errorf("guest refused the trust anchor: %v", resp.Error)
 	}
 	return nil
+}
+
+// Snapshot pauses the microVM, writes its state and memory, and resumes it.
+//
+// The machine is paused for the duration, which is the honest cost of a
+// consistent snapshot: memory has to stop changing while it is copied.
+func (s *Sandbox) Snapshot(dir string) (statePath, memPath string, err error) {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", "", err
+	}
+	statePath = filepath.Join(dir, "state")
+	memPath = filepath.Join(dir, "memory")
+
+	if err := s.api.pause(); err != nil {
+		return "", "", err
+	}
+	if err := s.api.createSnapshot(statePath, memPath); err != nil {
+		// Leave the machine running rather than paused: a failed snapshot
+		// should cost a snapshot, not the session.
+		_ = s.api.resume()
+		return "", "", err
+	}
+	if err := s.api.resume(); err != nil {
+		return "", "", err
+	}
+	return statePath, memPath, nil
+}
+
+// SnapshotRunning snapshots a sandbox this process did not start, by talking to
+// its API socket directly. `kelyfos snapshot save` is a separate invocation from
+// the `kelyfos run` holding the machine open, so it has no Sandbox to call.
+func SnapshotRunning(st *State, dir string) (statePath, memPath string, err error) {
+	if st.APIPath == "" {
+		return "", "", fmt.Errorf("sandbox %s was started by an older kelyfos with no API socket", st.ID)
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", "", err
+	}
+	statePath = filepath.Join(dir, "state")
+	memPath = filepath.Join(dir, "memory")
+
+	a := newAPI(st.APIPath)
+	if err := a.pause(); err != nil {
+		return "", "", err
+	}
+	if err := a.createSnapshot(statePath, memPath); err != nil {
+		_ = a.resume()
+		return "", "", err
+	}
+	return statePath, memPath, a.resume()
+}
+
+// Resync repairs what a restored guest is wrong about: the wall clock, which
+// still reads what it did when the snapshot was taken, and the random pool,
+// which holds exactly the state it held then (docs/protocol.md §5.4).
+//
+// For a single restore that is stale. For N forks of one snapshot it is worse:
+// every fork starts with an identical pool, so every fork generates the same
+// "random" bytes.
+func (s *Sandbox) Resync() error {
+	conn, err := Connect(s.State.UDSPath, proto.PortControl, 10*time.Second)
+	if err != nil {
+		return fmt.Errorf("resync: %w", err)
+	}
+	defer conn.Close()
+
+	seed := make([]byte, 32)
+	if _, err := rand.Read(seed); err != nil {
+		return err
+	}
+	if err := proto.NewWriter(conn).Write(proto.ControlRequest{
+		V: proto.Version, ID: "resync", Op: proto.OpResync,
+		RealtimeNS: time.Now().UnixNano(),
+		Entropy:    base64.StdEncoding.EncodeToString(seed),
+	}); err != nil {
+		return err
+	}
+	_ = conn.SetReadDeadline(time.Now().Add(10 * time.Second))
+	var resp proto.ControlResponse
+	if err := proto.NewReader(conn).Read(&resp); err != nil {
+		return err
+	}
+	if !resp.OK {
+		return fmt.Errorf("guest refused resync: %v", resp.Error)
+	}
+	return nil
+}
+
+// Restore brings a machine back from a snapshot into a fresh run directory.
+//
+// The snapshot is loaded without resuming, so the guest is still frozen when
+// vsock_override has taken effect and the host's channels are bound — then it is
+// resumed and resynced. Resuming first would let the guest run for a moment
+// believing a stale clock, which is exactly the window that produces duplicate
+// "random" values across forks.
+func Restore(snapDir string, opts Options) (*Sandbox, time.Duration, error) {
+	statePath := filepath.Join(snapDir, "state")
+	memPath := filepath.Join(snapDir, "memory")
+	for _, p := range []string{statePath, memPath} {
+		if _, err := os.Stat(p); err != nil {
+			return nil, 0, fmt.Errorf("snapshot is incomplete: %w", err)
+		}
+	}
+
+	id := opts.ID
+	if id == "" {
+		var err error
+		if id, err = newID(); err != nil {
+			return nil, 0, err
+		}
+	}
+	runDir := filepath.Join(RunRoot(), id)
+	if err := os.MkdirAll(runDir, 0o700); err != nil {
+		return nil, 0, err
+	}
+
+	s := &Sandbox{
+		opts:  opts,
+		ready: make(chan proto.Ready, 1),
+		done:  make(chan struct{}),
+		State: State{
+			ID: id, Arch: opts.Arch, Flavor: opts.Flavor,
+			UDSPath: filepath.Join(runDir, "v.sock"),
+			APIPath: filepath.Join(runDir, "fc.sock"),
+			RunDir:  runDir, StartedAt: time.Now(),
+		},
+	}
+	// The guest's channels must exist before it runs again: a restored guest
+	// reconnects its outbound channels immediately (docs/protocol.md §1.6).
+	ln, err := net.Listen("unix", fmt.Sprintf("%s_%d", s.State.UDSPath, proto.PortReady))
+	if err != nil {
+		s.cleanup()
+		return nil, 0, err
+	}
+	s.readyLn = ln
+	go s.serveReady()
+	s.api = newAPI(s.State.APIPath)
+
+	started := time.Now()
+	cmd := exec.Command("firecracker", "--api-sock", s.State.APIPath)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		s.cleanup()
+		return nil, 0, err
+	}
+	cmd.Stderr = cmd.Stdout
+	if err := cmd.Start(); err != nil {
+		s.cleanup()
+		return nil, 0, err
+	}
+	s.cmd = cmd
+	s.State.PID = cmd.Process.Pid
+	go s.drainConsole(stdout)
+	go func() { s.waitErr = cmd.Wait(); close(s.done) }()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := s.api.waitReady(ctx); err != nil {
+		_ = s.Shutdown(2 * time.Second)
+		return nil, 0, err
+	}
+	if err := s.api.loadSnapshot(snapshotLoad{
+		SnapshotPath:  statePath,
+		MemBackend:    memBackend{BackendPath: memPath, BackendType: "File"},
+		ResumeVM:      false,
+		VsockOverride: &vsockOverride{UDSPath: s.State.UDSPath},
+	}); err != nil {
+		_ = s.Shutdown(2 * time.Second)
+		return nil, 0, err
+	}
+	if err := s.api.resume(); err != nil {
+		_ = s.Shutdown(2 * time.Second)
+		return nil, 0, err
+	}
+	// The clock and entropy fix-up is a round trip to the guest, so completing
+	// it is also the proof that the restored machine is answering. Measuring
+	// through it makes "restore" mean the same thing "boot-to-ready" does —
+	// stopping at resume() would time a machine that is running but not yet
+	// known to be usable, which is the flattering number rather than the true
+	// one.
+	if err := s.Resync(); err != nil {
+		_ = s.Shutdown(2 * time.Second)
+		return nil, 0, err
+	}
+	elapsed := time.Since(started)
+	s.State.BootReadyMS = elapsed.Milliseconds()
+	return s, elapsed, s.writeState()
 }
 
 // Wait blocks until Firecracker exits.

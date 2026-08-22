@@ -55,10 +55,9 @@ func handleControl(conn net.Conn, shutdown chan<- struct{}) {
 			}
 
 		case proto.OpResync:
-			resp.OK = false
-			resp.Error = &proto.Error{
-				Kind:    proto.ErrBadRequest,
-				Message: "resync is not implemented until P3-1",
+			if err := applyResync(&req); err != nil {
+				resp.OK = false
+				resp.Error = &proto.Error{Kind: proto.ErrInternal, Message: err.Error()}
 			}
 		default:
 			resp.OK = false

@@ -1,0 +1,124 @@
+package sandbox
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"time"
+)
+
+// api talks to a Firecracker instance over its API socket.
+//
+// Phase 1 booted with --no-api and a config file, which is the simplest thing
+// that works when a machine only ever needs to start and stop. Snapshots need
+// more than that — pause, create, load, resume — so the API socket is now always
+// present. It stays a separate socket from the vsock UDS, with an unrelated
+// protocol: this one carries HTTP (docs/protocol.md §1).
+type api struct {
+	c *http.Client
+}
+
+func newAPI(socketPath string) *api {
+	return &api{c: &http.Client{
+		Timeout: 30 * time.Second,
+		Transport: &http.Transport{
+			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+				return (&net.Dialer{}).DialContext(ctx, "unix", socketPath)
+			},
+		},
+	}}
+}
+
+func (a *api) do(method, path string, body any) error {
+	var buf io.Reader
+	if body != nil {
+		blob, err := json.Marshal(body)
+		if err != nil {
+			return err
+		}
+		buf = bytes.NewReader(blob)
+	}
+	req, err := http.NewRequest(method, "http://localhost"+path, buf)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Accept", "application/json")
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	resp, err := a.c.Do(req)
+	if err != nil {
+		return fmt.Errorf("%s %s: %w", method, path, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		detail, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return fmt.Errorf("%s %s: firecracker returned %s: %s",
+			method, path, resp.Status, bytes.TrimSpace(detail))
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	return nil
+}
+
+// waitReady polls until the API socket answers, because Firecracker creates it
+// a moment after the process starts.
+func (a *api) waitReady(ctx context.Context) error {
+	for {
+		if err := a.do(http.MethodGet, "/version", nil); err == nil {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("firecracker API socket never answered: %w", ctx.Err())
+		case <-time.After(2 * time.Millisecond):
+		}
+	}
+}
+
+func (a *api) pause() error {
+	return a.do(http.MethodPatch, "/vm", map[string]string{"state": "Paused"})
+}
+
+func (a *api) resume() error {
+	return a.do(http.MethodPatch, "/vm", map[string]string{"state": "Resumed"})
+}
+
+// createSnapshot writes the machine state and a full copy of guest memory.
+// The microVM must already be paused.
+func (a *api) createSnapshot(statePath, memPath string) error {
+	return a.do(http.MethodPut, "/snapshot/create", map[string]string{
+		"snapshot_type": "Full",
+		"snapshot_path": statePath,
+		"mem_file_path": memPath,
+	})
+}
+
+// memBackend and snapshotLoad mirror Firecracker's load request.
+type memBackend struct {
+	BackendPath string `json:"backend_path"`
+	BackendType string `json:"backend_type"`
+}
+
+type vsockOverride struct {
+	UDSPath string `json:"uds_path"`
+}
+
+type snapshotLoad struct {
+	SnapshotPath  string         `json:"snapshot_path"`
+	MemBackend    memBackend     `json:"mem_backend"`
+	ResumeVM      bool           `json:"resume_vm"`
+	VsockOverride *vsockOverride `json:"vsock_override,omitempty"`
+}
+
+// loadSnapshot restores a machine.
+//
+// VsockOverride is what makes forking possible at all: two VMs restored from one
+// snapshot cannot share a vsock socket path, so each restore is given its own
+// (docs/protocol.md §1.6).
+func (a *api) loadSnapshot(req snapshotLoad) error {
+	return a.do(http.MethodPut, "/snapshot/load", req)
+}

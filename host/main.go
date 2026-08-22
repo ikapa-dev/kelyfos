@@ -19,6 +19,7 @@ usage:
   kelyfos run [flags]              boot a sandbox and keep it running
   kelyfos exec [flags] <command>   run a command inside a running sandbox
   kelyfos mcp [flags]              bridge an MCP client's stdio to a sandbox
+  kelyfos snapshot save|restore    save a sandbox's state, or bring it back
   kelyfos log [flags]              replay, follow or verify a session's record
   kelyfos bench [flags]            measure cold boot-to-ready over several runs
   kelyfos version
@@ -39,6 +40,8 @@ func main() {
 		err = execCmd(os.Args[2:])
 	case "mcp":
 		err = mcpCmd(os.Args[2:])
+	case "snapshot":
+		err = snapshotCmd(os.Args[2:])
 	case "log":
 		err = logCmd(os.Args[2:])
 	case "bench":
