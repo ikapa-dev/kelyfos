@@ -52,6 +52,38 @@ limactl shell kelyfos-dev -- bash dev/install-firecracker.sh
 limactl shell kelyfos-dev -- make
 ```
 
+## Attaching an agent
+
+KelyfOS exposes a running sandbox as MCP tools rather than as a shell. Any MCP
+client can attach; `kelyfos mcp` bridges the client's standard streams to the
+sandbox.
+
+Start a sandbox, then point a client at it. For Claude Code, add to
+`.mcp.json` in your project (or run `claude mcp add`):
+
+```json
+{
+  "mcpServers": {
+    "kelyfos": {
+      "command": "/path/to/kelyfos",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+The bridge attaches to the only running sandbox, so start one first:
+
+```sh
+kelyfos run --image dev --allow github.com --secret GITHUB_TOKEN@api.github.com
+```
+
+The agent then sees six tools — `exec`, `read_file`, `write_file`, `list_dir`,
+`upload`, `download` — and nothing else. It has no shell login, no SSH, and no
+route to the network except the proxy. Whatever it does is in
+`kelyfos log`, and `kelyfos log --verify` will tell you if that record has been
+edited since.
+
 ## License
 
 Apache-2.0. Contributions require a DCO `Signed-off-by` line — see
