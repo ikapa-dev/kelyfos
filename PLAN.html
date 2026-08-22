@@ -126,7 +126,7 @@
      injected secrets, full audit replay, and millisecond forking.</p>
   <div class="meta">
     owner: <b>John</b> &nbsp;·&nbsp; developer: <b>Claude Code</b> &nbsp;·&nbsp;
-    status: <b class="amber" id="meta-status">Phase 3 active — 10/12</b> &nbsp;·&nbsp;
+    status: <b class="amber" id="meta-status">v0.3 tagged &amp; public — phases 0–3 done, 36/43</b> &nbsp;·&nbsp;
     last updated: <b id="meta-updated">2026-08-22</b><br>
     repo file: <b>PLAN.html</b> (commit this document at the repository root — it is the single source of truth)<br>
     <span class="quiet">KelyfOS — from κέλυφος (kélyfos), "shell": the guest OS wrapped around the agent. Formerly working-titled "agos" (D4 → D10).</span>
@@ -166,7 +166,7 @@
     <span class="bl-name">Overall</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">P3-7 — public launch: README, demo, availability sweep, tag v0.3< 200 MB</b></div>
+  <div class="focusline">Current focus: <b id="focus">Phase 4 is an unordered backlog; feature work continues in PLAN-FEATURES.html< 200 MB</b></div>
 </div>
 
 <!-- ====================================================== 1. END GOAL -->
@@ -434,13 +434,13 @@
 </section>
 
 <!-- ====================================================== PHASE 3 -->
-<section class="phase" id="p3" data-phase="3" data-status="active">
+<section class="phase" id="p3" data-phase="3" data-status="done">
   <div class="phase-head">
     <div>
       <div class="kconfig">config KELYFOS_PHASE_3</div>
       <h2>Phase 3 — Snapshots, flavors, compatibility (v0.3 · "fork it")</h2>
     </div>
-    <span class="badge">ACTIVE</span>
+    <span class="badge">DONE</span>
   </div>
   <p class="goal"><b>Goal:</b> the performance story, the daily-driver UX, and the adoption hack — then go public. Est. 5–7 weekends.</p>
   <ul class="tasks">
@@ -466,7 +466,7 @@
         <span class="tid">P3-5</span><span class="tk">Write <code>docs/threat-model.md</code>: what kelyfos defends against (agent-generated code, prompt-injected exfiltration, credential theft from the guest) and explicitly what it does not yet (host-side attacks pre-jailer, side channels, TLS-termination trade-offs from D6). Linked from the README. Launch is blocked until this exists.</span></li>
     <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">P3-6</span><span class="tk">CI: GitHub Actions — build BOTH arches; boot-test x86_64 on <code>ubuntu-latest</code> (standard Linux runners expose <code>/dev/kvm</code>; a udev/permissions step is typically required — verify at implementation); boot-test aarch64 on an arm64 runner if it exposes KVM, else build-only there with aarch64 boots covered on the dev machine. Run <code>kelyfos exec "uname -a"</code> as the smoke test, cache Buildroot toolchains per arch. Green pipeline required on <code>main</code>. Includes <code>make bench</code>: reproducible boot-to-ready and snapshot-restore timing (median of 10 runs), published as a CI artifact on every commit — the x86_64 runner numbers are the published reference; Mac-local numbers are informational (nested-virt overhead). Large regressions are flagged in the job summary but don't hard-fail (shared runners jitter). The milliseconds are the marketing.</span></li>
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">P3-7</span><span class="tk">Public launch: README with 5-minute quickstart, demo GIF, final availability sweep on "KelyfOS" (GitHub, package registries, domains, trademark-level search — name locked in D10), tag v0.3, launch post (HN / blog).</span></li>
   </ul>
   <div class="accept">
@@ -488,13 +488,13 @@
 </section>
 
 <!-- ====================================================== PHASE 4 -->
-<section class="phase" id="p4" data-phase="4" data-status="todo">
+<section class="phase" id="p4" data-phase="4" data-status="active">
   <div class="phase-head">
     <div>
       <div class="kconfig">config KELYFOS_PHASE_4</div>
       <h2>Phase 4 — Hardening &amp; direction (backlog, post-launch)</h2>
     </div>
-    <span class="badge">TODO</span>
+    <span class="badge">ACTIVE</span>
   </div>
   <p class="goal"><b>Goal:</b> defense in depth and the strategic thread. Unordered backlog — prioritize by community pull.</p>
   <ul class="tasks">
@@ -1043,6 +1043,34 @@ all checks passed — this machine can run KelyfOS
 
 10. README-only path to a working exec in &le; 5 minutes
    151.0 s cold on macOS incl. building the Linux layer; 9.4 s on Linux/KVM</pre></td></tr>
+        <tr><td class="mono">2026-08-22</td><td class="mono">P3-7</td>
+        <td><b>Public launch. Tag <code>v0.3</code> exists and the repository is public</b> &mdash; the Phase 3 exit checkpoint is real. README rewritten around a quickstart that needs no compiler (static CLI + prebuilt image, both checksum-verified, D20), with the demo GIF built from a genuinely captured session and the measured cold-start numbers stated with their conditions. The release carries both arches: CLI binaries, kernel, rootfs, per-arch <code>image.json</code> manifests and <code>SHA256SUMS</code>. Availability sweep and its limits are in the row above. The launch post is written at <code>docs/launch/hn-post.md</code> and is deliberately <b>not</b> posted &mdash; submitting it is John's act, on his timing, and it gates nothing.</td>
+        <td class="mono"><pre>$ git tag v0.3 -&gt; eb8ba6e0 ; gh release create v0.3
+https://github.com/p4r4n0rm4l/KelyfOS/releases/tag/v0.3
+  kelyfos-linux-x86_64      11305120 bytes
+  kelyfos-linux-aarch64     10551456 bytes
+  vmlinux-x86_64.gz          7898377 bytes
+  rootfs-x86_64.ext4.gz     26555362 bytes
+  Image-aarch64.gz           5824082 bytes
+  rootfs-aarch64.ext4.gz    26549465 bytes
+  image-x86_64.json / image-aarch64.json / SHA256SUMS
+
+$ gh repo view --json visibility -&gt; PUBLIC
+$ gh release list
+KelyfOS v0.3 ...   Latest   v0.3   2026-08-22T17:17:39Z
+
+the README's own default path, against the real release:
+$ git clone ... &amp;&amp; bash dev/install-kelyfos.sh &amp;&amp; bash dev/fetch-image.sh
+kelyfos v0.3
+Installed /tmp/latesttest/bin/kelyfos
+Installed the 'dev' image for aarch64 into /tmp/latesttest/cache/out/aarch64</pre></td></tr>
+        <tr><td class="mono">2026-08-22</td><td class="mono">P3</td>
+        <td><b>Phase 3 closed.</b> All twelve tasks verified, the ten-step acceptance test green, CI green on main, <code>v0.3</code> tagged and released, repository public. Phases 0&ndash;3 are done: 36 of 43 tasks. Phase 4 opens as what it has always been by its own words &mdash; an unordered backlog, a direction rather than a deadline &mdash; so it is marked active without implying a queue. Ongoing feature work moves to <code>PLAN-FEATURES.html</code>, whose activation gate this tag satisfies.</td>
+        <td class="mono"><pre>$ python3 tools/check-plan.py
+PLAN.html is coherent: 43 tasks, 36 checked, 23 decisions
+
+phase status: p0 done 7/7 | p1 done 9/9 | p2 done 8/8 | p3 done 12/12 | p4 active 0/7
+tags: v0.0 v0.1 v0.2 v0.3</pre></td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
