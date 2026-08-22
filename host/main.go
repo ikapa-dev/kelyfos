@@ -18,6 +18,7 @@ const usage = `kelyfos — a minimal, agent-native guest OS for microVM sandboxe
 usage:
   kelyfos run [flags]              boot a sandbox and keep it running
   kelyfos exec [flags] <command>   run a command inside a running sandbox
+  kelyfos mcp [flags]              bridge an MCP client's stdio to a sandbox
   kelyfos bench [flags]            measure cold boot-to-ready over several runs
   kelyfos version
 
@@ -35,6 +36,8 @@ func main() {
 		err = runCmd(os.Args[2:])
 	case "exec":
 		err = execCmd(os.Args[2:])
+	case "mcp":
+		err = mcpCmd(os.Args[2:])
 	case "bench":
 		err = benchCmd(os.Args[2:])
 	case "version", "--version", "-v":
