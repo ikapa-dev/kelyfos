@@ -29,6 +29,8 @@ BR2_PACKAGE_LIBCURL_PROXY_SUPPORT=y
 # for nothing.
 
 # --- size ---------------------------------------------------------------
-# Roomier than base because the toolbox is the point. Still well inside the
-# 200 MB budget, and still sparse.
-BR2_TARGET_ROOTFS_EXT2_SIZE="512M"
+# The toolbox is about 59 MB. The root is mounted read-only and every write goes
+# to the tmpfs overlay, so this only has to hold the content — sizing it for
+# runtime writes would reserve space nothing can ever use. 128 MiB leaves room
+# for the toolbox to grow and stays inside the plan's 200 MB budget.
+BR2_TARGET_ROOTFS_EXT2_SIZE="128M"

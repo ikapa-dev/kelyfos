@@ -79,12 +79,14 @@ func (p *Proxy) terminate(client net.Conn, host string, port int, secret *Secret
 		if resp.ContentLength > 0 {
 			in += resp.ContentLength
 		}
-		if err := resp.Write(inner); err != nil {
-			resp.Body.Close()
-			break
-		}
+		// A response whose length is indeterminate is framed by the connection
+		// closing, so the loop must not carry on waiting for another request:
+		// the client would sit there until its own timeout with the whole body
+		// already in hand.
+		indeterminate := resp.ContentLength < 0 && resp.TransferEncoding == nil
+		werr := resp.Write(inner)
 		resp.Body.Close()
-		if resp.Close || req.Close {
+		if werr != nil || indeterminate || resp.Close || req.Close {
 			break
 		}
 	}
@@ -95,9 +97,24 @@ func (p *Proxy) terminate(client net.Conn, host string, port int, secret *Secret
 	})
 }
 
+// terminatedTransport is the upstream leg for terminated connections.
+//
+// Compression is disabled deliberately. Go's default transport adds
+// "Accept-Encoding: gzip" and transparently decompresses the reply, which is
+// convenient for a client and wrong for a proxy: it discards the original
+// Content-Length and leaves a response that can only be framed by closing the
+// connection. Passing bytes through as the server sent them keeps the framing
+// the client expects — and keeps keep-alive working.
+var terminatedTransport = &http.Transport{
+	DisableCompression:  true,
+	ForceAttemptHTTP2:   false,
+	MaxIdleConnsPerHost: 4,
+	TLSClientConfig:     &tls.Config{MinVersion: tls.VersionTLS12},
+}
+
 func (p *Proxy) upstream() http.RoundTripper {
 	if p.Upstream != nil {
 		return p.Upstream
 	}
-	return http.DefaultTransport
+	return terminatedTransport
 }
