@@ -35,3 +35,25 @@ BR2_ROOTFS_DEVICE_CREATION_DYNAMIC_DEVTMPFS=y
 BR2_TARGET_ROOTFS_EXT2=y
 BR2_TARGET_ROOTFS_EXT2_4=y
 BR2_TARGET_ROOTFS_TAR=n
+
+# --- kernel --------------------------------------------------------------
+# Version pinned in versions.mk. The tarball is fetched and checksum-verified by
+# image/fetch-kernel.sh before Buildroot runs, because Buildroot skips hash
+# checks for custom versions (decision D12).
+BR2_LINUX_KERNEL=y
+BR2_LINUX_KERNEL_CUSTOM_VERSION=y
+BR2_LINUX_KERNEL_CUSTOM_VERSION_VALUE="@LINUX_VERSION@"
+BR2_LINUX_KERNEL_USE_CUSTOM_CONFIG=y
+
+# Userland is compiled against the headers of the kernel it will actually run
+# on, rather than Buildroot's newer default.
+#
+# The series selector below is not optional and not cosmetic. Buildroot derives
+# "kernel headers are at least version X" from a Kconfig symbol, and with a
+# custom kernel version it cannot infer one — leaving it out makes the build
+# fail late with "Incorrect selection of kernel headers: expected 2.6.x, got
+# 6.18.x". The value is templated from LINUX_VERSION by the Makefile so it can
+# never drift from the pin; bumping the kernel to a series this Buildroot does
+# not list will fail loudly in image/check-config.sh instead of silently.
+BR2_KERNEL_HEADERS_AS_KERNEL=y
+BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_@LINUX_SERIES_US@=y

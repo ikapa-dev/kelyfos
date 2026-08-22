@@ -1,0 +1,15 @@
+#
+# KelyfOS guest kernel — aarch64 delta.
+#
+# Artifact: the uncompressed "Image" build target. Firecracker's aarch64 loader
+# takes a raw Image, not Image.gz — selected in Buildroot with
+# BR2_LINUX_KERNEL_IMAGE (see the Buildroot fragment, not here).
+#
+# Boot arguments (consumed by the CLI at P1-5):
+#   reboot=k panic=1 nomodule swiotlb=noforce console=ttyS0 pci=off quiet
+# No i8042 knobs: that controller is x86 hardware and does not exist here.
+#
+# Nothing arch-specific is needed in the kernel config itself — the vendored
+# base already targets this machine. The file exists so the per-arch seam is
+# real and visible rather than implied, and so an aarch64-only option has an
+# obvious home the day one is needed.

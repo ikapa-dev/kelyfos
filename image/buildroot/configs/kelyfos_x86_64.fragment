@@ -1,3 +1,12 @@
 # KelyfOS — x86_64 (CI reference architecture, cross-built from the aarch64 dev
 # machine and gated from P1-8 onward).
 BR2_x86_64=y
+
+# Kernel artifact. Firecracker boots the uncompressed form on both
+# architectures: the raw Image on aarch64, the ELF vmlinux on x86_64. Never
+# Image.gz, never bzImage.
+BR2_LINUX_KERNEL_VMLINUX=y
+
+# Base config vendored from Firecracker, KelyfOS delta merged on top (D12).
+BR2_LINUX_KERNEL_CUSTOM_CONFIG_FILE="$(BR2_EXTERNAL_KELYFOS_PATH)/kernel/base-x86_64.config"
+BR2_LINUX_KERNEL_CONFIG_FRAGMENT_FILES="$(BR2_EXTERNAL_KELYFOS_PATH)/kernel/kelyfos.fragment $(BR2_EXTERNAL_KELYFOS_PATH)/kernel/kelyfos-x86_64.fragment"

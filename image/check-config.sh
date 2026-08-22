@@ -14,11 +14,16 @@ got_file="${2:?resulting .config}"
 fail=0
 
 while IFS= read -r line; do
+  # Kconfig writes a disabled bool as "# CONFIG_X is not set", and fragments are
+  # written the same way. Treat that as a request for n rather than a comment.
   case "$line" in
+    '# '*' is not set')
+      sym="${line#\# }"; sym="${sym% is not set}"; val=n ;;
     ''|'#'*) continue ;;
+    *)
+      sym="${line%%=*}"
+      val="${line#*=}" ;;
   esac
-  sym="${line%%=*}"
-  val="${line#*=}"
 
   case "$val" in
     n)

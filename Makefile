@@ -29,6 +29,11 @@ BUILD_DIR     ?= $(KELYFOS_CACHE)/build/$(ARCH)
 # Buildroot invocation. BR2_EXTERNAL must be absolute: Buildroot resolves a
 # relative one against its own source directory, not ours. BR2_DL_DIR is shared
 # across architectures — the source tarballs are identical.
+# Kernel series (6.18.45 -> 6.18 -> 6_18), used to pick Buildroot's kernel-header
+# series symbol. Derived, never written by hand.
+LINUX_SERIES    := $(word 1,$(subst ., ,$(LINUX_VERSION))).$(word 2,$(subst ., ,$(LINUX_VERSION)))
+LINUX_SERIES_US := $(subst .,_,$(LINUX_SERIES))
+
 BR_EXTERNAL  := $(CURDIR)/image/buildroot
 BR_FRAGMENTS := $(BR_EXTERNAL)/configs/kelyfos_common.fragment \
                 $(BR_EXTERNAL)/configs/kelyfos_$(ARCH).fragment
@@ -44,7 +49,7 @@ KERNEL_ARTIFACT := vmlinux
 endif
 
 .DEFAULT_GOAL := help
-.PHONY: help versions toolchain image run clean test linux-only
+.PHONY: help versions toolchain kernel image run clean test linux-only fetch-kernel
 
 help: ## Show this target list
 	@echo "KelyfOS — targets (ARCH=$(ARCH), FLAVOR=$(FLAVOR))"
@@ -65,7 +70,7 @@ versions: ## Print the pinned toolchain versions (versions.mk)
 	@echo "  firecracker  $(FIRECRACKER_VERSION)"
 	@echo "  go           $(GO_VERSION)"
 
-toolchain: linux-only $(BUILD_DIR)/.config ## Download and prepare the pinned Buildroot tree (long, once per arch)
+toolchain: linux-only fetch-kernel $(BUILD_DIR)/.config ## Download and prepare the pinned Buildroot tree (long, once per arch)
 	@echo "==> building the $(ARCH) cross toolchain (long; once per architecture)"
 	+$(BR_MAKE) toolchain
 	@echo "==> toolchain ready: $$($(BUILD_DIR)/host/bin/*-linux-*-gcc --version 2>/dev/null | head -1)"
@@ -81,9 +86,22 @@ $(BR_SRC)/Makefile:
 $(BUILD_DIR)/.config: $(BR_SRC)/Makefile $(BR_FRAGMENTS)
 	@mkdir -p $(BUILD_DIR)
 	@echo "==> configuring buildroot for ARCH=$(ARCH)"
-	@cat $(BR_FRAGMENTS) > $(BUILD_DIR)/kelyfos_defconfig
+	@cat $(BR_FRAGMENTS) \
+	  | sed -e 's/@LINUX_VERSION@/$(LINUX_VERSION)/g' \
+	        -e 's/@LINUX_SERIES_US@/$(LINUX_SERIES_US)/g' \
+	  > $(BUILD_DIR)/kelyfos_defconfig
 	$(BR_MAKE) defconfig BR2_DEFCONFIG=$(BUILD_DIR)/kelyfos_defconfig
 	@$(CURDIR)/image/check-config.sh $(BUILD_DIR)/kelyfos_defconfig $(BUILD_DIR)/.config
+
+# The kernel tarball, verified against versions.mk before Buildroot sees it.
+# Buildroot skips hash checks for custom versions, so this is the only integrity
+# gate the guest kernel gets (decision D12).
+fetch-kernel:
+	@$(CURDIR)/image/fetch-kernel.sh "$(LINUX_VERSION)" "$(LINUX_SHA256)" "$(DL_DIR)"
+
+kernel: linux-only fetch-kernel $(BUILD_DIR)/.config ## Build just the guest kernel and verify its config
+	+$(BR_MAKE) linux
+	@$(CURDIR)/image/check-kernel.sh "$(ARCH)" "$(BUILD_DIR)" "$(BR_EXTERNAL)"
 
 linux-only:
 	@if [ "$$(uname -s)" != "Linux" ]; then \

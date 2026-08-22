@@ -1,0 +1,12 @@
+#
+# KelyfOS guest kernel — x86_64 delta.
+#
+# Artifact: the uncompressed ELF "vmlinux". Firecracker does not boot a bzImage
+# on x86_64 — selected in Buildroot with BR2_LINUX_KERNEL_VMLINUX.
+#
+# Boot arguments (consumed by the CLI at P1-5):
+#   reboot=k panic=1 nomodule swiotlb=noforce console=ttyS0 pci=off quiet
+#   i8042.noaux i8042.nomux i8042.dumbkbd
+# The i8042 knobs stop the kernel probing a PS/2 controller that Firecracker
+# does not emulate; they are pure boot-time savings and are x86-only, which is
+# the one genuine cmdline difference between the two architectures.

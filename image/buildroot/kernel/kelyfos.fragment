@@ -1,0 +1,55 @@
+#
+# KelyfOS guest kernel — shared delta over the vendored Firecracker base (D12).
+#
+# Merged on top of base-<arch>.config by Buildroot, then olddefconfig, then
+# verified by image/check-config.sh. Most lines here restate something the base
+# already sets: that is deliberate. A guarantee that is only true by inheritance
+# is a guarantee that disappears silently the day the base is re-vendored from a
+# newer Firecracker. Everything KelyfOS promises about this kernel is written
+# down here, and asserted on the result.
+#
+
+# --- no loadable modules ---------------------------------------------------
+# The one non-negotiable. A read-only, immutable guest that can load arbitrary
+# kernel modules at runtime is neither read-only nor immutable, and every other
+# claim in the threat model rests on this line. Firecracker's default cmdline
+# passes "nomodule" too; this is the config-level assertion behind it.
+# CONFIG_MODULES is not set
+
+# --- virtio: the only hardware KelyfOS has ---------------------------------
+CONFIG_VIRTIO=y
+CONFIG_VIRTIO_MENU=y
+CONFIG_VIRTIO_MMIO=y
+CONFIG_VIRTIO_BLK=y
+CONFIG_VIRTIO_NET=y
+
+# --- vsock: the entire host/guest interface (docs/protocol.md §1.5) --------
+CONFIG_VSOCKETS=y
+CONFIG_VIRTIO_VSOCKETS=y
+CONFIG_VIRTIO_VSOCKETS_COMMON=y
+# The guest is never a vsock *host*. Firecracker's hybrid vsock terminates on a
+# Unix socket on the host side and no vhost code is involved anywhere.
+# CONFIG_VHOST_VSOCK is not set
+
+# --- filesystems -----------------------------------------------------------
+# ext4 read-only root on /dev/vda, tmpfs for everything writable, overlayfs so
+# P1-3 can present a writable view without a writable disk.
+CONFIG_EXT4_FS=y
+CONFIG_TMPFS=y
+CONFIG_OVERLAY_FS=y
+CONFIG_DEVTMPFS=y
+CONFIG_DEVTMPFS_MOUNT=y
+
+# --- console ---------------------------------------------------------------
+# ttyS0 on both architectures. On aarch64 Firecracker describes its UART to the
+# guest as "ns16550a" in the FDT (src/vmm/src/arch/aarch64/fdt.rs), so this is
+# an 8250-family port there too — PL011 is genuinely not needed and stays off.
+CONFIG_SERIAL_8250=y
+CONFIG_SERIAL_8250_CONSOLE=y
+# CONFIG_SERIAL_AMBA_PL011 is not set
+
+# --- things KelyfOS does not boot with -------------------------------------
+# No initrd, ever: the root filesystem is the second thing Firecracker hands the
+# guest and there is no early-userspace stage to run. Dropping it removes a whole
+# boot path from a kernel that is trying to reach userspace in under 500 ms.
+# CONFIG_BLK_DEV_INITRD is not set
