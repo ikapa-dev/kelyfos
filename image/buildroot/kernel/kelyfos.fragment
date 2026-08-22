@@ -53,3 +53,98 @@ CONFIG_SERIAL_8250_CONSOLE=y
 # guest and there is no early-userspace stage to run. Dropping it removes a whole
 # boot path from a kernel that is trying to reach userspace in under 500 ms.
 # CONFIG_BLK_DEV_INITRD is not set
+
+# --- trimmed: hardware and subsystems this machine cannot have (P1-7) ------
+# The base config is Firecracker's, tuned for generality across their CI fleet.
+# KelyfOS knows exactly what its machine is — one virtio-blk disk, one virtio-net
+# NIC, one vsock device and one 16550A UART — so everything below is dead weight
+# in a kernel whose whole job is to reach userspace as fast as possible. Every
+# line is also attack surface removed from an image that will run other people's
+# agents.
+
+# No SCSI anywhere: virtio-blk is not a SCSI device, and iSCSI in a sandbox with
+# deny-all egress is a contradiction in terms.
+# CONFIG_SCSI is not set
+# CONFIG_SCSI_LOWLEVEL is not set
+# CONFIG_ISCSI_TCP is not set
+# CONFIG_SCSI_ISCSI_ATTRS is not set
+# CONFIG_BLK_DEV_BSG is not set
+
+# Only ext4. A filesystem driver the image never mounts is a parser that can
+# still be reached by a malicious disk image.
+# CONFIG_XFS_FS is not set
+
+# Headless by design: no keyboard, no mouse, no HID of any kind. The virtual
+# terminal layer goes with them — the console here is a serial port, and VT is
+# what drags the whole input stack in (drivers/tty/Kconfig: `select INPUT`).
+# Unix98 ptys stay, because /dev/pts is real and useful.
+#
+# CONFIG_EXPERT is the price of admission: without it, VT has no Kconfig prompt
+# at all and silently keeps its default of y, so a request to disable it is
+# ignored rather than refused. Turning EXPERT on is what makes the next three
+# lines mean anything — which is precisely the failure image/check-config.sh
+# exists to catch, and did.
+CONFIG_EXPERT=y
+# CONFIG_VT is not set
+# CONFIG_VT_CONSOLE is not set
+# CONFIG_HID is not set
+# CONFIG_HID_SUPPORT is not set
+# CONFIG_INPUT is not set
+
+# One I/O scheduler is plenty for a single virtio-blk queue.
+# CONFIG_IOSCHED_BFQ is not set
+# CONFIG_MQ_IOSCHED_KYBER is not set
+
+# Virtio devices KelyfOS does not attach. Firecracker exposes virtio over MMIO
+# and the CLI passes pci=off, so the PCI transport is never used either.
+# CONFIG_VIRTIO_PCI is not set
+# CONFIG_VIRTIO_BALLOON is not set
+# CONFIG_VIRTIO_MEM is not set
+# CONFIG_VIRTIO_PMEM is not set
+# CONFIG_VIRTIO_CONSOLE is not set
+
+# No loop devices, no bridges, no filesystem encryption on an immutable
+# read-only root.
+# CONFIG_BLK_DEV_LOOP is not set
+# CONFIG_BRIDGE_NETFILTER is not set
+# CONFIG_FS_ENCRYPTION is not set
+
+# Signature machinery is meaningless in a kernel that cannot load modules.
+# CONFIG_ASYMMETRIC_KEY_TYPE is not set
+# CONFIG_X509_CERTIFICATE_PARSER is not set
+
+# KelyfOS's audit story is the host-side flight recorder (P2-4), not the kernel
+# audit subsystem — which the guest could not be trusted to report anyway.
+# CONFIG_AUDIT is not set
+# CONFIG_TASKSTATS is not set
+# CONFIG_HUGETLBFS is not set
+
+# --- trimmed: subsystems that are pure attack surface here ----------------
+# No network filesystems. A sandbox with deny-all egress cannot mount one, and
+# the client code is a parser reachable from a hostile server.
+# CONFIG_NETWORK_FILESYSTEMS is not set
+# CONFIG_NFS_FS is not set
+# CONFIG_SUNRPC is not set
+# CONFIG_FUSE_FS is not set
+
+# No netfilter in the guest. KelyfOS enforces egress policy on the *host* TAP
+# with nftables (P2-5) precisely so the guest cannot participate in its own
+# containment; shipping the guest a firewall it might reconfigure would be
+# arguing with the design.
+# CONFIG_NETFILTER is not set
+# CONFIG_NF_TABLES is not set
+# CONFIG_IP_NF_IPTABLES is not set
+
+# No eBPF. It is a large, privileged, historically exploitable interface, and
+# nothing in KelyfOS uses it — seccomp filters (P4-2) are classic BPF and do not
+# need this.
+# CONFIG_BPF_SYSCALL is not set
+
+# No console escape hatch and no profiling in a shipped image.
+#
+# CONFIG_DEBUG_KERNEL and CONFIG_SLUB_DEBUG stay on deliberately. They are menu
+# gates rather than costs, and turning them off would take CONFIG_DEBUG_LIST with
+# them — list-corruption detection is a hardening feature, not a debugging one,
+# and Firecracker's base config enables it on purpose.
+# CONFIG_MAGIC_SYSRQ is not set
+# CONFIG_PROFILING is not set

@@ -55,24 +55,38 @@ func main() {
 	select {}
 }
 
+// Retry backoff for the ready channel. The first attempts are deliberately
+// aggressive: the virtio-vsock device is not always ready the instant the
+// supervisor is, and a flat 200 ms retry turns a transient one-attempt failure
+// into a fifth of a second added to every single boot — which, on a product
+// whose headline number is boot-to-ready, is most of the budget.
+const (
+	dialBackoffMin = 1 * time.Millisecond
+	dialBackoffMax = 200 * time.Millisecond
+)
+
 // announceReady dials the host and keeps the ready channel alive. It retries,
 // because the host may not have bound its end yet and because every connection
 // is severed by a snapshot restore (docs/protocol.md §1.6).
 func announceReady(start time.Duration) {
 	bootID := newBootID()
 	overlay := overlayActive()
+	backoff := dialBackoffMin
 	for {
 		conn, err := vsock.Dial(proto.CIDHost, proto.PortReady)
 		if err != nil {
-			time.Sleep(200 * time.Millisecond)
+			time.Sleep(backoff)
+			if backoff < dialBackoffMax {
+				backoff *= 2
+			}
 			continue
 		}
+		backoff = dialBackoffMin
 		if err := pumpReady(conn, bootID, overlay, start); err != nil &&
 			!errors.Is(err, io.EOF) {
 			log.Printf("ready channel: %v", err)
 		}
 		conn.Close()
-		time.Sleep(200 * time.Millisecond)
 	}
 }
 

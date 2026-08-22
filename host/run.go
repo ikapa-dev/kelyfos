@@ -74,7 +74,17 @@ func runCmd(argv []string) error {
 		return fmt.Errorf("guest never became ready: %w", err)
 	}
 
-	fmt.Printf("sandbox %s ready in %d ms\n", sb.State.ID, sb.State.BootReadyMS)
+	// The split matters when tuning: guest time is kernel plus init plus
+	// supervisor, measured by the guest's own monotonic clock; the remainder is
+	// Firecracker setting the machine up and loading the kernel, which no
+	// amount of guest tuning will touch.
+	// The split is worth printing because the two halves are tuned by different
+	// means: guest time is the kernel and the init path, measured by the guest's
+	// own monotonic clock; the remainder is Firecracker building the machine and
+	// loading the kernel, which no amount of guest tuning will touch.
+	guestMS := ready.MonotonicNS / 1e6
+	fmt.Printf("sandbox %s ready in %d ms (vmm %d ms + guest %d ms)\n",
+		sb.State.ID, sb.State.BootReadyMS, sb.State.BootReadyMS-guestMS, guestMS)
 	fmt.Printf("  kernel      %s (%s)\n", ready.Kernel, ready.Arch)
 	fmt.Printf("  supervisor  %s\n", ready.Supervisor)
 	if !ready.Overlay {
