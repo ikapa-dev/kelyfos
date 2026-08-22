@@ -1258,6 +1258,35 @@ after the fix, both commits build on their own:
 32605058898  success  0e700232  E1-4              (re-run)
 32605299543  success  9c197ac1  the fix itself
   — and they ran at the same time rather than one queueing behind the other</pre></td></tr>
+        <tr><td class="mono">2026-08-23</td><td class="mono">P3-7</td>
+        <td><b>A real defect in <code>kelyfos run -- &lt;command&gt;</code>, shipped in v0.3 and found while building E1-6:
+        when the command exited non-zero, the sandbox was never torn down and the workspace was never written back.</b>
+        <code>defer os.Exit(code)</code> was registered last and therefore ran <i>first</i> &mdash; before the shutdown, the
+        sync-back and the <code>session.end</code> that were registered above it &mdash; and <code>os.Exit</code> runs no
+        deferred functions at all. The comment beside it said &ldquo;deferred teardown still runs&rdquo;, which is exactly
+        the kind of belief a comment can hold and a program cannot. The consequence is as bad as it sounds: this is the
+        invocation section 1's definition of done names, the one a real agent uses, and an agent that did work and then
+        exited non-zero lost every byte of it &mdash; while leaving a microVM running and a run directory behind.
+        Reproduced, fixed by returning the status through the existing <code>exitError</code> that <code>main</code>
+        already understands, and reproduced again to confirm. The E1-4 OOM exit path had inherited the same shape a few
+        hours earlier and is fixed with it.</td>
+        <td class="mono"><pre>before &mdash; kelyfos run --workspace ./ws -- sh -c 'agent writes; exit 3'
+  exit: 3
+  workspace:      seed.txt              &lt;- the agent's file is gone
+  run dirs left:  2
+  firecracker:    2 processes still alive
+  session log:    no session.end at all
+
+after:
+  exit: 3
+  workspace written back to /tmp/e16c/ws
+  workspace:      out.txt seed.txt
+  content:        written-by-the-agent
+  run dirs left:  0     firecracker alive: 0
+  session end     command_exited after 998 ms
+
+- if code != 0 { defer os.Exit(code) }
++ if code != 0 { return &amp;exitError{code} }</pre></td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>

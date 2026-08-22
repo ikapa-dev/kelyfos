@@ -285,6 +285,10 @@ func printEvent(line []byte, asJSON bool) {
 		fmt.Printf("%s  egress %-7s %s:%d  mode=%s %s\n", ts, verdict, e.Host, e.Port, e.Mode, e.Reason)
 	case recorder.TypeSecretUse:
 		fmt.Printf("%s  secret          %s -> %s\n", ts, e.Name, e.Host)
+	case recorder.TypeResourceTimeout:
+		fmt.Printf("%s  timed out       the %s budget of %s expired after %s\n",
+			ts, e.Budget, time.Duration(e.BudgetMS)*time.Millisecond,
+			(time.Duration(e.ElapsedMS) * time.Millisecond).Round(time.Second))
 	case recorder.TypeResourceOOM:
 		fmt.Printf("%s  OOM-killed      %s (pid %d) holding %s of a %d MiB machine\n",
 			ts, e.Comm, e.PID, report.HumanKiB(e.RSSKiB), e.MemMiB)

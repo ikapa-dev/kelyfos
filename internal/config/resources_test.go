@@ -2,8 +2,8 @@ package config
 
 import (
 	"os"
-	"strings"
 	"testing"
+	"time"
 )
 
 func TestParseSizeAcceptsHumanUnits(t *testing.T) {
@@ -109,19 +109,56 @@ func TestParseMemMiBKeepsBareNumbersAsMiB(t *testing.T) {
 	}
 }
 
-// A limit that is specified but not yet enforced must refuse, not accept.
-// Accepting it would leave the user believing in a limit that does nothing.
-func TestUnenforcedResourceKeysRefuse(t *testing.T) {
-	// Shrinks as the epic lands each one: the four I/O rates left this list in
-	// E1-3, and the test failing when they did is the point of writing it here.
-	for _, key := range []string{"max_runtime", "idle_timeout"} {
-		_, err := loadString(t, "[resources]\n"+key+" = \"1\"\n")
-		if err == nil {
-			t.Errorf("[resources] %s was accepted but nothing enforces it", key)
-			continue
+// Every key docs/resources.md specifies is now enforced, so every one of them
+// must parse. This replaces the test that asserted the opposite for whichever
+// keys were still outstanding: that list emptied at E1-6, and a loop over an
+// empty list asserts nothing at all.
+func TestEveryDocumentedResourceKeyParses(t *testing.T) {
+	cfg := writeAndLoad(t, `
+[resources]
+cpus         = 4
+mem          = "2G"
+disk         = "8G"
+scratch      = "512M"
+cpu_quota    = "150%"
+net_mbps_rx  = 10
+net_mbps_tx  = 5
+disk_iops    = 500
+disk_mbps    = 50
+max_runtime  = "30m"
+idle_timeout = "5m"
+`)
+	for _, c := range []struct {
+		key string
+		ok  bool
+	}{
+		{"cpus", cfg.ResCPUs == 4},
+		{"mem", cfg.ResMemMiB == 2048},
+		{"disk", cfg.ResDiskByte == 8<<30},
+		{"scratch", cfg.ResScratchByte == 512<<20},
+		{"cpu_quota", cfg.ResCPUQuota == 150},
+		{"net_mbps_rx", cfg.ResNetMbpsRx == 10},
+		{"net_mbps_tx", cfg.ResNetMbpsTx == 5},
+		{"disk_iops", cfg.ResDiskIOPS == 500},
+		{"disk_mbps", cfg.ResDiskMbps == 50},
+		{"max_runtime", cfg.ResMaxRuntime == 30*time.Minute},
+		{"idle_timeout", cfg.ResIdleTimeout == 5*time.Minute},
+	} {
+		if !c.ok {
+			t.Errorf("%s did not parse to the expected value", c.key)
 		}
-		if !strings.Contains(err.Error(), "not enforced yet") || !strings.Contains(err.Error(), "E1-") {
-			t.Errorf("%s: error should say it is unenforced and name the task, got: %v", key, err)
+	}
+}
+
+func TestBudgetsRejectNonsense(t *testing.T) {
+	for _, body := range []string{
+		"[resources]\nmax_runtime = \"soon\"\n",
+		"[resources]\nidle_timeout = \"0s\"\n",
+		"[resources]\nmax_runtime = \"-5m\"\n",
+		"[resources]\nmax_runtime = 60\n", // a bare number has no unit, so no meaning
+	} {
+		if _, err := loadString(t, body); err == nil {
+			t.Errorf("accepted a bad budget:\n%s", body)
 		}
 	}
 }

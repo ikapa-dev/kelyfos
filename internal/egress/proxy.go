@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -104,6 +105,37 @@ type Proxy struct {
 	ln   net.Listener
 	wg   sync.WaitGroup
 	once sync.Once
+
+	// lastActive is the last moment any byte crossed this proxy, in Unix
+	// nanoseconds. It exists for the idle timeout (E1-6): a sandbox pulling a
+	// large file down a tunnel is not idle, and reporting only completed
+	// attempts would say it was for as long as the transfer lasted.
+	lastActive atomic.Int64
+}
+
+// touch records that the sandbox is doing something.
+func (p *Proxy) touch() { p.lastActive.Store(time.Now().UnixNano()) }
+
+// LastActive reports when a byte last crossed the proxy, or the zero time if
+// nothing ever has.
+func (p *Proxy) LastActive() time.Time {
+	if n := p.lastActive.Load(); n != 0 {
+		return time.Unix(0, n)
+	}
+	return time.Time{}
+}
+
+// activeWriter marks the proxy busy as bytes move through it. Wrapping the
+// writer rather than the reader means the timestamp advances when data is
+// actually delivered, not merely when it is available to read.
+type activeWriter struct {
+	w io.Writer
+	p *Proxy
+}
+
+func (a activeWriter) Write(b []byte) (int, error) {
+	a.p.touch()
+	return a.w.Write(b)
 }
 
 // Listen binds the proxy. The address is the host's TAP address, so the proxy
@@ -145,6 +177,7 @@ func (p *Proxy) Close() {
 }
 
 func (p *Proxy) report(a Attempt) {
+	p.touch()
 	if p.OnEvent != nil {
 		p.OnEvent(a)
 	}
@@ -152,6 +185,7 @@ func (p *Proxy) report(a Attempt) {
 
 func (p *Proxy) handle(client net.Conn) {
 	defer client.Close()
+	p.touch()
 	br := bufio.NewReader(client)
 
 	req, err := http.ReadRequest(br)
@@ -214,8 +248,16 @@ func (p *Proxy) tunnel(client net.Conn, host string, port int) {
 	var in, out int64
 	var wg sync.WaitGroup
 	wg.Add(2)
-	go func() { defer wg.Done(); out, _ = io.Copy(upstream, client); halfClose(upstream) }()
-	go func() { defer wg.Done(); in, _ = io.Copy(client, upstream); halfClose(client) }()
+	go func() {
+		defer wg.Done()
+		out, _ = io.Copy(activeWriter{upstream, p}, client)
+		halfClose(upstream)
+	}()
+	go func() {
+		defer wg.Done()
+		in, _ = io.Copy(activeWriter{client, p}, upstream)
+		halfClose(client)
+	}()
 	wg.Wait()
 
 	p.report(Attempt{

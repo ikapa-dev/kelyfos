@@ -83,6 +83,7 @@ const reportHTML = `<!DOCTYPE html>
   <tr><td>started</td><td>{{.Summary.Started}}</td></tr>
   <tr><td>ended</td><td>{{if .Summary.Ended}}{{.Summary.Ended}} ({{.Summary.EndReason}}){{else}}still running{{end}}</td></tr>
   <tr><td>TLS terminated</td><td>{{.Summary.Terminated}} connection(s) the proxy could read{{if not .Summary.Terminated}} — none{{end}}</td></tr>
+  <tr><td>ended by</td><td>{{if .Summary.TimedOut}}<span style="color:var(--warn)">the {{.Summary.TimedOut}} budget</span>{{else}}{{.Summary.EndReason}}{{end}}</td></tr>
   <tr><td>secrets used</td><td>{{if .Summary.Secrets}}{{range .Summary.Secrets}}{{.}} {{end}}<br><span style="color:var(--muted)">values are never recorded</span>{{else}}none{{end}}</td></tr>
 </table>
 

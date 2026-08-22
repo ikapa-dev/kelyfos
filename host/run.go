@@ -34,6 +34,8 @@ func runCmd(argv []string) error {
 		disk    = fs.String("disk", "", "ceiling on the packed workspace image, e.g. 2G (default: no ceiling)")
 		quota   = fs.String("cpu-quota", "", "host CPU time cap as a share of one core, e.g. 150% (default: uncapped)")
 		memStr  = fs.String("mem", "", "guest memory, e.g. 2G or 512M; a bare number is MiB (default 512)")
+		maxRun  = fs.String("max-runtime", "", "stop the sandbox after this long, e.g. 30m (default: no limit)")
+		idleFor = fs.String("idle-timeout", "", "stop the sandbox after this long with no activity, e.g. 5m (default: no limit)")
 		console = fs.Bool("console", false, "stream the guest serial console")
 		verbose = fs.Bool("verbose-boot", false, "drop `quiet` from the kernel command line")
 		timeout = fs.Duration("ready-timeout", 30*time.Second, "how long to wait for the guest to become ready")
@@ -86,6 +88,22 @@ status. This is how you hand an agent a sandbox and nothing else:
 		}
 		diskCeiling = n
 	}
+	var maxRuntime, idleTimeout time.Duration
+	for _, b := range []struct {
+		flag  string
+		value *string
+		into  *time.Duration
+	}{{"max-runtime", maxRun, &maxRuntime}, {"idle-timeout", idleFor, &idleTimeout}} {
+		if *b.value == "" {
+			continue
+		}
+		d, err := config.ParseDuration(*b.value, "--"+b.flag)
+		if err != nil {
+			return err
+		}
+		*b.into = d
+	}
+
 	cpuQuota := 0
 	if *quota != "" {
 		n, err := config.ParsePercent(*quota)
@@ -170,6 +188,30 @@ status. This is how you hand an agent a sandbox and nothing else:
 		// there is no request to check against a ceiling: the declared value is
 		// the value.
 		scratchBytes = cfg.ResScratchByte
+		// A budget behaves like every other ceiling: the file may only be asked
+		// for less, and asking for more refuses rather than clamps.
+		for _, b := range []struct {
+			key, flag string
+			limit     time.Duration
+			into      *time.Duration
+		}{
+			{"max_runtime", "max-runtime", cfg.ResMaxRuntime, &maxRuntime},
+			{"idle_timeout", "idle-timeout", cfg.ResIdleTimeout, &idleTimeout},
+		} {
+			if b.limit == 0 {
+				continue
+			}
+			if *b.into == 0 {
+				*b.into = b.limit
+				continue
+			}
+			if *b.into > b.limit {
+				line, _ := cfg.Ceiling(b.key)
+				return fmt.Errorf("--%s %s exceeds the ceiling %s = %s set at %s:%d\n"+
+					"    lower the flag, or raise the ceiling in the policy file",
+					b.flag, *b.into, b.key, b.limit, cfg.Path, line)
+			}
+		}
 		ioLimits = sandbox.IOLimits{
 			NetMbpsRx: cfg.ResNetMbpsRx,
 			NetMbpsTx: cfg.ResNetMbpsTx,
@@ -477,8 +519,48 @@ status. This is how you hand an agent a sandbox and nothing else:
 	if opts.Workspace != nil {
 		fmt.Printf("  workspace   %s -> /work\n", opts.Workspace.HostDir)
 	}
+	if maxRuntime > 0 {
+		fmt.Printf("  max runtime %s\n", maxRuntime)
+	}
+	if idleTimeout > 0 {
+		fmt.Printf("  idle timeout %s — no tool call and no traffic for that long ends the run\n", idleTimeout)
+	}
+
 	vmExited := make(chan struct{})
 	go func() { _ = sb.Wait(); close(vmExited) }()
+
+	// Time budgets (E1-6). The watchdog is host-side and observes host-side
+	// facts only: how long the sandbox has been up, whether the flight recorder
+	// has grown, and whether any byte has crossed the egress proxy. Between
+	// them those are exactly "no vsock RPC and no egress traffic" — every exec
+	// and every MCP tool call is recorded, whichever process issued it, and the
+	// proxy is the only route out.
+	budgetFired := make(chan timeoutFired, 1)
+	if maxRuntime > 0 || idleTimeout > 0 {
+		stopWatchdog := make(chan struct{})
+		defer close(stopWatchdog)
+		go watchBudgets(budgets{
+			max:      maxRuntime,
+			idle:     idleTimeout,
+			started:  time.Now(),
+			eventLog: recorder.Path(sandbox.Root(), sb.State.ID),
+			proxy:    proxy,
+			fired:    budgetFired,
+			stop:     stopWatchdog,
+		})
+	}
+	// recordTimeout writes the audit event and says why the run is ending. It
+	// runs on whichever path notices first, and only once.
+	var timedOut string
+	noteTimeout := func(t timeoutFired) {
+		timedOut = t.budget
+		_ = rec.Append(recorder.Event{
+			Type: recorder.TypeResourceTimeout, Budget: t.budget,
+			BudgetMS: t.budgetLimit.Milliseconds(), ElapsedMS: t.elapsed.Milliseconds(),
+		})
+		fmt.Fprintf(os.Stderr, "\nkelyfos: the %s budget of %s expired after %s; stopping the sandbox\n",
+			t.budget, t.budgetLimit, t.elapsed.Round(time.Second))
+	}
 
 	// With a trailing command, the sandbox's lifetime is that command's: run
 	// it on the host with a handle to this machine, then tear everything down
@@ -495,7 +577,32 @@ status. This is how you hand an agent a sandbox and nothing else:
 			env = append(env, "PATH="+filepath.Dir(self)+string(os.PathListSeparator)+os.Getenv("PATH"))
 		}
 		child.Env = env
-		err := child.Run()
+		if err := child.Start(); err != nil {
+			return fmt.Errorf("run %s: %w", command[0], err)
+		}
+		childDone := make(chan error, 1)
+		go func() { childDone <- child.Wait() }()
+
+		var err error
+		select {
+		case err = <-childDone:
+		case t := <-budgetFired:
+			noteTimeout(t)
+			// SIGTERM first and a grace period after it: the command is the
+			// agent, and an agent that is given a moment can finish the line it
+			// is writing. Killing outright would leave the workspace mid-edit,
+			// and the sync-back that follows would carry that state to the host
+			// as if it were a result.
+			_ = child.Process.Signal(syscall.SIGTERM)
+			select {
+			case err = <-childDone:
+			case <-time.After(childGrace):
+				fmt.Fprintf(os.Stderr, "kelyfos: %s did not stop within %s; killing it\n",
+					command[0], childGrace)
+				_ = child.Process.Kill()
+				err = <-childDone
+			}
+		}
 		reason = "command_exited"
 		code := 0
 		if err != nil {
@@ -505,6 +612,10 @@ status. This is how you hand an agent a sandbox and nothing else:
 			} else {
 				return fmt.Errorf("run %s: %w", command[0], err)
 			}
+		}
+		if timedOut != "" {
+			reason = "timeout"
+			code = exitTimedOut
 		}
 		fmt.Printf("\n%s exited %d; stopping the sandbox\n", command[0], code)
 		if code == 0 && oomKills.Load() > 0 {
@@ -516,8 +627,10 @@ status. This is how you hand an agent a sandbox and nothing else:
 			code = exitOOMKilled
 		}
 		if code != 0 {
-			// Deferred teardown still runs; the status is the child's.
-			defer os.Exit(code)
+			// Returned, never os.Exit: this function's deferred teardown is
+			// what stops the VM, syncs the workspace back and closes the
+			// session record, and os.Exit runs none of them.
+			return &exitError{code}
 		}
 		return nil
 	}
@@ -529,14 +642,85 @@ status. This is how you hand an agent a sandbox and nothing else:
 	case <-ctx.Done():
 		fmt.Println("\nstopping...")
 		reason = "interrupted"
+	case t := <-budgetFired:
+		noteTimeout(t)
+		reason = "timeout"
 	case <-vmExited:
 		reason = "vm_exited"
 		return fmt.Errorf("the microVM exited unexpectedly")
 	}
-	if oomKills.Load() > 0 {
-		defer os.Exit(exitOOMKilled)
+	switch {
+	case timedOut != "":
+		return &exitError{exitTimedOut}
+	case oomKills.Load() > 0:
+		return &exitError{exitOOMKilled}
 	}
 	return nil
+}
+
+// childGrace is how long a trailing command has to stop itself after SIGTERM
+// before it is killed.
+const childGrace = 5 * time.Second
+
+// exitTimedOut is timeout(1)'s exit status, for the same meaning. A CI job that
+// already treats 124 as "this took too long" needs no teaching.
+const exitTimedOut = 124
+
+type timeoutFired struct {
+	budget      string
+	budgetLimit time.Duration
+	elapsed     time.Duration
+}
+
+type budgets struct {
+	max, idle time.Duration
+	started   time.Time
+	eventLog  string
+	proxy     *egress.Proxy
+	fired     chan<- timeoutFired
+	stop      <-chan struct{}
+}
+
+// watchBudgets fires at most once, on whichever budget expires first.
+//
+// Idle is measured from two host-side facts and no guest-side ones: the size of
+// the flight recorder, which grows on every exec and every MCP tool call
+// whichever process issued it, and the proxy's own last-byte timestamp, which
+// covers a long download that produces no events until it finishes. A sandbox
+// doing neither is doing nothing the host can see, and the host is the only
+// side entitled to an opinion (F-D2).
+func watchBudgets(b budgets) {
+	const tick = time.Second
+	lastSize := int64(-1)
+	lastChange := b.started
+	for {
+		select {
+		case <-b.stop:
+			return
+		case <-time.After(tick):
+		}
+		now := time.Now()
+		if b.max > 0 && now.Sub(b.started) >= b.max {
+			b.fired <- timeoutFired{"max_runtime", b.max, now.Sub(b.started)}
+			return
+		}
+		if b.idle == 0 {
+			continue
+		}
+		if fi, err := os.Stat(b.eventLog); err == nil && fi.Size() != lastSize {
+			lastSize = fi.Size()
+			lastChange = now
+		}
+		if b.proxy != nil {
+			if t := b.proxy.LastActive(); t.After(lastChange) {
+				lastChange = t
+			}
+		}
+		if idle := now.Sub(lastChange); idle >= b.idle {
+			b.fired <- timeoutFired{"idle_timeout", b.idle, idle}
+			return
+		}
+	}
 }
 
 // exitOOMKilled is 128 + SIGKILL, the shell's convention for a process killed by

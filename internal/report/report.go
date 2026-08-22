@@ -48,6 +48,7 @@ type Summary struct {
 	EgressBlock  int
 	Terminated   int
 	OOMKills     int
+	TimedOut     string
 	Secrets      []string
 }
 
@@ -165,6 +166,12 @@ func Render(w io.Writer, sessionID string, events []recorder.Event, verifyErr er
 			}
 			v.Rows = append(v.Rows, Row{ts, "secret", "secret " + e.Name,
 				"sent to " + e.Host + " · the value is not recorded anywhere", "", false})
+		case recorder.TypeResourceTimeout:
+			v.Summary.TimedOut = e.Budget
+			v.Rows = append(v.Rows, Row{ts, "oom", "timed out on " + e.Budget,
+				fmt.Sprintf("budget %s · ran %s",
+					time.Duration(e.BudgetMS)*time.Millisecond,
+					(time.Duration(e.ElapsedMS) * time.Millisecond).Round(time.Second)), "", true})
 		case recorder.TypeResourceOOM:
 			// Flagged the way a blocked egress attempt is: this is a limit
 			// firing, and a reader skimming the transcript should not have to

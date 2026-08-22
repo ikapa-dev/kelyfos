@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // FileName is the policy file a project commits.
@@ -54,6 +55,10 @@ type Config struct {
 	// writes outside /work (E1-5). Zero means the guest kernel's own default,
 	// which is half the guest's RAM.
 	ResScratchByte int64
+
+	// Time budgets (E1-6). Zero means no budget.
+	ResMaxRuntime  time.Duration
+	ResIdleTimeout time.Duration
 	// ResLine records where each [resources] key was written, so a refusal can
 	// name the line the ceiling came from instead of just the number.
 	ResLine map[string]int
@@ -146,13 +151,10 @@ func Load(path string) (*Config, error) {
 				cfg.ResDiskMbps, err = parseRate(value, where, key)
 			case "scratch":
 				cfg.ResScratchByte, err = parseBytes(value, where)
-			case "max_runtime", "idle_timeout":
-				// Specified in docs/resources.md but not yet enforced. Refusing
-				// beats accepting: a limit that silently does nothing is worse
-				// than no limit, because you believe you have one.
-				return nil, fmt.Errorf("%s: [resources] %s is specified but not enforced yet (%s) — "+
-					"remove it rather than rely on a limit that would not hold; see docs/resources.md",
-					where, key, landsIn[key])
+			case "max_runtime":
+				cfg.ResMaxRuntime, err = parseDuration(value, where, key)
+			case "idle_timeout":
+				cfg.ResIdleTimeout, err = parseDuration(value, where, key)
 			default:
 				return nil, fmt.Errorf("%s: unknown key %q in [resources]", where, key)
 			}
@@ -311,12 +313,25 @@ func parseMiB(value, where string) (int, error) {
 // disk = "2G" cannot drift apart.
 func ParseSize(v string) (int64, error) { return parseBytes(v, "--disk") }
 
-// landsIn names the task each specified-but-unenforced key is waiting on, so
-// the refusal tells you when to expect it rather than just saying no.
-var landsIn = map[string]string{
-	"max_runtime":  "E1-6, the time budgets",
-	"idle_timeout": "E1-6, the time budgets",
+// parseDuration reads a budget like "60s", "30m" or "2h". Go's own grammar,
+// because it is the one this project already speaks everywhere else and
+// inventing a second way to write half an hour helps nobody.
+func parseDuration(value, where, key string) (time.Duration, error) {
+	t := strings.TrimSpace(strings.Trim(value, `"'`))
+	d, err := time.ParseDuration(t)
+	if err != nil {
+		return 0, fmt.Errorf("%s: %s %q is not a duration (want 60s, 30m, 2h)", where, key, value)
+	}
+	if d <= 0 {
+		return 0, fmt.Errorf("%s: %s must be positive; remove the key to leave that budget off", where, key)
+	}
+	return d, nil
 }
+
+// ParseDuration exposes the same grammar to the --max-runtime and
+// --idle-timeout flags, so a flag and the file it is checked against cannot
+// disagree about what "30m" means.
+func ParseDuration(v, flag string) (time.Duration, error) { return parseDuration(v, flag, flag) }
 
 // parseRate reads a positive I/O rate. Zero is refused rather than read as
 // either "no limit" or "no traffic": both readings are defensible, which is

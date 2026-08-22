@@ -129,10 +129,11 @@ limits.
 | `cpus`, `mem`, `disk`, `cpu_quota` | **enforced**, including the ceiling behaviour above |
 | `net_mbps_rx`, `net_mbps_tx`, `disk_iops`, `disk_mbps` | **enforced** (E1-3) |
 | `scratch` | **enforced** (E1-5) |
-| `max_runtime`, `idle_timeout` | specified; land with the time budgets (E1-6) |
+| `max_runtime`, `idle_timeout` | **enforced** (E1-6) |
 
-Using one of the not-yet-enforced keys is an error that says so and names the
-task, so nobody discovers the gap by watching a limit fail to hold.
+Every key this document specifies is now enforced, so the machinery that refused
+an unenforced key — and named the task it was waiting on — has been retired. A
+key this file does not list is still an error, as it always was.
 
 ### How the quota is applied
 
@@ -215,6 +216,35 @@ the guest's. A guest determined to defeat the cap can remount with a larger size
 VM's hardware. `scratch` is a partition of a budget the host has already fixed,
 not a new boundary: it stops an agent filling its own memory with build output by
 accident, and it is not a defence against an agent trying to.
+
+### How the time budgets are applied
+
+`max_runtime` is wall-clock from the moment the sandbox starts. `idle_timeout`
+is wall-clock since the last thing the sandbox did, which is measured from two
+host-side facts and no guest-side ones:
+
+- **the flight recorder grew** — every `exec` and every MCP tool call is
+  recorded, whichever process issued it, so the file growing is exactly "a vsock
+  RPC happened";
+- **a byte crossed the egress proxy** — tracked as bytes move rather than when a
+  connection finishes, because a sandbox halfway through a large download is not
+  idle and would otherwise look it for as long as the transfer lasted.
+
+A sandbox doing neither is doing nothing the host can see, and the host is the
+only side entitled to an opinion about it (F-D2).
+
+When a budget expires the run ends the way a careful `Ctrl-C` would, in this
+order: the trailing command gets `SIGTERM` and five seconds to stop itself, then
+`SIGKILL`; the VM is shut down; the workspace is synced back; the session record
+is closed with `reason: "timeout"`. The audit log gets a `resource.timeout`
+event naming which budget fired, its size and how long the run actually lasted.
+
+`kelyfos run` exits **124** — `timeout(1)`'s status, for the same meaning, so a
+CI job that already treats 124 as "this took too long" needs no teaching.
+
+The grace period is not politeness. An agent killed outright leaves the
+workspace mid-edit, and the sync-back that follows would carry that state to the
+host as if it were a result.
 
 ### How the I/O throttles are applied
 

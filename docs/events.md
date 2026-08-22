@@ -98,7 +98,7 @@ Closes the file.
 
 | Field | Type | Meaning |
 | --- | --- | --- |
-| `reason` | string | `shutdown`, `interrupted`, `vm_exited`, `command_exited`, `error`. |
+| `reason` | string | `shutdown`, `interrupted`, `vm_exited`, `command_exited`, `timeout`, `error`. |
 | `duration_ms` | integer | Session length. |
 
 `command_exited` is the `kelyfos run [flags] -- <command>` form (D23): the
@@ -177,6 +177,18 @@ hashed. A hash of a short credential is a credential. The whole point of
 injecting at the proxy is that the value exists in one place; writing it to an
 audit log would put it in two.
 
+### `resource.timeout`
+A time budget expired and ended the run. Written from E1-6.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `budget` | string | `max_runtime` or `idle_timeout` — which one fired. |
+| `budget_ms` | integer | The budget's size. |
+| `elapsed_ms` | integer | How long the run actually lasted, or how long it had been idle. |
+
+The `session.end` that follows carries `reason: "timeout"`, and `kelyfos run`
+exits 124.
+
 ### `resource.oom`
 The guest's OOM killer ran. Written from E1-4, and the first event type with
 `"source": "guest"` — the supervisor watches `/dev/kmsg`, reports what the
@@ -216,6 +228,7 @@ a reader should present the session as open rather than truncated.
 | `kelyfos log`, `--follow`, `--verify` | P2-4 |
 | `egress.attempt` with `mode`, `secret.use` by name | P2-5, P2-6 |
 | `resource.oom` reported by the guest, written by the host | E1-4 |
+| `resource.timeout` naming the budget that fired | E1-6 |
 | HTML session export built only from this file | P3-8 |
 | Live TUI built only from this file | P3-9 |
 | Signed exports verifiable offline | P4-3 |

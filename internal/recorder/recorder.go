@@ -28,16 +28,17 @@ const Version = 1
 
 // Event types.
 const (
-	TypeSessionStart  = "session.start"
-	TypeSessionReady  = "session.ready"
-	TypeSessionEnd    = "session.end"
-	TypeCommandStart  = "command.start"
-	TypeCommandOutput = "command.output"
-	TypeCommandExit   = "command.exit"
-	TypeFileWrite     = "file.write"
-	TypeEgressAttempt = "egress.attempt"
-	TypeSecretUse     = "secret.use"
-	TypeResourceOOM   = "resource.oom"
+	TypeSessionStart    = "session.start"
+	TypeSessionReady    = "session.ready"
+	TypeSessionEnd      = "session.end"
+	TypeCommandStart    = "command.start"
+	TypeCommandOutput   = "command.output"
+	TypeCommandExit     = "command.exit"
+	TypeFileWrite       = "file.write"
+	TypeEgressAttempt   = "egress.attempt"
+	TypeSecretUse       = "secret.use"
+	TypeResourceOOM     = "resource.oom"
+	TypeResourceTimeout = "resource.timeout"
 )
 
 // Sources.
@@ -111,6 +112,11 @@ type Event struct {
 	Comm   string `json:"comm,omitempty"`
 	RSSKiB int64  `json:"rss_kib,omitempty"`
 	MemMiB int    `json:"mem_mib,omitempty"`
+
+	// resource.timeout
+	Budget    string `json:"budget,omitempty"`
+	BudgetMS  int64  `json:"budget_ms,omitempty"`
+	ElapsedMS int64  `json:"elapsed_ms,omitempty"`
 }
 
 type EvError struct {

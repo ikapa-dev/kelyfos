@@ -126,7 +126,7 @@
      improvements to the existing product land here as epics. Inert until its gate opens.</p>
   <div class="meta">
     owner: <b>John</b> &nbsp;&middot;&nbsp; developer: <b>Claude Code</b> &nbsp;&middot;&nbsp;
-    status: <b class="ok" id="meta-status">Epic E1 — active, 6/9 (next: E1-6)</b> &nbsp;&middot;&nbsp;
+    status: <b class="ok" id="meta-status">Epic E1 — active, 7/9 (next: E1-7)</b> &nbsp;&middot;&nbsp;
     last updated: <b id="meta-updated">2026-08-23</b><br>
     repo file: <b>PLAN-FEATURES.html</b> (lives at the repository root next to <code>PLAN.html</code>)<br>
     <span class="quiet">Companion to PLAN.html — same protocol, same rules, later timeline.</span>
@@ -166,7 +166,7 @@
     <span class="bl-name">All epics</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">E1-6 — time budgets: <code>--max-runtime</code>, <code>--idle-timeout</code>, and a graceful teardown that says which fired</b></div>
+  <div class="focusline">Current focus: <b id="focus">E1-7 — usage vs caps: a resources lane in <code>kelyfos watch</code> and a <code>resource.summary</code> receipt at teardown</b></div>
 </div>
 
 <!-- ====================================================== 1. ACTIVATION GATE -->
@@ -271,7 +271,7 @@
         <code>size=</code> from <code>resources.scratch</code> (default 50% of the <i>guest&rsquo;s</i> RAM — the guest kernel&rsquo;s own default, i.e. relative to the
         <code>--mem</code> cap, not host memory — now stated instead of implied). All writes outside <code>/work</code> land on it and hit <code>ENOSPC</code> at the cap instead of silently
         consuming the RAM budget; the workspace disk at <code>/work</code> is a separate block device and unaffected.</span></li>
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">E1-6</span><span class="tk">Time budgets: <code>--max-runtime</code> and <code>--idle-timeout</code> flags + toml keys.
         Idle = no vsock RPC <i>and</i> no egress-proxy traffic for the window. On expiry: SIGTERM to the agent &rarr; grace period &rarr;
         workspace sync-back &rarr; teardown, plus a <code>resource.timeout</code> audit event recording which budget fired.</span></li>
@@ -1298,6 +1298,60 @@ $ go test ./...
 --- PASS: TestScratchCapRidesTheCommandLine
 --- PASS: TestScratchParsesAsASize
 ok  internal/config  internal/sandbox  supervisor  (and the rest)</pre></td></tr>
+        <tr><td class="mono">2026-08-23</td><td class="mono">E1-6</td>
+        <td>Time budgets. <code>--max-runtime</code> and <code>--idle-timeout</code> with matching toml keys, checked
+        against their ceilings like every other cap. Idle is measured from two host-side facts and no guest-side ones,
+        which is what the task's &ldquo;no vsock RPC <i>and</i> no egress-proxy traffic&rdquo; actually reduces to: the
+        flight recorder growing, since every exec and every MCP tool call is recorded whichever process issued it, and a
+        byte crossing the egress proxy. The second needed the proxy to track activity <i>as bytes move</i> rather than when
+        a connection closes &mdash; a sandbox halfway through a large download is not idle, and reporting only completed
+        attempts would have called it idle for as long as the transfer lasted. On expiry: SIGTERM to the trailing command,
+        five seconds of grace, then SIGKILL; VM down; workspace synced back; <code>session.end</code> with
+        <code>reason: "timeout"</code>; and a <code>resource.timeout</code> event naming which budget fired, its size and
+        how long the run really lasted. Exit status 124, <code>timeout(1)</code>'s, for the same meaning. The grace period
+        is not politeness: an agent killed outright leaves the workspace mid-edit, and the sync-back that follows would
+        carry that state to the host as if it were a result.
+        <b>This task also found a live defect in v0.3 and fixed it</b>, logged in PLAN.html under P3-7:
+        <code>kelyfos run -- &lt;command&gt;</code> with a non-zero exit never tore the sandbox down and never wrote the
+        workspace back, because <code>defer os.Exit(code)</code> was registered last and so ran first, ahead of every
+        teardown defer above it. E1-6 could not have been built on that path without inheriting it &mdash; and E1-4's OOM
+        exit had already inherited it.
+        One tidy-up worth noting: with the last two keys enforced, the parser's &ldquo;specified but not enforced yet&rdquo;
+        machinery has nothing left to refuse and is retired, and the test that asserted it has been replaced by one
+        asserting every documented key parses.</td>
+        <td class="mono"><pre>### max_runtime, with an agent that ignores it
+$ kelyfos run --image dev --max-runtime 8s --workspace ./ws -- \
+      sh -c 'kelyfos exec "echo agent-output > /work/o.txt"; sleep 300'
+kelyfos: the max_runtime budget of 8s expired after 8s; stopping the sandbox
+sh exited 124; stopping the sandbox
+workspace written back to /tmp/e16d/ws        # o.txt is there
+exit: 124   wall: 9s
+  23:38:44.966  timed out       the max_runtime budget of 8s expired after 8s
+  23:38:45.036  session end     timeout after 8947 ms
+
+### idle_timeout fires when nothing happens
+$ kelyfos run --image dev --idle-timeout 6s
+kelyfos: the idle_timeout budget of 6s expired after 6s; stopping the sandbox
+exit: 124   wall: 7s
+
+### and does not fire while the agent is working
+$ kelyfos run --image dev --idle-timeout 6s -- \
+      sh -c 'for i in 1..6; do kelyfos exec "echo tick $i"; sleep 3; done'
+agent-finished ; sh exited 0
+exit: 0     wall: 20s     (18 s of work under a 6 s idle budget)
+
+### the ceiling still binds
+$ kelyfos run --max-runtime 1h        # against max_runtime = "10s"
+kelyfos: --max-runtime 1h0m0s exceeds the ceiling max_runtime = 10s set at
+         /tmp/e16e/kelyfos.toml:2
+
+$ go test ./host/
+--- PASS: TestIdleBudgetFiresOnlyWhenNothingHappens  (busy 5s, then fires)
+--- PASS: TestMaxRuntimeFiresRegardlessOfActivity
+--- PASS: TestNoBudgetsNeverFires
+--- PASS: TestEveryDocumentedResourceKeyParses / TestBudgetsRejectNonsense
+ok  host  internal/config  internal/egress  internal/proto  internal/recorder
+ok  internal/sandbox  supervisor</pre></td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>

@@ -84,7 +84,7 @@ func (p *Proxy) terminate(client net.Conn, host string, port int, secret *Secret
 		// the client would sit there until its own timeout with the whole body
 		// already in hand.
 		indeterminate := resp.ContentLength < 0 && resp.TransferEncoding == nil
-		werr := resp.Write(inner)
+		werr := resp.Write(activeWriter{inner, p})
 		resp.Body.Close()
 		if werr != nil || indeterminate || resp.Close || req.Close {
 			break
