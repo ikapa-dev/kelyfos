@@ -166,7 +166,7 @@
     <span class="bl-name">Overall</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">P1-8 — cross-arch gate: make image ARCH=x86_64 must build< 200 MB</b></div>
+  <div class="focusline">Current focus: <b id="focus">Phase 1 acceptance test< 200 MB</b></div>
 </div>
 
 <!-- ====================================================== 1. END GOAL -->
@@ -373,7 +373,7 @@
         <span class="tid">P1-6</span><span class="tk"><code>kelyfos exec "&lt;cmd&gt;"</code>: newline-delimited JSON over Firecracker's vsock UDS → run in guest → return stdout, stderr, exit code.</span></li>
     <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">P1-7</span><span class="tk">Measure boot-to-ready (host timestamp → first vsock heartbeat). Record the number in the progress log. Target this phase: ≤ 500 ms.</span></li>
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">P1-8</span><span class="tk">Cross-arch gate: <code>make image ARCH=x86_64</code> cross-builds cleanly on the aarch64 dev machine (build only — no local boot required). From this point it must keep passing on every commit; boot verification for x86_64 lands with CI in P3-6. Pulled forward so x86-specific breakage is caught in days, not weeks.</span></li>
   </ul>
   <div class="accept">
@@ -672,6 +672,9 @@ make image         <span class="c"># kernel Image (aarch64) / vmlinux (x86_64) +
         <tr><td class="mono">2026-08-22</td><td class="mono">P1-7</td>
         <td><b>Why the target is missed, with evidence rather than a guess.</b> Measured inside the guest against the Lima VM that hosts it: user-mode CPU is at parity (64 MiB md5 in 86 ms in the guest vs 121 ms in the VM), pure syscalls are effectively free, but <b>virtio block I/O runs at about 77 MB/s</b> (32 MiB read in 413 ms). So compute is native and the cost is concentrated in the virtualised device and MMIO path — which is exactly where nested virtualisation is expensive, since every L2 exit is serviced by Lima's hypervisor. The kernel's own boot log agrees: the 465 ms to reach userspace is spread thinly across many initcalls with no single hotspot above 70 ms, which is what uniformly-expensive traps look like rather than one slow driver. This is the situation the plan's own risk table anticipates — &quot;nested-virt overhead means Mac-local timings are informational; Linux CI publishes the reference numbers&quot; — so the reference measurement for the ≤ 500 ms claim belongs to <code>make bench</code> on bare Linux at P3-6, and these numbers stand as the dev-machine baseline. <b>Surfacing it rather than burying it: the phase target is unmet on this platform and no v0.1 claim should quote 500 ms.</b></td>
         <td class="mono">guest vs its own host (L1), same workloads, host-side timing minus a 61 ms exec baseline:<br>CPU-bound 64 MiB md5    guest=86 ms   L1=121 ms  → parity<br>syscall-bound 400k ops  guest≈0 ms    L1=57 ms   → no penalty<br>virtio-blk 32 MiB read  guest=413 ms  (~77 MB/s) → the bottleneck<br>dmesg gap analysis: largest single gap 0.070 s (&quot;applying system-wide alternatives&quot;), remainder spread across ~100 initcalls</td></tr>
+        <tr><td class="mono">2026-08-22</td><td class="mono">P1-8</td>
+        <td>Cross-arch gate passing: <code>make image ARCH=x86_64</code> builds cleanly on the aarch64 dev machine, from the same fragments and the same one-line arch delta — a full cross toolchain (binutils, gcc 14.3.0, musl 1.2.6), kernel and rootfs, with no aarch64 assumptions leaking in. The artifact is the <b>uncompressed ELF <code>vmlinux</code></b>, 26 194 408 bytes, which is what Firecracker boots on x86_64 — not a bzImage — and the per-arch selection is asserted by <code>image/check-kernel.sh</code> on every build rather than assumed. The guest supervisor is cross-compiled to amd64 into the x86 rootfs by the same target. The two architectures build into separate trees and the aarch64 artifacts are untouched afterwards. Build-only as the task specifies; x86_64 boot verification lands with CI at P3-6.</td>
+        <td class="mono">limactl shell kelyfos-dev -- make image ARCH=x86_64 → EXIT=0<br>==&gt; config verified: every requested symbol is present in .config (buildroot and kernel)<br>==&gt; vmlinux: ELF 64-bit LSB executable, x86-64, version 1 (SYSV), statically linked … (26194408 bytes)<br>==&gt; rootfs.ext4 67108864 bytes (5.2M on disk, sparse) — under the 200 MB budget<br>==&gt; rootfs contains /init and /sbin/kelyfos-supervisor (3 174 560 bytes, mode 0755)<br>out/aarch64 → Image rootfs.ext4 · out/x86_64 → vmlinux rootfs.ext4<br>aarch64 Image still &quot;Linux kernel ARM64 boot executable&quot; after the x86 build</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
