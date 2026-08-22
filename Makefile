@@ -173,7 +173,7 @@ test: ## Run the test suite (unit tests; integration tests skip without an image
 	go test ./...
 
 test-integration: linux-only cli ## Boot a real microVM and exercise the guest
-	go test -count=1 -v -timeout 15m -run 'TestConcurrent|TestOrphans|TestExec' ./internal/sandbox/
+	go test -count=1 -v -timeout 15m -run 'TestConcurrent|TestOrphans|TestExec|TestMCP' ./internal/sandbox/
 
 clean: ## Remove build output (keeps the downloaded Buildroot toolchain)
 	rm -rf $(OUT_DIR) $(IMAGE_DIR) $(GUEST_OVERLAY)
