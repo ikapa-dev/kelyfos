@@ -36,14 +36,21 @@ permissions:
   contents: read
 
 concurrency:
-  # Keyed on the event as well as the ref, so a push to main cannot cancel the
-  # weekly from-source build that is the whole point of the schedule.
-  group: ci-${{ github.ref }}-${{ github.event_name }}
-  # Superseding a branch's older run is the point of this setting; superseding
-  # main's is not. Every commit that lands on main is a commit someone may bisect
-  # to, and this project's own protocol produces closely-spaced pairs — the work,
-  # then the status file — where the second push would otherwise cancel the first
-  # commit's build and leave it looking verified when nothing verified it.
+  # On main, every commit gets a group of its own, keyed on its sha. Elsewhere,
+  # one group per ref and event.
+  #
+  # cancel-in-progress: false is not enough on its own, and finding that out
+  # cost a second attempt at this. GitHub's concurrency model cancels a
+  # *pending* run when a newer one queues behind the same in-progress run, so
+  # with one shared group a rapid three-push sequence still loses the middle
+  # commit — which is exactly the sequence this project's protocol produces:
+  # the work, then STATUS.md. A per-sha group means main's runs never queue
+  # behind each other and none of them can be superseded. Every commit on main
+  # is one someone may bisect to, so every one of them gets built.
+  #
+  # The event is in the key as well, so a push cannot displace the weekly
+  # from-source build that is the whole point of the schedule.
+  group: ci-${{ github.event_name }}-${{ github.ref }}-${{ github.ref == 'refs/heads/main' && github.sha || 'tip' }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
