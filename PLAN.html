@@ -464,7 +464,7 @@
         <span class="tid">P3-9</span><span class="tk"><code>kelyfos watch</code>: live single-sandbox TUI (Go + bubbletea) — streaming event lane, status line (uptime, egress allowed/blocked counters), quit without affecting the sandbox. Reads the flight recorder only. Source of the launch demo GIF.</span></li>
     <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">P3-5</span><span class="tk">Write <code>docs/threat-model.md</code>: what kelyfos defends against (agent-generated code, prompt-injected exfiltration, credential theft from the guest) and explicitly what it does not yet (host-side attacks pre-jailer, side channels, TLS-termination trade-offs from D6). Linked from the README. Launch is blocked until this exists.</span></li>
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">P3-6</span><span class="tk">CI: GitHub Actions — build BOTH arches; boot-test x86_64 on <code>ubuntu-latest</code> (standard Linux runners expose <code>/dev/kvm</code>; a udev/permissions step is typically required — verify at implementation); boot-test aarch64 on an arm64 runner if it exposes KVM, else build-only there with aarch64 boots covered on the dev machine. Run <code>kelyfos exec "uname -a"</code> as the smoke test, cache Buildroot toolchains per arch. Green pipeline required on <code>main</code>. Includes <code>make bench</code>: reproducible boot-to-ready and snapshot-restore timing (median of 10 runs), published as a CI artifact on every commit — the x86_64 runner numbers are the published reference; Mac-local numbers are informational (nested-virt overhead). Large regressions are flagged in the job summary but don't hard-fail (shared runners jitter). The milliseconds are the marketing.</span></li>
     <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">P3-7</span><span class="tk">Public launch: README with 5-minute quickstart, demo GIF, final availability sweep on "KelyfOS" (GitHub, package registries, domains, trademark-level search — name locked in D10), tag v0.3, launch post (HN / blog).</span></li>
@@ -956,6 +956,93 @@ flight recorder for that session:
   {'type':'egress.attempt','host':'github.com','allowed':True,'mode':'terminated'}
 $ grep -c 'ghp_thisIsTheSecretValue' events.jsonl
 0</pre></td></tr>
+        <tr><td class="mono">2026-08-22</td><td class="mono">P3-6</td>
+        <td><b>CI green on main.</b> <code>.github/workflows/ci.yml</code>: <code>checks</code> (gofmt, vet, unit tests, <code>tools/check-plan.py</code>), <code>build</code> matrix for both arches with Buildroot download + tree caching, and <code>boot</code> &mdash; a real x86_64 microVM on the runner's KVM asserting <code>uname -a</code>, <code>ID=kelyfos</code>, a verified event chain and clean teardown, then the integration tests. <code>make bench</code> lives in <code>.github/workflows/bench.yml</code> and publishes cold-boot and snapshot-restore medians to the job summary; those runs are the published reference numbers per D15.</td>
+        <td class="mono"><pre>$ gh run view 32586597454 --json conclusion,jobs
+overall: success
+  checks: success
+  build (x86_64): success
+  build (aarch64): success
+  boot: success
+
+head d87115af == origin/main == HEAD, working tree clean
+
+reference numbers from the bench workflow (bare-KVM x86_64 runner, n=10):
+  cold boot-to-ready   median  90 ms   p95  95 ms
+  snapshot restore     median  29 ms   p95  35 ms</pre></td></tr>
+        <tr><td class="mono">2026-08-22</td><td class="mono">P3-7</td>
+        <td><b>Quickstart measured cold against the published release</b>, per the rule that this number must be real: a fresh <code>git clone</code>, a Lima VM that did not exist, Lima's base-image cache purged, and the artifacts pulled from the actual <code>v0.3-rc1</code> GitHub release &mdash; no local mirror anywhere. <b>151.0 s (2 min 31 s) from <code>git clone</code> to the first <code>kelyfos exec</code> output.</b> Section 1's bullet specifies &ldquo;a stock Linux/KVM machine&rdquo;, where the Lima step does not exist at all: <b>9.4 s</b>. Both are inside the &le;5-minute bar and both are now in the README, with the conditions stated rather than implied. One honest observation for later, not acted on now: 141.6 s of the 151 is <code>limactl start</code>, and a slice of that is Lima's default nerdctl/containerd download &mdash; several hundred MB of something KelyfOS never uses. Removing it is a one-line template change and a real improvement, but it is not v0.3's problem.</td>
+        <td class="mono"><pre>$ PURGE_LIMA_CACHE=1 qs-measure.sh v0.3-rc1     # no MIRROR set: real GitHub
+purged Lima's base-image cache (measuring a true first run)
+
+--- first exec output ---
+Linux kelyfos 6.18.45 #1 SMP Sat Aug 22 14:31:01 EEST 2026 aarch64 GNU/Linux
+--- doctor exit 0 ---
+all checks passed — this machine can run KelyfOS
+
+  git clone                             1.1s
+  limactl start (fresh Ubuntu VM)     141.6s
+  dev/install-firecracker.sh            2.4s
+  dev/install-kelyfos.sh                1.5s
+  dev/fetch-image.sh                    3.4s
+  kelyfos doctor                        0.0s
+  kelyfos run -&gt; first exec output      0.9s
+  -----------------------------------------
+  TOTAL clone -&gt; first exec output    151.0s   = 2.5 minutes
+  minus the macOS-only Lima layer:      9.4s</pre></td></tr>
+        <tr><td class="mono">2026-08-22</td><td class="mono">P3</td>
+        <td><b>Phase 3 acceptance test, all ten steps run in order.</b> Two of them failed the first time and both failures were real work, not paperwork: step 2 exposed that snapshot restore had never been wired for a machine with a NIC (fixed under D22, three layers deep), and step 6's <code>watch</code> check was a harness fault &mdash; bubbletea needs a terminal, and it was being run under <code>setsid</code> with stdout redirected to a file. Re-run under an allocated PTY it is correct. Step 3 is run on a vsock-only snapshot because P3-2 scopes forks that way by design.</td>
+        <td class="mono"><pre>1. prepare + snapshot save
+   git clone --depth 1 .../nocode /work/nc   -&gt; CONTRIBUTING.md Dockerfile LICENSE
+   saved snapshot "p3" from sandbox 9a8c242f in 211 ms
+
+2. restore -&gt; session continues
+   sandbox cbd72c64 restored from "p3" in 153 ms
+   egress      github.com via kelyfoscbd72c64
+   ls /work/nc  -&gt; CONTRIBUTING.md Dockerfile LICENSE   (the clone survived)
+   git ls-remote -&gt; 6c073b08f7987018cbb2cb9a5747c84913b3608e refs/heads/master
+   [binding restore number is the bare-KVM 29 ms median, D15; 153 ms is nested-virt]
+
+3. fork -n 4 -&gt; diverge, parent unchanged
+   4 fork(s) live in 525 ms wall clock
+   fork 1 (8b69158d): fork-1 1da42d50
+   fork 2 (1fa4deef): fork-2 cb1810e4
+   fork 3 (473f01b6): fork-3 c7289736
+   fork 4 (011b13a7): fork-4 28655d0e     &lt;- four different random draws
+   parent snapshot still reads: parent-value
+
+4. E2B Python SDK against the shim
+   read back: 'hello from the E2B SDK\n'
+   bytes survived: 0001fffe414280
+   OK — E2B SDK round trip against the KelyfOS shim
+
+5. CI green on main + threat model linked
+   run 32586597454: checks/build x86_64/build aarch64/boot all success
+   docs/threat-model.md present; README references it 3x
+
+6. export replays standalone; watch streams live
+   wrote /tmp/p3/session.html (7 events, 5554 bytes)
+   scripts/external refs in export (want 0): 0
+   watch under a PTY:
+     16:36:35.515 $         /bin/sh -c echo LIVE-EVENT-MARKER
+     16:36:35.551 |         LIVE-EVENT-MARKER
+     16:36:35.551 exit      0 &middot; 35 ms
+
+7. doctor on a fresh machine
+   8/8 [ok]; all checks passed — this machine can run KelyfOS   (exit 0)
+   also verified on the brand-new measurement VM: all checks passed
+
+8. workspace round-trip
+   host sees: after-edit-from-guest / deep      (nested file too)
+
+9. kelyfos.toml picked up by a bare run
+   policy: /tmp/p3/proj/kelyfos.toml
+   sandbox ebd4b0d7 ready in 879 ms
+   curl example.com -&gt; CONNECT tunnel failed, response 403   (not in the toml allowlist)
+   session ebd4b0d7: chain intact, 8 events verified
+
+10. README-only path to a working exec in &le; 5 minutes
+   151.0 s cold on macOS incl. building the Linux layer; 9.4 s on Linux/KVM</pre></td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>

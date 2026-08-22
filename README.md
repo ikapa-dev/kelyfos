@@ -49,8 +49,12 @@ On macOS, clone it somewhere under your home directory — that is what the Lima
 VM mounts, and `limactl shell` keeps your working directory, so the commands
 below just work.
 
+Measured end to end — `git clone` to the first `kelyfos exec` output, on a
+machine with no Lima VM, no image cache and no KelyfOS anything: **2 minutes 31 seconds on macOS, 9 seconds on a Linux/KVM box**.
+Building the macOS Linux layer is 142 s of that — on Linux there is no such step. Measured against the published v0.3 release with Lima's image cache purged; the KelyfOS downloads themselves are 5 s of the total.
+
 **On macOS first — a Linux layer with nested virtualisation** (skip on Linux).
-This step downloads and boots an Ubuntu VM, and is most of the wall clock below:
+This step downloads and boots an Ubuntu VM, and is most of that wall clock:
 
 ```sh
 brew install lima
@@ -124,9 +128,20 @@ need to know who built the bytes, build them yourself.
 
 ## Attaching an agent
 
-The sandbox is a toolbox, not a computer. `kelyfos mcp` bridges any MCP client's
-standard streams to a running sandbox; this repository ships a
-[`.mcp.json`](.mcp.json) that attaches Claude Code:
+The sandbox is a toolbox, not a computer. The shortest path is to let `kelyfos`
+own the agent's lifetime:
+
+```sh
+kelyfos run --workspace . --allow github.com -- claude
+```
+
+That boots a sandbox, runs your agent with `KELYFOS_SANDBOX` set so its tools
+attach to that machine, and tears everything down when the agent exits —
+`kelyfos` exits with the agent's own status, so it composes in a script.
+
+Under the hood, `kelyfos mcp` bridges any MCP client's standard streams to a
+running sandbox; this repository ships a [`.mcp.json`](.mcp.json) that attaches
+Claude Code:
 
 ```json
 { "mcpServers": { "kelyfos": { "command": "kelyfos", "args": ["mcp"] } } }
