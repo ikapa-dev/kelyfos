@@ -1,0 +1,3 @@
+# KelyfOS — x86_64 (CI reference architecture, cross-built from the aarch64 dev
+# machine and gated from P1-8 onward).
+BR2_x86_64=y

@@ -1,0 +1,2 @@
+# KelyfOS — aarch64 (primary architecture, decision D9).
+BR2_aarch64=y

@@ -1,0 +1,7 @@
+# KelyfOS br2-external tree — Kconfig entry point.
+#
+# Deliberately empty for now. The supervisor (P2-1) is a static Go binary
+# cross-compiled by the Go toolchain pinned in versions.mk, not by Buildroot's,
+# so it arrives through the rootfs overlay rather than as a Buildroot package.
+# Add `source "$BR2_EXTERNAL_KELYFOS_PATH/package/<name>/Config.in"` lines here
+# if that ever stops being true.

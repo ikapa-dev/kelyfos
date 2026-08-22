@@ -20,8 +20,20 @@ FLAVOR ?= base
 # Where artifacts land, and where the heavy Buildroot trees live. BUILD_DIR is
 # deliberately overridable: on macOS the repo sits on a virtiofs mount, and
 # Buildroot must not build there (device nodes, hardlinks, fakeroot, IO volume).
-OUT_DIR   ?= $(CURDIR)/bin
-BUILD_DIR ?= $(HOME)/.cache/kelyfos/build/$(ARCH)
+OUT_DIR       ?= $(CURDIR)/bin
+KELYFOS_CACHE ?= $(HOME)/.cache/kelyfos
+DL_DIR        ?= $(KELYFOS_CACHE)/dl
+BR_SRC        ?= $(KELYFOS_CACHE)/buildroot-$(BUILDROOT_VERSION)
+BUILD_DIR     ?= $(KELYFOS_CACHE)/build/$(ARCH)
+
+# Buildroot invocation. BR2_EXTERNAL must be absolute: Buildroot resolves a
+# relative one against its own source directory, not ours. BR2_DL_DIR is shared
+# across architectures — the source tarballs are identical.
+BR_EXTERNAL  := $(CURDIR)/image/buildroot
+BR_FRAGMENTS := $(BR_EXTERNAL)/configs/kelyfos_common.fragment \
+                $(BR_EXTERNAL)/configs/kelyfos_$(ARCH).fragment
+BR_MAKE       = $(MAKE) -C $(BR_SRC) O=$(BUILD_DIR) \
+                  BR2_EXTERNAL=$(BR_EXTERNAL) BR2_DL_DIR=$(DL_DIR)
 
 # Kernel artifact differs per architecture and both must be uncompressed:
 # Firecracker boots the ELF vmlinux on x86_64 and the raw Image on aarch64.
@@ -32,7 +44,7 @@ KERNEL_ARTIFACT := vmlinux
 endif
 
 .DEFAULT_GOAL := help
-.PHONY: help versions toolchain image run clean test
+.PHONY: help versions toolchain image run clean test linux-only
 
 help: ## Show this target list
 	@echo "KelyfOS — targets (ARCH=$(ARCH), FLAVOR=$(FLAVOR))"
@@ -53,10 +65,33 @@ versions: ## Print the pinned toolchain versions (versions.mk)
 	@echo "  firecracker  $(FIRECRACKER_VERSION)"
 	@echo "  go           $(GO_VERSION)"
 
-toolchain: ## Download and prepare the pinned Buildroot tree (long, once per arch)
-	@echo "[stub] toolchain: fetch Buildroot $(BUILDROOT_VERSION), verify sha256,"
-	@echo "                  unpack into $(BUILD_DIR), apply image/buildroot/ as an"
-	@echo "                  external tree and configure for ARCH=$(ARCH). (P1-1)"
+toolchain: linux-only $(BUILD_DIR)/.config ## Download and prepare the pinned Buildroot tree (long, once per arch)
+	@echo "==> building the $(ARCH) cross toolchain (long; once per architecture)"
+	+$(BR_MAKE) toolchain
+	@echo "==> toolchain ready: $$($(BUILD_DIR)/host/bin/*-linux-*-gcc --version 2>/dev/null | head -1)"
+
+# Buildroot's own tree, fetched and checksum-verified against versions.mk.
+$(BR_SRC)/Makefile:
+	@$(CURDIR)/image/fetch-buildroot.sh \
+	  "$(BUILDROOT_VERSION)" "$(BUILDROOT_SHA256)" "$(DL_DIR)" "$(dir $(BR_SRC))"
+
+# The per-arch configuration, assembled from the shared fragment plus the arch
+# fragment. Regenerated whenever either fragment changes, so an edit to the
+# config cannot be silently ignored by a stale build directory.
+$(BUILD_DIR)/.config: $(BR_SRC)/Makefile $(BR_FRAGMENTS)
+	@mkdir -p $(BUILD_DIR)
+	@echo "==> configuring buildroot for ARCH=$(ARCH)"
+	@cat $(BR_FRAGMENTS) > $(BUILD_DIR)/kelyfos_defconfig
+	$(BR_MAKE) defconfig BR2_DEFCONFIG=$(BUILD_DIR)/kelyfos_defconfig
+	@$(CURDIR)/image/check-config.sh $(BUILD_DIR)/kelyfos_defconfig $(BUILD_DIR)/.config
+
+linux-only:
+	@if [ "$$(uname -s)" != "Linux" ]; then \
+	  echo "This target builds a Linux guest image and must run on Linux."; \
+	  echo "On macOS use the Lima layer:"; \
+	  echo "    limactl shell kelyfos-dev -- make $(MAKECMDGOALS)"; \
+	  exit 1; \
+	fi
 
 image: ## Build the guest kernel + rootfs.ext4 for ARCH/FLAVOR
 	@echo "[stub] image: build linux $(LINUX_VERSION) as $(KERNEL_ARTIFACT) (uncompressed)"
