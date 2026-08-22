@@ -126,7 +126,7 @@
      improvements to the existing product land here as epics. Inert until its gate opens.</p>
   <div class="meta">
     owner: <b>John</b> &nbsp;&middot;&nbsp; developer: <b>Claude Code</b> &nbsp;&middot;&nbsp;
-    status: <b class="amber" id="meta-status">QUEUED — build plan in progress; do not start (see the gate)</b> &nbsp;&middot;&nbsp;
+    status: <b class="ok" id="meta-status">Epic E1 — active</b> &nbsp;&middot;&nbsp;
     last updated: <b id="meta-updated">2026-08-22</b><br>
     repo file: <b>PLAN-FEATURES.html</b> (lives at the repository root next to <code>PLAN.html</code>)<br>
     <span class="quiet">Companion to PLAN.html — same protocol, same rules, later timeline.</span>
@@ -166,7 +166,7 @@
     <span class="bl-name">All epics</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">— (queued; nothing may start until the gate below is satisfied)</b></div>
+  <div class="focusline">Current focus: <b id="focus">E1-0 — baseline reconcile: establish which resource-caps revision actually shipped</b></div>
 </div>
 
 <!-- ====================================================== 1. ACTIVATION GATE -->
@@ -215,13 +215,13 @@
 </section>
 
 <!-- ====================================================== 3. EPIC E1 -->
-<section class="phase" id="e1" data-phase="E1" data-status="todo">
+<section class="phase" id="e1" data-phase="E1" data-status="active">
   <div class="phase-head">
     <div>
       <div class="kconfig">config KELYFOS_EPIC_E1</div>
       <h2>Epic E1 — Resource governance (v0.4)</h2>
     </div>
-    <span class="badge">QUEUED</span>
+    <span class="badge">ACTIVE</span>
   </div>
   <p>Goal: <b>the user decides exactly how much machine the agent gets — and can prove the limits held.</b>
      The build plan targets the caps that are free at boot time (vCPU count, RAM, disk size — the VM&rsquo;s hardware,
@@ -897,6 +897,20 @@
             Reference numbers at this point: 90&nbsp;ms median cold boot, 29&nbsp;ms median restore (bare-KVM CI) — E2&rsquo;s
             fork bar and E5&rsquo;s session mechanics inherit large headroom.</td>
         <td class="mono">build status report + this document</td></tr>
+        <tr><td class="mono">2026-08-22</td><td class="mono">gate</td>
+        <td><b>Activated.</b> The build plan reached 100% of what this gate asks for, and both halves of section 1 were
+        checked rather than assumed. <i>Phase 3 exit checkpoint:</i> tag <code>v0.3</code> exists (annotated object
+        <code>0daa5fe3</code> &rarr; commit <code>eb8ba6e0</code>), the repository is public, and PLAN.html says so itself —
+        its status line reads &ldquo;v0.3 tagged &amp; public — phases 0&ndash;3 done, 36/43&rdquo;, its Phase 3 is
+        <code>data-status="done"</code> at 12/12, and its progress log carries the release row.
+        <i>Definition of done (PLAN.html &sect;1):</i> all six bullets met — clone-to-working-command 9.4&nbsp;s on a stock
+        Linux/KVM machine (151.0&nbsp;s including building the macOS Linux layer, both measured cold against the published
+        release); the full <code>--secret</code> invocation verified with the token absent from the guest and appearing zero
+        times in the flight recorder; 90&nbsp;ms cold boot and 29&nbsp;ms restore on the bare-KVM reference with
+        <code>fork -n 4</code> diverging; hash-chained audit log live and exportable standalone; E2B SDK smoke test passing;
+        published Apache-2.0 with README, quickstart and demo, dogfooded through real Claude Code.
+        Per the gate's own carve-out, PLAN.html's Phase 4 backlog (0/7) does not block. Epic E1 opens at E1-0.</td>
+        <td class="mono">PLAN.html status line + progress log; git tag v0.3; gh repo view -&gt; PUBLIC</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
