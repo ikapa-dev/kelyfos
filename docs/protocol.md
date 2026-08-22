@@ -302,7 +302,28 @@ Request/response, correlated by `id`. Introduced with the supervisor in P2-1.
 | --- | --- | --- |
 | `ping` | — | `{"ok":true}`. Liveness without waiting for a heartbeat. |
 | `shutdown` | — | Terminate children, flush, unmount, halt. The host still supervises the Firecracker process and force-kills after a grace period. |
+| `trust` | `ca_pem` | Install the egress CA's trust anchor (P2-6). |
 | `resync` | `realtime_ns`, `entropy` | Post-snapshot-restore fix-up (P3-1). |
+
+```json
+{"v":1,"id":"c3","op":"trust","ca_pem":"-----BEGIN CERTIFICATE-----\n…"}
+```
+
+`trust` carries a **certificate, never a key**: the guest is asked to trust the
+proxy, not given the means to impersonate it. It arrives over this channel
+rather than being baked into the image for two reasons — the CA is minted per
+run and never persisted (decision D6), so an image-baked one would be wrong for
+every run but the one that made it; and the rootfs is read-only, so there is
+nowhere to put it until the overlay is up.
+
+The supervisor writes it into the guest trust store *and* points
+`SSL_CERT_FILE`, `CURL_CA_BUNDLE`, `REQUESTS_CA_BUNDLE`, `NODE_EXTRA_CA_CERTS`
+and `GIT_SSL_CAINFO` at it. The environment variables are not belt and braces:
+Python's `requests` ships its own CA bundle in `certifi` and Node carries its own
+roots, and both ignore the system store entirely. KelyfOS can do this only
+because it owns the guest's default environment (§5.2) — which is the reason
+decision D6 chose termination here and would not choose it on a general-purpose
+machine.
 
 ```json
 {"v":1,"id":"c2","op":"resync","realtime_ns":1787654321000000000,"entropy":"<base64, 32 bytes>"}
