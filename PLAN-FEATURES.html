@@ -1,0 +1,940 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KelyfOS — PLAN-FEATURES (features &amp; improvements, post-v0.3)</title>
+<style>
+  :root{
+    --bg:#10161d;         /* deep blue-slate, not black */
+    --panel:#161e28;
+    --panel-2:#1b2431;
+    --line:#26313f;
+    --text:#c9d4de;
+    --muted:#71818f;
+    --amber:#f0a63c;      /* phosphor amber — primary accent */
+    --ok:#58c470;         /* kernel [ OK ] green — status only */
+    --warn:#d96a5f;       /* risk / blocked only */
+    --mono:ui-monospace,"Cascadia Code","SF Mono","JetBrains Mono",Consolas,monospace;
+    --sans:-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  @media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+  body{margin:0;background:var(--bg);color:var(--text);font:16px/1.65 var(--sans)}
+  .wrap{max-width:900px;margin:0 auto;padding:48px 24px 96px}
+
+  /* ---------- header ---------- */
+  .masthead{margin-bottom:40px}
+  .masthead h1{font:700 40px/1.1 var(--mono);letter-spacing:.02em;margin:0;color:#e8eef4}
+  .masthead h1 span{color:var(--amber)}
+  .tagline{margin:10px 0 0;font-size:17px;color:var(--text)}
+  .meta{margin-top:18px;font:13px/1.8 var(--mono);color:var(--muted)}
+  .meta b{color:var(--text);font-weight:600}
+  .meta .amber{color:var(--amber)}
+
+  /* ---------- boot-log dashboard (signature) ---------- */
+  .bootlog{background:var(--panel);border:1px solid var(--line);border-radius:6px;
+           padding:20px 22px;font:14px/2 var(--mono)}
+  .bootlog .cap{color:var(--muted);font-size:12px;letter-spacing:.14em;text-transform:uppercase;margin-bottom:10px}
+  .bl-row{display:flex;align-items:center;gap:14px;white-space:nowrap}
+  .bl-tag{width:88px;flex:none;text-align:center;font-weight:600}
+  .bl-tag.done{color:var(--ok)}
+  .bl-tag.active{color:var(--amber)}
+  .bl-tag.todo{color:var(--muted)}
+  .bl-name{flex:1;overflow:hidden;text-overflow:ellipsis;color:var(--text)}
+  .bl-name a{color:inherit;text-decoration:none;border-bottom:1px dotted var(--line)}
+  .bl-bar{flex:none;width:180px;height:9px;background:#0c1117;border:1px solid var(--line);border-radius:2px;overflow:hidden}
+  .bl-bar i{display:block;height:100%;width:0;background:var(--amber)}
+  .bl-row[data-s="done"] .bl-bar i{background:var(--ok)}
+  .bl-pct{flex:none;width:44px;text-align:right;color:var(--muted)}
+  .bl-total{margin-top:12px;padding-top:12px;border-top:1px dashed var(--line)}
+  .bl-total .bl-bar{width:180px}
+  .focusline{margin-top:14px;font:14px/1.6 var(--mono)}
+  .focusline b{color:var(--amber);font-weight:600}
+
+  /* ---------- sections ---------- */
+  section{margin-top:56px}
+  .eyebrow{font:12px/1 var(--mono);letter-spacing:.16em;text-transform:uppercase;color:var(--muted);margin:0 0 8px}
+  h2{font:600 24px/1.25 var(--mono);color:#e8eef4;margin:0 0 16px}
+  h3{font:600 16px/1.3 var(--mono);color:var(--text);margin:26px 0 10px}
+  p{margin:0 0 14px}
+  .quiet{color:var(--muted)}
+  code{font:13.5px var(--mono);background:var(--panel-2);border:1px solid var(--line);
+       border-radius:4px;padding:1px 6px;color:#e3b06a}
+  pre{background:var(--panel);border:1px solid var(--line);border-radius:6px;
+      padding:16px 18px;overflow-x:auto;font:13px/1.7 var(--mono);color:var(--text)}
+  pre code{background:none;border:0;padding:0;color:inherit}
+  pre .c{color:var(--muted)}
+  pre .out{color:var(--ok)}
+  ul.plain{padding-left:20px;margin:0 0 14px}
+  ul.plain li{margin:6px 0}
+  table{width:100%;border-collapse:collapse;font-size:14.5px;margin:0 0 14px}
+  th,td{text-align:left;padding:9px 12px;border:1px solid var(--line);vertical-align:top}
+  th{background:var(--panel);font:600 12px/1.4 var(--mono);letter-spacing:.08em;
+     text-transform:uppercase;color:var(--muted)}
+  td{background:transparent}
+  td.mono, .mono{font:13.5px var(--mono)}
+
+  /* ---------- phases ---------- */
+  .phase{background:var(--panel);border:1px solid var(--line);border-radius:6px;
+         padding:24px 26px;margin-top:28px}
+  .phase-head{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap}
+  .kconfig{font:12px var(--mono);color:var(--muted);letter-spacing:.06em}
+  .phase h2{margin:2px 0 0;font-size:21px}
+  .badge{font:12px/1 var(--mono);font-weight:700;padding:5px 10px;border-radius:3px;
+         border:1px solid var(--line);letter-spacing:.08em;margin-left:auto}
+  .phase[data-status="todo"]   .badge{color:var(--muted)}
+  .phase[data-status="active"] .badge{color:var(--amber);border-color:var(--amber)}
+  .phase[data-status="done"]   .badge{color:var(--ok);border-color:var(--ok)}
+  .goal{margin:14px 0 4px;color:var(--text)}
+  .goal b{color:var(--amber);font-weight:600}
+  ul.tasks{list-style:none;padding:0;margin:10px 0 0}
+  ul.tasks li{display:flex;gap:12px;align-items:flex-start;padding:8px 0;border-top:1px dashed var(--line)}
+  ul.tasks li:first-child{border-top:0}
+  ul.tasks input{margin-top:5px;accent-color:var(--ok);flex:none;cursor:not-allowed}
+  ul.tasks .tid{font:12px/1.9 var(--mono);color:var(--muted);flex:none;width:46px}
+  ul.tasks .tk{flex:1}
+  .accept{margin-top:20px;border-top:1px solid var(--line);padding-top:16px}
+  .accept h4{margin:0 0 10px;font:600 13px/1 var(--mono);letter-spacing:.12em;
+             text-transform:uppercase;color:var(--amber)}
+  .accept ol{margin:0;padding-left:22px}
+  .accept li{margin:7px 0}
+  .exit{margin-top:16px;font:13px var(--mono);color:var(--muted)}
+  .exit b{color:var(--text)}
+
+  .callout{border-left:3px solid var(--amber);background:var(--panel);
+           padding:14px 18px;border-radius:0 6px 6px 0;margin:16px 0}
+  .callout.red{border-left-color:var(--warn)}
+  a{color:var(--amber)}
+  footer{margin-top:72px;padding-top:20px;border-top:1px solid var(--line);
+         font:12.5px/1.8 var(--mono);color:var(--muted)}
+  @media print{
+    body{background:#fff;color:#111}
+    .bootlog,.phase,pre{border-color:#bbb;background:#fff}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<!-- ====================================================== MASTHEAD -->
+<header class="masthead">
+  <h1>Kelyf<span>OS</span></h1>
+  <p class="tagline">Features &amp; improvements plan. Everything KelyfOS ships <i>after</i> the build plan
+     (<code>PLAN.html</code>, phases 0&ndash;3, tags v0.0&ndash;v0.3) reaches 100%. New capabilities and
+     improvements to the existing product land here as epics. Inert until its gate opens.</p>
+  <div class="meta">
+    owner: <b>John</b> &nbsp;&middot;&nbsp; developer: <b>Claude Code</b> &nbsp;&middot;&nbsp;
+    status: <b class="amber" id="meta-status">QUEUED — build plan in progress; do not start (see the gate)</b> &nbsp;&middot;&nbsp;
+    last updated: <b id="meta-updated">2026-08-22</b><br>
+    repo file: <b>PLAN-FEATURES.html</b> (lives at the repository root next to <code>PLAN.html</code>)<br>
+    <span class="quiet">Companion to PLAN.html — same protocol, same rules, later timeline.</span>
+  </div>
+</header>
+
+<!-- ====================================================== DASHBOARD -->
+<div class="bootlog" id="bootlog">
+  <div class="cap">Epic status (computed from task checkboxes below)</div>
+  <div class="bl-row" data-phase="E1" data-s="todo">
+    <span class="bl-tag todo">[ TODO ]</span>
+    <span class="bl-name"><a href="#e1">Epic E1 — Resource governance (v0.4)</a></span>
+    <span class="bl-bar"><i></i></span><span class="bl-pct">0%</span>
+  </div>
+  <div class="bl-row" data-phase="E2" data-s="todo">
+    <span class="bl-tag todo">[ TODO ]</span>
+    <span class="bl-name"><a href="#e2">Epic E2 — Agent teams (v0.5)</a></span>
+    <span class="bl-bar"><i></i></span><span class="bl-pct">0%</span>
+  </div>
+  <div class="bl-row" data-phase="E3" data-s="todo">
+    <span class="bl-tag todo">[ TODO ]</span>
+    <span class="bl-name"><a href="#e3">Epic E3 — LLM-native documentation (v0.6)</a></span>
+    <span class="bl-bar"><i></i></span><span class="bl-pct">0%</span>
+  </div>
+  <div class="bl-row" data-phase="E4" data-s="todo">
+    <span class="bl-tag todo">[ TODO ]</span>
+    <span class="bl-name"><a href="#e4">Epic E4 — MCP surface (v0.7)</a></span>
+    <span class="bl-bar"><i></i></span><span class="bl-pct">0%</span>
+  </div>
+  <div class="bl-row" data-phase="E5" data-s="todo">
+    <span class="bl-tag todo">[ TODO ]</span>
+    <span class="bl-name"><a href="#e5">Epic E5 — Daily-driver QoL (v0.8)</a></span>
+    <span class="bl-bar"><i></i></span><span class="bl-pct">0%</span>
+  </div>
+  <div class="bl-row bl-total" data-s="todo">
+    <span class="bl-tag todo">[ TODO ]</span>
+    <span class="bl-name">All epics</span>
+    <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
+  </div>
+  <div class="focusline">Current focus: <b id="focus">— (queued; nothing may start until the gate below is satisfied)</b></div>
+</div>
+
+<!-- ====================================================== 1. ACTIVATION GATE -->
+<section id="gate">
+  <p class="eyebrow">section 1</p>
+  <h2>Activation gate</h2>
+  <p><b>Claude Code: if you are reading this while PLAN.html is still in progress — stop here.
+     This file is not yours yet.</b> It is safe to have in the repo at any time precisely because it is inert.</p>
+  <p>This document activates when, and only when, <b>the build plan is 100% done</b>, meaning both:
+     PLAN.html&rsquo;s definition of done (its &sect;1) is met, and its <b>Phase 3 exit checkpoint</b> is real —
+     tag <code>v0.3</code> exists and the repo is public, with PLAN.html&rsquo;s own status line and progress log saying so.
+     One deliberate carve-out: PLAN.html&rsquo;s Phase 4 is a backlog — &ldquo;a direction, not a deadline&rdquo; by its
+     own words — and does <b>not</b> block this gate; if it did, 100% would never arrive.</p>
+  <p>On activation, Claude Code: sets <code>#meta-status</code> here to
+     <span class="mono">&ldquo;Epic E1 — active&rdquo;</span>, sets Epic E1&rsquo;s <code>data-status</code> to
+     <code>active</code> and its badge to <code>ACTIVE</code>, updates <code>#focus</code>, and logs the
+     activation in the progress log with the PLAN.html evidence (tag + status line) that opened the gate.</p>
+</section>
+
+<!-- ====================================================== 2. PROTOCOL -->
+<section id="protocol">
+  <p class="eyebrow">section 2</p>
+  <h2>How this document works</h2>
+  <p><b>PLAN.html &sect;8 applies here verbatim</b> — top-down execution by list order, task-ID commits,
+     evidence-based checkboxes only, acceptance tests run word-for-word, decision-log-before-deviation,
+     append-only logs, <span class="mono">[BLOCKED:]</span> handling, and committing this file in the same
+     commit as the work it records — read &ldquo;phase&rdquo; in those rules as &ldquo;epic&rdquo; here. Four additions specific to this file:</p>
+  <ul class="tasks" style="list-style:disc;margin-left:20px">
+    <li style="display:list-item"><b>Relationship to the build plan&rsquo;s Phase 4 backlog:</b> PLAN.html P4 is the idea list
+        the build plan left behind; <i>this</i> document is where those ideas (and new ones) become executable.
+        A P4 item that is ready to happen gets promoted into an epic here — goal, tasks with IDs, acceptance test,
+        exit checkpoint, dashboard row, and a decision entry recording the promotion. Items stay listed in P4 for
+        history; the work happens here.</li>
+    <li style="display:list-item">The <b>parking lot</b> (&sect;4) is ideas, not work. Nothing there has a checkbox and nothing
+        there may be coded. Same promotion path as above — write the epic first, <i>then</i> it is work.</li>
+    <li style="display:list-item">The <b>non-goals in PLAN.html &sect;2 still bind</b>. No epic in this file may cross them
+        (no kernel, no VMM, no orchestrator or control plane, no hosted service, no web dashboard).
+        An idea that needs to cross one needs the non-goal renegotiated with John first — by name, in a decision.</li>
+    <li style="display:list-item"><b>Docs ride with features (F-D9).</b> From E3&rsquo;s exit onward, no epic reaches its exit
+        checkpoint until: <code>make docs</code> is clean (CI enforces the generated reference — F-D4); <code>llms.txt</code> /
+        <code>llms-full.txt</code> are regenerated and committed <i>with</i> the epic; every new user-facing command, flag,
+        toml key, or MCP tool has a cookbook recipe that CI executes; the <code>llms-full.txt</code> token count is
+        re-measured and logged; and, when the epic added commands or MCP tools, the E3-5 docs-only exam is re-run against
+        the new surface with its transcript committed. E1 and E2 predate the machinery and are swept in by E3-0/E3-2.</li>
+  </ul>
+</section>
+
+<!-- ====================================================== 3. EPIC E1 -->
+<section class="phase" id="e1" data-phase="E1" data-status="todo">
+  <div class="phase-head">
+    <div>
+      <div class="kconfig">config KELYFOS_EPIC_E1</div>
+      <h2>Epic E1 — Resource governance (v0.4)</h2>
+    </div>
+    <span class="badge">QUEUED</span>
+  </div>
+  <p>Goal: <b>the user decides exactly how much machine the agent gets — and can prove the limits held.</b>
+     The build plan targets the caps that are free at boot time (vCPU count, RAM, disk size — the VM&rsquo;s hardware,
+     enforced by KVM), added to it by a same-day amendment (D11). Because the build run started in parallel with
+     that amendment, E1-0 first establishes which revision actually shipped. This epic then adds the
+     enforcement-grade layer: host CPU-time quotas, I/O throttling, scratch caps, time budgets, and a usage receipt
+     for every session. Everything enforces <b>host-side</b> (F-D2): the guest runs untrusted code and polices nothing.
+     Estimate: 2&ndash;3 weekends.</p>
+  <ul class="tasks">
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">E1-0</span><span class="tk">Baseline reconcile — establish what v0.1 actually shipped before building on it.
+        Check the repo&rsquo;s PLAN.html for the resource-caps amendment — match by <i>content</i>, not decision number
+        (the run logs its own decisions, so &ldquo;D11&rdquo; may be taken by something else). The knobs to look for: <code>--cpus</code>/<code>--mem</code> in P1-5,
+        <code>--disk</code> in P3-10, <code>[resources]</code> defaults in P3-12. Present and implemented &rarr; verify with a quick
+        boot test and move on. Absent (the run started from a pre-amendment copy) &rarr; implement those knobs now as the first
+        work of this epic and add a decision row here noting they shipped in v0.4 rather than v0.1. Either way, log the finding —
+        every task below assumes the knobs exist.</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">E1-1</span><span class="tk"><code>docs/resources.md</code> — semantics &amp; precedence spec, written before code.
+        The <code>[resources]</code> keys in <code>kelyfos.toml</code> become <b>hard ceilings</b>; CLI flags request within them;
+        a flag exceeding its ceiling refuses at boot with an error naming the ceiling and the toml line it came from
+        (this upgrades the v0.1 &ldquo;flags override toml&rdquo; behavior — note it in the doc). Units: <code>cpus</code> integer;
+        <code>mem</code>/<code>disk</code>/<code>scratch</code> human sizes (<code>512M</code>, <code>2G</code>);
+        <code>cpu_quota</code> a percentage of a single core&rsquo;s worth of CPU time (<code>100%</code> = one core&rsquo;s worth;
+        <code>150%</code> = 1.5 cores&rsquo; worth — an absolute quota, exactly the E1-2 mapping). One table lists every cap and
+        the host mechanism that enforces it: KVM machine config, cgroup v2, Firecracker rate limiter, tmpfs mount option, host timer, device size.</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">E1-2</span><span class="tk">Host CPU-time quota: launch each Firecracker process inside its own cgroup v2 slice;
+        <code>cpu_quota</code> (e.g. <code>"150%"</code> = 1.5 cores) is translated by the CLI into cgroup v2
+        <code>cpu.max</code> integer microseconds with a 100&nbsp;ms period — <code>"150%"</code> &rarr; <code>150000 100000</code>,
+        <code>"50%"</code> &rarr; <code>50000 100000</code>; the percentage string never touches the kernel. Document the distinction this creates:
+        <code>cpus</code> caps <i>parallelism</i> (cores the guest sees), <code>cpu_quota</code> caps <i>actual host CPU time</i>.
+        Standalone implementation now; folds into the jailer if PLAN.html P4-1 ever lands.</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">E1-3</span><span class="tk">I/O throttling via Firecracker&rsquo;s <b>native token-bucket rate limiters</b> on the network
+        device and both block devices — configuration of an existing Firecracker feature, no new machinery. Toml keys:
+        <code>net_mbps_rx</code>, <code>net_mbps_tx</code>, <code>disk_iops</code>, <code>disk_mbps</code> &rarr; <code>rate_limiter</code>
+        objects in the drive / network-interface API config.</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">E1-4</span><span class="tk">OOM visibility: the RAM cap is already absolute (VM hardware) — make hitting it legible.
+        The supervisor (PID 1) watches <code>/dev/kmsg</code> for guest OOM-killer events and emits a
+        <code>resource.oom</code> flight-recorder event naming the killed process; <code>kelyfos run</code>&rsquo;s exit
+        distinguishes &ldquo;agent was OOM-killed&rdquo; from a crash.</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">E1-5</span><span class="tk">Scratch cap, named precisely: the P1-3 init mounts one tmpfs that backs the
+        overlayfs <code>upperdir</code>/<code>workdir</code> over the read-only root — <i>that</i> tmpfs mount receives an explicit
+        <code>size=</code> from <code>resources.scratch</code> (default 50% of the <i>guest&rsquo;s</i> RAM — the guest kernel&rsquo;s own default, i.e. relative to the
+        <code>--mem</code> cap, not host memory — now stated instead of implied). All writes outside <code>/work</code> land on it and hit <code>ENOSPC</code> at the cap instead of silently
+        consuming the RAM budget; the workspace disk at <code>/work</code> is a separate block device and unaffected.</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">E1-6</span><span class="tk">Time budgets: <code>--max-runtime</code> and <code>--idle-timeout</code> flags + toml keys.
+        Idle = no vsock RPC <i>and</i> no egress-proxy traffic for the window. On expiry: SIGTERM to the agent &rarr; grace period &rarr;
+        workspace sync-back &rarr; teardown, plus a <code>resource.timeout</code> audit event recording which budget fired.</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">E1-7</span><span class="tk">Usage vs caps, live and after: <code>kelyfos watch</code> gains a resources lane
+        (CPU% vs quota, mem vs cap, disk vs device size, net vs limiter), sampled from the VM slice&rsquo;s cgroup v2
+        <code>cpu.stat</code> / <code>memory.current</code> deltas at a ~1&nbsp;s tick. At teardown the flight recorder gets a
+        <code>resource.summary</code> event — peak RSS, CPU-seconds, bytes tx/rx, disk bytes written — so every session
+        ends with a usage receipt that <code>kelyfos log --export</code> renders.</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">E1-8</span><span class="tk">Enforcement proof: add <code>stress-ng</code> to the dev flavor; drive CPU, memory,
+        disk, and network against deliberately tight caps and verify <b>from the host</b> that each one held.
+        Numbers go in the progress log the same way P1-7&rsquo;s boot times did.</span></li>
+  </ul>
+  <div class="accept">
+    <h4>Acceptance test — recreate &amp; verify</h4>
+    <ol>
+      <li><code>kelyfos run --image dev --cpus 1 --mem 512M --disk 1G</code> with toml: <code>cpu_quota="50%"</code>,
+          <code>net_mbps_rx=10</code>, <code>max_runtime="60s"</code>.</li>
+      <li>In-guest <code>stress-ng --cpu 4</code> &rarr; host cgroup stats show &le; 50% of one core consumed.</li>
+      <li>In-guest <code>dd</code> into <code>/work</code> &rarr; <code>ENOSPC</code> at the 1 GiB device size; same into scratch &rarr;
+          <code>ENOSPC</code> at the scratch cap (unset in step 1, so the default applies: 50% of the 512M guest RAM
+          = 256M).</li>
+      <li>Download from an allowlisted local test server &rarr; observed throughput &le; 10 Mbps.</li>
+      <li>Let the 60 s budget fire &rarr; graceful teardown, workspace sync-back completed, exit status says timeout.</li>
+      <li><code>kelyfos log --verify</code> passes; the log contains <code>resource.timeout</code> and
+          <code>resource.summary</code>; <code>kelyfos log --export</code> renders the usage receipt.</li>
+      <li>A flag exceeding a toml ceiling (<code>--cpus 8</code> vs <code>cpus=2</code>) refuses at boot, naming the ceiling.</li>
+    </ol>
+  </div>
+  <p class="exit">Exit checkpoint: <b>tag v0.4</b> — &ldquo;the user decides how much machine the agent gets.&rdquo;</p>
+</section>
+
+<!-- ====================================================== 3b. EPIC E2 -->
+<section class="phase" id="e2" data-phase="E2" data-status="todo">
+  <div class="phase-head">
+    <div>
+      <div class="kconfig">config KELYFOS_EPIC_E2</div>
+      <h2>Epic E2 — Agent teams (v0.5)</h2>
+    </div>
+    <span class="badge">QUEUED</span>
+  </div>
+  <p>Goal: <b>user-declared multi-agent topologies on one host — isolated agents, enforced edges, shared state,
+     full team audit.</b> A <code>[team]</code> section in <code>kelyfos.toml</code> declares agents and the edges
+     between them; <code>kelyfos team up</code> boots the graph. Think <i>docker-compose for agent teams</i>:
+     master&ndash;workers, full mesh, pipelines, or islands — the edge list is the topology. The agents&rsquo;
+     <i>reasoning</i> (who delegates what) stays in the agent framework; KelyfOS provides the enforced substrate:
+     no guest ever has a network path to another guest — every inter-agent message transits the host broker over
+     the existing vsock channels, is checked against the edge list, and lands in the hash-chained flight recorder.
+     In scope per F-D3 (single-host only); fleet orchestration remains a non-goal. Builds on E1 (team budgets are
+     cgroup hierarchies), P2-4/P2-5 (audit + egress), and P3-2 (fork makes team spawn milliseconds-class — the build plan&rsquo;s restore target, to be confirmed by its
+     P3 measurements).
+     Estimate: 5&ndash;7 weekends — the largest epic in the project.</p>
+  <ul class="tasks">
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">E2-0</span><span class="tk"><code>docs/teams.md</code> — spec first. Toml schema: <code>[team]</code> name;
+        <code>[[team.agent]]</code> name / image / <code>[resources]</code> per agent / per-agent egress allowlist &amp; secrets;
+        <code>[[team.edge]]</code> from / to / bidirectional (default true). Broker semantics: <code>send</code>, <code>recv</code>,
+        <code>ask</code>/<code>reply</code> (correlated question&rarr;answer with a timeout — the primitive agents actually need),
+        team-store access; delivery is at-most-once with explicit errors, no queues-as-a-service. Threat model in the same doc:
+        no guest-to-guest network path exists at all; no edge &rarr; message refused <i>and audited</i>; declared topology is fixed for the run — no live
+        rewiring, with exactly one sanctioned exception: an E2-5 runtime spawn joins with a single edge to its spawner
+        (plus store access per the spawn budget); nothing else changes without a restart. Two clarifications the spec must
+        state: the flight recorder logs message <i>outcomes</i> and is not a delivery buffer — at-most-once delivery and the
+        durable audit log are orthogonal; delivered messages are FIFO per edge. And edge direction: a unidirectional edge is
+        visible in <code>team_peers</code> to the initiating side only; replies to an <code>ask</code> travel the return path of
+        that ask and need no edge of their own.</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">E2-1</span><span class="tk">Broker in the host CLI: routes messages between VM supervisors over the existing
+        per-VM vsock channels, enforcing the edge list. Every message becomes a flight-recorder event — metadata always
+        (from, to, size, hash); payload capture is a per-team toml switch so sensitive teams can log hashes only.
+        Refused sends (no edge) are their own event type.</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">E2-2</span><span class="tk">Guest side: the supervisor exposes team capability as MCP tools —
+        <code>team_send</code>, <code>team_recv</code>, <code>team_ask</code> (ask a peer a question and wait for the answer;
+        the broker correlates the reply and enforces the timeout), <code>team_reply</code>, <code>team_peers</code>,
+        <code>team_store_get</code> / <code>team_store_put</code>. Incoming questions surface to the receiving agent as ordinary
+        MCP tool events, so answering is natural for an LLM.
+        <code>team_peers</code> returns only the agents this node can <i>initiate</i> to (edge-direction rule in E2-0) — an agent
+        cannot enumerate the rest of the team.</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">E2-3</span><span class="tk">Team store: host-side key/blob store per team, the &ldquo;shared knowledge&rdquo; mechanism.
+        Per-key access rules (owner / listed agents / whole team). Stated plainly in the docs, as two separate facts with separate reasons:
+        cross-VM shared RAM is impossible here because Firecracker ships no shared-memory device (its minimal model — F-D1&rsquo;s
+        sibling fact); concurrent read-write mounting of one ext4 disk is impossible because ext4 is not a cluster filesystem —
+        true on any VMM, nothing to do with Firecracker; read-only multi-mounting is fine, and is exactly what the build
+        plan&rsquo;s fork design does with the shared rootfs. The store is the safe equivalent, and unlike shared memory every access is permissioned and audited.</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">E2-4</span><span class="tk"><code>kelyfos team up | ps | down</code>: boot the declared graph (fork from a shared
+        snapshot when agents use the same image — five warm workers in milliseconds-class time per the build plan&rsquo;s
+        restore target; a target until P3 measures it), per-agent workspaces, <code>ps</code> shows
+        agents + edge counts + resource use, <code>down</code> tears down all VMs and syncs all workspaces.</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">E2-5</span><span class="tk">Master spawn capability: an agent whose toml grants <code>team.spawn</code> may request
+        workers at runtime <b>within a declared budget</b> — max count, per-worker resource ceilings, image whitelist, lifetime.
+        The host enforces the budget; every spawn/despawn is an audit event. A spawned worker attaches with exactly
+        one edge — to its spawner — plus whatever store access the budget template grants (the E2-0 exception). The decision <i>to</i> spawn stays agent-side;
+        KelyfOS only enforces what was pre-authorized by the user.</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">E2-6</span><span class="tk">Team resource budget: each team gets a parent cgroup v2 slice — the collective cap —
+        with per-agent E1-2 slices as children; <code>cpu.weight</code> divides contention fairly inside the team.
+        This absorbs the old &ldquo;fair-share&rdquo; parking-lot item, scoped to a team; host-wide or cross-team scheduling
+        remains out of scope (fleet territory).</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">E2-7</span><span class="tk">Team transcript: <code>kelyfos log --verify</code> covers the whole team chain;
+        <code>kelyfos log --export team.html</code> renders per-agent lanes with message flow between them — a replayable
+        record of who told what to whom, with the store accesses inline.</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">E2-8</span><span class="tk"><code>kelyfos watch</code> multi-lane team view: one lane per agent (exec activity,
+        egress, resource use vs caps) plus a message-flow ticker. Supersedes the build plan&rsquo;s P4-6 idea for the team case.</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">E2-9</span><span class="tk">Proof demo, scripted and committed: 1 master + 4 fork-spawned workers; master splits a
+        task via <code>team_send</code>, one worker <code>team_ask</code>s the master a clarifying question mid-task,
+        workers coordinate results through the team store, master assembles the answer.
+        A deliberate edge violation (worker&rarr;worker with no edge) must be refused and logged. Teardown leaves synced
+        workspaces and a verifiable transcript.</span></li>
+  </ul>
+  <div class="accept">
+    <h4>Acceptance test — recreate &amp; verify</h4>
+    <ol>
+      <li><code>kelyfos team up</code> on the committed demo toml (1 master, 4 workers, star topology + store) &rarr; 5 VMs boot;
+          workers spawn via fork, total spawn time recorded — the &lt; 1 s bar binds on the P3-6 reference environment,
+          local nested-virt numbers are informational (per the build plan&rsquo;s P1-7 decision).</li>
+      <li><code>kelyfos team ps</code> shows all five, their edges, and live resource use against E1 caps.</li>
+      <li>The demo task completes end-to-end through <code>team_send</code>/<code>team_recv</code>, at least one
+          <code>team_ask</code> round-trip, and the team store.</li>
+      <li>A worker attempts to message a worker it has no edge to &rarr; refused, and the refusal appears in the log.</li>
+      <li>An agent without <code>team.spawn</code> attempts a spawn &rarr; refused + audited; the master&rsquo;s spawn beyond its
+          budget cap &rarr; refused + audited; one budgeted spawn by the master <i>succeeds</i>, the new worker attaching
+          with a single edge to the master.</li>
+      <li>Host cgroup stats show the team&rsquo;s collective cap held while all five run <code>stress-ng</code>.</li>
+      <li><code>kelyfos team down</code> &rarr; all VMs gone, all workspaces synced.</li>
+      <li><code>kelyfos log --verify</code> passes for the whole session; <code>kelyfos log --export team.html</code> renders
+          the five-lane transcript including the refused events.</li>
+    </ol>
+  </div>
+  <p class="exit">Exit checkpoint: <b>tag v0.5</b> — &ldquo;agent teams as code.&rdquo;</p>
+</section>
+
+<!-- ====================================================== 3c. EPIC E3 -->
+<section class="phase" id="e3" data-phase="E3" data-status="todo">
+  <div class="phase-head">
+    <div>
+      <div class="kconfig">config KELYFOS_EPIC_E3</div>
+      <h2>Epic E3 — LLM-native documentation (v0.6)</h2>
+    </div>
+    <span class="badge">QUEUED</span>
+  </div>
+  <p>Goal: <b>any LLM tool (Claude Code or otherwise) can build on KelyfOS from the docs alone — zero source reading.</b>
+     A user should be able to say &ldquo;use KelyfOS to run three agents that each check one supplier site&rdquo; and have their
+     coding agent produce a correct script on the first try. The build plan&rsquo;s spec-first tasks already accumulate the concept
+     docs (protocol, networking, events, resources, teams); this epic turns them into a product for machine readers.
+     Core principle (F-D4): the <i>reference</i> is generated from the code — flags, toml keys, MCP tool schemas, event types,
+     exit codes — so it cannot drift; CI fails if committed docs disagree with the source. Ordered after E2 because it must
+     document teams. Estimate: 2&ndash;3 weekends.</p>
+  <ul class="tasks">
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">E3-0</span><span class="tk">Docs inventory: list every doc the build produced (protocol.md, networking.md,
+        events.md, resources.md, teams.md, threat model), mark what is concept vs reference vs missing, and write
+        <code>docs/README.md</code> as the human/LLM entry map.</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">E3-1</span><span class="tk">Generated reference: <code>make docs</code> extracts, from the code itself,
+        every CLI command and flag (from the Go flag definitions), every <code>kelyfos.toml</code> key with type and default
+        (from struct tags), every MCP tool the supervisor exposes with its schema, every flight-recorder event type, and all
+        exit codes. CI runs <code>make docs</code> and fails on any diff — the reference is physically unable to go stale.</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">E3-2</span><span class="tk"><code>llms.txt</code> — a Markdown link index exactly per the llmstxt.org spec — and <code>llms-full.txt</code>, the
+        de-facto companion the ecosystem converged on (not part of the core spec; say so in the file header): the entire
+        product in one file, generated reference + concepts + recipes, at the repo root.
+        Measure the token count of the full file and record it in the progress log; it must fit comfortably in a typical
+        LLM context window.</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">E3-3</span><span class="tk">Cookbook: self-contained copy-paste recipes — run one sandbox; allowlist a domain
+        + inject a secret; workspace mode; snapshot &amp; fork; build a 3-agent team with an <code>ask</code> round-trip; read and
+        verify the audit log; use the E2B-compatible shim from Python. Each recipe is a literal script that CI extracts and
+        executes — a recipe that stops working fails the build.</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">E3-4</span><span class="tk">Integration guide for agent builders: calling <code>kelyfos</code> from Python/JS,
+        the MCP stdio bridge, the shim, and the patterns for building an orchestrator <i>on top</i> (spawn-under-budget,
+        team toml generation). Includes a &ldquo;common mistakes&rdquo; section fed by real errors from the build&rsquo;s progress log.</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">E3-5</span><span class="tk">The exam: a fresh Claude Code session on a machine with the <code>kelyfos</code> binary and both image flavors
+        (base + dev) built from the commit under test, installed via the README quickstart, is given <b>only</b> <code>llms-full.txt</code> — the source tree
+        withheld — and asked to build a small orchestrator: boot a 3-agent team, run a task with one <code>team_ask</code>,
+        export the transcript. It must succeed without reading source. The session transcript is committed as evidence;
+        every failure becomes a docs fix, and the exam reruns until it passes.</span></li>
+  </ul>
+  <div class="accept">
+    <h4>Acceptance test — recreate &amp; verify</h4>
+    <ol>
+      <li><code>make docs</code> regenerates the reference; <code>git status</code> clean afterwards; introducing a fake flag in a
+          scratch branch makes CI fail on docs drift.</li>
+      <li>Every cookbook recipe executes green in CI from a fresh clone.</li>
+      <li><code>llms-full.txt</code> exists at the repo root; token count measured and logged.</li>
+      <li>The E3-5 exam passes: docs-only Claude Code builds the 3-agent orchestrator; transcript committed.</li>
+    </ol>
+  </div>
+  <p class="exit">Exit checkpoint: <b>tag v0.6</b> — &ldquo;any LLM can build on KelyfOS from the docs alone.&rdquo;</p>
+</section>
+
+<!-- ====================================================== 3d. EPIC E4 -->
+<section class="phase" id="e4" data-phase="E4" data-status="todo">
+  <div class="phase-head">
+    <div>
+      <div class="kconfig">config KELYFOS_EPIC_E4</div>
+      <h2>Epic E4 — MCP surface (v0.7)</h2>
+    </div>
+    <span class="badge">QUEUED</span>
+  </div>
+  <p>Goal: <b>MCP in both directions.</b> Outward: <code>kelyfos serve-mcp</code> makes KelyfOS a tool for any MCP client —
+     Claude Code, Cursor, anything — one config line and the client&rsquo;s agent gains <code>sandbox_run</code>,
+     <code>sandbox_exec</code>, snapshots, and team control, so risky commands execute inside a VM instead of the developer&rsquo;s
+     machine. Inward: <code>[[plugin]]</code> entries in <code>kelyfos.toml</code> declare extra MCP servers the agent gets
+     <i>inside</i> the guest (e.g. a browser-control server), namespaced, policy-bound, and audited per call.
+     Two standing principles (F-D5): <code>serve-mcp</code> can <b>never widen policy</b> — the project&rsquo;s toml is the ceiling,
+     and no tool exists to change it; and in-guest plugins are safe <i>because</i> they run inside the same isolation —
+     a malicious plugin has exactly the powers of a malicious agent, which the sandbox already assumes.
+     Distinct from the per-VM <code>kelyfos mcp</code> bridge (P2-3), which fronts one guest&rsquo;s supervisor.
+     Builds on E2 (team tools) and E3 (generated reference auto-covers the new surface). Estimate: 3&ndash;5 weekends.</p>
+  <ul class="tasks">
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">E4-0</span><span class="tk"><code>docs/mcp-surface.md</code> — spec first, both directions. Host tool list with
+        schemas; the policy-ceiling rule stated as an invariant; plugin tool namespacing (<code>&lt;plugin&gt;.&lt;tool&gt;</code>);
+        the plugins-drive layout and per-plugin manifest; session/concurrency model with <code>max_sandboxes</code> (toml
+        <code>[mcp]</code> section, small default). Framing note carried over: MCP stdio is newline-delimited JSON-RPC — settled (verified against the official
+        MCP spec, all revisions through 2025-11-25, during the build-plan review rounds); do not relitigate.</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">E4-1</span><span class="tk"><code>kelyfos serve-mcp</code> core: stdio MCP server wrapping the existing host
+        machinery — <code>sandbox_run</code> (boot with the project&rsquo;s toml policy), <code>sandbox_exec</code>,
+        <code>sandbox_stop</code>, <code>sandbox_list</code>; multiple concurrent sandboxes with ids; <code>max_sandboxes</code>
+        enforced; requests exceeding the toml ceilings refused with the E1-1 error style.</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">E4-2</span><span class="tk">File and state tools over existing machinery: <code>sandbox_read_file</code> /
+        <code>sandbox_write_file</code> (supervisor RPCs), <code>sandbox_snapshot</code> / <code>sandbox_fork</code> /
+        <code>sandbox_restore</code> (P3 snapshot layer).</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">E4-3</span><span class="tk">Team tools: <code>team_up</code> / <code>team_ps</code> / <code>team_down</code> as thin
+        wrappers over E2 — an external agent can raise and retire a whole declared team, still bounded by the team toml.</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">E4-4</span><span class="tk">Audit lane for the outward direction: every client tool call is a flight-recorder
+        event (<code>mcp.host.*</code>) — the external agent&rsquo;s use of the sandbox is itself in the transcript, and
+        <code>kelyfos log --export</code> renders the client lane alongside guest activity.</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">E4-5</span><span class="tk">Client recipes: working config snippets for Claude Code and one more MCP client,
+        added to the E3-3 cookbook and CI-executed like every recipe; <code>make docs</code> re-run so the generated reference and
+        <code>llms-full.txt</code> pick up the new tools and toml keys automatically (F-D4 paying off).</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">E4-6</span><span class="tk">Plugins drive (F-D6): the host packs each declared plugin&rsquo;s files into a
+        read-only ext4 image attached as the next virtio-blk drive, mounted at <code>/plugins</code> — ext4 rather than squashfs: both ride virtio-blk
+        equally well (no loop device involved — <code>/dev/vdc</code> is already a block device), but squashfs would require
+        adding <code>CONFIG_SQUASHFS</code> to the P1-2 kernel fragments, a config change for marginal gain (F-D6). Sizing per the P3-10 rule; image creation reuses the P3-10 workspace-packing
+        mechanism (host-side <code>mkfs.ext4</code> + populate — on macOS that runs inside the Lima VM, like all Linux work),
+        pointed at the plugin files. Flavors may additionally ship built-in servers;
+        both routes launch identically.</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">E4-7</span><span class="tk">Supervisor plugin runtime: launch each <code>[[plugin]]</code> entry as a child
+        process, speak MCP stdio to it, aggregate its tools into the agent&rsquo;s session under the
+        <code>&lt;plugin&gt;.&lt;tool&gt;</code> namespace. Per-call audit events carry the plugin name; a crashing plugin fails
+        its own tools cleanly (<code>plugin.crash</code> event) without taking the supervisor down. Plugins get no egress of
+        their own — the per-agent allowlist is the only network policy.</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">E4-8</span><span class="tk">Proof, both directions at once: a scripted MCP client (CI) plus a live Claude Code
+        session (demo) drive <code>serve-mcp</code>; inside the sandbox a small demo plugin shipped in-repo as a test fixture
+        provides namespaced tools the inner agent calls. The exported transcript shows both lanes — the outer agent&rsquo;s
+        sandbox calls and the inner agent&rsquo;s plugin calls.</span></li>
+  </ul>
+  <div class="accept">
+    <h4>Acceptance test — recreate &amp; verify</h4>
+    <ol>
+      <li>A scripted stdio MCP client connects to <code>kelyfos serve-mcp</code>, lists tools, and runs
+          <code>sandbox_run</code> &rarr; <code>sandbox_exec "uname -a"</code> &rarr; guest kernel string returned.</li>
+      <li>The client requests a sandbox with a domain outside the project toml &rarr; refused with the ceiling named, and the
+          refusal is an <code>mcp.host.*</code> audit event.</li>
+      <li><code>max_sandboxes</code> + 1 concurrent <code>sandbox_run</code> &rarr; the extra one refused + audited.</li>
+      <li>A sandbox with the in-repo demo plugin declared: <code>team_peers</code>-style listing shows the namespaced tools;
+          calling one succeeds and the audit event names the plugin.</li>
+      <li>Kill the plugin process inside the guest &rarr; its tools return clean errors, <code>plugin.crash</code> logged,
+          <code>sandbox_exec</code> still works.</li>
+      <li><code>kelyfos log --verify</code> passes; <code>--export</code> renders the client lane and the plugin calls.</li>
+      <li>Both E4-5 client recipes execute green in CI from a fresh clone.</li>
+      <li>F-D9 exit requirements met: <code>llms-full.txt</code> regenerated with the new tools, token count re-measured and
+          logged, and the E3-5 docs-only exam re-run against the MCP surface — transcript committed.</li>
+    </ol>
+  </div>
+  <p class="exit">Exit checkpoint: <b>tag v0.7</b> — &ldquo;any MCP client can drive KelyfOS; any MCP server can run inside it.&rdquo;</p>
+</section>
+
+<!-- ====================================================== 3e. EPIC E5 -->
+<section class="phase" id="e5" data-phase="E5" data-status="todo">
+  <div class="phase-head">
+    <div>
+      <div class="kconfig">config KELYFOS_EPIC_E5</div>
+      <h2>Epic E5 — Daily-driver QoL (v0.8)</h2>
+    </div>
+    <span class="badge">QUEUED</span>
+  </div>
+  <p>Goal: <b>remove every friction a developer hits daily once they already use KelyfOS.</b> Eight small features that
+     promote together: named pause/resume, diff + review-before-sync, an interactive shell, actionable denials, inbound
+     port forwarding, run history with exact re-execution, desktop notifications, and a plain-text log tail. Two stances
+     were written at promotion time (the parking condition for port forwarding): <b>F-D7</b> — inbound exists only as
+     explicit, loopback-bound, audited vsock-tunneled forwards, so the network-layer &ldquo;no inbound path&rdquo; invariant
+     survives; <b>F-D8</b> — interactive shell contents are not captured by default, <code>--transcript</code> opts in.
+     Estimate: 3&ndash;4 weekends (the shell PTY and port forwarding carry the substance; the rest are wrappers over
+     existing machinery).</p>
+  <ul class="tasks">
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">E5-0</span><span class="tk"><code>docs/qol.md</code> — spec first for the pieces that need shape:
+        session-store layout (<code>~/.kelyfos/sessions/&lt;name&gt;/</code> holding memory + disk snapshots, the workspace
+        image, and a frozen copy of the policy toml); the workspace-manifest format for diff (path, mode, size, content hash);
+        the PTY channel added to <code>docs/protocol.md</code> as an additive revision (raw stream + resize events); and the
+        new audit event types (<code>session.pause/resume</code>, <code>shell.start/end</code>, <code>forward.accept</code>,
+        <code>run.review</code>).</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">E5-1</span><span class="tk">Named sessions: <code>kelyfos pause [--as &lt;name&gt;]</code> = P3-1 snapshot +
+        teardown + store; <code>resume &lt;name&gt;</code> restores memory, disks, and the <i>frozen</i> policy — if the project
+        toml changed since pause, warn and use the frozen copy (resumed VMs run under the policy they were paused with).
+        Workspace sync-back happens at final shutdown after resume, never at pause. <code>kelyfos sessions</code> lists
+        name/age/size; <code>sessions rm</code> deletes.</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">E5-2</span><span class="tk"><code>kelyfos diff</code> + <code>run --review</code>: the P3-10 packing step
+        records the manifest for free; at shutdown the guest tree is compared against it and rendered as A/M/D with numstat.
+        With <code>--review</code>, the summary prints and sync-back waits for confirmation — decline routes results to the
+        existing <code>.kelyfos-out</code> fallback (P3-10&rsquo;s mechanism, reused), so the host directory is untouched until
+        an explicit yes. The decision is a <code>run.review</code> audit event.</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">E5-3</span><span class="tk"><code>kelyfos shell</code>: interactive PTY over the existing vsock channel —
+        supervisor allocates the PTY, spawns the flavor&rsquo;s shell, raw-mode passthrough with window-resize forwarding.
+        Audit per F-D8: <code>shell.start/end</code> with duration always; contents only with <code>--transcript</code>,
+        which stores the full terminal stream beside the session log.</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">E5-4</span><span class="tk">Actionable denials, everywhere: every refusal (egress deny, unbound secret,
+        resource ceiling, team edge, spawn budget, forward attempt) carries a structured error with a human fix line —
+        <code>blocked: api.stripe.com — add allow = ["api.stripe.com"] to kelyfos.toml, or rerun with --allow api.stripe.com</code>.
+        One error catalog in the docs; the E3 generated reference picks it up automatically.</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">E5-5</span><span class="tk">Inbound port forwarding per F-D7: <code>-p host:guest</code> (repeatable) and
+        <code>[[forward]]</code> toml entries. Host listener binds <code>127.0.0.1</code> only; <code>--p-bind 0.0.0.0</code> is
+        the explicit, loudly-warned LAN exposure. Transport is a vsock bridge (host listener &harr; supervisor &harr;
+        guest-local port), so TAP and nftables stay egress-only and the network-layer no-inbound invariant holds. Every
+        accepted connection is a <code>forward.accept</code> event with peer address; teardown closes all listeners.</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">E5-6</span><span class="tk">Run history: a local index built from the session logs that already exist —
+        <code>kelyfos runs</code> (id, time, image, command, exit, duration), <code>kelyfos rerun &lt;id&gt;</code> re-executing
+        with the recorded image, frozen policy, and command, printing a provenance line. Plus <code>kelyfos logs -f</code>:
+        the plain-text live tail of the flight recorder — the greppable sibling of <code>watch</code>.</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">E5-7</span><span class="tk"><code>--notify</code> (flag + toml key): desktop notification on finish, block,
+        timeout, or a waiting <code>--review</code> prompt — osascript on macOS, notify-send on Linux, terminal bell fallback —
+        carrying exit status and duration.</span></li>
+  </ul>
+  <div class="accept">
+    <h4>Acceptance test — recreate &amp; verify</h4>
+    <ol>
+      <li>Write a file into guest scratch (tmpfs), <code>kelyfos pause --as t1</code>, kill every kelyfos process, 
+          <code>kelyfos resume t1</code> &rarr; the scratch file is still there — full-state resume proven.</li>
+      <li>Edit the project toml while t1 is paused &rarr; <code>resume</code> warns and runs under the frozen policy.</li>
+      <li><code>run --review</code> on a task that adds, edits, and deletes files &rarr; A/M/D summary matches a manual check;
+          answering <b>n</b> leaves the host directory byte-identical and routes results to <code>.kelyfos-out</code>;
+          <b>y</b> syncs.</li>
+      <li><code>kelyfos shell</code>: interactive commands work, window resize propagates, exit is clean;
+          <code>shell.start/end</code> logged; with <code>--transcript</code> the stream file exists, without it nothing
+          of the contents is stored.</li>
+      <li>A blocked domain and a ceiling violation both print copy-pasteable fix lines.</li>
+      <li>busybox httpd on guest port 80, <code>-p 8080:80</code> &rarr; <code>curl 127.0.0.1:8080</code> succeeds from the host
+          and logs <code>forward.accept</code>; the same request from another machine is refused (loopback bind);
+          after teardown the port is closed.</li>
+      <li><code>kelyfos runs</code> lists the session history; <code>rerun</code> of a failed run reproduces the identical
+          image, policy, and command per its provenance line.</li>
+      <li><code>--notify</code> fires on completion (mocked notifier in CI; manual check on macOS);
+          <code>kelyfos log --verify</code> passes with all new event types present.</li>
+      <li>F-D9 exit requirements met: <code>llms-full.txt</code> regenerated with every new command and flag, recipes for
+          pause&rarr;resume and review-diff green in CI, token count re-measured and logged, docs-only exam re-run —
+          transcript committed.</li>
+    </ol>
+  </div>
+  <p class="exit">Exit checkpoint: <b>tag v0.8</b> — &ldquo;the daily driver feels like one.&rdquo;</p>
+</section>
+
+<!-- ====================================================== 4. PARKING LOT -->
+<section id="parking">
+  <p class="eyebrow">section 4</p>
+  <h2>Parking lot — ideas, not work</h2>
+  <p>No checkboxes here on purpose. Promotion path is in &sect;2. PLAN.html&rsquo;s P4 backlog items are
+     implicitly parked here too — they promote the same way.</p>
+  <ul class="tasks" style="list-style:disc;margin-left:20px">
+    <li style="display:list-item"><b>GPU via an alternate backend.</b> Firecracker has no device passthrough by design — no KelyfOS VM
+        will ever see a GPU on this backend (F-D1). The only path is a second VMM backend behind the same CLI:
+        libkrun (virtio-gpu/venus; also the native-macOS thread from P4-7) or Cloud Hypervisor (VFIO passthrough).
+        A large lift that needs its own epic and a backend-abstraction decision before any code.</li>
+    <li style="display:list-item"><b>Per-domain egress budgets.</b> Byte quotas per allowlisted domain on top of the P2-5 proxy
+        (&ldquo;github.com: unlimited; api.openai.com: 100 MB&rdquo;). Cheap once E1-7&rsquo;s accounting exists.</li>
+    <li style="display:list-item"><b>Cost/token budget hooks.</b> Probably belongs in the agent runtime, not the OS. Keep only if a clean
+        OS-side signal exists — e.g. proxy byte counts per API domain as a spend proxy. Decide honestly; don&rsquo;t scope-creep.</li>
+    <li style="display:list-item"><b>Host-wide / cross-team fair-share scheduling.</b> The within-team case was absorbed into
+        E2-6 (team cgroup hierarchy) under F-D3. Arbitrating between <i>unrelated</i> teams or across hosts remains fleet-orchestrator
+        territory — still parked, still requires its own renegotiation with John by name.</li>
+    <li style="display:list-item"><b>KelyfOS as an MCP server for agent hosts</b> — promoted to Epic E4 (F-D5).</li>
+    <li style="display:list-item"><b>MCP plugins inside the guest</b> — promoted to Epic E4; delivery decided in F-D6.</li>
+    <li style="display:list-item"><b>Zero-friction start: <code>kelyfos init</code> + allowlist presets + packaged installs.</b>
+        <code>init</code> detects the project and writes a working toml; presets like <code>@python</code>/<code>@node</code>/<code>@github</code>
+        expand to the ecosystem&rsquo;s domains; prebuilt image artifacts on releases plus a Homebrew formula so no user ever
+        runs Buildroot. Deny-all egress stays; only the configuration pain goes.
+        <i>Update 2026-08-22: the prebuilt-artifacts piece shipped early in v0.3 via the build plan&rsquo;s D20
+        (<code>make fetch-image</code>, gzipped + checksummed, tamper-refused with zero files installed);
+        <code>init</code>, allowlist presets, and the Homebrew formula remain parked here.</i></li>
+    <li style="display:list-item"><b>Teach mode for policy.</b> <code>kelyfos run --teach</code>: unknown egress triggers an interactive
+        prompt (allow always / once / deny); approvals are written into <code>kelyfos.toml</code>; subsequent runs are strict.
+        Loud banner while teaching, audit always on. Policy-as-code that writes itself from observed behavior + human approval.</li>
+    <li style="display:list-item"><b>Community flavors via OCI registries.</b> <code>kelyfos run --image ghcr.io/&lt;user&gt;/&lt;flavor&gt;</code>
+        pulls prebuilt flavors from any existing registry — an ecosystem without us running a registry (hosted-service non-goal intact).
+        Needs the P4-3 signing story for trust before promotion.</li>
+    <li style="display:list-item"><b>GitHub Action.</b> A CI step that runs an agent inside KelyfOS and uploads <code>session.html</code>
+        as a build artifact — reviewers replay exactly what the agent did in CI. Audit-as-artifact; cheap once P3-8 exists.</li>
+    <li style="display:list-item"><b>Daily-driver QoL batch</b> — promoted to Epic E5 (includes <code>logs -f</code>).</li>
+    <li style="display:list-item"><b>Inbound port forwarding</b> — promoted to Epic E5; the required security stance written as F-D7.</li>
+  </ul>
+</section>
+
+<!-- ====================================================== 5. DECISION LOG -->
+<section id="decisions">
+  <p class="eyebrow">section 5</p>
+  <h2>Decision log</h2>
+  <table>
+    <tr><th style="width:70px">ID</th><th style="width:110px">Date</th><th>Decision</th><th>Rationale</th></tr>
+    <tr><td class="mono">F-D1</td><td class="mono">2026-08-22</td>
+        <td>No GPU support on the Firecracker backend — permanently, not &ldquo;yet&rdquo;. Firecracker offers no device
+            passthrough; its minimal device model <i>is</i> the security posture. GPU work is possible only via an
+            alternate VMM backend and stays in the parking lot until promoted as its own epic.</td>
+        <td>States the physics up front so nobody burns a weekend discovering it. Stated here independently so it
+            holds regardless of which PLAN.html revision is running (see E1-0).</td></tr>
+    <tr><td class="mono">F-D2</td><td class="mono">2026-08-22</td>
+        <td>All resource caps enforce <b>host-side only</b>: KVM machine config, cgroup v2, Firecracker rate limiters,
+            tmpfs mount options, device sizes, host timers. Nothing inside the guest is trusted to police itself.</td>
+        <td>The guest runs untrusted agent code — guest-side limits are advisory at best and theater at worst.
+            Same trust model as the P2-5 egress design (proxy on the host, not a guest firewall).</td></tr>
+    <tr><td class="mono">F-D3</td><td class="mono">2026-08-22</td>
+        <td>Non-goal renegotiated <b>by name</b>: the build plan&rsquo;s &ldquo;no orchestrator / control plane&rdquo; non-goal is
+            narrowed, not removed. <b>In scope now:</b> single-host, user-declared agent-team topologies — multiple KelyfOS VMs
+            with edges enforced by a host-side broker, a permissioned team store, spawn-under-budget, and team-level resource
+            hierarchies (Epic E2). <b>Still out, permanently:</b> multi-host scheduling, hosted control planes, autoscaling
+            services, work queues as a product — the fleet layer where E2B/Kubernetes live.</td>
+        <td>Proposed and approved by John, 2026-08-22 (this feature request <i>is</i> the renegotiation the parking lot required).
+            The distinction: a fleet control plane manages infrastructure for you; a team topology is policy the user declares and
+            KelyfOS enforces — networking + policy + audit, the product&rsquo;s home turf. Orchestration <i>logic</i> stays in the
+            agent framework; KelyfOS is mechanism.</td></tr>
+    <tr><td class="mono">F-D4</td><td class="mono">2026-08-22</td>
+        <td>Documentation principle: the <b>reference is generated from the code</b> (CLI flags, toml keys, MCP schemas, event
+            types, exit codes) and CI fails on drift; hand-written docs are reserved for concepts and recipes, and every recipe
+            is executed in CI. The docs ship as <code>llms.txt</code> / <code>llms-full.txt</code> for machine readers.</td>
+        <td>Docs that can lie are worse than no docs — for LLM consumers especially, a stale flag name produces confidently
+            wrong code. Generation + CI makes staleness a build failure instead of a user bug report.</td></tr>
+    <tr><td class="mono">F-D5</td><td class="mono">2026-08-22</td>
+        <td>Both MCP parking items promoted into Epic E4 per the &sect;2 path. Standing invariants: (1) <code>serve-mcp</code>
+            can never widen policy — the project&rsquo;s <code>kelyfos.toml</code> is the ceiling and no MCP tool exists to modify
+            it; policy changes stay human-only. (2) Plugin tools are namespaced <code>&lt;plugin&gt;.&lt;tool&gt;</code>.
+            (3) In-guest plugins get no egress of their own — the per-agent allowlist is the single network policy surface.</td>
+        <td>Approved by John, 2026-08-22. The outward server is the highest-leverage adoption path (every MCP client becomes a
+            user with one config line); the inward slot is what &ldquo;MCP-native&rdquo; structurally implies. Plugins are safe to
+            allow because they run inside the same isolation — a malicious plugin has exactly a malicious agent&rsquo;s powers,
+            which the sandbox already assumes.</td></tr>
+    <tr><td class="mono">F-D6</td><td class="mono">2026-08-22</td>
+        <td>Plugin delivery: injected at boot via a host-packed <b>read-only ext4 plugins drive</b> (next virtio-blk device,
+            mounted at <code>/plugins</code>), sized per the P3-10 rule. Flavors may also bake servers in; both routes launch
+            through the same supervisor runtime. ext4 chosen over squashfs to leave the P1-2 kernel fragments untouched.</td>
+        <td>Per-project plugin sets are the point — baking-only would force an image rebuild per plugin change and bloat the
+            5&nbsp;MB base. Read-only device + same-isolation containment keeps the trust story identical to the rootfs.
+            Squashfs would be smaller but adds a kernel config change for marginal gain.</td></tr>
+    <tr><td class="mono">F-D7</td><td class="mono">2026-08-22</td>
+        <td>Inbound stance (the port-forwarding parking condition, written at promotion): forwards exist only as explicit
+            per-run <code>-p</code> flags or <code>[[forward]]</code> toml entries; host listeners bind loopback by default
+            with LAN exposure a separate, loudly-warned flag; transport is a vsock bridge so TAP/nftables remain egress-only
+            and the network-layer no-inbound invariant is preserved; every accepted connection is audited; teardown closes
+            all listeners.</td>
+        <td>Approved by John, 2026-08-22. The most-requested sandbox feature must never mean &ldquo;the sandbox is silently
+            reachable&rdquo;: inbound rides the already-trusted host channel, is user-declared per run, and leaves an audit
+            trail like everything else.</td></tr>
+    <tr><td class="mono">F-D8</td><td class="mono">2026-08-22</td>
+        <td>Interactive-shell audit stance: <code>kelyfos shell</code> logs <code>shell.start/end</code> with duration always;
+            terminal <i>contents</i> are captured only with an explicit <code>--transcript</code> flag.</td>
+        <td>A human typing into a shell is not an agent acting — capturing keystrokes by default is surveillance, not audit.
+            The audit chain still shows that a human entered the sandbox and for how long; full capture stays one flag away
+            for regulated use.</td></tr>
+    <tr><td class="mono">F-D9</td><td class="mono">2026-08-22</td>
+        <td><b>Docs ride with features.</b> From E3&rsquo;s exit onward, every epic&rsquo;s exit checkpoint additionally requires:
+            clean <code>make docs</code>; <code>llms.txt</code>/<code>llms-full.txt</code> regenerated and committed with the
+            epic; a CI-executed cookbook recipe for each new user-facing command, flag, toml key, or MCP tool; the
+            llms-full.txt token count re-measured and logged; and a re-run of the E3-5 docs-only exam (transcript committed)
+            whenever the epic added commands or MCP tools. Encoded as protocol rule 4 in &sect;2 and as explicit acceptance
+            lines in E4 and E5.</td>
+        <td>Approved by John, 2026-08-22. For an LLM consumer, docs lagging one feature behind are worse than missing docs —
+            the consuming agent confidently writes around features that exist. Generated parts are already enforced by CI
+            drift-failure (F-D4); this closes the hand-written half and makes &ldquo;updated&rdquo; mean <i>proven usable</i>,
+            with the docs-only exam as the standard of proof.</td></tr>
+    <!-- Claude Code: append rows above this line. -->
+  </table>
+</section>
+
+<!-- ====================================================== 6. PROGRESS LOG -->
+<section id="log">
+  <p class="eyebrow">section 6</p>
+  <h2>Progress log</h2>
+  <table>
+    <tr><th style="width:110px">Date</th><th style="width:70px">Task</th><th>What happened</th><th style="width:220px">Evidence</th></tr>
+    <tr><td class="mono">2026-08-22</td><td class="mono">—</td>
+        <td>Document created as <b>PLAN-FEATURES.html</b> — the features-and-improvements plan for the existing product,
+            gated on the build plan reaching 100%. Supersedes a same-day draft named PLAN-NEXT.html (renamed for clarity;
+            the draft was never committed). The build run was kicked off in parallel with the resource-caps amendment to
+            PLAN.html (D11), so E1-0 (baseline reconcile) was added — the running revision is unknown from here.
+            Origin of Epic E1: resource-capping question during planning; boot-time hardware knobs were targeted at v0.1,
+            the enforcement-grade layer lives here. GPU stance recorded in F-D1.</td>
+        <td class="mono">this document</td></tr>
+    <tr><td class="mono">2026-08-22</td><td class="mono">—</td>
+        <td>Epic E2 (Agent teams, v0.5) added from John&rsquo;s multi-agent topology idea: user-declared team graphs on one host,
+            host-broker-enforced edges over vsock, permissioned team store as the shared-knowledge mechanism (cross-VM shared RAM
+            and dual-mounted ext4 stated as impossible on Firecracker), fork-based team spawn, spawn-under-budget for master agents,
+            team cgroup hierarchies. Non-goal narrowed via F-D3; parking-lot fair-share item absorbed into E2-6 for the within-team
+            case. E2 ordered after E1 because team budgets build on E1&rsquo;s cgroup work.</td>
+        <td class="mono">this document</td></tr>
+    <tr><td class="mono">2026-08-22</td><td class="mono">—</td>
+        <td>Two changes from John. (1) Clarified E2 messaging: direct question&rarr;answer between agents is the point —
+            <code>ask</code>/<code>reply</code> made a first-class broker primitive and <code>team_ask</code>/<code>team_reply</code>
+            MCP tools added (E2-0, E2-2, demo E2-9, acceptance). (2) New Epic E3 — LLM-native documentation (v0.6):
+            generated never-stale reference, llms.txt/llms-full.txt, CI-executed cookbook, integration guide, and a docs-only
+            Claude Code exam as the acceptance bar. Principle recorded as F-D4.</td>
+        <td class="mono">this document</td></tr>
+    <tr><td class="mono">2026-08-22</td><td class="mono">—</td>
+        <td>Consistency pass before handoff. Found and fixed a real contradiction: E2-0 forbade live topology changes while
+            E2-5 spawns workers at runtime — resolved by making runtime spawn the single sanctioned exception (spawned worker
+            gets exactly one edge, to its spawner). Also: E2 acceptance now requires one <i>successful</i> budgeted spawn, not
+            only refusals; &sect;2 states that PLAN.html &sect;8&rsquo;s &ldquo;phase&rdquo; reads as &ldquo;epic&rdquo; here; E3-5 exam
+            environment pinned (installed binary + docs, source withheld). Independent-review artifact created for this file
+            (kelyfos-features-reviewer.html), same zero-context pattern as the build plan&rsquo;s.</td>
+        <td class="mono">this document</td></tr>
+    <tr><td class="mono">2026-08-22</td><td class="mono">—</td>
+        <td>E1-0 hardened after the first build status report: the running PLAN.html predates the resource-caps amendment and
+            has its own D11&ndash;D14, so E1-0 now matches the amendment by content, not by decision number.</td>
+        <td class="mono">build status report + this document</td></tr>
+    <tr><td class="mono">2026-08-22</td><td class="mono">—</td>
+        <td>Independent (zero-context) review triaged. Accepted &amp; fixed: <code>cpu_quota</code> unit defined in E1-1
+            (percentage of a single core); cgroup v2 <code>cpu.max</code> translation specified in E1-2 (integer &micro;s,
+            100&nbsp;ms period — the percentage never touches the kernel); scratch cap pinned to the exact tmpfs backing the
+            overlay upperdir/workdir, <code>/work</code> unaffected (E1-5); llms.txt described per the llmstxt.org spec with
+            llms-full.txt labeled a de-facto companion (E3-2); <code>team_peers</code> is initiator-side only and ask-replies
+            ride the return path, no edge needed (E2-0, E2-2). Rejected as misreadings, reworded anyway: the Firecracker
+            minimal-model rationale applied to shared RAM, not ext4 — now two facts with two reasons, ext4 being a filesystem
+            constraint on any VMM (E2-3); no at-most-once/audit contradiction exists — the flight recorder logs outcomes and
+            is not a delivery buffer, now stated with per-edge FIFO (E2-0). The NOT READY verdict rested on the two accepted
+            blockers and is overruled post-fix. Do not re-fix these designs later.</td>
+        <td class="mono">reviewer output + this document</td></tr>
+    <tr><td class="mono">2026-08-22</td><td class="mono">—</td>
+        <td>Second review round triaged — VERDICT: READY accepted, <b>review loop closed</b>. Accepted: tmpfs default stated
+            as 50% of the <i>guest&rsquo;s</i> RAM relative to <code>--mem</code> (E1-5); &ldquo;warm workers in milliseconds&rdquo;
+            relabeled as the build plan&rsquo;s restore target, not a measured fact (E2 goal, E2-4); E3-5 exam environment pinned
+            (binary + base and dev flavors from the commit under test, README quickstart install). Rejected: the
+            <code>cpu_quota</code> &ldquo;self-contradiction&rdquo; — cpu.max quota is absolute CPU-time, 100% &equiv; one core&rsquo;s
+            worth by construction (parenthetical tightened anyway); and the ext4 finding — the sentence already reads
+            &ldquo;concurrent read-write mounting&rdquo; verbatim, and multi-guest read-only mounting is deliberately used by the
+            build plan&rsquo;s fork design. Do not re-fix these. Further review rounds add noise, not safety; the next quality
+            gates are execution itself (E1-0) and the E3-5 docs exam.</td>
+        <td class="mono">reviewer output + this document</td></tr>
+    <tr><td class="mono">2026-08-22</td><td class="mono">—</td>
+        <td>Developer-experience brainstorm parked (ideas, not work): KelyfOS as a host-level MCP server for agent tools;
+            MCP plugins inside the guest; <code>kelyfos init</code> + allowlist presets + prebuilt images/Homebrew;
+            <code>--teach</code> interactive policy mode; community flavors via OCI registries; GitHub Action with the session
+            export as CI artifact. Deliberately excluded: editor extensions (second product), bespoke SDKs (host MCP server +
+            E3-4 cover it), anything hosted (non-goal). Promotion path per &sect;2 applies to all.</td>
+        <td class="mono">this document</td></tr>
+    <tr><td class="mono">2026-08-22</td><td class="mono">—</td>
+        <td>Both MCP ideas promoted to <b>Epic E4 — MCP surface (v0.7)</b> per the &sect;2 promotion path: 9 tasks
+            (E4-0&hellip;E4-8), acceptance test, dashboard row; parking items replaced with tombstones. Decisions F-D5
+            (invariants: policy ceiling, namespacing, single egress surface) and F-D6 (plugin delivery = read-only ext4
+            plugins drive; ext4 over squashfs to keep P1-2 kernel fragments untouched) recorded. Epic order is now
+            E1 &rarr; E2 &rarr; E3 &rarr; E4; E4 sits after E3 so the generated docs pick up the new surface automatically.</td>
+        <td class="mono">this document</td></tr>
+    <tr><td class="mono">2026-08-22</td><td class="mono">—</td>
+        <td>Post-E4 review round triaged — VERDICT: READY, all findings wording-grade, five accepted: E2-3 now states the
+            positive case inline (read-only multi-mount fine, used by fork) after a second independent reviewer tripped on the
+            same sentence — facts unchanged, wording conceded per the round-1 standard; E4-6 names its packing mechanism
+            (reuses P3-10&rsquo;s, mkfs.ext4 inside Lima on macOS); the E2 fork-timing acceptance bar binds on the P3-6
+            reference environment per the P1-7 decision; E4-0&rsquo;s settled-MCP note cites its spec verification
+            (revisions through 2025-11-25); E1-7 names its sampling source (cgroup <code>cpu.stat</code>/<code>memory.current</code>
+            deltas, ~1&nbsp;s tick). One finding self-resolved by the reviewer (/dev/kmsg — correct as written).
+            <b>Standing review rule from here:</b> a material addition (new epic) gets one independent round, triaged, then
+            closed; re-running on unchanged content adds noise, not safety.</td>
+        <td class="mono">reviewer output + this document</td></tr>
+    <tr><td class="mono">2026-08-22</td><td class="mono">—</td>
+        <td>Second DX brainstorm parked: a daily-driver QoL batch (pause/resume named sessions, diff + review-before-sync,
+            shell, actionable denials, runs/rerun history, --notify, logs -f) as one promotable item, and inbound port
+            forwarding as its own item pending a written security stance. Considered and rejected: live bidirectional file
+            sync (conflict semantics; snapshot model + review-diff covers it) and anything GUI-shaped (non-goal).
+            Promotion guidance recorded: with four epics already queued, these promote after launch based on observed user
+            friction, not speculation.</td>
+        <td class="mono">this document</td></tr>
+    <tr><td class="mono">2026-08-22</td><td class="mono">—</td>
+        <td>Both QoL parking items promoted to <b>Epic E5 — Daily-driver QoL (v0.8)</b> per the &sect;2 path: 8 tasks
+            (E5-0&hellip;E5-7) covering pause/resume with frozen policy, diff + review-before-sync, PTY shell, actionable
+            denials, inbound forwarding, runs/rerun + <code>logs -f</code>, and notifications; full acceptance test; dashboard
+            row; tombstones left in the parking lot. The port-forwarding promotion condition is satisfied by F-D7 (inbound
+            stance) written at promotion time; F-D8 records the shell-audit stance. Queue is now five epics, E1&rarr;E5,
+            v0.4&rarr;v0.8 — remaining parked ideas should wait for post-launch user evidence.</td>
+        <td class="mono">this document</td></tr>
+    <tr><td class="mono">2026-08-22</td><td class="mono">—</td>
+        <td>Post-E5 review round triaged — VERDICT: READY, and <b>zero findings on E5 itself</b>; all six targeted earlier
+            sections. Accepted (wording): E4-6 now names <code>CONFIG_SQUASHFS</code> as the actual constraint and corrects
+            the mechanics inline — both filesystems ride virtio-blk, no loop device involved; E1 acceptance states the derived
+            scratch default (256M at 512M guest RAM) explicitly. Rejected: MCP stdio framing (scoped to the stdio transport by
+            construction; carries a do-not-relitigate tag); the 2025-11-25 provenance date (live-verified during the build-plan
+            rounds — the requested &ldquo;as of build-plan review&rdquo; qualifier is already present verbatim; the executing
+            agent has web access, unlike the reviewer); P3-2 cross-reference (verified: fork, correct as written).
+            Self-retracted by the reviewer for the second consecutive round: supervisor-as-PID-1 reading <code>/dev/kmsg</code>
+            in-guest — added to the settled list by name. Round closed per the standing rule.</td>
+        <td class="mono">reviewer output + this document</td></tr>
+    <tr><td class="mono">2026-08-22</td><td class="mono">—</td>
+        <td>Standing rule added per John: <b>F-D9 — docs ride with features</b>. Protocol &sect;2 gains rule 4 (epic exits
+            gated on regenerated llms files, CI-executed recipes for all new surface, token re-measurement, and a docs-only
+            exam re-run when commands/tools were added); E4 and E5 acceptance tests gain the corresponding explicit line.
+            Generated-reference enforcement was already structural via F-D4/E3-1; this closes the hand-written half.</td>
+        <td class="mono">this document</td></tr>
+    <tr><td class="mono">2026-08-22</td><td class="mono">—</td>
+        <td>Build-plan cross-delivery noted: D20 (prebuilt, checksummed release images + <code>make fetch-image</code>)
+            shipped the packaged-installs piece of the parked &ldquo;zero-friction start&rdquo; item early, in v0.3.
+            Parking entry annotated; the remaining pieces (<code>kelyfos init</code>, allowlist presets, Homebrew) stay parked.
+            Reference numbers at this point: 90&nbsp;ms median cold boot, 29&nbsp;ms median restore (bare-KVM CI) — E2&rsquo;s
+            fork bar and E5&rsquo;s session mechanics inherit large headroom.</td>
+        <td class="mono">build status report + this document</td></tr>
+    <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
+  </table>
+</section>
+
+<footer>
+  <p class="quiet">KelyfOS · PLAN-FEATURES.html · queued behind PLAN.html · same protocol, later timeline.</p>
+</footer>
+</div>
+
+<script>
+/* Dashboard bars compute from the *markup* (checked attribute), so the only way to
+   move them is to edit this file — which is the point. */
+(function(){
+  var totalAll=0, doneAll=0;
+  document.querySelectorAll('.phase').forEach(function(ph){
+    var n=ph.getAttribute('data-phase');
+    var boxes=ph.querySelectorAll('ul.tasks input[type=checkbox]');
+    var done=0;
+    boxes.forEach(function(b){ if(b.hasAttribute('checked')) done++; });
+    totalAll+=boxes.length; doneAll+=done;
+    var pct=boxes.length? Math.round(100*done/boxes.length):0;
+    var row=document.querySelector('.bl-row[data-phase="'+n+'"]');
+    if(!row) return;
+    row.querySelector('.bl-bar i').style.width=pct+'%';
+    row.querySelector('.bl-pct').textContent=pct+'%';
+    var st=ph.getAttribute('data-status');
+    row.setAttribute('data-s',st);
+    var tag=row.querySelector('.bl-tag');
+    tag.className='bl-tag '+st;
+    tag.textContent = st==='done' ? '[  OK  ]' : st==='active' ? '[ACTIVE]' : '[ TODO ]';
+  });
+  var t=totalAll? Math.round(100*doneAll/totalAll):0;
+  document.getElementById('total-bar').style.width=t+'%';
+  document.getElementById('total-pct').textContent=t+'%';
+  var ot=document.querySelector('.bl-total .bl-tag');
+  ot.className='bl-tag '+(t===100?'done':(doneAll>0?'active':'todo'));
+  ot.textContent = t===100 ? '[  OK  ]' : (doneAll>0 ? '[ACTIVE]' : '[ TODO ]');
+})();
+</script>
+</body>
+</html>
