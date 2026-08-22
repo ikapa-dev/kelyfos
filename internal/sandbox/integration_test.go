@@ -39,7 +39,14 @@ func requireSandbox(t *testing.T) sandbox.Options {
 			t.Skipf("no built image at %s — run `make image` first", dir)
 		}
 	}
-	return sandbox.Options{Arch: arch, Flavor: "base", Quiet: true}
+	// Take the flavor from the image that is actually there (D21) rather than
+	// assuming base: a dev machine usually holds dev, and hardcoding the label
+	// would make every integration test fail the manifest check.
+	m, err := sandbox.ReadManifest(dir)
+	if err != nil {
+		t.Skipf("no image.json in %s — rebuild with `make image`: %v", dir, err)
+	}
+	return sandbox.Options{Arch: arch, Flavor: m.Flavor, Quiet: true}
 }
 
 func bootOne(t *testing.T) *sandbox.Sandbox {

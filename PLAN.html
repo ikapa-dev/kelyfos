@@ -774,6 +774,55 @@ make image         <span class="c"># kernel Image (aarch64) / vmlinux (x86_64) +
         <tr><td class="mono">2026-08-22</td><td class="mono">P3-5</td>
         <td><code>docs/threat-model.md</code> written and linked from the README, which is the launch gate this task exists to be. It states the design assumption plainly — <b>anything inside the guest may be hostile</b>, not buggy but actively working against you, because a prompt-injected agent is an attacker holding your tools — and then spends more words on what is <i>not</i> defended than on what is. <b>The largest open gap is named as such:</b> Firecracker runs as your user, unconfined, until the jailer lands at P4-1, so a VMM vulnerability gets the attacker your account. The TLS-termination trade-off from decision D6 is spelled out with its three real consequences — the proxy sees that traffic in plaintext, certificate pinning breaks for bound domains, and the ephemeral CA is trusted inside the guest — alongside how tightly it is scoped. Also documented as undefended: side channels, denial of service, the supply chain of what the agent fetches, unencrypted snapshots (a snapshot holds the guest's whole memory), and multi-tenancy, which KelyfOS has no notion of. A trust-boundary table marks two rows <b>not yet</b>. The README now says <i>isolation-first architecture, not hardened</i>, which is the plan's own red callout honoured rather than quietly forgotten at launch time.</td>
         <td class="mono">docs/threat-model.md, 151 lines, linked from README under a Security heading<br>Sections: what it is for · assets in priority order · what is defended (guest escape, exfiltration, credential theft, record tampering) · <b>what is not</b> (host-side before the jailer, unconfined inside the guest, TLS termination, side channels, DoS, supply chain, host tooling, data at rest, multi-tenancy) · trust-boundary table · an evaluation section saying plainly what is and is not reasonable today<br>No security claim is made anywhere that P4-1 and P4-2 have not earned</td></tr>
+        <tr><td class="mono">2026-08-22</td><td class="mono">P3-7</td>
+        <td>Prebuilt image distribution per D20, because the acceptance test's &le;5-minute README walk cannot survive a 35-minute Buildroot compile. <code>make release-artifacts</code> stages gzipped, arch-tagged artifacts plus <code>SHA256SUMS</code>; <code>make fetch-image</code> / <code>dev/fetch-image.sh</code> downloads, verifies, and only then decompresses into the cache. 141 MB &rarr; 32 MB. <code>KELYFOS_RELEASE_BASE</code> exists so the verify path is testable without a network round trip.</td>
+        <td class="mono"><pre>$ make release-artifacts ARCH=aarch64
+-rw-r--r-- 1 ...  5824082 Image-aarch64.gz
+-rw-r--r-- 1 ... 26549465 rootfs-aarch64.ext4.gz
+
+$ bash dev/fetch-image.sh aarch64        # against a local file server
+Verifying checksums
+Image-aarch64.gz: OK
+rootfs-aarch64.ext4.gz: OK
+image-aarch64.json: OK
+Decompressing
+Installed the 'dev' image for aarch64 into /tmp/ft3/out/aarch64
+
+$ cmp /tmp/ft3/out/aarch64/rootfs.ext4 ~/.cache/kelyfos/out/aarch64/rootfs.ext4
+(no output &mdash; identical to the built image)
+
+$ printf corrupt | dd of=dist/rootfs-aarch64.ext4.gz bs=1 seek=900 conv=notrunc
+$ bash dev/fetch-image.sh aarch64
+rootfs-aarch64.ext4.gz: FAILED
+CHECKSUM MISMATCH &mdash; refusing to install. Nothing was written to /tmp/ft3/out/aarch64.
+files installed after refusal: 0</pre></td></tr>
+        <tr><td class="mono">2026-08-22</td><td class="mono">P3-7</td>
+        <td><b>Bug found while preparing the release, fixed under D21:</b> <code>ImageDir()</code> is <code>out/&lt;arch&gt;</code> with no flavor component, so <code>--image</code> selected nothing &mdash; booting <code>base</code> while <code>--image dev</code> wrote <code>image: dev</code> into the flight recorder's <code>session.start</code>. The host was asserting an unverified fact in the one record the product claims is trustworthy. Every image now carries <code>image.json</code> (arch, flavor, both digests, pinned Buildroot/Linux, build date), written by <code>make image</code> and installed by <code>fetch-image</code>; <code>sandbox.New</code> refuses a mismatch, and a missing manifest is a hard error rather than a silent pass. 5 unit tests; the integration harness now takes its flavor from the manifest instead of hardcoding <code>base</code>.</td>
+        <td class="mono"><pre>$ grep -E '"(arch|flavor)"' ~/.cache/kelyfos/out/aarch64/image.json
+  "arch": "aarch64",
+  "flavor": "dev",
+
+$ kelyfos run --image base
+kelyfos: requested --image base but /home/.../out/aarch64 holds the "dev" image.
+    run it:   kelyfos run --image dev
+    or build: make image ARCH=aarch64 FLAVOR=base
+
+$ kelyfos run --image dev &amp;&amp; kelyfos exec "cat /etc/os-release | head -2"
+NAME="KelyfOS"
+ID=kelyfos
+
+$ kelyfos log --verify
+session d3aa81c3: chain intact, 7 events verified
+$ grep -o '"image":"[^"]*"' .../events.jsonl | head -1
+"image":"dev"
+
+$ go test ./internal/sandbox/ -run TestCheckManifest
+--- PASS: TestCheckManifestAcceptsMatch
+--- PASS: TestCheckManifestRejectsFlavorMismatch
+--- PASS: TestCheckManifestRejectsArchMismatch
+--- PASS: TestCheckManifestRejectsMissing
+--- PASS: TestCheckManifestRejectsGarbage
+ok  github.com/p4r4n0rm4l/KelyfOS/internal/sandbox</pre></td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
@@ -841,6 +890,12 @@ make image         <span class="c"># kernel Image (aarch64) / vmlinux (x86_64) +
         <tr><td class="mono">D19</td><td class="mono">2026-08-22</td>
         <td>The P3-1 resync design is <b>endorsed as written and must not be simplified later</b>: mix host-supplied entropy into <code>/dev/urandom</code> first, attempt <code>RNDADDENTROPY</code> credit second and ignore its failure, set the wall clock with <code>clock_settime(CLOCK_REALTIME)</code>. Restore is measured <i>through</i> the resync round trip rather than stopping at <code>resume()</code>.</td>
         <td>Endorsed by John, 2026-08-22. The ordering is load-bearing rather than stylistic. The plain write is what makes N forks of one snapshot <i>diverge</i>: without it every fork resumes with an identical random pool and generates the same session ids, nonces and temporary filenames — a correctness failure that looks like nothing until two forks collide. The <code>RNDADDENTROPY</code> credit is second and optional because it solves a different problem — a restored guest can otherwise block in <code>getrandom(2)</code> waiting for the kernel's entropy estimate to recover, which is how a 100 ms restore becomes a two-second one — and the guaranteed part must not depend on the optional part. Measuring through resync matters for the same reason: stopping at <code>resume()</code> reported <b>3 ms</b> locally where the honest number, with the guest proven to be answering, is <b>130 ms</b>. The flattering number was available and is not the one that gets published.</td></tr>
+        <tr><td class="mono">D20</td><td class="mono">2026-08-22</td>
+        <td>The README quickstart installs a prebuilt image from the GitHub release; building from source is the documented alternative, not the default path.</td>
+        <td>The Phase 3 acceptance test requires a person following only the README to reach a working <code>kelyfos exec</code> in &le; 5 minutes. The from-source path cannot satisfy that under any optimisation: <code>make image</code> compiles a cross toolchain, a kernel and a userland, and takes ~35 minutes on CI hardware. Either the criterion is dropped or the image ships prebuilt, and dropping it would mean the first thing a visitor does with KelyfOS is wait half an hour, which is the opposite of the product's whole claim. So the v0.3 release publishes <code>vmlinux</code>/<code>Image</code> + <code>rootfs.ext4</code> per arch with a <code>SHA256SUMS</code> file, and <code>make fetch-image</code> (script <code>dev/fetch-image.sh</code>) downloads and verifies them into <code>$(IMAGE_DIR)</code>. Artifacts ship gzipped: 141 MB of kernel + rootfs becomes 32 MB, which is most of the quickstart's wall clock. gzip rather than zstd (which would reach 21 MB) because <code>gunzip</code> is on every machine already and the quickstart must not require installing a decompressor. The sums cover the compressed files &mdash; that is what gets downloaded &mdash; and decompression happens only after they verify, into a temp dir, so a bad download cannot damage an image already in the cache. This is a distribution change, not an architecture change: the artifacts are byte-identical to what <code>make image</code> produces, the build path stays first-class and is what CI exercises on every commit, and the checksums are published so the download is verifiable. It also does not cross a non-goal &mdash; the artifacts are static files on a GitHub release, not a hosted service or a registry KelyfOS operates. Signed images and reproducible builds are P4-3; until then the checksum is integrity, not provenance, and <code>dev/fetch-image.sh</code> says so.</td></tr>
+        <tr><td class="mono">D21</td><td class="mono">2026-08-22</td>
+        <td>Every built or fetched image carries an <code>image.json</code> manifest, and the sandbox refuses to boot when the requested flavor does not match it.</td>
+        <td>Found while preparing the v0.3 release: <code>ImageDir()</code> resolves to <code>out/&lt;arch&gt;</code> with no flavor component, so <code>--image</code> was a label that selected nothing. Build <code>base</code>, run <code>--image dev</code>, and the sandbox boots <code>base</code> while the flight recorder writes <code>image: dev</code> into <code>session.start</code>. That is not a cosmetic bug: the entire value proposition of the recorder is that it is the one account of the session the guest cannot influence, and here the <i>host</i> was writing a field it had never checked. An audit record that is confidently wrong is worse than one that is absent. Rejected the alternative of making the path flavor-scoped (<code>out/&lt;arch&gt;/&lt;flavor&gt;/</code>): it is the tidier model, but it invalidates every existing cache and snapshot <code>workspace_path</code>, and it still would not stop a hand-placed rootfs from being mislabelled. The manifest fixes the actual defect &mdash; the host asserting an unverified fact &mdash; and it earns its keep twice more: it is the provenance record the release artifacts needed anyway (arch, flavor, kernel and rootfs digests, pinned Buildroot/Linux versions, build date), and it lets <code>fetch-image</code> tell you what you just downloaded. <code>make image</code> and <code>dev/fetch-image.sh</code> both write it; a missing manifest is a hard error naming the fix rather than a silent fallback, because a silent fallback is how the original bug survived this long.</td></tr>
     <!-- Claude Code: append rows above this line. -->
   </table>
 </section>

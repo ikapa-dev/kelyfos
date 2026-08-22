@@ -49,6 +49,7 @@ LINUX_SERIES_US := $(subst .,_,$(LINUX_SERIES))
 # Firecracker reads the rootfs as a block device on every boot, and P1-7 measures
 # that boot in milliseconds.
 IMAGE_DIR      ?= $(KELYFOS_CACHE)/out/$(ARCH)
+RELEASE_TAG    ?= latest
 FLAVOR_OVERLAY := $(CURDIR)/image/flavors/$(FLAVOR)/overlay
 GUEST_OVERLAY  := $(BUILD_DIR)/kelyfos-overlay
 OVERLAY_DIRS   := $(FLAVOR_OVERLAY) $(GUEST_OVERLAY)
@@ -150,6 +151,22 @@ image: linux-only supervisor fetch-kernel $(BUILD_DIR)/.config ## Build the gues
 	@cp -f $(BUILD_DIR)/images/$(KERNEL_ARTIFACT) $(IMAGE_DIR)/
 	@cp -f $(BUILD_DIR)/images/rootfs.ext4        $(IMAGE_DIR)/
 	@$(CURDIR)/image/check-image.sh "$(ARCH)" "$(IMAGE_DIR)" "$(KERNEL_ARTIFACT)"
+	@$(CURDIR)/image/write-manifest.sh "$(ARCH)" "$(FLAVOR)" "$(IMAGE_DIR)" "$(KERNEL_ARTIFACT)" "$(BUILDROOT_VERSION)" "$(LINUX_VERSION)"
+
+# Prebuilt guest images from the GitHub release (D20). Same bytes `image` makes,
+# without the 35-minute build. Checksum-verified; not signed until P4-3.
+fetch-image: ## Download a prebuilt guest image for ARCH instead of building it
+	@$(CURDIR)/dev/fetch-image.sh "$(ARCH)" "$(RELEASE_TAG)"
+
+# Package the built artifacts for a release, arch-tagged so one release can carry
+# both, with the sums file fetch-image.sh verifies against.
+release-artifacts: ## Stage $(IMAGE_DIR) artifacts + SHA256SUMS into dist/
+	@mkdir -p $(CURDIR)/dist
+	@gzip -9 -c $(IMAGE_DIR)/$(KERNEL_ARTIFACT) > $(CURDIR)/dist/$(KERNEL_ARTIFACT)-$(ARCH).gz
+	@gzip -9 -c $(IMAGE_DIR)/rootfs.ext4        > $(CURDIR)/dist/rootfs-$(ARCH).ext4.gz
+	@cp -f $(IMAGE_DIR)/image.json $(CURDIR)/dist/image-$(ARCH).json
+	@cd $(CURDIR)/dist && sha256sum $(KERNEL_ARTIFACT)-$(ARCH).gz rootfs-$(ARCH).ext4.gz image-$(ARCH).json >> SHA256SUMS
+	@cd $(CURDIR)/dist && ls -la $(KERNEL_ARTIFACT)-$(ARCH).gz rootfs-$(ARCH).ext4.gz
 
 cli: linux-only ## Build the kelyfos host CLI into bin/
 	@mkdir -p $(OUT_DIR)

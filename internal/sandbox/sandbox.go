@@ -134,6 +134,12 @@ func New(opts Options) (*Sandbox, error) {
 		}
 	}
 
+	// The flavor is recorded in the audit trail, so it has to be checked
+	// against the image rather than believed (D21).
+	if err := checkManifest(opts.ImageDir, opts.Arch, opts.Flavor); err != nil {
+		return nil, err
+	}
+
 	id := opts.ID
 	if id == "" {
 		var err error
