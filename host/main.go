@@ -21,6 +21,7 @@ usage:
   kelyfos mcp [flags]              bridge an MCP client's stdio to a sandbox
   kelyfos snapshot save|restore    save a sandbox's state, or bring it back
   kelyfos fork [flags]             restore one snapshot into several sandboxes
+  kelyfos shim [flags]             serve an E2B-compatible REST subset
   kelyfos log [flags]              replay, follow or verify a session's record
   kelyfos bench [flags]            measure cold boot-to-ready over several runs
   kelyfos version
@@ -45,6 +46,8 @@ func main() {
 		err = snapshotCmd(os.Args[2:])
 	case "fork":
 		err = forkCmd(os.Args[2:])
+	case "shim":
+		err = shimCmd(os.Args[2:])
 	case "log":
 		err = logCmd(os.Args[2:])
 	case "bench":
