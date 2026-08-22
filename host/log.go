@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"flag"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
+	"github.com/p4r4n0rm4l/KelyfOS/internal/report"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/sandbox"
 )
 
@@ -25,6 +27,7 @@ func logCmd(argv []string) error {
 		verify = fs.Bool("verify", false, "check the hash chain and report the first break")
 		asJSON = fs.Bool("json", false, "print the raw events instead of a readable replay")
 		list   = fs.Bool("list", false, "list recorded sessions")
+		export = fs.String("export", "", "write a self-contained HTML report to this path")
 	)
 	fs.Usage = func() {
 		fmt.Fprint(fs.Output(), `usage: kelyfos log [flags]
@@ -50,6 +53,9 @@ docs/events.md.
 	}
 	path := recorder.Path(sandbox.Root(), sessionID)
 
+	if *export != "" {
+		return exportSession(sessionID, path, *export)
+	}
 	if *verify {
 		return verifySession(sessionID, path)
 	}
@@ -125,6 +131,36 @@ func listSessions() error {
 		}
 		fmt.Printf("%s  %s  %4d events  %s\n",
 			e.Name(), info.ModTime().Format("2006-01-02 15:04:05"), len(events), state)
+	}
+	return nil
+}
+
+// exportSession renders the report. It verifies the chain as part of rendering,
+// because a report that does not say whether its own source has been tampered
+// with is worth very little as evidence.
+func exportSession(id, path, dest string) error {
+	blob, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("no flight recorder for session %s: %w", id, err)
+	}
+	events, err := recorder.Read(bytes.NewReader(blob))
+	if err != nil {
+		return err
+	}
+	_, verifyErr := recorder.Verify(bytes.NewReader(blob))
+
+	f, err := os.Create(dest)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if err := report.Render(f, id, events, verifyErr); err != nil {
+		return err
+	}
+	info, _ := os.Stat(dest)
+	fmt.Printf("wrote %s (%d events, %d bytes)\n", dest, len(events), sizeOf(info))
+	if verifyErr != nil {
+		fmt.Printf("  warning: the chain does NOT verify — the report says so prominently\n")
 	}
 	return nil
 }
