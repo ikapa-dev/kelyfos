@@ -166,7 +166,7 @@
     <span class="bl-name">Overall</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">P0-2 — install Firecracker and confirm the version</b></div>
+  <div class="focusline">Current focus: <b id="focus">P0-3 — scaffold the repository as in section 5</b></div>
 </div>
 
 <!-- ====================================================== 1. END GOAL -->
@@ -321,7 +321,7 @@
   <ul class="tasks">
     <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">P0-1</span><span class="tk">Set up the Linux layer on the dev machine — MacBook Pro M5 Max / 64 GB, macOS 15+ (nested virtualization needs M3 or newer): install Lima, create an Ubuntu 24.04 arm64 VM with <code>vmType: vz</code> and <code>nestedVirtualization: true</code> (start with 6 CPUs / 12 GiB RAM / 60 GiB disk), commit the config as <code>dev/lima.yaml</code>, then verify <code>ls -l /dev/kvm</code> succeeds inside it. Alternate hosts: Windows 11 → WSL2 Ubuntu with <code>nestedVirtualization=true</code> under <code>[wsl2]</code> in <code>%UserProfile%\.wslconfig</code> + <code>wsl --update</code>; or any Linux/KVM box directly. Record the chosen machine in the progress log.</span></li>
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">P0-2</span><span class="tk">Install Firecracker (latest release binary) and confirm <code>firecracker --version</code>.</span></li>
     <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">P0-3</span><span class="tk">Scaffold the repository exactly as in section 5; <code>git init</code>, first commit, push.</span></li>
@@ -609,6 +609,9 @@ make image         <span class="c"># kernel Image (aarch64) / vmlinux (x86_64) +
         <tr><td class="mono">2026-08-22</td><td class="mono">P0-1</td>
         <td>Linux layer created. <code>dev/lima.yaml</code> defines the <b>kelyfos-dev</b> VM: Ubuntu 24.04 arm64, <code>vmType: vz</code>, <code>nestedVirtualization: true</code>, 6 CPU / 12 GiB / 60 GiB, image pinned by digest with a latest-release fallback, home mounted writable via virtiofs. A <code>data</code>-mode provision writes <code>/etc/udev/rules.d/99-kelyfos-kvm.rules</code> so <code>/dev/kvm</code> exists and is usable without qemu installed, and a start-time probe fails loudly if nested virtualization did not come up. Dev machine recorded: MacBook Pro <b>M5 Max / 64 GB</b>, macOS 26.6.2, Lima 2.2.0.</td>
         <td class="mono">limactl start --name kelyfos-dev dev/lima.yaml → &quot;READY. Run `limactl shell kelyfos-dev`&quot;<br>limactl shell kelyfos-dev -- ls -l /dev/kvm<br>crw-rw-rw- 1 root kvm 10, 232 Aug 22 11:23 /dev/kvm<br>uname -a → Linux lima-kelyfos-dev 6.8.0-134-generic … aarch64 GNU/Linux<br>nproc → 6 · df -h / → 58G · Ubuntu 24.04.4 LTS<br>ioctl(open(/dev/kvm), KVM_GET_API_VERSION) → 12</td></tr>
+        <tr><td class="mono">2026-08-22</td><td class="mono">P0-2</td>
+        <td>Firecracker <b>v1.16.1</b> (latest release, ≥ 1.7 as required) installed in the Lima VM via a repeatable <code>dev/install-firecracker.sh</code>: downloads the arch-matched release tarball, verifies the published sha256, and installs both <code>firecracker</code> and <code>jailer</code> (same tarball; jailer is needed at P4-1) to <code>/usr/local/bin</code>. The script resolves the version from <code>versions.mk</code> once P0-6 creates it, falling back to the pinned default — so there is one place that says which Firecracker this project targets.</td>
+        <td class="mono">limactl shell kelyfos-dev -- bash dev/install-firecracker.sh<br>==&gt; firecracker v1.16.1 (aarch64) -&gt; /usr/local/bin<br>==&gt; sha256 ok: 8d0e69f6d6f9a1724551f607f18504052c16c1828ee3d4d7b6e6c73380871e0e<br>limactl shell kelyfos-dev -- firecracker --version<br>Firecracker v1.16.1<br>… Firecracker exiting successfully. exit_code=0<br>jailer --version → Jailer v1.16.1</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
