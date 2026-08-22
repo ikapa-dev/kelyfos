@@ -126,7 +126,7 @@
      injected secrets, full audit replay, and millisecond forking.</p>
   <div class="meta">
     owner: <b>John</b> &nbsp;·&nbsp; developer: <b>Claude Code</b> &nbsp;·&nbsp;
-    status: <b class="amber" id="meta-status">Phase 0 done (v0.0) — Phase 1 active</b> &nbsp;·&nbsp;
+    status: <b class="amber" id="meta-status">Phase 1 done (v0.1) — Phase 2 active</b> &nbsp;·&nbsp;
     last updated: <b id="meta-updated">2026-08-22</b><br>
     repo file: <b>PLAN.html</b> (commit this document at the repository root — it is the single source of truth)<br>
     <span class="quiet">KelyfOS — from κέλυφος (kélyfos), "shell": the guest OS wrapped around the agent. Formerly working-titled "agos" (D4 → D10).</span>
@@ -166,7 +166,7 @@
     <span class="bl-name">Overall</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">Phase 1 acceptance test< 200 MB</b></div>
+  <div class="focusline">Current focus: <b id="focus">P2-0 — TLS strategy design gate (record decision D6)< 200 MB</b></div>
 </div>
 
 <!-- ====================================================== 1. END GOAL -->
@@ -347,13 +347,13 @@
 </section>
 
 <!-- ====================================================== PHASE 1 -->
-<section class="phase" id="p1" data-phase="1" data-status="active">
+<section class="phase" id="p1" data-phase="1" data-status="done">
   <div class="phase-head">
     <div>
       <div class="kconfig">config KELYFOS_PHASE_1</div>
       <h2>Phase 1 — Minimal bootable guest (v0.1 · "it boots")</h2>
     </div>
-    <span class="badge">ACTIVE</span>
+    <span class="badge">DONE</span>
   </div>
   <p class="goal"><b>Goal:</b> a self-built kernel + rootfs that boots under Firecracker and answers one command over vsock. Est. 3–4 weekends.</p>
   <ul class="tasks">
@@ -391,13 +391,13 @@
 </section>
 
 <!-- ====================================================== PHASE 2 -->
-<section class="phase" id="p2" data-phase="2" data-status="todo">
+<section class="phase" id="p2" data-phase="2" data-status="active">
   <div class="phase-head">
     <div>
       <div class="kconfig">config KELYFOS_PHASE_2</div>
       <h2>Phase 2 — Agent-native supervisor (v0.2 · "a toolbox, not a computer")</h2>
     </div>
-    <span class="badge">TODO</span>
+    <span class="badge">ACTIVE</span>
   </div>
   <p class="goal"><b>Goal:</b> the differentiating layer — MCP as the only interface, policy and audit built in. Est. 3–4 weekends.</p>
   <ul class="tasks">
@@ -675,6 +675,12 @@ make image         <span class="c"># kernel Image (aarch64) / vmlinux (x86_64) +
         <tr><td class="mono">2026-08-22</td><td class="mono">P1-8</td>
         <td>Cross-arch gate passing: <code>make image ARCH=x86_64</code> builds cleanly on the aarch64 dev machine, from the same fragments and the same one-line arch delta — a full cross toolchain (binutils, gcc 14.3.0, musl 1.2.6), kernel and rootfs, with no aarch64 assumptions leaking in. The artifact is the <b>uncompressed ELF <code>vmlinux</code></b>, 26 194 408 bytes, which is what Firecracker boots on x86_64 — not a bzImage — and the per-arch selection is asserted by <code>image/check-kernel.sh</code> on every build rather than assumed. The guest supervisor is cross-compiled to amd64 into the x86 rootfs by the same target. The two architectures build into separate trees and the aarch64 artifacts are untouched afterwards. Build-only as the task specifies; x86_64 boot verification lands with CI at P3-6.</td>
         <td class="mono">limactl shell kelyfos-dev -- make image ARCH=x86_64 → EXIT=0<br>==&gt; config verified: every requested symbol is present in .config (buildroot and kernel)<br>==&gt; vmlinux: ELF 64-bit LSB executable, x86-64, version 1 (SYSV), statically linked … (26194408 bytes)<br>==&gt; rootfs.ext4 67108864 bytes (5.2M on disk, sparse) — under the 200 MB budget<br>==&gt; rootfs contains /init and /sbin/kelyfos-supervisor (3 174 560 bytes, mode 0755)<br>out/aarch64 → Image rootfs.ext4 · out/x86_64 → vmlinux rootfs.ext4<br>aarch64 Image still &quot;Linux kernel ARM64 boot executable&quot; after the x86 build</td></tr>
+        <tr><td class="mono">2026-08-22</td><td class="mono">P1</td>
+        <td><b>Phase 1 acceptance test — passed, all six steps run verbatim.</b> Step 1 used a genuinely from-scratch build: a fresh <code>git clone</code> of <code>origin/main</code> with its own <code>KELYFOS_CACHE</code>, so the cross toolchain, kernel and rootfs were all rebuilt rather than inherited. Phase 1 closed; tagged <b>v0.1</b>. Phase 2 is now active, starting at P2-0 — the TLS strategy design gate, where decision D6 gets recorded.</td>
+        <td class="mono">1) fresh clone (c064f03) → make toolchain &amp;&amp; make image → EXIT=0<br>&nbsp;&nbsp;&nbsp;Image 13 457 920 bytes · rootfs.ext4 67 108 864 bytes — both exist<br>2) make image ARCH=x86_64 on the aarch64 dev machine → EXIT=0<br>&nbsp;&nbsp;&nbsp;vmlinux: ELF 64-bit LSB executable, x86-64 … (26 194 408 bytes), uncompressed<br>3) ./bin/kelyfos run → &quot;sandbox d2a6f57a ready in 882 ms (vmm 247 ms + guest 635 ms)&quot;; still running 3 s later, 1 firecracker process<br>4) ./bin/kelyfos exec &quot;uname -a&quot; → <b>Linux kelyfos 6.18.45 #6 SMP … aarch64 GNU/Linux</b> · exit=0<br>5) ./bin/kelyfos exec &quot;cat /etc/os-release&quot; → NAME=&quot;KelyfOS&quot; · ID=kelyfos · PRETTY_NAME=&quot;KelyfOS (base)&quot; — the guest, not the host distro · exit=0<br>6) SIGINT to terminal A → kelyfos run exit=0 · firecracker processes 0 · run dirs 0 · socket files 0</td></tr>
+        <tr><td class="mono">2026-08-22</td><td class="mono">P1</td>
+        <td>One failure met and understood during the acceptance run, recorded so it is not rediscovered. Step 2's <i>incremental</i> x86_64 rebuild failed with Buildroot's <code>duplicate filename … 0001-Complete-function-prototype…patch</code> on <code>host-gmp</code>. Cause: <code>.stamp_extracted</code> had become newer than <code>.stamp_patched</code>, so make re-ran the patch step and <code>apply-patches.sh</code> correctly refused a patch already in <code>.applied_patches_list</code>. The trigger was this session's own shortcut — step 1's fresh clone was pointed at the <i>shared</i> <code>DL_DIR</code> to avoid re-downloading, which disturbed stamp ordering in the other tree. <b>Not a defect in the committed build system:</b> after <code>host-gmp-dirclean</code>, a full rebuild and then a second incremental rebuild both succeeded, and the aarch64 tree — which nothing else touched — rebuilds incrementally without complaint throughout. Worth knowing before P3-6 wires up CI caching across architectures.</td>
+        <td class="mono">make -C … host-gmp-dirclean<br>make image ARCH=x86_64 → EXIT=0 (vmlinux 26 194 408 bytes)<br>make image ARCH=x86_64 → EXIT=0 (second, incremental — the case that failed)<br>make image (aarch64, incremental) → EXIT=0 throughout</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
