@@ -68,6 +68,10 @@ type Options struct {
 	// CPUSlice caps the host CPU time the VMM may consume. Distinct from
 	// VcpuCount, which caps parallelism (E1-2).
 	CPUSlice *Slice
+	// IO caps network and block throughput, enforced by Firecracker's own
+	// token-bucket limiters (E1-3). The zero value leaves every device
+	// unthrottled.
+	IO IOLimits
 }
 
 // State is the on-disk description of a running sandbox, written into the run
@@ -88,6 +92,10 @@ type State struct {
 	ProxyPort   int       `json:"proxy_port,omitempty"`
 	CPUQuota    int       `json:"cpu_quota_percent,omitempty"`
 	CGroupPath  string    `json:"cgroup_path,omitempty"`
+	NetMbpsRx   int       `json:"net_mbps_rx,omitempty"`
+	NetMbpsTx   int       `json:"net_mbps_tx,omitempty"`
+	DiskIOPS    int       `json:"disk_iops,omitempty"`
+	DiskMbps    int       `json:"disk_mbps,omitempty"`
 	Workspace   string    `json:"workspace,omitempty"`
 	Allow       []string  `json:"allow,omitempty"`
 	RunDir      string    `json:"run_dir"`
@@ -178,38 +186,15 @@ func New(opts Options) (*Sandbox, error) {
 		},
 	}
 
-	cfg := FirecrackerConfig{
-		BootSource: BootSource{
-			KernelImagePath: kernel,
-			BootArgs:        bootArgs(opts.Arch, opts.Quiet, opts.Net, opts.Workspace != nil),
-		},
-		Drives: []Drive{{
-			DriveID:      "rootfs",
-			PathOnHost:   rootfs,
-			IsRootDevice: true,
-			IsReadOnly:   true,
-		}},
-		MachineConfig: MachineConfig{VcpuCount: opts.VcpuCount, MemSizeMib: opts.MemMiB},
-		Vsock:         &Vsock{GuestCID: proto.CIDGuest, UDSPath: s.State.UDSPath},
-	}
+	cfg := firecrackerConfig(opts, kernel, rootfs, s.State.UDSPath, id)
 	if opts.Workspace != nil {
 		s.State.Workspace = opts.Workspace.ImagePath
-		// The workspace is the second virtio-blk drive, so it is always
-		// /dev/vdb in the guest — pinned rather than discovered, because the
-		// supervisor should not have to guess which disk is which.
-		cfg.Drives = append(cfg.Drives, Drive{
-			DriveID:      "workspace",
-			PathOnHost:   opts.Workspace.ImagePath,
-			IsRootDevice: false,
-			IsReadOnly:   false,
-		})
 	}
+	s.State.NetMbpsRx = opts.IO.NetMbpsRx
+	s.State.NetMbpsTx = opts.IO.NetMbpsTx
+	s.State.DiskIOPS = opts.IO.DiskIOPS
+	s.State.DiskMbps = opts.IO.DiskMbps
 	if opts.Net != nil {
-		cfg.NetworkIfaces = []NetworkIface{{
-			IfaceID:     "eth0",
-			HostDevName: opts.Net.TAP,
-			GuestMAC:    guestMAC(id),
-		}}
 		s.State.TAP = opts.Net.TAP
 		s.State.HostIP = opts.Net.HostIP.String()
 		s.State.GuestIP = opts.Net.GuestIP.String()

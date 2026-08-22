@@ -112,8 +112,9 @@ func TestParseMemMiBKeepsBareNumbersAsMiB(t *testing.T) {
 // A limit that is specified but not yet enforced must refuse, not accept.
 // Accepting it would leave the user believing in a limit that does nothing.
 func TestUnenforcedResourceKeysRefuse(t *testing.T) {
-	for _, key := range []string{"scratch", "net_mbps_rx", "net_mbps_tx",
-		"disk_iops", "disk_mbps", "max_runtime", "idle_timeout"} {
+	// Shrinks as the epic lands each one: the four I/O rates left this list in
+	// E1-3, and the test failing when they did is the point of writing it here.
+	for _, key := range []string{"scratch", "max_runtime", "idle_timeout"} {
 		_, err := loadString(t, "[resources]\n"+key+" = \"1\"\n")
 		if err == nil {
 			t.Errorf("[resources] %s was accepted but nothing enforces it", key)
@@ -147,6 +148,44 @@ func TestCPUQuotaParses(t *testing.T) {
 	for _, bad := range []string{"50", "\"\"", "\"-10%\"", "\"0%\"", "\"abc%\""} {
 		if _, err := loadString(t, "[resources]\ncpu_quota = "+bad+"\n"); err == nil {
 			t.Errorf("cpu_quota = %s was accepted", bad)
+		}
+	}
+}
+
+func TestIORatesParse(t *testing.T) {
+	cfg := writeAndLoad(t, `
+[resources]
+net_mbps_rx = 10
+net_mbps_tx = 5
+disk_iops   = 500
+disk_mbps   = 50
+`)
+	for _, c := range []struct {
+		key  string
+		got  int
+		want int
+	}{
+		{"net_mbps_rx", cfg.ResNetMbpsRx, 10},
+		{"net_mbps_tx", cfg.ResNetMbpsTx, 5},
+		{"disk_iops", cfg.ResDiskIOPS, 500},
+		{"disk_mbps", cfg.ResDiskMbps, 50},
+	} {
+		if c.got != c.want {
+			t.Errorf("%s = %d, want %d", c.key, c.got, c.want)
+		}
+	}
+}
+
+// Zero is refused rather than read as either "no limit" or "no traffic". Both
+// readings are defensible, which is exactly why the file may not say it.
+func TestIORateZeroAndNegativeRefused(t *testing.T) {
+	for _, body := range []string{
+		"[resources]\nnet_mbps_rx = 0\n",
+		"[resources]\ndisk_iops = -1\n",
+		"[resources]\ndisk_mbps = \"50M\"\n",
+	} {
+		if _, err := loadString(t, body); err == nil {
+			t.Errorf("accepted a bad rate:\n%s", body)
 		}
 	}
 }

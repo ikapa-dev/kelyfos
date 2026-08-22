@@ -126,7 +126,7 @@
      improvements to the existing product land here as epics. Inert until its gate opens.</p>
   <div class="meta">
     owner: <b>John</b> &nbsp;&middot;&nbsp; developer: <b>Claude Code</b> &nbsp;&middot;&nbsp;
-    status: <b class="ok" id="meta-status">Epic E1 — active, paused at 3/9 (next: E1-3)</b> &nbsp;&middot;&nbsp;
+    status: <b class="ok" id="meta-status">Epic E1 — active, 4/9 (next: E1-4)</b> &nbsp;&middot;&nbsp;
     last updated: <b id="meta-updated">2026-08-23</b><br>
     repo file: <b>PLAN-FEATURES.html</b> (lives at the repository root next to <code>PLAN.html</code>)<br>
     <span class="quiet">Companion to PLAN.html — same protocol, same rules, later timeline.</span>
@@ -166,7 +166,7 @@
     <span class="bl-name">All epics</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">Paused — resume at E1-3 (I/O throttling via Firecracker rate limiters)</b></div>
+  <div class="focusline">Current focus: <b id="focus">E1-4 — OOM visibility: <code>resource.oom</code> from the supervisor, and an exit status that says so</b></div>
 </div>
 
 <!-- ====================================================== 1. ACTIVATION GATE -->
@@ -255,7 +255,7 @@
         <code>"50%"</code> &rarr; <code>50000 100000</code>; the percentage string never touches the kernel. Document the distinction this creates:
         <code>cpus</code> caps <i>parallelism</i> (cores the guest sees), <code>cpu_quota</code> caps <i>actual host CPU time</i>.
         Standalone implementation now; folds into the jailer if PLAN.html P4-1 ever lands.</span></li>
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">E1-3</span><span class="tk">I/O throttling via Firecracker&rsquo;s <b>native token-bucket rate limiters</b> on the network
         device and both block devices — configuration of an existing Firecracker feature, no new machinery. Toml keys:
         <code>net_mbps_rx</code>, <code>net_mbps_tx</code>, <code>disk_iops</code>, <code>disk_mbps</code> &rarr; <code>rate_limiter</code>
@@ -1112,6 +1112,61 @@ $ go test ./...   -&gt; all packages ok</pre></td></tr>
 $ git status --porcelain   (empty)
 $ git rev-parse --short HEAD -&gt; 3db8807f == origin/main
 $ go test ./...            -&gt; all packages ok</pre></td></tr>
+        <tr><td class="mono">2026-08-23</td><td class="mono">E1-3</td>
+        <td>I/O throttling, and the honest version of it. The four keys are wired the way the task says &mdash;
+        <code>net_mbps_rx</code>/<code>net_mbps_tx</code> become <code>rx_rate_limiter</code>/<code>tx_rate_limiter</code> on the
+        NIC, <code>disk_iops</code>/<code>disk_mbps</code> become a <code>rate_limiter</code> on <i>each</i> block device &mdash;
+        against Firecracker v1.16.1's schema read from its own swagger rather than from memory. Toml keys only, no flags: the
+        task names keys, and a limit with no flag has no request to check against a ceiling.
+        <b>The part worth recording is the bucket sizing, because the obvious choice is wrong twice over.</b> Firecracker
+        enforces <code>size/refill_time</code>, so any pair in that ratio states the same rate &mdash; on paper. In practice a
+        bucket smaller than one request cannot be paid for, and Firecracker empties it and waits out only the <i>deficit</i>,
+        forgiving the tokens that would have overflowed: a 10 MB/s cap with a 1 MB bucket passed 200 MiB at 12.3 MB/s, 23% over.
+        Widening it to whole seconds fixed that &mdash; and then a tenth-second bucket, tried in the other direction to shrink
+        the opening burst, failed the opposite way: when a bucket empties Firecracker waits a fixed 100 ms before retrying, so a
+        bucket only a little larger than one 64 kB frame leaves most of each window unspent, and a 10 Mbps cap delivered
+        6.8 Mbps &mdash; 32% <i>under</i>. A small bucket is not a tighter limit, it is a wrong one. So: a whole number of
+        seconds' worth of tokens, one second unless a second's worth would be smaller than a single 4 MiB block request
+        (measured from the guest's own <code>max_sectors_kb</code>, not assumed), which is why <code>disk_mbps = 1</code> gets a
+        5 MB bucket over 5 s. What that costs is stated in <code>docs/resources.md</code> rather than hidden: the bucket starts
+        full and the opening burst is about <i>two</i> bucket-fulls, because Firecracker only advances a bucket's
+        <code>last_update</code> when it has to replenish &mdash; a device idle beforehand drains one bucket and is handed
+        another. Measured at 10, 40 and 100 Mbps, that excess was a constant 0.8 s of traffic at each rate. Two residuals
+        carried forward, both written down: a guest that raises its own <code>max_sectors_kb</code> past the bucket can still
+        provoke the over-consumption path, bounded at twice the rate; and an exact operations-per-second figure needs a workload
+        that is not confounded by ext4 journal writes, which is E1-8's stress-ng territory.</td>
+        <td class="mono"><pre>disk, 200 MiB written to /work (dev flavor, aarch64, nested virt &mdash; D15):
+  unlimited                                        3.15 s      66.6 MB/s
+  disk_mbps = 10   {"size":10000000,"refill":1000} 19.99 s      9.99 MB/s steady
+  disk_mbps = 1    {"size":5000000,"refill":5000}  27.59 s/30M  0.96 MB/s steady
+
+disk operations, 800 direct 4 KiB writes:
+  unlimited                                        0.17 s
+  disk_iops = 200  {"ops":{"size":200,"refill":1000}}  4.77 s   (28x slower)
+
+network, 50 MB over the egress proxy from a local server:
+  unlimited                                        0.13 s   375 MB/s
+  net_mbps_rx = 10   {"size":1250000,"refill":1000}   38.19 s   9.95 Mbps steady
+  net_mbps_rx = 40   {"size":5000000,"refill":1000}    8.15 s  39.3  Mbps steady
+  net_mbps_rx = 100  {"size":12500000,"refill":1000}   2.16 s  92.5  Mbps steady
+  ("steady" discounts the two-bucket opening burst; gross figures are higher,
+   and converge on the configured rate as the transfer outgrows the burst)
+
+rejected shapes, measured not guessed:
+  10 MB/s with a 1 MB bucket      200 MiB in 17.0 s = 12.3 MB/s   23% over
+  10 Mbps  with a 125 kB bucket   50 MB  in 58.7 s =  6.8 Mbps    32% under
+
+$ kelyfos run   (no --allow, net limit set)
+  net limit   not applied &mdash; this sandbox has no network interface
+
+$ go test ./internal/...
+--- PASS: TestBucketMapsRatesToSizeAndRefillTime   (6 subtests)
+--- PASS: TestEveryBucketIsExactAndBigEnough       (7000 rates: exact, and
+                                                    every bucket holds a request)
+--- PASS: TestConfigCarriesTheLimitersFirecrackerExpects
+--- PASS: TestUnlimitedConfigHasNoLimiterFields
+--- PASS: TestIORatesParse / TestIORateZeroAndNegativeRefused
+ok  internal/config   ok  internal/sandbox</pre></td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>

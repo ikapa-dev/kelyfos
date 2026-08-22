@@ -101,6 +101,8 @@ status. This is how you hand an agent a sandbox and nothing else:
 		*memMiB = n
 	}
 
+	var ioLimits sandbox.IOLimits
+
 	cfg, cfgErr := loadPolicy()
 	if cfgErr != nil {
 		return cfgErr
@@ -160,6 +162,15 @@ status. This is how you hand an agent a sandbox and nothing else:
 		if cfg.MemMiB > 0 && !typed["mem"] && cfg.ResMemMiB == 0 {
 			*memMiB = cfg.MemMiB
 		}
+		// The I/O rates have no flags by design (E1-3 names toml keys only), so
+		// there is no request to check against a ceiling: the declared value is
+		// the value.
+		ioLimits = sandbox.IOLimits{
+			NetMbpsRx: cfg.ResNetMbpsRx,
+			NetMbpsTx: cfg.ResNetMbpsTx,
+			DiskIOPS:  cfg.ResDiskIOPS,
+			DiskMbps:  cfg.ResDiskMbps,
+		}
 	}
 
 	if *cpus == 0 {
@@ -188,6 +199,7 @@ status. This is how you hand an agent a sandbox and nothing else:
 
 	opts := sandbox.Options{
 		CPUSlice:  cpuSlice,
+		IO:        ioLimits,
 		Arch:      *arch,
 		Flavor:    *flavor,
 		ImageDir:  *imgDir,
@@ -379,6 +391,21 @@ status. This is how you hand an agent a sandbox and nothing else:
 			*cpus, cpuSlice.Percent)
 		fmt.Printf("  cgroup      %s\n", sb.State.CGroupPath)
 	}
+	if ioLimits.DiskIOPS > 0 || ioLimits.DiskMbps > 0 {
+		// Per device, not shared — the limiter is a property of one virtio-blk
+		// device and a sandbox with a workspace has two of them.
+		fmt.Printf("  disk limit  %s, per block device\n", describeDiskLimit(ioLimits))
+	}
+	if ioLimits.NetMbpsRx > 0 || ioLimits.NetMbpsTx > 0 {
+		if opts.Net == nil {
+			// Not an error: no network at all is a stricter limit than a
+			// throttled one. Said out loud so nobody reads the silence as the
+			// limit having been applied.
+			fmt.Printf("  net limit   not applied — this sandbox has no network interface\n")
+		} else {
+			fmt.Printf("  net limit   %s\n", describeNetLimit(ioLimits))
+		}
+	}
 	if opts.Net != nil {
 		fmt.Printf("  egress      %s via proxy on %s:%d\n",
 			strings.Join(opts.Allow, ", "), opts.Net.HostIP, opts.Net.ProxyPort)
@@ -502,6 +529,30 @@ func loadPolicy() (*config.Config, error) {
 
 // ceiling applies one [resources] limit: with no flag it becomes the value,
 // with a flag under it the flag wins, and with a flag over it the boot is
+// describeDiskLimit and describeNetLimit render only the limits that are set,
+// because "500 iops / unlimited MB/s" reads like a limit nobody chose.
+func describeDiskLimit(l sandbox.IOLimits) string {
+	var parts []string
+	if l.DiskIOPS > 0 {
+		parts = append(parts, fmt.Sprintf("%d iops", l.DiskIOPS))
+	}
+	if l.DiskMbps > 0 {
+		parts = append(parts, fmt.Sprintf("%d MB/s", l.DiskMbps))
+	}
+	return strings.Join(parts, " and ")
+}
+
+func describeNetLimit(l sandbox.IOLimits) string {
+	var parts []string
+	if l.NetMbpsRx > 0 {
+		parts = append(parts, fmt.Sprintf("%d Mbps in", l.NetMbpsRx))
+	}
+	if l.NetMbpsTx > 0 {
+		parts = append(parts, fmt.Sprintf("%d Mbps out", l.NetMbpsTx))
+	}
+	return strings.Join(parts, " and ")
+}
+
 // refused naming the policy line (docs/resources.md).
 func ceiling(key, flagName string, cfg *config.Config, limit int, flagVal *int, typed bool, show func(int) string) error {
 	if limit == 0 {

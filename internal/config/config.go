@@ -40,6 +40,15 @@ type Config struct {
 	ResMemMiB   int
 	ResDiskByte int64
 	ResCPUQuota int // percent of one core's worth of CPU time
+
+	// I/O rates, enforced by Firecracker's own token-bucket limiters (E1-3).
+	// Rates are decimal — megabits and megabytes of a million — because that is
+	// how a rate is quoted, whereas the sizes above are powers of two because
+	// that is what a size means. docs/resources.md says so out loud.
+	ResNetMbpsRx int
+	ResNetMbpsTx int
+	ResDiskIOPS  int
+	ResDiskMbps  int
 	// ResLine records where each [resources] key was written, so a refusal can
 	// name the line the ceiling came from instead of just the number.
 	ResLine map[string]int
@@ -122,8 +131,15 @@ func Load(path string) (*Config, error) {
 				cfg.ResDiskByte, err = parseBytes(value, where)
 			case "cpu_quota":
 				cfg.ResCPUQuota, err = parsePercent(value, where)
-			case "scratch", "net_mbps_rx", "net_mbps_tx",
-				"disk_iops", "disk_mbps", "max_runtime", "idle_timeout":
+			case "net_mbps_rx":
+				cfg.ResNetMbpsRx, err = parseRate(value, where, key)
+			case "net_mbps_tx":
+				cfg.ResNetMbpsTx, err = parseRate(value, where, key)
+			case "disk_iops":
+				cfg.ResDiskIOPS, err = parseRate(value, where, key)
+			case "disk_mbps":
+				cfg.ResDiskMbps, err = parseRate(value, where, key)
+			case "scratch", "max_runtime", "idle_timeout":
 				// Specified in docs/resources.md but not yet enforced. Refusing
 				// beats accepting: a limit that silently does nothing is worse
 				// than no limit, because you believe you have one.
@@ -291,14 +307,23 @@ func ParseSize(v string) (int64, error) { return parseBytes(v, "--disk") }
 // landsIn names the task each specified-but-unenforced key is waiting on, so
 // the refusal tells you when to expect it rather than just saying no.
 var landsIn = map[string]string{
-	"cpu_quota":    "E1-2, the cgroup CPU quota",
-	"net_mbps_rx":  "E1-3, the Firecracker rate limiters",
-	"net_mbps_tx":  "E1-3, the Firecracker rate limiters",
-	"disk_iops":    "E1-3, the Firecracker rate limiters",
-	"disk_mbps":    "E1-3, the Firecracker rate limiters",
 	"scratch":      "E1-5, the tmpfs scratch cap",
 	"max_runtime":  "E1-6, the time budgets",
 	"idle_timeout": "E1-6, the time budgets",
+}
+
+// parseRate reads a positive I/O rate. Zero is refused rather than read as
+// either "no limit" or "no traffic": both readings are defensible, which is
+// exactly why the file may not say it.
+func parseRate(value, where, key string) (int, error) {
+	n, err := parseInt(strings.TrimSpace(strings.Trim(value, `"'`)), where)
+	if err != nil {
+		return 0, fmt.Errorf("%s: %s must be a whole number, got %s", where, key, value)
+	}
+	if n <= 0 {
+		return 0, fmt.Errorf("%s: %s must be positive; remove the key to leave that limit off", where, key)
+	}
+	return n, nil
 }
 
 // Ceiling reports a [resources] ceiling and where it was declared, for the

@@ -55,6 +55,16 @@ Sizes accept `K`, `M`, `G`, `T` and are powers of two: `1G` is 1073741824 bytes.
 A bare number is bytes. The same grammar parses `--disk 2G` and `disk = "2G"`,
 from the same function, so the flag and the file can never drift apart.
 
+**Sizes are binary, rates are decimal.** A `1G` disk is 2³⁰ bytes, because that
+is what a size means; a `net_mbps_rx` of 10 is 10 000 000 bits per second and a
+`disk_mbps` of 50 is 50 000 000 bytes per second, because that is how a rate is
+quoted. The two conventions disagree by 7% and both are correct in their own
+context, so the rule is written down rather than left to be inferred.
+
+The four I/O rates have **no CLI flags** — they are `kelyfos.toml` keys only.
+Nothing about them is a per-run choice the way `--cpus` is, and a limit with no
+flag has no request to check against a ceiling: the declared value is the value.
+
 `cpu_quota` is **absolute, not relative to `cpus`**. `100%` is one core's worth
 of CPU time per wall-clock second; `150%` is one and a half. It is not a
 percentage of the cores the guest can see, and a quota above `cpus × 100%` is
@@ -117,7 +127,7 @@ limits.
 | key | status |
 | --- | --- |
 | `cpus`, `mem`, `disk`, `cpu_quota` | **enforced**, including the ceiling behaviour above |
-| `net_mbps_rx`, `net_mbps_tx`, `disk_iops`, `disk_mbps` | specified; land with the rate limiters (E1-3) |
+| `net_mbps_rx`, `net_mbps_tx`, `disk_iops`, `disk_mbps` | **enforced** (E1-3) |
 | `scratch` | specified; lands with the tmpfs sizing (E1-5) |
 | `max_runtime`, `idle_timeout` | specified; land with the time budgets (E1-6) |
 
@@ -143,6 +153,48 @@ Either way the percentage is translated in the CLI, and the resulting `cpu.max`
 is **read back and checked** after launch. If the quota did not land, the
 sandbox refuses to start rather than running unlimited while claiming a cap.
 If neither path is available, `--cpu-quota` fails with the reason.
+
+### How the I/O throttles are applied
+
+`net_mbps_rx` / `net_mbps_tx` become `rx_rate_limiter` / `tx_rate_limiter` on
+the guest's network interface; `disk_iops` and `disk_mbps` become a
+`rate_limiter` on each block device. These are Firecracker's own token buckets,
+applied in the VMM's I/O thread at the point where guest traffic is copied to
+the host device — KelyfOS configures them and builds nothing.
+
+Three consequences worth knowing before you tune them.
+
+**The disk limits are per device, not a shared budget.** A Firecracker limiter
+belongs to one device, and a sandbox with a workspace has two: the read-only
+root and `/work`. `disk_mbps = 10` therefore means ten megabytes a second on
+each, not five each. The alternative — one budget split between them — is what
+people assume, so it is worth saying that it is not what happens.
+
+**A limit is a rate plus an opening burst, and the burst is about two seconds'
+worth.** A token bucket is a size and a refill time, and the rate it enforces is
+the ratio; KelyfOS always sizes the bucket at a whole number of seconds' worth
+of tokens. The bucket starts full, and Firecracker hands out roughly a second
+bucket before the limit begins to bite, so a transfer short enough to fit inside
+that burst runs at full speed. Over anything longer the observed rate converges
+on the configured one. Measured against a 50 MB download on the dev machine: a
+10 Mbps cap took 38.2 s where an uncapped one took 0.13 s, and the steady-state
+rate worked out at 9.95 Mbps.
+
+Whole seconds are not an arbitrary choice. A smaller bucket sounds like a
+tighter limit and is not: when the bucket empties, Firecracker waits a fixed
+100 ms before retrying, so a bucket only a little larger than one request leaves
+most of each window unspent. The same 10 Mbps cap with a 125 kB bucket delivered
+6.8 Mbps — 32% *under* what was asked for. And a bucket *smaller* than one
+request is worse in the other direction: Firecracker charges only the deficit
+and forgives the rest, which measured 23% over. One second's worth is the size
+that is exactly right, and the window widens past a second only when a second's
+worth would be smaller than a single 4 MiB block request — at `disk_mbps = 1`,
+for instance, the bucket is 5 MB refilling over 5 s.
+
+**Setting a network rate on a sandbox with no `--allow` does nothing, and says
+so.** No network interface is a stricter limit than a throttled one, so this is
+not an error; `kelyfos run` prints `net limit not applied — this sandbox has no
+network interface` rather than leaving you to infer it from silence.
 
 ## Example
 
