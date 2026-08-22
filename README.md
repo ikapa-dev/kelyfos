@@ -45,6 +45,10 @@ WSL2; on a Linux box with `/dev/kvm`, nothing.
 git clone https://github.com/p4r4n0rm4l/KelyfOS && cd KelyfOS
 ```
 
+On macOS, clone it somewhere under your home directory — that is what the Lima
+VM mounts, and `limactl shell` keeps your working directory, so the commands
+below just work.
+
 **On macOS first — a Linux layer with nested virtualisation** (skip on Linux).
 This step downloads and boots an Ubuntu VM, and is most of the wall clock below:
 

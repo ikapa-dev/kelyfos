@@ -112,6 +112,16 @@ type snapshotLoad struct {
 	MemBackend    memBackend     `json:"mem_backend"`
 	ResumeVM      bool           `json:"resume_vm"`
 	VsockOverride *vsockOverride `json:"vsock_override,omitempty"`
+	// NetworkOverrides re-pairs each virtio-net device to a TAP that exists
+	// now. The snapshot records the TAP it was taken with, and that device is
+	// gone by the time anyone restores — so without this the load fails inside
+	// Firecracker with an ifreq error rather than anywhere useful (D22).
+	NetworkOverrides []networkOverride `json:"network_overrides,omitempty"`
+}
+
+type networkOverride struct {
+	IfaceID     string `json:"iface_id"`
+	HostDevName string `json:"host_dev_name"`
 }
 
 // patchDrive repoints a block device after the machine exists but before it

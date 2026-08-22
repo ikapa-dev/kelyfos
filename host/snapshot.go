@@ -8,9 +8,11 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
+	"github.com/p4r4n0rm4l/KelyfOS/internal/egress"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/sandbox"
 )
@@ -72,7 +74,10 @@ func snapshotRestore(argv []string) error {
 		arch    = fs.String("arch", sandbox.HostArch(), "guest architecture")
 		flavor  = fs.String("image", "dev", "image flavor the snapshot was taken from")
 		console = fs.Bool("console", false, "stream the guest serial console")
+		allow   = fs.String("allow", "", "egress allowlist for the restored machine (default: whatever the snapshot recorded)")
+		secrets multiFlag
 	)
+	fs.Var(&secrets, "secret", "attach a credential to a domain: NAME@domain[:bearer|basic]. Repeatable.")
 	if err := fs.Parse(argv); err != nil {
 		return err
 	}
@@ -83,9 +88,87 @@ func snapshotRestore(argv []string) error {
 		opts.Console = prefixWriter{os.Stderr, "[guest] "}
 	}
 
+	// A machine frozen with a NIC has to be restored into one, or Firecracker
+	// refuses the load outright. The allowlist defaults to what the snapshot
+	// was taken with, so restoring does not silently widen what the machine
+	// can reach — and --allow can narrow it (D22).
+	var proxy *egress.Proxy
+	var ca *egress.CA
+	meta, metaErr := sandbox.ReadSnapshotMeta(dir)
+	if metaErr == nil && meta.HasNetwork {
+		list := splitAllow(*allow)
+		if len(list) == 0 {
+			list = meta.Allow
+		}
+		if len(list) == 0 {
+			return fmt.Errorf("snapshot %q was taken from a networked sandbox but recorded no allowlist; pass --allow", *name)
+		}
+		sandboxID, err := sandbox.NewID()
+		if err != nil {
+			return err
+		}
+		opts.ID = sandboxID
+		opts.Allow = list
+		// Re-use the addressing the snapshot recorded, not a fresh /30: the
+		// guest's HTTPS_PROXY is in the memory image and cannot be changed
+		// from out here (D22).
+		if meta.HostIP != "" {
+			opts.Net, err = sandbox.NewNetworkFor(sandboxID, meta.HostIP, meta.GuestIP, meta.Netmask, meta.HostMAC)
+		} else {
+			opts.Net, err = sandbox.NewNetwork(sandboxID)
+		}
+		if err != nil {
+			return err
+		}
+		defer opts.Net.Down()
+
+		policy := egress.Policy{Allow: list}
+		for _, spec := range secrets {
+			sec, err := egress.ParseSecret(spec)
+			if err != nil {
+				return err
+			}
+			if !containsDomain(list, sec.Domain) {
+				return fmt.Errorf("--secret %s: %s is not in the allowlist", spec, sec.Domain)
+			}
+			policy.Secrets = append(policy.Secrets, sec)
+		}
+		if len(policy.Secrets) > 0 {
+			if ca, err = egress.NewCA(); err != nil {
+				return err
+			}
+		}
+		proxy = &egress.Proxy{Policy: policy, CA: ca}
+		// Same reasoning as the address: the port is baked into the guest's
+		// proxy environment, so the restored proxy has to bind the one the
+		// snapshot recorded rather than whatever the kernel offers.
+		bind := opts.Net.HostIP.String() + ":0"
+		if meta.ProxyPort != 0 {
+			bind = fmt.Sprintf("%s:%d", opts.Net.HostIP, meta.ProxyPort)
+		}
+		port, err := proxy.Listen(bind)
+		if err != nil {
+			return fmt.Errorf("bind the egress proxy on %s (the address this snapshot's guest expects): %w", bind, err)
+		}
+		opts.ProxyPort = port
+		if err := opts.Net.Restrict(port); err != nil {
+			return err
+		}
+		go proxy.Serve()
+		defer proxy.Close()
+	}
+
 	sb, elapsed, err := sandbox.Restore(dir, opts)
 	if err != nil {
 		return err
+	}
+	// D6 mints a fresh CA every run, so a restored guest is carrying an anchor
+	// for a CA that no longer exists. It has to be replaced before anything in
+	// there tries to reach a secret-bound domain.
+	if ca != nil {
+		if err := sb.InstallTrustAnchor(ca.AnchorPEM()); err != nil {
+			return err
+		}
 	}
 	defer func() {
 		if err := sb.Shutdown(5 * time.Second); err != nil {
@@ -108,6 +191,9 @@ func snapshotRestore(argv []string) error {
 
 	fmt.Printf("sandbox %s restored from %q in %d ms\n", sb.State.ID, *name, elapsed.Milliseconds())
 	fmt.Printf("  vsock       %s\n", sb.State.UDSPath)
+	if sb.State.TAP != "" {
+		fmt.Printf("  egress      %s via %s\n", strings.Join(sb.State.Allow, ", "), sb.State.TAP)
+	}
 	fmt.Println("  clock and entropy resynced")
 	fmt.Println("\nCtrl-C to stop.")
 

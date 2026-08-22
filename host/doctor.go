@@ -280,7 +280,16 @@ func checkImages(arch string) check {
 		return check{"guest image", false, "missing " + strings.Join(missing, ", ") + " in " + dir,
 			fmt.Sprintf("Build it:  make image ARCH=%s\n(the first build downloads and compiles a toolchain and takes a while)", arch)}
 	}
-	return check{"guest image", true, dir, ""}
+	// The manifest is part of a usable image, not a nicety: without it the
+	// sandbox refuses to boot (D21). Doctor reporting the image as fine and
+	// the very next command failing is exactly the kind of check that trains
+	// people to ignore it.
+	m, err := sandbox.ReadManifest(dir)
+	if err != nil {
+		return check{"guest image", false, "no readable image.json in " + dir,
+			fmt.Sprintf("This image predates the manifest, or was copied without it.\nRebuild:  make image ARCH=%s\nOr fetch: make fetch-image ARCH=%s", arch, arch)}
+	}
+	return check{"guest image", true, fmt.Sprintf("%s (%s, built %s)", dir, m.Flavor, m.Built), ""}
 }
 
 func checkDisk(haveImages bool) check {

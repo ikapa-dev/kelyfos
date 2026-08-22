@@ -18,6 +18,7 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -77,6 +78,11 @@ type State struct {
 	UDSPath     string    `json:"uds_path"`
 	APIPath     string    `json:"api_path"`
 	TAP         string    `json:"tap,omitempty"`
+	HostIP      string    `json:"host_ip,omitempty"`
+	GuestIP     string    `json:"guest_ip,omitempty"`
+	Netmask     string    `json:"netmask,omitempty"`
+	HostMAC     string    `json:"host_mac,omitempty"`
+	ProxyPort   int       `json:"proxy_port,omitempty"`
 	Workspace   string    `json:"workspace,omitempty"`
 	Allow       []string  `json:"allow,omitempty"`
 	RunDir      string    `json:"run_dir"`
@@ -200,6 +206,11 @@ func New(opts Options) (*Sandbox, error) {
 			GuestMAC:    guestMAC(id),
 		}}
 		s.State.TAP = opts.Net.TAP
+		s.State.HostIP = opts.Net.HostIP.String()
+		s.State.GuestIP = opts.Net.GuestIP.String()
+		s.State.Netmask = opts.Net.Netmask
+		s.State.HostMAC = opts.Net.HostMAC
+		s.State.ProxyPort = opts.Net.ProxyPort
 		s.State.Allow = opts.Allow
 	}
 	blob, err := json.MarshalIndent(cfg, "", "  ")
@@ -342,6 +353,23 @@ type SnapshotMeta struct {
 	// load at all — the drive can only be repointed afterwards.
 	WorkspacePath string `json:"workspace_path,omitempty"`
 	WorkspaceSize int64  `json:"workspace_size,omitempty"`
+	// HasNetwork records that the machine had a NIC when it was frozen. The
+	// TAP itself is deliberately not recorded: it will not exist at restore
+	// time and re-using its name would collide with a live sandbox. What the
+	// restore needs is only that a NIC must be re-paired, which interface, and
+	// what the machine was allowed to reach (D22).
+	HasNetwork bool     `json:"has_network,omitempty"`
+	IfaceID    string   `json:"iface_id,omitempty"`
+	Allow      []string `json:"allow,omitempty"`
+	// The addressing travels with the snapshot too. The guest's HTTPS_PROXY
+	// points at HostIP:ProxyPort and lives inside the memory image, so a
+	// restore that picked new numbers would come up with working plumbing and
+	// a guest still dialling where the proxy used to be.
+	HostIP    string `json:"host_ip,omitempty"`
+	GuestIP   string `json:"guest_ip,omitempty"`
+	Netmask   string `json:"netmask,omitempty"`
+	HostMAC   string `json:"host_mac,omitempty"`
+	ProxyPort int    `json:"proxy_port,omitempty"`
 }
 
 func snapshotMetaPath(dir string) string  { return filepath.Join(dir, "meta.json") }
@@ -385,6 +413,16 @@ func SnapshotRunning(st *State, dir string) (statePath, memPath string, err erro
 	}
 
 	meta := SnapshotMeta{Arch: st.Arch, Flavor: st.Flavor}
+	if st.TAP != "" {
+		meta.HasNetwork = true
+		meta.IfaceID = "eth0"
+		meta.Allow = st.Allow
+		meta.HostIP = st.HostIP
+		meta.GuestIP = st.GuestIP
+		meta.Netmask = st.Netmask
+		meta.HostMAC = st.HostMAC
+		meta.ProxyPort = st.ProxyPort
+	}
 	if st.Workspace != "" {
 		// The workspace disk is part of the machine's state, so it travels with
 		// the snapshot. Copying it while the VM is paused is what makes the copy
@@ -533,12 +571,37 @@ func Restore(snapDir string, opts Options) (*Sandbox, time.Duration, error) {
 		}
 	}
 
-	if err := s.api.loadSnapshot(snapshotLoad{
+	// A machine frozen with a NIC cannot be loaded until that NIC has somewhere
+	// to attach. The TAP it was taken with is long gone, so it is re-paired to
+	// the one this restore just created (D22).
+	load := snapshotLoad{
 		SnapshotPath:  statePath,
 		MemBackend:    memBackend{BackendPath: memPath, BackendType: "File"},
 		ResumeVM:      false,
 		VsockOverride: &vsockOverride{UDSPath: s.State.UDSPath},
-	}); err != nil {
+	}
+	if metaErr == nil && meta.HasNetwork {
+		if opts.Net == nil {
+			_ = s.Shutdown(2 * time.Second)
+			return nil, 0, fmt.Errorf(
+				"this snapshot was taken from a sandbox with egress (allowed: %s), so it needs a network to restore into.\n"+
+					"    restore it with:  kelyfos snapshot restore --allow %s",
+				strings.Join(meta.Allow, ","), strings.Join(meta.Allow, ","))
+		}
+		iface := meta.IfaceID
+		if iface == "" {
+			iface = "eth0"
+		}
+		load.NetworkOverrides = []networkOverride{{IfaceID: iface, HostDevName: opts.Net.TAP}}
+		s.State.TAP = opts.Net.TAP
+		s.State.HostIP = opts.Net.HostIP.String()
+		s.State.GuestIP = opts.Net.GuestIP.String()
+		s.State.Netmask = opts.Net.Netmask
+		s.State.HostMAC = opts.Net.HostMAC
+		s.State.ProxyPort = opts.Net.ProxyPort
+		s.State.Allow = opts.Allow
+	}
+	if err := s.api.loadSnapshot(load); err != nil {
 		_ = s.Shutdown(2 * time.Second)
 		return nil, 0, err
 	}
@@ -771,6 +834,19 @@ func NewNetwork(sandboxID string) (*Network, error) {
 		return nil, err
 	}
 	return newNetwork(sandboxID, u.Username)
+}
+
+// NewNetworkFor re-creates the network a snapshot was taken with, so a restored
+// guest finds the proxy at the address it already believes in (D22).
+func NewNetworkFor(sandboxID, hostIP, guestIP, netmask, hostMAC string) (*Network, error) {
+	if err := CheckPrivileges(); err != nil {
+		return nil, err
+	}
+	u, err := user.Current()
+	if err != nil {
+		return nil, err
+	}
+	return newNetworkAt(sandboxID, u.Username, hostIP, guestIP, netmask, hostMAC)
 }
 
 // NewID mints a sandbox id. Exposed because the network has to exist before the

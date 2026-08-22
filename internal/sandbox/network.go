@@ -22,7 +22,13 @@ type Network struct {
 	GuestIP   net.IP
 	Netmask   string
 	ProxyPort int
-	table     string
+	// HostMAC is pinned rather than left to the kernel's random assignment.
+	// A restored guest still holds an ARP entry mapping the host's address to
+	// the MAC of the TAP that no longer exists; if the replacement comes up
+	// with a different one, the guest's packets go to a MAC nobody answers to
+	// and every connection hangs until that entry ages out (D22).
+	HostMAC string
+	table   string
 }
 
 // newNetwork derives a /30 for this sandbox and brings up the TAP.
@@ -52,6 +58,7 @@ func newNetwork(sandboxID, user string) (*Network, error) {
 		n := &Network{
 			TAP: tap, HostIP: hostIP, GuestIP: guestIP,
 			Netmask: "255.255.255.252",
+			HostMAC: hostMAC(sandboxID),
 			table:   "kelyfos_" + sandboxID,
 		}
 		if err := n.up(user); err != nil {
@@ -64,9 +71,47 @@ func newNetwork(sandboxID, user string) (*Network, error) {
 	return nil, fmt.Errorf("could not bring up a TAP for sandbox %s: %w", sandboxID, lastErr)
 }
 
+// newNetworkAt re-creates a TAP using addressing a snapshot recorded, instead
+// of deriving fresh addresses from the sandbox id.
+//
+// A restored guest has the host's proxy address and port baked into its memory
+// as HTTPS_PROXY, and nothing on the host can reach in to change them. So a
+// restore that invented a new /30 would come up with working plumbing and a
+// guest still dialling the address the proxy used to be on — which is exactly
+// the failure this exists to prevent (D22). The TAP name is still new: the old
+// one is gone, and Firecracker re-pairs the interface by name on load.
+func newNetworkAt(sandboxID, user, hostIP, guestIP, netmask, hostMACAddr string) (*Network, error) {
+	h, g := net.ParseIP(hostIP), net.ParseIP(guestIP)
+	if h == nil || g == nil {
+		return nil, fmt.Errorf("snapshot recorded an unusable address pair (host %q, guest %q)", hostIP, guestIP)
+	}
+	tap := "kelyfos" + sandboxID
+	if len(tap) > 15 { // IFNAMSIZ - 1
+		tap = tap[:15]
+	}
+	if netmask == "" {
+		netmask = "255.255.255.252"
+	}
+	if hostMACAddr == "" {
+		hostMACAddr = hostMAC(sandboxID)
+	}
+	n := &Network{
+		TAP: tap, HostIP: h, GuestIP: g,
+		Netmask: netmask,
+		HostMAC: hostMACAddr,
+		table:   "kelyfos_" + sandboxID,
+	}
+	if err := n.up(user); err != nil {
+		n.Down()
+		return nil, fmt.Errorf("re-create the snapshot's network on %s: %w", hostIP, err)
+	}
+	return n, nil
+}
+
 func (n *Network) up(user string) error {
 	steps := [][]string{
 		{"ip", "tuntap", "add", n.TAP, "mode", "tap", "user", user},
+		{"ip", "link", "set", n.TAP, "address", n.HostMAC},
 		{"ip", "addr", "add", n.HostIP.String() + "/30", "dev", n.TAP},
 		{"ip", "link", "set", n.TAP, "up"},
 	}
@@ -169,4 +214,14 @@ func CheckPrivileges() error {
 			"loading nftables rules): %w: %s", err, out)
 	}
 	return nil
+}
+
+// hostMAC derives the TAP's own address from the sandbox id, the same way the
+// guest's is derived, so it is stable and reproducible rather than random.
+func hostMAC(sandboxID string) string {
+	b, err := hex.DecodeString(sandboxID)
+	if err != nil || len(b) < 4 {
+		return "02:00:00:00:00:02"
+	}
+	return fmt.Sprintf("02:01:%02x:%02x:%02x:%02x", b[0], b[1], b[2], b[3])
 }

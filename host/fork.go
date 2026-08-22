@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -66,6 +67,18 @@ unique guest network identity, which is backlog work.
 			return err
 		}
 		fmt.Printf("each fork gets its own copy of a %d byte workspace disk\n", meta.WorkspaceSize)
+	}
+	// Forks are vsock-only in v0.x, exactly as P3-2 scopes them. One restore
+	// can re-pair its NIC to a fresh TAP (D22), but N forks would need N
+	// distinct guest network identities, and the guest's address and default
+	// route live inside the memory image every fork shares. Say that here
+	// rather than letting each fork fail separately inside Firecracker.
+	if meta.HasNetwork {
+		return fmt.Errorf("snapshot %q was taken from a sandbox with egress (allowed: %s), and forks are vsock-only in v0.x.\n"+
+			"    Forking needs one network identity per fork; the guest's address is baked into the shared memory image.\n"+
+			"    restore it as a single machine:  kelyfos snapshot restore -name %s\n"+
+			"    or prepare the snapshot without egress and fork that.",
+			*name, strings.Join(meta.Allow, ","), *name)
 	}
 
 	started := time.Now()

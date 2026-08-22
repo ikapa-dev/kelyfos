@@ -843,6 +843,88 @@ $ bash dev/install-kelyfos.sh
 kelyfos-linux-aarch64: FAILED
 CHECKSUM MISMATCH &mdash; refusing to install.
 binaries installed after refusal: 0</pre></td></tr>
+        <tr><td class="mono">2026-08-22</td><td class="mono">P3-7</td>
+        <td>Final availability sweep on "KelyfOS" (D10 locked the name; this is the launch-gate confirmation). <b>One finding that is the owner's to act on, not a blocker:</b> the GitHub account <code>Kelyfos</code> is taken &mdash; but by a dormant <i>user</i> created 2020-11-02 with 0 public repositories, not a project. It cannot be claimed as an organisation, so the repo stays at <code>p4r4n0rm4l/KelyfOS</code>. Nothing else collides in a way that matters: the closest name in code hosting is <code>5p4c351ck/Kelyfoss</code> (different spelling, "a simple shell for linux", 0 stars, last pushed 2024-06-10), and the other matches are a Greek dance ensemble and two personal pages. Every package registry that matters is free. Domains <code>.dev</code>/<code>.io</code>/<code>.org</code> are unregistered; <code>.com</code> is parked at Sedo. <b>Scope limit, stated plainly:</b> the trademark leg was an open-web search only &mdash; EUIPO/TMview and USPTO block automated queries, and Justia returns 403 &mdash; so it surfaced no conflicts but is not a formal clearance search. Also worth knowing: κέλυφος is an ordinary Greek noun for "shell", which cuts both ways for registrability. A registry clearance search is a lawyer's job before any commercial use, and that is now noted rather than assumed.</td>
+        <td class="mono"><pre>GitHub   api.github.com/users/Kelyfos  -> type=User repos=0 created=2020-11-02 name=null
+         api.github.com/users/kelyfosin -> type=User repos=1 name='kelyfos'
+         repo search "kelyfos" -> 5 hits:
+           GabrielFodor/Ansamblul-Kelyfos   (Greek dance ensemble)
+           5p4c351ck/Kelyfoss   0 stars, pushed 2024-06-10, "simple shell for linux"
+           spirossorips/kelyfos
+           kelyfosin/kelyfosin.github.io
+           p4r4n0rm4l/KelyfOS   (ours)
+
+PyPI     pypi.org/project/kelyfos/       -> 404  free
+npm      registry.npmjs.org/kelyfos      -> 404  free
+crates   crates.io/api/v1/crates/kelyfos -> 404  free
+Go       proxy.golang.org/github.com/p4r4n0rm4l/!kelyf!o!s/@v/list -> 200 (published)
+
+DNS      kelyfos.dev  -> no NS   (unregistered)
+         kelyfos.io   -> no NS   (unregistered)
+         kelyfos.org  -> no NS   (unregistered)
+         kelyfos.com  -> ns2.sedoparking.com  (registered, parked/for sale)
+
+TM       open-web search: no "Kelyfos" mark surfaced (nearest: KALYDOS, KEA SYSTEMS)
+         trademarks.justia.com/search?q=kelyfos -> HTTP 403 (blocks automation)
+         EUIPO/TMview + USPTO: not machine-queryable; formal clearance NOT done</pre></td></tr>
+        <tr><td class="mono">2026-08-22</td><td class="mono">P3-1</td>
+        <td><b>Networked snapshot restore, implemented under D22 after the Phase 3 acceptance test found it broken.</b> Acceptance step 1 prepares a sandbox by cloning a repo <i>inside</i> it, which needs a NIC, and step 2 restores that snapshot &mdash; a path never exercised, because P3-1 was verified on vsock-only machines. It failed with a raw Firecracker fault after the user had already paid for a 512 MB snapshot that could never load. Restore now re-creates the egress path and re-pairs the interface with <code>network_overrides</code>. Getting the load to succeed was the easy half. Making the restored machine actually reach the network took two more findings, both of which come from the same root cause &mdash; <i>the guest's view of its network lives inside the memory image and cannot be reached from the host</i>. First, the guest's <code>HTTPS_PROXY</code> names a specific address and port, so a restore that allocated a fresh /30 produced correct-looking plumbing and a guest dialling where the proxy used to be; the snapshot now records the addressing and the restore reproduces it. Second, even with the right address the guest hung for ~138 s per connection: its ARP entry still mapped that address to the MAC of a TAP that no longer existed, and the replacement came up with a kernel-random one. Host TAP MACs are now derived from the sandbox id and pinned, so the replacement is indistinguishable from the original. <code>fork</code> keeps refusing networked snapshots &mdash; P3-2 scopes forks to vsock-only and that reasoning still holds, since N forks need N guest identities baked into one shared memory image &mdash; but it now says so instead of printing the same Firecracker fault four times.</td>
+        <td class="mono"><pre>$ cat ~/.cache/kelyfos/snapshots/d22/meta.json
+{
+  "has_network": true,
+  "iface_id": "eth0",
+  "allow": [ "github.com" ],
+  "host_ip": "169.254.237.113",
+  "guest_ip": "169.254.237.114",
+  "netmask": "255.255.255.252",
+  "host_mac": "02:01:b9:6f:4b:e3",
+  "proxy_port": 40983
+}
+
+$ kelyfos snapshot restore -name d22
+sandbox 8f57a44b restored from "d22" in 156 ms
+  egress      github.com via kelyfos8f57a44b
+  clock and entropy resynced
+
+$ kelyfos exec "ls /work/nc | head -3"     # the session continued
+CONTRIBUTING.md
+Dockerfile
+LICENSE
+
+$ kelyfos exec "git ls-remote --heads https://github.com/kelseyhightower/nocode | head -1"
+6c073b08f7987018cbb2cb9a5747c84913b3608e	refs/heads/master
+
+$ kelyfos exec "curl -sS https://example.com"   # still denied, unchanged
+curl: (7) CONNECT tunnel failed, response 403
+
+$ kelyfos fork -n 4 -name d22
+kelyfos: snapshot "d22" was taken from a sandbox with egress (allowed: github.com),
+    and forks are vsock-only in v0.x.
+    restore it as a single machine:  kelyfos snapshot restore -name d22</pre></td></tr>
+        <tr><td class="mono">2026-08-22</td><td class="mono">P3-6</td>
+        <td>CI caught the D21 manifest requirement as a packaging gap, which is exactly what it is for: the build job uploaded the kernel and rootfs but not <code>image.json</code>, so the boot job downloaded an image the sandbox now refuses. Added the manifest to the uploaded artifact. The same failure exposed a worse one in <code>doctor</code>: it reported <b>[ok] guest image</b> and the very next command failed on the missing manifest. A check that passes and is then contradicted by the next command is worse than no check, so <code>checkImages</code> now reads the manifest and reports the flavor and build date it found.</td>
+        <td class="mono"><pre>CI run 32582931289, job boot (x86_64, bare KVM):
+  [ok  ] guest image            /home/runner/.cache/kelyfos/out/x86_64
+  all checks passed — this machine can run KelyfOS
+  kelyfos: no image.json in /home/runner/.cache/kelyfos/out/x86_64 — this image predates the manifest.
+  the guest never became ready
+  ##[error]Process completed with exit code 1
+
+after the fix, locally:
+$ kelyfos doctor | grep "guest image"
+  [ok  ] guest image            /home/.../out/aarch64 (dev, built 2026-08-22T15:43:46Z)</pre></td></tr>
+        <tr><td class="mono">2026-08-22</td><td class="mono">P3-11</td>
+        <td>Acceptance step 6 (<code>kelyfos watch</code> streams live events) first reported nothing, and the cause was the test, not the product: the harness ran <code>watch</code> under <code>setsid</code> with stdout redirected to a file, and bubbletea legitimately requires a terminal. Re-run under an allocated PTY it is correct &mdash; the command, its output line, its exit and the rolling status line all appear while the sandbox runs. Recorded here so the earlier zero is not mistaken later for a regression.</td>
+        <td class="mono"><pre>$ TERM=xterm script -qec "timeout 10 kelyfos watch" /tmp/watch-pty.out
+(escape sequences stripped)
+16:36:31.432 $         /bin/sh -c true
+16:36:31.451 ready     850 ms &middot; kernel 6.18.45
+16:36:31.501 exit      0 &middot; 69 ms
+16:36:35.515 $         /bin/sh -c echo LIVE-EVENT-MARKER
+16:36:35.551 |         LIVE-EVENT-MARKER
+16:36:35.551 exit      0 &middot; 35 ms
+q to quit — the sandbox keeps running
+uptime 4s &middot; boot 850 ms &middot; 2 commands (0 failed) &middot; 0 files &middot; egress 0 ok / 0 blocked &middot; 0 secret uses</pre></td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
@@ -916,6 +998,9 @@ binaries installed after refusal: 0</pre></td></tr>
         <tr><td class="mono">D21</td><td class="mono">2026-08-22</td>
         <td>Every built or fetched image carries an <code>image.json</code> manifest, and the sandbox refuses to boot when the requested flavor does not match it.</td>
         <td>Found while preparing the v0.3 release: <code>ImageDir()</code> resolves to <code>out/&lt;arch&gt;</code> with no flavor component, so <code>--image</code> was a label that selected nothing. Build <code>base</code>, run <code>--image dev</code>, and the sandbox boots <code>base</code> while the flight recorder writes <code>image: dev</code> into <code>session.start</code>. That is not a cosmetic bug: the entire value proposition of the recorder is that it is the one account of the session the guest cannot influence, and here the <i>host</i> was writing a field it had never checked. An audit record that is confidently wrong is worse than one that is absent. Rejected the alternative of making the path flavor-scoped (<code>out/&lt;arch&gt;/&lt;flavor&gt;/</code>): it is the tidier model, but it invalidates every existing cache and snapshot <code>workspace_path</code>, and it still would not stop a hand-placed rootfs from being mislabelled. The manifest fixes the actual defect &mdash; the host asserting an unverified fact &mdash; and it earns its keep twice more: it is the provenance record the release artifacts needed anyway (arch, flavor, kernel and rootfs digests, pinned Buildroot/Linux versions, build date), and it lets <code>fetch-image</code> tell you what you just downloaded. <code>make image</code> and <code>dev/fetch-image.sh</code> both write it; a missing manifest is a hard error naming the fix rather than a silent fallback, because a silent fallback is how the original bug survived this long.</td></tr>
+        <tr><td class="mono">D22</td><td class="mono">2026-08-22</td>
+        <td><code>kelyfos snapshot restore</code> re-creates the egress path and re-pairs the guest's NIC to a fresh TAP via Firecracker's <code>network_overrides</code>. Forks stay vsock-only exactly as P3-2 specifies.</td>
+        <td>The Phase 3 acceptance test surfaced this: step 1 prepares a sandbox by cloning a repo <i>inside</i> it, which requires a NIC, and step 2 restores that snapshot. Restore had only ever been exercised on vsock-only machines, so it failed &mdash; and failed badly. With the parent still running, Firecracker reported <code>Resource busy</code> on the original TAP; with the parent gone, <code>Operation not permitted</code>, because the TAP no longer existed and nothing re-created it. Either way the user had already paid for a 512 MB snapshot that could never be loaded, and the error they saw was a raw Firecracker fault string about ifreq structures. P3-2 deliberately scopes <i>forks</i> to vsock-only, and that stands: N forks would need N distinct guest network identities, and the guest's address and default route are baked into the memory image, so genuinely separating them needs a network namespace per fork &mdash; which is P4-1 jailer territory. But P3-1 never scoped restore that way, and restore is the tractable case precisely because there is only one machine: it can re-use the original addressing. The mechanism was already available and simply unused &mdash; Firecracker's <code>PUT /snapshot/load</code> takes <code>network_overrides</code> (host device re-pairing per interface) alongside the <code>vsock_override</code> KelyfOS already passes. Restore now builds the egress path in the same order <code>run</code> does (TAP, proxy, firewall, then the machine), loads with the override, and re-installs the trust anchor over the control channel &mdash; necessary because D6 mints a fresh CA per run, so a restored guest is otherwise carrying an anchor for a CA that no longer exists. <code>fork</code> now refuses a networked snapshot with a message that says so, instead of emitting the same Firecracker fault four times.</td></tr>
     <!-- Claude Code: append rows above this line. -->
   </table>
 </section>

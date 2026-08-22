@@ -92,6 +92,7 @@ jobs:
             ~/.cache/kelyfos/out/${{ matrix.arch }}/vmlinux
             ~/.cache/kelyfos/out/${{ matrix.arch }}/Image
             ~/.cache/kelyfos/out/${{ matrix.arch }}/rootfs.ext4
+            ~/.cache/kelyfos/out/${{ matrix.arch }}/image.json
           if-no-files-found: error
           retention-days: 7
 
