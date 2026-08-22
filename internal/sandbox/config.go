@@ -10,10 +10,19 @@ import (
 // `firecracker --config-file`. Only the fields KelyfOS sets are modelled;
 // Firecracker rejects unknown fields, so this is a whitelist by construction.
 type FirecrackerConfig struct {
-	BootSource    BootSource    `json:"boot-source"`
-	Drives        []Drive       `json:"drives"`
-	MachineConfig MachineConfig `json:"machine-config"`
-	Vsock         *Vsock        `json:"vsock,omitempty"`
+	BootSource    BootSource     `json:"boot-source"`
+	Drives        []Drive        `json:"drives"`
+	MachineConfig MachineConfig  `json:"machine-config"`
+	Vsock         *Vsock         `json:"vsock,omitempty"`
+	NetworkIfaces []NetworkIface `json:"network-interfaces,omitempty"`
+}
+
+// NetworkIface attaches the host TAP. It is present only when the sandbox was
+// started with an allowlist; otherwise the machine has no NIC at all.
+type NetworkIface struct {
+	IfaceID     string `json:"iface_id"`
+	HostDevName string `json:"host_dev_name"`
+	GuestMAC    string `json:"guest_mac,omitempty"`
 }
 
 type BootSource struct {
@@ -50,7 +59,7 @@ type Vsock struct {
 // Also absent: 8250.nr_uarts=0, which is in Firecracker's own default cmdline.
 // It disables the serial port, and KelyfOS wants a console — it is the only way
 // to see why a guest failed before the supervisor is up.
-func bootArgs(arch string, quiet bool) string {
+func bootArgs(arch string, quiet bool, net *Network) string {
 	args := []string{
 		"reboot=k",                      // no BIOS to reboot through; ask KVM to reset
 		"panic=1",                       // a panicked sandbox should die, not sit there
@@ -65,6 +74,16 @@ func bootArgs(arch string, quiet bool) string {
 		// emulate. Pure boot-time saving, and meaningless on aarch64 where the
 		// i8042 does not exist.
 		args = append(args, "i8042.noaux", "i8042.nomux", "i8042.dumbkbd")
+	}
+	if net != nil {
+		// CONFIG_IP_PNP configures eth0 before userspace starts, so nothing in
+		// the guest has to be trusted to bring the network up correctly, and
+		// the supervisor learns where the proxy is from the same place
+		// (docs/networking.md §5).
+		args = append(args,
+			fmt.Sprintf("ip=%s::%s:%s::eth0:off", net.GuestIP, net.HostIP, net.Netmask),
+			fmt.Sprintf("kelyfos.proxy=%s:%d", net.HostIP, net.ProxyPort),
+		)
 	}
 	if quiet {
 		args = append(args, "quiet")

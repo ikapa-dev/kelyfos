@@ -15,6 +15,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"syscall"
 	"time"
@@ -41,14 +42,25 @@ func RunRoot() string             { return filepath.Join(Root(), "run") }
 
 // Options configure one sandbox.
 type Options struct {
+	// ID, when set, is used instead of minting a new one — the network has to
+	// exist before the sandbox that uses it, and both must agree on the name.
+	ID        string
 	Arch      string
 	Flavor    string
 	ImageDir  string
 	VcpuCount int
 	MemMiB    int
 	Quiet     bool
+	// Allow is the egress allowlist. Empty means the sandbox gets no network
+	// interface at all — not a firewalled one, not an empty allowlist, none.
+	Allow []string
 	// Console, when set, receives the guest's serial output line by line.
 	Console io.Writer
+	// ProxyPort is the port the egress proxy has already bound on the host TAP
+	// address. Set by the caller between NewNetwork and New.
+	ProxyPort int
+	// Net is the egress plumbing, when there is any.
+	Net *Network
 }
 
 // State is the on-disk description of a running sandbox, written into the run
@@ -60,6 +72,8 @@ type State struct {
 	Arch        string    `json:"arch"`
 	Flavor      string    `json:"flavor"`
 	UDSPath     string    `json:"uds_path"`
+	TAP         string    `json:"tap,omitempty"`
+	Allow       []string  `json:"allow,omitempty"`
 	RunDir      string    `json:"run_dir"`
 	StartedAt   time.Time `json:"started_at"`
 	BootReadyMS int64     `json:"boot_ready_ms"`
@@ -114,9 +128,12 @@ func New(opts Options) (*Sandbox, error) {
 		}
 	}
 
-	id, err := newID()
-	if err != nil {
-		return nil, err
+	id := opts.ID
+	if id == "" {
+		var err error
+		if id, err = newID(); err != nil {
+			return nil, err
+		}
 	}
 	runDir := filepath.Join(RunRoot(), id)
 	if err := os.MkdirAll(runDir, 0o700); err != nil {
@@ -140,7 +157,7 @@ func New(opts Options) (*Sandbox, error) {
 	cfg := FirecrackerConfig{
 		BootSource: BootSource{
 			KernelImagePath: kernel,
-			BootArgs:        bootArgs(opts.Arch, opts.Quiet),
+			BootArgs:        bootArgs(opts.Arch, opts.Quiet, opts.Net),
 		},
 		Drives: []Drive{{
 			DriveID:      "rootfs",
@@ -150,6 +167,15 @@ func New(opts Options) (*Sandbox, error) {
 		}},
 		MachineConfig: MachineConfig{VcpuCount: opts.VcpuCount, MemSizeMib: opts.MemMiB},
 		Vsock:         &Vsock{GuestCID: proto.CIDGuest, UDSPath: s.State.UDSPath},
+	}
+	if opts.Net != nil {
+		cfg.NetworkIfaces = []NetworkIface{{
+			IfaceID:     "eth0",
+			HostDevName: opts.Net.TAP,
+			GuestMAC:    guestMAC(id),
+		}}
+		s.State.TAP = opts.Net.TAP
+		s.State.Allow = opts.Allow
 	}
 	blob, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
@@ -246,6 +272,7 @@ func (s *Sandbox) Shutdown(grace time.Duration) error {
 	if s.readyLn != nil {
 		_ = s.readyLn.Close()
 	}
+	s.opts.Net.Down()
 	s.cleanup()
 	if s.waitErr != nil {
 		// A VM killed on purpose is not a failure worth reporting upward.
@@ -393,6 +420,35 @@ func alive(pid int) bool {
 		return false
 	}
 	return syscall.Kill(pid, 0) == nil
+}
+
+// NewNetwork brings up this sandbox's TAP before the proxy binds on it. The
+// caller then binds the proxy, calls Restrict with the port, and passes the
+// Network to New.
+func NewNetwork(sandboxID string) (*Network, error) {
+	if err := CheckPrivileges(); err != nil {
+		return nil, err
+	}
+	u, err := user.Current()
+	if err != nil {
+		return nil, err
+	}
+	return newNetwork(sandboxID, u.Username)
+}
+
+// NewID mints a sandbox id. Exposed because the network has to exist before the
+// sandbox that uses it.
+func NewID() (string, error) { return newID() }
+
+// guestMAC derives a stable locally-administered MAC from the sandbox id, so a
+// guest keeps the same address across restarts of the same sandbox and two
+// sandboxes never collide.
+func guestMAC(id string) string {
+	b, err := hex.DecodeString(id)
+	if err != nil || len(b) < 4 {
+		return "02:00:00:00:00:01"
+	}
+	return fmt.Sprintf("02:00:%02x:%02x:%02x:%02x", b[0], b[1], b[2], b[3])
 }
 
 func newID() (string, error) {

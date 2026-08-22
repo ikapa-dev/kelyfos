@@ -7,9 +7,11 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
+	"github.com/p4r4n0rm4l/KelyfOS/internal/egress"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/sandbox"
 )
@@ -25,6 +27,7 @@ func runCmd(argv []string) error {
 		console = fs.Bool("console", false, "stream the guest serial console")
 		verbose = fs.Bool("verbose-boot", false, "drop `quiet` from the kernel command line")
 		timeout = fs.Duration("ready-timeout", 30*time.Second, "how long to wait for the guest to become ready")
+		allow   = fs.String("allow", "", "comma-separated egress allowlist, e.g. github.com,pypi.org. Without it the sandbox has no network interface at all.")
 	)
 	fs.Usage = func() {
 		fmt.Fprintln(fs.Output(), "usage: kelyfos run [flags]\n\nBoots a sandbox and keeps it running until Ctrl-C.")
@@ -39,7 +42,7 @@ func runCmd(argv []string) error {
 		consoleOut = prefixWriter{os.Stderr, "[guest] "}
 	}
 
-	sb, err := sandbox.New(sandbox.Options{
+	opts := sandbox.Options{
 		Arch:      *arch,
 		Flavor:    *flavor,
 		ImageDir:  *imgDir,
@@ -47,7 +50,39 @@ func runCmd(argv []string) error {
 		MemMiB:    *memMiB,
 		Quiet:     !*verbose,
 		Console:   consoleOut,
-	})
+	}
+
+	// Egress is opt-in and, when opted into, is built before the VM exists:
+	// the TAP first, then the proxy bound on it, then the firewall that makes
+	// the proxy the only reachable destination, and only then a machine that
+	// can send a packet anywhere (docs/networking.md).
+	var proxy *egress.Proxy
+	sandboxID, err := sandbox.NewID()
+	if err != nil {
+		return err
+	}
+	if list := splitAllow(*allow); len(list) > 0 {
+		opts.Allow = list
+		opts.Net, err = sandbox.NewNetwork(sandboxID)
+		if err != nil {
+			return err
+		}
+		defer opts.Net.Down()
+
+		proxy = &egress.Proxy{Policy: egress.Policy{Allow: list}}
+		port, err := proxy.Listen(opts.Net.HostIP.String() + ":0")
+		if err != nil {
+			return err
+		}
+		if err := opts.Net.Restrict(port); err != nil {
+			return err
+		}
+		go proxy.Serve()
+		defer proxy.Close()
+	}
+	opts.ID = sandboxID
+
+	sb, err := sandbox.New(opts)
 	if err != nil {
 		return err
 	}
@@ -82,6 +117,20 @@ func runCmd(argv []string) error {
 		Kelyfos: Version, Argv: os.Args,
 	}); err != nil {
 		return err
+	}
+
+	// Every attempt to leave the sandbox is recorded, allowed or not. The
+	// blocked ones are the interesting ones.
+	if proxy != nil {
+		proxy.OnEvent = func(a egress.Attempt) {
+			allowed := a.Allowed
+			_ = rec.Append(recorder.Event{
+				Type: recorder.TypeEgressAttempt,
+				Host: a.Host, Port: a.Port, Allowed: &allowed,
+				Reason: a.Reason, Mode: a.Mode,
+				BytesIn: a.BytesIn, BytesOut: a.BytesOut,
+			})
+		}
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -121,6 +170,12 @@ func runCmd(argv []string) error {
 		fmt.Fprintln(os.Stderr, "  warning: the guest is running on a READ-ONLY root — the overlay failed")
 	}
 	fmt.Printf("  vsock       %s\n", sb.State.UDSPath)
+	if opts.Net != nil {
+		fmt.Printf("  egress      %s via proxy on %s:%d\n",
+			strings.Join(opts.Allow, ", "), opts.Net.HostIP, opts.Net.ProxyPort)
+	} else {
+		fmt.Printf("  egress      none (no network interface)\n")
+	}
 	fmt.Println("\nCtrl-C to stop.")
 
 	// Return when the user interrupts, or earlier if the VM dies on its own.
@@ -147,4 +202,16 @@ func (p prefixWriter) Write(b []byte) (int, error) {
 		return 0, err
 	}
 	return len(b), nil
+}
+
+// splitAllow turns --allow into a list, tolerating spaces and trailing commas
+// because people type them.
+func splitAllow(spec string) []string {
+	var out []string
+	for _, part := range strings.Split(spec, ",") {
+		if p := strings.TrimSpace(part); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }

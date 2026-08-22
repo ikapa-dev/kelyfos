@@ -51,6 +51,12 @@ func main() {
 		setupRoot()
 	}
 
+	// Egress, if this sandbox has any. Reading it here means every command
+	// started from any channel inherits the same environment.
+	if proxy := applyEgressEnv(); proxy != "" {
+		logf("egress via proxy %s", proxy)
+	}
+
 	rp := newReaper()
 	if isPID1 {
 		rp.start()
