@@ -39,7 +39,12 @@ concurrency:
   # Keyed on the event as well as the ref, so a push to main cannot cancel the
   # weekly from-source build that is the whole point of the schedule.
   group: ci-${{ github.ref }}-${{ github.event_name }}
-  cancel-in-progress: true
+  # Superseding a branch's older run is the point of this setting; superseding
+  # main's is not. Every commit that lands on main is a commit someone may bisect
+  # to, and this project's own protocol produces closely-spaced pairs — the work,
+  # then the status file — where the second push would otherwise cancel the first
+  # commit's build and leave it looking verified when nothing verified it.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   # Does this change touch anything a compiler cares about? Answered with git
