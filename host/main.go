@@ -24,6 +24,7 @@ usage:
   kelyfos fork [flags]             restore one snapshot into several sandboxes
   kelyfos shim [flags]             serve an E2B-compatible REST subset
   kelyfos log [flags]              replay, follow or verify a session's record
+  kelyfos watch [flags]            live view of a sandbox (reads the record only)
   kelyfos bench [flags]            measure cold boot-to-ready over several runs
   kelyfos version
 
@@ -53,6 +54,8 @@ func main() {
 		err = shimCmd(os.Args[2:])
 	case "log":
 		err = logCmd(os.Args[2:])
+	case "watch":
+		err = watchCmd(os.Args[2:])
 	case "bench":
 		err = benchCmd(os.Args[2:])
 	case "version", "--version", "-v":
