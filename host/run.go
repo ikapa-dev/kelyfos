@@ -2,10 +2,12 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strings"
@@ -37,12 +39,23 @@ func runCmd(argv []string) error {
 	fs.Var(&secrets, "secret", "attach a credential to a domain: NAME@domain[:bearer|basic]. "+
 		"The value is read from the host environment and never enters the guest. Repeatable.")
 	fs.Usage = func() {
-		fmt.Fprintln(fs.Output(), "usage: kelyfos run [flags]\n\nBoots a sandbox and keeps it running until Ctrl-C.")
+		fmt.Fprintln(fs.Output(), `usage: kelyfos run [flags]
+       kelyfos run [flags] -- <command>...
+
+Boots a sandbox. With no trailing command it keeps running until Ctrl-C.
+
+With one, that command runs on the host for as long as the sandbox lives, with
+KELYFOS_SANDBOX set so its `+"`kelyfos mcp`"+` and `+"`kelyfos exec`"+` attach to this machine.
+The sandbox is torn down when the command exits, and kelyfos exits with its
+status. This is how you hand an agent a sandbox and nothing else:
+
+    kelyfos run --workspace . --allow github.com -- claude`)
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(argv); err != nil {
 		return err
 	}
+	command := fs.Args()
 
 	// A committed policy file supplies the defaults; an explicit flag always
 	// wins. Knowing which flags the user actually typed is the whole trick —
@@ -293,11 +306,46 @@ func runCmd(argv []string) error {
 	if opts.Workspace != nil {
 		fmt.Printf("  workspace   %s -> /work\n", opts.Workspace.HostDir)
 	}
+	vmExited := make(chan struct{})
+	go func() { _ = sb.Wait(); close(vmExited) }()
+
+	// With a trailing command, the sandbox's lifetime is that command's: run
+	// it on the host with a handle to this machine, then tear everything down
+	// and exit with its status (D23, and section 1's definition of done).
+	if len(command) > 0 {
+		fmt.Printf("\nrunning: %s\n\n", strings.Join(command, " "))
+		child := exec.Command(command[0], command[1:]...)
+		child.Stdin, child.Stdout, child.Stderr = os.Stdin, os.Stdout, os.Stderr
+		// The command's whole purpose is to reach back in through `kelyfos
+		// mcp`, so make sure it can find the binary that launched it — the
+		// README installs to ./bin, which is not on anyone's PATH.
+		env := append(os.Environ(), "KELYFOS_SANDBOX="+sb.State.ID)
+		if self, err := os.Executable(); err == nil {
+			env = append(env, "PATH="+filepath.Dir(self)+string(os.PathListSeparator)+os.Getenv("PATH"))
+		}
+		child.Env = env
+		err := child.Run()
+		reason = "command_exited"
+		code := 0
+		if err != nil {
+			var ee *exec.ExitError
+			if errors.As(err, &ee) {
+				code = ee.ExitCode()
+			} else {
+				return fmt.Errorf("run %s: %w", command[0], err)
+			}
+		}
+		fmt.Printf("\n%s exited %d; stopping the sandbox\n", command[0], code)
+		if code != 0 {
+			// Deferred teardown still runs; the status is the child's.
+			defer os.Exit(code)
+		}
+		return nil
+	}
+
 	fmt.Println("\nCtrl-C to stop.")
 
 	// Return when the user interrupts, or earlier if the VM dies on its own.
-	vmExited := make(chan struct{})
-	go func() { _ = sb.Wait(); close(vmExited) }()
 	select {
 	case <-ctx.Done():
 		fmt.Println("\nstopping...")

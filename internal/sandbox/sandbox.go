@@ -771,6 +771,11 @@ func (s *Sandbox) drainConsole(r io.Reader) {
 // Load reads the state of a running sandbox. With an empty id it finds the only
 // running sandbox, and refuses to guess when there is more than one.
 func Load(id string) (*State, error) {
+	// `kelyfos run -- <cmd>` exports this so the command it launches reaches
+	// the sandbox that launched it, even when others are running (D23).
+	if id == "" {
+		id = os.Getenv("KELYFOS_SANDBOX")
+	}
 	if id != "" {
 		return readState(filepath.Join(RunRoot(), id))
 	}

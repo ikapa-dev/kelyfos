@@ -126,7 +126,7 @@
      injected secrets, full audit replay, and millisecond forking.</p>
   <div class="meta">
     owner: <b>John</b> &nbsp;·&nbsp; developer: <b>Claude Code</b> &nbsp;·&nbsp;
-    status: <b class="amber" id="meta-status">Phase 3 active — 5/12</b> &nbsp;·&nbsp;
+    status: <b class="amber" id="meta-status">Phase 3 active — 10/12</b> &nbsp;·&nbsp;
     last updated: <b id="meta-updated">2026-08-22</b><br>
     repo file: <b>PLAN.html</b> (commit this document at the repository root — it is the single source of truth)<br>
     <span class="quiet">KelyfOS — from κέλυφος (kélyfos), "shell": the guest OS wrapped around the agent. Formerly working-titled "agos" (D4 → D10).</span>
@@ -166,7 +166,7 @@
     <span class="bl-name">Overall</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">P3-6 — CI: dual-arch build, boot test, bench< 200 MB</b></div>
+  <div class="focusline">Current focus: <b id="focus">P3-7 — public launch: README, demo, availability sweep, tag v0.3< 200 MB</b></div>
 </div>
 
 <!-- ====================================================== 1. END GOAL -->
@@ -925,6 +925,37 @@ $ kelyfos doctor | grep "guest image"
 16:36:35.551 exit      0 &middot; 35 ms
 q to quit — the sandbox keeps running
 uptime 4s &middot; boot 850 ms &middot; 2 commands (0 failed) &middot; 0 files &middot; egress 0 ok / 0 blocked &middot; 0 secret uses</pre></td></tr>
+        <tr><td class="mono">2026-08-22</td><td class="mono">P3-7</td>
+        <td><b>Gap against &sect;1 found by reading the definition of done line by line instead of assuming it was covered</b> (the PLAN-FEATURES gate depends on &sect;1 being met, so it had to be checked rather than believed). Bullet 2 names the invocation <code>kelyfos run --image dev --workspace . --allow github.com --secret GITHUB_TOKEN@github.com -- &lt;agent cmd&gt;</code>, and <code>run</code> accepted no positional arguments at all &mdash; the only way to use a sandbox was <code>run &amp;</code> then <code>exec</code>. Implemented under D23: the trailing command runs on the host for the sandbox's lifetime with <code>KELYFOS_SANDBOX</code> and the kelyfos binary's directory on its PATH, and kelyfos exits with its status. That bullet is now demonstrable as one command, and it is also the shape a real agent wants &mdash; <code>kelyfos run --workspace . --allow github.com -- claude</code> hands an agent a sandbox and takes it away again.</td>
+        <td class="mono"><pre>$ export GITHUB_TOKEN='ghp_thisIsTheSecretValue...'
+$ kelyfos run --image dev --workspace . --allow github.com \
+      --secret GITHUB_TOKEN@github.com -- bash -c '...'
+  egress      github.com via proxy on 169.254.104.193:42797
+  secret      GITHUB_TOKEN -&gt; github.com (Bearer; the value stays on the host)
+  workspace   /tmp/d23b/proj -&gt; /work
+
+  [agent] on the host; sandbox handle cc1d05d7
+  [agent] project files, seen only through the sandbox:
+hello.txt
+  [agent] secret in the guest environment? (count)
+0
+  [agent] secret anywhere the guest can normally look?
+(nothing above = absent)
+  [agent] egress outside the allowlist:
+curl: (7) CONNECT tunnel failed, response 403
+
+bash exited 0; stopping the sandbox
+workspace written back to /tmp/d23b/proj
+
+$ kelyfos run --image dev -- bash -c 'exit 42'; echo $?
+42
+
+flight recorder for that session:
+  {'type':'egress.attempt','host':'example.com','allowed':False}
+  {'type':'secret.use','host':'github.com','name':'GITHUB_TOKEN'}
+  {'type':'egress.attempt','host':'github.com','allowed':True,'mode':'terminated'}
+$ grep -c 'ghp_thisIsTheSecretValue' events.jsonl
+0</pre></td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
@@ -1001,6 +1032,9 @@ uptime 4s &middot; boot 850 ms &middot; 2 commands (0 failed) &middot; 0 files &
         <tr><td class="mono">D22</td><td class="mono">2026-08-22</td>
         <td><code>kelyfos snapshot restore</code> re-creates the egress path and re-pairs the guest's NIC to a fresh TAP via Firecracker's <code>network_overrides</code>. Forks stay vsock-only exactly as P3-2 specifies.</td>
         <td>The Phase 3 acceptance test surfaced this: step 1 prepares a sandbox by cloning a repo <i>inside</i> it, which requires a NIC, and step 2 restores that snapshot. Restore had only ever been exercised on vsock-only machines, so it failed &mdash; and failed badly. With the parent still running, Firecracker reported <code>Resource busy</code> on the original TAP; with the parent gone, <code>Operation not permitted</code>, because the TAP no longer existed and nothing re-created it. Either way the user had already paid for a 512 MB snapshot that could never be loaded, and the error they saw was a raw Firecracker fault string about ifreq structures. P3-2 deliberately scopes <i>forks</i> to vsock-only, and that stands: N forks would need N distinct guest network identities, and the guest's address and default route are baked into the memory image, so genuinely separating them needs a network namespace per fork &mdash; which is P4-1 jailer territory. But P3-1 never scoped restore that way, and restore is the tractable case precisely because there is only one machine: it can re-use the original addressing. The mechanism was already available and simply unused &mdash; Firecracker's <code>PUT /snapshot/load</code> takes <code>network_overrides</code> (host device re-pairing per interface) alongside the <code>vsock_override</code> KelyfOS already passes. Restore now builds the egress path in the same order <code>run</code> does (TAP, proxy, firewall, then the machine), loads with the override, and re-installs the trust anchor over the control channel &mdash; necessary because D6 mints a fresh CA per run, so a restored guest is otherwise carrying an anchor for a CA that no longer exists. <code>fork</code> now refuses a networked snapshot with a message that says so, instead of emitting the same Firecracker fault four times.</td></tr>
+        <tr><td class="mono">D23</td><td class="mono">2026-08-22</td>
+        <td><code>kelyfos run [flags] -- &lt;command&gt;</code> runs that command on the host for the lifetime of the sandbox, exports <code>KELYFOS_SANDBOX</code> to it, and exits with its status.</td>
+        <td>Section 1's definition of done names this exact invocation &mdash; <code>kelyfos run --image dev --workspace . --allow github.com --secret GITHUB_TOKEN@github.com -- &lt;agent cmd&gt;</code> &mdash; and it did not exist: <code>run</code> took no positional arguments at all, so the only way to use a sandbox was <code>run &amp;</code> followed by <code>exec</code>. Found while checking &sect;1 line by line rather than assuming it was covered, since the PLAN-FEATURES activation gate depends on &sect;1 being met. The bullet also settles what the command <i>is</i>: it says the agent &ldquo;operates only through MCP tools on your project files&rdquo;. An agent running inside the guest would not use MCP tools, it would just use the filesystem. So the trailing command runs on the <b>host</b>, reaching the sandbox over the MCP bridge &mdash; which is also the shape that makes the secret guarantee meaningful, since the value stays on the host side of the proxy and never enters the guest either way. <code>sandbox.Load</code> now falls back to <code>$KELYFOS_SANDBOX</code> when no <code>--sandbox</code> is given, so the child's <code>kelyfos mcp</code> and <code>kelyfos exec</code> attach to the right machine even when other sandboxes are running &mdash; previously an empty id meant &ldquo;the only running one&rdquo; and simply failed when there were several. Teardown, workspace sync-back and the flight recorder's <code>session.end</code> all run on the child's exit, so the sandbox's lifetime is exactly the command's.</td></tr>
     <!-- Claude Code: append rows above this line. -->
   </table>
 </section>
