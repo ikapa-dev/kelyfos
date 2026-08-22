@@ -5,6 +5,10 @@
 #
 # Targets are stubs until phase 1 (P1-1 onward); each prints what it will do.
 
+# Version stamped into the CLI. A dev build says so rather than claiming a
+# release number it does not have.
+KELYFOS_VERSION ?= $(shell git describe --tags --dirty --always 2>/dev/null || echo dev)
+
 # Pinned toolchain versions (P0-6). Hard include: a build with no version policy
 # is not a build this project is willing to make.
 include versions.mk
@@ -64,7 +68,7 @@ KERNEL_ARTIFACT := vmlinux
 endif
 
 .DEFAULT_GOAL := help
-.PHONY: help versions toolchain kernel supervisor image run clean test linux-only fetch-kernel
+.PHONY: help versions toolchain kernel supervisor cli image run clean test linux-only fetch-kernel
 
 help: ## Show this target list
 	@echo "KelyfOS — targets (ARCH=$(ARCH), FLAVOR=$(FLAVOR))"
@@ -146,15 +150,21 @@ image: linux-only supervisor fetch-kernel $(BUILD_DIR)/.config ## Build the gues
 	@cp -f $(BUILD_DIR)/images/rootfs.ext4        $(IMAGE_DIR)/
 	@$(CURDIR)/image/check-image.sh "$(ARCH)" "$(IMAGE_DIR)" "$(KERNEL_ARTIFACT)"
 
-run: ## Boot a microVM from the built image under Firecracker
-	@echo "[stub] run: build the kelyfos CLI, write the Firecracker machine config"
-	@echo "            (vsock guest_cid=3 over a host-side UDS) and boot the guest,"
-	@echo "            tearing down cleanly on Ctrl-C. (P1-5)"
+cli: linux-only ## Build the kelyfos host CLI into bin/
+	@mkdir -p $(OUT_DIR)
+	CGO_ENABLED=0 go build -trimpath \
+	  -ldflags="-s -w -X main.Version=$(KELYFOS_VERSION)" \
+	  -o $(OUT_DIR)/kelyfos ./host
+	@$(OUT_DIR)/kelyfos version
+
+run: cli ## Boot a microVM from the built image under Firecracker
+	$(OUT_DIR)/kelyfos run --image $(FLAVOR) --arch $(ARCH)
 
 test: ## Run the test suite
-	@echo "[stub] test: Go unit tests for host/ and supervisor/, plus the boot smoke"
-	@echo "             test (kelyfos exec \"uname -a\") for ARCH=$(ARCH). (P1-6, P3-6)"
+	go vet ./...
+	go test ./...
 
 clean: ## Remove build output (keeps the downloaded Buildroot toolchain)
-	@echo "[stub] clean: remove $(OUT_DIR) and the built artifacts in $(BUILD_DIR),"
-	@echo "              leaving the downloaded toolchain cache in place."
+	rm -rf $(OUT_DIR) $(IMAGE_DIR) $(GUEST_OVERLAY)
+	@echo "removed CLI, images and the generated overlay for ARCH=$(ARCH)"
+	@echo "kept the Buildroot tree and download cache under $(KELYFOS_CACHE)"
