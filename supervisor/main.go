@@ -66,6 +66,11 @@ func main() {
 	} else {
 		go serveExec(ln, rp)
 	}
+	if ln, err := vsock.Listen(proto.PortMCP); err != nil {
+		logf("cannot listen on mcp port %d: %v", proto.PortMCP, err)
+	} else {
+		go serveMCP(ln, rp)
+	}
 	if ln, err := vsock.Listen(proto.PortControl); err != nil {
 		logf("cannot listen on control port %d: %v", proto.PortControl, err)
 	} else {

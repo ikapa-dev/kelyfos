@@ -43,21 +43,42 @@ func serveExecConn(conn net.Conn, rp *reaper) {
 		}
 		return
 	}
-	switch {
-	case req.V != proto.Version:
+	if req.V != proto.Version {
 		w.exit(req.ID, -1, "", &proto.Error{Kind: proto.ErrBadRequest, Message: "unsupported protocol version"})
 		return
-	case len(req.Cmd) == 0:
-		w.exit(req.ID, -1, "", &proto.Error{Kind: proto.ErrBadRequest, Message: "cmd must not be empty"})
-		return
+	}
+
+	res := runCommand(req, rp,
+		func(b []byte) { w.chunk(req.ID, proto.StreamStdout, b) },
+		func(b []byte) { w.chunk(req.ID, proto.StreamStderr, b) },
+	)
+	w.exit(req.ID, res.Code, res.Signal, res.Err)
+}
+
+// Result is what running one command produced, beyond its output.
+type Result struct {
+	Code   int
+	Signal string
+	Err    *proto.Error
+}
+
+// runCommand executes one request and hands output to the callbacks as it
+// arrives. It is the single implementation of "run a thing in this guest",
+// shared by the raw exec channel and the MCP exec tool, so the two cannot drift
+// in how they handle environments, timeouts or exit statuses.
+//
+// Output callbacks are invoked from two goroutines; callers serialise if they
+// need to.
+func runCommand(req proto.ExecRequest, rp *reaper, onStdout, onStderr func([]byte)) Result {
+	if len(req.Cmd) == 0 {
+		return Result{Code: -1, Err: &proto.Error{Kind: proto.ErrBadRequest, Message: "cmd must not be empty"}}
 	}
 
 	var stdin []byte
 	if req.Stdin != "" {
 		var err error
 		if stdin, err = base64.StdEncoding.DecodeString(req.Stdin); err != nil {
-			w.exit(req.ID, -1, "", &proto.Error{Kind: proto.ErrBadRequest, Message: "stdin is not valid base64"})
-			return
+			return Result{Code: -1, Err: &proto.Error{Kind: proto.ErrBadRequest, Message: "stdin is not valid base64"}}
 		}
 	}
 
@@ -66,18 +87,21 @@ func serveExecConn(conn net.Conn, rp *reaper) {
 	// (see reaper.go). Owning the pipes means owning when they close.
 	inR, inW, err := os.Pipe()
 	if err != nil {
-		w.exit(req.ID, -1, "", &proto.Error{Kind: proto.ErrInternal, Message: err.Error()})
-		return
+		return internalErr(err)
 	}
 	outR, outW, err := os.Pipe()
 	if err != nil {
-		w.exit(req.ID, -1, "", &proto.Error{Kind: proto.ErrInternal, Message: err.Error()})
-		return
+		inR.Close()
+		inW.Close()
+		return internalErr(err)
 	}
 	errR, errW, err := os.Pipe()
 	if err != nil {
-		w.exit(req.ID, -1, "", &proto.Error{Kind: proto.ErrInternal, Message: err.Error()})
-		return
+		inR.Close()
+		inW.Close()
+		outR.Close()
+		outW.Close()
+		return internalErr(err)
 	}
 
 	cmd := exec.Command(req.Cmd[0], req.Cmd[1:]...)
@@ -97,7 +121,8 @@ func serveExecConn(conn net.Conn, rp *reaper) {
 	// the shell that spawned it.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
-	if err := cmd.Start(); err != nil {
+	status, err := rp.startAndRegister(cmd)
+	if err != nil {
 		for _, f := range []*os.File{inR, inW, outR, outW, errR, errW} {
 			f.Close()
 		}
@@ -108,10 +133,8 @@ func serveExecConn(conn net.Conn, rp *reaper) {
 		case errors.Is(err, os.ErrPermission):
 			kind = proto.ErrDenied
 		}
-		w.exit(req.ID, -1, "", &proto.Error{Kind: kind, Message: err.Error()})
-		return
+		return Result{Code: -1, Err: &proto.Error{Kind: kind, Message: err.Error()}}
 	}
-	status := rp.register(cmd.Process.Pid)
 	defer rp.forget(cmd.Process.Pid)
 
 	// The child holds its own copies now; ours would otherwise keep the pipes
@@ -129,8 +152,8 @@ func serveExecConn(conn net.Conn, rp *reaper) {
 
 	var pump sync.WaitGroup
 	pump.Add(2)
-	go func() { defer pump.Done(); defer outR.Close(); w.stream(req.ID, proto.StreamStdout, outR) }()
-	go func() { defer pump.Done(); defer errR.Close(); w.stream(req.ID, proto.StreamStderr, errR) }()
+	go func() { defer pump.Done(); defer outR.Close(); drain(outR, onStdout) }()
+	go func() { defer pump.Done(); defer errR.Close(); drain(errR, onStderr) }()
 
 	var timedOut atomic.Bool
 	var timer *time.Timer
@@ -150,12 +173,29 @@ func serveExecConn(conn net.Conn, rp *reaper) {
 	}
 
 	code, signal := exitStatus(ws)
-	var perr *proto.Error
 	if timedOut.Load() {
-		perr = &proto.Error{Kind: proto.ErrTimeout, Message: "command exceeded timeout_ms"}
-		code = -1
+		return Result{Code: -1, Signal: signal, Err: &proto.Error{
+			Kind: proto.ErrTimeout, Message: "command exceeded timeout_ms",
+		}}
 	}
-	w.exit(req.ID, code, signal, perr)
+	return Result{Code: code, Signal: signal}
+}
+
+func internalErr(err error) Result {
+	return Result{Code: -1, Err: &proto.Error{Kind: proto.ErrInternal, Message: err.Error()}}
+}
+
+func drain(r io.Reader, sink func([]byte)) {
+	buf := make([]byte, proto.MaxChunk)
+	for {
+		n, err := r.Read(buf)
+		if n > 0 && sink != nil {
+			sink(buf[:n])
+		}
+		if err != nil {
+			return
+		}
+	}
 }
 
 // killGroup targets the whole process group (negative pid), falling back to the
@@ -183,25 +223,13 @@ type syncWriter struct {
 	w  *proto.Writer
 }
 
-func (s *syncWriter) stream(id, name string, r io.Reader) {
-	buf := make([]byte, proto.MaxChunk)
-	for {
-		n, err := r.Read(buf)
-		if n > 0 {
-			s.mu.Lock()
-			werr := s.w.Write(proto.ExecResponse{
-				V: proto.Version, ID: id, Stream: name,
-				Data: base64.StdEncoding.EncodeToString(buf[:n]),
-			})
-			s.mu.Unlock()
-			if werr != nil {
-				return
-			}
-		}
-		if err != nil {
-			return
-		}
-	}
+func (s *syncWriter) chunk(id, name string, b []byte) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_ = s.w.Write(proto.ExecResponse{
+		V: proto.Version, ID: id, Stream: name,
+		Data: base64.StdEncoding.EncodeToString(b),
+	})
 }
 
 func (s *syncWriter) exit(id string, code int, signal string, perr *proto.Error) {

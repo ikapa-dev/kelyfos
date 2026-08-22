@@ -38,9 +38,17 @@ The guest listens on an `AF_VSOCK` port. The host:
 3. reads the acknowledgement line `OK <assigned_hostside_port>\n`.
 
 After that line the connection is a raw bidirectional byte stream to the guest
-listener. If nothing is listening on `<port>` in the guest, Firecracker closes
-the connection instead of acknowledging — a closed socket at step 3 means "the
-supervisor is not up yet", not "the transport is broken".
+listener. If the connection cannot be completed, Firecracker closes it instead
+of acknowledging. That happens for two reasons, and both are transient:
+
+- nothing is listening on `<port>` in the guest yet;
+- the guest's listener has a full accept backlog, which a burst of concurrent
+  tool calls can produce.
+
+Neither is "the transport is broken", so a host **MUST** retry a closed
+handshake until its own timeout expires rather than failing the first attempt.
+Reporting it immediately turns an ordinary burst into sporadic, unreproducible
+failures.
 
 > **Implementation rule.** `<assigned_hostside_port>` is an arbitrary number
 > chosen by Firecracker (values like `1073741824` are normal). Read the

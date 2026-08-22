@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"os/exec"
 	"os/signal"
 	"sync"
 	"syscall"
@@ -18,9 +19,9 @@ import (
 // symptom is intermittent "waitid: no child processes" on commands that in fact
 // ran perfectly.
 //
-// So there is exactly one waiter: this one. Callers that start a child register
-// its pid and read the status from a channel instead of calling Cmd.Wait, which
-// is why exec.go builds its pipes by hand.
+// So there is exactly one waiter: this one. Callers start their children
+// through startAndRegister and read the status from a channel instead of
+// calling Cmd.Wait, which is why exec.go builds its pipes by hand.
 type reaper struct {
 	mu      sync.Mutex
 	waiters map[int]chan syscall.WaitStatus
@@ -30,9 +31,9 @@ func newReaper() *reaper {
 	return &reaper{waiters: make(map[int]chan syscall.WaitStatus)}
 }
 
-// start begins reaping. SIGCHLD is the wake-up, but the loop drains every
-// available zombie on each wake: signals are not queued, so several children
-// exiting at once can produce a single SIGCHLD.
+// start begins reaping. SIGCHLD is the wake-up, but each wake drains every
+// available zombie: signals are not queued, so several children exiting at once
+// can produce a single SIGCHLD.
 func (r *reaper) start() {
 	ch := make(chan os.Signal, 8)
 	signal.Notify(ch, unix.SIGCHLD)
@@ -44,28 +45,42 @@ func (r *reaper) start() {
 }
 
 func (r *reaper) drain() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.drainLocked()
+}
+
+func (r *reaper) drainLocked() {
 	for {
 		var ws syscall.WaitStatus
 		pid, err := syscall.Wait4(-1, &ws, syscall.WNOHANG, nil)
 		if err != nil || pid <= 0 {
-			// ECHILD (no children at all) or 0 (none exited yet).
+			// ECHILD (no children at all) or 0 (none have exited yet).
 			return
 		}
-		r.deliver(pid, ws)
+		r.deliverLocked(pid, ws)
 	}
 }
 
-// register must be called before the child can exit, so the status has
-// somewhere to go. Callers hold the returned channel and read exactly once.
-func (r *reaper) register(pid int) chan syscall.WaitStatus {
-	c := make(chan syscall.WaitStatus, 1)
+// startAndRegister starts a child and registers its waiter atomically with
+// respect to reaping.
+//
+// This has to be one operation, not two. If it were two, a short-lived command
+// could exit in the window between fork and registration; the SIGCHLD handler
+// would reap it, find no waiter, and drop the status on the floor — and the
+// caller would then block forever on a channel nobody will ever write to. That
+// failure is invisible under light load and reliable under concurrency, which
+// is the worst combination a bug can have. Holding the lock across both closes
+// the window, because a concurrent drain cannot run until the waiter exists.
+func (r *reaper) startAndRegister(cmd *exec.Cmd) (chan syscall.WaitStatus, error) {
 	r.mu.Lock()
-	r.waiters[pid] = c
-	r.mu.Unlock()
-	// A child can exit between fork and register; drain again so its status is
-	// not stranded in a zombie nobody is listening for.
-	go r.drain()
-	return c
+	defer r.mu.Unlock()
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
+	c := make(chan syscall.WaitStatus, 1)
+	r.waiters[cmd.Process.Pid] = c
+	return c, nil
 }
 
 func (r *reaper) forget(pid int) {
@@ -74,17 +89,15 @@ func (r *reaper) forget(pid int) {
 	r.mu.Unlock()
 }
 
-func (r *reaper) deliver(pid int, ws syscall.WaitStatus) {
-	r.mu.Lock()
+// deliverLocked hands a status to its waiter. The caller holds r.mu.
+func (r *reaper) deliverLocked(pid int, ws syscall.WaitStatus) {
 	c, ok := r.waiters[pid]
-	if ok {
-		delete(r.waiters, pid)
+	if !ok {
+		// An orphan the machine handed us. Reaping it was the entire point;
+		// there is nobody to tell.
+		return
 	}
-	r.mu.Unlock()
-	if ok {
-		c <- ws
-		close(c)
-	}
-	// An unregistered pid is an orphan the machine handed us. Reaping it was
-	// the entire point; there is nobody to tell.
+	delete(r.waiters, pid)
+	c <- ws
+	close(c)
 }

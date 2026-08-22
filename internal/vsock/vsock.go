@@ -24,6 +24,9 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+// listenBacklog bounds how many connections may be waiting to be accepted.
+const listenBacklog = 128
+
 // Addr is a vsock endpoint: a context ID and a port.
 type Addr struct {
 	CID  uint32
@@ -68,7 +71,12 @@ func Listen(port uint32) (net.Listener, error) {
 		unix.Close(fd)
 		return nil, fmt.Errorf("vsock: bind port=%d: %w", port, err)
 	}
-	if err := unix.Listen(fd, 16); err != nil {
+	// The backlog is generous on purpose. An agent driving this sandbox can
+	// fire many tool calls at once, and each one is a separate connection; when
+	// the backlog overflows, Firecracker cannot complete the CONNECT handshake
+	// and the host sees the socket close with no "OK" — indistinguishable, from
+	// the outside, from a supervisor that is not running.
+	if err := unix.Listen(fd, listenBacklog); err != nil {
 		unix.Close(fd)
 		return nil, fmt.Errorf("vsock: listen port=%d: %w", port, err)
 	}

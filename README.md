@@ -5,8 +5,11 @@ A minimal, agent-native guest operating system image for microVM sandboxes.
 One command runs an AI agent inside a hardware-isolated VM with deny-all egress,
 injected secrets, full audit replay, and millisecond forking.
 
-> **Status: pre-v0.1, under construction.** Early development, building in the
-> open — v0.3 will be the first announced release. Nothing here works end to end yet.
+> **Status: v0.1 — it boots.** Early development, building in the open — v0.3
+> will be the first announced release. The guest boots and answers commands over
+> vsock; egress policy, secrets and the audit log are Phase 2 work.
+> Cold boot-to-ready is **103 ms median** (p95 125 ms, 10 runs, x86_64 on a
+> bare-KVM CI runner).
 > [`PLAN.html`](PLAN.html) is the living source of truth for scope, architecture,
 > decisions and progress — read it first. The user-facing quickstart lands with
 > the public launch (P3-7).

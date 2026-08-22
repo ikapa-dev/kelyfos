@@ -68,7 +68,7 @@ KERNEL_ARTIFACT := vmlinux
 endif
 
 .DEFAULT_GOAL := help
-.PHONY: help versions toolchain kernel supervisor cli image run bench clean test linux-only fetch-kernel
+.PHONY: help versions toolchain kernel supervisor cli image run bench clean test test-integration linux-only fetch-kernel
 
 help: ## Show this target list
 	@echo "KelyfOS — targets (ARCH=$(ARCH), FLAVOR=$(FLAVOR))"
@@ -168,9 +168,12 @@ bench: cli ## Measure cold boot-to-ready (BENCH_RUNS cold boots)
 run: cli ## Boot a microVM from the built image under Firecracker
 	$(OUT_DIR)/kelyfos run --image $(FLAVOR) --arch $(ARCH)
 
-test: ## Run the test suite
+test: ## Run the test suite (unit tests; integration tests skip without an image)
 	go vet ./...
 	go test ./...
+
+test-integration: linux-only cli ## Boot a real microVM and exercise the guest
+	go test -count=1 -v -timeout 15m -run 'TestConcurrent|TestOrphans|TestExec' ./internal/sandbox/
 
 clean: ## Remove build output (keeps the downloaded Buildroot toolchain)
 	rm -rf $(OUT_DIR) $(IMAGE_DIR) $(GUEST_OVERLAY)
