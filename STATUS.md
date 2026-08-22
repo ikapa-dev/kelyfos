@@ -4,14 +4,15 @@ Heartbeat file. Current state only; history lives in the plan progress logs.
 Rewritten at every task boundary, in its own commit right after the work lands,
 so the sha below is always a commit that exists.
 
-- **as of** 2026-08-23T00:05Z · **HEAD** `d5d322a` · tree clean, `origin/main` == `HEAD`
-- **PLAN.html** 36/43 (phases 0–3 done; P4 backlog, 2 blocked) · **PLAN-FEATURES.html** 6/42
-- **active** Epic E1 — Resource governance (v0.4), 6/9 · right now: starting E1-6
+- **as of** 2026-08-23T00:45Z · **HEAD** `4cb0e3d` · tree clean, `origin/main` == `HEAD`
+- **PLAN.html** 36/43 (phases 0–3 done; P4 backlog, 2 blocked) · **PLAN-FEATURES.html** 7/42
+- **active** Epic E1 — Resource governance (v0.4), 7/9 · right now: starting E1-7
 
 ## Last three completed
-- `a4e9fe1` E1-5 — scratch cap: `size=` on the overlay tmpfs via `kelyfos.scratch=` on the kernel
-  command line; `ENOSPC` at the cap, `/work` unaffected. F-D13: the one guest-applied cap, and why
-- `9c197ac` + `d5d322a` CI — a concurrency group per commit on main; the first fix was insufficient
+- `4cb0e3d` E1-6 — time budgets (`--max-runtime`, `--idle-timeout`), `resource.timeout`, exit 124.
+  Also fixed a v0.3 defect it uncovered: `run -- <cmd>` with a non-zero exit skipped teardown
+  **and workspace sync-back** (`defer os.Exit` runs no other defers). Logged under P3-7
+- `a4e9fe1` E1-5 — scratch cap on the overlay tmpfs; F-D13 on why this one is guest-applied
 - `0e70023` E1-4 — `resource.oom`, events channel implemented, `run` exits 137. F-D12
 
 ## Blocked
@@ -29,11 +30,11 @@ so the sha below is always a commit that exists.
 - **E1-5**: `scratch` is applied by the guest kernel (F-D13). Bounded by `mem`, which is hardware.
 
 ## Next three actions
-1. E1-6 — time budgets: `--max-runtime` / `--idle-timeout` + toml keys; SIGTERM → grace →
-   workspace sync-back → teardown, plus a `resource.timeout` event naming which budget fired.
-2. E1-7 — usage receipt: `kelyfos watch` resources lane + `resource.summary` at teardown.
-3. E1-8 — enforcement proof: `stress-ng` in the dev flavor, driven against tight caps on the
+1. E1-7 — usage vs caps: a resources lane in `kelyfos watch` sampled from cgroup `cpu.stat` /
+   `memory.current`, and a `resource.summary` receipt at teardown that `log --export` renders.
+2. E1-8 — enforcement proof: `stress-ng` in the dev flavor, driven against tight caps on the
    bare-KVM CI reference. Settles the E1-2 and E1-3 debts above.
+3. Epic E1 exit: full acceptance test, tag `v0.4`, publish the release as v0.3 was published.
 
 ## Waiting on John
 - The HN launch post (`docs/launch/hn-post.md`) is written and deliberately unposted — his act, his timing.
