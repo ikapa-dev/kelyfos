@@ -50,6 +50,22 @@ type Summary struct {
 	OOMKills     int
 	TimedOut     string
 	Secrets      []string
+	// Usage is the receipt: what the sandbox actually consumed, and what it was
+	// allowed to. Nil for a session that ended before one was written.
+	Usage *Usage
+}
+
+// Usage is the rendered form of the resource.summary event.
+type Usage struct {
+	CPUSeconds float64
+	CPUQuota   int
+	Vcpus      int
+	PeakRSS    string
+	MemMiB     int
+	NetIn      string
+	NetOut     string
+	DiskRead   string
+	DiskWrite  string
 }
 
 // Row is one line of the timeline.
@@ -166,6 +182,13 @@ func Render(w io.Writer, sessionID string, events []recorder.Event, verifyErr er
 			}
 			v.Rows = append(v.Rows, Row{ts, "secret", "secret " + e.Name,
 				"sent to " + e.Host + " · the value is not recorded anywhere", "", false})
+		case recorder.TypeResourceSummary:
+			v.Summary.Usage = &Usage{
+				CPUSeconds: e.CPUSeconds, CPUQuota: e.CPUQuota, Vcpus: e.VcpuCount,
+				PeakRSS: HumanKiB(e.PeakRSSKiB), MemMiB: e.MemMiB,
+				NetIn: HumanBytes(e.NetInBytes), NetOut: HumanBytes(e.NetOutBytes),
+				DiskRead: HumanBytes(e.DiskReadBytes), DiskWrite: HumanBytes(e.DiskWriteBytes),
+			}
 		case recorder.TypeResourceTimeout:
 			v.Summary.TimedOut = e.Budget
 			v.Rows = append(v.Rows, Row{ts, "oom", "timed out on " + e.Budget,
@@ -185,6 +208,20 @@ func Render(w io.Writer, sessionID string, events []recorder.Event, verifyErr er
 		}
 	}
 	return tmpl.Execute(w, v)
+}
+
+// HumanBytes renders a byte count the way a person reads it.
+func HumanBytes(n int64) string {
+	switch {
+	case n >= 1<<30:
+		return fmt.Sprintf("%.1f GiB", float64(n)/(1<<30))
+	case n >= 1<<20:
+		return fmt.Sprintf("%.1f MiB", float64(n)/(1<<20))
+	case n >= 1<<10:
+		return fmt.Sprintf("%d KiB", n>>10)
+	default:
+		return fmt.Sprintf("%d B", n)
+	}
 }
 
 // HumanKiB renders a kernel-reported size the way a person reads it. Exported

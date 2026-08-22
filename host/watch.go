@@ -15,6 +15,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
+	"github.com/p4r4n0rm4l/KelyfOS/internal/report"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/sandbox"
 )
 
@@ -59,6 +60,18 @@ talk to the guest and quitting it leaves the sandbox running.
 type eventMsg recorder.Event
 type tickMsg time.Time
 
+// usageMsg is one reading of what the sandbox is consuming. It is the one thing
+// this view does not get from the flight recorder, and F-D14 records why: a
+// live gauge of a running machine is a reading, not a record, and writing a
+// sample per second into a tamper-evident log to display it would be inventing
+// a metrics store nobody asked for. The durable number is the single
+// resource.summary written at teardown, which this view also renders.
+type usageMsg struct {
+	usage sandbox.Usage
+	state sandbox.State
+	at    time.Time
+}
+
 type watchModel struct {
 	session string
 	path    string
@@ -72,9 +85,32 @@ type watchModel struct {
 	commands, failed, files, egressOK, egressBlocked, secrets int
 	image, kernel, endReason                                  string
 	bootMS                                                    int64
+
+	// the resources lane: a live sample while the sandbox runs, and the
+	// recorded receipt once it has stopped
+	live, prev *usageMsg
+	cpuPercent float64
+	receipt    *recorder.Event
 }
 
-func (m *watchModel) Init() tea.Cmd { return tick() }
+func (m *watchModel) Init() tea.Cmd { return tea.Batch(tick(), sampleUsage(m.session)) }
+
+// sampleUsage reads the host's counters for this sandbox, if it is still
+// running. A sandbox that has stopped simply has no state file, and the lane
+// falls back to the recorded receipt.
+func sampleUsage(id string) tea.Cmd {
+	return func() tea.Msg {
+		st, err := sandbox.Load(id)
+		if err != nil {
+			return nil
+		}
+		u, err := st.Sample()
+		if err != nil {
+			return nil
+		}
+		return usageMsg{usage: u, state: *st, at: time.Now()}
+	}
+}
 
 func tick() tea.Cmd {
 	return tea.Tick(time.Second, func(t time.Time) tea.Msg { return tickMsg(t) })
@@ -125,7 +161,17 @@ func (m *watchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 	case tickMsg:
-		return m, tick()
+		return m, tea.Batch(tick(), sampleUsage(m.session))
+	case usageMsg:
+		// CPU is a rate, so it needs two readings. The first tick shows the
+		// machine's shape and no percentage, which is honest: nothing has been
+		// measured over an interval yet.
+		if m.live != nil {
+			if dt := msg.at.Sub(m.live.at).Seconds(); dt > 0 {
+				m.cpuPercent = 100 * (msg.usage.CPUSeconds - m.live.usage.CPUSeconds) / dt
+			}
+		}
+		m.prev, m.live = m.live, &msg
 	case eventMsg:
 		m.absorb(recorder.Event(msg))
 	}
@@ -133,6 +179,10 @@ func (m *watchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *watchModel) absorb(e recorder.Event) {
+	if e.Type == recorder.TypeResourceSummary {
+		ev := e
+		m.receipt = &ev
+	}
 	ts := e.TS
 	if len(ts) > 23 {
 		ts = ts[11:23]
@@ -234,8 +284,10 @@ func (m *watchModel) View() string {
 		time.Since(m.started).Truncate(time.Second), m.bootMS,
 		m.commands, m.failed, m.files, m.egressOK, m.egressBlocked, m.secrets))
 
-	// Three lines of chrome: header, status, and the quit hint.
-	lane := height - 4
+	resources := m.resourceLane()
+
+	// Chrome: header, status, resources, rule, and the quit hint.
+	lane := height - 5
 	if lane < 1 {
 		lane = 1
 	}
@@ -248,8 +300,49 @@ func (m *watchModel) View() string {
 		body = dim.Render("  waiting for events…")
 	}
 
-	return header + "\n" + status + "\n" + strings.Repeat("─", min(width, 120)) + "\n" +
+	return header + "\n" + status + "\n" + resources + "\n" +
+		strings.Repeat("─", min(width, 120)) + "\n" +
 		body + "\n" + dim.Render("q to quit — the sandbox keeps running")
+}
+
+// resourceLane shows consumption against the caps it is consumed under. Every
+// figure is measured on the host — the guest is never asked, which is what
+// makes the line worth reading (F-D2).
+func (m *watchModel) resourceLane() string {
+	if m.live != nil {
+		st, u := m.live.state, m.live.usage
+		cpu := "cpu   —"
+		if m.prev != nil {
+			cpu = fmt.Sprintf("cpu %5.1f%%", m.cpuPercent)
+		}
+		switch {
+		case st.CPUQuota > 0:
+			cpu += fmt.Sprintf(" of %d%% quota", st.CPUQuota)
+		case st.VcpuCount > 0:
+			cpu += fmt.Sprintf(" of %d core(s), no quota", st.VcpuCount*100)
+		}
+		mem := fmt.Sprintf("mem %s", report.HumanKiB(u.RSSKiB))
+		if st.MemMiB > 0 {
+			mem += fmt.Sprintf(" of %d MiB", st.MemMiB)
+		}
+		net := fmt.Sprintf("net %s in / %s out", humanBytes(u.NetInBytes), humanBytes(u.NetOutBytes))
+		if st.NetMbpsRx > 0 || st.NetMbpsTx > 0 {
+			net += fmt.Sprintf(" (cap %d/%d Mbps)", st.NetMbpsRx, st.NetMbpsTx)
+		}
+		disk := fmt.Sprintf("disk %s written", humanBytes(u.DiskWriteBytes))
+		if st.DiskMbps > 0 || st.DiskIOPS > 0 {
+			disk += " (capped)"
+		}
+		return barStyle.Render(strings.Join([]string{cpu, mem, net, disk}, " · "))
+	}
+	if m.receipt != nil {
+		e := m.receipt
+		return barStyle.Render(fmt.Sprintf(
+			"final · %.2f CPU-seconds%s · peak RSS %s%s · net %s in / %s out · disk %s written",
+			e.CPUSeconds, quotaSuffix(*e), report.HumanKiB(e.PeakRSSKiB), capSuffix(e.MemMiB),
+			humanBytes(e.NetInBytes), humanBytes(e.NetOutBytes), humanBytes(e.DiskWriteBytes)))
+	}
+	return dim.Render("  resources: waiting for the first sample…")
 }
 
 func min(a, b int) int {

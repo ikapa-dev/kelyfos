@@ -404,7 +404,20 @@ status. This is how you hand an agent a sandbox and nothing else:
 	// Teardown must happen on every path out of this function, including the
 	// signal path — a sandbox left running with its run directory deleted, or a
 	// stale socket left behind, is worse than a failure.
+	//
+	// The usage receipt is taken here, immediately before the shutdown, because
+	// every counter it reads belongs to a process that is about to stop
+	// existing (E1-7).
 	defer func() {
+		if u, err := sb.State.Sample(); err == nil {
+			_ = rec.Append(recorder.Event{
+				Type:       recorder.TypeResourceSummary,
+				CPUSeconds: u.CPUSeconds, PeakRSSKiB: u.PeakRSSKiB,
+				NetInBytes: u.NetInBytes, NetOutBytes: u.NetOutBytes,
+				DiskReadBytes: u.DiskReadBytes, DiskWriteBytes: u.DiskWriteBytes,
+				MemMiB: sb.State.MemMiB, VcpuCount: sb.State.VcpuCount, CPUQuota: sb.State.CPUQuota,
+			})
+		}
 		if err := sb.Shutdown(5 * time.Second); err != nil {
 			fmt.Fprintf(os.Stderr, "kelyfos: shutdown: %v\n", err)
 		}

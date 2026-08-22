@@ -285,6 +285,11 @@ func printEvent(line []byte, asJSON bool) {
 		fmt.Printf("%s  egress %-7s %s:%d  mode=%s %s\n", ts, verdict, e.Host, e.Port, e.Mode, e.Reason)
 	case recorder.TypeSecretUse:
 		fmt.Printf("%s  secret          %s -> %s\n", ts, e.Name, e.Host)
+	case recorder.TypeResourceSummary:
+		fmt.Printf("%s  usage           %.2f CPU-seconds%s · peak RSS %s%s · net %s in / %s out · disk %s written\n",
+			ts, e.CPUSeconds, quotaSuffix(e), report.HumanKiB(e.PeakRSSKiB),
+			capSuffix(e.MemMiB), humanBytes(e.NetInBytes), humanBytes(e.NetOutBytes),
+			humanBytes(e.DiskWriteBytes))
 	case recorder.TypeResourceTimeout:
 		fmt.Printf("%s  timed out       the %s budget of %s expired after %s\n",
 			ts, e.Budget, time.Duration(e.BudgetMS)*time.Millisecond,
@@ -294,6 +299,39 @@ func printEvent(line []byte, asJSON bool) {
 			ts, e.Comm, e.PID, report.HumanKiB(e.RSSKiB), e.MemMiB)
 	default:
 		fmt.Printf("%s  %-15s %s\n", ts, e.Type, strings.TrimSpace(string(line)))
+	}
+}
+
+// quotaSuffix and capSuffix say what a number was measured against, when there
+// was something to measure it against. A receipt that reports consumption
+// without the cap it was consumed under is half a receipt.
+func quotaSuffix(e recorder.Event) string {
+	switch {
+	case e.CPUQuota > 0:
+		return fmt.Sprintf(" (quota %d%% of one core)", e.CPUQuota)
+	case e.VcpuCount > 0:
+		return fmt.Sprintf(" across %d core(s), no quota", e.VcpuCount)
+	}
+	return ""
+}
+
+func capSuffix(memMiB int) string {
+	if memMiB <= 0 {
+		return ""
+	}
+	return fmt.Sprintf(" of %d MiB", memMiB)
+}
+
+func humanBytes(n int64) string {
+	switch {
+	case n >= 1<<30:
+		return fmt.Sprintf("%.1f GiB", float64(n)/(1<<30))
+	case n >= 1<<20:
+		return fmt.Sprintf("%.1f MiB", float64(n)/(1<<20))
+	case n >= 1<<10:
+		return fmt.Sprintf("%d KiB", n>>10)
+	default:
+		return fmt.Sprintf("%d B", n)
 	}
 }
 

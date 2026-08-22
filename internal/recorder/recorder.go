@@ -39,6 +39,7 @@ const (
 	TypeSecretUse       = "secret.use"
 	TypeResourceOOM     = "resource.oom"
 	TypeResourceTimeout = "resource.timeout"
+	TypeResourceSummary = "resource.summary"
 )
 
 // Sources.
@@ -117,6 +118,16 @@ type Event struct {
 	Budget    string `json:"budget,omitempty"`
 	BudgetMS  int64  `json:"budget_ms,omitempty"`
 	ElapsedMS int64  `json:"elapsed_ms,omitempty"`
+
+	// resource.summary — the usage receipt, written once at teardown.
+	CPUSeconds     float64 `json:"cpu_seconds,omitempty"`
+	PeakRSSKiB     int64   `json:"peak_rss_kib,omitempty"`
+	NetInBytes     int64   `json:"net_in_bytes,omitempty"`
+	NetOutBytes    int64   `json:"net_out_bytes,omitempty"`
+	DiskReadBytes  int64   `json:"disk_read_bytes,omitempty"`
+	DiskWriteBytes int64   `json:"disk_write_bytes,omitempty"`
+	VcpuCount      int     `json:"vcpu_count,omitempty"`
+	CPUQuota       int     `json:"cpu_quota_percent,omitempty"`
 }
 
 type EvError struct {

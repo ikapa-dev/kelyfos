@@ -83,6 +83,12 @@ const reportHTML = `<!DOCTYPE html>
   <tr><td>started</td><td>{{.Summary.Started}}</td></tr>
   <tr><td>ended</td><td>{{if .Summary.Ended}}{{.Summary.Ended}} ({{.Summary.EndReason}}){{else}}still running{{end}}</td></tr>
   <tr><td>TLS terminated</td><td>{{.Summary.Terminated}} connection(s) the proxy could read{{if not .Summary.Terminated}} — none{{end}}</td></tr>
+  {{if .Summary.Usage}}<tr><td>usage receipt</td><td>
+    {{printf "%.2f" .Summary.Usage.CPUSeconds}} CPU-seconds{{if .Summary.Usage.CPUQuota}} · quota {{.Summary.Usage.CPUQuota}}% of one core{{else if .Summary.Usage.Vcpus}} · {{.Summary.Usage.Vcpus}} core(s), no quota{{end}}<br>
+    peak RSS {{.Summary.Usage.PeakRSS}}{{if .Summary.Usage.MemMiB}} of {{.Summary.Usage.MemMiB}} MiB{{end}}<br>
+    network {{.Summary.Usage.NetIn}} in / {{.Summary.Usage.NetOut}} out · disk {{.Summary.Usage.DiskWrite}} written, {{.Summary.Usage.DiskRead}} read<br>
+    <span style="color:var(--muted)">measured on the host, from the VMM's own counters — the guest was not asked</span>
+  </td></tr>{{end}}
   <tr><td>ended by</td><td>{{if .Summary.TimedOut}}<span style="color:var(--warn)">the {{.Summary.TimedOut}} budget</span>{{else}}{{.Summary.EndReason}}{{end}}</td></tr>
   <tr><td>secrets used</td><td>{{if .Summary.Secrets}}{{range .Summary.Secrets}}{{.}} {{end}}<br><span style="color:var(--muted)">values are never recorded</span>{{else}}none{{end}}</td></tr>
 </table>

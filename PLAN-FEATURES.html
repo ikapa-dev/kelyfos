@@ -126,7 +126,7 @@
      improvements to the existing product land here as epics. Inert until its gate opens.</p>
   <div class="meta">
     owner: <b>John</b> &nbsp;&middot;&nbsp; developer: <b>Claude Code</b> &nbsp;&middot;&nbsp;
-    status: <b class="ok" id="meta-status">Epic E1 — active, 7/9 (next: E1-7)</b> &nbsp;&middot;&nbsp;
+    status: <b class="ok" id="meta-status">Epic E1 — active, 8/9 (next: E1-8)</b> &nbsp;&middot;&nbsp;
     last updated: <b id="meta-updated">2026-08-23</b><br>
     repo file: <b>PLAN-FEATURES.html</b> (lives at the repository root next to <code>PLAN.html</code>)<br>
     <span class="quiet">Companion to PLAN.html — same protocol, same rules, later timeline.</span>
@@ -166,7 +166,7 @@
     <span class="bl-name">All epics</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">E1-7 — usage vs caps: a resources lane in <code>kelyfos watch</code> and a <code>resource.summary</code> receipt at teardown</b></div>
+  <div class="focusline">Current focus: <b id="focus">E1-8 — enforcement proof: <code>stress-ng</code> against tight caps on the bare-KVM reference</b></div>
 </div>
 
 <!-- ====================================================== 1. ACTIVATION GATE -->
@@ -275,7 +275,7 @@
         <span class="tid">E1-6</span><span class="tk">Time budgets: <code>--max-runtime</code> and <code>--idle-timeout</code> flags + toml keys.
         Idle = no vsock RPC <i>and</i> no egress-proxy traffic for the window. On expiry: SIGTERM to the agent &rarr; grace period &rarr;
         workspace sync-back &rarr; teardown, plus a <code>resource.timeout</code> audit event recording which budget fired.</span></li>
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">E1-7</span><span class="tk">Usage vs caps, live and after: <code>kelyfos watch</code> gains a resources lane
         (CPU% vs quota, mem vs cap, disk vs device size, net vs limiter), sampled from the VM slice&rsquo;s cgroup v2
         <code>cpu.stat</code> / <code>memory.current</code> deltas at a ~1&nbsp;s tick. At teardown the flight recorder gets a
@@ -792,6 +792,19 @@
         as enforcement is the point &mdash; a limit whose actual strength is misunderstood is worse than one whose weakness
         is written down. The number itself travels on the kernel command line, which the guest cannot alter, and a
         <code>scratch</code> above <code>mem</code> is refused at boot instead of accepted as an unreachable limit.</td></tr>
+        <tr><td class="mono">F-D14</td><td class="mono">2026-08-23</td>
+        <td>The E1-7 resources lane in <code>kelyfos watch</code> reads host counters &mdash; cgroup <code>cpu.stat</code>,
+        <code>/proc/&lt;pid&gt;</code>, the TAP's byte counters &mdash; alongside the flight recorder, which PLAN.html's D7
+        describes as the only thing monitoring may read. The durable record is unchanged: exactly one
+        <code>resource.summary</code> per session, written at teardown.</td>
+        <td>D7's own litmus test is &ldquo;does it read the JSONL, or does it manage sandboxes? Readers are fine; managers
+        are scope creep&rdquo;, and a gauge that samples counters about a sandbox it is already watching manages nothing.
+        The alternative considered and rejected was to emit a <code>resource.sample</code> event every second so the view
+        could stay recorder-only: that would put roughly 3,600 events an hour into a tamper-evident log in order to draw a
+        number that is stale a second later, which is a metrics store wearing an audit log's clothes. The distinction worth
+        keeping is between a <i>reading</i> and a <i>record</i>. A live gauge is a reading and does not belong in the chain;
+        the receipt is a record and does. Both come from the same host-side counters, so the lane and the receipt can never
+        disagree about what happened.</td></tr>
     <!-- Claude Code: append rows above this line. -->
       <tr><td class="mono">F-D10</td><td class="mono">2026-08-22</td>
         <td>The resource knobs E1-0 goes looking for shipped <b>partly</b>: <code>--vcpus</code>/<code>--mem</code> and
@@ -1350,6 +1363,52 @@ $ go test ./host/
 --- PASS: TestMaxRuntimeFiresRegardlessOfActivity
 --- PASS: TestNoBudgetsNeverFires
 --- PASS: TestEveryDocumentedResourceKeyParses / TestBudgetsRejectNonsense
+ok  host  internal/config  internal/egress  internal/proto  internal/recorder
+ok  internal/sandbox  supervisor</pre></td></tr>
+        <tr><td class="mono">2026-08-23</td><td class="mono">E1-7</td>
+        <td>Usage against caps, live and after. One sampler serves both, so a lane and a receipt cannot disagree about the
+        same session: it reads the VM's cgroup <code>cpu.stat</code> and <code>memory.current</code> when the sandbox has a
+        cgroup, and <code>/proc/&lt;pid&gt;</code> when it does not &mdash; which is most of the time, because E1-2 creates
+        a cgroup only when <code>--cpu-quota</code> is asked for, and creating one for every sandbox to make this tidier
+        would charge every boot the systemd round trip that path pays, about three hundred milliseconds on a product whose
+        headline number is boot-to-ready. Network comes from the TAP's own counters and storage from
+        <code>/proc/&lt;pid&gt;/io</code>, so the figures are bytes the VMM actually moved rather than anything the guest
+        says about itself. The TAP's counters are named from the host's point of view and therefore read backwards here,
+        which is called out in the code: putting a download in the upload column is exactly the kind of error a receipt is
+        read too casually to catch. <code>kelyfos watch</code> gains the lane; CPU is a rate, so the first tick shows the
+        machine's shape and no percentage rather than a number nothing has measured yet, and once the sandbox stops the
+        lane falls back to the recorded receipt. At teardown &mdash; immediately before the shutdown, because every counter
+        belongs to a process about to stop existing &mdash; the recorder gets one <code>resource.summary</code> carrying
+        the consumption <i>and the caps it was consumed under</i>, since a receipt that omits what was allowed is half a
+        receipt. F-D14 records the one deliberate stretch: the live lane reads host counters as well as the JSONL, which
+        passes D7's own litmus test, and the alternative &mdash; a sample event per second in a tamper-evident log &mdash;
+        was rejected as a metrics store in an audit log's clothes.</td>
+        <td class="mono"><pre>$ kelyfos run --image dev --cpus 2 --mem 512M --cpu-quota 60% \
+      --workspace ./ws --disk 1G -- sh -c 'kelyfos exec "dd ... 60 MiB"'
+$ kelyfos log --session 34b565b7 | tail -3
+23:52:18.898  exit 0          3001 ms
+23:52:18.899  usage           2.05 CPU-seconds (quota 60% of one core)
+                              &middot; peak RSS 163 MiB of 512 MiB
+                              &middot; net 0 B in / 0 B out
+                              &middot; disk 60.0 MiB written
+23:52:18.970  session end     command_exited after 4665 ms
+$ kelyfos log --session 34b565b7 --verify
+session 34b565b7: chain intact, 7 events verified
+
+$ kelyfos log --session 34b565b7 --export report.html
+  usage receipt
+    2.05 CPU-seconds &middot; quota 60% of one core
+    peak RSS 163 MiB of 512 MiB
+    network 0 B in / 0 B out &middot; disk 60.0 MiB written, 0 B read
+    measured on the host, from the VMM's own counters — the guest was not asked
+  external references in the export (want 0): 0
+
+$ go test ./host/
+--- PASS: TestResourceLaneShowsUsageAgainstItsCaps
+      cpu  50.0% of 60% quota · mem 122 MiB of 512 MiB
+      · net 3.0 MiB in / 1 KiB out (cap 10/0 Mbps) · disk 40.0 MiB written
+      (and "cpu   —" until a second sample makes a rate measurable)
+--- PASS: TestResourceLaneFallsBackToTheRecordedReceipt
 ok  host  internal/config  internal/egress  internal/proto  internal/recorder
 ok  internal/sandbox  supervisor</pre></td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->

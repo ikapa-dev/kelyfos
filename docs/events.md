@@ -177,6 +177,25 @@ hashed. A hash of a short credential is a credential. The whole point of
 injecting at the proxy is that the value exists in one place; writing it to an
 audit log would put it in two.
 
+### `resource.summary`
+The usage receipt, written once at teardown. Written from E1-7.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `cpu_seconds` | number | Host CPU time the VMM consumed. |
+| `peak_rss_kib` | integer | High-water resident set of the VMM process. |
+| `net_in_bytes`, `net_out_bytes` | integer | Bytes across the TAP, from the guest's point of view. |
+| `disk_read_bytes`, `disk_write_bytes` | integer | Bytes the VMM moved to and from host storage. |
+| `vcpu_count`, `mem_mib`, `cpu_quota_percent` | integer | The caps those figures were consumed under. |
+
+Every number is read on the host, from counters the kernel keeps about the
+Firecracker process and the TAP attached to it. The guest is not asked, which is
+the point: a guest that could write its own receipt could write a flattering one.
+
+The caps are carried alongside the consumption deliberately. A receipt that says
+what was used without saying what was allowed is half a receipt, and joining the
+two later means trusting that nothing changed in between.
+
 ### `resource.timeout`
 A time budget expired and ended the run. Written from E1-6.
 
@@ -229,6 +248,7 @@ a reader should present the session as open rather than truncated.
 | `egress.attempt` with `mode`, `secret.use` by name | P2-5, P2-6 |
 | `resource.oom` reported by the guest, written by the host | E1-4 |
 | `resource.timeout` naming the budget that fired | E1-6 |
+| `resource.summary` usage receipt at teardown | E1-7 |
 | HTML session export built only from this file | P3-8 |
 | Live TUI built only from this file | P3-9 |
 | Signed exports verifiable offline | P4-3 |

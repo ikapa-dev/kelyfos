@@ -310,11 +310,29 @@ the disk, and cannot run past half an hour.
 
 ## Seeing the limits hold
 
-`kelyfos watch` shows live usage against each cap, and every session ends with a
-`resource.summary` event in the flight recorder — peak RSS, CPU-seconds, bytes
-in and out, disk bytes written — which `kelyfos log --export` renders as a usage
-receipt. Limits that fire leave their own audit events: `resource.oom` when the
-guest OOM-killer runs, `resource.timeout` naming which budget expired.
+`kelyfos watch` carries a resources lane showing live consumption against each
+cap:
+
+```
+cpu  50.0% of 60% quota · mem 122 MiB of 512 MiB · net 3.0 MiB in / 1 KiB out
+(cap 10/0 Mbps) · disk 40.0 MiB written
+```
+
+CPU is a rate, so it needs two readings; the first tick shows the machine's
+shape and no percentage rather than a number it has not measured yet. Once the
+sandbox stops there is nothing left to sample and the lane shows the recorded
+receipt instead.
+
+Every session ends with a `resource.summary` event in the flight recorder — CPU
+seconds, peak RSS, bytes in and out, disk bytes written, each alongside the cap
+it was consumed under — which `kelyfos log --export` renders as a receipt. Both
+the lane and the receipt read the same host-side counters: cgroup `cpu.stat` and
+`memory.current` when the sandbox has a cgroup, `/proc/<pid>` when it does not,
+the TAP's own byte counters, and `/proc/<pid>/io` for storage. The guest is never
+asked.
+
+Limits that fire leave their own audit events: `resource.oom` when the guest
+OOM-killer runs, `resource.timeout` naming which budget expired.
 
 That is the point of enforcing host-side: the record of what the sandbox
 consumed is written by the same side that imposed the limits, so it is worth

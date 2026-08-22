@@ -98,6 +98,8 @@ type State struct {
 	Netmask     string    `json:"netmask,omitempty"`
 	HostMAC     string    `json:"host_mac,omitempty"`
 	ProxyPort   int       `json:"proxy_port,omitempty"`
+	VcpuCount   int       `json:"vcpu_count,omitempty"`
+	MemMiB      int       `json:"mem_mib,omitempty"`
 	CPUQuota    int       `json:"cpu_quota_percent,omitempty"`
 	CGroupPath  string    `json:"cgroup_path,omitempty"`
 	ScratchByte int64     `json:"scratch_bytes,omitempty"`
@@ -200,6 +202,8 @@ func New(opts Options) (*Sandbox, error) {
 	if opts.Workspace != nil {
 		s.State.Workspace = opts.Workspace.ImagePath
 	}
+	s.State.VcpuCount = opts.VcpuCount
+	s.State.MemMiB = opts.MemMiB
 	s.State.ScratchByte = opts.ScratchBytes
 	s.State.NetMbpsRx = opts.IO.NetMbpsRx
 	s.State.NetMbpsTx = opts.IO.NetMbpsTx
