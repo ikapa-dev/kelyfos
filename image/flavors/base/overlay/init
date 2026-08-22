@@ -70,6 +70,14 @@ mkdir -p /dev/pts /dev/shm 2>/dev/null
 mount -t devpts -o nosuid,noexec,gid=5,mode=0620 devpts /dev/pts 2>/dev/null
 mount -t tmpfs  -o nosuid,nodev,mode=1777        tmpfs  /dev/shm 2>/dev/null
 
+# Buildroot writes /etc/hostname but nothing applies it, because this image has
+# no init system to do it (BR2_INIT_NONE). Without this the guest calls itself
+# "(none)" in every uname and every log line.
+if [ -r /etc/hostname ]; then
+	read -r kelyfos_hostname < /etc/hostname
+	[ -n "$kelyfos_hostname" ] && printf '%s' "$kelyfos_hostname" > /proc/sys/kernel/hostname
+fi
+
 # Somewhere for work to happen. P3-10 replaces this with a real block device.
 mkdir -p /work 2>/dev/null
 

@@ -4,6 +4,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 )
@@ -42,6 +43,12 @@ func main() {
 		os.Exit(2)
 	}
 	if err != nil {
+		// A command that ran and failed inside the guest is not a kelyfos
+		// failure: pass its status through instead of flattening it to 1.
+		var ee *exitError
+		if errors.As(err, &ee) {
+			os.Exit(ee.code)
+		}
 		fmt.Fprintf(os.Stderr, "kelyfos: %v\n", err)
 		os.Exit(1)
 	}

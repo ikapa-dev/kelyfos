@@ -102,11 +102,8 @@ func pumpReady(conn net.Conn, bootID string, overlay bool, start time.Duration) 
 	return nil
 }
 
-// serveExec answers the exec channel. Phase 1 has no command execution, so it
-// replies with a well-formed error frame rather than closing silently: a host
-// that gets a valid exit frame saying "not implemented" is debuggable, one that
-// gets a dropped connection cannot tell that from a crashed supervisor
-// (docs/protocol.md §5.2).
+// serveExec answers the exec channel, one command per connection
+// (docs/protocol.md §5.1).
 func serveExec(ln net.Listener) {
 	for {
 		conn, err := ln.Accept()
@@ -114,24 +111,7 @@ func serveExec(ln net.Listener) {
 			log.Printf("exec accept: %v", err)
 			return
 		}
-		go func() {
-			defer conn.Close()
-			var req proto.ExecRequest
-			if err := proto.NewReader(conn).Read(&req); err != nil {
-				return
-			}
-			code := -1
-			_ = proto.NewWriter(conn).Write(proto.ExecResponse{
-				V:      proto.Version,
-				ID:     req.ID,
-				Stream: proto.StreamExit,
-				Code:   &code,
-				Error: &proto.Error{
-					Kind:    proto.ErrInternal,
-					Message: "exec is not implemented in the phase-1 supervisor stub (P1-6)",
-				},
-			})
-		}()
+		go serveExecConn(conn)
 	}
 }
 
