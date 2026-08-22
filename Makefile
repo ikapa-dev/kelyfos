@@ -5,6 +5,10 @@
 #
 # Targets are stubs until phase 1 (P1-1 onward); each prints what it will do.
 
+# Pinned toolchain versions (P0-6). Hard include: a build with no version policy
+# is not a build this project is willing to make.
+include versions.mk
+
 # Architecture. Defaults to the build host: aarch64 is primary (D9), x86_64 is
 # cross-built and gated from P1-8 onward.
 HOST_ARCH := $(shell uname -m | sed -e 's/^arm64$$/aarch64/' -e 's/^amd64$$/x86_64/')
@@ -28,7 +32,7 @@ KERNEL_ARTIFACT := vmlinux
 endif
 
 .DEFAULT_GOAL := help
-.PHONY: help toolchain image run clean test
+.PHONY: help versions toolchain image run clean test
 
 help: ## Show this target list
 	@echo "KelyfOS — targets (ARCH=$(ARCH), FLAVOR=$(FLAVOR))"
@@ -39,14 +43,24 @@ help: ## Show this target list
 	@echo
 	@echo "Variables: ARCH={aarch64|x86_64}  FLAVOR={base|dev}  BUILD_DIR=$(BUILD_DIR)"
 	@echo "           OUT_DIR=$(OUT_DIR)"
+	@echo
+	@$(MAKE) --no-print-directory versions
+
+versions: ## Print the pinned toolchain versions (versions.mk)
+	@echo "Pinned (versions.mk):"
+	@echo "  buildroot    $(BUILDROOT_VERSION)"
+	@echo "  linux        $(LINUX_VERSION)"
+	@echo "  firecracker  $(FIRECRACKER_VERSION)"
+	@echo "  go           $(GO_VERSION)"
 
 toolchain: ## Download and prepare the pinned Buildroot tree (long, once per arch)
-	@echo "[stub] toolchain: fetch Buildroot pinned in versions.mk, verify it,"
+	@echo "[stub] toolchain: fetch Buildroot $(BUILDROOT_VERSION), verify sha256,"
 	@echo "                  unpack into $(BUILD_DIR), apply image/buildroot/ as an"
 	@echo "                  external tree and configure for ARCH=$(ARCH). (P1-1)"
 
 image: ## Build the guest kernel + rootfs.ext4 for ARCH/FLAVOR
-	@echo "[stub] image: build $(KERNEL_ARTIFACT) (uncompressed) and rootfs.ext4 for"
+	@echo "[stub] image: build linux $(LINUX_VERSION) as $(KERNEL_ARTIFACT) (uncompressed)"
+	@echo "              and rootfs.ext4 for"
 	@echo "              ARCH=$(ARCH) FLAVOR=$(FLAVOR), rootfs under 200 MB,"
 	@echo "              output to $(OUT_DIR). (P1-2, P1-4)"
 

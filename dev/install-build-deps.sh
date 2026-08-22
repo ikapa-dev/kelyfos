@@ -19,8 +19,12 @@ sudo -E apt-get update
 sudo -E apt-get install -y --no-install-recommends \
   build-essential git bc flex bison \
   libssl-dev libelf-dev libncurses-dev \
-  unzip rsync file cpio wget curl golang \
+  unzip rsync file cpio wget curl \
   ca-certificates e2fsprogs
+
+# Go comes from the pinned official tarball, not from apt: Ubuntu 24.04 ships
+# Go 1.22, too old to honour a go.mod toolchain directive. See versions.mk.
+bash "$(dirname "${BASH_SOURCE[0]}")/install-go.sh"
 
 make --version | head -1
 gcc --version | head -1

@@ -166,7 +166,7 @@
     <span class="bl-name">Overall</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">P0-6 — pin toolchain versions in versions.mk</b></div>
+  <div class="focusline">Current focus: <b id="focus">P0-7 — commit Apache-2.0 LICENSE and CONTRIBUTING.md with DCO</b></div>
 </div>
 
 <!-- ====================================================== 1. END GOAL -->
@@ -329,7 +329,7 @@
         <span class="tid">P0-4</span><span class="tk">Makefile with stub targets (<code>toolchain</code>, <code>image</code>, <code>run</code>, <code>clean</code>, <code>test</code>) that print what they will do.</span></li>
     <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">P0-5</span><span class="tk">Commit this document as <code>PLAN.html</code> at the repo root.</span></li>
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">P0-6</span><span class="tk">Pin all toolchain versions in <code>versions.mk</code>: Buildroot release, kernel LTS line, Firecracker version, Go version. Every build reads from this file; no floating "latest".</span></li>
     <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">P0-7</span><span class="tk"><b>Decided (D5) — execute:</b> commit the Apache-2.0 <code>LICENSE</code> at the repo root, and add <code>CONTRIBUTING.md</code> requiring DCO sign-off (<code>Signed-off-by</code>) on every contribution — keeping a future relicensing option open without contributor archaeology. No further sign-off needed.</span></li>
@@ -535,8 +535,11 @@ ls -l /dev/kvm
 <span class="out">crw-rw-rw- 1 root kvm 10, 232 ... /dev/kvm</span>
 
 <span class="c"># 3. Build tools (inside the VM):</span>
+bash dev/install-build-deps.sh   <span class="c"># apt build deps + the pinned Go toolchain (D11)</span>
+<span class="c">#    equivalently, by hand:</span>
 sudo apt update &amp;&amp; sudo apt install -y build-essential git bc flex bison \
-     libssl-dev libelf-dev libncurses-dev unzip rsync file cpio wget curl golang
+     libssl-dev libelf-dev libncurses-dev unzip rsync file cpio wget curl e2fsprogs
+bash dev/install-go.sh              <span class="c"># Go from versions.mk; apt ships 1.22, too old</span>
 
 <span class="c"># 4. Clone and build (ARCH defaults to the machine — aarch64 here):</span>
 git clone &lt;repo-url&gt; kelyfos &amp;&amp; cd kelyfos
@@ -624,6 +627,9 @@ make image         <span class="c"># kernel Image (aarch64) / vmlinux (x86_64) +
         <tr><td class="mono">2026-08-22</td><td class="mono">P0-5</td>
         <td><code>PLAN.html</code> is committed at the repository root and pushed to <code>origin/main</code>; it has been part of every commit since P0-1, as protocol rule 3 requires. No separate change was needed — this task verifies the state.</td>
         <td class="mono">git ls-files --full-name PLAN.html → PLAN.html<br>git log --oneline --follow -- PLAN.html → 9dbd583 P0-1 …, 360dec6 P0-2 …, d955ce4 P0-3 …<br>git ls-tree --name-only origin/main → PLAN.html present at the root</td></tr>
+        <tr><td class="mono">2026-08-22</td><td class="mono">P0-6</td>
+        <td><code>versions.mk</code> added as the single source of truth for external components — Buildroot 2026.02.3, Linux 6.18.45, Firecracker v1.16.1, Go 1.27.0, each with its sha256 and each overridable via <code>?=</code>. The Makefile now hard-<code>include</code>s it (a build with no version policy fails rather than floats) and gained a <code>versions</code> target; the <code>toolchain</code> and <code>image</code> stubs print the pinned values. <code>dev/install-firecracker.sh</code> resolves its version from the file, and a new <code>dev/install-go.sh</code> installs the pinned Go toolchain, removing the shadowing apt package. Choices and the apt-to-tarball change for Go recorded as decision D11; quickstart section 7 updated to match.</td>
+        <td class="mono">make versions → buildroot 2026.02.3 · linux 6.18.45 · firecracker v1.16.1 · go 1.27.0<br>limactl shell kelyfos-dev -- bash dev/install-go.sh<br>==&gt; sha256 ok: 51798d2c42d0e1c6ed7fd9f48728b4193abac9e8aad6dbac2fe96a81f5909bda<br>go version go1.27.0 linux/arm64 (was go1.22.2 from apt)<br>rerun of dev/install-firecracker.sh with no env → resolved v1.16.1 from versions.mk, sha256 ok</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
@@ -664,6 +670,9 @@ make image         <span class="c"># kernel Image (aarch64) / vmlinux (x86_64) +
     <tr><td class="mono">D10</td><td class="mono">2026-08-22</td>
         <td>Project named <b>KelyfOS</b> — κέλυφος (kélyfos), "shell". CLI binary <code>kelyfos</code>, config <code>kelyfos.toml</code>, TAP prefix <code>kelyfos&lt;id&gt;</code>. Supersedes the "agos" working title (D4).</td>
         <td>Chosen over KratOS: "kratos" is heavily occupied in adjacent open source (a major Go microservices framework whose CLI binary is literally <code>kratos</code>, the Ory Kratos identity server) plus a listed defense contractor — bad findability and a PATH collision for a Go CLI. KelyfOS has clean airspace and the metaphor is literal: a shell wrapped around the agent. Final availability sweep stays gated at launch (P3-7).</td></tr>
+        <tr><td class="mono">D11</td><td class="mono">2026-08-22</td>
+        <td>Version policy fixed at P0-6: Buildroot <b>2026.02.3</b> (the yearly .02 long-term-supported line, not the newer 2026.05.x), guest kernel <b>6.18.45</b> (newest longterm line on kernel.org, pinned to an exact patch), Firecracker <b>v1.16.1</b>, Go <b>1.27.0</b>. Every pin carries its sha256 in <code>versions.mk</code>. Go is installed from the official tarball by <code>dev/install-go.sh</code> instead of the <code>golang</code> apt package, and the quickstart in section 7 is updated to match.</td>
+        <td>Buildroot's LTS line is the right default for a project whose selling point is reproducible images: a year of fixes without feature churn. The kernel is pinned to a patch release because &quot;latest 6.18&quot; is a floating version by another name, which is exactly what this task exists to prevent; buildroot.org ships only a PGP-signed manifest, so the digest is transcribed into <code>versions.mk</code> where the build can check it. Go from apt is 1.22 on Ubuntu 24.04 — old enough that a <code>go.mod</code> toolchain directive fails outright, so the distribution package cannot be the pin. Overrides stay possible for bisecting upstream regressions: every value uses <code>?=</code>.</td></tr>
     <!-- Claude Code: append rows above this line. -->
   </table>
 </section>
