@@ -114,7 +114,7 @@ func TestParseMemMiBKeepsBareNumbersAsMiB(t *testing.T) {
 func TestUnenforcedResourceKeysRefuse(t *testing.T) {
 	// Shrinks as the epic lands each one: the four I/O rates left this list in
 	// E1-3, and the test failing when they did is the point of writing it here.
-	for _, key := range []string{"scratch", "max_runtime", "idle_timeout"} {
+	for _, key := range []string{"max_runtime", "idle_timeout"} {
 		_, err := loadString(t, "[resources]\n"+key+" = \"1\"\n")
 		if err == nil {
 			t.Errorf("[resources] %s was accepted but nothing enforces it", key)
@@ -187,5 +187,17 @@ func TestIORateZeroAndNegativeRefused(t *testing.T) {
 		if _, err := loadString(t, body); err == nil {
 			t.Errorf("accepted a bad rate:\n%s", body)
 		}
+	}
+}
+
+func TestScratchParsesAsASize(t *testing.T) {
+	cfg := writeAndLoad(t, "[resources]\nscratch = \"256M\"\n")
+	if cfg.ResScratchByte != 256<<20 {
+		t.Errorf("scratch = %d, want %d", cfg.ResScratchByte, int64(256)<<20)
+	}
+	// Same grammar as mem and disk: a bare byte count is a byte count.
+	cfg = writeAndLoad(t, "[resources]\nscratch = 1048576\n")
+	if cfg.ResScratchByte != 1<<20 {
+		t.Errorf("scratch = %d, want %d", cfg.ResScratchByte, 1<<20)
 	}
 }

@@ -72,6 +72,10 @@ type Options struct {
 	// token-bucket limiters (E1-3). The zero value leaves every device
 	// unthrottled.
 	IO IOLimits
+	// ScratchBytes caps the tmpfs behind the overlay — everything the guest
+	// writes outside /work (E1-5). Zero leaves the guest kernel's own default,
+	// which is half the guest's RAM.
+	ScratchBytes int64
 	// OnGuestEvent receives what the guest reports on the events channel
 	// (docs/protocol.md §5.5). The caller decides what to record; the guest
 	// never writes the flight recorder itself (docs/events.md §1).
@@ -96,6 +100,7 @@ type State struct {
 	ProxyPort   int       `json:"proxy_port,omitempty"`
 	CPUQuota    int       `json:"cpu_quota_percent,omitempty"`
 	CGroupPath  string    `json:"cgroup_path,omitempty"`
+	ScratchByte int64     `json:"scratch_bytes,omitempty"`
 	NetMbpsRx   int       `json:"net_mbps_rx,omitempty"`
 	NetMbpsTx   int       `json:"net_mbps_tx,omitempty"`
 	DiskIOPS    int       `json:"disk_iops,omitempty"`
@@ -195,6 +200,7 @@ func New(opts Options) (*Sandbox, error) {
 	if opts.Workspace != nil {
 		s.State.Workspace = opts.Workspace.ImagePath
 	}
+	s.State.ScratchByte = opts.ScratchBytes
 	s.State.NetMbpsRx = opts.IO.NetMbpsRx
 	s.State.NetMbpsTx = opts.IO.NetMbpsTx
 	s.State.DiskIOPS = opts.IO.DiskIOPS

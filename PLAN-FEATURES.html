@@ -126,7 +126,7 @@
      improvements to the existing product land here as epics. Inert until its gate opens.</p>
   <div class="meta">
     owner: <b>John</b> &nbsp;&middot;&nbsp; developer: <b>Claude Code</b> &nbsp;&middot;&nbsp;
-    status: <b class="ok" id="meta-status">Epic E1 — active, 5/9 (next: E1-5)</b> &nbsp;&middot;&nbsp;
+    status: <b class="ok" id="meta-status">Epic E1 — active, 6/9 (next: E1-6)</b> &nbsp;&middot;&nbsp;
     last updated: <b id="meta-updated">2026-08-23</b><br>
     repo file: <b>PLAN-FEATURES.html</b> (lives at the repository root next to <code>PLAN.html</code>)<br>
     <span class="quiet">Companion to PLAN.html — same protocol, same rules, later timeline.</span>
@@ -166,7 +166,7 @@
     <span class="bl-name">All epics</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">E1-5 — scratch cap: an explicit <code>size=</code> on the tmpfs behind the overlay</b></div>
+  <div class="focusline">Current focus: <b id="focus">E1-6 — time budgets: <code>--max-runtime</code>, <code>--idle-timeout</code>, and a graceful teardown that says which fired</b></div>
 </div>
 
 <!-- ====================================================== 1. ACTIVATION GATE -->
@@ -265,7 +265,7 @@
         The supervisor (PID 1) watches <code>/dev/kmsg</code> for guest OOM-killer events and emits a
         <code>resource.oom</code> flight-recorder event naming the killed process; <code>kelyfos run</code>&rsquo;s exit
         distinguishes &ldquo;agent was OOM-killed&rdquo; from a crash.</span></li>
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">E1-5</span><span class="tk">Scratch cap, named precisely: the P1-3 init mounts one tmpfs that backs the
         overlayfs <code>upperdir</code>/<code>workdir</code> over the read-only root — <i>that</i> tmpfs mount receives an explicit
         <code>size=</code> from <code>resources.scratch</code> (default 50% of the <i>guest&rsquo;s</i> RAM — the guest kernel&rsquo;s own default, i.e. relative to the
@@ -779,6 +779,19 @@
         event at all after it, and no kill line on the console either. Restoring the score per child costs one small write
         and leaves a window between fork and that write; the window is an exec long, and a command that reads its own
         <code>oom_score_adj</code> as its very first act already reads 0.</td></tr>
+        <tr><td class="mono">F-D13</td><td class="mono">2026-08-23</td>
+        <td><code>scratch</code> is applied by the <b>guest</b> kernel, as a <code>size=</code> on the tmpfs it mounts, and
+        this is stated as an exception to F-D2 rather than filed under it. The cap is a partition of a budget the host has
+        already fixed, not a boundary of its own.</td>
+        <td>F-D2 says every cap enforces host-side, and every other one in this epic does. A tmpfs's size cannot: it is by
+        construction a property of the kernel that mounts the filesystem, and inside a microVM that kernel is the guest's.
+        A guest determined to defeat the cap can remount with a larger size &mdash; and gains nothing at all by it, because
+        the tmpfs lives in guest RAM and <code>mem</code> is the VM's hardware. So the honest description is the one written
+        into <code>docs/resources.md</code>: <code>scratch</code> stops an agent filling its own memory with build output by
+        accident, and is not a defence against one trying to. Recording it as an exception rather than quietly counting it
+        as enforcement is the point &mdash; a limit whose actual strength is misunderstood is worse than one whose weakness
+        is written down. The number itself travels on the kernel command line, which the guest cannot alter, and a
+        <code>scratch</code> above <code>mem</code> is refused at boot instead of accepted as an unreachable limit.</td></tr>
     <!-- Claude Code: append rows above this line. -->
       <tr><td class="mono">F-D10</td><td class="mono">2026-08-22</td>
         <td>The resource knobs E1-0 goes looking for shipped <b>partly</b>: <code>--vcpus</code>/<code>--mem</code> and
@@ -1244,6 +1257,47 @@ $ go test ./...
 --- PASS: TestEventsChannelSurvivesRubbish / TestEventsChannelToleratesNoHandler
 ok  internal/config  internal/egress  internal/proto  internal/recorder
 ok  internal/sandbox  supervisor</pre></td></tr>
+        <tr><td class="mono">2026-08-23</td><td class="mono">E1-5</td>
+        <td>Scratch cap. <code>resources.scratch</code> becomes an explicit <code>size=</code> on the one tmpfs that backs
+        the overlay's <code>upperdir</code>/<code>workdir</code>, delivered as <code>kelyfos.scratch=&lt;bytes&gt;</code> on
+        the kernel command line &mdash; the overlay is mounted before any vsock channel exists to ask over, and the command
+        line is the one thing inside the guest that the guest did not write. Writes outside <code>/work</code> now hit
+        <code>ENOSPC</code> at the cap instead of quietly eating the RAM budget, and <code>/work</code> is untouched because
+        it is a different device. With no key the mount gets no <code>size=</code> and the guest kernel applies its own
+        default of half the machine's RAM &mdash; which is the documented default, so it is left to the kernel rather than
+        restated in KelyfOS where the two copies could drift. A <code>scratch</code> larger than <code>mem</code> is refused
+        at boot: the tmpfs lives in that memory, so a cap above it is not a generous limit but an absent one, and an inert
+        limit in a file whose whole job is limits is the outcome this parser exists to prevent. The awkward fact is recorded
+        as F-D13 rather than glossed: this is the one cap the guest kernel applies rather than the host, it is a partition of
+        a budget <code>mem</code> has already fixed rather than a boundary of its own, and it stops an agent filling its
+        memory by accident without pretending to stop one trying to.</td>
+        <td class="mono"><pre>### no scratch key: the guest kernel default, half of a 512 MiB machine
+  cmdline:  none
+  df /:     overlay  243.6M  0  243.6M  0% /
+  200 MiB into /tmp:   200+0 records out          (fits)
+
+### scratch = "64M"
+  scratch     64 MiB for everything written outside /work
+  cmdline:  kelyfos.scratch=67108864
+  df /:     overlay   64.0M  0   64.0M  0% /
+  200 MiB into /tmp:
+    dd: error writing '/tmp/blob': No space left on device
+    64+0 records out                              (stopped at the cap)
+  200 MiB into /work:  200+0 records out          (separate device, unaffected)
+
+### a cap the machine cannot reach
+$ kelyfos run --image dev --mem 512M      # with scratch = "2G"
+kelyfos: scratch = 2147483648 bytes at ./kelyfos.toml:2 is larger than the
+         512 MiB the machine has
+    the scratch tmpfs lives in that memory, so a cap above it can never be reached
+$ kelyfos run --image dev --mem 4G        # same file, a machine that can
+  scratch     2.0 GiB for everything written outside /work
+  df /:     overlay    2.0G  0    2.0G  0% /
+
+$ go test ./...
+--- PASS: TestScratchCapRidesTheCommandLine
+--- PASS: TestScratchParsesAsASize
+ok  internal/config  internal/sandbox  supervisor  (and the rest)</pre></td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>

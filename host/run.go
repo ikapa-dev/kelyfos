@@ -105,6 +105,7 @@ status. This is how you hand an agent a sandbox and nothing else:
 	}
 
 	var ioLimits sandbox.IOLimits
+	var scratchBytes int64
 
 	cfg, cfgErr := loadPolicy()
 	if cfgErr != nil {
@@ -168,6 +169,7 @@ status. This is how you hand an agent a sandbox and nothing else:
 		// The I/O rates have no flags by design (E1-3 names toml keys only), so
 		// there is no request to check against a ceiling: the declared value is
 		// the value.
+		scratchBytes = cfg.ResScratchByte
 		ioLimits = sandbox.IOLimits{
 			NetMbpsRx: cfg.ResNetMbpsRx,
 			NetMbpsTx: cfg.ResNetMbpsTx,
@@ -178,6 +180,17 @@ status. This is how you hand an agent a sandbox and nothing else:
 
 	if *cpus == 0 {
 		*cpus = 2
+	}
+	// A scratch cap larger than the machine's RAM is not a generous limit, it is
+	// no limit: the tmpfs it sizes lives in that same RAM and can never reach
+	// it. Refusing beats accepting, for the same reason the parser refuses a key
+	// it cannot enforce — a limits file whose limit is inert is the worst
+	// outcome available (docs/resources.md).
+	if scratchBytes > 0 && scratchBytes > int64(*memMiB)<<20 {
+		line, _ := cfg.Ceiling("scratch")
+		return fmt.Errorf("scratch = %d bytes at %s:%d is larger than the %d MiB the machine has\n"+
+			"    the scratch tmpfs lives in that memory, so a cap above it can never be reached",
+			scratchBytes, cfg.Path, line, *memMiB)
 	}
 
 	sandboxID, err := sandbox.NewID()
@@ -207,8 +220,9 @@ status. This is how you hand an agent a sandbox and nothing else:
 	var onGuestEvent atomic.Pointer[func(proto.GuestEvent)]
 
 	opts := sandbox.Options{
-		CPUSlice: cpuSlice,
-		IO:       ioLimits,
+		CPUSlice:     cpuSlice,
+		IO:           ioLimits,
+		ScratchBytes: scratchBytes,
 		OnGuestEvent: func(ev proto.GuestEvent) {
 			if fn := onGuestEvent.Load(); fn != nil {
 				(*fn)(ev)
@@ -430,6 +444,10 @@ status. This is how you hand an agent a sandbox and nothing else:
 		fmt.Printf("  cpu         %d core(s), capped at %d%% of one core's CPU time\n",
 			*cpus, cpuSlice.Percent)
 		fmt.Printf("  cgroup      %s\n", sb.State.CGroupPath)
+	}
+	if scratchBytes > 0 {
+		fmt.Printf("  scratch     %s for everything written outside /work\n",
+			report.HumanKiB(scratchBytes>>10))
 	}
 	if ioLimits.DiskIOPS > 0 || ioLimits.DiskMbps > 0 {
 		// Per device, not shared — the limiter is a property of one virtio-blk

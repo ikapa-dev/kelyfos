@@ -169,7 +169,7 @@ func firecrackerConfig(opts Options, kernel, rootfs, udsPath, id string) Firecra
 	cfg := FirecrackerConfig{
 		BootSource: BootSource{
 			KernelImagePath: kernel,
-			BootArgs:        bootArgs(opts.Arch, opts.Quiet, opts.Net, opts.Workspace != nil),
+			BootArgs:        bootArgs(opts.Arch, opts.Quiet, opts.Net, opts.Workspace != nil, opts.ScratchBytes),
 		},
 		Drives: []Drive{{
 			DriveID:      "rootfs",
@@ -247,7 +247,7 @@ type Vsock struct {
 // Also absent: 8250.nr_uarts=0, which is in Firecracker's own default cmdline.
 // It disables the serial port, and KelyfOS wants a console — it is the only way
 // to see why a guest failed before the supervisor is up.
-func bootArgs(arch string, quiet bool, net *Network, workspace bool) string {
+func bootArgs(arch string, quiet bool, net *Network, workspace bool, scratchBytes int64) string {
 	args := []string{
 		"reboot=k",                      // no BIOS to reboot through; ask KVM to reset
 		"panic=1",                       // a panicked sandbox should die, not sit there
@@ -275,6 +275,14 @@ func bootArgs(arch string, quiet bool, net *Network, workspace bool) string {
 	}
 	if workspace {
 		args = append(args, "kelyfos.workspace=/dev/vdb")
+	}
+	if scratchBytes > 0 {
+		// The cap travels on the kernel command line rather than over a vsock
+		// RPC because the overlay is mounted before any channel exists, and
+		// because the command line is the one thing in the guest the guest did
+		// not write (E1-5, and docs/networking.md §5 for the same reasoning
+		// applied to the proxy address).
+		args = append(args, fmt.Sprintf("kelyfos.scratch=%d", scratchBytes))
 	}
 	if quiet {
 		args = append(args, "quiet")

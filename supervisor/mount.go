@@ -53,7 +53,16 @@ func setupRoot() (overlay bool) {
 // into it. /mnt and /.oldroot already exist in the image because nothing can
 // create a directory on a read-only root.
 func setupOverlay() error {
-	if err := unix.Mount("tmpfs", "/mnt", "tmpfs", unix.MS_NOSUID|unix.MS_NODEV, "mode=0755"); err != nil {
+	// The scratch cap, when the host set one. With no size= the guest kernel
+	// applies its own default of half the machine's RAM — which is the
+	// documented default, so it is left to the kernel rather than restated here
+	// where it could drift (E1-5).
+	opts := "mode=0755"
+	if n := kernelParam("kelyfos.scratch"); n != "" {
+		opts += ",size=" + n
+		logf("scratch capped at %s", n)
+	}
+	if err := unix.Mount("tmpfs", "/mnt", "tmpfs", unix.MS_NOSUID|unix.MS_NODEV, opts); err != nil {
 		return fmt.Errorf("tmpfs on /mnt: %w", err)
 	}
 	for _, d := range []string{"/mnt/upper", "/mnt/work", "/mnt/merged"} {
@@ -122,6 +131,22 @@ func protectFromOOMKiller() {
 	if err := os.WriteFile("/proc/self/oom_score_adj", []byte("-1000\n"), 0o644); err != nil {
 		logf("warning: could not exempt PID 1 from the OOM killer: %v", err)
 	}
+}
+
+// kernelParam reads one kelyfos.* value from the kernel command line, which is
+// the one thing in this machine the guest did not write.
+func kernelParam(name string) string {
+	blob, err := os.ReadFile("/proc/cmdline")
+	if err != nil {
+		return ""
+	}
+	value := ""
+	for _, field := range strings.Fields(string(blob)) {
+		if v, ok := strings.CutPrefix(field, name+"="); ok {
+			value = v
+		}
+	}
+	return value
 }
 
 // restoreOOMScore undoes, for one child, the exemption PID 1 gave itself.

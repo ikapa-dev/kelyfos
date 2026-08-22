@@ -49,6 +49,11 @@ type Config struct {
 	ResNetMbpsTx int
 	ResDiskIOPS  int
 	ResDiskMbps  int
+
+	// Scratch is the size of the tmpfs behind the overlay: everything the guest
+	// writes outside /work (E1-5). Zero means the guest kernel's own default,
+	// which is half the guest's RAM.
+	ResScratchByte int64
 	// ResLine records where each [resources] key was written, so a refusal can
 	// name the line the ceiling came from instead of just the number.
 	ResLine map[string]int
@@ -139,7 +144,9 @@ func Load(path string) (*Config, error) {
 				cfg.ResDiskIOPS, err = parseRate(value, where, key)
 			case "disk_mbps":
 				cfg.ResDiskMbps, err = parseRate(value, where, key)
-			case "scratch", "max_runtime", "idle_timeout":
+			case "scratch":
+				cfg.ResScratchByte, err = parseBytes(value, where)
+			case "max_runtime", "idle_timeout":
 				// Specified in docs/resources.md but not yet enforced. Refusing
 				// beats accepting: a limit that silently does nothing is worse
 				// than no limit, because you believe you have one.
@@ -307,7 +314,6 @@ func ParseSize(v string) (int64, error) { return parseBytes(v, "--disk") }
 // landsIn names the task each specified-but-unenforced key is waiting on, so
 // the refusal tells you when to expect it rather than just saying no.
 var landsIn = map[string]string{
-	"scratch":      "E1-5, the tmpfs scratch cap",
 	"max_runtime":  "E1-6, the time budgets",
 	"idle_timeout": "E1-6, the time budgets",
 }

@@ -97,7 +97,7 @@ happens at the limit and how hard the limit is.
 | `mem` | KVM machine config (`mem_size_mib`) | absolute — the RAM does not exist; the guest OOM-kills, and says so |
 | `cpu_quota` | cgroup v2 `cpu.max` on the Firecracker process's own cgroup | throttled — work slows, nothing fails |
 | `disk` | size of the packed workspace block device | `ENOSPC` on writes to `/work` |
-| `scratch` | `size=` on the tmpfs backing the overlay upper layer | `ENOSPC` on writes outside `/work` |
+| `scratch` | `size=` on the tmpfs backing the overlay upper layer, applied by the guest kernel inside the `mem` cap | `ENOSPC` on writes outside `/work` |
 | `net_mbps_rx` / `net_mbps_tx` | Firecracker token-bucket rate limiter on the network device | throttled |
 | `disk_iops` / `disk_mbps` | Firecracker token-bucket rate limiter on the block devices | throttled |
 | `max_runtime` / `idle_timeout` | host timer in `kelyfos run` | SIGTERM, grace, sync-back, teardown |
@@ -128,7 +128,7 @@ limits.
 | --- | --- |
 | `cpus`, `mem`, `disk`, `cpu_quota` | **enforced**, including the ceiling behaviour above |
 | `net_mbps_rx`, `net_mbps_tx`, `disk_iops`, `disk_mbps` | **enforced** (E1-3) |
-| `scratch` | specified; lands with the tmpfs sizing (E1-5) |
+| `scratch` | **enforced** (E1-5) |
 | `max_runtime`, `idle_timeout` | specified; land with the time budgets (E1-6) |
 
 Using one of the not-yet-enforced keys is an error that says so and names the
@@ -179,6 +179,42 @@ nothing; it means the machine survives its own memory exhaustion long enough to
 report it. Killing PID 1 is a kernel panic, and a sandbox that vanishes at
 exactly the moment it ran out of memory is the least diagnosable outcome
 available.
+
+### How the scratch cap is applied
+
+`scratch` sizes exactly one thing: the tmpfs that backs the overlay's upper and
+work directories. That is where every write outside `/work` lands, because the
+root filesystem itself is read-only. The size travels to the guest on the kernel
+command line as `kelyfos.scratch=<bytes>` — the overlay is mounted before any
+vsock channel exists to ask over, and the command line is the one thing inside
+the guest that the guest did not write.
+
+With no `scratch` key the mount gets no `size=` at all and the guest kernel
+applies its own default of half the machine's RAM. That default is deliberately
+left to the kernel rather than restated by KelyfOS: a number copied into two
+places is a number that will eventually disagree with itself.
+
+At the cap, writes fail with `ENOSPC`, which is an error the program doing the
+writing can see and handle. `/work` is a separate block device sized by `disk`
+and is completely unaffected; so is `/dev/shm`, which is its own tmpfs with its
+own kernel default of half the RAM.
+
+A `scratch` larger than `mem` is refused at boot rather than accepted:
+
+```
+kelyfos: scratch = 2147483648 bytes at ./kelyfos.toml:2 is larger than the
+         512 MiB the machine has
+    the scratch tmpfs lives in that memory, so a cap above it can never be reached
+```
+
+**This is the one cap the guest kernel applies rather than the host**, and it is
+worth being exact about what that does and does not mean (F-D13). A tmpfs's size
+is by construction a property of the kernel that mounts it, and that kernel is
+the guest's. A guest determined to defeat the cap can remount with a larger size
+— and gains nothing by it, because the tmpfs lives in guest RAM and `mem` is the
+VM's hardware. `scratch` is a partition of a budget the host has already fixed,
+not a new boundary: it stops an agent filling its own memory with build output by
+accident, and it is not a defence against an agent trying to.
 
 ### How the I/O throttles are applied
 
