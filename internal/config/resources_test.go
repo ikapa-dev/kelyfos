@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -86,4 +87,53 @@ func writeAndLoad(t *testing.T, body string) *Config {
 		t.Fatalf("load: %v", err)
 	}
 	return cfg
+}
+
+func TestParseMemMiBKeepsBareNumbersAsMiB(t *testing.T) {
+	// v0.3 command lines say --mem 512 and mean 512 MiB. Reading that as
+	// 512 bytes would silently hand out a machine with no memory.
+	for in, want := range map[string]int{"512": 512, "384": 384, "512M": 512, "2G": 2048, `"1G"`: 1024} {
+		got, err := ParseMemMiB(in)
+		if err != nil {
+			t.Errorf("ParseMemMiB(%q): %v", in, err)
+			continue
+		}
+		if got != want {
+			t.Errorf("ParseMemMiB(%q) = %d MiB, want %d", in, got, want)
+		}
+	}
+	for _, bad := range []string{"", "0", "-5", "abc", "2X"} {
+		if _, err := ParseMemMiB(bad); err == nil {
+			t.Errorf("ParseMemMiB(%q) accepted", bad)
+		}
+	}
+}
+
+// A limit that is specified but not yet enforced must refuse, not accept.
+// Accepting it would leave the user believing in a limit that does nothing.
+func TestUnenforcedResourceKeysRefuse(t *testing.T) {
+	for _, key := range []string{"cpu_quota", "scratch", "net_mbps_rx", "net_mbps_tx",
+		"disk_iops", "disk_mbps", "max_runtime", "idle_timeout"} {
+		_, err := loadString(t, "[resources]\n"+key+" = \"1\"\n")
+		if err == nil {
+			t.Errorf("[resources] %s was accepted but nothing enforces it", key)
+			continue
+		}
+		if !strings.Contains(err.Error(), "not enforced yet") || !strings.Contains(err.Error(), "E1-") {
+			t.Errorf("%s: error should say it is unenforced and name the task, got: %v", key, err)
+		}
+	}
+}
+
+func TestCeilingRecordsItsLine(t *testing.T) {
+	cfg := writeAndLoad(t, "[sandbox]\nimage = \"dev\"\n\n[resources]\ncpus = 2\nmem  = \"1G\"\n")
+	if line, ok := cfg.Ceiling("cpus"); !ok || line != 5 {
+		t.Errorf("cpus ceiling at line %d (ok=%v), want 5", line, ok)
+	}
+	if line, ok := cfg.Ceiling("mem"); !ok || line != 6 {
+		t.Errorf("mem ceiling at line %d (ok=%v), want 6", line, ok)
+	}
+	if _, ok := cfg.Ceiling("disk"); ok {
+		t.Error("reported a ceiling for a key that was never written")
+	}
 }

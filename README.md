@@ -168,9 +168,16 @@ image     = "dev"
 allow     = ["github.com", "pypi.org"]
 secrets   = ["GITHUB_TOKEN@api.github.com"]   # names only — never values
 workspace = "."
-vcpus     = 2
-mem_mib   = 2048
+
+[resources]                 # hard ceilings: a flag may ask for less, never more
+cpus = 2
+mem  = "2G"
+disk = "4G"
 ```
+
+`[resources]` are limits, not defaults — `--cpus 8` against `cpus = 2` refuses
+at boot and names the line it came from, rather than quietly clamping. See
+[`docs/resources.md`](docs/resources.md).
 
 ## What else it does
 
@@ -193,6 +200,7 @@ mem_mib   = 2048
 | [`docs/protocol.md`](docs/protocol.md) | the host/guest wire protocol |
 | [`docs/events.md`](docs/events.md) | the audit event schema |
 | [`docs/networking.md`](docs/networking.md) | egress design and the nftables rules |
+| [`docs/resources.md`](docs/resources.md) | resource limits: units, precedence, what enforces what |
 | [`docs/e2b-shim.md`](docs/e2b-shim.md) | the E2B compatibility subset |
 
 ## Security

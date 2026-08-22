@@ -29,7 +29,7 @@ func runCmd(argv []string) error {
 		vcpus   = fs.Int("vcpus", 0, "alias for --cpus, kept so v0.3 command lines keep working")
 		cpus    = fs.Int("cpus", 0, "virtual CPUs the guest sees (default 2)")
 		disk    = fs.String("disk", "", "ceiling on the packed workspace image, e.g. 2G (default: no ceiling)")
-		memMiB  = fs.Int("mem", 512, "guest memory, MiB")
+		memStr  = fs.String("mem", "", "guest memory, e.g. 2G or 512M; a bare number is MiB (default 512)")
 		console = fs.Bool("console", false, "stream the guest serial console")
 		verbose = fs.Bool("verbose-boot", false, "drop `quiet` from the kernel command line")
 		timeout = fs.Duration("ready-timeout", 30*time.Second, "how long to wait for the guest to become ready")
@@ -82,6 +82,15 @@ status. This is how you hand an agent a sandbox and nothing else:
 		}
 		diskCeiling = n
 	}
+	memMiB := new(int)
+	*memMiB = 512
+	if *memStr != "" {
+		n, err := config.ParseMemMiB(*memStr)
+		if err != nil {
+			return fmt.Errorf("--mem %s: %w", *memStr, err)
+		}
+		*memMiB = n
+	}
 
 	cfg, cfgErr := loadPolicy()
 	if cfgErr != nil {
@@ -95,16 +104,27 @@ status. This is how you hand an agent a sandbox and nothing else:
 		if cfg.Arch != "" && !typed["arch"] {
 			*arch = cfg.Arch
 		}
-		// [resources] supplies defaults; an explicit flag still wins (F-D10).
-		// E1-1 turns these into hard ceilings — not yet.
-		if cfg.ResCPUs != 0 && !typed["cpus"] && !typed["vcpus"] {
-			*cpus = cfg.ResCPUs
+		// [resources] declares ceilings, not defaults: a flag may ask for less,
+		// never for more (docs/resources.md). Refusing rather than clamping,
+		// because a clamped run reports limits nobody asked for while the
+		// command line still reads what the user typed.
+		if err := ceiling("cpus", cfg, cfg.ResCPUs, cpus, typed["cpus"] || typed["vcpus"],
+			func(v int) string { return fmt.Sprint(v) }); err != nil {
+			return err
 		}
-		if cfg.ResMemMiB != 0 && !typed["mem"] {
-			*memMiB = cfg.ResMemMiB
+		if err := ceiling("mem", cfg, cfg.ResMemMiB, memMiB, typed["mem"],
+			func(v int) string { return fmt.Sprintf("%d MiB", v) }); err != nil {
+			return err
 		}
-		if cfg.ResDiskByte != 0 && !typed["disk"] {
-			diskCeiling = cfg.ResDiskByte
+		if cfg.ResDiskByte != 0 {
+			if diskCeiling == 0 {
+				diskCeiling = cfg.ResDiskByte
+			} else if diskCeiling > cfg.ResDiskByte {
+				line, _ := cfg.Ceiling("disk")
+				return fmt.Errorf("--disk %s exceeds the ceiling disk = %d bytes set at %s:%d\n"+
+					"    lower the flag, or raise the ceiling in the policy file",
+					*disk, cfg.ResDiskByte, cfg.Path, line)
+			}
 		}
 		if len(cfg.Allow) > 0 && !typed["allow"] {
 			*allow = strings.Join(cfg.Allow, ",")
@@ -124,7 +144,7 @@ status. This is how you hand an agent a sandbox and nothing else:
 		if cfg.Vcpus > 0 && !typed["vcpus"] && !typed["cpus"] && *cpus == 0 {
 			*cpus = cfg.Vcpus
 		}
-		if cfg.MemMiB > 0 && !typed["mem"] {
+		if cfg.MemMiB > 0 && !typed["mem"] && cfg.ResMemMiB == 0 {
 			*memMiB = cfg.MemMiB
 		}
 	}
@@ -446,4 +466,24 @@ func loadPolicy() (*config.Config, error) {
 		return nil, nil
 	}
 	return config.Load(path)
+}
+
+// ceiling applies one [resources] limit: with no flag it becomes the value,
+// with a flag under it the flag wins, and with a flag over it the boot is
+// refused naming the policy line (docs/resources.md).
+func ceiling(key string, cfg *config.Config, limit int, flagVal *int, typed bool, show func(int) string) error {
+	if limit == 0 {
+		return nil
+	}
+	if !typed || *flagVal == 0 {
+		*flagVal = limit
+		return nil
+	}
+	if *flagVal > limit {
+		line, _ := cfg.Ceiling(key)
+		return fmt.Errorf("--%s %s exceeds the ceiling %s = %s set at %s:%d\n"+
+			"    lower the flag, or raise the ceiling in the policy file",
+			key, show(*flagVal), key, show(limit), cfg.Path, line)
+	}
+	return nil
 }

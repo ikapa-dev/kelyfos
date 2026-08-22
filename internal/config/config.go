@@ -39,6 +39,9 @@ type Config struct {
 	ResCPUs     int
 	ResMemMiB   int
 	ResDiskByte int64
+	// ResLine records where each [resources] key was written, so a refusal can
+	// name the line the ceiling came from instead of just the number.
+	ResLine map[string]int
 
 	// Path is where this was read from, for error messages that say which file
 	// is wrong.
@@ -77,7 +80,7 @@ func Load(path string) (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	cfg := &Config{Path: path}
+	cfg := &Config{Path: path, ResLine: map[string]int{}}
 	section := ""
 
 	for n, raw := range strings.Split(string(blob), "\n") {
@@ -108,6 +111,7 @@ func Load(path string) (*Config, error) {
 		// [resources] keys are kept separate from [sandbox] so a typo in one
 		// section cannot silently satisfy the other.
 		if section == "resources" {
+			cfg.ResLine[key] = n + 1
 			switch key {
 			case "cpus":
 				cfg.ResCPUs, err = parseInt(value, where)
@@ -115,6 +119,14 @@ func Load(path string) (*Config, error) {
 				cfg.ResMemMiB, err = parseMiB(value, where)
 			case "disk":
 				cfg.ResDiskByte, err = parseBytes(value, where)
+			case "cpu_quota", "scratch", "net_mbps_rx", "net_mbps_tx",
+				"disk_iops", "disk_mbps", "max_runtime", "idle_timeout":
+				// Specified in docs/resources.md but not yet enforced. Refusing
+				// beats accepting: a limit that silently does nothing is worse
+				// than no limit, because you believe you have one.
+				return nil, fmt.Errorf("%s: [resources] %s is specified but not enforced yet (%s) — "+
+					"remove it rather than rely on a limit that would not hold; see docs/resources.md",
+					where, key, landsIn[key])
 			default:
 				return nil, fmt.Errorf("%s: unknown key %q in [resources]", where, key)
 			}
@@ -272,3 +284,44 @@ func parseMiB(value, where string) (int, error) {
 // ParseSize exposes the policy file's size grammar to the CLI, so --disk 2G and
 // disk = "2G" cannot drift apart.
 func ParseSize(v string) (int64, error) { return parseBytes(v, "--disk") }
+
+// landsIn names the task each specified-but-unenforced key is waiting on, so
+// the refusal tells you when to expect it rather than just saying no.
+var landsIn = map[string]string{
+	"cpu_quota":    "E1-2, the cgroup CPU quota",
+	"net_mbps_rx":  "E1-3, the Firecracker rate limiters",
+	"net_mbps_tx":  "E1-3, the Firecracker rate limiters",
+	"disk_iops":    "E1-3, the Firecracker rate limiters",
+	"disk_mbps":    "E1-3, the Firecracker rate limiters",
+	"scratch":      "E1-5, the tmpfs scratch cap",
+	"max_runtime":  "E1-6, the time budgets",
+	"idle_timeout": "E1-6, the time budgets",
+}
+
+// Ceiling reports a [resources] ceiling and where it was declared, for the
+// error a flag gets when it asks for more than the policy allows.
+func (c *Config) Ceiling(key string) (line int, ok bool) {
+	if c == nil || c.ResLine == nil {
+		return 0, false
+	}
+	line, ok = c.ResLine[key]
+	return line, ok
+}
+
+// ParseMemMiB reads a memory size for the --mem flag. A bare number is MiB,
+// which is what --mem meant in v0.3 and what every v0.3 command line still
+// says; anything with a unit is a size. Changing the meaning of `--mem 512`
+// would silently give a machine half a gigabyte less than a day earlier.
+func ParseMemMiB(v string) (int, error) {
+	t := strings.TrimSpace(strings.Trim(v, `"'`))
+	if t == "" {
+		return 0, fmt.Errorf("empty size")
+	}
+	if n, err := strconv.Atoi(t); err == nil {
+		if n <= 0 {
+			return 0, fmt.Errorf("memory must be positive")
+		}
+		return n, nil
+	}
+	return parseMiB(v, "--mem")
+}

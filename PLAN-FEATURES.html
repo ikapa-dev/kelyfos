@@ -166,7 +166,7 @@
     <span class="bl-name">All epics</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">E1-1 — docs/resources.md: semantics &amp; precedence spec, written before code</b></div>
+  <div class="focusline">Current focus: <b id="focus">E1-2 — host CPU-time quota via cgroup v2 cpu.max</b></div>
 </div>
 
 <!-- ====================================================== 1. ACTIVATION GATE -->
@@ -239,7 +239,7 @@
         boot test and move on. Absent (the run started from a pre-amendment copy) &rarr; implement those knobs now as the first
         work of this epic and add a decision row here noting they shipped in v0.4 rather than v0.1. Either way, log the finding —
         every task below assumes the knobs exist.</span></li>
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">E1-1</span><span class="tk"><code>docs/resources.md</code> — semantics &amp; precedence spec, written before code.
         The <code>[resources]</code> keys in <code>kelyfos.toml</code> become <b>hard ceilings</b>; CLI flags request within them;
         a flag exceeding its ceiling refuses at boot with an error naming the ceiling and the toml line it came from
@@ -972,6 +972,47 @@ $ go test ./internal/config/ -run "Resources|ParseSize"
 --- PASS: TestResourcesSectionParses
 --- PASS: TestResourcesKeysAreSectionScoped
 --- PASS: TestUnknownSectionStillRefused</pre></td></tr>
+        <tr><td class="mono">2026-08-22</td><td class="mono">E1-1</td>
+        <td><code>docs/resources.md</code> written first, then the code it specifies. The substantive change is that
+        <code>[resources]</code> stops being defaults and becomes <b>hard ceilings</b>: a flag may ask for less, never more,
+        and asking for more <i>refuses at boot naming the ceiling and the file and line it came from</i> rather than clamping.
+        Clamping was rejected explicitly &mdash; it is a silent lie, since the run would proceed under limits nobody asked for
+        while the command line still reads what the user typed. The v0.3 behaviour is documented as superseded, and
+        <code>[sandbox] vcpus</code>/<code>mem_mib</code> keep their defaults-only meaning so existing files still work.
+        The doc carries the required table of every cap against the host mechanism that enforces it, and states the
+        distinction that will otherwise bite: <code>cpus</code> caps <i>parallelism</i>, <code>cpu_quota</code> caps
+        <i>consumption</i>, and the latter is absolute rather than a share of the former.
+        Two judgement calls worth recording. <code>--mem</code> now takes sizes, but a bare number still means MiB &mdash;
+        reading v0.3's <code>--mem 512</code> as 512 bytes would hand out a machine with no memory. And the parser
+        <b>refuses</b> the keys this doc specifies but E1-2/E1-3/E1-5/E1-6 have not built yet, naming the task: for a file
+        whose entire purpose is limits, silently accepting one that does nothing is the worst available outcome.</td>
+        <td class="mono"><pre>$ cat -n kelyfos.toml
+     4  [resources]
+     5  cpus = 2
+     6  mem  = "1G"
+     7  disk = "2G"
+
+$ kelyfos run --cpus 8
+kelyfos: --cpus 8 exceeds the ceiling cpus = 2 set at /tmp/e1p/kelyfos.toml:5
+    lower the flag, or raise the ceiling in the policy file
+$ kelyfos run --mem 4G
+kelyfos: --mem 4096 MiB exceeds the ceiling mem = 1024 MiB set at .../kelyfos.toml:6
+$ kelyfos run --disk 8G --workspace /tmp/e1p
+kelyfos: --disk 8G exceeds the ceiling disk = 2147483648 bytes set at .../kelyfos.toml:7
+
+$ kelyfos run --cpus 1     # under the ceiling: honoured
+  nproc=1  (ceiling is 2)
+$ kelyfos run              # no flag: the ceiling is the value
+  nproc=2  MemTotal: 1013296 kB
+$ kelyfos run --mem 512M   -&gt; MemTotal:  498992 kB
+$ kelyfos run --mem 384    -&gt; MemTotal:  370224 kB   (bare number still MiB)
+
+$ printf '[resources]\ncpu_quota = "50%%"\n' &gt; kelyfos.toml &amp;&amp; kelyfos run
+kelyfos: kelyfos.toml:2: [resources] cpu_quota is specified but not enforced yet
+  (E1-2, the cgroup CPU quota) — remove it rather than rely on a limit that
+  would not hold; see docs/resources.md
+
+$ go test ./internal/config/ -v   -&gt; 17 PASS, ok</pre></td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
