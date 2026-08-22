@@ -166,7 +166,7 @@
     <span class="bl-name">All epics</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">E1-0 — baseline reconcile: establish which resource-caps revision actually shipped</b></div>
+  <div class="focusline">Current focus: <b id="focus">E1-1 — docs/resources.md: semantics &amp; precedence spec, written before code</b></div>
 </div>
 
 <!-- ====================================================== 1. ACTIVATION GATE -->
@@ -231,7 +231,7 @@
      for every session. Everything enforces <b>host-side</b> (F-D2): the guest runs untrusted code and polices nothing.
      Estimate: 2&ndash;3 weekends.</p>
   <ul class="tasks">
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">E1-0</span><span class="tk">Baseline reconcile — establish what v0.1 actually shipped before building on it.
         Check the repo&rsquo;s PLAN.html for the resource-caps amendment — match by <i>content</i>, not decision number
         (the run logs its own decisions, so &ldquo;D11&rdquo; may be taken by something else). The knobs to look for: <code>--cpus</code>/<code>--mem</code> in P1-5,
@@ -766,7 +766,20 @@
             drift-failure (F-D4); this closes the hand-written half and makes &ldquo;updated&rdquo; mean <i>proven usable</i>,
             with the docs-only exam as the standard of proof.</td></tr>
     <!-- Claude Code: append rows above this line. -->
-  </table>
+      <tr><td class="mono">F-D10</td><td class="mono">2026-08-22</td>
+        <td>The resource knobs E1-0 goes looking for shipped <b>partly</b>: <code>--vcpus</code>/<code>--mem</code> and
+        <code>[sandbox] vcpus</code>/<code>mem_mib</code> are real and effective in v0.3, but <code>--disk</code> and a
+        <code>[resources]</code> section never existed. The missing half is implemented here and therefore ships in
+        <b>v0.4, not v0.1</b>. Two naming facts are settled now so later tasks do not trip on them: the flag the epic calls
+        <code>--cpus</code> exists in this build as <code>--vcpus</code>, so <code>--cpus</code> becomes the documented
+        name with <code>--vcpus</code> kept as a working alias rather than a rename that would break the v0.3 CLI a day
+        after release; and <code>[sandbox] mem_mib</code> stays valid alongside the new
+        <code>[resources] mem</code> for the same reason.
+        E1-0 deliberately stops at making the knobs exist &mdash; precedence stays v0.3 behaviour (a flag overrides the
+        file) because turning the file into a <b>hard ceiling</b> is E1-1's spec-before-code job, and pre-empting it here
+        would be exactly the deviation the protocol forbids.</td>
+        <td class="mono">boot test in the E1-0 progress row</td></tr>
+</table>
 </section>
 
 <!-- ====================================================== 6. PROGRESS LOG -->
@@ -911,6 +924,54 @@
         published Apache-2.0 with README, quickstart and demo, dogfooded through real Claude Code.
         Per the gate's own carve-out, PLAN.html's Phase 4 backlog (0/7) does not block. Epic E1 opens at E1-0.</td>
         <td class="mono">PLAN.html status line + progress log; git tag v0.3; gh repo view -&gt; PUBLIC</td></tr>
+        <tr><td class="mono">2026-08-22</td><td class="mono">E1-0</td>
+        <td><b>Baseline reconcile: the amendment shipped by halves.</b> Matched by content, not decision number &mdash; and the
+        warning was justified, since <code>D11</code> in this run is the version-pinning decision, nothing to do with resources.
+        <i>Present and genuinely effective in v0.3:</i> <code>--vcpus</code>/<code>--mem</code>, and
+        <code>[sandbox] vcpus</code>/<code>mem_mib</code>. <i>Absent entirely:</i> any <code>--disk</code> flag and any
+        <code>[resources]</code> section &mdash; the parser refused the section outright. PLAN.html's own text confirms the
+        halves: P1-5 says only &ldquo;write Firecracker config JSON, boot the VM, clean teardown&rdquo;, P3-10 mentions a
+        ceiling &ldquo;configurable in kelyfos.toml&rdquo; that was never wired, and P3-12 says &ldquo;resource limits&rdquo;
+        without naming a section. So the missing half is implemented here and ships in v0.4 (F-D10).
+        Added: <code>[resources]</code> with <code>cpus</code>/<code>mem</code>/<code>disk</code> and a human size grammar
+        (<code>512M</code>, <code>2G</code>); <code>--cpus</code> as the documented flag with <code>--vcpus</code> kept as a
+        working alias; <code>--disk</code> plumbed into the workspace ceiling <code>PackWorkspace</code> already accepted and
+        <code>run</code> had been passing as 0. A contradiction between the two CPU spellings is refused rather than silently
+        resolved. Precedence is deliberately left at v0.3 behaviour &mdash; flag beats file &mdash; because making the file a
+        hard ceiling is E1-1's spec-first job.</td>
+        <td class="mono"><pre>$ kelyfos run --image dev --cpus 3 --mem 768
+  nproc=3  MemTotal: 755688 kB
+$ kelyfos run --image dev --vcpus 1          # v0.3 spelling still works
+  nproc=1
+$ kelyfos run --image dev --cpus 2 --vcpus 4
+kelyfos: --cpus 2 and --vcpus 4 disagree; --vcpus is an alias for --cpus
+
+$ cat kelyfos.toml
+[sandbox]
+image = "dev"
+[resources]
+cpus = 4
+mem  = "1G"
+disk = "8G"
+$ kelyfos run
+  policy: /tmp/e1v/kelyfos.toml
+  nproc=4  MemTotal: 1013152 kB
+$ kelyfos run --cpus 1                       # flag still wins over the file
+  nproc=1  (file says 4)
+
+$ kelyfos run --image dev --workspace /tmp/e1ws --disk 1M
+kelyfos: workspace /tmp/e1ws needs an image of 1073741824 bytes, over the
+         1048576 byte ceiling; raise it or exclude what does not need to be
+         in the sandbox
+$ kelyfos run --image dev --workspace /tmp/e1ws --disk 2G
+  /work/blob.bin  3000000 bytes
+
+$ go test ./internal/config/ -run "Resources|ParseSize"
+--- PASS: TestParseSizeAcceptsHumanUnits
+--- PASS: TestParseSizeRejectsNonsense
+--- PASS: TestResourcesSectionParses
+--- PASS: TestResourcesKeysAreSectionScoped
+--- PASS: TestUnknownSectionStillRefused</pre></td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>

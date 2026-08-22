@@ -32,6 +32,14 @@ type Config struct {
 	Vcpus     int
 	MemMiB    int
 
+	// [resources] — the caps the user declares for the machine (F-D10).
+	// DiskBytes is the ceiling on the packed workspace image, not the rootfs.
+	// Precedence stays v0.3 behaviour for now: an explicit flag wins. Turning
+	// these into hard ceilings is E1-1's job, spec first.
+	ResCPUs     int
+	ResMemMiB   int
+	ResDiskByte int64
+
 	// Path is where this was read from, for error messages that say which file
 	// is wrong.
 	Path string
@@ -84,8 +92,8 @@ func Load(path string) (*Config, error) {
 				return nil, fmt.Errorf("%s: unterminated section header", where)
 			}
 			section = strings.Trim(line, "[]")
-			if section != "sandbox" {
-				return nil, fmt.Errorf("%s: unknown section [%s]; only [sandbox] is understood", where, section)
+			if section != "sandbox" && section != "resources" {
+				return nil, fmt.Errorf("%s: unknown section [%s]; only [sandbox] and [resources] are understood", where, section)
 			}
 			continue
 		}
@@ -96,6 +104,25 @@ func Load(path string) (*Config, error) {
 		}
 		key = strings.TrimSpace(key)
 		value = strings.TrimSpace(value)
+
+		// [resources] keys are kept separate from [sandbox] so a typo in one
+		// section cannot silently satisfy the other.
+		if section == "resources" {
+			switch key {
+			case "cpus":
+				cfg.ResCPUs, err = parseInt(value, where)
+			case "mem":
+				cfg.ResMemMiB, err = parseMiB(value, where)
+			case "disk":
+				cfg.ResDiskByte, err = parseBytes(value, where)
+			default:
+				return nil, fmt.Errorf("%s: unknown key %q in [resources]", where, key)
+			}
+			if err != nil {
+				return nil, err
+			}
+			continue
+		}
 
 		switch key {
 		case "image":
@@ -194,3 +221,54 @@ func parseArray(v, where string) ([]string, error) {
 	}
 	return out, nil
 }
+
+// parseBytes reads a human size — 512M, 2G, or a bare byte count. Sizes in a
+// policy file are read by people, and "2G" is what a person writes; requiring
+// 2147483648 invites the typo that this parser exists to refuse.
+func parseBytes(value, where string) (int64, error) {
+	s, err := parseString(value, where)
+	if err != nil {
+		// Unquoted is fine too: disk = 2G reads better than disk = "2G".
+		s = strings.Trim(value, `"'`)
+	}
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, fmt.Errorf("%s: empty size", where)
+	}
+	mult := int64(1)
+	switch last := s[len(s)-1]; last {
+	case 'K', 'k':
+		mult, s = 1<<10, s[:len(s)-1]
+	case 'M', 'm':
+		mult, s = 1<<20, s[:len(s)-1]
+	case 'G', 'g':
+		mult, s = 1<<30, s[:len(s)-1]
+	case 'T', 't':
+		mult, s = 1<<40, s[:len(s)-1]
+	}
+	n, err := strconv.ParseInt(strings.TrimSpace(s), 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("%s: %q is not a size (want 512M, 2G, or a byte count)", where, value)
+	}
+	if n < 0 {
+		return 0, fmt.Errorf("%s: size cannot be negative", where)
+	}
+	return n * mult, nil
+}
+
+// parseMiB is parseBytes rounded to whole MiB, which is the unit Firecracker's
+// machine config speaks.
+func parseMiB(value, where string) (int, error) {
+	b, err := parseBytes(value, where)
+	if err != nil {
+		return 0, err
+	}
+	if b > 0 && b < 1<<20 {
+		return 0, fmt.Errorf("%s: %q is under 1 MiB", where, value)
+	}
+	return int(b >> 20), nil
+}
+
+// ParseSize exposes the policy file's size grammar to the CLI, so --disk 2G and
+// disk = "2G" cannot drift apart.
+func ParseSize(v string) (int64, error) { return parseBytes(v, "--disk") }

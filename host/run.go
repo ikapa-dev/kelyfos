@@ -26,7 +26,9 @@ func runCmd(argv []string) error {
 		arch    = fs.String("arch", sandbox.HostArch(), "guest architecture (aarch64|x86_64)")
 		flavor  = fs.String("image", "base", "image flavor")
 		imgDir  = fs.String("image-dir", "", "directory holding the kernel and rootfs (default: the build output)")
-		vcpus   = fs.Int("vcpus", 2, "virtual CPUs")
+		vcpus   = fs.Int("vcpus", 0, "alias for --cpus, kept so v0.3 command lines keep working")
+		cpus    = fs.Int("cpus", 0, "virtual CPUs the guest sees (default 2)")
+		disk    = fs.String("disk", "", "ceiling on the packed workspace image, e.g. 2G (default: no ceiling)")
 		memMiB  = fs.Int("mem", 512, "guest memory, MiB")
 		console = fs.Bool("console", false, "stream the guest serial console")
 		verbose = fs.Bool("verbose-boot", false, "drop `quiet` from the kernel command line")
@@ -64,6 +66,23 @@ status. This is how you hand an agent a sandbox and nothing else:
 	typed := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { typed[f.Name] = true })
 
+	// --vcpus is v0.3's name for --cpus. Accept both, refuse a contradiction
+	// rather than silently picking one (F-D10).
+	var diskCeiling int64
+	if typed["cpus"] && typed["vcpus"] && *cpus != *vcpus {
+		return fmt.Errorf("--cpus %d and --vcpus %d disagree; --vcpus is an alias for --cpus", *cpus, *vcpus)
+	}
+	if typed["vcpus"] && !typed["cpus"] {
+		*cpus = *vcpus
+	}
+	if *disk != "" {
+		n, err := config.ParseSize(*disk)
+		if err != nil {
+			return fmt.Errorf("--disk %s: %w", *disk, err)
+		}
+		diskCeiling = n
+	}
+
 	cfg, cfgErr := loadPolicy()
 	if cfgErr != nil {
 		return cfgErr
@@ -75,6 +94,17 @@ status. This is how you hand an agent a sandbox and nothing else:
 		}
 		if cfg.Arch != "" && !typed["arch"] {
 			*arch = cfg.Arch
+		}
+		// [resources] supplies defaults; an explicit flag still wins (F-D10).
+		// E1-1 turns these into hard ceilings — not yet.
+		if cfg.ResCPUs != 0 && !typed["cpus"] && !typed["vcpus"] {
+			*cpus = cfg.ResCPUs
+		}
+		if cfg.ResMemMiB != 0 && !typed["mem"] {
+			*memMiB = cfg.ResMemMiB
+		}
+		if cfg.ResDiskByte != 0 && !typed["disk"] {
+			diskCeiling = cfg.ResDiskByte
 		}
 		if len(cfg.Allow) > 0 && !typed["allow"] {
 			*allow = strings.Join(cfg.Allow, ",")
@@ -91,12 +121,16 @@ status. This is how you hand an agent a sandbox and nothing else:
 			}
 			*wsDir = ws
 		}
-		if cfg.Vcpus > 0 && !typed["vcpus"] {
-			*vcpus = cfg.Vcpus
+		if cfg.Vcpus > 0 && !typed["vcpus"] && !typed["cpus"] && *cpus == 0 {
+			*cpus = cfg.Vcpus
 		}
 		if cfg.MemMiB > 0 && !typed["mem"] {
 			*memMiB = cfg.MemMiB
 		}
+	}
+
+	if *cpus == 0 {
+		*cpus = 2
 	}
 
 	var consoleOut io.Writer
@@ -108,7 +142,7 @@ status. This is how you hand an agent a sandbox and nothing else:
 		Arch:      *arch,
 		Flavor:    *flavor,
 		ImageDir:  *imgDir,
-		VcpuCount: *vcpus,
+		VcpuCount: *cpus,
 		MemMiB:    *memMiB,
 		Quiet:     !*verbose,
 		Console:   consoleOut,
@@ -168,7 +202,7 @@ status. This is how you hand an agent a sandbox and nothing else:
 	// image has to exist to be attached.
 	if *wsDir != "" {
 		ws, err := sandbox.PackWorkspace(*wsDir,
-			filepath.Join(sandbox.Root(), "workspaces", sandboxID+".ext4"), 0)
+			filepath.Join(sandbox.Root(), "workspaces", sandboxID+".ext4"), diskCeiling)
 		if err != nil {
 			return err
 		}
