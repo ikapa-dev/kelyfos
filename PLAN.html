@@ -166,7 +166,7 @@
     <span class="bl-name">Overall</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">P0-5 — commit PLAN.html at the repo root</b></div>
+  <div class="focusline">Current focus: <b id="focus">P0-6 — pin toolchain versions in versions.mk</b></div>
 </div>
 
 <!-- ====================================================== 1. END GOAL -->
@@ -327,7 +327,7 @@
         <span class="tid">P0-3</span><span class="tk">Scaffold the repository exactly as in section 5; <code>git init</code>, first commit, push.</span></li>
     <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">P0-4</span><span class="tk">Makefile with stub targets (<code>toolchain</code>, <code>image</code>, <code>run</code>, <code>clean</code>, <code>test</code>) that print what they will do.</span></li>
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">P0-5</span><span class="tk">Commit this document as <code>PLAN.html</code> at the repo root.</span></li>
     <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">P0-6</span><span class="tk">Pin all toolchain versions in <code>versions.mk</code>: Buildroot release, kernel LTS line, Firecracker version, Go version. Every build reads from this file; no floating "latest".</span></li>
@@ -618,6 +618,12 @@ make image         <span class="c"># kernel Image (aarch64) / vmlinux (x86_64) +
         <tr><td class="mono">2026-08-22</td><td class="mono">P0-4</td>
         <td><code>Makefile</code> added with the five stub targets plus a default <code>help</code> target, so bare <code>make</code> prints the target list and exits 0. Each stub prints what it will do and which task implements it. Build variables are in place from the start: <code>ARCH</code> defaults to the build host (<code>arm64</code>/<code>amd64</code> normalised) and already selects the correct uncompressed kernel artifact per arch — <code>Image</code> on aarch64, <code>vmlinux</code> on x86_64; <code>FLAVOR</code>, <code>OUT_DIR</code> and <code>BUILD_DIR</code> are overridable, with <code>BUILD_DIR</code> defaulting to <code>~/.cache/kelyfos/build/$(ARCH)</code> so Buildroot never builds on the macOS virtiofs mount. Environment: <code>dev/install-build-deps.sh</code> added (quickstart section 7 step 3, verbatim plus e2fsprogs) because the Linux layer had no <code>make</code>; it installs GNU Make 4.3, gcc 13.3.0 and go1.22.2.</td>
         <td class="mono">limactl shell kelyfos-dev -- bash dev/install-build-deps.sh → GNU Make 4.3 · gcc 13.3.0 · go1.22.2 linux/arm64<br>limactl shell kelyfos-dev -- make → target list (clean, help, image, run, test, toolchain) · exit=0<br>make image ARCH=x86_64 → &quot;[stub] image: build vmlinux (uncompressed) … ARCH=x86_64&quot;<br>make toolchain &amp;&amp; make image ARCH=x86_64 &amp;&amp; make run &amp;&amp; make test &amp;&amp; make clean → exit=0</td></tr>
+        <tr><td class="mono">2026-08-22</td><td class="mono">P0-3</td>
+        <td><b>Correction to the P0-3 scaffold.</b> The whole <code>image/</code> tree was silently missing from git: <code>.gitignore</code> carried a bare <code>Image</code> pattern for the aarch64 kernel artifact, and macOS sets <code>core.ignoreCase=true</code>, so the pattern matched the <code>image/</code> directory. On-disk scaffold was correct all along; only the commit was short. <code>.gitignore</code> rewritten so no artifact name appears unanchored (<code>/bin/</code> already covers built kernels), with a comment recording the trap, and <code>image/buildroot/</code> plus <code>image/flavors/{base,dev}/</code> added. Would have surfaced as a missing external tree at P1-1.</td>
+        <td class="mono">git check-ignore -v image/buildroot/.gitkeep<br>.gitignore:11:Image&#9;image/buildroot/.gitkeep<br>after the fix: &quot;image/ no longer ignored&quot;<br>git ls-tree --name-only HEAD → .gitignore CLAUDE.md Makefile PLAN.html README.md dev docs host image shim supervisor</td></tr>
+        <tr><td class="mono">2026-08-22</td><td class="mono">P0-5</td>
+        <td><code>PLAN.html</code> is committed at the repository root and pushed to <code>origin/main</code>; it has been part of every commit since P0-1, as protocol rule 3 requires. No separate change was needed — this task verifies the state.</td>
+        <td class="mono">git ls-files --full-name PLAN.html → PLAN.html<br>git log --oneline --follow -- PLAN.html → 9dbd583 P0-1 …, 360dec6 P0-2 …, d955ce4 P0-3 …<br>git ls-tree --name-only origin/main → PLAN.html present at the root</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>

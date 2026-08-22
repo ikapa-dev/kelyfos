@@ -1,15 +1,18 @@
 # Build output — everything here is reproducible from source.
+# Note: patterns are matched case-insensitively on macOS (core.ignoreCase), so
+# bare artifact names like "Image" or "vmlinux" must never appear unanchored —
+# "Image" would swallow the whole image/ tree.
 /bin/
 /out/
 
-# Buildroot working trees. These are huge and live on the Linux layer's own
-# filesystem, never on the virtiofs mount (see dev/lima.yaml).
+# Buildroot working trees, if BUILD_DIR is pointed back into the repo. The
+# default keeps them on local disk outside the repo (see Makefile).
 /image/buildroot-*/
 /image/.stamp-*
+
+# Built artifacts
 *.ext4
 *.img
-Image
-vmlinux
 
 # Go
 *.test
