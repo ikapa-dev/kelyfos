@@ -65,6 +65,9 @@ type Options struct {
 	Net *Network
 	// Workspace is a host directory packed as a second disk, when there is one.
 	Workspace *Workspace
+	// CPUSlice caps the host CPU time the VMM may consume. Distinct from
+	// VcpuCount, which caps parallelism (E1-2).
+	CPUSlice *Slice
 }
 
 // State is the on-disk description of a running sandbox, written into the run
@@ -83,6 +86,8 @@ type State struct {
 	Netmask     string    `json:"netmask,omitempty"`
 	HostMAC     string    `json:"host_mac,omitempty"`
 	ProxyPort   int       `json:"proxy_port,omitempty"`
+	CPUQuota    int       `json:"cpu_quota_percent,omitempty"`
+	CGroupPath  string    `json:"cgroup_path,omitempty"`
 	Workspace   string    `json:"workspace,omitempty"`
 	Allow       []string  `json:"allow,omitempty"`
 	RunDir      string    `json:"run_dir"`
@@ -242,12 +247,26 @@ func (s *Sandbox) Start(ctx context.Context) error {
 	// be snapshotted: pause, create and load all go through it, and a sandbox
 	// that cannot be snapshotted later because of how it was started is a
 	// surprise nobody wants at the moment they need it.
-	cmd := exec.Command("firecracker",
+	argv := []string{"firecracker",
 		"--api-sock", s.State.APIPath,
-		"--config-file", filepath.Join(s.State.RunDir, "config.json"))
+		"--config-file", filepath.Join(s.State.RunDir, "config.json")}
+	// Under systemd this prefixes the command with the scope request; on the
+	// direct path it is unchanged (F-D11).
+	argv = s.opts.CPUSlice.WrapArgv(argv)
+	cmd := exec.Command(argv[0], argv[1:]...)
 	// Its own process group, so a Ctrl-C delivered to the whole foreground
 	// group does not race our orderly shutdown.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	// On the direct path, place it in its cgroup at clone time rather than
+	// moving it once it is already running: a quota that starts a moment late
+	// is a quota with a hole in it (E1-2).
+	if s.opts.CPUSlice.Direct() {
+		cmd.SysProcAttr.UseCgroupFD = true
+		cmd.SysProcAttr.CgroupFD = s.opts.CPUSlice.FD()
+	}
+	if s.opts.CPUSlice != nil {
+		s.State.CPUQuota = s.opts.CPUSlice.Percent
+	}
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -265,6 +284,16 @@ func (s *Sandbox) Start(ctx context.Context) error {
 		s.waitErr = cmd.Wait()
 		close(s.done)
 	}()
+	// Read the quota back rather than trusting that asking for it worked.
+	if s.opts.CPUSlice != nil {
+		if err := s.opts.CPUSlice.Confirm(cmd.Process.Pid); err != nil {
+			_ = s.Shutdown(2 * time.Second)
+			return err
+		}
+		// Recorded because the quota is only a claim until someone can go and
+		// read cpu.stat for themselves (E1-7, E1-8).
+		s.State.CGroupPath = s.opts.CPUSlice.Path
+	}
 	return s.writeState()
 }
 

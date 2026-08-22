@@ -112,7 +112,7 @@ func TestParseMemMiBKeepsBareNumbersAsMiB(t *testing.T) {
 // A limit that is specified but not yet enforced must refuse, not accept.
 // Accepting it would leave the user believing in a limit that does nothing.
 func TestUnenforcedResourceKeysRefuse(t *testing.T) {
-	for _, key := range []string{"cpu_quota", "scratch", "net_mbps_rx", "net_mbps_tx",
+	for _, key := range []string{"scratch", "net_mbps_rx", "net_mbps_tx",
 		"disk_iops", "disk_mbps", "max_runtime", "idle_timeout"} {
 		_, err := loadString(t, "[resources]\n"+key+" = \"1\"\n")
 		if err == nil {
@@ -135,5 +135,18 @@ func TestCeilingRecordsItsLine(t *testing.T) {
 	}
 	if _, ok := cfg.Ceiling("disk"); ok {
 		t.Error("reported a ceiling for a key that was never written")
+	}
+}
+
+func TestCPUQuotaParses(t *testing.T) {
+	cfg := writeAndLoad(t, "[resources]\ncpu_quota = \"150%\"\n")
+	if cfg.ResCPUQuota != 150 {
+		t.Errorf("cpu_quota = %d, want 150", cfg.ResCPUQuota)
+	}
+	// A bare number is ambiguous — 50 could be half a core or fifty of them.
+	for _, bad := range []string{"50", "\"\"", "\"-10%\"", "\"0%\"", "\"abc%\""} {
+		if _, err := loadString(t, "[resources]\ncpu_quota = "+bad+"\n"); err == nil {
+			t.Errorf("cpu_quota = %s was accepted", bad)
+		}
 	}
 }

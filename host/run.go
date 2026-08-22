@@ -29,6 +29,7 @@ func runCmd(argv []string) error {
 		vcpus   = fs.Int("vcpus", 0, "alias for --cpus, kept so v0.3 command lines keep working")
 		cpus    = fs.Int("cpus", 0, "virtual CPUs the guest sees (default 2)")
 		disk    = fs.String("disk", "", "ceiling on the packed workspace image, e.g. 2G (default: no ceiling)")
+		quota   = fs.String("cpu-quota", "", "host CPU time cap as a share of one core, e.g. 150% (default: uncapped)")
 		memStr  = fs.String("mem", "", "guest memory, e.g. 2G or 512M; a bare number is MiB (default 512)")
 		console = fs.Bool("console", false, "stream the guest serial console")
 		verbose = fs.Bool("verbose-boot", false, "drop `quiet` from the kernel command line")
@@ -82,6 +83,14 @@ status. This is how you hand an agent a sandbox and nothing else:
 		}
 		diskCeiling = n
 	}
+	cpuQuota := 0
+	if *quota != "" {
+		n, err := config.ParsePercent(*quota)
+		if err != nil {
+			return err
+		}
+		cpuQuota = n
+	}
 	memMiB := new(int)
 	*memMiB = 512
 	if *memStr != "" {
@@ -108,12 +117,16 @@ status. This is how you hand an agent a sandbox and nothing else:
 		// never for more (docs/resources.md). Refusing rather than clamping,
 		// because a clamped run reports limits nobody asked for while the
 		// command line still reads what the user typed.
-		if err := ceiling("cpus", cfg, cfg.ResCPUs, cpus, typed["cpus"] || typed["vcpus"],
+		if err := ceiling("cpus", "cpus", cfg, cfg.ResCPUs, cpus, typed["cpus"] || typed["vcpus"],
 			func(v int) string { return fmt.Sprint(v) }); err != nil {
 			return err
 		}
-		if err := ceiling("mem", cfg, cfg.ResMemMiB, memMiB, typed["mem"],
+		if err := ceiling("mem", "mem", cfg, cfg.ResMemMiB, memMiB, typed["mem"],
 			func(v int) string { return fmt.Sprintf("%d MiB", v) }); err != nil {
+			return err
+		}
+		if err := ceiling("cpu_quota", "cpu-quota", cfg, cfg.ResCPUQuota, &cpuQuota, typed["cpu-quota"],
+			func(v int) string { return fmt.Sprintf("%d%%", v) }); err != nil {
 			return err
 		}
 		if cfg.ResDiskByte != 0 {
@@ -153,12 +166,28 @@ status. This is how you hand an agent a sandbox and nothing else:
 		*cpus = 2
 	}
 
+	sandboxID, err := sandbox.NewID()
+	if err != nil {
+		return err
+	}
+
+	var cpuSlice *sandbox.Slice
 	var consoleOut io.Writer
 	if *console || *verbose {
 		consoleOut = prefixWriter{os.Stderr, "[guest] "}
 	}
 
+	if cpuQuota > 0 {
+		slice, err := sandbox.NewCPUSlice(sandboxID, cpuQuota)
+		if err != nil {
+			return err
+		}
+		defer slice.Close()
+		cpuSlice = slice
+	}
+
 	opts := sandbox.Options{
+		CPUSlice:  cpuSlice,
 		Arch:      *arch,
 		Flavor:    *flavor,
 		ImageDir:  *imgDir,
@@ -174,10 +203,6 @@ status. This is how you hand an agent a sandbox and nothing else:
 	// can send a packet anywhere (docs/networking.md).
 	var proxy *egress.Proxy
 	var ca *egress.CA
-	sandboxID, err := sandbox.NewID()
-	if err != nil {
-		return err
-	}
 	if list := splitAllow(*allow); len(list) > 0 {
 		opts.Allow = list
 		opts.Net, err = sandbox.NewNetwork(sandboxID)
@@ -347,6 +372,13 @@ status. This is how you hand an agent a sandbox and nothing else:
 		fmt.Fprintln(os.Stderr, "  warning: the guest is running on a READ-ONLY root — the overlay failed")
 	}
 	fmt.Printf("  vsock       %s\n", sb.State.UDSPath)
+	if cpuSlice != nil {
+		// Say both numbers together, because the pair is the whole point:
+		// cores are parallelism, the quota is consumption.
+		fmt.Printf("  cpu         %d core(s), capped at %d%% of one core's CPU time\n",
+			*cpus, cpuSlice.Percent)
+		fmt.Printf("  cgroup      %s\n", sb.State.CGroupPath)
+	}
 	if opts.Net != nil {
 		fmt.Printf("  egress      %s via proxy on %s:%d\n",
 			strings.Join(opts.Allow, ", "), opts.Net.HostIP, opts.Net.ProxyPort)
@@ -471,7 +503,7 @@ func loadPolicy() (*config.Config, error) {
 // ceiling applies one [resources] limit: with no flag it becomes the value,
 // with a flag under it the flag wins, and with a flag over it the boot is
 // refused naming the policy line (docs/resources.md).
-func ceiling(key string, cfg *config.Config, limit int, flagVal *int, typed bool, show func(int) string) error {
+func ceiling(key, flagName string, cfg *config.Config, limit int, flagVal *int, typed bool, show func(int) string) error {
 	if limit == 0 {
 		return nil
 	}
@@ -483,7 +515,7 @@ func ceiling(key string, cfg *config.Config, limit int, flagVal *int, typed bool
 		line, _ := cfg.Ceiling(key)
 		return fmt.Errorf("--%s %s exceeds the ceiling %s = %s set at %s:%d\n"+
 			"    lower the flag, or raise the ceiling in the policy file",
-			key, show(*flagVal), key, show(limit), cfg.Path, line)
+			flagName, show(*flagVal), key, show(limit), cfg.Path, line)
 	}
 	return nil
 }

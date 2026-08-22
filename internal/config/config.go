@@ -39,6 +39,7 @@ type Config struct {
 	ResCPUs     int
 	ResMemMiB   int
 	ResDiskByte int64
+	ResCPUQuota int // percent of one core's worth of CPU time
 	// ResLine records where each [resources] key was written, so a refusal can
 	// name the line the ceiling came from instead of just the number.
 	ResLine map[string]int
@@ -119,7 +120,9 @@ func Load(path string) (*Config, error) {
 				cfg.ResMemMiB, err = parseMiB(value, where)
 			case "disk":
 				cfg.ResDiskByte, err = parseBytes(value, where)
-			case "cpu_quota", "scratch", "net_mbps_rx", "net_mbps_tx",
+			case "cpu_quota":
+				cfg.ResCPUQuota, err = parsePercent(value, where)
+			case "scratch", "net_mbps_rx", "net_mbps_tx",
 				"disk_iops", "disk_mbps", "max_runtime", "idle_timeout":
 				// Specified in docs/resources.md but not yet enforced. Refusing
 				// beats accepting: a limit that silently does nothing is worse
@@ -325,3 +328,20 @@ func ParseMemMiB(v string) (int, error) {
 	}
 	return parseMiB(v, "--mem")
 }
+
+// parsePercent reads a cpu_quota like "150%". The unit is a share of one
+// core's worth of CPU time, not a share of the cores the guest can see.
+func parsePercent(value, where string) (int, error) {
+	t := strings.TrimSpace(strings.Trim(value, `"'`))
+	if !strings.HasSuffix(t, "%") {
+		return 0, fmt.Errorf("%s: cpu_quota must be a percentage like \"150%%\", got %q", where, value)
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(strings.TrimSuffix(t, "%")))
+	if err != nil || n <= 0 {
+		return 0, fmt.Errorf("%s: cpu_quota %q is not a positive percentage", where, value)
+	}
+	return n, nil
+}
+
+// ParsePercent exposes the same grammar to the --cpu-quota flag.
+func ParsePercent(v string) (int, error) { return parsePercent(v, "--cpu-quota") }

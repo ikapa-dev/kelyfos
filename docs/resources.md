@@ -85,7 +85,7 @@ happens at the limit and how hard the limit is.
 | --- | --- | --- |
 | `cpus` | KVM machine config (`vcpu_count`) | absolute — the cores do not exist |
 | `mem` | KVM machine config (`mem_size_mib`) | absolute — the RAM does not exist; the guest OOM-kills (see E1-4) |
-| `cpu_quota` | cgroup v2 `cpu.max` on the Firecracker process's slice | throttled — work slows, nothing fails |
+| `cpu_quota` | cgroup v2 `cpu.max` on the Firecracker process's own cgroup | throttled — work slows, nothing fails |
 | `disk` | size of the packed workspace block device | `ENOSPC` on writes to `/work` |
 | `scratch` | `size=` on the tmpfs backing the overlay upper layer | `ENOSPC` on writes outside `/work` |
 | `net_mbps_rx` / `net_mbps_tx` | Firecracker token-bucket rate limiter on the network device | throttled |
@@ -116,14 +116,33 @@ limits.
 
 | key | status |
 | --- | --- |
-| `cpus`, `mem`, `disk` | **enforced**, including the ceiling behaviour above |
-| `cpu_quota` | specified; lands with the cgroup slice (E1-2) |
+| `cpus`, `mem`, `disk`, `cpu_quota` | **enforced**, including the ceiling behaviour above |
 | `net_mbps_rx`, `net_mbps_tx`, `disk_iops`, `disk_mbps` | specified; land with the rate limiters (E1-3) |
 | `scratch` | specified; lands with the tmpfs sizing (E1-5) |
 | `max_runtime`, `idle_timeout` | specified; land with the time budgets (E1-6) |
 
 Using one of the not-yet-enforced keys is an error that says so and names the
 task, so nobody discovers the gap by watching a limit fail to hold.
+
+### How the quota is applied
+
+`cpu_quota` needs the Firecracker process to live in a cgroup with `cpu.max`
+set, and how KelyfOS gets one depends on the machine:
+
+- **Under a systemd user session** — the usual case on a developer's box — the
+  cgroup is requested through `systemd-run --user --scope`. This is not a
+  convenience: a login session's own cgroup is root-owned, and moving a process
+  into the subtree systemd delegates to you requires write access to the
+  *common ancestor* of both, which is also root's. The user manager is the one
+  component that legitimately holds that privilege.
+- **As root, or where the cgroup is genuinely delegated** (containers, CI),
+  KelyfOS creates the cgroup itself and places the process in it at clone time,
+  so there is no window in which the process runs uncapped.
+
+Either way the percentage is translated in the CLI, and the resulting `cpu.max`
+is **read back and checked** after launch. If the quota did not land, the
+sandbox refuses to start rather than running unlimited while claiming a cap.
+If neither path is available, `--cpu-quota` fails with the reason.
 
 ## Example
 

@@ -127,7 +127,7 @@
   <div class="meta">
     owner: <b>John</b> &nbsp;&middot;&nbsp; developer: <b>Claude Code</b> &nbsp;&middot;&nbsp;
     status: <b class="ok" id="meta-status">Epic E1 — active</b> &nbsp;&middot;&nbsp;
-    last updated: <b id="meta-updated">2026-08-22</b><br>
+    last updated: <b id="meta-updated">2026-08-23</b><br>
     repo file: <b>PLAN-FEATURES.html</b> (lives at the repository root next to <code>PLAN.html</code>)<br>
     <span class="quiet">Companion to PLAN.html — same protocol, same rules, later timeline.</span>
   </div>
@@ -166,7 +166,7 @@
     <span class="bl-name">All epics</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">E1-2 — host CPU-time quota via cgroup v2 cpu.max</b></div>
+  <div class="focusline">Current focus: <b id="focus">E1-3 — I/O throttling via Firecracker rate limiters</b></div>
 </div>
 
 <!-- ====================================================== 1. ACTIVATION GATE -->
@@ -248,7 +248,7 @@
         <code>cpu_quota</code> a percentage of a single core&rsquo;s worth of CPU time (<code>100%</code> = one core&rsquo;s worth;
         <code>150%</code> = 1.5 cores&rsquo; worth — an absolute quota, exactly the E1-2 mapping). One table lists every cap and
         the host mechanism that enforces it: KVM machine config, cgroup v2, Firecracker rate limiter, tmpfs mount option, host timer, device size.</span></li>
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">E1-2</span><span class="tk">Host CPU-time quota: launch each Firecracker process inside its own cgroup v2 slice;
         <code>cpu_quota</code> (e.g. <code>"150%"</code> = 1.5 cores) is translated by the CLI into cgroup v2
         <code>cpu.max</code> integer microseconds with a 100&nbsp;ms period — <code>"150%"</code> &rarr; <code>150000 100000</code>,
@@ -779,6 +779,27 @@
         file) because turning the file into a <b>hard ceiling</b> is E1-1's spec-before-code job, and pre-empting it here
         would be exactly the deviation the protocol forbids.</td>
         <td class="mono">boot test in the E1-0 progress row</td></tr>
+    <tr><td class="mono">F-D11</td><td class="mono">2026-08-22</td>
+        <td>E1-2's CPU quota is applied by <b>asking systemd for the scope</b> when KelyfOS is running unprivileged under a
+        systemd user session, and by writing <code>cpu.max</code> directly only when it actually can. The
+        percentage&rarr;<code>cpu.max</code> mapping E1-2 specifies is unchanged and still done in the CLI:
+        <code>"150%"</code> is <code>150000 100000</code>, and the resulting file is <b>read back and verified</b> after launch
+        rather than assumed.
+        <i>Why the change:</i> the task says &ldquo;launch each Firecracker process inside its own cgroup v2 slice&rdquo;, and
+        writing that cgroup ourselves turns out to be impossible unprivileged, for a reason that is a property of cgroup v2
+        rather than a bug to work around. A login session lives in <code>session-N.scope</code>, which is root-owned; the
+        subtree systemd delegates to the user is <code>user@UID.service</code>. Moving a process between them needs write
+        access to the <b>common ancestor</b>'s <code>cgroup.procs</code> — <code>user-UID.slice</code>, owned by root. So the
+        target directory being ours is not enough, and <code>clone3(CLONE_INTO_CGROUP)</code> fails with a bare
+        <code>EACCES</code> that surfaces as &ldquo;fork/exec: permission denied&rdquo;. Confirmed directly: we can
+        <code>mkdir</code> under the delegated subtree and write its <code>cpu.max</code>, and still cannot put a process there.
+        <i>Why this answer:</i> <code>systemd-run --user --scope -p CPUQuota=</code> performs exactly that move through the
+        user manager, which is the one component that legitimately holds the privilege — and it sets the same
+        <code>cpu.max</code> with the same 100&nbsp;ms period. Requiring root instead would make a resource cap a privileged
+        feature of a tool whose whole point is running unprivileged on a developer's machine. The direct path is kept for
+        root and for containers where the root cgroup is genuinely delegated, so CI and rootless-container hosts do not
+        depend on systemd; when neither is available the flag refuses with the reason rather than pretending to cap anything.</td>
+        <td class="mono">probe output in the E1-2 progress row</td></tr>
 </table>
 </section>
 
@@ -1013,6 +1034,54 @@ kelyfos: kelyfos.toml:2: [resources] cpu_quota is specified but not enforced yet
   would not hold; see docs/resources.md
 
 $ go test ./internal/config/ -v   -&gt; 17 PASS, ok</pre></td></tr>
+        <tr><td class="mono">2026-08-23</td><td class="mono">E1-2</td>
+        <td>Host CPU-time quota. The percentage&rarr;kernel translation is exactly as specified and lives in one function so
+        the two application paths cannot disagree: <code>"150%"</code> &rarr; <code>150000 100000</code>. Applying it needed
+        F-D11 &mdash; writing the cgroup ourselves is impossible unprivileged, because a login session sits in a root-owned
+        <code>session-N.scope</code> and moving into the delegated subtree needs write access to their root-owned common
+        ancestor. <code>clone3(CLONE_INTO_CGROUP)</code> fails there as a bare <code>EACCES</code> surfacing as
+        &ldquo;fork/exec: permission denied&rdquo;, which is what the first implementation hit. So systemd is asked for the
+        scope when running under a user session, and the cgroup is created directly when that is actually possible (root, or
+        a delegated container) so CI does not depend on systemd. <b>The applied <code>cpu.max</code> is read back and
+        verified</b>; a sandbox whose quota did not land refuses to start rather than running uncapped while claiming a cap.
+        That check earned itself immediately &mdash; it caught the systemd move being asynchronous, which a
+        write-and-hope implementation would have shipped as a silent hole.
+        <i>Measurement honesty:</i> the 50% case is the proof, because it is the one where the cap sits below available demand.
+        At 150% and uncapped this dev box cannot tell the two apart: the guest only generates about one core of demand under
+        nested virtualisation regardless of the cap, which the guest's own <code>/proc/stat</code> confirms (507 jiffies user
+        against 1521 idle across 4 CPUs, with all four loops in R state at 6&ndash;8%). Per D15 that is a property of the
+        measuring environment, not the mechanism; saturating multiple cores is E1-8's job with stress-ng on the bare-KVM
+        reference.</td>
+        <td class="mono"><pre>$ kelyfos run --image dev --cpus 4 --cpu-quota 50%
+  cpu         4 core(s), capped at 50% of one core's CPU time
+  cgroup      /sys/fs/cgroup/.../user@501.service/app.slice/kelyfos-7e828406.scope
+     cpu.max          50000 100000
+     guest nproc      4
+     CPU used in 5s   2494223 usec  -&gt;  49.8% of one core
+     throttling       nr_throttled=98 throttled_usec=6889154
+
+$ kelyfos run --image dev --cpus 4 --cpu-quota 150%
+     cpu.max          150000 100000
+     CPU used in 5s   5003069 usec  -&gt;  100.0% of one core   (demand-limited, see above)
+     throttling       nr_throttled=2 throttled_usec=205386
+
+$ kelyfos run --image dev --cpus 4          # no quota
+     cpu.max          max 100000
+     CPU used in 5s   5163069 usec  -&gt;  103.2% of one core
+     throttling       nr_throttled=0 throttled_usec=0
+
+guest-side, uncapped, 4 busy loops:
+  /proc/stat  before: cpu 224 0 60 821 ... / after: cpu 731 0 60 2342 ...
+  top:        CPU: 25% usr  75% idle   (4x "sh -c while :; do :; done" at 6-8%)
+
+$ kelyfos run --cpu-quota 400%     # against cpu_quota = "50%" in the file
+kelyfos: --cpu-quota 400% exceeds the ceiling cpu_quota = 50% set at .../kelyfos.toml:5
+
+$ go test ./internal/sandbox/ -run "CPUMax|NewCPUSlice|WrapArgv"
+--- PASS: TestCPUMaxLineMapsPercentToMicroseconds
+--- PASS: TestNewCPUSliceRejectsNonPositiveQuota
+--- PASS: TestWrapArgvBuildsTheScopeRequest
+$ go test ./...   -&gt; all packages ok</pre></td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
