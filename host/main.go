@@ -16,6 +16,7 @@ var Version = "dev"
 const usage = `kelyfos — a minimal, agent-native guest OS for microVM sandboxes
 
 usage:
+  kelyfos doctor                   check this machine can run KelyfOS
   kelyfos run [flags]              boot a sandbox and keep it running
   kelyfos exec [flags] <command>   run a command inside a running sandbox
   kelyfos mcp [flags]              bridge an MCP client's stdio to a sandbox
@@ -36,6 +37,8 @@ func main() {
 	}
 	var err error
 	switch os.Args[1] {
+	case "doctor":
+		err = doctorCmd(os.Args[2:])
 	case "run":
 		err = runCmd(os.Args[2:])
 	case "exec":

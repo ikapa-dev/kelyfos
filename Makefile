@@ -154,7 +154,8 @@ image: linux-only supervisor fetch-kernel $(BUILD_DIR)/.config ## Build the gues
 cli: linux-only ## Build the kelyfos host CLI into bin/
 	@mkdir -p $(OUT_DIR)
 	CGO_ENABLED=0 go build -trimpath \
-	  -ldflags="-s -w -X main.Version=$(KELYFOS_VERSION)" \
+	  -ldflags="-s -w -X main.Version=$(KELYFOS_VERSION) \
+	              -X main.FirecrackerVersion=$(FIRECRACKER_VERSION)" \
 	  -o $(OUT_DIR)/kelyfos ./host
 	@$(OUT_DIR)/kelyfos version
 
