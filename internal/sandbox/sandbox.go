@@ -77,6 +77,7 @@ type State struct {
 	UDSPath     string    `json:"uds_path"`
 	APIPath     string    `json:"api_path"`
 	TAP         string    `json:"tap,omitempty"`
+	Workspace   string    `json:"workspace,omitempty"`
 	Allow       []string  `json:"allow,omitempty"`
 	RunDir      string    `json:"run_dir"`
 	StartedAt   time.Time `json:"started_at"`
@@ -175,6 +176,7 @@ func New(opts Options) (*Sandbox, error) {
 		Vsock:         &Vsock{GuestCID: proto.CIDGuest, UDSPath: s.State.UDSPath},
 	}
 	if opts.Workspace != nil {
+		s.State.Workspace = opts.Workspace.ImagePath
 		// The workspace is the second virtio-blk drive, so it is always
 		// /dev/vdb in the guest — pinned rather than discovered, because the
 		// supervisor should not have to guess which disk is which.
@@ -322,6 +324,41 @@ func (s *Sandbox) Snapshot(dir string) (statePath, memPath string, err error) {
 // SnapshotRunning snapshots a sandbox this process did not start, by talking to
 // its API socket directly. `kelyfos snapshot save` is a separate invocation from
 // the `kelyfos run` holding the machine open, so it has no Sandbox to call.
+// SnapshotMeta travels with a snapshot so a later restore knows what the machine
+// was, rather than making the caller remember.
+type SnapshotMeta struct {
+	Arch         string `json:"arch"`
+	Flavor       string `json:"flavor"`
+	HasWorkspace bool   `json:"has_workspace"`
+	// WorkspacePath is where the workspace disk lived when the snapshot was
+	// taken. It has to be recorded because Firecracker insists that a block
+	// device's backing file exists at its original path before a snapshot will
+	// load at all — the drive can only be repointed afterwards.
+	WorkspacePath string `json:"workspace_path,omitempty"`
+	WorkspaceSize int64  `json:"workspace_size,omitempty"`
+}
+
+func snapshotMetaPath(dir string) string  { return filepath.Join(dir, "meta.json") }
+func snapshotWorkspace(dir string) string { return filepath.Join(dir, "workspace.ext4") }
+
+// ReadSnapshotMeta loads what was recorded alongside a snapshot.
+func ReadSnapshotMeta(dir string) (*SnapshotMeta, error) {
+	blob, err := os.ReadFile(snapshotMetaPath(dir))
+	if err != nil {
+		// A snapshot from before metadata existed is still restorable; it just
+		// has nothing to say about itself.
+		if os.IsNotExist(err) {
+			return &SnapshotMeta{}, nil
+		}
+		return nil, err
+	}
+	var meta SnapshotMeta
+	if err := json.Unmarshal(blob, &meta); err != nil {
+		return nil, err
+	}
+	return &meta, nil
+}
+
 func SnapshotRunning(st *State, dir string) (statePath, memPath string, err error) {
 	if st.APIPath == "" {
 		return "", "", fmt.Errorf("sandbox %s was started by an older kelyfos with no API socket", st.ID)
@@ -337,6 +374,27 @@ func SnapshotRunning(st *State, dir string) (statePath, memPath string, err erro
 		return "", "", err
 	}
 	if err := a.createSnapshot(statePath, memPath); err != nil {
+		_ = a.resume()
+		return "", "", err
+	}
+
+	meta := SnapshotMeta{Arch: st.Arch, Flavor: st.Flavor}
+	if st.Workspace != "" {
+		// The workspace disk is part of the machine's state, so it travels with
+		// the snapshot. Copying it while the VM is paused is what makes the copy
+		// consistent with the memory image.
+		if err := copyFile(st.Workspace, snapshotWorkspace(dir)); err != nil {
+			_ = a.resume()
+			return "", "", fmt.Errorf("capture workspace: %w", err)
+		}
+		if info, err := os.Stat(snapshotWorkspace(dir)); err == nil {
+			meta.HasWorkspace = true
+			meta.WorkspacePath = st.Workspace
+			meta.WorkspaceSize = info.Size()
+		}
+	}
+	blob, _ := json.MarshalIndent(meta, "", "  ")
+	if err := os.WriteFile(snapshotMetaPath(dir), blob, 0o600); err != nil {
 		_ = a.resume()
 		return "", "", err
 	}
@@ -453,6 +511,22 @@ func Restore(snapDir string, opts Options) (*Sandbox, time.Duration, error) {
 		_ = s.Shutdown(2 * time.Second)
 		return nil, 0, err
 	}
+	// Firecracker will not load a snapshot unless every block device's backing
+	// file is present at the path recorded in it — the drive can only be
+	// repointed after the load succeeds. So the captured workspace is put back
+	// where it was first, purely so the load has something to open; each fork
+	// then swaps in its own copy before the machine is resumed, and no guest
+	// I/O happens in between.
+	meta, metaErr := ReadSnapshotMeta(snapDir)
+	if metaErr == nil && meta.HasWorkspace && meta.WorkspacePath != "" {
+		if _, err := os.Stat(meta.WorkspacePath); os.IsNotExist(err) {
+			if err := copyFile(snapshotWorkspace(snapDir), meta.WorkspacePath); err != nil {
+				_ = s.Shutdown(2 * time.Second)
+				return nil, 0, fmt.Errorf("stage workspace for snapshot load: %w", err)
+			}
+		}
+	}
+
 	if err := s.api.loadSnapshot(snapshotLoad{
 		SnapshotPath:  statePath,
 		MemBackend:    memBackend{BackendPath: memPath, BackendType: "File"},
@@ -461,6 +535,22 @@ func Restore(snapDir string, opts Options) (*Sandbox, time.Duration, error) {
 	}); err != nil {
 		_ = s.Shutdown(2 * time.Second)
 		return nil, 0, err
+	}
+
+	// A snapshot with a workspace needs its own copy of that disk, or every
+	// restore would write into the same file and the "independent fork" claim
+	// would be false in the most damaging possible way (P3-2).
+	if metaErr == nil && meta.HasWorkspace {
+		mine := filepath.Join(runDir, "workspace.ext4")
+		if err := copyFile(snapshotWorkspace(snapDir), mine); err != nil {
+			_ = s.Shutdown(2 * time.Second)
+			return nil, 0, fmt.Errorf("copy workspace for this fork: %w", err)
+		}
+		if err := s.api.patchDrive("workspace", mine); err != nil {
+			_ = s.Shutdown(2 * time.Second)
+			return nil, 0, fmt.Errorf("repoint workspace drive: %w", err)
+		}
+		s.State.Workspace = mine
 	}
 	if err := s.api.resume(); err != nil {
 		_ = s.Shutdown(2 * time.Second)

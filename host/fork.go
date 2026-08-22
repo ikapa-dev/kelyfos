@@ -55,6 +55,19 @@ unique guest network identity, which is backlog work.
 	}
 	results := make([]forked, *n)
 
+	// Refuse before starting rather than failing partway through the third
+	// copy. Without reflink support each fork is a full copy of the workspace.
+	meta, err := sandbox.ReadSnapshotMeta(snapshotDir(*name))
+	if err != nil {
+		return err
+	}
+	if meta.HasWorkspace {
+		if err := sandbox.CheckForkSpace(sandbox.RunRoot(), *n, meta.WorkspaceSize); err != nil {
+			return err
+		}
+		fmt.Printf("each fork gets its own copy of a %d byte workspace disk\n", meta.WorkspaceSize)
+	}
+
 	started := time.Now()
 	var wg sync.WaitGroup
 	for i := 0; i < *n; i++ {

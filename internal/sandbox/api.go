@@ -114,6 +114,17 @@ type snapshotLoad struct {
 	VsockOverride *vsockOverride `json:"vsock_override,omitempty"`
 }
 
+// patchDrive repoints a block device after the machine exists but before it
+// runs. Firecracker documents PATCH /drives as post-boot only, and a
+// snapshot-loaded VM that has not been resumed qualifies — which is what lets N
+// forks of one snapshot each get their own workspace disk.
+func (a *api) patchDrive(driveID, pathOnHost string) error {
+	return a.do(http.MethodPatch, "/drives/"+driveID, map[string]string{
+		"drive_id":     driveID,
+		"path_on_host": pathOnHost,
+	})
+}
+
 // loadSnapshot restores a machine.
 //
 // VsockOverride is what makes forking possible at all: two VMs restored from one
