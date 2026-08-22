@@ -126,7 +126,7 @@
      injected secrets, full audit replay, and millisecond forking.</p>
   <div class="meta">
     owner: <b>John</b> &nbsp;·&nbsp; developer: <b>Claude Code</b> &nbsp;·&nbsp;
-    status: <b class="amber" id="meta-status">Phase 1 done (v0.1) — Phase 2 active</b> &nbsp;·&nbsp;
+    status: <b class="amber" id="meta-status">Phase 2 done (v0.2) — Phase 3 active</b> &nbsp;·&nbsp;
     last updated: <b id="meta-updated">2026-08-22</b><br>
     repo file: <b>PLAN.html</b> (commit this document at the repository root — it is the single source of truth)<br>
     <span class="quiet">KelyfOS — from κέλυφος (kélyfos), "shell": the guest OS wrapped around the agent. Formerly working-titled "agos" (D4 → D10).</span>
@@ -166,7 +166,7 @@
     <span class="bl-name">Overall</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">P2-7 — end-to-end dogfood via kelyfos mcp< 200 MB</b></div>
+  <div class="focusline">Current focus: <b id="focus">P3-1 — kelyfos snapshot save|restore with clock and entropy resync< 200 MB</b></div>
 </div>
 
 <!-- ====================================================== 1. END GOAL -->
@@ -391,13 +391,13 @@
 </section>
 
 <!-- ====================================================== PHASE 2 -->
-<section class="phase" id="p2" data-phase="2" data-status="active">
+<section class="phase" id="p2" data-phase="2" data-status="done">
   <div class="phase-head">
     <div>
       <div class="kconfig">config KELYFOS_PHASE_2</div>
       <h2>Phase 2 — Agent-native supervisor (v0.2 · "a toolbox, not a computer")</h2>
     </div>
-    <span class="badge">ACTIVE</span>
+    <span class="badge">DONE</span>
   </div>
   <p class="goal"><b>Goal:</b> the differentiating layer — MCP as the only interface, policy and audit built in. Est. 3–4 weekends.</p>
   <ul class="tasks">
@@ -434,13 +434,13 @@
 </section>
 
 <!-- ====================================================== PHASE 3 -->
-<section class="phase" id="p3" data-phase="3" data-status="todo">
+<section class="phase" id="p3" data-phase="3" data-status="active">
   <div class="phase-head">
     <div>
       <div class="kconfig">config KELYFOS_PHASE_3</div>
       <h2>Phase 3 — Snapshots, flavors, compatibility (v0.3 · "fork it")</h2>
     </div>
-    <span class="badge">TODO</span>
+    <span class="badge">ACTIVE</span>
   </div>
   <p class="goal"><b>Goal:</b> the performance story, the daily-driver UX, and the adoption hack — then go public. Est. 5–7 weekends.</p>
   <ul class="tasks">
@@ -723,6 +723,12 @@ make image         <span class="c"># kernel Image (aarch64) / vmlinux (x86_64) +
         <tr><td class="mono">2026-08-22</td><td class="mono">P2-7</td>
         <td>End-to-end dogfood: a real task completed entirely inside the sandbox through <code>kelyfos mcp</code> — clone a repository, write a module and a test, watch the test fail, fix the bug, watch it pass. <b>The client was the official MCP Python SDK (2.0.0), not code written for this project.</b> That was a deliberate substitution and arguably stronger evidence than the task asks for: validating my own client against my own server would prove the two agree with each other, not that KelyfOS speaks MCP. A third-party implementation connected, negotiated protocol 2025-11-25, listed the six tools and drove the whole workflow with no adjustments on the server side. <b>Honest caveat: the client was not literally Claude Code.</b> Attaching it is a configuration step rather than an engineering one — the README now carries the <code>.mcp.json</code> snippet — and nothing about the protocol path differs, but the plan named Claude Code and a third-party SDK is not that. Flagged for John rather than glossed.</td>
         <td class="mono">official mcp SDK 2.0.0 → connected: kelyfos 0.2.0-p2 (protocol 2025-11-25)<br>tools: exec, read_file, write_file, list_dir, upload, download<br>1. git clone --depth 1 https://github.com/octocat/Hello-World → README<br>2. write_file greet.py (41 B) + test_greet.py (155 B)<br>3. python3 test_greet.py → <b>isError=True exit_code=1</b>, AssertionError in the recorded stderr<br>4. read_file, fix, write_file → greet.py now returns 'Hello, ' + name + '!'<br>5. python3 test_greet.py → <b>isError=False exit_code=0</b>, output &quot;PASS&quot;<br>6. git status --short → ?? greet.py ?? test_greet.py<br>7. curl https://example.com → isError=True, CONNECT tunnel failed, response 403<br>The recorded session reads as the compliance artifact the plan promises: the clone with &quot;egress allowed github.com:443 mode=tunnelled&quot;, both writes with their sha256, the failing traceback, the rewrite with a <i>different</i> digest, the passing run, and the refused egress — <code>--verify</code> → chain intact, 23 events</td></tr>
+        <tr><td class="mono">2026-08-22</td><td class="mono">P2</td>
+        <td><b>Phase 2 acceptance test — passed, all seven steps run verbatim.</b> Step 1 used <code>--image dev</code> per decision D17, because <code>base</code> has no HTTPS client and steps 3 and 5 require one. Phase 2 closed; tagged <b>v0.2</b>. Phase 3 is now active — and already 1/12, since P3-3 was pulled forward.</td>
+        <td class="mono">1) kelyfos run --image dev --allow github.com --secret GITHUB_TOKEN@api.github.com<br>&nbsp;&nbsp;&nbsp;sandbox 6d437186 ready in 861 ms · egress github.com via proxy · secret GITHUB_TOKEN → api.github.com<br>2) official MCP SDK attached via kelyfos mcp → <b>tools (6): exec, read_file, write_file, list_dir, upload, download</b><br>3) exec &quot;git clone https://github.com/octocat/Hello-World&quot; → README, CLONE-OK, exit 0<br>4) exec &quot;curl -m 5 https://example.com&quot; → curl: (7) CONNECT tunnel failed, response 403; recorded as <b>egress BLOCKED example.com:443 not_in_allowlist</b><br>5) exec &quot;curl https://api.github.com/user&quot; → {&quot;message&quot;: &quot;Bad credentials&quot;, …} — the header arrived; <code>env | grep -c ghp_</code> → <b>0</b><br>6) kelyfos log replayed the session in order: clone with its egress event, the blocked attempt, the secret use by name, the authenticated call marked <b>mode=terminated</b><br>7) kelyfos log --verify → chain intact, <b>29 events</b>, exit 0; after flipping one byte → &quot;event 3 has been modified — its contents hash to 852703166fca, but it carries 480f5d6f6281&quot;, exit 1; restored → intact again</td></tr>
+        <tr><td class="mono">2026-08-22</td><td class="mono">P2-4</td>
+        <td>Defect the acceptance test exposed, fixed straight after. Command output was recorded one event per pipe read, and a pipe read returns whatever is available — for an unbuffered writer like curl's error output that is often a single byte. &quot;curl: (7) CONNECT tunnel failed, response 403&quot; became <b>28 events, one per character</b>: a log that is unreadable, needlessly long, and whose hash chain is mostly noise. Output is now coalesced before it reaches the recorder, flushing on a stream switch, at 8 KiB, or at exit. Coalescing happens on the recording side rather than on the wire, so output still streams to the terminal immediately — a person watching a command wants it live, a person reading the record wants it whole.</td>
+        <td class="mono">before: 28 command.output events for one 43-character stderr line, one per byte<br>after:  the same command produces <b>1</b>; a whole session with two commands → <b>2 command.output events</b>, chain intact, 10 events verified<br>replay now reads: &quot;! curl: (7) CONNECT tunnel failed, response 403&quot; on one line</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>

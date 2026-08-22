@@ -95,6 +95,8 @@ to close.
 	_ = rec.Append(recorder.Event{
 		Type: recorder.TypeCommandStart, Call: reqID, Cmd: cmd, Cwd: *cwd, Via: "exec",
 	})
+	out := &outputRecorder{rec: rec, call: reqID}
+	defer out.flush()
 	if err := proto.NewWriter(conn).Write(proto.ExecRequest{
 		V:         proto.Version,
 		ID:        reqID,
@@ -124,10 +126,7 @@ to close.
 			if err != nil {
 				return fmt.Errorf("guest sent invalid base64 on %s: %w", resp.Stream, err)
 			}
-			_ = rec.Append(recorder.Event{
-				Type: recorder.TypeCommandOutput, Call: reqID,
-				Stream: resp.Stream, Data: resp.Data, Bytes: len(data),
-			})
+			out.add(resp.Stream, data)
 			out := os.Stdout
 			if resp.Stream == proto.StreamStderr {
 				out = os.Stderr
@@ -136,6 +135,7 @@ to close.
 				return err
 			}
 		case proto.StreamExit:
+			out.flush()
 			ev := recorder.Event{
 				Type: recorder.TypeCommandExit, Call: reqID, Code: resp.Code,
 				Signal: resp.Signal, DurationMS: time.Since(started).Milliseconds(),
@@ -178,4 +178,45 @@ func exitCodeFor(kind string) int {
 	default:
 		return 1
 	}
+}
+
+// outputRecorder coalesces command output before it reaches the flight
+// recorder.
+//
+// A pipe read returns whatever is available, which for an unbuffered writer like
+// curl's progress output is often a single byte. Recording one event per read
+// turned "curl: (7) CONNECT tunnel failed" into twenty-eight events, one per
+// character — a log that is unreadable, needlessly long, and whose hash chain is
+// mostly noise. Coalescing here rather than on the wire keeps output streaming
+// to the terminal immediately, which is what a person watching a command wants,
+// while the record stays legible.
+type outputRecorder struct {
+	rec    *recorder.Recorder
+	call   string
+	stream string
+	buf    []byte
+}
+
+const outputFlushAt = 8 << 10
+
+func (o *outputRecorder) add(stream string, data []byte) {
+	if stream != o.stream {
+		o.flush()
+		o.stream = stream
+	}
+	o.buf = append(o.buf, data...)
+	if len(o.buf) >= outputFlushAt {
+		o.flush()
+	}
+}
+
+func (o *outputRecorder) flush() {
+	if len(o.buf) == 0 {
+		return
+	}
+	_ = o.rec.Append(recorder.Event{
+		Type: recorder.TypeCommandOutput, Call: o.call, Stream: o.stream,
+		Data: base64.StdEncoding.EncodeToString(o.buf), Bytes: len(o.buf),
+	})
+	o.buf = o.buf[:0]
 }
