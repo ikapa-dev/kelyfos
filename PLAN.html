@@ -1129,6 +1129,50 @@ Cacheable calls:   34 / 47      38 / 58
 Local storage:
   Cache size (GB): 0.0 / 2.0    0.0 / 2.0     the -M 2G setup landed
   Files:           68           76            and the cache is now populated</pre></td></tr>
+        <tr><td class="mono">2026-08-23</td><td class="mono">P0-6</td>
+        <td><b>Dependency refresh, run before feature work resumes rather than after something breaks.</b> Every pin in
+        <code>versions.mk</code> was checked against its upstream and <b>all four are already current</b> — Buildroot on the
+        2026.02 long-term line, the kernel on the newest 6.18 longterm patch, Firecracker on its newest stable, Go on its newest
+        stable — so nothing was bumped and the two Go tarball digests were verified against go.dev rather than assumed. The Go
+        module graph was a different story: <code>go get -u ./... &amp;&amp; go mod tidy</code> moved the one direct dependency that
+        had aged, <code>golang.org/x/sys v0.36.0 &rarr; v0.47.0</code>, and eight indirect ones with it. That upgrade retires the
+        single finding <code>govulncheck</code> had against the old graph, GO-2026-5024 in <code>x/sys/windows</code>, which was
+        unreachable here for the plain reason that KelyfOS is a Linux program — but a known-vulnerable module in
+        <code>go.mod</code> is a thing a future reader has to re-reason about, and this one cost nothing to remove.
+        <code>go-runewidth v0.0.28</code> brought two new transitive modules, <code>clipperhouse/displaywidth v0.11.0</code> and
+        <code>clipperhouse/uax29/v2 v2.7.0</code>; both are MIT, hence Apache-2.0-compatible, and both are actively maintained.
+        No major versions were taken: Bubble Tea and Lip Gloss both have current v2 lines, and declining them for now is
+        recorded as D25 rather than left as a silence.</td>
+        <td class="mono"><pre>upstream, checked 2026-08-23:
+  buildroot    2026.02.3   newest on the .02 LTS line (only 2026.05.1 / 2026.08-rc1 above it)
+  linux        6.18.45     newest 6.18 longterm on kernel.org (released 2026-08-19)
+  firecracker  v1.16.1     newest non-prerelease (published 2026-07-02)
+  go           1.27.0      newest stable on go.dev
+  go1.27.0.linux-arm64.tar.gz  51798d2c&hellip;909bda   == versions.mk
+  go1.27.0.linux-amd64.tar.gz  675c26c4&hellip;280685   == versions.mk
+
+$ go get -u ./... &amp;&amp; go mod tidy
+upgraded golang.org/x/sys           v0.36.0 -&gt; v0.47.0    (direct)
+upgraded golang.org/x/text          v0.3.8  -&gt; v0.41.0
+upgraded charmbracelet/x/ansi       v0.10.1 -&gt; v0.11.8
+upgraded charmbracelet/colorprofile v0.2.3-0.2025&hellip; -&gt; v0.4.3
+upgraded charmbracelet/x/cellbuf    v0.0.13-0.2025&hellip; -&gt; v0.0.15
+upgraded charmbracelet/x/term       v0.2.1  -&gt; v0.2.2
+upgraded lucasb-eyer/go-colorful    v1.2.0  -&gt; v1.4.1
+upgraded mattn/go-isatty            v0.0.20 -&gt; v0.0.24
+upgraded mattn/go-runewidth         v0.0.16 -&gt; v0.0.28
+upgraded xo/terminfo                v0.0.0-2022&hellip;  -&gt; v1.0.0
+added    clipperhouse/displaywidth  v0.11.0   MIT
+added    clipperhouse/uax29/v2      v2.7.0    MIT
+
+$ govulncheck ./...        (scanner v1.7.0, DB 2026-08-21)
+before:  Vulnerability #1: GO-2026-5024
+         integer overflow in NewNTUnicodeString in golang.org/x/sys/windows
+         Found in golang.org/x/sys@v0.36.0 / Fixed in v0.44.0 / Platforms: windows
+         "your code doesn't appear to call these"
+after:   No vulnerabilities found.
+
+$ gofmt -l .   (empty)     $ go vet ./...   ok     $ go test ./...   all packages ok</pre></td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
@@ -1211,6 +1255,18 @@ Local storage:
         <tr><td class="mono">D24</td><td class="mono">2026-08-23</td>
         <td>CI build economics, settled as one change: a <b>documentation-only</b> change skips the <code>build</code> and <code>boot</code> jobs; Buildroot gains a <b>compiler cache</b> (<code>BR2_CCACHE</code>) persisted between runs and keyed on <code>versions.mk</code>, next to the download and per-arch tree caches that were already there; and a <b>weekly scheduled run restores no cache at all</b>.</td>
         <td>A from-source Buildroot run is tens of minutes per architecture, and this project&rsquo;s own protocol asks for a commit per completed task &mdash; most of which touch nothing but <code>PLAN.html</code>, <code>PLAN-FEATURES.html</code> and <code>STATUS.md</code>. Paying an hour of runners to rebuild a kernel because a progress row was appended is waste, and slow feedback is the mechanism by which people stop reading CI. Three specifics worth recording because the obvious alternative is wrong in each case. <b>The filter is a job-level <code>if</code>, not <code>paths-ignore</code>:</b> a workflow skipped by <code>paths-ignore</code> never reports a status at all, which leaves a required check pending forever, whereas a job skipped by a conditional reports as skipped and satisfies it. <code>checks</code> stays unconditional regardless, so a documentation-only commit is still audited by <code>tools/check-plan.py</code> &mdash; the plan files are exactly the documentation most able to break. And the filter is four lines of <code>git diff</code> rather than a marketplace action: a third-party action in the path of every build is a supply-chain dependency bought for nothing. <b>The ccache key has no <code>restore-keys</code>:</b> Buildroot&rsquo;s own help text makes purging the cache the user&rsquo;s responsibility when the compiler changes, and <code>versions.mk</code> is what changes it, so a bump starts a clean cache instead of inheriting objects built by a toolchain that no longer exists. The download cache keeps its loose restore key, because those tarballs are checksum-verified on every use and a stale one is inert. <b>The weekly run exists to make the caches falsifiable:</b> a build that only succeeds because of what a cache is holding &mdash; a vanished upstream tarball, a package that no longer configures from scratch &mdash; is a build that works until the first person clones the repository. Seven days is the longest that can now stay hidden. <code>cmake</code> joins <code>dev/install-build-deps.sh</code> for ccache&rsquo;s sake alone: without a host cmake &ge; 3.18 Buildroot quietly builds its own, spending ten minutes to save a few.</td></tr>
+        <tr><td class="mono">D25</td><td class="mono">2026-08-23</td>
+        <td><b>Parked, not taken: the move to Bubble Tea v2 and Lip Gloss v2.</b> KelyfOS stays on
+        <code>bubbletea v1.3.10</code> and <code>lipgloss v1.1.0</code> — the newest releases of the v1 lines — while
+        <code>bubbletea/v2 v2.0.9</code> and <code>lipgloss/v2 v2.0.6</code> exist and are current. Revisit at E1-7, which is the
+        next task to open <code>host/watch.go</code>.</td>
+        <td>Recorded because a version that exists and is not taken should be a decision rather than an oversight. The
+        two libraries are used by exactly one file, <code>host/watch.go</code>, and a major version is an API rewrite:
+        taking it means rewriting the TUI, and rewriting the TUI on a dependency refresh — a change whose entire purpose
+        is to be uneventful — mixes a mechanical upgrade with a real one. The v1 lines are not abandoned; both are the
+        current release of their line and neither carries an advisory. E1-7 adds a resources lane to <code>kelyfos watch</code>
+        and E2-8 rebuilds it as a multi-lane team view, so the file is going to be rewritten on purpose soon enough; that
+        is when the v2 API should be adopted, if it is adopted at all, and the work will be paid for once instead of twice.</td></tr>
     <!-- Claude Code: append rows above this line. -->
   </table>
 </section>
