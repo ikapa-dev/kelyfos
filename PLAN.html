@@ -126,7 +126,7 @@
      injected secrets, full audit replay, and millisecond forking.</p>
   <div class="meta">
     owner: <b>John</b> &nbsp;·&nbsp; developer: <b>Claude Code</b> &nbsp;·&nbsp;
-    status: <b class="amber" id="meta-status">Phase 0 — active</b> &nbsp;·&nbsp;
+    status: <b class="amber" id="meta-status">Phase 0 done (v0.0) — Phase 1 active</b> &nbsp;·&nbsp;
     last updated: <b id="meta-updated">2026-08-22</b><br>
     repo file: <b>PLAN.html</b> (commit this document at the repository root — it is the single source of truth)<br>
     <span class="quiet">KelyfOS — from κέλυφος (kélyfos), "shell": the guest OS wrapped around the agent. Formerly working-titled "agos" (D4 → D10).</span>
@@ -166,7 +166,7 @@
     <span class="bl-name">Overall</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">P0-7 — commit Apache-2.0 LICENSE and CONTRIBUTING.md with DCO</b></div>
+  <div class="focusline">Current focus: <b id="focus">P1-0 — write docs/protocol.md (vsock model, ports, frame schemas)</b></div>
 </div>
 
 <!-- ====================================================== 1. END GOAL -->
@@ -309,13 +309,13 @@
 </section>
 
 <!-- ====================================================== PHASE 0 -->
-<section class="phase" id="p0" data-phase="0" data-status="active">
+<section class="phase" id="p0" data-phase="0" data-status="done">
   <div class="phase-head">
     <div>
       <div class="kconfig">config KELYFOS_PHASE_0</div>
       <h2>Phase 0 — Environment &amp; scaffold</h2>
     </div>
-    <span class="badge">ACTIVE</span>
+    <span class="badge">DONE</span>
   </div>
   <p class="goal"><b>Goal:</b> a machine that can run Firecracker, and an empty repo with working build scaffolding. Est. one weekend.</p>
   <ul class="tasks">
@@ -331,7 +331,7 @@
         <span class="tid">P0-5</span><span class="tk">Commit this document as <code>PLAN.html</code> at the repo root.</span></li>
     <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">P0-6</span><span class="tk">Pin all toolchain versions in <code>versions.mk</code>: Buildroot release, kernel LTS line, Firecracker version, Go version. Every build reads from this file; no floating "latest".</span></li>
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">P0-7</span><span class="tk"><b>Decided (D5) — execute:</b> commit the Apache-2.0 <code>LICENSE</code> at the repo root, and add <code>CONTRIBUTING.md</code> requiring DCO sign-off (<code>Signed-off-by</code>) on every contribution — keeping a future relicensing option open without contributor archaeology. No further sign-off needed.</span></li>
   </ul>
   <div class="accept">
@@ -347,13 +347,13 @@
 </section>
 
 <!-- ====================================================== PHASE 1 -->
-<section class="phase" id="p1" data-phase="1" data-status="todo">
+<section class="phase" id="p1" data-phase="1" data-status="active">
   <div class="phase-head">
     <div>
       <div class="kconfig">config KELYFOS_PHASE_1</div>
       <h2>Phase 1 — Minimal bootable guest (v0.1 · "it boots")</h2>
     </div>
-    <span class="badge">TODO</span>
+    <span class="badge">ACTIVE</span>
   </div>
   <p class="goal"><b>Goal:</b> a self-built kernel + rootfs that boots under Firecracker and answers one command over vsock. Est. 3–4 weekends.</p>
   <ul class="tasks">
@@ -630,6 +630,12 @@ make image         <span class="c"># kernel Image (aarch64) / vmlinux (x86_64) +
         <tr><td class="mono">2026-08-22</td><td class="mono">P0-6</td>
         <td><code>versions.mk</code> added as the single source of truth for external components — Buildroot 2026.02.3, Linux 6.18.45, Firecracker v1.16.1, Go 1.27.0, each with its sha256 and each overridable via <code>?=</code>. The Makefile now hard-<code>include</code>s it (a build with no version policy fails rather than floats) and gained a <code>versions</code> target; the <code>toolchain</code> and <code>image</code> stubs print the pinned values. <code>dev/install-firecracker.sh</code> resolves its version from the file, and a new <code>dev/install-go.sh</code> installs the pinned Go toolchain, removing the shadowing apt package. Choices and the apt-to-tarball change for Go recorded as decision D11; quickstart section 7 updated to match.</td>
         <td class="mono">make versions → buildroot 2026.02.3 · linux 6.18.45 · firecracker v1.16.1 · go 1.27.0<br>limactl shell kelyfos-dev -- bash dev/install-go.sh<br>==&gt; sha256 ok: 51798d2c42d0e1c6ed7fd9f48728b4193abac9e8aad6dbac2fe96a81f5909bda<br>go version go1.27.0 linux/arm64 (was go1.22.2 from apt)<br>rerun of dev/install-firecracker.sh with no env → resolved v1.16.1 from versions.mk, sha256 ok</td></tr>
+        <tr><td class="mono">2026-08-22</td><td class="mono">P0-7</td>
+        <td>Decision D5 executed: canonical Apache-2.0 text committed as <code>LICENSE</code> at the repository root (11 358 bytes, the upstream file verbatim including the appendix), and <code>CONTRIBUTING.md</code> added requiring a DCO <code>Signed-off-by</code> line on every commit, quoting DCO 1.1 verbatim and explaining why sign-off exists (provenance without a CLA, keeping a future relicensing option open). The guide also points contributors at PLAN.html first, restates the section 2 non-goals as hard boundaries, and states plainly that KelyfOS makes no hardened-security claims before phase 4. All commits in this repository have carried sign-off since P0-1.</td>
+        <td class="mono">curl https://www.apache.org/licenses/LICENSE-2.0.txt -o LICENSE<br>sha256(LICENSE) = cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30<br>test -f LICENSE &amp;&amp; test -f versions.mk → both exist; exit=0<br>git log --format='%G? %s' → every commit carries Signed-off-by</td></tr>
+        <tr><td class="mono">2026-08-22</td><td class="mono">P0</td>
+        <td><b>Phase 0 acceptance test — passed.</b> All four steps run verbatim, step 3 against a genuinely fresh <code>git clone</code> of <code>origin/main</code> on the Linux layer's own disk (not the virtiofs mount). Phase 0 closed; tagged <b>v0.0</b> — the workbench exists. Phase 1 is now active, starting at P1-0 (write <code>docs/protocol.md</code>).</td>
+        <td class="mono">limactl shell kelyfos-dev:<br>1) ls -l /dev/kvm → crw-rw-rw- 1 root kvm 10, 232 Aug 22 11:29 /dev/kvm<br>2) firecracker --version → Firecracker v1.16.1 (≥ 1.7) · exit_code=0<br>3) git clone https://github.com/p4r4n0rm4l/KelyfOS.git ~/acceptance-p0/kelyfos &amp;&amp; make<br>&nbsp;&nbsp;&nbsp;HEAD 6dda179 · target list printed (clean, help, image, run, test, toolchain, versions)<br>&nbsp;&nbsp;&nbsp;+ pinned versions: buildroot 2026.02.3 · linux 6.18.45 · firecracker v1.16.1 · go 1.27.0 · make exit=0<br>4) test -f LICENSE &amp;&amp; test -f versions.mk → both exist; exit=0</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
