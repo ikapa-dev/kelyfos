@@ -1173,6 +1173,31 @@ before:  Vulnerability #1: GO-2026-5024
 after:   No vulnerabilities found.
 
 $ gofmt -l .   (empty)     $ go vet ./...   ok     $ go test ./...   all packages ok</pre></td></tr>
+        <tr><td class="mono">2026-08-23</td><td class="mono">P3-6</td>
+        <td><b>Follow-up to the row above: <code>cancel-in-progress</code> now applies to branches only, not to
+        <code>main</code>.</b> The defect showed itself twice within an hour and both times the same way. This project's
+        protocol produces closely-spaced pairs of pushes &mdash; the work, then <code>STATUS.md</code> &mdash; and the second
+        push cancelled the first commit's build. Because the status commit is documentation-only, its own run legitimately
+        skipped <code>build</code> and <code>boot</code>, so the pair ended with a green tick against a commit whose code had
+        never been compiled or booted. That is worse than a red build: it is a commit that <i>looks</i> verified. Superseding
+        an older run is the right behaviour on a branch, where only the tip matters; on <code>main</code> every commit is one
+        someone may bisect to. The cancelled run for the E1-3 commit was re-run to confirm it, and the deps commit before it
+        needed the same treatment.</td>
+        <td class="mono"><pre>before the fix:
+$ gh run list
+32603407221  in_progress            b2360f78   STATUS.md only
+32603388615  completed  cancelled   050022df   E1-3  &lt;- cancelled by the above
+32601915193  completed  success     d69064eb   STATUS.md only (build+boot skipped)
+32601898225  completed  cancelled   966e0ab4   deps  &lt;- same shape, re-run to green
+
+concurrency:
+  group: ci-${{ github.ref }}-${{ github.event_name }}
+- cancel-in-progress: true
++ cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+after the fix, both runs green on their own commits:
+32603388615  success  050022df  E1-3            (re-run)
+32603455113  success  fec01ab3  concurrency fix (re-run)</pre></td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
