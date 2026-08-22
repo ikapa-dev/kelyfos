@@ -1,0 +1,714 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>KelyfOS — Project Brief &amp; Progress</title>
+<style>
+  :root{
+    --bg:#10161d;         /* deep blue-slate, not black */
+    --panel:#161e28;
+    --panel-2:#1b2431;
+    --line:#26313f;
+    --text:#c9d4de;
+    --muted:#71818f;
+    --amber:#f0a63c;      /* phosphor amber — primary accent */
+    --ok:#58c470;         /* kernel [ OK ] green — status only */
+    --warn:#d96a5f;       /* risk / blocked only */
+    --mono:ui-monospace,"Cascadia Code","SF Mono","JetBrains Mono",Consolas,monospace;
+    --sans:-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  @media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+  body{margin:0;background:var(--bg);color:var(--text);font:16px/1.65 var(--sans)}
+  .wrap{max-width:900px;margin:0 auto;padding:48px 24px 96px}
+
+  /* ---------- header ---------- */
+  .masthead{margin-bottom:40px}
+  .masthead h1{font:700 40px/1.1 var(--mono);letter-spacing:.02em;margin:0;color:#e8eef4}
+  .masthead h1 span{color:var(--amber)}
+  .tagline{margin:10px 0 0;font-size:17px;color:var(--text)}
+  .meta{margin-top:18px;font:13px/1.8 var(--mono);color:var(--muted)}
+  .meta b{color:var(--text);font-weight:600}
+  .meta .amber{color:var(--amber)}
+
+  /* ---------- boot-log dashboard (signature) ---------- */
+  .bootlog{background:var(--panel);border:1px solid var(--line);border-radius:6px;
+           padding:20px 22px;font:14px/2 var(--mono)}
+  .bootlog .cap{color:var(--muted);font-size:12px;letter-spacing:.14em;text-transform:uppercase;margin-bottom:10px}
+  .bl-row{display:flex;align-items:center;gap:14px;white-space:nowrap}
+  .bl-tag{width:88px;flex:none;text-align:center;font-weight:600}
+  .bl-tag.done{color:var(--ok)}
+  .bl-tag.active{color:var(--amber)}
+  .bl-tag.todo{color:var(--muted)}
+  .bl-name{flex:1;overflow:hidden;text-overflow:ellipsis;color:var(--text)}
+  .bl-name a{color:inherit;text-decoration:none;border-bottom:1px dotted var(--line)}
+  .bl-bar{flex:none;width:180px;height:9px;background:#0c1117;border:1px solid var(--line);border-radius:2px;overflow:hidden}
+  .bl-bar i{display:block;height:100%;width:0;background:var(--amber)}
+  .bl-row[data-s="done"] .bl-bar i{background:var(--ok)}
+  .bl-pct{flex:none;width:44px;text-align:right;color:var(--muted)}
+  .bl-total{margin-top:12px;padding-top:12px;border-top:1px dashed var(--line)}
+  .bl-total .bl-bar{width:180px}
+  .focusline{margin-top:14px;font:14px/1.6 var(--mono)}
+  .focusline b{color:var(--amber);font-weight:600}
+
+  /* ---------- sections ---------- */
+  section{margin-top:56px}
+  .eyebrow{font:12px/1 var(--mono);letter-spacing:.16em;text-transform:uppercase;color:var(--muted);margin:0 0 8px}
+  h2{font:600 24px/1.25 var(--mono);color:#e8eef4;margin:0 0 16px}
+  h3{font:600 16px/1.3 var(--mono);color:var(--text);margin:26px 0 10px}
+  p{margin:0 0 14px}
+  .quiet{color:var(--muted)}
+  code{font:13.5px var(--mono);background:var(--panel-2);border:1px solid var(--line);
+       border-radius:4px;padding:1px 6px;color:#e3b06a}
+  pre{background:var(--panel);border:1px solid var(--line);border-radius:6px;
+      padding:16px 18px;overflow-x:auto;font:13px/1.7 var(--mono);color:var(--text)}
+  pre code{background:none;border:0;padding:0;color:inherit}
+  pre .c{color:var(--muted)}
+  pre .out{color:var(--ok)}
+  ul.plain{padding-left:20px;margin:0 0 14px}
+  ul.plain li{margin:6px 0}
+  table{width:100%;border-collapse:collapse;font-size:14.5px;margin:0 0 14px}
+  th,td{text-align:left;padding:9px 12px;border:1px solid var(--line);vertical-align:top}
+  th{background:var(--panel);font:600 12px/1.4 var(--mono);letter-spacing:.08em;
+     text-transform:uppercase;color:var(--muted)}
+  td{background:transparent}
+  td.mono, .mono{font:13.5px var(--mono)}
+
+  /* ---------- phases ---------- */
+  .phase{background:var(--panel);border:1px solid var(--line);border-radius:6px;
+         padding:24px 26px;margin-top:28px}
+  .phase-head{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap}
+  .kconfig{font:12px var(--mono);color:var(--muted);letter-spacing:.06em}
+  .phase h2{margin:2px 0 0;font-size:21px}
+  .badge{font:12px/1 var(--mono);font-weight:700;padding:5px 10px;border-radius:3px;
+         border:1px solid var(--line);letter-spacing:.08em;margin-left:auto}
+  .phase[data-status="todo"]   .badge{color:var(--muted)}
+  .phase[data-status="active"] .badge{color:var(--amber);border-color:var(--amber)}
+  .phase[data-status="done"]   .badge{color:var(--ok);border-color:var(--ok)}
+  .goal{margin:14px 0 4px;color:var(--text)}
+  .goal b{color:var(--amber);font-weight:600}
+  ul.tasks{list-style:none;padding:0;margin:10px 0 0}
+  ul.tasks li{display:flex;gap:12px;align-items:flex-start;padding:8px 0;border-top:1px dashed var(--line)}
+  ul.tasks li:first-child{border-top:0}
+  ul.tasks input{margin-top:5px;accent-color:var(--ok);flex:none;cursor:not-allowed}
+  ul.tasks .tid{font:12px/1.9 var(--mono);color:var(--muted);flex:none;width:46px}
+  ul.tasks .tk{flex:1}
+  .accept{margin-top:20px;border-top:1px solid var(--line);padding-top:16px}
+  .accept h4{margin:0 0 10px;font:600 13px/1 var(--mono);letter-spacing:.12em;
+             text-transform:uppercase;color:var(--amber)}
+  .accept ol{margin:0;padding-left:22px}
+  .accept li{margin:7px 0}
+  .exit{margin-top:16px;font:13px var(--mono);color:var(--muted)}
+  .exit b{color:var(--text)}
+
+  .callout{border-left:3px solid var(--amber);background:var(--panel);
+           padding:14px 18px;border-radius:0 6px 6px 0;margin:16px 0}
+  .callout.red{border-left-color:var(--warn)}
+  a{color:var(--amber)}
+  footer{margin-top:72px;padding-top:20px;border-top:1px solid var(--line);
+         font:12.5px/1.8 var(--mono);color:var(--muted)}
+  @media print{
+    body{background:#fff;color:#111}
+    .bootlog,.phase,pre{border-color:#bbb;background:#fff}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<!-- ====================================================== MASTHEAD -->
+<header class="masthead">
+  <h1>Kelyf<span>OS</span></h1>
+  <p class="tagline">A minimal, agent-native guest operating system image for microVM sandboxes.
+     One command runs an AI agent inside a hardware-isolated VM with deny-all egress,
+     injected secrets, full audit replay, and millisecond forking.</p>
+  <div class="meta">
+    owner: <b>John</b> &nbsp;·&nbsp; developer: <b>Claude Code</b> &nbsp;·&nbsp;
+    status: <b class="amber" id="meta-status">Phase 0 — active</b> &nbsp;·&nbsp;
+    last updated: <b id="meta-updated">2026-08-22</b><br>
+    repo file: <b>PLAN.html</b> (commit this document at the repository root — it is the single source of truth)<br>
+    <span class="quiet">KelyfOS — from κέλυφος (kélyfos), "shell": the guest OS wrapped around the agent. Formerly working-titled "agos" (D4 → D10).</span>
+  </div>
+</header>
+
+<!-- ====================================================== DASHBOARD -->
+<div class="bootlog" id="bootlog">
+  <div class="cap">Boot sequence — project status (computed from task checkboxes below)</div>
+  <div class="bl-row" data-phase="0" data-s="todo">
+    <span class="bl-tag todo">[ TODO ]</span>
+    <span class="bl-name"><a href="#p0">Phase 0 — Environment &amp; scaffold</a></span>
+    <span class="bl-bar"><i></i></span><span class="bl-pct">0%</span>
+  </div>
+  <div class="bl-row" data-phase="1" data-s="todo">
+    <span class="bl-tag todo">[ TODO ]</span>
+    <span class="bl-name"><a href="#p1">Phase 1 — Minimal bootable guest (v0.1)</a></span>
+    <span class="bl-bar"><i></i></span><span class="bl-pct">0%</span>
+  </div>
+  <div class="bl-row" data-phase="2" data-s="todo">
+    <span class="bl-tag todo">[ TODO ]</span>
+    <span class="bl-name"><a href="#p2">Phase 2 — Agent-native supervisor (v0.2)</a></span>
+    <span class="bl-bar"><i></i></span><span class="bl-pct">0%</span>
+  </div>
+  <div class="bl-row" data-phase="3" data-s="todo">
+    <span class="bl-tag todo">[ TODO ]</span>
+    <span class="bl-name"><a href="#p3">Phase 3 — Snapshots, flavors, compatibility (v0.3)</a></span>
+    <span class="bl-bar"><i></i></span><span class="bl-pct">0%</span>
+  </div>
+  <div class="bl-row" data-phase="4" data-s="todo">
+    <span class="bl-tag todo">[ TODO ]</span>
+    <span class="bl-name"><a href="#p4">Phase 4 — Hardening &amp; direction (backlog)</a></span>
+    <span class="bl-bar"><i></i></span><span class="bl-pct">0%</span>
+  </div>
+  <div class="bl-row bl-total" data-s="todo">
+    <span class="bl-tag active">[ INIT ]</span>
+    <span class="bl-name">Overall</span>
+    <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
+  </div>
+  <div class="focusline">Current focus: <b id="focus">P0-2 — install Firecracker and confirm the version</b></div>
+</div>
+
+<!-- ====================================================== 1. END GOAL -->
+<section id="goal">
+  <p class="eyebrow">section 1</p>
+  <h2>End goal &amp; definition of done</h2>
+  <p><b>Mission.</b> Build the guest OS layer that every agent-sandbox platform treats as an
+     afterthought: a tiny, immutable Linux image whose init system speaks MCP, with security
+     policy and auditability baked into the image itself — self-hostable on any Linux/KVM box,
+     portable across microVM runtimes.</p>
+  <p>The project is <b>done (v1.0-worthy)</b> when all of the following are true:</p>
+  <ul class="plain">
+    <li>A fresh user goes from <code>git clone</code> to a working sandboxed agent command in under 5 minutes on a stock Linux/KVM machine.</li>
+    <li><code>kelyfos run --image dev --workspace . --allow github.com --secret GITHUB_TOKEN@github.com -- &lt;agent cmd&gt;</code> works as advertised: the agent operates only through MCP tools on your project files, egress outside the allowlist fails, and the secret value never exists inside the guest.</li>
+    <li>Boot-to-ready ≤ 300 ms cold, ≤ 100 ms from snapshot; <code>kelyfos fork -n 4</code> yields four divergent copies of a prepared environment.</li>
+    <li>Every session produces a complete, tamper-evident (hash-chained) audit log — live (<code>kelyfos log --follow</code>, <code>kelyfos watch</code>) and exportable as a standalone, verifiable HTML session report.</li>
+    <li>An E2B-compatible API shim passes an SDK smoke test, so existing code can point at a self-hosted kelyfos box.</li>
+    <li>Published as open source with a README, quickstart, and demo; John uses it for his own Claude Code runs (dogfooding).</li>
+  </ul>
+  <p class="quiet">Strategic intent: reputation, learning, and consulting leads first. The one
+     commercial thread worth keeping alive is the EU-compliance / self-hosted angle
+     (hardened, auditable images + support for European teams). Revenue is a bonus, not the goal.</p>
+</section>
+
+<!-- ====================================================== 2. WHAT WE BUILD -->
+<section id="what">
+  <p class="eyebrow">section 2</p>
+  <h2>What we are building</h2>
+  <table>
+    <tr><th style="width:190px">Component</th><th>Description</th></tr>
+    <tr><td class="mono">image/</td>
+        <td>A Buildroot pipeline producing two artifacts: a stripped <code>vmlinux</code>
+            (virtio-only, no modules) and a read-only ext4 rootfs (target &lt; 200 MB) with a
+            tmpfs overlay for writes. Flavors: <code>base</code>, <code>dev</code>,
+            later <code>browser</code>.</td></tr>
+    <tr><td class="mono">supervisor/</td>
+        <td>The novel software. One static Go binary running as PID 1 inside the guest:
+            mounts, zombie reaping, and an MCP server over vsock exposing the machine as tools —
+            <code>exec</code>, <code>read_file</code>, <code>write_file</code>,
+            <code>list_dir</code>, <code>upload</code>/<code>download</code>. No SSH, no shell
+            login, no cloud-init. The sandbox is a toolbox, not a computer.</td></tr>
+    <tr><td class="mono">host/</td>
+        <td>The <code>kelyfos</code> CLI (Go): assembles Firecracker config, boots/stops VMs,
+            bridges MCP to stdio, runs the egress proxy (deny-all + domain allowlist), injects
+            secrets at the proxy so credentials never enter the guest, packs and syncs
+            <code>--workspace</code> directories, self-checks the environment
+            (<code>kelyfos doctor</code>), and writes the flight recorder (append-only,
+            hash-chained JSONL of every tool call and network attempt).</td></tr>
+    <tr><td class="mono">shim/</td>
+        <td>E2B-compatible REST subset (create sandbox / exec / files) so existing SDK users can
+            point at a self-hosted kelyfos host. Adoption hack, phase 3.</td></tr>
+    <tr><td class="mono">snapshots</td>
+        <td>First-class snapshot/restore/fork via Firecracker snapshots: clock resync, entropy,
+            network re-init handled correctly so one prepared environment forks into N parallel
+            branches.</td></tr>
+  </table>
+
+  <h3>Non-goals — hard boundaries</h3>
+  <ul class="plain">
+    <li><b>No new kernel.</b> Stock Linux, custom config only.</li>
+    <li><b>No VMM.</b> Firecracker (cloud-hypervisor later, maybe). We ship what boots <i>inside</i> it.</li>
+    <li><b>No orchestrator, no control plane, no hosted service, no web dashboard.</b> Single-host CLI; monitoring is read-only viewers over the flight recorder (decision D7). Fleet management is someone else's product.</li>
+    <li><b>No GUI desktop / computer-use layer</b> in v0.x. Headless browser flavor is the closest we get, and only in phase 4.</li>
+    <li><b>No Kubernetes integration</b> in v0.x.</li>
+  </ul>
+  <div class="callout">Scope discipline is the project's survival strategy. Every one of these
+    non-goals has a funded startup already doing it. The guest image is the empty niche — stay in it.</div>
+</section>
+
+<!-- ====================================================== 3. POSITIONING -->
+<section id="why">
+  <p class="eyebrow">section 3</p>
+  <h2>Why this exists</h2>
+  <p>The runtime layer is crowded (E2B, Daytona, Beam, Temps, PandaStack, Microsandbox,
+     OpenComputer, Northflank, Modal…). All of them build control planes and boot a generic
+     Ubuntu/Alpine rootfs inside. Nobody ships the guest itself as an opinionated, portable
+     product: MCP-native init, deny-all egress, secrets kept outside the VM, audit-first design.
+     The analogy is Talos Linux — Talos didn't compete with Kubernetes, it became the OS
+     purpose-built to be run <i>by</i> it.</p>
+  <p>Differentiators, in priority order: (1) agent-native interface — the guest is a set of MCP
+     tools, not a computer with a shell; (2) auditability — a replayable flight recorder nobody
+     else offers out of the box; (3) self-hosted and EU-friendly — data residency is the one
+     buying reason the US-hosted platforms cannot serve.</p>
+</section>
+
+<!-- ====================================================== 4. STACK -->
+<section id="stack">
+  <p class="eyebrow">section 4</p>
+  <h2>Stack &amp; architecture</h2>
+  <table>
+    <tr><th style="width:190px">Choice</th><th>Decision</th></tr>
+    <tr><td>Image build</td><td>Buildroot (external tree). Nix flake reconsidered in phase 4 — see decision D2.</td></tr>
+    <tr><td>Guest kernel</td><td>Latest LTS, custom fragment: virtio-blk / virtio-net / virtio-vsock, no modules, quiet.</td></tr>
+    <tr><td>Architectures</td><td><b>aarch64 primary</b> (dev machine, ARM servers/Graviton, cheap EU ARM hosting) and x86_64 (CI reference, most servers) from one pipeline via an <code>ARCH</code> parameter. Kernel artifact differs: aarch64 boots the uncompressed <code>Image</code>, x86_64 boots <code>vmlinux</code>.</td></tr>
+    <tr><td>Guest userland</td><td>musl + BusyBox in phase 1; supervisor replaces init in phase 2.</td></tr>
+    <tr><td>Supervisor &amp; CLI</td><td>Go, static binaries, cross-compiled from the host repo — see decision D3.</td></tr>
+    <tr><td>Host ⇄ guest transport</td><td>virtio-vsock, Firecracker hybrid model: guest speaks AF_VSOCK; the host side is a dedicated Unix domain socket with a <code>CONNECT &lt;port&gt;</code> handshake — separate from the Firecracker API socket, and no host vsock kernel module is involved (bypassing vhost is the point of the hybrid design, unlike QEMU's vhost-vsock). Guest CID set to 3 via the Firecracker vsock resource's <code>guest_cid</code> field; the host is always CID 2 (<code>VMADDR_CID_HOST</code>) per the virtio-vsock spec.</td></tr>
+    <tr><td>VMM</td><td>Firecracker ≥ 1.7, jailer adopted in phase 4.</td></tr>
+    <tr><td>Dev machine</td><td>MacBook Pro M5 Max / 64 GB: macOS 15+ → Lima Linux VM (<code>vmType: vz</code>, <code>nestedVirtualization: true</code>) → <code>/dev/kvm</code> → Firecracker. Alternates: Windows 11 → WSL2, or any Linux/KVM box. Firecracker itself always runs on Linux.</td></tr>
+  </table>
+<pre><code><span class="c"># Runtime topology</span>
+┌──────────────────────────── host (Linux/KVM) ────────────────────────────┐
+│  kelyfos CLI ──┬── egress proxy (deny-all + allowlist, secret injection)    │
+│             ├── flight recorder (JSONL append-only)                      │
+│             └── Firecracker ──► microVM                                  │
+│                                 ┌─────────────────────────────┐         │
+│                                 │ vmlinux (virtio-only)        │         │
+│                                 │ supervisor = PID 1           │         │
+│                                 │   └─ MCP server over vsock   │         │
+│                                 │ rootfs RO + tmpfs overlay    │         │
+│                                 └─────────────────────────────┘         │
+│  MCP client (Claude Code, any) ⇄ kelyfos mcp (stdio bridge) ⇄ vsock        │
+└──────────────────────────────────────────────────────────────────────────┘</code></pre>
+</section>
+
+<!-- ====================================================== 5. REPO -->
+<section id="repo">
+  <p class="eyebrow">section 5</p>
+  <h2>Repository layout</h2>
+<pre><code>kelyfos/
+├── PLAN.html            <span class="c">← this document. Living source of truth.</span>
+├── bin/                 <span class="c">← build output (gitignored): kelyfos CLI</span>
+├── dev/                 <span class="c">← host setup: lima.yaml (macOS), WSL2 notes</span>
+├── README.md
+├── Makefile             <span class="c">← targets: toolchain, image, run, clean, test</span>
+├── image/
+│   ├── buildroot/       <span class="c">← external tree: defconfig, kernel fragment, rootfs overlay</span>
+│   └── flavors/         <span class="c">← base/, dev/, (browser/ later)</span>
+├── supervisor/          <span class="c">← Go: PID 1 + MCP server (guest)</span>
+├── host/                <span class="c">← Go: kelyfos CLI, egress proxy, flight recorder</span>
+├── shim/                <span class="c">← E2B-compatible REST subset (phase 3)</span>
+└── docs/</code></pre>
+</section>
+
+<section id="phases-intro">
+  <p class="eyebrow">section 6</p>
+  <h2>Phases &amp; checkpoints</h2>
+  <p class="quiet">Execution order is list position, top to bottom. Task IDs are stable labels and may be
+     non-sequential after amendments — never renumber existing IDs once work has started.</p>
+</section>
+
+<!-- ====================================================== PHASE 0 -->
+<section class="phase" id="p0" data-phase="0" data-status="active">
+  <div class="phase-head">
+    <div>
+      <div class="kconfig">config KELYFOS_PHASE_0</div>
+      <h2>Phase 0 — Environment &amp; scaffold</h2>
+    </div>
+    <span class="badge">ACTIVE</span>
+  </div>
+  <p class="goal"><b>Goal:</b> a machine that can run Firecracker, and an empty repo with working build scaffolding. Est. one weekend.</p>
+  <ul class="tasks">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P0-1</span><span class="tk">Set up the Linux layer on the dev machine — MacBook Pro M5 Max / 64 GB, macOS 15+ (nested virtualization needs M3 or newer): install Lima, create an Ubuntu 24.04 arm64 VM with <code>vmType: vz</code> and <code>nestedVirtualization: true</code> (start with 6 CPUs / 12 GiB RAM / 60 GiB disk), commit the config as <code>dev/lima.yaml</code>, then verify <code>ls -l /dev/kvm</code> succeeds inside it. Alternate hosts: Windows 11 → WSL2 Ubuntu with <code>nestedVirtualization=true</code> under <code>[wsl2]</code> in <code>%UserProfile%\.wslconfig</code> + <code>wsl --update</code>; or any Linux/KVM box directly. Record the chosen machine in the progress log.</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P0-2</span><span class="tk">Install Firecracker (latest release binary) and confirm <code>firecracker --version</code>.</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P0-3</span><span class="tk">Scaffold the repository exactly as in section 5; <code>git init</code>, first commit, push.</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P0-4</span><span class="tk">Makefile with stub targets (<code>toolchain</code>, <code>image</code>, <code>run</code>, <code>clean</code>, <code>test</code>) that print what they will do.</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P0-5</span><span class="tk">Commit this document as <code>PLAN.html</code> at the repo root.</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P0-6</span><span class="tk">Pin all toolchain versions in <code>versions.mk</code>: Buildroot release, kernel LTS line, Firecracker version, Go version. Every build reads from this file; no floating "latest".</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P0-7</span><span class="tk"><b>Decided (D5) — execute:</b> commit the Apache-2.0 <code>LICENSE</code> at the repo root, and add <code>CONTRIBUTING.md</code> requiring DCO sign-off (<code>Signed-off-by</code>) on every contribution — keeping a future relicensing option open without contributor archaeology. No further sign-off needed.</span></li>
+  </ul>
+  <div class="accept">
+    <h4>Acceptance test — recreate &amp; verify</h4>
+    <ol>
+      <li>Inside the Linux layer (Lima VM / WSL2 / bare Linux): <code>ls -l /dev/kvm</code> → expect a character device, no error.</li>
+      <li>Run <code>firecracker --version</code> → expect a version string ≥ 1.7.</li>
+      <li>Run <code>make</code> in a fresh clone → expect the target list, exit 0.</li>
+      <li>Run <code>test -f LICENSE &amp;&amp; test -f versions.mk</code> → both exist.</li>
+    </ol>
+  </div>
+  <p class="exit">Exit checkpoint: <b>tag v0.0</b> — "the workbench exists".</p>
+</section>
+
+<!-- ====================================================== PHASE 1 -->
+<section class="phase" id="p1" data-phase="1" data-status="todo">
+  <div class="phase-head">
+    <div>
+      <div class="kconfig">config KELYFOS_PHASE_1</div>
+      <h2>Phase 1 — Minimal bootable guest (v0.1 · "it boots")</h2>
+    </div>
+    <span class="badge">TODO</span>
+  </div>
+  <p class="goal"><b>Goal:</b> a self-built kernel + rootfs that boots under Firecracker and answers one command over vsock. Est. 3–4 weekends.</p>
+  <ul class="tasks">
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P1-0</span><span class="tk">Spec before code — write <code>docs/protocol.md</code> covering: (a) Firecracker's <b>hybrid vsock</b> model — the guest speaks AF_VSOCK, but the host side is a dedicated Unix domain socket (this is <i>not</i> the Firecracker API socket, and no host vsock kernel module is involved): host-initiated connections open the vsock UDS and send <code>CONNECT &lt;port&gt;\n</code>, guest-initiated connections to host CID 2 port N land on <code>&lt;uds_path&gt;_&lt;port&gt;</code>; (b) project constants: <code>vsock.guest_cid = 3</code> and the port assignments (exec, log, MCP channels); (c) the newline-delimited JSON frame schema for exec (request id, cmd, stdin, timeout; response chunks: stream, data, exit code); (d) MCP framing for phase 2: newline-delimited JSON-RPC per the MCP stdio transport spec — "Messages are delimited by newlines, and MUST NOT contain embedded newlines" (spec §Transports, all revisions incl. 2025-11-25); explicitly <i>not</i> LSP <code>Content-Length</code> framing — so the <code>kelyfos mcp</code> bridge is a pass-through. All later tasks implement this document.</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P1-1</span><span class="tk">Buildroot external tree parameterized by <code>ARCH</code> (aarch64 primary — the dev machine; x86_64 second): musl, BusyBox; <code>make toolchain</code> downloads and prepares Buildroot pinned to a release, defaulting <code>ARCH</code> to the build host.</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P1-2</span><span class="tk">Kernel config fragments per arch: virtio-blk, virtio-net, virtio-vsock, ext4, no loadable modules, no real-hardware drivers, <code>quiet</code> boot. aarch64 and x86_64 differ in console device and boot arguments — keep those bits in arch-specific fragments and verify each against the Firecracker docs. Artifact formats are strict: aarch64 must produce the uncompressed <code>Image</code> build target (not <code>Image.gz</code>); x86_64 must produce the uncompressed ELF <code>vmlinux</code> (Firecracker does not boot <code>bzImage</code>). The fragments must also state <code># CONFIG_MODULES is not set</code> explicitly — "no loadable modules" is a config assertion, not a hope.</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P1-3</span><span class="tk">Guest init script: mount <code>/proc</code>, <code>/sys</code>, <code>/dev</code>, tmpfs overlay on a read-only root, then start a vsock listener stub.</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P1-4</span><span class="tk"><code>make image</code> outputs the kernel artifact (<code>Image</code> on aarch64, <code>vmlinux</code> on x86_64) + <code>rootfs.ext4</code>; rootfs &lt; 200 MB.</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P1-5</span><span class="tk"><code>kelyfos run</code> (Go, in <code>host/</code>): write Firecracker config JSON, boot the VM, clean teardown on Ctrl-C.</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P1-6</span><span class="tk"><code>kelyfos exec "&lt;cmd&gt;"</code>: newline-delimited JSON over Firecracker's vsock UDS → run in guest → return stdout, stderr, exit code.</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P1-7</span><span class="tk">Measure boot-to-ready (host timestamp → first vsock heartbeat). Record the number in the progress log. Target this phase: ≤ 500 ms.</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P1-8</span><span class="tk">Cross-arch gate: <code>make image ARCH=x86_64</code> cross-builds cleanly on the aarch64 dev machine (build only — no local boot required). From this point it must keep passing on every commit; boot verification for x86_64 lands with CI in P3-6. Pulled forward so x86-specific breakage is caught in days, not weeks.</span></li>
+  </ul>
+  <div class="accept">
+    <h4>Acceptance test — recreate &amp; verify</h4>
+    <ol>
+      <li>Fresh clone → <code>make toolchain &amp;&amp; make image</code> → both artifacts exist.</li>
+      <li><code>make image ARCH=x86_64</code> cross-builds successfully on the aarch64 dev machine.</li>
+      <li><code>kelyfos run</code> in terminal A → VM reaches ready state, stays up.</li>
+      <li><code>kelyfos exec "uname -a"</code> in terminal B → prints the <i>guest</i> kernel string, exit 0.</li>
+      <li><code>kelyfos exec "cat /etc/os-release"</code> → identifies kelyfos, not the host distro.</li>
+      <li>Ctrl-C in terminal A → VM and socket files cleaned up.</li>
+    </ol>
+  </div>
+  <p class="exit">Exit checkpoint: <b>tag v0.1</b>, boot time recorded in the log.</p>
+</section>
+
+<!-- ====================================================== PHASE 2 -->
+<section class="phase" id="p2" data-phase="2" data-status="todo">
+  <div class="phase-head">
+    <div>
+      <div class="kconfig">config KELYFOS_PHASE_2</div>
+      <h2>Phase 2 — Agent-native supervisor (v0.2 · "a toolbox, not a computer")</h2>
+    </div>
+    <span class="badge">TODO</span>
+  </div>
+  <p class="goal"><b>Goal:</b> the differentiating layer — MCP as the only interface, policy and audit built in. Est. 3–4 weekends.</p>
+  <ul class="tasks">
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P2-0</span><span class="tk"><b>Design gate before P2-5/P2-6</b> — HTTPS makes plain CONNECT tunneling incompatible with header injection, so choose the TLS strategy: (a) TLS-terminating proxy with a per-install kelyfos CA baked into the guest trust store (transparent injection, MITM within your own box), or (b) CONNECT-only tunnel plus a guest-side credential helper that fetches short-lived tokens from the supervisor (no MITM, needs tool cooperation). Prototype the riskiest part, record the choice as decision D6, then implement P2-5/P2-6 accordingly.</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P2-1</span><span class="tk">Supervisor as PID 1 (static Go binary): mounts, zombie reaping, clean shutdown on vsock command. Replaces the P1 init script.</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P2-2</span><span class="tk">MCP server over vsock with tools: <code>exec</code> (streaming stdout/stderr), <code>read_file</code>, <code>write_file</code>, <code>list_dir</code>, <code>upload</code>, <code>download</code>.</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P2-3</span><span class="tk"><code>kelyfos mcp</code>: stdio ⇄ vsock bridge so any MCP client (Claude Code first) can attach to a running sandbox.</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P2-4</span><span class="tk">Flight recorder: every tool call and result appended as JSONL on the host; <code>kelyfos log [--follow]</code> replays a session. Stable, versioned event schema documented in <code>docs/events.md</code> (command start / output / exit, file writes, egress allowed / blocked, secret use by name — never values). Each event embeds the hash of the previous event, making every session log a tamper-evident chain verifiable with <code>kelyfos log --verify</code>. The P3 viewers build on this contract; the schema is the product, viewers are replaceable.</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P2-5</span><span class="tk">Egress off by default (no NIC). <code>--allow d1,d2</code> boots with a NIC: the CLI creates a per-VM TAP (<code>ip tuntap add kelyfos&lt;id&gt; mode tap</code>, /30 point-to-point addressing, no NAT and no IP forwarding — none is needed, because the proxy and DNS responder bind directly on the host's TAP address, so guest traffic terminates on the host and only the proxy process itself can reach the internet) and installs an nftables chain on it permitting only the host-side proxy port and DNS, dropping everything else; the guest gets <code>HTTP_PROXY</code>/<code>HTTPS_PROXY</code> pointing at the proxy (HTTP(S) CONNECT + DNS restricted to the allowlist). The exact nftables rule template is written into <code>docs/networking.md</code> as part of this task. Every attempt (allowed or blocked) is logged.</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P2-6</span><span class="tk">Secret injection: <code>--secret NAME@domain</code> — the proxy attaches the credential to matching requests; the value never appears in guest env, disk, or logs.</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P2-7</span><span class="tk">End-to-end dogfood: Claude Code attached via <code>kelyfos mcp</code> completes a small real task (clone a repo, edit, run tests) entirely inside the sandbox.</span></li>
+  </ul>
+  <div class="accept">
+    <h4>Acceptance test — recreate &amp; verify</h4>
+    <ol>
+      <li><code>kelyfos run --image base --allow github.com</code> → sandbox up.</li>
+      <li>Attach an MCP client via <code>kelyfos mcp</code> → tool list shows the six tools.</li>
+      <li>Inside: <code>exec "git clone https://github.com/octocat/Hello-World"</code> → succeeds (allowlisted).</li>
+      <li>Inside: <code>exec "curl -m 5 https://example.com"</code> → fails; the attempt appears as <b>blocked</b> in <code>kelyfos log</code>.</li>
+      <li>With <code>--secret GITHUB_TOKEN@github.com</code>: an authenticated API call succeeds, and <code>exec "env"</code> shows no token.</li>
+      <li><code>kelyfos log</code> replays the full session in order.</li>
+      <li><code>kelyfos log --verify</code> passes on the session; flipping one byte in the JSONL makes it fail.</li>
+    </ol>
+  </div>
+  <p class="exit">Exit checkpoint: <b>tag v0.2</b> — first demo-able security story.</p>
+</section>
+
+<!-- ====================================================== PHASE 3 -->
+<section class="phase" id="p3" data-phase="3" data-status="todo">
+  <div class="phase-head">
+    <div>
+      <div class="kconfig">config KELYFOS_PHASE_3</div>
+      <h2>Phase 3 — Snapshots, flavors, compatibility (v0.3 · "fork it")</h2>
+    </div>
+    <span class="badge">TODO</span>
+  </div>
+  <p class="goal"><b>Goal:</b> the performance story, the daily-driver UX, and the adoption hack — then go public. Est. 5–7 weekends.</p>
+  <ul class="tasks">
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P3-1</span><span class="tk"><code>kelyfos snapshot save|restore</code> via Firecracker snapshots. On resume the host sends a resync RPC over vsock — wall-clock timestamp plus fresh random bytes — and the supervisor applies them with <code>clock_settime(CLOCK_REALTIME)</code> and a write to <code>/dev/urandom</code> (ptp_kvm + chrony considered and rejected: too heavy for a BusyBox image). Target restore ≤ 100 ms.</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P3-2</span><span class="tk"><code>kelyfos fork -n N</code>: N restores from one snapshot, with the mechanism made explicit. The rootfs block device is opened read-only and <i>shared</i> by all forks — divergent writes already live in the in-guest tmpfs overlay, which is part of guest memory; each fork maps the memory snapshot file privately (<code>MAP_PRIVATE</code>), so the OS provides page-level copy-on-write for free. A workspace disk, if present, gets a per-fork sparse copy (<code>cp --reflink=auto</code>; falls back to a plain copy on ext4 — a <i>full</i> copy, so <code>fork</code> pre-checks free disk ≥ N × workspace image size and refuses with a clear error if short). v0.3 forks are vsock-only (no NIC) — networked forks require per-fork TAP re-pairing and unique guest network identity, deferred to backlog.</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P3-3</span><span class="tk"><code>dev</code> flavor from the same pipeline: git, curl, python3, node. Same guarantees, bigger toolbox.</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P3-4</span><span class="tk">E2B-compatible REST shim (create sandbox / exec / files subset) in <code>shim/</code>; smoke test with the E2B Python SDK pointed at localhost. Document it as best-effort subset.</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P3-10</span><span class="tk"><code>kelyfos run --workspace ./dir</code>: pack the directory into an ext4 image on the host and attach it as the second virtio-blk drive in the Firecracker drives config at boot (guest <code>/dev/vdb</code>, mounted at <code>/work</code>; rootfs stays <code>/dev/vda</code>). Image size: 2× the directory size, minimum 1 GiB, ceiling configurable in <code>kelyfos.toml</code>. Sync changes back to the host directory on clean shutdown (<code>--no-sync-back</code> to opt out). If the host directory changed during the run, refuse the in-place sync, warn, and write results to <code>./dir.kelyfos-out</code> instead. Firecracker has no shared-filesystem device — this is the local-files path, and the daily-driver feature.</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P3-11</span><span class="tk"><code>kelyfos doctor</code>: environment self-check — <code>/dev/kvm</code> present and accessible, nested virtualization, Firecracker version vs <code>versions.mk</code>, vsock availability, free disk for images; detects the host flavor (Lima / WSL2 / bare Linux) and tailors each fix accordingly. Each check prints pass/fail plus the exact fix (mirrors P0-1 and the quickstart). First command the README tells a new user to run.</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P3-12</span><span class="tk">Policy as code: <code>kelyfos.toml</code> in the project directory declares image, allowlist, secret names, workspace, and resource limits. Bare <code>kelyfos run</code> loads it; explicit flags override. It gets committed to the repo like <code>.devcontainer</code> — the sandbox policy travels with the project. Secret <i>values</i> still come from the host environment or keychain, never from the file.</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P3-8</span><span class="tk"><code>kelyfos log --export session.html</code>: a self-contained, replayable HTML report of one session — timeline, commands with output, file diffs, egress attempts (blocked in red), secret use by name only. No server; a template rendered over the flight-recorder JSONL. Doubles as the compliance artifact: one file that answers "what did the agent do?"</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P3-9</span><span class="tk"><code>kelyfos watch</code>: live single-sandbox TUI (Go + bubbletea) — streaming event lane, status line (uptime, egress allowed/blocked counters), quit without affecting the sandbox. Reads the flight recorder only. Source of the launch demo GIF.</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P3-5</span><span class="tk">Write <code>docs/threat-model.md</code>: what kelyfos defends against (agent-generated code, prompt-injected exfiltration, credential theft from the guest) and explicitly what it does not yet (host-side attacks pre-jailer, side channels, TLS-termination trade-offs from D6). Linked from the README. Launch is blocked until this exists.</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P3-6</span><span class="tk">CI: GitHub Actions — build BOTH arches; boot-test x86_64 on <code>ubuntu-latest</code> (standard Linux runners expose <code>/dev/kvm</code>; a udev/permissions step is typically required — verify at implementation); boot-test aarch64 on an arm64 runner if it exposes KVM, else build-only there with aarch64 boots covered on the dev machine. Run <code>kelyfos exec "uname -a"</code> as the smoke test, cache Buildroot toolchains per arch. Green pipeline required on <code>main</code>. Includes <code>make bench</code>: reproducible boot-to-ready and snapshot-restore timing (median of 10 runs), published as a CI artifact on every commit — the x86_64 runner numbers are the published reference; Mac-local numbers are informational (nested-virt overhead). Large regressions are flagged in the job summary but don't hard-fail (shared runners jitter). The milliseconds are the marketing.</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P3-7</span><span class="tk">Public launch: README with 5-minute quickstart, demo GIF, final availability sweep on "KelyfOS" (GitHub, package registries, domains, trademark-level search — name locked in D10), tag v0.3, launch post (HN / blog).</span></li>
+  </ul>
+  <div class="accept">
+    <h4>Acceptance test — recreate &amp; verify</h4>
+    <ol>
+      <li>Prepare a sandbox (clone a repo inside), <code>kelyfos snapshot save</code>.</li>
+      <li><code>kelyfos snapshot restore</code> → measured restore ≤ 100 ms, session continues.</li>
+      <li><code>kelyfos fork -n 4</code> → run a different command in each fork; results diverge; parents unchanged.</li>
+      <li>E2B Python SDK "hello world" against the shim → passes.</li>
+      <li>CI pipeline green on <code>main</code>; <code>docs/threat-model.md</code> exists and is linked from the README.</li>
+      <li><code>kelyfos log --export session.html</code> → the file opens standalone in a browser and replays the session; <code>kelyfos watch</code> streams live events during a run.</li>
+      <li><code>kelyfos doctor</code> on a fresh machine → every check passes or prints its exact fix.</li>
+      <li>Workspace round-trip: edit a file under <code>/work</code> inside the sandbox → after clean shutdown the change exists in the host directory.</li>
+      <li>A project containing <code>kelyfos.toml</code> runs with bare <code>kelyfos run</code> and gets the declared policy (verified via <code>kelyfos log</code>).</li>
+      <li>A person following only the README reaches a working <code>kelyfos exec</code> in ≤ 5 minutes.</li>
+    </ol>
+  </div>
+  <p class="exit">Exit checkpoint: <b>tag v0.3 + public repo</b>.</p>
+</section>
+
+<!-- ====================================================== PHASE 4 -->
+<section class="phase" id="p4" data-phase="4" data-status="todo">
+  <div class="phase-head">
+    <div>
+      <div class="kconfig">config KELYFOS_PHASE_4</div>
+      <h2>Phase 4 — Hardening &amp; direction (backlog, post-launch)</h2>
+    </div>
+    <span class="badge">TODO</span>
+  </div>
+  <p class="goal"><b>Goal:</b> defense in depth and the strategic thread. Unordered backlog — prioritize by community pull.</p>
+  <ul class="tasks">
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P4-1</span><span class="tk">Host hardening: run Firecracker under the jailer (cgroups, chroot, dropped privileges).</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P4-2</span><span class="tk">Guest hardening: seccomp / Landlock profiles per flavor.</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P4-3</span><span class="tk">Compliance groundwork: reproducible builds, signed images, SBOM per release — the substrate of the EU angle. Extend signing to session exports: <code>kelyfos log --export --sign</code> produces a report whose event chain and signature verify offline (<code>kelyfos verify report.html</code>).</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P4-4</span><span class="tk"><code>browser</code> flavor (headless Chromium) if users ask for it.</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P4-5</span><span class="tk">Decision gate: is there real pull for a paid EU-compliance pack (audit retention, hardened images, support)? Decide with evidence; record in the decision log.</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P4-6</span><span class="tk">Multi-lane <code>kelyfos watch</code>: one lane per running sandbox/fork, k9s-style, so <code>kelyfos fork -n 4</code> shows four agents working side by side. Still a reader of the flight recorder only — no management actions beyond kill/stop passthrough to the CLI.</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P4-7</span><span class="tk">One-command host integration (the Docker Desktop pattern): ship the <code>kelyfos</code> CLI for macOS/Windows/Linux, where on macOS/Windows it transparently provisions, starts, and stops its own Linux layer (Lima / WSL2) — <code>kelyfos doctor</code> creates it if missing, and users never touch the VM by hand. Same commands, same <code>kelyfos.toml</code>, same images everywhere. Backlog experiment behind it: a native macOS backend via libkrun on Apple's hypervisor, replacing the VM layer entirely.</span></li>
+  </ul>
+  <p class="exit">Exit checkpoint: none — this phase is a direction, not a deadline.</p>
+</section>
+
+<!-- ====================================================== QUICKSTART -->
+<section id="quickstart">
+  <p class="eyebrow">section 7</p>
+  <h2>Recreate &amp; test from zero — quickstart</h2>
+  <p>The canonical path a new machine (or a new contributor) follows. Every phase's acceptance
+     test assumes this baseline.</p>
+<pre><code><span class="c"># 1. Primary host — macOS 15+ on Apple Silicon (this project: MacBook Pro M5 Max, 64 GB).
+#    Nested virtualization needs an M3 or newer chip.</span>
+brew install lima
+limactl start --name kelyfos-dev dev/lima.yaml   <span class="c"># Ubuntu 24.04 arm64 · vmType: vz · nestedVirtualization: true</span>
+limactl shell kelyfos-dev
+<span class="c">#    Alternate hosts: Windows 11 → WSL2 Ubuntu (nestedVirtualization=true under [wsl2]
+#    in %UserProfile%\.wslconfig, then `wsl --update`); or any Linux/KVM box directly.</span>
+
+<span class="c"># 2. Inside the Linux VM — confirm KVM is exposed:</span>
+ls -l /dev/kvm
+<span class="out">crw-rw-rw- 1 root kvm 10, 232 ... /dev/kvm</span>
+
+<span class="c"># 3. Build tools (inside the VM):</span>
+sudo apt update &amp;&amp; sudo apt install -y build-essential git bc flex bison \
+     libssl-dev libelf-dev libncurses-dev unzip rsync file cpio wget curl golang
+
+<span class="c"># 4. Clone and build (ARCH defaults to the machine — aarch64 here):</span>
+git clone &lt;repo-url&gt; kelyfos &amp;&amp; cd kelyfos
+make toolchain     <span class="c"># downloads pinned Buildroot (long, once)</span>
+make image         <span class="c"># kernel Image (aarch64) / vmlinux (x86_64) + rootfs.ext4</span>
+
+<span class="c"># 5. Check, run, verify:</span>
+./bin/kelyfos doctor
+./bin/kelyfos run --image base &amp;
+./bin/kelyfos exec "uname -a"
+<span class="out">Linux kelyfos 6.x.x #1 SMP ... aarch64 GNU/Linux</span></code></pre>
+</section>
+
+<!-- ====================================================== DEV PROTOCOL -->
+<section id="protocol">
+  <p class="eyebrow">section 8</p>
+  <h2>Developer protocol — how Claude Code works on this project</h2>
+  <p>This file (<code>PLAN.html</code>) is the single source of truth. Read it fully before any
+     session. Then follow these rules, in order:</p>
+  <ul class="plain">
+    <li><b>1. Pick work top-down.</b> Take the first unchecked task in the lowest-numbered phase that is not <code>done</code>. List position defines order; task IDs are stable labels and may be non-sequential. Do not skip ahead across phases without a decision-log entry.</li>
+    <li><b>2. Small commits.</b> Reference task IDs in commit messages: <code>P1-6: exec over vsock</code>.</li>
+    <li><b>3. Record completion in this file.</b> When a task is verified working: add the <code>checked</code> attribute to its checkbox in the markup, and append a row to the Progress Log (date, task ID, what changed, evidence: the exact command run and a trimmed output snippet). The dashboard bars compute from the markup, not from browser clicks.</li>
+    <li><b>4. Close phases with the acceptance test.</b> Run the phase's acceptance steps verbatim, paste evidence into the Progress Log, set the phase's <code>data-status="done"</code> and its badge text to <code>DONE</code>, set the next phase to <code>active</code> / <code>ACTIVE</code>, and update the "Current focus" line (<code>#focus</code>) and header status (<code>#meta-status</code>).</li>
+    <li><b>5. Log deviations.</b> Any change of approach, library, or scope gets a Decision Log row with rationale <i>before</i> implementation. Non-goals in section 2 are hard boundaries — do not cross them; propose a decision-log entry and stop if a task seems to require it.</li>
+    <li><b>6. Append, never rewrite history.</b> Log rows are immutable. Update <code>#meta-updated</code> with today's date on every edit of this file.</li>
+    <li><b>7. Blocked?</b> Mark the task with <code>[BLOCKED: reason]</code> appended to its text, log it, and move to the next task. Surface all blockers at the end of the session summary.</li>
+  </ul>
+</section>
+
+<!-- ====================================================== PROGRESS LOG -->
+<section id="log">
+  <p class="eyebrow">section 9</p>
+  <h2>Progress log</h2>
+  <table id="progress-log">
+    <tr><th style="width:110px">Date</th><th style="width:70px">Task</th><th>What changed</th><th>Evidence</th></tr>
+    <tr><td class="mono">2026-08-21</td><td class="mono">—</td>
+        <td>Plan created. Scope locked to guest image + host CLI.</td>
+        <td class="mono">this document</td></tr>
+    <tr><td class="mono">2026-08-21</td><td class="mono">—</td>
+        <td>Completeness audit: added P0-6 (version pinning), P0-7 (license, John's sign-off), P1-0 (protocol spec), P2-0 (TLS/secret-injection design gate → D6), P3-5 (threat model), P3-6 (CI); launch renumbered to P3-7. Acceptance tests extended to match.</td>
+        <td class="mono">this document</td></tr>
+    <tr><td class="mono">2026-08-21</td><td class="mono">—</td>
+        <td>Monitoring scope added per decision D7: P3-8 (HTML session export), P3-9 (kelyfos watch TUI), P4-6 (multi-lane watch), P2-4 extended with a documented event schema (docs/events.md), non-goals extended with "no web dashboard". Note: task IDs are stable labels; list position defines execution order.</td>
+        <td class="mono">this document</td></tr>
+    <tr><td class="mono">2026-08-21</td><td class="mono">—</td>
+        <td>Pre-flight cross-check corrections: MCP framing fixed to newline-delimited JSON-RPC (MCP stdio transport) in P1-0; v0.3 forks constrained to vsock-only in P3-2; egress mechanism made explicit (TAP firewall + proxy env vars) in P2-5; WSL2 nested-virt recovery hint added to P0-1 and quickstart; Buildroot deps completed (wget, curl, ncurses); bin/ added to repo layout; secret flag syntax unified; section-6 marker added with the ID/order rule.</td>
+        <td class="mono">this document</td></tr>
+    <tr><td class="mono">2026-08-21</td><td class="mono">—</td>
+        <td>Feature set per decision D8: P3-10 (--workspace sync), P3-11 (kelyfos doctor), P3-12 (kelyfos.toml), hash chain + --verify in P2-4 and P2 acceptance, signed exports in P4-3, make bench in P3-6. Definition of done, component table, quickstart, and P3 acceptance updated to match; Phase 3 estimate now 5–7 weekends.</td>
+        <td class="mono">this document</td></tr>
+    <tr><td class="mono">2026-08-21</td><td class="mono">—</td>
+        <td>Independent verification pass: deterministic audit of IDs, cross-references, anchors, structure, and ordering — clean except D5/D6 forward references, now resolved with pending placeholder rows in the decision log; overall dashboard tag now computed from progress; zero-context reviewer artifact (kelyfos-plan-reviewer.html) created for an external model audit.</td>
+        <td class="mono">audit script + this document</td></tr>
+    <tr><td class="mono">2026-08-22</td><td class="mono">—</td>
+        <td>Dev platform locked per D9: MacBook Pro M5 Max + Lima primary. P0-1 rewritten for Lima (dev/lima.yaml); ARCH parameter introduced across P1-1/P1-2/P1-4; x86_64 cross-build gate added (P1-8 + P1 acceptance, estimate now 3–4 weekends); P3-6 CI is dual-arch with x86_64 as the published benchmark reference; kelyfos doctor detects host flavor; quickstart rewritten Mac-first; stack table, repo layout (dev/), and risks updated; P4-7 transparent host integration added.</td>
+        <td class="mono">this document</td></tr>
+    <tr><td class="mono">2026-08-22</td><td class="mono">—</td>
+        <td>Independent (zero-context) review triaged. Accepted &amp; fixed: hybrid-vsock model + guest CID 3 documented (P1-0, stack table); uncompressed kernel artifact requirements per arch (P1-2); TAP + nftables mechanism specified with docs/networking.md (P2-5); fork mechanism made explicit — shared read-only rootfs, MAP_PRIVATE memory, per-fork workspace copy (P3-2); workspace pinned to /dev/vdb with sizing rules (P3-10). Rejected as factually incorrect: host AF_VSOCK requirement (Firecracker hybrid vsock uses host-side UDS by design), MCP Content-Length framing (MCP stdio transport is newline-delimited JSON-RPC), and x86_64 bzImage (Firecracker boots the uncompressed ELF vmlinux).</td>
+        <td class="mono">reviewer output + this document</td></tr>
+    <tr><td class="mono">2026-08-22</td><td class="mono">—</td>
+        <td>Second review round triaged. Accepted: clock/entropy resync RPC specified (P3-1); <code>CONFIG_MODULES</code> explicitly unset (P1-2); fork free-disk pre-check for the ext4 full-copy fallback (P3-2); KVM permissions caveat on hosted runners (P3-6); proxy-binds-on-TAP clarification — why no IP forwarding exists or is needed (P2-5); ordering rule restated in protocol rule 1; guest_cid wording tightened (stack table). Rejected as factually incorrect: "CID 3 is the host CID" (virtio-vsock spec: host is always CID 2 / VMADDR_CID_HOST, guests ≥ 3); "vhost_vsock module required" (Firecracker hybrid vsock bypasses vhost by design — guest-initiated connects land on &lt;uds_path&gt;_&lt;port&gt; Unix sockets); "MCP uses Content-Length framing" (verified against the MCP spec, all revisions: messages are newline-delimited, no embedded newlines); "remove CID 2 reference" (CID 2 is the constant guest code must connect to). The NOT READY verdict rested on the two rejected vsock claims and is overruled. Do not "fix" these designs later.</td>
+        <td class="mono">reviewer output + MCP spec + this document</td></tr>
+    <tr><td class="mono">2026-08-22</td><td class="mono">—</td>
+        <td>Renamed to KelyfOS per D10 (formerly "agos"): binary kelyfos, config kelyfos.toml, TAP prefix kelyfos&lt;id&gt;, Lima VM kelyfos-dev, workspace fallback dir .kelyfos-out, kconfig markers KELYFOS_PHASE_N. Launch task P3-7 changed from collision check to final availability sweep; masthead carries the etymology. Historical log and D4 wording preserved.</td>
+        <td class="mono">this document</td></tr>
+    <tr><td class="mono">2026-08-22</td><td class="mono">—</td>
+        <td>D5 resolved: Apache-2.0 + DCO sign-off. P0-7 converted from a human sign-off gate to a plain execution task (commit LICENSE + CONTRIBUTING.md). No human gates remain in Phase 0. Document finalized for the repo as PLAN.html.</td>
+        <td class="mono">this document</td></tr>
+        <tr><td class="mono">2026-08-22</td><td class="mono">P0-1</td>
+        <td>Linux layer created. <code>dev/lima.yaml</code> defines the <b>kelyfos-dev</b> VM: Ubuntu 24.04 arm64, <code>vmType: vz</code>, <code>nestedVirtualization: true</code>, 6 CPU / 12 GiB / 60 GiB, image pinned by digest with a latest-release fallback, home mounted writable via virtiofs. A <code>data</code>-mode provision writes <code>/etc/udev/rules.d/99-kelyfos-kvm.rules</code> so <code>/dev/kvm</code> exists and is usable without qemu installed, and a start-time probe fails loudly if nested virtualization did not come up. Dev machine recorded: MacBook Pro <b>M5 Max / 64 GB</b>, macOS 26.6.2, Lima 2.2.0.</td>
+        <td class="mono">limactl start --name kelyfos-dev dev/lima.yaml → &quot;READY. Run `limactl shell kelyfos-dev`&quot;<br>limactl shell kelyfos-dev -- ls -l /dev/kvm<br>crw-rw-rw- 1 root kvm 10, 232 Aug 22 11:23 /dev/kvm<br>uname -a → Linux lima-kelyfos-dev 6.8.0-134-generic … aarch64 GNU/Linux<br>nproc → 6 · df -h / → 58G · Ubuntu 24.04.4 LTS<br>ioctl(open(/dev/kvm), KVM_GET_API_VERSION) → 12</td></tr>
+    <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
+  </table>
+</section>
+
+<!-- ====================================================== DECISION LOG -->
+<section id="decisions">
+  <p class="eyebrow">section 10</p>
+  <h2>Decision log</h2>
+  <table>
+    <tr><th style="width:60px">ID</th><th style="width:110px">Date</th><th>Decision</th><th>Rationale</th></tr>
+    <tr><td class="mono">D1</td><td class="mono">2026-08-21</td>
+        <td>Build the guest image + single-host CLI; explicitly not a kernel, VMM, control plane, or hosted service.</td>
+        <td>The only under-served niche in a crowded market; solo-sized; portable across runtimes.</td></tr>
+    <tr><td class="mono">D2</td><td class="mono">2026-08-21</td>
+        <td>Buildroot for v0.x; revisit a Nix flake in phase 4.</td>
+        <td>Fastest path to first boot; reproducible-build story can come later with signing/SBOM.</td></tr>
+    <tr><td class="mono">D3</td><td class="mono">2026-08-21</td>
+        <td>Go for supervisor and CLI.</td>
+        <td>Single static binaries, trivial cross-compilation, fast iteration. Revisit Rust only if binary size or startup cost becomes a measured problem.</td></tr>
+    <tr><td class="mono">D4</td><td class="mono">2026-08-21</td>
+        <td>"agos" is a working title.</td>
+        <td>Collision check is a launch-gate task (P3-7), not a today problem.</td></tr>
+    <tr><td class="mono">D5</td><td class="mono">2026-08-22</td>
+        <td>License: <b>Apache-2.0</b>, with DCO sign-off required on all contributions from day one.</td>
+        <td>Decided by John, 2026-08-22. KelyfOS is positioned as the portable guest image other runtimes adopt — AGPL would block commercial runtimes from embedding it and fight the distribution strategy. The EU-compliance thread sells services and signed artifacts, not code exclusivity, so it survives under Apache (the Talos / Red Hat model). Matches the ecosystem: Firecracker itself is Apache-2.0. DCO keeps a future relicensing move possible. Executed in P0-7.</td></tr>
+    <tr><td class="mono">D6</td><td class="mono">pending</td>
+        <td>TLS strategy for egress + secret injection (terminating proxy with local CA vs CONNECT + credential helper).</td>
+        <td>To be recorded at the P2-0 design gate. Referenced by: P2-0, P3-5.</td></tr>
+    <tr><td class="mono">D7</td><td class="mono">2026-08-21</td>
+        <td>Monitoring = readers of the flight-recorder JSONL only: HTML session export (P3-8) and terminal TUI (P3-9, P4-6). No web dashboard — no server with auth, persistence, or a fleet view. A localhost read-only viewer is the absolute ceiling, and only on demonstrated community demand.</td>
+        <td>A dashboard is a control plane — non-goal territory where funded competitors live. Litmus test for any monitoring feature: does it read the JSONL, or does it manage sandboxes? Readers are fine; managers are scope creep.</td></tr>
+    <tr><td class="mono">D8</td><td class="mono">2026-08-21</td>
+        <td>Daily-driver and trust features adopted: workspace block-device sync (P3-10), <code>kelyfos doctor</code> (P3-11), <code>kelyfos.toml</code> policy-as-code (P3-12), hash-chained audit (P2-4) with signed exports (P4-3), CI benchmark (P3-6). Phase 3 re-estimated to 5–7 weekends.</td>
+        <td>Approved by John, 2026-08-21. Differentiators no competitor ships as a set; all stay inside the non-goals (single-host, readers not managers, policy in files not servers).</td></tr>
+    <tr><td class="mono">D9</td><td class="mono">2026-08-22</td>
+        <td>Dev machine = MacBook Pro M5 Max / 64 GB: macOS 15+ → Lima (<code>vz</code>, nested virtualization) → Linux → Firecracker. aarch64 is the primary architecture; x86_64 is cross-built and gated from Phase 1 (P1-8) and is the CI reference. Host support model = the Docker Desktop pattern (P4-7): one CLI everywhere, transparently managed Linux layer on macOS/Windows; Firecracker itself always runs on Linux/KVM.</td>
+        <td>Approved by John, 2026-08-22. Fastest compile loop for the Buildroot/kernel-heavy phases; 64 GB enables the many-fork demo; aarch64-first covers Graviton and cheap EU ARM hosting; the early x86 gate prevents drift. Native macOS backend (libkrun) stays a backlog experiment, not v0.x scope.</td></tr>
+    <tr><td class="mono">D10</td><td class="mono">2026-08-22</td>
+        <td>Project named <b>KelyfOS</b> — κέλυφος (kélyfos), "shell". CLI binary <code>kelyfos</code>, config <code>kelyfos.toml</code>, TAP prefix <code>kelyfos&lt;id&gt;</code>. Supersedes the "agos" working title (D4).</td>
+        <td>Chosen over KratOS: "kratos" is heavily occupied in adjacent open source (a major Go microservices framework whose CLI binary is literally <code>kratos</code>, the Ory Kratos identity server) plus a listed defense contractor — bad findability and a PATH collision for a Go CLI. KelyfOS has clean airspace and the metaphor is literal: a shell wrapped around the agent. Final availability sweep stays gated at launch (P3-7).</td></tr>
+    <!-- Claude Code: append rows above this line. -->
+  </table>
+</section>
+
+<!-- ====================================================== RISKS -->
+<section id="risks">
+  <p class="eyebrow">section 11</p>
+  <h2>Risks &amp; constraints</h2>
+  <table>
+    <tr><th style="width:230px">Risk</th><th>Mitigation</th></tr>
+    <tr><td>KVM requires Linux; the dev machine is macOS (M5 Max).</td>
+        <td>Lima VM with <code>vz</code> + nested virtualization (M3+, macOS 15+) is the primary path — verified by P0-1 and <code>kelyfos doctor</code>. WSL2 and bare Linux boxes are equal-citizen alternates. Nested-virt overhead means Mac-local timings are informational; Linux CI publishes the reference numbers.</td></tr>
+    <tr><td>Fast-moving, consolidating market; a platform ships the same idea as a feature.</td>
+        <td>Ship small and publicly early (v0.1–v0.3 in months, not a year). The portable-guest positioning survives even if runtimes bundle their own images.</td></tr>
+    <tr><td>Solo time budget; motivation decay.</td>
+        <td>Phases sized at 2–4 weekends each, every one ends in a demo-able checkpoint. Momentum over completeness.</td></tr>
+    <tr><td>Scope creep toward orchestration.</td>
+        <td>Non-goals in section 2 are enforced by developer protocol rule 5.</td></tr>
+    <tr><td>Security claims invite scrutiny.</td>
+        <td>Document the threat model honestly in the README (what kelyfos defends against, what it doesn't). Jailer + hardening land in phase 4 before any strong claims.</td></tr>
+  </table>
+  <div class="callout red">Do not market security guarantees before P4-1 and P4-2 are done. Until
+     then the story is "isolation-first architecture," not "hardened."</div>
+</section>
+
+<footer>
+  KelyfOS · project brief &amp; living progress report · maintained by Claude Code under the
+  developer protocol in section 8 · plan drafted 2026-08-21
+</footer>
+</div>
+
+<script>
+/* Dashboard bars compute from the *markup* (checked attribute), so the only way to
+   move them is to edit this file — which is the point. */
+(function(){
+  var totalAll=0, doneAll=0;
+  document.querySelectorAll('.phase').forEach(function(ph){
+    var n=ph.getAttribute('data-phase');
+    var boxes=ph.querySelectorAll('ul.tasks input[type=checkbox]');
+    var done=0;
+    boxes.forEach(function(b){ if(b.hasAttribute('checked')) done++; });
+    totalAll+=boxes.length; doneAll+=done;
+    var pct=boxes.length? Math.round(100*done/boxes.length):0;
+    var row=document.querySelector('.bl-row[data-phase="'+n+'"]');
+    if(!row) return;
+    row.querySelector('.bl-bar i').style.width=pct+'%';
+    row.querySelector('.bl-pct').textContent=pct+'%';
+    var st=ph.getAttribute('data-status');
+    row.setAttribute('data-s',st);
+    var tag=row.querySelector('.bl-tag');
+    tag.className='bl-tag '+st;
+    tag.textContent = st==='done' ? '[  OK  ]' : st==='active' ? '[ACTIVE]' : '[ TODO ]';
+  });
+  var t=totalAll? Math.round(100*doneAll/totalAll):0;
+  document.getElementById('total-bar').style.width=t+'%';
+  document.getElementById('total-pct').textContent=t+'%';
+  var ot=document.querySelector('.bl-total .bl-tag');
+  ot.className='bl-tag '+(t===100?'done':(doneAll>0?'active':'todo'));
+  ot.textContent = t===100 ? '[  OK  ]' : (doneAll>0 ? '[ACTIVE]' : '[ TODO ]');
+})();
+</script>
+</body>
+</html>

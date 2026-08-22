@@ -1,0 +1,84 @@
+# KelyfOS — Linux layer for the macOS dev machine (P0-1, decision D9).
+#
+# Firecracker only runs on Linux/KVM. On Apple Silicon (M3 or newer, macOS 15+)
+# Lima's Virtualization.framework backend can expose nested virtualization, which
+# gives this guest a working /dev/kvm and lets Firecracker run inside it.
+#
+#   limactl start --name kelyfos-dev dev/lima.yaml
+#   limactl shell kelyfos-dev
+#   ls -l /dev/kvm
+#
+# Everything Linux in this project (Buildroot, kernel builds, Firecracker, image
+# boots) runs inside this VM. The macOS host only runs git, go and limactl.
+
+# Virtualization.framework. Required for nestedVirtualization; cannot be changed
+# after the instance is created.
+vmType: "vz"
+
+# Native aarch64 — the primary architecture (D9). x86_64 is cross-built, never
+# emulated here.
+arch: "aarch64"
+
+images:
+# Pinned release, digest-verified.
+- location: "https://cloud-images.ubuntu.com/releases/noble/release-20260705/ubuntu-24.04-server-cloudimg-arm64.img"
+  arch: "aarch64"
+  digest: "sha256:7df0201546f75b8bcc1044594c806c35749421ad3c9bc1be2a3ab806cfae39cc"
+# Fallback if the pinned release is pruned upstream (Canonical removes dated
+# releases after a few months). Run `limactl prune` to invalidate the cache.
+- location: "https://cloud-images.ubuntu.com/releases/noble/release/ubuntu-24.04-server-cloudimg-arm64.img"
+  arch: "aarch64"
+
+# Nested virtualization: the whole reason this file exists. Apple M3+ with
+# vmType vz only. Without it there is no /dev/kvm in the guest.
+nestedVirtualization: true
+
+# Sized for Buildroot + kernel builds and the many-fork demo. Bump if the
+# toolchain build starts thrashing.
+cpus: 6
+memory: "12GiB"
+disk: "60GiB"
+
+# The repo lives on the macOS side and is edited there; the VM builds it.
+# Buildroot output must NOT live on a virtiofs mount (device nodes, hardlinks,
+# fakeroot and sheer IO volume) — the Makefile keeps build trees on the VM's own
+# ext4 via BUILD_DIR.
+mountType: "virtiofs"
+mounts:
+- location: "~"
+  writable: true
+
+provision:
+# /dev/kvm is root:kvm 0660 on Ubuntu and the rule that creates it normally ships
+# with qemu, which this image does not install. Write the rule ourselves so the
+# node is present and usable by Firecracker after every boot. 0666 on a
+# single-user build VM; the isolation story is the guest we build, not this one.
+- mode: data
+  path: /etc/udev/rules.d/99-kelyfos-kvm.rules
+  content: |
+    KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"
+  owner: "root:root"
+  permissions: 644
+- mode: system
+  script: |
+    #!/bin/bash
+    set -eux -o pipefail
+    groupadd -f kvm
+    udevadm control --reload-rules
+    udevadm trigger --name-match=kvm
+    ls -l /dev/kvm
+
+probes:
+# Fail loudly at `limactl start` time if nested virtualization did not come up,
+# instead of failing mysteriously at the first Firecracker boot.
+- description: "/dev/kvm to be present (nested virtualization)"
+  script: |
+    #!/bin/bash
+    set -eux -o pipefail
+    if ! timeout 30s bash -c "until [ -e /dev/kvm ]; do sleep 1; done"; then
+      echo >&2 "/dev/kvm never appeared: nested virtualization is not active."
+      exit 1
+    fi
+  hint: |
+    /dev/kvm is missing in the guest. Requires an Apple M3 or newer chip,
+    macOS 15+, vmType "vz" and nestedVirtualization: true.
