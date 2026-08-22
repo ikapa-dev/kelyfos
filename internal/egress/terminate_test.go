@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 const testToken = "ghp_thisisaverysecrettokenvalue"
@@ -63,12 +64,15 @@ func proxyFor(t *testing.T, upstream *httptest.Server, policy Policy, ca *CA) (s
 }
 
 // throughProxy performs an HTTPS GET through the proxy's CONNECT, trusting the
-// given roots for the inner TLS session.
-func throughProxy(t *testing.T, proxyAddr, target string, roots *x509.CertPool) (*http.Response, error) {
+// given roots for the inner TLS session. It returns the raw client connection
+// as well: a tunnelled attempt is only recorded once both copy directions end,
+// and the client-to-upstream direction ends when the client closes, so a test
+// that wants to see that record has to close it first.
+func throughProxy(t *testing.T, proxyAddr, target string, roots *x509.CertPool) (*http.Response, net.Conn, error) {
 	t.Helper()
 	raw, err := net.Dial("tcp", proxyAddr)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	t.Cleanup(func() { raw.Close() })
 
@@ -77,16 +81,16 @@ func throughProxy(t *testing.T, proxyAddr, target string, roots *x509.CertPool) 
 	br := bufio.NewReader(raw)
 	line, err := br.ReadString('\n')
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if !strings.Contains(line, "200") {
 		body, _ := io.ReadAll(br)
-		return nil, fmt.Errorf("proxy refused: %s%s", strings.TrimSpace(line), body)
+		return nil, nil, fmt.Errorf("proxy refused: %s%s", strings.TrimSpace(line), body)
 	}
 	for { // drain the rest of the response headers
 		l, err := br.ReadString('\n')
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if strings.TrimSpace(l) == "" {
 			break
@@ -95,10 +99,11 @@ func throughProxy(t *testing.T, proxyAddr, target string, roots *x509.CertPool) 
 
 	inner := tls.Client(raw, &tls.Config{ServerName: host, RootCAs: roots})
 	if err := inner.Handshake(); err != nil {
-		return nil, fmt.Errorf("inner handshake: %w", err)
+		return nil, nil, fmt.Errorf("inner handshake: %w", err)
 	}
 	fmt.Fprintf(inner, "GET / HTTP/1.1\r\nHost: %s\r\nConnection: close\r\n\r\n", host)
-	return http.ReadResponse(bufio.NewReader(inner), nil)
+	resp, err := http.ReadResponse(bufio.NewReader(inner), nil)
+	return resp, raw, err
 }
 
 // TestTerminationInjectsTheCredential is the heart of P2-6: the client is never
@@ -125,7 +130,7 @@ func TestTerminationInjectsTheCredential(t *testing.T) {
 	}
 
 	target := strings.TrimPrefix(upstream.URL, "https://")
-	resp, err := throughProxy(t, proxyAddr, target, roots)
+	resp, _, err := throughProxy(t, proxyAddr, target, roots)
 	if err != nil {
 		t.Fatalf("request through the proxy: %v", err)
 	}
@@ -138,17 +143,13 @@ func TestTerminationInjectsTheCredential(t *testing.T) {
 
 	// The connection must be recorded as terminated, so a user can tell which
 	// traffic the proxy could read.
-	var found bool
-	for _, a := range attempts() {
-		if a.Allowed && a.Mode == ModeTerminated {
-			found = true
-		}
+	recorded := waitForAttempt(t, attempts, func(a Attempt) bool {
+		return a.Allowed && a.Mode == ModeTerminated
+	})
+	for _, a := range recorded {
 		if a.Mode == ModeTunnelled {
 			t.Errorf("a secret-bound domain must be terminated, not tunnelled: %+v", a)
 		}
-	}
-	if !found {
-		t.Errorf("no terminated attempt was recorded: %+v", attempts())
 	}
 	if uses := secretUses(); len(uses) == 0 || !strings.HasPrefix(uses[0], "GITHUB_TOKEN@") {
 		t.Errorf("secret use was not reported by name: %v", uses)
@@ -172,7 +173,7 @@ func TestNoSecretMeansNoTermination(t *testing.T) {
 	roots := x509.NewCertPool()
 	roots.AddCert(upstream.Certificate())
 
-	resp, err := throughProxy(t, proxyAddr, strings.TrimPrefix(upstream.URL, "https://"), roots)
+	resp, raw, err := throughProxy(t, proxyAddr, strings.TrimPrefix(upstream.URL, "https://"), roots)
 	if err != nil {
 		t.Fatalf("tunnelled request: %v", err)
 	}
@@ -181,10 +182,47 @@ func TestNoSecretMeansNoTermination(t *testing.T) {
 	if string(body) != "hello" {
 		t.Errorf("tunnelled body = %q", body)
 	}
-	for _, a := range attempts() {
+	// A tunnel's record is written once both copy directions end, and the
+	// client-to-upstream direction ends when the client hangs up. Nothing is
+	// recorded until then, by design: the record carries the byte counts.
+	raw.Close()
+	// Wait for the connection's own record before asserting anything about it.
+	// Checking too early would let this test pass by finding nothing at all,
+	// which is the one result it must never accept.
+	for _, a := range waitForAttempt(t, attempts, func(a Attempt) bool {
+		return a.Allowed && a.Mode == ModeTunnelled
+	}) {
 		if a.Mode == ModeTerminated {
 			t.Errorf("a domain with no secret must not be terminated: %+v", a)
 		}
+	}
+}
+
+// waitForAttempt blocks until the proxy has recorded a matching attempt, and
+// returns everything recorded so far.
+//
+// The wait is not politeness, it is correctness. An attempt is reported when the
+// connection finishes, which is deliberately after the last byte has reached the
+// client: the record carries the byte counts, so it cannot be written before
+// there are any to count. A test that reads the response body and immediately
+// inspects the record is therefore racing the proxy's own bookkeeping — and it
+// loses about one run in ten, which is exactly often enough to be dismissed as
+// noise and exactly rare enough to survive review.
+func waitForAttempt(t *testing.T, attempts func() []Attempt, match func(Attempt) bool) []Attempt {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		got := attempts()
+		for _, a := range got {
+			if match(a) {
+				return got
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("no matching attempt was recorded within 5s: %+v", got)
+			return got
+		}
+		time.Sleep(2 * time.Millisecond)
 	}
 }
 

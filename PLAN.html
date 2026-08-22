@@ -1198,6 +1198,39 @@ concurrency:
 after the fix, both runs green on their own commits:
 32603388615  success  050022df  E1-3            (re-run)
 32603455113  success  fec01ab3  concurrency fix (re-run)</pre></td></tr>
+        <tr><td class="mono">2026-08-23</td><td class="mono">P2-6</td>
+        <td><b>A flaky test found and fixed &mdash; one failure in ten, in the test that proves the secret-injection
+        guarantee.</b> Noticed because <code>go test ./...</code> failed once during E1-4 and passed on the retry, which is
+        the moment a flake either gets chased or gets normalised. Forty runs put it at 2 in 20 and then 0 in 40 after the
+        fix. The race was in the test, not the proxy, and the proxy is right: an <code>egress.attempt</code> carries the
+        connection's byte counts, so it cannot be recorded until the connection is done &mdash; which is deliberately after
+        the last byte has reached the client. The test read the response body and immediately inspected the record, racing
+        the proxy's own bookkeeping. It now waits for the matching attempt with a five-second deadline. The sibling test
+        was strengthened at the same time, and strengthening it turned up a second fact worth knowing: it asserted only
+        that <i>no</i> terminated attempt existed, which an empty list satisfies, so it could pass by finding nothing.
+        Making it wait for the tunnelled attempt first failed 40 times out of 40 &mdash; because a tunnel's record is
+        written when <i>both</i> copy directions end, and the client-to-upstream direction ends only when the client hangs
+        up, which the test was leaving to cleanup. The helper now hands the caller its raw connection so the test can close
+        it and then wait. Both halves of that are the same lesson: the proxy records a connection when the connection is
+        over, because the record carries its byte counts.</td>
+        <td class="mono"><pre>$ for i in $(seq 1 20); do go test -count=1 ./internal/egress/; done
+--- FAIL: TestTerminationInjectsTheCredential
+    terminate_test.go:151: no terminated attempt was recorded: []
+--- FAIL: TestTerminationInjectsTheCredential
+    terminate_test.go:151: no terminated attempt was recorded: []
+failures: 2 / 20
+
+$ go test -count=1 -race ./internal/egress/     ok  (the race is a happens-
+                                                    before gap, not a data race)
+first attempt at the fix, which the sibling test caught:
+$ for i in $(seq 1 40); do go test -count=1 ./internal/egress/; done
+--- FAIL: TestNoSecretMeansNoTermination (5.00s)
+    terminate_test.go:184: no matching attempt was recorded within 5s: []
+failures: 40 / 40      &lt;- a tunnel's record waits for the client to hang up
+
+after closing the client connection before waiting:
+$ for i in $(seq 1 60); do go test -count=1 ./internal/egress/; done
+failures: 0 / 60</pre></td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
