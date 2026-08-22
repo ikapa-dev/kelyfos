@@ -48,6 +48,12 @@ func handleControl(conn net.Conn, shutdown chan<- struct{}) {
 			default:
 			}
 			return
+		case proto.OpTrust:
+			if err := installTrustAnchor(req.CAPEM); err != nil {
+				resp.OK = false
+				resp.Error = &proto.Error{Kind: proto.ErrInternal, Message: err.Error()}
+			}
+
 		case proto.OpResync:
 			resp.OK = false
 			resp.Error = &proto.Error{

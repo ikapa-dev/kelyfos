@@ -32,6 +32,7 @@ const (
 	ReasonBadPort    = "port_not_allowed"
 	ReasonBadRequest = "bad_request"
 	ReasonDialFailed = "upstream_unreachable"
+	ReasonPinned     = "tls_pinning_rejected_our_ca"
 )
 
 // Attempt is one outbound connection, reported to the caller's recorder whether
@@ -55,6 +56,10 @@ type Policy struct {
 	Allow []string
 	// Ports that may be reached. Empty means 80 and 443.
 	Ports []int
+	// Secrets bound to domains. A domain with a secret is TLS-terminated so the
+	// credential can be attached; every other domain is tunnelled untouched
+	// (decision D6).
+	Secrets []*Secret
 }
 
 func (p *Policy) allowsHost(host string) bool {
@@ -84,6 +89,14 @@ func (p *Policy) allowsPort(port int) bool {
 type Proxy struct {
 	Policy  Policy
 	OnEvent func(Attempt)
+	// OnSecret is called with the secret's NAME and the host it went to —
+	// never the value, in any form (docs/events.md §4).
+	OnSecret func(name, host string)
+	// CA terminates TLS for secret-bound domains. Ephemeral, per run.
+	CA *CA
+	// Upstream is the transport used for terminated requests. Injectable so
+	// tests can point it at a local server.
+	Upstream http.RoundTripper
 
 	// DialTimeout bounds how long an upstream connection may take to establish.
 	DialTimeout time.Duration
@@ -170,6 +183,13 @@ func (p *Proxy) handle(client net.Conn) {
 	}
 
 	if req.Method == http.MethodConnect {
+		// Terminate only when a secret is bound to this domain. Everything else
+		// is tunnelled untouched, so the proxy sees plaintext for exactly the
+		// domains the user handed a credential to (decision D6).
+		if secret := p.Policy.secretFor(host); secret != nil {
+			p.terminate(client, host, port, secret)
+			return
+		}
 		p.tunnel(client, host, port)
 		return
 	}

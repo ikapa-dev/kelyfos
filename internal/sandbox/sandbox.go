@@ -240,6 +240,36 @@ func (s *Sandbox) WaitReady(ctx context.Context) (proto.Ready, error) {
 	}
 }
 
+// InstallTrustAnchor hands the guest the egress CA's certificate over the
+// control channel, so TLS termination for secret-bound domains is trusted
+// inside the sandbox.
+//
+// It happens after the guest is ready rather than at image build time because
+// the CA is minted per run and never persisted, and after the overlay is up
+// because the rootfs is read-only (decision D6).
+func (s *Sandbox) InstallTrustAnchor(pemData []byte) error {
+	conn, err := Connect(s.State.UDSPath, proto.PortControl, 10*time.Second)
+	if err != nil {
+		return fmt.Errorf("install trust anchor: %w", err)
+	}
+	defer conn.Close()
+
+	if err := proto.NewWriter(conn).Write(proto.ControlRequest{
+		V: proto.Version, ID: "trust", Op: proto.OpTrust, CAPEM: string(pemData),
+	}); err != nil {
+		return err
+	}
+	_ = conn.SetReadDeadline(time.Now().Add(10 * time.Second))
+	var resp proto.ControlResponse
+	if err := proto.NewReader(conn).Read(&resp); err != nil {
+		return err
+	}
+	if !resp.OK {
+		return fmt.Errorf("guest refused the trust anchor: %v", resp.Error)
+	}
+	return nil
+}
+
 // Wait blocks until Firecracker exits.
 func (s *Sandbox) Wait() error { <-s.done; return s.waitErr }
 

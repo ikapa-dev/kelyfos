@@ -28,7 +28,10 @@ func runCmd(argv []string) error {
 		verbose = fs.Bool("verbose-boot", false, "drop `quiet` from the kernel command line")
 		timeout = fs.Duration("ready-timeout", 30*time.Second, "how long to wait for the guest to become ready")
 		allow   = fs.String("allow", "", "comma-separated egress allowlist, e.g. github.com,pypi.org. Without it the sandbox has no network interface at all.")
+		secrets multiFlag
 	)
+	fs.Var(&secrets, "secret", "attach a credential to a domain: NAME@domain[:bearer|basic]. "+
+		"The value is read from the host environment and never enters the guest. Repeatable.")
 	fs.Usage = func() {
 		fmt.Fprintln(fs.Output(), "usage: kelyfos run [flags]\n\nBoots a sandbox and keeps it running until Ctrl-C.")
 		fs.PrintDefaults()
@@ -57,6 +60,7 @@ func runCmd(argv []string) error {
 	// the proxy the only reachable destination, and only then a machine that
 	// can send a packet anywhere (docs/networking.md).
 	var proxy *egress.Proxy
+	var ca *egress.CA
 	sandboxID, err := sandbox.NewID()
 	if err != nil {
 		return err
@@ -69,7 +73,24 @@ func runCmd(argv []string) error {
 		}
 		defer opts.Net.Down()
 
-		proxy = &egress.Proxy{Policy: egress.Policy{Allow: list}}
+		policy := egress.Policy{Allow: list}
+		for _, spec := range secrets {
+			sec, err := egress.ParseSecret(spec)
+			if err != nil {
+				return err
+			}
+			// A secret is only useful for a domain traffic may reach at all.
+			if !containsDomain(list, sec.Domain) {
+				return fmt.Errorf("--secret %s: %s is not in --allow", spec, sec.Domain)
+			}
+			policy.Secrets = append(policy.Secrets, sec)
+		}
+		if len(policy.Secrets) > 0 {
+			if ca, err = egress.NewCA(); err != nil {
+				return err
+			}
+		}
+		proxy = &egress.Proxy{Policy: policy, CA: ca}
 		port, err := proxy.Listen(opts.Net.HostIP.String() + ":0")
 		if err != nil {
 			return err
@@ -122,6 +143,11 @@ func runCmd(argv []string) error {
 	// Every attempt to leave the sandbox is recorded, allowed or not. The
 	// blocked ones are the interesting ones.
 	if proxy != nil {
+		proxy.OnSecret = func(name, host string) {
+			// Name and destination only. The value is never recorded in any
+			// field, in any form (docs/events.md §4).
+			_ = rec.Append(recorder.Event{Type: recorder.TypeSecretUse, Name: name, Host: host})
+		}
 		proxy.OnEvent = func(a egress.Attempt) {
 			allowed := a.Allowed
 			_ = rec.Append(recorder.Event{
@@ -156,6 +182,13 @@ func runCmd(argv []string) error {
 	// own monotonic clock; the remainder is Firecracker building the machine and
 	// loading the kernel, which no amount of guest tuning will touch.
 	guestMS := ready.MonotonicNS / 1e6
+	// The guest must trust the egress CA before anything tries to use it.
+	if ca != nil {
+		if err := sb.InstallTrustAnchor(ca.AnchorPEM()); err != nil {
+			return err
+		}
+	}
+
 	overlay := ready.Overlay
 	_ = rec.Append(recorder.Event{
 		Type: recorder.TypeSessionReady, BootMS: sb.State.BootReadyMS,
@@ -173,6 +206,10 @@ func runCmd(argv []string) error {
 	if opts.Net != nil {
 		fmt.Printf("  egress      %s via proxy on %s:%d\n",
 			strings.Join(opts.Allow, ", "), opts.Net.HostIP, opts.Net.ProxyPort)
+		for _, sec := range proxy.Policy.Secrets {
+			fmt.Printf("  secret      %s -> %s (%s; the value stays on the host)\n",
+				sec.Name, sec.Domain, sec.Scheme)
+		}
 	} else {
 		fmt.Printf("  egress      none (no network interface)\n")
 	}
@@ -214,4 +251,22 @@ func splitAllow(spec string) []string {
 		}
 	}
 	return out
+}
+
+// multiFlag collects a repeatable string flag.
+type multiFlag []string
+
+func (m *multiFlag) String() string     { return strings.Join(*m, ",") }
+func (m *multiFlag) Set(v string) error { *m = append(*m, v); return nil }
+
+// containsDomain reports whether an allowlist covers a domain, using the same
+// suffix rule the proxy enforces.
+func containsDomain(allow []string, domain string) bool {
+	for _, a := range allow {
+		a = strings.ToLower(strings.TrimPrefix(strings.TrimSuffix(a, "."), "*."))
+		if domain == a || strings.HasSuffix(domain, "."+a) {
+			return true
+		}
+	}
+	return false
 }

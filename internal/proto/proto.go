@@ -121,6 +121,10 @@ type ControlRequest struct {
 	Op         string `json:"op"`
 	RealtimeNS int64  `json:"realtime_ns,omitempty"`
 	Entropy    string `json:"entropy,omitempty"` // base64
+	// CAPEM carries the egress CA's trust anchor for OpTrust. It is a public
+	// certificate, never a key — the guest is asked to trust the proxy, not
+	// given the means to impersonate it.
+	CAPEM string `json:"ca_pem,omitempty"`
 }
 
 type ControlResponse struct {
@@ -135,6 +139,11 @@ const (
 	OpPing     = "ping"
 	OpShutdown = "shutdown"
 	OpResync   = "resync"
+	// OpTrust installs the egress CA's anchor in the guest trust store. It
+	// arrives after boot rather than in the image because the CA is minted per
+	// run and never persisted (decision D6), and after the overlay is up
+	// because the rootfs itself is read-only.
+	OpTrust = "trust"
 )
 
 // Writer emits newline-delimited JSON. Callers must not share one across
