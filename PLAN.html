@@ -1090,6 +1090,45 @@ https://github.com/p4r4n0rm4l/KelyfOS/releases/tag/v0.3
 
 PLAN.html            36/43   (phases 0-3 done; P4 backlog, 2 blocked)
 PLAN-FEATURES.html    3/42   (Epic E1 active, paused at E1-3)</pre></td></tr>
+        <tr><td class="mono">2026-08-23</td><td class="mono">P3-6</td>
+        <td><b>CI stops paying full price for documentation, and starts proving its own caches.</b> Deferred until after the v0.3 launch on purpose &mdash; a pipeline whose shape is changing is not one to optimise &mdash; and taken now under D24, before feature work resumes. Three parts. A <code>changes</code> job diffs the push or pull request and, when every changed path is <code>docs/</code>, any <code>.md</code>, either plan file or <code>LICENSE</code>, skips <code>build</code> and <code>boot</code>; <code>checks</code> is deliberately left unconditional so <code>tools/check-plan.py</code> still audits every plan edit. <code>BR2_CCACHE</code> is enabled in the shared Buildroot fragment with its cache directory templated from the Makefile, and the CI job persists it keyed on <code>versions.mk</code> with no loose restore key. And <code>ci.yml</code> now carries a Monday cron whose run restores none of the three caches, so a build that has quietly become dependent on a cache fails within the week rather than on a stranger&rsquo;s first clone. <code>cmake</code> was added to the build dependencies because ccache builds with it and Buildroot otherwise builds a cmake of its own.</td>
+        <td class="mono"><pre>$ make ARCH=aarch64 BUILD_DIR=/tmp/ccck /tmp/ccck/.config
+==&gt; configuring buildroot for ARCH=aarch64
+==&gt; config verified: every requested symbol is present in .config
+$ grep CCACHE /tmp/ccck/.config
+BR2_CCACHE=y
+BR2_CCACHE_DIR="/home/&hellip;/.cache/kelyfos/ccache"
+BR2_CCACHE_INITIAL_SETUP="-M 2G"
+BR2_CCACHE_USE_BASEDIR=y
+
+the five host packages ccache pulls in all resolve and verify:
+$ make -C buildroot-2026.02.3 O=/tmp/ccck host-ccache-source &hellip;
+ccache-4.12.3.tar.xz:  OK   hiredis-1.3.0.tar.gz:  OK
+zstd-1.5.7.tar.gz:     OK   xxhash-0.8.3.tar.gz:   OK
+blake3-1.8.3.tar.gz:   OK
+
+filter, against the cases that matter:
+  PLAN.html STATUS.md docs/resources.md LICENSE  -&gt; code=false  (skips build)
+  PLAN.html host/run.go                          -&gt; code=true
+  .github/workflows/ci.yml                       -&gt; code=true
+  dev/wsl2.md docs/launch/hn-post.md             -&gt; code=false
+  (no files at all)                              -&gt; code=false
+
+$ gh run view 32601143550   (push 4dcbaff3, the commit above)
+overall: success
+  what changed     success   6 s   -&gt; &ldquo;code changed: running the full pipeline&rdquo;
+  checks           success  23 s
+  build (aarch64)  success   4 m 02 s
+  build (x86_64)   success  10 m 05 s
+  boot             success   1 m 11 s
+
+$ ccache --show-stats --verbose      (aarch64 / x86_64)
+Cache directory:   /home/runner/.cache/kelyfos/ccache
+Cacheable calls:   34 / 47      38 / 58
+  Misses:          34 (100%)    38 (100%)     first run: nothing to hit yet
+Local storage:
+  Cache size (GB): 0.0 / 2.0    0.0 / 2.0     the -M 2G setup landed
+  Files:           68           76            and the cache is now populated</pre></td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
@@ -1169,6 +1208,9 @@ PLAN-FEATURES.html    3/42   (Epic E1 active, paused at E1-3)</pre></td></tr>
         <tr><td class="mono">D23</td><td class="mono">2026-08-22</td>
         <td><code>kelyfos run [flags] -- &lt;command&gt;</code> runs that command on the host for the lifetime of the sandbox, exports <code>KELYFOS_SANDBOX</code> to it, and exits with its status.</td>
         <td>Section 1's definition of done names this exact invocation &mdash; <code>kelyfos run --image dev --workspace . --allow github.com --secret GITHUB_TOKEN@github.com -- &lt;agent cmd&gt;</code> &mdash; and it did not exist: <code>run</code> took no positional arguments at all, so the only way to use a sandbox was <code>run &amp;</code> followed by <code>exec</code>. Found while checking &sect;1 line by line rather than assuming it was covered, since the PLAN-FEATURES activation gate depends on &sect;1 being met. The bullet also settles what the command <i>is</i>: it says the agent &ldquo;operates only through MCP tools on your project files&rdquo;. An agent running inside the guest would not use MCP tools, it would just use the filesystem. So the trailing command runs on the <b>host</b>, reaching the sandbox over the MCP bridge &mdash; which is also the shape that makes the secret guarantee meaningful, since the value stays on the host side of the proxy and never enters the guest either way. <code>sandbox.Load</code> now falls back to <code>$KELYFOS_SANDBOX</code> when no <code>--sandbox</code> is given, so the child's <code>kelyfos mcp</code> and <code>kelyfos exec</code> attach to the right machine even when other sandboxes are running &mdash; previously an empty id meant &ldquo;the only running one&rdquo; and simply failed when there were several. Teardown, workspace sync-back and the flight recorder's <code>session.end</code> all run on the child's exit, so the sandbox's lifetime is exactly the command's.</td></tr>
+        <tr><td class="mono">D24</td><td class="mono">2026-08-23</td>
+        <td>CI build economics, settled as one change: a <b>documentation-only</b> change skips the <code>build</code> and <code>boot</code> jobs; Buildroot gains a <b>compiler cache</b> (<code>BR2_CCACHE</code>) persisted between runs and keyed on <code>versions.mk</code>, next to the download and per-arch tree caches that were already there; and a <b>weekly scheduled run restores no cache at all</b>.</td>
+        <td>A from-source Buildroot run is tens of minutes per architecture, and this project&rsquo;s own protocol asks for a commit per completed task &mdash; most of which touch nothing but <code>PLAN.html</code>, <code>PLAN-FEATURES.html</code> and <code>STATUS.md</code>. Paying an hour of runners to rebuild a kernel because a progress row was appended is waste, and slow feedback is the mechanism by which people stop reading CI. Three specifics worth recording because the obvious alternative is wrong in each case. <b>The filter is a job-level <code>if</code>, not <code>paths-ignore</code>:</b> a workflow skipped by <code>paths-ignore</code> never reports a status at all, which leaves a required check pending forever, whereas a job skipped by a conditional reports as skipped and satisfies it. <code>checks</code> stays unconditional regardless, so a documentation-only commit is still audited by <code>tools/check-plan.py</code> &mdash; the plan files are exactly the documentation most able to break. And the filter is four lines of <code>git diff</code> rather than a marketplace action: a third-party action in the path of every build is a supply-chain dependency bought for nothing. <b>The ccache key has no <code>restore-keys</code>:</b> Buildroot&rsquo;s own help text makes purging the cache the user&rsquo;s responsibility when the compiler changes, and <code>versions.mk</code> is what changes it, so a bump starts a clean cache instead of inheriting objects built by a toolchain that no longer exists. The download cache keeps its loose restore key, because those tarballs are checksum-verified on every use and a stale one is inert. <b>The weekly run exists to make the caches falsifiable:</b> a build that only succeeds because of what a cache is holding &mdash; a vanished upstream tarball, a package that no longer configures from scratch &mdash; is a build that works until the first person clones the repository. Seven days is the longest that can now stay hidden. <code>cmake</code> joins <code>dev/install-build-deps.sh</code> for ccache&rsquo;s sake alone: without a host cmake &ge; 3.18 Buildroot quietly builds its own, spending ten minutes to save a few.</td></tr>
     <!-- Claude Code: append rows above this line. -->
   </table>
 </section>
