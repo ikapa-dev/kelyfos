@@ -168,6 +168,21 @@ release-artifacts: ## Stage $(IMAGE_DIR) artifacts + SHA256SUMS into dist/
 	@cd $(CURDIR)/dist && sha256sum $(KERNEL_ARTIFACT)-$(ARCH).gz rootfs-$(ARCH).ext4.gz image-$(ARCH).json >> SHA256SUMS
 	@cd $(CURDIR)/dist && ls -la $(KERNEL_ARTIFACT)-$(ARCH).gz rootfs-$(ARCH).ext4.gz
 
+# Static CLI binaries for the release (D20). CGO is already off, so these run
+# on any Linux of the right architecture with no runtime dependencies at all —
+# which is what lets the quickstart skip installing a Go toolchain.
+release-cli: ## Cross-build static kelyfos binaries for both arches into dist/
+	@mkdir -p $(CURDIR)/dist
+	@for a in amd64:x86_64 arm64:aarch64; do \
+	  goarch=$${a%%:*}; uarch=$${a##*:}; \
+	  CGO_ENABLED=0 GOOS=linux GOARCH=$$goarch go build -trimpath \
+	    -ldflags="-s -w -X main.Version=$(KELYFOS_VERSION) \
+	                -X main.FirecrackerVersion=$(FIRECRACKER_VERSION)" \
+	    -o $(CURDIR)/dist/kelyfos-linux-$$uarch ./host || exit 1; \
+	  ( cd $(CURDIR)/dist && sha256sum kelyfos-linux-$$uarch >> SHA256SUMS ); \
+	  echo "built dist/kelyfos-linux-$$uarch"; \
+	done
+
 cli: linux-only ## Build the kelyfos host CLI into bin/
 	@mkdir -p $(OUT_DIR)
 	CGO_ENABLED=0 go build -trimpath \

@@ -823,6 +823,26 @@ $ go test ./internal/sandbox/ -run TestCheckManifest
 --- PASS: TestCheckManifestRejectsMissing
 --- PASS: TestCheckManifestRejectsGarbage
 ok  github.com/p4r4n0rm4l/KelyfOS/internal/sandbox</pre></td></tr>
+        <tr><td class="mono">2026-08-22</td><td class="mono">P3-7</td>
+        <td><b>Second defect in the quickstart, found by checking my own README against a fresh machine:</b> it called <code>make cli</code> while skipping <code>dev/install-build-deps.sh</code>, which is what installs Go &mdash; so the documented path would have died at the first build step on any machine that had not already built from source. Fixed under D20 rather than by re-adding the toolchain step: the CLI is already <code>CGO_ENABLED=0</code>, so the release now ships static <code>kelyfos-linux-{x86_64,aarch64}</code> binaries and <code>dev/install-kelyfos.sh</code> installs one. The quickstart now needs only bash, curl and sha256sum &mdash; no compiler, no Go, no Buildroot prerequisites.</td>
+        <td class="mono"><pre>$ make release-cli
+built dist/kelyfos-linux-x86_64
+built dist/kelyfos-linux-aarch64
+$ file dist/kelyfos-linux-x86_64
+ELF 64-bit LSB executable, x86-64, statically linked, stripped
+
+$ bash dev/install-kelyfos.sh
+Fetching kelyfos latest for aarch64
+Verifying checksum
+kelyfos-linux-aarch64: OK
+kelyfos v0.2-15-g0200f12-dirty
+Installed /tmp/kbin/kelyfos
+
+$ printf corrupt | dd of=dist/kelyfos-linux-aarch64 bs=1 seek=5000 conv=notrunc
+$ bash dev/install-kelyfos.sh
+kelyfos-linux-aarch64: FAILED
+CHECKSUM MISMATCH &mdash; refusing to install.
+binaries installed after refusal: 0</pre></td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>

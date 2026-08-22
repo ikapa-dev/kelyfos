@@ -45,7 +45,8 @@ WSL2; on a Linux box with `/dev/kvm`, nothing.
 git clone https://github.com/p4r4n0rm4l/KelyfOS && cd KelyfOS
 ```
 
-**On macOS — a Linux layer with nested virtualisation** (skip on Linux):
+**On macOS first — a Linux layer with nested virtualisation** (skip on Linux).
+This step downloads and boots an Ubuntu VM, and is most of the wall clock below:
 
 ```sh
 brew install lima
@@ -53,19 +54,18 @@ limactl start --name kelyfos-dev dev/lima.yaml
 limactl shell kelyfos-dev          # everything below runs in here
 ```
 
-**Then, on Linux or inside that shell:**
+**Then, on Linux or inside that shell.** Nothing here needs a compiler — the CLI
+is a static binary and the guest image is prebuilt:
 
 ```sh
-bash dev/install-firecracker.sh    # pinned build, checksum-verified
-make cli                           # the host CLI, ~20s
-./bin/kelyfos doctor               # eight checks, each with its exact fix
-
-make fetch-image                   # prebuilt guest image for your arch
+bash dev/install-firecracker.sh    # the VMM
+bash dev/install-kelyfos.sh        # the CLI
+bash dev/fetch-image.sh            # the guest image
+./bin/kelyfos doctor
 ```
 
-`fetch-image` checks what it downloaded against the release's published
-`SHA256SUMS` before anything reaches your cache, and shows you it doing so — a
-mismatch aborts with nothing installed:
+Each of those verifies what it downloaded against a published checksum before
+installing it, and shows you doing so — a mismatch aborts with nothing written:
 
 ```
 Fetching KelyfOS v0.3 image for x86_64 from p4r4n0rm4l/KelyfOS
@@ -83,7 +83,7 @@ Installed the 'dev' image for x86_64 into ~/.cache/kelyfos/out/x86_64
 Run it with:  kelyfos run --image dev
 ```
 
-**Run something in it:**
+**Now run something in it:**
 
 ```sh
 ./bin/kelyfos run --image dev --allow github.com &
@@ -97,16 +97,15 @@ Run it with:  kelyfos run --image dev
 things and prints the exact fix for whatever is wrong, tailored to whether you
 are on Lima, WSL2, bare Linux or macOS.
 
-### Building the image yourself
+### Building it yourself
 
-`make fetch-image` downloads the release artifacts and verifies them against a
-published `SHA256SUMS`. They are the same bytes `make image` produces — CI
-builds both arches from source on every commit — but building takes about
-thirty-five minutes because it compiles a cross toolchain, a kernel and a
-userland:
+The downloads above are the same bytes the build produces — CI builds both
+arches from source on every commit — but building takes about thirty-five
+minutes, because it compiles a cross toolchain, a kernel and a userland:
 
 ```sh
-bash dev/install-build-deps.sh
+bash dev/install-build-deps.sh     # compiler, Buildroot prerequisites, pinned Go
+make cli
 make image FLAVOR=dev              # or ARCH=x86_64, FLAVOR=base
 ```
 
