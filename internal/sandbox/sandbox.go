@@ -62,6 +62,8 @@ type Options struct {
 	ProxyPort int
 	// Net is the egress plumbing, when there is any.
 	Net *Network
+	// Workspace is a host directory packed as a second disk, when there is one.
+	Workspace *Workspace
 }
 
 // State is the on-disk description of a running sandbox, written into the run
@@ -161,7 +163,7 @@ func New(opts Options) (*Sandbox, error) {
 	cfg := FirecrackerConfig{
 		BootSource: BootSource{
 			KernelImagePath: kernel,
-			BootArgs:        bootArgs(opts.Arch, opts.Quiet, opts.Net),
+			BootArgs:        bootArgs(opts.Arch, opts.Quiet, opts.Net, opts.Workspace != nil),
 		},
 		Drives: []Drive{{
 			DriveID:      "rootfs",
@@ -171,6 +173,17 @@ func New(opts Options) (*Sandbox, error) {
 		}},
 		MachineConfig: MachineConfig{VcpuCount: opts.VcpuCount, MemSizeMib: opts.MemMiB},
 		Vsock:         &Vsock{GuestCID: proto.CIDGuest, UDSPath: s.State.UDSPath},
+	}
+	if opts.Workspace != nil {
+		// The workspace is the second virtio-blk drive, so it is always
+		// /dev/vdb in the guest — pinned rather than discovered, because the
+		// supervisor should not have to guess which disk is which.
+		cfg.Drives = append(cfg.Drives, Drive{
+			DriveID:      "workspace",
+			PathOnHost:   opts.Workspace.ImagePath,
+			IsRootDevice: false,
+			IsReadOnly:   false,
+		})
 	}
 	if opts.Net != nil {
 		cfg.NetworkIfaces = []NetworkIface{{

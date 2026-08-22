@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -28,6 +29,8 @@ func runCmd(argv []string) error {
 		verbose = fs.Bool("verbose-boot", false, "drop `quiet` from the kernel command line")
 		timeout = fs.Duration("ready-timeout", 30*time.Second, "how long to wait for the guest to become ready")
 		allow   = fs.String("allow", "", "comma-separated egress allowlist, e.g. github.com,pypi.org. Without it the sandbox has no network interface at all.")
+		wsDir   = fs.String("workspace", "", "host directory to make available at /work inside the sandbox")
+		noSync  = fs.Bool("no-sync-back", false, "do not write the workspace back to the host on shutdown")
 		secrets multiFlag
 	)
 	fs.Var(&secrets, "secret", "attach a credential to a domain: NAME@domain[:bearer|basic]. "+
@@ -102,6 +105,37 @@ func runCmd(argv []string) error {
 		defer proxy.Close()
 	}
 	opts.ID = sandboxID
+
+	// Firecracker has no shared-filesystem device, so a workspace is a copy in
+	// and a copy out rather than a mount (docs/networking.md is about egress;
+	// this is the local-files path). Packing happens before boot because the
+	// image has to exist to be attached.
+	if *wsDir != "" {
+		ws, err := sandbox.PackWorkspace(*wsDir,
+			filepath.Join(sandbox.Root(), "workspaces", sandboxID+".ext4"), 0)
+		if err != nil {
+			return err
+		}
+		opts.Workspace = ws
+		defer func() {
+			if *noSync {
+				fmt.Printf("workspace not written back (--no-sync-back); image kept at %s\n", ws.ImagePath)
+				return
+			}
+			dest, diverted, err := ws.SyncBack()
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "kelyfos: workspace sync-back failed: %v\n", err)
+				return
+			}
+			if diverted {
+				fmt.Printf("\nthe host directory changed while the sandbox was running, so it was NOT "+
+					"overwritten.\nresults written to %s instead\n", dest)
+			} else {
+				fmt.Printf("workspace written back to %s\n", dest)
+			}
+			_ = os.Remove(ws.ImagePath)
+		}()
+	}
 
 	sb, err := sandbox.New(opts)
 	if err != nil {
@@ -212,6 +246,9 @@ func runCmd(argv []string) error {
 		}
 	} else {
 		fmt.Printf("  egress      none (no network interface)\n")
+	}
+	if opts.Workspace != nil {
+		fmt.Printf("  workspace   %s -> /work\n", opts.Workspace.HostDir)
 	}
 	fmt.Println("\nCtrl-C to stop.")
 

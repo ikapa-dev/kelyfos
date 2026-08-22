@@ -80,6 +80,7 @@ func handleControl(conn net.Conn, shutdown chan<- struct{}) {
 // after which it kills Firecracker outright.
 func halt(grace time.Duration) {
 	logf("shutting down")
+	syncWorkspace()
 
 	// Everything except PID 1. TERM first so a command can finish writing.
 	_ = unix.Kill(-1, unix.SIGTERM)

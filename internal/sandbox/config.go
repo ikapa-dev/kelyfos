@@ -59,7 +59,7 @@ type Vsock struct {
 // Also absent: 8250.nr_uarts=0, which is in Firecracker's own default cmdline.
 // It disables the serial port, and KelyfOS wants a console — it is the only way
 // to see why a guest failed before the supervisor is up.
-func bootArgs(arch string, quiet bool, net *Network) string {
+func bootArgs(arch string, quiet bool, net *Network, workspace bool) string {
 	args := []string{
 		"reboot=k",                      // no BIOS to reboot through; ask KVM to reset
 		"panic=1",                       // a panicked sandbox should die, not sit there
@@ -84,6 +84,9 @@ func bootArgs(arch string, quiet bool, net *Network) string {
 			fmt.Sprintf("ip=%s::%s:%s::eth0:off", net.GuestIP, net.HostIP, net.Netmask),
 			fmt.Sprintf("kelyfos.proxy=%s:%d", net.HostIP, net.ProxyPort),
 		)
+	}
+	if workspace {
+		args = append(args, "kelyfos.workspace=/dev/vdb")
 	}
 	if quiet {
 		args = append(args, "quiet")

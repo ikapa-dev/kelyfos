@@ -49,6 +49,7 @@ func main() {
 		// no writable filesystem to log to — only the console the kernel gave
 		// us. setupRoot changes that.
 		setupRoot()
+		mountWorkspace()
 	}
 
 	// Egress, if this sandbox has any. Reading it here means every command
