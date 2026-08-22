@@ -42,6 +42,18 @@ while IFS= read -r line; do
   esac
 done < "$want_file"
 
+# A renamed symbol is accepted into .config and then makes Buildroot refuse to
+# build, with an error that names no symbol at all. Catching it here says which.
+if grep -q '^BR2_LEGACY=y' "$got_file" 2>/dev/null; then
+  echo "  LEGACY: the configuration selects renamed symbols; Buildroot will refuse to build" >&2
+  grep -E '^BR2_PACKAGE_[A-Z0-9_]+=y' "$want_file" | while IFS='=' read -r sym _; do
+    if grep -q "^# ${sym} is not set" "$got_file"; then
+      echo "    $sym looks renamed — check Config.in.legacy for its replacement" >&2
+    fi
+  done
+  fail=1
+fi
+
 if [ "$fail" -ne 0 ]; then
   echo "config verification failed: $got_file does not honour $want_file" >&2
   exit 1

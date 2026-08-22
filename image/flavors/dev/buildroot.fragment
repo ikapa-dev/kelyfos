@@ -1,0 +1,34 @@
+# KelyfOS — dev flavor (P3-3).
+#
+# The same guarantees as base — read-only root, no login, MCP-only interface,
+# deny-all egress — with the tools an agent actually needs to do work: fetch a
+# repository, edit it, run its tests.
+
+# --- TLS ----------------------------------------------------------------
+# OpenSSL and a real CA bundle. Without these the sandbox has egress it cannot
+# use, and the egress CA (decision D6) has nothing to append to.
+BR2_PACKAGE_OPENSSL=y
+BR2_PACKAGE_LIBOPENSSL=y
+BR2_PACKAGE_CA_CERTIFICATES=y
+
+# --- the toolbox --------------------------------------------------------
+BR2_PACKAGE_GIT=y
+BR2_PACKAGE_PYTHON3=y
+
+# curl is BR2_PACKAGE_LIBCURL (the library) plus BR2_PACKAGE_LIBCURL_CURL (the
+# binary). BR2_PACKAGE_CURL is a renamed legacy symbol: Buildroot accepts it into
+# .config and then refuses to build at all, which is a confusing way to find out.
+BR2_PACKAGE_LIBCURL=y
+BR2_PACKAGE_LIBCURL_CURL=y
+BR2_PACKAGE_LIBCURL_PROXY_SUPPORT=y
+
+# Not added: bash, diffutils and patch. Buildroot hides packages BusyBox already
+# provides unless BR2_PACKAGE_BUSYBOX_SHOW_OTHERS is set, and BusyBox's ash, diff
+# and patch are enough here — git's core is C, and only a few of its
+# subcommands are shell scripts. Adding a second copy of each would be weight
+# for nothing.
+
+# --- size ---------------------------------------------------------------
+# Roomier than base because the toolbox is the point. Still well inside the
+# 200 MB budget, and still sparse.
+BR2_TARGET_ROOTFS_EXT2_SIZE="512M"

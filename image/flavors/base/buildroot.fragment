@@ -1,0 +1,9 @@
+# KelyfOS — base flavor.
+#
+# BusyBox and musl and nothing else. No TLS client, no interpreters, no package
+# manager. This is the flavor for running a known binary under supervision, and
+# its value is precisely what it does not contain.
+#
+# 64 MiB is a ceiling on what the guest may write to the rootfs image, not a
+# cost: the file is sparse and occupies about 5 MiB.
+BR2_TARGET_ROOTFS_EXT2_SIZE="64M"

@@ -35,7 +35,7 @@ OUT_DIR       ?= $(CURDIR)/bin
 KELYFOS_CACHE ?= $(HOME)/.cache/kelyfos
 DL_DIR        ?= $(KELYFOS_CACHE)/dl
 BR_SRC        ?= $(KELYFOS_CACHE)/buildroot-$(BUILDROOT_VERSION)
-BUILD_DIR     ?= $(KELYFOS_CACHE)/build/$(ARCH)
+BUILD_DIR     ?= $(KELYFOS_CACHE)/build/$(ARCH)-$(FLAVOR)
 
 # Buildroot invocation. BR2_EXTERNAL must be absolute: Buildroot resolves a
 # relative one against its own source directory, not ours. BR2_DL_DIR is shared
@@ -55,7 +55,8 @@ OVERLAY_DIRS   := $(FLAVOR_OVERLAY) $(GUEST_OVERLAY)
 
 BR_EXTERNAL  := $(CURDIR)/image/buildroot
 BR_FRAGMENTS := $(BR_EXTERNAL)/configs/kelyfos_common.fragment \
-                $(BR_EXTERNAL)/configs/kelyfos_$(ARCH).fragment
+                $(BR_EXTERNAL)/configs/kelyfos_$(ARCH).fragment \
+                $(CURDIR)/image/flavors/$(FLAVOR)/buildroot.fragment
 BR_MAKE       = $(MAKE) -C $(BR_SRC) O=$(BUILD_DIR) \
                   BR2_EXTERNAL=$(BR_EXTERNAL) BR2_DL_DIR=$(DL_DIR)
 

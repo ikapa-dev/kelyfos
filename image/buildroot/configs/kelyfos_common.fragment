@@ -35,9 +35,9 @@ BR2_ROOTFS_DEVICE_CREATION_DYNAMIC_DEVTMPFS=y
 BR2_TARGET_ROOTFS_EXT2=y
 BR2_TARGET_ROOTFS_EXT2_4=y
 BR2_TARGET_ROOTFS_TAR=n
-# Deliberately sized rather than left to Buildroot's default. The file is sparse,
-# so this is a ceiling on what the guest may write to disk, not a cost.
-BR2_TARGET_ROOTFS_EXT2_SIZE="64M"
+# Rootfs size is set per flavor (image/flavors/<flavor>/buildroot.fragment):
+# base is deliberately tiny, dev carries a toolbox. The file is sparse either
+# way, so the number is a ceiling rather than a cost.
 
 # --- rootfs overlay --------------------------------------------------------
 # Two directories, templated by the Makefile: the flavor's tracked overlay
