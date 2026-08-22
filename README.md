@@ -58,18 +58,26 @@ KelyfOS exposes a running sandbox as MCP tools rather than as a shell. Any MCP
 client can attach; `kelyfos mcp` bridges the client's standard streams to the
 sandbox.
 
-Start a sandbox, then point a client at it. For Claude Code, add to
-`.mcp.json` in your project (or run `claude mcp add`):
+This repository ships a [`.mcp.json`](.mcp.json) that attaches Claude Code to a
+running sandbox:
 
 ```json
 {
   "mcpServers": {
     "kelyfos": {
-      "command": "/path/to/kelyfos",
+      "command": "kelyfos",
       "args": ["mcp"]
     }
   }
 }
+```
+
+If your agent runs on macOS while the sandbox runs in the Lima layer, the
+command has to cross into the VM — the bridge speaks stdio, so `limactl` passes
+it through unchanged:
+
+```json
+{ "command": "limactl", "args": ["shell", "kelyfos-dev", "--", "kelyfos", "mcp"] }
 ```
 
 The bridge attaches to the only running sandbox, so start one first:
