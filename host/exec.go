@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/p4r4n0rm4l/KelyfOS/internal/proto"
+	"github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/sandbox"
 )
 
@@ -25,6 +26,7 @@ func execCmd(argv []string) error {
 		cwd     = fs.String("cwd", "", "working directory inside the guest (default /)")
 		timeout = fs.Duration("timeout", 0, "kill the command after this long (0 = no limit)")
 		shell   = fs.Bool("shell", true, "run a single argument through /bin/sh -c")
+		useIn   = fs.Bool("stdin", false, "forward this process's stdin to the command")
 	)
 	fs.Usage = func() {
 		fmt.Fprint(fs.Output(), `usage: kelyfos exec [flags] <command>
@@ -32,7 +34,13 @@ func execCmd(argv []string) error {
 
 A single argument is a shell command line, run as /bin/sh -c "<argument>".
 Several arguments are an argv, executed directly with no shell involved.
-Piped stdin is forwarded to the command.
+
+Standard input is only forwarded when --stdin is given, the same way docker exec
+requires -i. Reading it automatically would hang whenever kelyfos runs from a
+script or a CI job, where stdin is an inherited pipe that nobody is ever going
+to close.
+
+    printf 'data' | kelyfos exec --stdin "cat"
 
 `)
 		fs.PrintDefaults()
@@ -60,9 +68,11 @@ Piped stdin is forwarded to the command.
 	}
 
 	var stdin string
-	if data, err := readPipedStdin(); err != nil {
-		return err
-	} else if len(data) > 0 {
+	if *useIn {
+		data, err := io.ReadAll(os.Stdin)
+		if err != nil {
+			return fmt.Errorf("read stdin: %w", err)
+		}
 		stdin = base64.StdEncoding.EncodeToString(data)
 	}
 
@@ -73,6 +83,18 @@ Piped stdin is forwarded to the command.
 	defer conn.Close()
 
 	reqID := fmt.Sprintf("e%d", time.Now().UnixNano())
+
+	// Every command goes into the flight recorder, including the shell wrapper
+	// if one was added, because that changes what the command can do.
+	rec, err := recorder.Open(sandbox.Root(), st.ID)
+	if err != nil {
+		return err
+	}
+	defer rec.Close()
+	started := time.Now()
+	_ = rec.Append(recorder.Event{
+		Type: recorder.TypeCommandStart, Call: reqID, Cmd: cmd, Cwd: *cwd, Via: "exec",
+	})
 	if err := proto.NewWriter(conn).Write(proto.ExecRequest{
 		V:         proto.Version,
 		ID:        reqID,
@@ -102,6 +124,10 @@ Piped stdin is forwarded to the command.
 			if err != nil {
 				return fmt.Errorf("guest sent invalid base64 on %s: %w", resp.Stream, err)
 			}
+			_ = rec.Append(recorder.Event{
+				Type: recorder.TypeCommandOutput, Call: reqID,
+				Stream: resp.Stream, Data: resp.Data, Bytes: len(data),
+			})
 			out := os.Stdout
 			if resp.Stream == proto.StreamStderr {
 				out = os.Stderr
@@ -110,6 +136,15 @@ Piped stdin is forwarded to the command.
 				return err
 			}
 		case proto.StreamExit:
+			ev := recorder.Event{
+				Type: recorder.TypeCommandExit, Call: reqID, Code: resp.Code,
+				Signal: resp.Signal, DurationMS: time.Since(started).Milliseconds(),
+			}
+			if resp.Error != nil {
+				ev.Error = &recorder.EvError{Kind: resp.Error.Kind, Message: resp.Error.Message}
+			}
+			_ = rec.Append(ev)
+
 			if resp.Error != nil {
 				fmt.Fprintf(os.Stderr, "kelyfos: %s: %s\n", resp.Error.Kind, resp.Error.Message)
 				return &exitError{code: exitCodeFor(resp.Error.Kind)}
@@ -126,23 +161,6 @@ Piped stdin is forwarded to the command.
 			return fmt.Errorf("guest sent unknown stream %q", resp.Stream)
 		}
 	}
-}
-
-// readPipedStdin returns stdin only when it is piped or redirected. Reading an
-// interactive terminal here would hang waiting for a Ctrl-D nobody expects.
-func readPipedStdin() ([]byte, error) {
-	info, err := os.Stdin.Stat()
-	if err != nil {
-		return nil, nil
-	}
-	if info.Mode()&os.ModeCharDevice != 0 {
-		return nil, nil
-	}
-	data, err := io.ReadAll(os.Stdin)
-	if err != nil {
-		return nil, fmt.Errorf("read stdin: %w", err)
-	}
-	return data, nil
 }
 
 // exitCodeFor maps a protocol error onto the exit status the CLI reports. The

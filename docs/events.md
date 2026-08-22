@@ -1,0 +1,197 @@
+# KelyfOS flight recorder — event schema
+
+**Status:** normative for `v: 1`. Written at task P2-4. The viewers in P3-8 and
+P3-9 are built on this contract; the schema is the product and the viewers are
+replaceable, so this document changes far more slowly than they do.
+
+A session's flight recorder is a single append-only file of newline-delimited
+JSON — one event per line, in the order the host observed them:
+
+```
+~/.cache/kelyfos/sessions/<sandbox-id>/events.jsonl
+```
+
+It lives outside the sandbox's run directory on purpose. The run directory is
+deleted when the sandbox stops; the record of what happened must outlive the
+thing it describes.
+
+---
+
+## 1. Why the host writes it
+
+Every event is recorded by the **host**, never by the guest. That is not a
+convenience — it is the whole basis for trusting the file. The guest runs
+whatever an agent decides to run; a guest that could write its own audit trail
+could also write a flattering one. The host sees enough to be useful without
+asking: it launches the VM, it bridges MCP, and from P2-5 it is the only route
+to the network.
+
+The guest may *report* things on its events channel (`docs/protocol.md` §5.5),
+and those arrive as events with `"source": "guest"`. They are still written by
+the host, and a reader should weigh them accordingly.
+
+## 2. Tamper evidence
+
+Each event carries the hash of the one before it, so the file is a chain:
+
+- `prev` — the `hash` of the previous event, or `""` for the first;
+- `hash` — `sha256(canonical(event without its own hash field))`, hex-encoded.
+
+Canonical form is the event serialized as JSON with `hash` set to the empty
+string and every field in the order this document lists, with empty optional
+fields omitted. Verification re-serializes each parsed event the same way and
+recomputes the digest.
+
+This makes the log **tamper-evident, not tamper-proof**. Anyone who can write
+the file can rewrite it end to end and recompute every hash. What the chain
+buys is that a *selective* edit — deleting one blocked-egress event, softening
+one command — breaks every hash after it, which is exactly the edit someone
+covering their tracks wants to make. `kelyfos log --verify` reports the first
+sequence number where the chain breaks.
+
+Signing, which turns tamper-evidence into something a third party can check
+offline, is P4-3.
+
+## 3. Common fields
+
+Every event has these, in this order:
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `v` | integer | Schema version. `1`. |
+| `seq` | integer | Position in the session, from 1, no gaps. |
+| `ts` | string | RFC 3339 with milliseconds, UTC, host clock. |
+| `sandbox` | string | Sandbox id this session belongs to. |
+| `type` | string | Event type, from §4. |
+| `source` | string | `host` or `guest`. See §1. |
+| `prev` | string | Previous event's `hash`; `""` for the first. |
+| `hash` | string | This event's digest. |
+
+Type-specific fields follow, and are documented per type below. **A reader must
+ignore fields it does not recognise** — adding a field is not a breaking change,
+and `v` is bumped only when the meaning of an existing field changes.
+
+## 4. Event types
+
+### `session.start`
+Opens the file. Records what the sandbox is.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `image` | string | Flavor, e.g. `base`. |
+| `arch` | string | `aarch64` or `x86_64`. |
+| `kelyfos` | string | CLI version. |
+| `argv` | array of string | How the sandbox was launched, for reproduction. |
+
+### `session.ready`
+The guest announced itself.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `boot_ms` | integer | Host-measured boot-to-ready. |
+| `kernel` | string | Guest kernel release. |
+| `supervisor` | string | Supervisor version. |
+| `overlay` | boolean | Whether the writable overlay came up. |
+
+### `session.end`
+Closes the file.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `reason` | string | `shutdown`, `interrupted`, `vm_exited`, `error`. |
+| `duration_ms` | integer | Session length. |
+
+### `command.start`
+A command was submitted, before it runs.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `call` | string | Correlates the start, output and exit of one command. |
+| `cmd` | array of string | The argv actually sent. A shell wrapper is visible here because it changes what the command can do. |
+| `cwd` | string | Working directory, if set. |
+| `via` | string | `exec` (the CLI) or `mcp` (a tool call). |
+
+### `command.output`
+A chunk of output, in the order it was observed.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `call` | string | The command this belongs to. |
+| `stream` | string | `stdout` or `stderr`. |
+| `data` | string | base64 of the raw bytes. |
+| `bytes` | integer | Decoded length, so a reader can size a session without decoding. |
+
+### `command.exit`
+Exactly one per `command.start`.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `call` | string | The command this belongs to. |
+| `code` | integer | Exit status; `-1` when the command could not be run. |
+| `signal` | string | Signal name, if one killed it. |
+| `error` | object | `{kind, message}` when the command could not be run or was cut short. |
+| `duration_ms` | integer | Wall-clock time. |
+
+### `file.write`
+A file was written through a tool. The **content is not recorded** — a flight
+recorder that copies every byte an agent writes is a second copy of the
+workspace, and a much worse place to leave it.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `path` | string | Path inside the guest. |
+| `bytes` | integer | Size written. |
+| `sha256` | string | Digest of the content, so a later claim about what was written can be checked. |
+| `via` | string | Tool name: `write_file` or `upload`. |
+
+### `egress.attempt`
+One outbound connection attempt. Written from P2-5.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `host` | string | Requested host. |
+| `port` | integer | Requested port. |
+| `allowed` | boolean | Whether policy permitted it. |
+| `reason` | string | Why, when blocked: `not_in_allowlist`, `dns_blocked`, `no_nic`. |
+| `mode` | string | `tunnelled` or `terminated`. **Required whenever `allowed` is true.** |
+| `bytes_in`, `bytes_out` | integer | Transferred, when the connection closed. |
+
+`mode` exists because of decision D6. KelyfOS terminates TLS only for domains
+with a secret bound to them, and tunnels everything else; recording which
+happened per connection is how a user can prove exactly which traffic the proxy
+was able to read.
+
+### `secret.use`
+A credential was attached to a request. Written from P2-6.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `name` | string | Secret name, e.g. `GITHUB_TOKEN`. |
+| `host` | string | Where it was sent. |
+
+**The value is never recorded, in any field, in any form** — not truncated, not
+hashed. A hash of a short credential is a credential. The whole point of
+injecting at the proxy is that the value exists in one place; writing it to an
+audit log would put it in two.
+
+---
+
+## 5. Reading the file
+
+- `kelyfos log` replays a session in order.
+- `kelyfos log --follow` streams events as they are recorded.
+- `kelyfos log --verify` checks the chain and reports the first break.
+
+A session that is still running has no `session.end`. That is not corruption:
+a reader should present the session as open rather than truncated.
+
+## 6. Conformance
+
+| Requirement | Task |
+| --- | --- |
+| Events written host-side, chained, with the types in §4 | P2-4 |
+| `kelyfos log`, `--follow`, `--verify` | P2-4 |
+| `egress.attempt` with `mode`, `secret.use` by name | P2-5, P2-6 |
+| HTML session export built only from this file | P3-8 |
+| Live TUI built only from this file | P3-9 |
+| Signed exports verifiable offline | P4-3 |

@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/sandbox"
 )
 
@@ -51,6 +52,22 @@ func runCmd(argv []string) error {
 		return err
 	}
 
+	// The flight recorder is opened before the VM starts and closed after it
+	// stops, so a session's record brackets the thing it describes. It lives
+	// outside the run directory, which is deleted on teardown.
+	rec, err := recorder.Open(sandbox.Root(), sb.State.ID)
+	if err != nil {
+		return err
+	}
+	reason := "error"
+	defer func() {
+		_ = rec.Append(recorder.Event{
+			Type: recorder.TypeSessionEnd, Reason: reason,
+			DurationMS: rec.Since().Milliseconds(),
+		})
+		_ = rec.Close()
+	}()
+
 	// Teardown must happen on every path out of this function, including the
 	// signal path — a sandbox left running with its run directory deleted, or a
 	// stale socket left behind, is worse than a failure.
@@ -59,6 +76,13 @@ func runCmd(argv []string) error {
 			fmt.Fprintf(os.Stderr, "kelyfos: shutdown: %v\n", err)
 		}
 	}()
+
+	if err := rec.Append(recorder.Event{
+		Type: recorder.TypeSessionStart, Image: *flavor, Arch: *arch,
+		Kelyfos: Version, Argv: os.Args,
+	}); err != nil {
+		return err
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -83,6 +107,12 @@ func runCmd(argv []string) error {
 	// own monotonic clock; the remainder is Firecracker building the machine and
 	// loading the kernel, which no amount of guest tuning will touch.
 	guestMS := ready.MonotonicNS / 1e6
+	overlay := ready.Overlay
+	_ = rec.Append(recorder.Event{
+		Type: recorder.TypeSessionReady, BootMS: sb.State.BootReadyMS,
+		Kernel: ready.Kernel, Supervisor: ready.Supervisor, Overlay: &overlay,
+	})
+
 	fmt.Printf("sandbox %s ready in %d ms (vmm %d ms + guest %d ms)\n",
 		sb.State.ID, sb.State.BootReadyMS, sb.State.BootReadyMS-guestMS, guestMS)
 	fmt.Printf("  kernel      %s (%s)\n", ready.Kernel, ready.Arch)
@@ -99,7 +129,9 @@ func runCmd(argv []string) error {
 	select {
 	case <-ctx.Done():
 		fmt.Println("\nstopping...")
+		reason = "interrupted"
 	case <-vmExited:
+		reason = "vm_exited"
 		return fmt.Errorf("the microVM exited unexpectedly")
 	}
 	return nil

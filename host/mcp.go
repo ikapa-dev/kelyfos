@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/p4r4n0rm4l/KelyfOS/internal/proto"
+	"github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/sandbox"
 )
 
@@ -60,11 +61,21 @@ which clients are required not to treat as failure.
 
 	fmt.Fprintf(os.Stderr, "kelyfos: attached to sandbox %s\n", st.ID)
 
+	// Observation is a tee, not a filter: each direction is copied through
+	// byte-for-byte while a duplicate is parsed for the flight recorder. The
+	// bridge stays a pass-through and the session still gets an audit trail.
+	rec, err := recorder.Open(sandbox.Root(), st.ID)
+	if err != nil {
+		return err
+	}
+	defer rec.Close()
+	obs := newObserver(rec)
+
 	// Two copies, and the first one to end takes the bridge down with it.
 	errc := make(chan error, 2)
 
 	go func() {
-		_, err := io.Copy(conn, os.Stdin)
+		_, err := io.Copy(conn, tee(os.Stdin, obs.fromClient))
 		// The client closing stdin means "no more requests". Half-close so the
 		// guest sees EOF and can finish, rather than waiting on a peer that is
 		// never going to speak again.
@@ -74,7 +85,7 @@ which clients are required not to treat as failure.
 		errc <- err
 	}()
 	go func() {
-		_, err := io.Copy(os.Stdout, conn)
+		_, err := io.Copy(os.Stdout, tee(conn, obs.fromGuest))
 		errc <- err
 	}()
 
