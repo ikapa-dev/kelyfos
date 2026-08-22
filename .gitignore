@@ -1,0 +1,19 @@
+# Build output — everything here is reproducible from source.
+/bin/
+/out/
+
+# Buildroot working trees. These are huge and live on the Linux layer's own
+# filesystem, never on the virtiofs mount (see dev/lima.yaml).
+/image/buildroot-*/
+/image/.stamp-*
+*.ext4
+*.img
+Image
+vmlinux
+
+# Go
+*.test
+*.out
+
+# macOS
+.DS_Store
