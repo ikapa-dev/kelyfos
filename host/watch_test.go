@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 
 	"github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/sandbox"
@@ -249,7 +249,10 @@ func TestASingleSandboxStillGetsTheSingleView(t *testing.T) {
 	if len(m.order) != 0 {
 		t.Fatalf("a single sandbox grew lanes: %v", m.order)
 	}
-	out := m.View()
+	// render() rather than View(): the view is now a struct carrying the
+	// terminal's mode alongside the content, and what this test is about is
+	// the content.
+	out := m.render()
 	if strings.Contains(out, "message flow") {
 		t.Error("the single-sandbox view rendered the team ticker")
 	}

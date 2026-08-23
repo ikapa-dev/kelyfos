@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/report"
@@ -60,7 +60,9 @@ it: a session whose events name agents is a team.
 	path := recorder.Path(sandbox.Root(), sessionID)
 
 	m := &watchModel{session: sessionID, path: path, started: time.Now()}
-	p := tea.NewProgram(m, tea.WithAltScreen())
+	// The alt screen is a property of the view in v2, not an option on the
+	// program: set once in View() rather than asked for here (F-D51).
+	p := tea.NewProgram(m)
 	m.program = p
 	go m.tail()
 	_, err = p.Run()
@@ -255,7 +257,7 @@ func (m *watchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		switch msg.String() {
 		case "q", "esc", "ctrl+c":
 			return m, tea.Quit
@@ -472,7 +474,16 @@ var (
 	barStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 )
 
-func (m *watchModel) View() string {
+// View returns a tea.View rather than a string in v2, which is what carries the
+// alt-screen flag: the terminal's mode is now something the view declares each
+// frame rather than something the program was started with.
+func (m *watchModel) View() tea.View {
+	v := tea.NewView(m.render())
+	v.AltScreen = true
+	return v
+}
+
+func (m *watchModel) render() string {
 	width := m.width
 	if width < 40 {
 		width = 80

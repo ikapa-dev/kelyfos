@@ -1776,6 +1776,33 @@
         stands in the log and F-D40 stands unexecuted; neither is wrong, and the plan should not pretend the move
         happened.</td>
         <td class="mono">curl from Lima and host, 2026-08-23</td></tr>
+        <tr><td class="mono">F-D51</td><td class="mono">2026-08-23</td>
+        <td><b>Bubble Tea and Lip Gloss are on v2, and <code>watch</code> is proved on a real terminal rather than on a
+        rendered string.</b> Executes F-D41.
+        <i>The vanity path, resolved rather than argued.</i> F-D23&rsquo;s worry was <code>charm.land</code>. It is not
+        avoidable and it is not a choice: the module served from the GitHub path <i>declares itself</i>
+        <code>module charm.land/bubbletea/v2</code>, so both names are the same module and only one of them is the
+        module path. F-D41&rsquo;s mitigation is the answer &mdash; the proxy&rsquo;s immutable cache plus
+        <code>go.sum</code> &mdash; and it is now doing the work rather than being a plan to do it.
+        <b>bubbletea v2.0.9, lipgloss v2.0.6.</b>
+        <i>What actually changed in the code.</i> Three things, and all three are the same shape: state that used to be
+        set once when the program started is now declared by the view every frame. <code>View() string</code> becomes
+        <code>View() tea.View</code>, and the alt screen is a field of it rather than <code>tea.WithAltScreen()</code>
+        on the program. <code>tea.KeyMsg</code> becomes <code>tea.KeyPressMsg</code>, because a key message is now an
+        interface covering presses and releases. The rendering itself is untouched: <code>render()</code> is the old
+        <code>View()</code> body, moved.
+        <i>Why the acceptance had to be a terminal.</i> The unit tests render the model and read the string, which
+        covers what the view says and nothing about the terminal &mdash; and the terminal is exactly what moved. So
+        <code>dev/accept-watch.sh</code> drives the real binary through a pseudo-terminal: it checks the alt screen is
+        entered <i>and left</i>, that <code>q</code> is seen as a keypress and the process exits 0, and that a screen is
+        written at all. Five checks, five passes.
+        <i>Identical, checked rather than asserted.</i> The same script was run against v1 first, by reverting the
+        change, and the two screens are the same: same header, same summary line, same columns, same event lines. Then
+        <code>-race</code>, both as <code>go test -race</code> and as a race-built binary driven through the PTY: no
+        report either way.
+        <i>Revisit when</i> v2 gains something <code>watch</code> wants, which is now a normal upgrade rather than a
+        migration.</td>
+        <td class="mono">dev/accept-watch.sh, charm.land/bubbletea/v2</td></tr>
     <!-- Claude Code: append rows above this line. -->
       <tr><td class="mono">F-D10</td><td class="mono">2026-08-22</td>
         <td>The resource knobs E1-0 goes looking for shipped <b>partly</b>: <code>--vcpus</code>/<code>--mem</code> and
