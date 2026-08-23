@@ -77,7 +77,7 @@ KERNEL_ARTIFACT := vmlinux
 endif
 
 .DEFAULT_GOAL := help
-.PHONY: help versions toolchain kernel supervisor cli image run bench docs prove-caps prove-team demo-team accept-e2 clean test test-integration linux-only fetch-kernel
+.PHONY: help versions toolchain kernel supervisor cli image run bench docs cookbook prove-caps prove-team demo-team accept-e2 clean test test-integration linux-only fetch-kernel
 
 help: ## Show this target list
 	@echo "KelyfOS — targets (ARCH=$(ARCH), FLAVOR=$(FLAVOR))"
@@ -246,6 +246,12 @@ docs: linux-only cli ## Regenerate docs/reference from the source
 	  -supervisor $(OUT_DIR)/kelyfos-supervisor-host \
 	  -out $(CURDIR)/docs/reference \
 	  -repo $(CURDIR)
+
+# Every recipe in docs/cookbook.md, run as written (E3-3). The recipes are the
+# documentation, so this is how a recipe that stopped working gets found by us
+# rather than by a stranger.
+cookbook: linux-only cli ## Run every cookbook recipe on this machine
+	bash $(CURDIR)/dev/cookbook.sh
 
 run: cli ## Boot a microVM from the built image under Firecracker
 	$(OUT_DIR)/kelyfos run --image $(FLAVOR) --arch $(ARCH)

@@ -69,6 +69,8 @@ func docSet() []doc {
 			Summary: "the vsock transport, the port map, and every channel's messages"},
 		{Path: "docs/e2b-shim.md", Title: "E2B-compatible shim", Full: true,
 			Summary: "the REST subset for existing E2B SDK code, and what it deliberately omits"},
+		{Path: "docs/cookbook.md", Title: "Cookbook", Full: true,
+			Summary: "seven complete recipes, each one a script CI runs on a real machine"},
 		{Path: "docs/README.md", Title: "Documentation map", Full: true,
 			Summary: "what every document is, and — deliberately — where each is still thin"},
 	}

@@ -126,7 +126,7 @@
      improvements to the existing product land here as epics. Inert until its gate opens.</p>
   <div class="meta">
     owner: <b>John</b> &nbsp;&middot;&nbsp; developer: <b>Claude Code</b> &nbsp;&middot;&nbsp;
-    status: <b class="ok" id="meta-status">Epic E3 — active, 3/6 (v0.5 released; next: E3-3, the CI-executed cookbook)</b> &nbsp;&middot;&nbsp;
+    status: <b class="ok" id="meta-status">Epic E3 — active, 4/6 (v0.5 released; next: E3-4, the integration guide)</b> &nbsp;&middot;&nbsp;
     last updated: <b id="meta-updated">2026-08-23</b><br>
     repo file: <b>PLAN-FEATURES.html</b> (lives at the repository root next to <code>PLAN.html</code>)<br>
     <span class="quiet">Companion to PLAN.html — same protocol, same rules, later timeline.</span>
@@ -166,7 +166,7 @@
     <span class="bl-name">All epics</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">E3-3 — the cookbook: self-contained copy-paste recipes, each a literal script CI extracts and executes, so a recipe that stops working fails the build</b></div>
+  <div class="focusline">Current focus: <b id="focus">E3-4 — the integration guide for agent builders: calling KelyfOS from Python and JS, the MCP bridge, the shim, and the common mistakes the build log already knows about</b></div>
 </div>
 
 <!-- ====================================================== 1. ACTIVATION GATE -->
@@ -443,7 +443,7 @@
         product in one file, generated reference + concepts + recipes, at the repo root.
         Measure the token count of the full file and record it in the progress log; it must fit comfortably in a typical
         LLM context window.</span></li>
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">E3-3</span><span class="tk">Cookbook: self-contained copy-paste recipes — run one sandbox; allowlist a domain
         + inject a secret; workspace mode; snapshot &amp; fork; build a 3-agent team with an <code>ask</code> round-trip; read and
         verify the audit log; use the E2B-compatible shim from Python. Each recipe is a literal script that CI extracts and
@@ -1226,6 +1226,35 @@
         rendered site finds no mention of it. It is an ecosystem convention, apparently Mintlify&rsquo;s, and this
         file&rsquo;s own header says so rather than implying a standard it is not part of.</td>
         <td class="mono">the E3-2 progress row; tools/gendocs/llms_test.go</td></tr>
+        <tr><td class="mono">F-D30</td><td class="mono">2026-08-23</td>
+        <td>The cookbook is executed in <b>two places at two cadences</b>, because &ldquo;CI executes every
+        recipe&rdquo; and &ldquo;every commit executes every recipe&rdquo; are different requirements and only the
+        first one is E3-3&rsquo;s. Every commit, in <code>ci.yml</code>&rsquo;s <code>checks</code>: every recipe still
+        extracts and is still valid shell. Weekly and on demand, in a new <code>cookbook.yml</code> on a bare-KVM
+        runner: every recipe actually runs.
+        <i>Why not every commit.</i> The recipes need KVM, Firecracker and the <b>dev</b> image, and
+        <code>ci.yml</code> builds <code>base</code>. A second from-source Buildroot tree on every push is tens of
+        minutes for a check whose subject changes rarely — the same arithmetic D24 already did when it stopped
+        rebuilding a kernel because a progress row was appended. Seven days is then the longest a recipe can rot
+        without saying so, which is the bound the weekly cache-free build already sets for the image itself.
+        <i>Two things the extractor refuses, and why they are refusals rather than warnings.</i> A shell block with no
+        <code>&lt;!-- recipe: name --&gt;</code> above it is an error: a runnable-looking block CI never runs is
+        precisely the one that quietly stops working, which is the whole failure E3-3 exists to prevent. And a script
+        that does not begin with <code>set -euo pipefail</code> is an error, because without it a failed step is a green
+        recipe — worse than no recipe at all. A block fenced as anything but shell needs no marker; the cookbook has to
+        be able to show a toml file without promising to execute it.
+        <i>What writing them found.</i> Three things, none of which was visible from reading the code.
+        <b>(1)</b> <code>kill -INT</code> on a backgrounded <code>kelyfos run</code> is not reliably waited for by
+        <code>wait</code>, so a recipe that stopped a sandbox that way read its workspace before the write-back had
+        finished — it passed on a fast path and failed on a slow one. Every recipe that can now uses
+        <code>run -- &lt;command&gt;</code>, which is deterministic, and it is better documentation besides.
+        <b>(2)</b> The workspace write-back is a <b>swap</b>: the old directory is renamed away and the reconstructed
+        one renamed into place, so a shell whose current directory <i>is</i> the workspace ends up in a directory that
+        no longer exists. That is correct behaviour and a genuine surprise, so the recipe says so.
+        <b>(3)</b> <code>kelyfos log --list</code> orders sessions by id rather than by time, so
+        <code>head -1</code> gives an arbitrary one. The recipes use the default &ldquo;most recent&rdquo; instead.
+        The ordering is worth fixing and is not E3-3&rsquo;s to fix; it is recorded here.</td>
+        <td class="mono">the E3-3 progress row</td></tr>
     <!-- Claude Code: append rows above this line. -->
       <tr><td class="mono">F-D10</td><td class="mono">2026-08-22</td>
         <td>The resource knobs E1-0 goes looking for shipped <b>partly</b>: <code>--vcpus</code>/<code>--mem</code> and
@@ -3022,6 +3051,64 @@ $ # add a prose bullet under ## Optional
 
 $ gofmt -l . ; go vet ./... ; go test ./...
   clean · clean · all packages ok</pre></td></tr>
+        <tr><td class="mono">2026-08-23</td><td class="mono">E3-3</td>
+        <td><b>Seven recipes, and every one of them was run before it was written down.</b>
+        <code>docs/cookbook.md</code> covers what E3-3 names: one sandbox; an allowlist plus an injected credential;
+        a workspace round-trip; snapshot and fork; a three-agent team with an ask round-trip and a deliberately refused
+        edge; reading the record and watching one altered byte break the chain; and driving a sandbox from the E2B
+        Python SDK. <b>7 passed, 0 failed</b> on the dev machine, through the same extractor and runner CI uses.
+        <b>The scripts are the documentation.</b> <code>tools/cookbook</code> takes them out of the Markdown and
+        <code>dev/cookbook.sh</code> runs them, so what CI executes is character-for-character what a reader copies —
+        checked by a test that diffs the extracted script against the file that was tested. The extractor refuses a
+        shell block with no recipe marker and a script that does not begin with <code>set -euo pipefail</code>; both
+        refusals have tests, and both exist because the failure they prevent looks exactly like success.
+        <b>Writing them found three things reading the code had not.</b> A backgrounded <code>kelyfos run</code> stopped
+        with <code>kill -INT</code> is not reliably waited for, so a recipe read its workspace before the write-back
+        finished and passed or failed depending on timing — every recipe that can now uses
+        <code>run -- &lt;command&gt;</code>. The workspace write-back is a swap rather than a merge, which strands a
+        shell sitting in the workspace directory. And <code>kelyfos log --list</code> orders by session id rather than
+        by time. All three are in F-D30, and the first two are now in the cookbook where a reader meets them before
+        they cost anyone an afternoon.
+        Cadence is F-D30&rsquo;s other half: every commit checks that the recipes extract and parse, and the new
+        <code>cookbook</code> workflow runs them weekly on bare KVM, because they need the dev image and
+        <code>ci.yml</code> builds base.</td>
+        <td class="mono"><pre>$ bash dev/cookbook.sh
+docs/cookbook.md: wrote 7 recipes to /tmp/…/recipes
+
+  PASS  allowlist-and-secret   (2s)
+  PASS  audit-log              (1s)
+  PASS  e2b-shim               (4s)
+  PASS  one-sandbox            (1s)
+  PASS  snapshot-and-fork      (3s)
+  PASS  three-agent-team      (37s)
+  PASS  workspace              (2s)
+
+  7 passed, 0 failed
+
+what they proved, in their own output:
+  401 from api.github.com  (the proxy attached the
+      credential; the token was deliberately fake)
+  curl: (7) CONNECT tunnel failed, response 403
+      (example.com, not in the allowlist)
+  no environment variable and no file in the guest
+      carries the value
+  worker-1's ask returned: yes, regular files only
+  no_edge: this team has no edge from worker-1 to
+      worker-2
+  session d9a4a7c6: FAILED after 2 events
+    event 3 has been modified — its contents hash to
+    cce97d568387, but it carries c2e3408046e7
+  read it back: hello from the E2B SDK
+
+$ diff &lt;(tail -n +2 extracted/one-sandbox.sh) tested.sh
+  (no difference: the doc is the script)
+
+$ go test ./tools/... ; gofmt -l . ; go vet ./...
+  ok · clean · clean
+
+llms-full.txt regenerated with the cookbook in it:
+  54 306 tokens (cl100k) · 54 283 (o200k)
+  = 27% of a 200k window</pre></td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>

@@ -1,0 +1,148 @@
+# KelyfOS — every cookbook recipe, run as written (E3-3).
+#
+# The recipes in docs/cookbook.md are the documentation, and a recipe that has
+# stopped working is worse than a missing one: it costs a stranger an afternoon
+# before they conclude the fault is theirs. So they are executed rather than
+# reviewed, on a machine that can actually boot a microVM.
+#
+# Why this is its own workflow and not a job in ci.yml (F-D30): the recipes need
+# KVM, Firecracker and the *dev* image, and ci.yml builds `base`. Adding a second
+# from-source Buildroot tree to every commit would cost tens of minutes per push
+# for a check whose subject changes rarely — the same arithmetic D24 already did
+# for the build jobs. What every commit does get, in ci.yml's `checks`, is that
+# every recipe still extracts and is still valid shell. What this adds is that
+# they still work.
+#
+# The weekly run is what keeps that honest: a recipe cannot rot for longer than
+# seven days without saying so.
+name: cookbook
+
+on:
+  workflow_dispatch:
+    inputs:
+      arch:
+        description: "Guest architecture"
+        required: false
+        default: "x86_64"
+      recipes:
+        description: "Recipe names to run, space-separated. Empty runs them all."
+        required: false
+        default: ""
+  schedule:
+    # Tuesdays, 05:17 UTC — a day after ci.yml's cache-free build, so a break in
+    # the image itself is already known by the time this runs.
+    - cron: "17 5 * * 2"
+
+permissions:
+  contents: read
+
+jobs:
+  recipes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      ARCH: ${{ github.event.inputs.arch || 'x86_64' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Grant access to /dev/kvm
+        run: |
+          set -eux
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -l /dev/kvm
+
+      - name: Cache Buildroot downloads
+        id: dl
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.cache/kelyfos/dl
+          key: kelyfos-dl-${{ hashFiles('versions.mk') }}
+          restore-keys: kelyfos-dl-
+
+      # The same key caps.yml uses: both workflows want the dev tree, and there
+      # is no reason for them to build it twice.
+      - name: Cache the Buildroot tree
+        id: tree
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.cache/kelyfos/build/${{ env.ARCH }}-dev
+          key: kelyfos-tree-${{ env.ARCH }}-dev-${{ hashFiles('versions.mk', 'image/buildroot/configs/*', 'image/buildroot/kernel/*', 'image/flavors/dev/*') }}
+          restore-keys: kelyfos-tree-${{ env.ARCH }}-dev-
+
+      - name: Cache the compiler cache
+        id: ccache
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.cache/kelyfos/ccache
+          key: kelyfos-ccache-${{ env.ARCH }}-${{ hashFiles('versions.mk') }}
+
+      - name: Install build dependencies
+        run: bash dev/install-build-deps.sh
+
+      - name: Install Firecracker
+        run: bash dev/install-firecracker.sh
+
+      - name: Build the dev image
+        run: make image ARCH="$ARCH" FLAVOR=dev
+
+      - name: Build the CLI
+        run: make cli
+
+      # The recipes create TAP devices and load nftables rules for the ones that
+      # use --allow, which needs passwordless sudo. A GitHub runner has it; HOME
+      # is passed explicitly because the image built above lives under it and
+      # root's HOME is a different directory with no image in it.
+      - name: Run every recipe
+        run: |
+          set -o pipefail
+          sudo -E env "PATH=$PATH" "HOME=$HOME" ARCH="$ARCH" \
+            bash dev/cookbook.sh ${{ github.event.inputs.recipes }} 2>&1 | tee cookbook.log
+
+      - name: Publish the transcript
+        if: always()
+        run: |
+          {
+            echo "### Cookbook — every recipe, run as written"
+            echo
+            echo '```'
+            sed -e 's/\x1b\[[0-9;]*m//g' cookbook.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cookbook-${{ env.ARCH }}
+          path: cookbook.log
+          if-no-files-found: warn
+
+      # Saved with if: always() for the reason caps.yml records: a post step is
+      # skipped once any step has failed, and the run worth iterating on is
+      # exactly the one that failed.
+      - name: Save the Buildroot tree
+        if: always() && steps.tree.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/kelyfos/build/${{ env.ARCH }}-dev
+          key: ${{ steps.tree.outputs.cache-primary-key }}
+
+      - name: Save the downloads
+        if: always() && steps.dl.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/kelyfos/dl
+          key: ${{ steps.dl.outputs.cache-primary-key }}
+
+      - name: Save the compiler cache
+        if: always() && steps.ccache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/kelyfos/ccache
+          key: ${{ steps.ccache.outputs.cache-primary-key }}

@@ -25,6 +25,7 @@ hand-written half, and this page says where each is still thin.
 | running several agents together | [`teams.md`](teams.md) |
 | auditing what an agent did | [`events.md`](events.md) |
 | keeping an agent off the network | [`networking.md`](networking.md) |
+| after something that works, right now | [`cookbook.md`](cookbook.md) — seven recipes, each one runnable as it stands |
 | building KelyfOS into something else | [`protocol.md`](protocol.md), then [`e2b-shim.md`](e2b-shim.md) |
 | judging whether to trust it | [`threat-model.md`](threat-model.md) |
 
@@ -39,9 +40,10 @@ hand-written half, and this page says where each is still thin.
 | [`resources.md`](resources.md) | mixed | Every resource cap: units, precedence, what enforces it, and what happens when it is reached. |
 | [`teams.md`](teams.md) | mixed | The `[team]` schema, the host broker and its edge rules, the team store, the collective budget, and how a team boots. |
 | [`threat-model.md`](threat-model.md) | concept | What KelyfOS defends against and — the longer half — what it does not. |
+| [`cookbook.md`](cookbook.md) | recipes | Seven complete, copy-pasteable recipes. Every one is a script CI extracts and runs on a real machine. |
 | [`e2b-shim.md`](e2b-shim.md) | mixed | The E2B-compatible REST subset: what it implements, what it does not, and why. |
 | [`../llms.txt`](../llms.txt) | **generated** | The index a machine reads first: every page above as a link with a one-line description, per the llmstxt.org spec. |
-| [`../llms-full.txt`](../llms-full.txt) | **generated** | Every page above concatenated, each with its source URL. About 48,000 tokens — a quarter of a 200k context window. |
+| [`../llms-full.txt`](../llms-full.txt) | **generated** | Every page above concatenated, each with its source URL. About 54,000 tokens — a quarter of a 200k context window. |
 | [`launch/hn-post.md`](launch/hn-post.md) | not documentation | The launch post draft. Unposted, and the maintainer's to send. |
 
 The plan files at the repository root — [`PLAN.html`](../PLAN.html) for phases 0–4
@@ -140,6 +142,17 @@ the second; `[team.agent.spawn.resources]` accepts two keys nothing enforces
 (F-D27); `team ps` has no sample output; the store's `not_found` is described as
 "not a refusal" and is recorded as one.
 
+### `cookbook.md` — seven things that work
+
+*Recipes:* one sandbox; an allowlist and an injected credential; a workspace
+round-trip; snapshot and fork; a three-agent team with an ask round-trip and a
+refused edge; reading and verifying the record, including watching one altered
+byte break the chain; and driving a sandbox from the E2B SDK.
+*Thin:* nothing hidden — every script is extracted and executed by
+`dev/cookbook.sh` and by the `cookbook` workflow, so a recipe that stops working
+fails rather than misleading. What it does not have is a recipe for embedding
+KelyfOS in another program, which is E3-4's.
+
 ### `threat-model.md` — what to trust
 
 Concept throughout, deliberately, and the document the README sends a first-time
@@ -180,9 +193,10 @@ specification, not a description.
 `KELYFOS_CGROUP_ROOT` are read by the CLI and named nowhere. `KELYFOS_SANDBOX`
 is the one an integrator needs, and E3-4 is its home.
 
-**Recipes.** There is no cookbook and no integration guide. Those are E3-3 and
-E3-4, and until they exist neither `llms.txt` nor `llms-full.txt` can offer a
-worked example — which is the gap a machine reader will feel first.
+**The integration guide.** How to call KelyfOS from Python or JavaScript, how
+to build an orchestrator on top of it, and the mistakes worth warning about.
+That is E3-4. The cookbook now covers the seven things a reader most often wants
+to do; what it does not cover is being *embedded* in something else.
 
 ## How these documents are kept true
 
@@ -194,8 +208,11 @@ worked example — which is the gap a machine reader will feel first.
    supervisor's own `tools/list` — and the other two out of tables the product
    depends on, so there is no copy of the truth that only the documentation
    reads.
-2. **Executed where possible.** Every cookbook recipe is a script CI runs from a
-   fresh clone, so a recipe that stops working fails the build (E3-3).
+2. **Executed where possible.** Every recipe in
+   [`cookbook.md`](cookbook.md) is a script, extracted rather than transcribed,
+   run on a real machine by the `cookbook` workflow (E3-3). Every commit checks
+   that they still extract and are still valid shell; the weekly run checks that
+   they still work.
 3. **Examined by a reader with no other source.** A fresh agent is given the
    documentation and nothing else and asked to build something real; every
    failure becomes a documentation fix (E3-5).

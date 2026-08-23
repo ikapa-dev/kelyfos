@@ -165,6 +165,20 @@ jobs:
           fi
           echo "the reference, llms.txt and llms-full.txt all match"
 
+      # The cheap half of the cookbook gate. Extraction and shell syntax are
+      # checked on every commit here; the recipes are actually *run* in
+      # cookbook.yml, which needs KVM, Firecracker and the dev image and is
+      # therefore not something every commit can afford (F-D30).
+      - name: Every cookbook recipe extracts and parses
+        run: |
+          set -euo pipefail
+          out="$(mktemp -d)"
+          go run ./tools/cookbook -in docs/cookbook.md -out "$out"
+          for r in "$out"/*.sh; do
+            bash -n "$r" || { echo "$(basename "$r"): shell syntax error"; exit 1; }
+            echo "  ok  $(basename "$r" .sh)"
+          done
+
   build:
     needs: changes
     if: needs.changes.outputs.code == 'true'
