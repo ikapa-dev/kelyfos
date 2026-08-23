@@ -126,7 +126,7 @@
      improvements to the existing product land here as epics. Inert until its gate opens.</p>
   <div class="meta">
     owner: <b>John</b> &nbsp;&middot;&nbsp; developer: <b>Claude Code</b> &nbsp;&middot;&nbsp;
-    status: <b class="ok" id="meta-status">Epic E2 — active, 10/10 (next: the E2 acceptance test and v0.5)</b> &nbsp;&middot;&nbsp;
+    status: <b class="ok" id="meta-status">Epic E3 — active, 0/6 (v0.5 released; next: E3-0, the docs inventory)</b> &nbsp;&middot;&nbsp;
     last updated: <b id="meta-updated">2026-08-23</b><br>
     repo file: <b>PLAN-FEATURES.html</b> (lives at the repository root next to <code>PLAN.html</code>)<br>
     <span class="quiet">Companion to PLAN.html — same protocol, same rules, later timeline.</span>
@@ -166,7 +166,7 @@
     <span class="bl-name">All epics</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">Epic E2 acceptance — run the list verbatim, then the exit checkpoint and tag v0.5</b></div>
+  <div class="focusline">Current focus: <b id="focus">E3-0 — the docs inventory: what exists, what is concept vs reference, and <code>docs/README.md</code> as the entry map</b></div>
 </div>
 
 <!-- ====================================================== 1. ACTIVATION GATE -->
@@ -306,13 +306,13 @@
 </section>
 
 <!-- ====================================================== 3b. EPIC E2 -->
-<section class="phase" id="e2" data-phase="E2" data-status="active">
+<section class="phase" id="e2" data-phase="E2" data-status="done">
   <div class="phase-head">
     <div>
       <div class="kconfig">config KELYFOS_EPIC_E2</div>
       <h2>Epic E2 — Agent teams (v0.5)</h2>
     </div>
-    <span class="badge">ACTIVE</span>
+    <span class="badge">DONE</span>
   </div>
   <p>Goal: <b>user-declared multi-agent topologies on one host — isolated agents, enforced edges, shared state,
      full team audit.</b> A <code>[team]</code> section in <code>kelyfos.toml</code> declares agents and the edges
@@ -412,13 +412,13 @@
 </section>
 
 <!-- ====================================================== 3c. EPIC E3 -->
-<section class="phase" id="e3" data-phase="E3" data-status="todo">
+<section class="phase" id="e3" data-phase="E3" data-status="active">
   <div class="phase-head">
     <div>
       <div class="kconfig">config KELYFOS_EPIC_E3</div>
       <h2>Epic E3 — LLM-native documentation (v0.6)</h2>
     </div>
-    <span class="badge">QUEUED</span>
+    <span class="badge">ACTIVE</span>
   </div>
   <p>Goal: <b>any LLM tool (Claude Code or otherwise) can build on KelyfOS from the docs alone — zero source reading.</b>
      A user should be able to say &ldquo;use KelyfOS to run three agents that each check one supplier site&rdquo; and have their
@@ -1066,6 +1066,33 @@
         The exclusions are deliberately conservative. Forking is an optimisation, and an optimisation that quietly hands
         one agent another&rsquo;s files or another&rsquo;s spawn budget would be paying for milliseconds with the
         product&rsquo;s only real claim.</td></tr>
+        <tr><td class="mono">F-D25</td><td class="mono">2026-08-23</td>
+        <td>Measured on the reference: <b>the fork fast path costs more than it saves there, and it is what makes the
+        E2 spawn bar unmeetable.</b> Total spawn on the bare-KVM runner is <b>1098 ms</b> against a 1000 ms bar &mdash;
+        missed by 98 ms &mdash; and 927 ms of it is the one-time write of the template&rsquo;s memory image. A cold boot
+        on that same machine is 109&ndash;134 ms. Five concurrent cold boots would therefore have come in far under the
+        bar, and the fork path is the reason it is missed. The path stays as F-D19 ruled and as E2-9 built it; what is
+        recorded here is the number, the comparison, and the open question, which is John&rsquo;s to answer because it
+        revises F-D19&rsquo;s premise rather than its implementation.</td>
+        <td>F-D19&rsquo;s reasoning was that concurrent cold boots could not meet a sub-second bar and that forking
+        would. That was sound on the evidence available: on the nested dev machine a cold boot is ~2.2 s and a fork
+        ~0.4 s, so forking four workers is the difference between 2.2 s and 1.8 s and the bar is out of reach either
+        way. The reference environment inverts it, because the two costs scale differently. A cold boot is CPU and
+        device setup, and that runner is fast at both: 109 ms. A fork is one memory-image write plus N cheap restores,
+        and that runner is <i>slow</i> at the write: 927 ms for 384 MiB, about 220 MB/s. The dev machine&rsquo;s NVMe
+        does the same write in 151 ms. So the ratio that makes forking pay reverses between the two machines, and the
+        environment D15 makes binding is the one where it does not pay.
+        Reported rather than buried because the alternative is the flattering omission: it would have been easy to write
+        &ldquo;1098 ms, not met, the memory write dominates&rdquo; and leave out that not forking at all would have met
+        it. F-D19 asked for the measured number with the reason; the reason is the fast path.
+        Three things follow, none of them taken here. (1) The fast path is not wrong &mdash; it is a large win where
+        boot is expensive, which is every nested host and every machine with a slow CPU and a fast disk. (2) The obvious
+        repair is to stop paying the write per <code>team up</code>: a template snapshot keyed on the image and machine
+        shape could be cached between runs, turning 927 ms into a first-run cost. That needs a decision about
+        invalidation &mdash; an image rebuild must not be servable from a stale template &mdash; and it is parked, not
+        designed. (3) Choosing per host by measurement rather than by rule would be the other answer, and a heuristic
+        that guesses which of two costs is larger without measuring either is how a fast path becomes a slow one
+        silently. Neither is E2&rsquo;s to decide.</td></tr>
     <!-- Claude Code: append rows above this line. -->
       <tr><td class="mono">F-D10</td><td class="mono">2026-08-22</td>
         <td>The resource knobs E1-0 goes looking for shipped <b>partly</b>: <code>--vcpus</code>/<code>--mem</code> and
@@ -2469,6 +2496,125 @@ github.com/charmbracelet/lipgloss  v1.1.0      no update offered
 golang.org/x/sys                   v0.47.0     no update offered
 $ govulncheck ./...
 No vulnerabilities found.</pre></td></tr>
+        <tr><td class="mono">2026-08-23</td><td class="mono">E2</td>
+        <td><b>Epic E2 acceptance test, run as written on the reference environment. Seven of the eight steps pass.
+        Step 1&rsquo;s &ldquo;total spawn time &lt; 1 s&rdquo; is NOT met: 1098 ms, missed by 98 ms.</b>
+        The list is <code>dev/accept-e2.sh</code>, which runs it in the plan&rsquo;s own order and numbering the way
+        <code>dev/accept-e1.sh</code> does for E1, driving <code>dev/demo-team.sh</code> for steps 1&ndash;5, 7 and 8 and
+        <code>dev/prove-team.sh</code> for step 6. On the bare-KVM runner the demo reports 20 passed, 0 failed, 1
+        skipped and the budget proof 6 passed, 0 failed, 0 skipped; every behavioural clause holds. Five machines boot,
+        four of them forks; <code>ps</code> shows each agent&rsquo;s use beside its own cap; the task completes through
+        send, one ask round trip and the store; a worker-to-worker message with no edge is refused; an agent with no
+        budget cannot spawn, a spawn outside the image whitelist is refused, one budgeted spawn succeeds and attaches
+        with a single edge to its spawner, and a second is refused; the collective cap holds at 2.07 of 2.00 cores with
+        40.9 s of throttling and the children&rsquo;s CPU time adding up to the parent&rsquo;s; teardown leaves no VM
+        and a written-back workspace; the chain verifies across all six agents and the export renders a lane for each
+        with the refusals drawn in.
+        <b>The number, and why it is what it is.</b> Template boots in 109 ms, its memory image takes 927 ms to write,
+        each fork restores in 57&ndash;61 ms, the master cold-boots in 134 ms: 1098 ms. The first run of this measurement
+        said 6917 ms, and the five seconds between were the template being asked to power itself off <i>synchronously</i>
+        between &ldquo;the image exists&rdquo; and &ldquo;the first fork starts&rdquo; &mdash; a real defect, fixed, and
+        the reason to measure rather than assume. What is left is the memory write, and it is the whole gap.
+        <b>The part worth saying out loud</b> is in F-D25: a cold boot on that machine is 109&ndash;134 ms, so five
+        concurrent cold boots would have met the bar comfortably, and it is the fork path that misses it. F-D19 asked for
+        the measured number with the reason; the reason is the fast path. It stays as ruled, the finding is recorded,
+        and what to do about it is John&rsquo;s.</td>
+        <td class="mono"><pre>$ gh workflow run caps.yml -f arch=x86_64      (the D15 reference)
+  run 32630824099, completed success
+
+1. team up: five machines, four forked
+   template     dev template booted in 109 ms, snapshotted in 927 ms, forked 4
+   master       42bae789 ready in 134 ms   (cold, it has egress)
+   worker-1     98aec9b4 ready in  61 ms   (forked)
+   worker-2     8defdc81 ready in  57 ms   (forked)
+   worker-3     e896ce54 ready in  59 ms   (forked)
+   worker-4     bebcb01d ready in  58 ms   (forked)
+   team up in 1098 ms                      &lt;- the bar is 1000 ms: NOT MET
+2. ps  PASS  every agent, its edges, its use beside its own cap
+3. PASS  send to four workers, one ask round trip, the store round trip
+4. PASS  worker-1 -&gt; worker-2 refused (no_edge), and it is in the record
+5. PASS  no budget -&gt; refused; wrong image -&gt; refused;
+         one budgeted spawn -&gt; master-spawn-1, one edge to its spawner;
+         a second -&gt; refused (budget_exhausted)
+6. PASS  collective cap held: 2.07 cores' worth vs 200%, throttled 40.9s
+         the children's CPU time adds up to the parent's, within 5%
+7. PASS  every VM gone; the master's workspace written back
+8. PASS  chain intact, 35 events across 6 agents; export renders 6 lanes
+         and the refused flow
+
+  demo-team.sh   20 passed, 0 failed, 1 skipped
+  prove-team.sh   6 passed, 0 failed, 0 skipped
+
+the same list on the nested dev host: accept-e2.sh 16 passed, 0 failed,
+1 skipped &mdash; the skip is step 1, in both places, for the same reason.
+
+first measurement of the same bar, before the critical-path fix: 6917 ms
+  109 boot + 927 snapshot + ~5000 waiting for the template to power off</pre></td></tr>
+        <tr><td class="mono">2026-08-23</td><td class="mono">E2-6</td>
+        <td><b>A team's systemd slice outlived the team, and a cgroup counter is cumulative for the life of the
+        directory.</b> Found by running the acceptance list unprivileged, which is the path CI never takes: the second
+        run of <code>dev/prove-team.sh</code> reported that the children&rsquo;s CPU time came to half the
+        parent&rsquo;s and concluded &mdash; correctly, from what it could see &mdash; that these were not one tree.
+        They were. The parent was the <i>previous</i> run&rsquo;s slice, which systemd had not got round to collecting,
+        still holding that run&rsquo;s accumulated CPU time while its new children started from zero.
+        Two fixes, one on each side. <code>TeamSlice.Close</code> now stops the slice as well as taking its runtime
+        property back, so a team&rsquo;s cgroup does not outlive the team and the next team of the same name lands in a
+        fresh one. And the proof compares <i>deltas over the stress window</i> rather than absolutes, which is the
+        correct measurement whatever the parent was carrying beforehand &mdash; a cumulative number compared against a
+        fresh one is the kind of mistake this project writes down rather than patches around.
+        Neither showed up on the reference runner, because there the direct path removes the parent directory itself
+        and every run therefore starts from zero. The unprivileged path is the one a developer actually uses.</td>
+        <td class="mono"><pre>before, second unprivileged run of prove-team.sh:
+  FAIL  the children do not add up to the parent
+        (56870951 vs 114483383) &mdash; these are not one tree
+
+after, same conditions:
+  PASS  the team's collective cap held: 2.05 cores' worth vs 200%
+  PASS  the cap bit: the kernel throttled the team for 85.5s
+  PASS  the hierarchy is real: the children's CPU time adds up to
+        the parent's, within 5%
+  PASS  no agent was privileged: every child's cpu.weight is 100
+  PASS  teardown removed the team's slice: &hellip;/kelyfos-team-proof.slice
+        is gone
+  PASS  the comparison is meaningful: uncapped reached 4.90 cores'
+  6 passed, 0 failed, 0 skipped
+
+and on the reference runner, unchanged:
+  6 passed, 0 failed, 0 skipped  (cap held at 2.07 of 2.00 cores)</pre></td></tr>
+        <tr><td class="mono">2026-08-23</td><td class="mono">E2</td>
+        <td><b>Exit checkpoint reached. Epic E2 is done, 10/10, and Epic E3 is now active.</b> The acceptance list was
+        run as written on the reference environment: seven of its eight steps pass, and step 1&rsquo;s sub-second spawn
+        bar is <b>reported as not met at 1098 ms</b>, per F-D19&rsquo;s instruction to measure and report rather than
+        restate. F-D25 records the measurement and the part of it that is unflattering: on that hardware a cold boot is
+        109&ndash;134 ms and it is the fork path that misses the bar. F-D9&rsquo;s docs duties do not bind here &mdash;
+        it says &ldquo;from E3&rsquo;s exit onward&rdquo;, and that E1 and E2 predate the machinery and are swept in by
+        E3-0/E3-2 &mdash; so the exit is the acceptance run, this row, and the tag.
+        <b>What v0.5 is.</b> A <code>[team]</code> section declares agents and the edges between them and
+        <code>kelyfos team up</code> boots the graph; no guest ever has a network path to another guest, and every
+        message transits the host broker, is checked against the edge list, and lands in the record with the refusals
+        beside the deliveries. Seven MCP tools in the guest, a permissioned store, spawn under a declared budget, a
+        collective cgroup budget with each agent&rsquo;s slice beneath it, one verifiable transcript per team with a
+        lane per agent in the export and in <code>watch</code>, and a fork fast path for the agents that can take one.
+        <b>Nine decisions and eleven progress rows behind it</b>, including four defects the epic found in its own
+        earlier work: per-agent egress, secrets and workspaces parsed and dropped; forked agents escaping the team
+        cgroup; a team&rsquo;s members recording into files nobody could join afterwards; and a slice outliving its
+        team with the counters to prove it.</td>
+        <td class="mono"><pre>$ bash dev/accept-e2.sh                (the list, in its own order)
+  16 passed, 0 failed, 1 skipped     nested dev host
+  the skip is step 1, and it is the same skip on the reference
+
+$ gh workflow run caps.yml -f arch=x86_64      run 32630824099
+  prove-caps.sh    8 passed, 0 failed, 0 skipped
+  prove-team.sh    6 passed, 0 failed, 0 skipped
+  demo-team.sh    20 passed, 0 failed, 1 skipped
+  accept-e1.sh    13 passed, 0 failed, 0 skipped   (E1, still green)
+
+  step 1: team up in 1098 ms against a 1000 ms bar &mdash; NOT MET
+
+$ go test ./... -race     all packages ok
+$ govulncheck ./...       No vulnerabilities found.
+$ python3 tools/check-plan.py
+PLAN.html is coherent: 43 tasks, 36 checked, 26 decisions</pre></td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>

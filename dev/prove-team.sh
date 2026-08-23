@@ -107,12 +107,26 @@ stress_agents() {
 
 # stress_all — drives every agent at once and reports cores' worth consumed by
 # the whole team over the wall clock it took.
+# children_usec <cgroup dir> — the sum of the direct children's CPU time.
+children_usec() {
+  local total=0 u
+  for d in "$1"/*/; do
+    u="$(usage_usec "${d%/}")"
+    total=$(( total + ${u:-0} ))
+  done
+  echo "$total"
+}
+
 stress_all() {
   local cg="$1" before after wall
   before="$(usage_usec "$cg")"; before="${before:-0}"
+  PARENT_BEFORE="$before"
+  CHILD_BEFORE="$(children_usec "$cg")"
   stress_agents
   wall="$STRESS_WALL"
   after="$(usage_usec "$cg")"; after="${after:-0}"
+  PARENT_AFTER="$after"
+  CHILD_AFTER="$(children_usec "$cg")"
   TEAM_CORES="$(python3 -c "print(f'{($after - $before)/1e6/$wall:.2f}')")"
   TEAM_WALL="$wall"
   printf '        %s cpu-seconds over %ss = %s core(s) busy for the whole team\n' \
@@ -180,12 +194,16 @@ else
 
     # Five unrelated cgroups would not add up. This is the assertion that
     # distinguishes a hierarchy from five E1-2 slices that happen to coexist.
-    CHILD_SUM=0
-    for d in "$TEAM_CGROUP"/*/; do
-      u="$(usage_usec "${d%/}")"; CHILD_SUM=$(( CHILD_SUM + ${u:-0} ))
-    done
-    PARENT_USE="$(usage_usec "$TEAM_CGROUP")"; PARENT_USE="${PARENT_USE:-0}"
-    printf '        children %s usec, parent %s usec\n' "$CHILD_SUM" "$PARENT_USE"
+    #
+    # Compared as *deltas over the stress window*, not as absolutes. A cgroup's
+    # counters are cumulative for the life of the directory, so a parent that
+    # outlived a previous run would carry that run's CPU time while its children
+    # started from zero — and the assertion would fail on a hierarchy that is
+    # perfectly real. That is not hypothetical: it is what a second unprivileged
+    # run of this script reported before the deltas were taken.
+    CHILD_SUM=$(( CHILD_AFTER - CHILD_BEFORE ))
+    PARENT_USE=$(( PARENT_AFTER - PARENT_BEFORE ))
+    printf '        over the window: children %s usec, parent %s usec\n' "$CHILD_SUM" "$PARENT_USE"
     if [ "$CHILD_SUM" -gt 0 ] && python3 -c "import sys; sys.exit(0 if abs($CHILD_SUM - $PARENT_USE) <= 0.05 * max($PARENT_USE,1) else 1)"; then
       pass "the hierarchy is real: the children's CPU time adds up to the parent's, within 5%"
     else

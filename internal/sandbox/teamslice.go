@@ -218,15 +218,25 @@ func (t *TeamSlice) Close() error {
 		return nil
 	}
 	if t.mode == modeSystemd {
-		// systemd removes the scopes when their processes exit and collects the
-		// empty slice itself; what does not go on its own is the runtime
-		// property, which would otherwise still be capping a slice the next
-		// team of the same name lands in.
+		// systemd removes the scopes when their processes exit; what does not go
+		// on its own is the runtime property, which would otherwise still be
+		// capping a slice the next team of the same name lands in.
 		if t.setProperty {
 			if out, err := exec.Command("systemctl", "--user", "revert", "--runtime", t.unit).CombinedOutput(); err != nil {
 				return fmt.Errorf("take back the team's cap on %s: %w: %s",
 					t.unit, err, strings.TrimSpace(string(out)))
 			}
+		}
+		// And the slice itself is stopped rather than left for systemd to
+		// collect whenever it gets to it. A lingering empty slice is not
+		// harmless: a cgroup's counters are cumulative for the life of the
+		// *directory*, so the next team of the same name would land in a parent
+		// already holding the previous team's CPU time — and a reader comparing
+		// that parent against its fresh children would find they did not add up.
+		// Measured exactly that way before this call existed.
+		if out, err := exec.Command("systemctl", "--user", "stop", t.unit).CombinedOutput(); err != nil {
+			return fmt.Errorf("stop the team's slice %s: %w: %s",
+				t.unit, err, strings.TrimSpace(string(out)))
 		}
 		return nil
 	}
