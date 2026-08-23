@@ -12,7 +12,9 @@ package shim
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -23,6 +25,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/p4r4n0rm4l/KelyfOS/internal/egress"
+	"github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/sandbox"
 )
 
@@ -31,21 +35,85 @@ import (
 // rather than the newest one.
 const EnvdVersion = "0.1.0"
 
+// Policy is the project's kelyfos.toml, resolved once by the CLI and applied to
+// every sandbox this shim creates (F-D33).
+//
+// It exists because an entry path that skips the policy file is a hole in the
+// wall, not a convenience. F-D5 already says an MCP tool can never widen policy
+// because the toml is the ceiling; the same rule has to hold here, or "the
+// policy travels with the project" is true of `kelyfos run` and false of the
+// door an SDK comes through.
+type Policy struct {
+	Arch   string
+	Flavor string
+
+	// Allow is the egress allowlist, and Secrets the credentials bound to
+	// domains inside it. Both come from the file unless the operator who
+	// started the shim named them on the command line.
+	Allow   []string
+	Secrets []egress.Secret
+
+	// The caps, exactly as [resources] declares them. There are no per-request
+	// knobs: an SDK client cannot ask for a bigger machine, which is the point.
+	Vcpus        int
+	MemMiB       int
+	CPUQuota     int
+	IO           sandbox.IOLimits
+	ScratchBytes int64
+
+	// Argv and Version are what session.start records about how this shim was
+	// launched, so a reader of the chain can reproduce it.
+	Argv    []string
+	Version string
+	// PolicyPath is the file the above came from, empty when there was none.
+	PolicyPath string
+}
+
+// box is one sandbox the shim owns, with everything that has to come down with
+// it. The recorder is per sandbox because a shim sandbox is a session like any
+// other: it gets its own chain, opened before the VM starts and closed after it
+// stops.
+type box struct {
+	sb    *sandbox.Sandbox
+	rec   *recorder.Recorder
+	net   *sandbox.Network
+	proxy *egress.Proxy
+	slice *sandbox.Slice
+}
+
+func (b *box) close(reason string) {
+	_ = b.sb.Shutdown(5 * time.Second)
+	if b.proxy != nil {
+		b.proxy.Close()
+	}
+	if b.net != nil {
+		b.net.Down()
+	}
+	if b.slice != nil {
+		b.slice.Close()
+	}
+	if b.rec != nil {
+		_ = b.rec.Append(recorder.Event{
+			Type: recorder.TypeSessionEnd, Reason: reason,
+			DurationMS: b.rec.Since().Milliseconds(),
+		})
+		_ = b.rec.Close()
+	}
+}
+
 // Server owns the sandboxes it created. It deliberately does not adopt
 // sandboxes started by `kelyfos run`: the SDK's lifecycle expects to own what
 // it creates, and killing someone else's interactive session because an SDK
 // call said so would be a nasty surprise.
 type Server struct {
-	Arch   string
-	Flavor string
-	Allow  []string
+	Policy Policy
 
 	mu    sync.Mutex
-	boxes map[string]*sandbox.Sandbox
+	boxes map[string]*box
 }
 
-func New(arch, flavor string, allow []string) *Server {
-	return &Server{Arch: arch, Flavor: flavor, Allow: allow, boxes: map[string]*sandbox.Sandbox{}}
+func New(p Policy) *Server {
+	return &Server{Policy: p, boxes: map[string]*box{}}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -65,14 +133,14 @@ func (s *Server) Handler() http.Handler {
 // Close stops every sandbox the shim created.
 func (s *Server) Close() {
 	s.mu.Lock()
-	boxes := make([]*sandbox.Sandbox, 0, len(s.boxes))
+	boxes := make([]*box, 0, len(s.boxes))
 	for _, b := range s.boxes {
 		boxes = append(boxes, b)
 	}
-	s.boxes = map[string]*sandbox.Sandbox{}
+	s.boxes = map[string]*box{}
 	s.mu.Unlock()
 	for _, b := range boxes {
-		_ = b.Shutdown(5 * time.Second)
+		b.close("shutdown")
 	}
 }
 
@@ -95,33 +163,21 @@ func (s *Server) createSandbox(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = json.NewDecoder(r.Body).Decode(&req)
 
-	opts := sandbox.Options{Arch: s.Arch, Flavor: s.Flavor, Quiet: true, Allow: s.Allow}
-	sb, err := sandbox.New(opts)
+	b, err := s.boot(r.Context())
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
-	defer cancel()
-	if err := sb.Start(ctx); err != nil {
-		_ = sb.Shutdown(2 * time.Second)
-		writeErr(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	if _, err := sb.WaitReady(ctx); err != nil {
-		_ = sb.Shutdown(2 * time.Second)
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
 	s.mu.Lock()
-	s.boxes[sb.State.ID] = sb
+	s.boxes[b.sb.State.ID] = b
 	s.mu.Unlock()
 
 	template := req.TemplateID
 	if template == "" {
-		template = s.Flavor
+		template = s.Policy.Flavor
 	}
+	sb := b.sb
 	writeJSON(w, http.StatusCreated, sandboxResponse{
 		TemplateID:  template,
 		SandboxID:   sb.State.ID,
@@ -130,13 +186,152 @@ func (s *Server) createSandbox(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// boot brings up one sandbox under the project's policy, with its own flight
+// recorder, its own egress path when the policy grants any, and its own cgroup
+// slice when the policy caps CPU time.
+//
+// The order is the order `kelyfos run` uses and it is load-bearing: the TAP
+// first, then the proxy bound on it, then the firewall that makes the proxy the
+// only reachable destination, and only then a machine that can send a packet
+// anywhere (docs/networking.md). Anything that fails part way unwinds what it
+// already built rather than leaving a TAP behind.
+func (s *Server) boot(parent context.Context) (*box, error) {
+	id, err := sandbox.NewID()
+	if err != nil {
+		return nil, err
+	}
+	b := &box{}
+	ok := false
+	defer func() {
+		if !ok {
+			if b.proxy != nil {
+				b.proxy.Close()
+			}
+			if b.net != nil {
+				b.net.Down()
+			}
+			if b.slice != nil {
+				b.slice.Close()
+			}
+			if b.rec != nil {
+				_ = b.rec.Close()
+			}
+		}
+	}()
+
+	opts := sandbox.Options{
+		ID:           id,
+		Arch:         s.Policy.Arch,
+		Flavor:       s.Policy.Flavor,
+		VcpuCount:    s.Policy.Vcpus,
+		MemMiB:       s.Policy.MemMiB,
+		IO:           s.Policy.IO,
+		ScratchBytes: s.Policy.ScratchBytes,
+		Quiet:        true,
+	}
+	if s.Policy.CPUQuota > 0 {
+		if b.slice, err = sandbox.NewCPUSlice(id, s.Policy.CPUQuota); err != nil {
+			return nil, err
+		}
+		opts.CPUSlice = b.slice
+	}
+
+	var ca *egress.CA
+	if len(s.Policy.Allow) > 0 {
+		opts.Allow = s.Policy.Allow
+		if b.net, err = sandbox.NewNetwork(id); err != nil {
+			return nil, err
+		}
+		opts.Net = b.net
+		pol := egress.Policy{Allow: s.Policy.Allow}
+		for i := range s.Policy.Secrets {
+			pol.Secrets = append(pol.Secrets, &s.Policy.Secrets[i])
+		}
+		if len(pol.Secrets) > 0 {
+			if ca, err = egress.NewCA(); err != nil {
+				return nil, err
+			}
+		}
+		b.proxy = &egress.Proxy{Policy: pol, CA: ca}
+		port, err := b.proxy.Listen(b.net.HostIP.String() + ":0")
+		if err != nil {
+			return nil, err
+		}
+		if err := b.net.Restrict(port); err != nil {
+			return nil, err
+		}
+		go b.proxy.Serve()
+	}
+
+	if b.sb, err = sandbox.New(opts); err != nil {
+		return nil, err
+	}
+
+	// Opened before the VM starts and closed after it stops, so the record
+	// brackets the thing it describes — the same contract every other entry
+	// path holds to (docs/events.md).
+	if b.rec, err = recorder.Open(sandbox.Root(), id); err != nil {
+		return nil, err
+	}
+	_ = b.rec.Append(recorder.Event{
+		Type: recorder.TypeSessionStart, Image: s.Policy.Flavor, Arch: s.Policy.Arch,
+		Kelyfos: s.Policy.Version, Argv: s.Policy.Argv,
+		Reason: "created through the E2B shim",
+	})
+	s.wireEgressAudit(b)
+
+	ctx, cancel := context.WithTimeout(parent, 60*time.Second)
+	defer cancel()
+	if err := b.sb.Start(ctx); err != nil {
+		_ = b.sb.Shutdown(2 * time.Second)
+		return nil, err
+	}
+	ready, err := b.sb.WaitReady(ctx)
+	if err != nil {
+		_ = b.sb.Shutdown(2 * time.Second)
+		return nil, err
+	}
+	if ca != nil {
+		if err := b.sb.InstallTrustAnchor(ca.AnchorPEM()); err != nil {
+			return nil, err
+		}
+	}
+	overlay := ready.Overlay
+	_ = b.rec.Append(recorder.Event{
+		Type: recorder.TypeSessionReady, BootMS: b.sb.State.BootReadyMS,
+		Kernel: ready.Kernel, Supervisor: ready.Supervisor, Overlay: &overlay,
+	})
+	ok = true
+	return b, nil
+}
+
+// wireEgressAudit points the proxy's reports at this sandbox's chain. Every
+// connection attempt is recorded, allowed or blocked, and a bound credential is
+// recorded by name — never by value (docs/events.md §4).
+func (s *Server) wireEgressAudit(b *box) {
+	if b.proxy == nil {
+		return
+	}
+	b.proxy.OnSecret = func(name, host string) {
+		_ = b.rec.Append(recorder.Event{Type: recorder.TypeSecretUse, Name: name, Host: host})
+	}
+	b.proxy.OnEvent = func(a egress.Attempt) {
+		allowed := a.Allowed
+		_ = b.rec.Append(recorder.Event{
+			Type: recorder.TypeEgressAttempt, Host: a.Host, Port: a.Port,
+			Allowed: &allowed, Reason: a.Reason, Mode: a.Mode,
+			BytesIn: a.BytesIn, BytesOut: a.BytesOut,
+		})
+	}
+}
+
 func (s *Server) listSandboxes(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	out := make([]sandboxResponse, 0, len(s.boxes))
 	for id := range s.boxes {
 		out = append(out, sandboxResponse{
-			TemplateID: s.Flavor, SandboxID: id, ClientID: "kelyfos", EnvdVersion: EnvdVersion,
+			TemplateID: s.Policy.Flavor, SandboxID: id, ClientID: "kelyfos", EnvdVersion: EnvdVersion,
 		})
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -152,7 +347,7 @@ func (s *Server) killSandbox(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "no sandbox "+id+" created by this shim")
 		return
 	}
-	_ = sb.Shutdown(5 * time.Second)
+	sb.close("shutdown")
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -161,7 +356,7 @@ func (s *Server) killSandbox(w http.ResponseWriter, r *http.Request) {
 // only returns the single sandbox to act on. The SDK addresses envd by URL
 // rather than by id, and the shim serves one address, so a single running
 // sandbox is unambiguous and several are not.
-func (s *Server) only() (*sandbox.Sandbox, error) {
+func (s *Server) only() (*box, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	switch len(s.boxes) {
@@ -188,7 +383,7 @@ func (s *Server) readFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// base64 keeps the round trip binary-safe over a channel that carries text.
-	res, err := sandbox.Exec(sb.State.UDSPath,
+	res, err := sandbox.Exec(sb.sb.State.UDSPath,
 		[]string{"/bin/sh", "-c", "base64 " + shellQuote(path)}, nil, 30*time.Second)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
@@ -241,7 +436,7 @@ func (s *Server) writeFile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	script := "mkdir -p \"$(dirname " + shellQuote(path) + ")\" && base64 -d > " + shellQuote(path)
-	res, err := sandbox.Exec(sb.State.UDSPath, []string{"/bin/sh", "-c", script},
+	res, err := sandbox.Exec(sb.sb.State.UDSPath, []string{"/bin/sh", "-c", script},
 		[]byte(encodeBase64(body)), 60*time.Second)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
@@ -251,6 +446,15 @@ func (s *Server) writeFile(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, strings.TrimSpace(string(res.Stderr)))
 		return
 	}
+	// A file that arrived through this door is recorded exactly as one that
+	// arrived through an MCP tool: by path, size and digest, never by content
+	// (docs/events.md §4). Reads are not recorded here for the same reason they
+	// are not recorded there — the record is of what was changed.
+	sum := sha256.Sum256(body)
+	_ = sb.rec.Append(recorder.Event{
+		Type: recorder.TypeFileWrite, Path: path, Bytes: len(body),
+		SHA256: hex.EncodeToString(sum[:]), Via: "shim",
+	})
 	writeJSON(w, http.StatusOK, []map[string]any{{"name": path, "path": path, "type": "file"}})
 }
 

@@ -475,9 +475,10 @@ not, because the current SDK runs those over Connect RPC with protobuf rather
 than REST. Use `kelyfos mcp` for commands — it is KelyfOS's actual interface and
 a published standard rather than one product's internal API.
 
-Two things a shim sandbox does **not** get, which
-[`e2b-shim.md`](e2b-shim.md) states and this recipe will not pretend otherwise
-about: no flight recorder, and no `kelyfos.toml` resource caps.
+A shim sandbox is a sandbox like any other: the project's `kelyfos.toml` caps
+it, and it writes its own flight recorder — `kelyfos log --list` will show the
+one this recipe creates. What the shim does not do is authenticate anybody, so
+treat the port the way you would any unauthenticated local API.
 
 <!-- recipe: e2b-shim -->
 

@@ -113,7 +113,7 @@ func Types() []EventType {
 				{Name: "path", Type: "string", Doc: "path inside the guest"},
 				{Name: "bytes", Type: "integer", Doc: "size written"},
 				{Name: "sha256", Type: "string", Doc: "digest of the content"},
-				{Name: "via", Type: "string", Doc: "write_file or upload"},
+				{Name: "via", Type: "string", Doc: "write_file or upload for an MCP tool, shim for the E2B surface"},
 				agentField(),
 			}},
 		{Type: TypeEgressAttempt, Source: SourceHost,

@@ -163,11 +163,10 @@ and read and write arbitrary paths inside a running guest.** That is a local
 privilege surface the rest of the CLI does not have, and `--addr` is the only
 thing between it and the network.
 
-Two further facts about shim sandboxes, both recorded as defects in F-D27 rather
-than defended here: they get **no flight recorder**, so nothing done through the
-shim is in any audit record; and they read no `kelyfos.toml`, so none of the
-resource caps above apply to them. Run it when you need it and stop it when you
-do not.
+The sandboxes it creates are policed like any other: since F-D33 the shim reads
+`kelyfos.toml`, the caps above apply to them, and each one writes its own flight
+recorder. What remains is the port itself, and it is the whole of the exposure —
+run it when you need it and stop it when you do not.
 
 ### The supply chain of what you run *inside*
 `--allow github.com` means the agent can fetch and execute whatever is at

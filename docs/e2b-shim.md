@@ -1,7 +1,7 @@
 # The E2B-compatible shim
 
-**Status:** best-effort subset, v0.x. Implemented at P3-4 and unchanged since;
-it predates resource caps (v0.4) and teams (v0.5) and supports neither.
+**Status:** best-effort subset, v0.x. Implemented at P3-4; brought under the
+project's policy and the flight recorder at F-D33.
 
 KelyfOS is not an E2B clone and this is not a reimplementation of their product.
 It exists for one reason: someone with code already written against the E2B SDK
@@ -35,19 +35,32 @@ print(sbx.files.read("/work/hello.txt"))
 sbx.kill()
 ```
 
-Every `Sandbox.create()` boots a real Firecracker microVM: read-only root, no
-login, and no egress unless the shim was started with `--allow`.
+Every `Sandbox.create()` boots a real Firecracker microVM with the same
+guarantees as any other KelyfOS sandbox: read-only root, no login, no egress
+unless the policy grants it, the project's resource caps, and a flight recorder
+of its own.
 
-**Two guarantees a shim sandbox does not get, and they are the two this project
-is loudest about.** It has **no flight recorder** — nothing done through the
-shim appears in any audit record — and it reads **no `kelyfos.toml`**, so none
-of the resource caps in [`docs/resources.md`](resources.md) apply to it. The
-shim also authenticates nobody: while it is running, any process that can reach
-its port can boot, kill and rummage through sandboxes. Both are recorded as
-defects in F-D27 rather than defended; until they are fixed, treat `kelyfos
-shim` as a compatibility bridge for code you already trust, on a machine you
-already trust, and not as a way to run an agent under KelyfOS's guarantees.
-`kelyfos run` is that.
+**The policy file applies here.** The shim reads `kelyfos.toml` the way
+`kelyfos run` does: `[resources]` caps every sandbox it creates, `allow` and
+`secrets` decide what those sandboxes may reach, and the flags on
+`kelyfos shim` are the operator's, not the client's. There is no request
+parameter that widens any of it — an SDK client cannot ask for a bigger machine
+or another domain, which is the point of the door being in the wall rather than
+beside it (F-D5, F-D33).
+
+**Every sandbox gets its own record.** `session.start` when it is created,
+`session.ready` when the guest answers, a `file.write` with `via: shim` for
+every file the SDK writes, an `egress.attempt` for every connection it tries,
+and `session.end` when it is killed. `kelyfos log --list` shows them and
+`kelyfos log --verify` checks the chain, exactly as for a sandbox `kelyfos run`
+started.
+
+**One thing the shim still does not do is authenticate anybody.** While it is
+running, any process on the machine that can reach its port can boot sandboxes,
+kill them, and read and write files inside them. `--addr` binds loopback by
+default and is the only thing between it and the network. That is a property of
+being an unauthenticated local API, not an oversight, and
+[`docs/threat-model.md`](threat-model.md) says so.
 
 ## What is implemented
 

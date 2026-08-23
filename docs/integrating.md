@@ -17,11 +17,16 @@ this page says so rather than printing it anyway.
 | **The MCP bridge** | `kelyfos mcp` copies bytes between your standard streams and the guest's MCP server | You are writing an agent, or you already have an MCP client. This is the interface the product is designed around. |
 | **The E2B shim** | an E2B-compatible REST subset on a local port | You have code already written against the E2B SDK and want it to work against a self-hosted box without a rewrite. |
 
-They are not layered on each other and they do not have equal guarantees. The
-CLI and the bridge both write the flight recorder; **the shim does not**, and it
-reads no `kelyfos.toml`, so a shim sandbox has neither an audit record nor a
-resource cap ([`e2b-shim.md`](e2b-shim.md)). If the audit trail is why you are
-here, the shim is not the door.
+All three go through the same wall. Each reads the project's `kelyfos.toml`,
+each is capped by its `[resources]`, and each writes a flight recorder — there
+is no entry path that skips the policy, which is the invariant F-D5 states for
+MCP and F-D33 applied to the shim.
+
+They do differ in what they can express. The shim serves a fixed REST subset and
+cannot run commands at all; the bridge gives an agent the full tool surface; the
+CLI gives you everything including the things no tool exposes, like `fork` and
+`team up`. And the shim authenticates nobody, so its port is a local privilege
+surface the other two do not have.
 
 ### The one flag that shapes everything else
 
@@ -404,6 +409,14 @@ That timeout writes **no event**. `outcome: timeout` in the record means an ask
 nobody answered; a recv that found nothing is not an outcome, because no message
 was involved. Do not wait for the transcript to tell you an agent has gone
 quiet.
+
+### Assuming a shim sandbox is unpoliced
+
+It is not, since F-D33: `kelyfos shim` reads the project's `kelyfos.toml`,
+`[resources]` caps every sandbox it creates, and each one writes its own flight
+recorder. What it does not do is authenticate its caller. If you are embedding
+it, bind it to loopback and treat reaching that port as equivalent to running
+`kelyfos` on the machine.
 
 ### Running commands through the E2B shim
 

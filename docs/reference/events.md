@@ -103,7 +103,7 @@ A file written through a tool, recorded by hash rather than content. Written by 
 | `path` | string | path inside the guest |
 | `bytes` | integer | size written |
 | `sha256` | string | digest of the content |
-| `via` | string | write_file or upload |
+| `via` | string | write_file or upload for an MCP tool, shim for the E2B surface |
 | `agent` | string | which machine produced it; present inside a team *(in a team)* |
 
 ## `egress.attempt`

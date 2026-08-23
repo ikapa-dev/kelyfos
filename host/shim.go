@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/p4r4n0rm4l/KelyfOS/internal/egress"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/sandbox"
 	"github.com/p4r4n0rm4l/KelyfOS/shim"
 )
@@ -45,8 +46,73 @@ commands. See docs/e2b-shim.md.
 	if err := fs.Parse(argv); err != nil {
 		return err
 	}
+	typed := map[string]bool{}
+	fs.Visit(func(f *flag.Flag) { typed[f.Name] = true })
 
-	srv := shim.New(*arch, *flavor, splitAllow(*allow))
+	// The project's policy applies here exactly as it applies to `kelyfos run`.
+	// An entry path that skips the file is a hole in the wall, and a shim
+	// sandbox that quietly ran uncapped was one (F-D33).
+	pol := shim.Policy{
+		Arch: *arch, Flavor: *flavor, Allow: splitAllow(*allow),
+		Vcpus: 2, MemMiB: 512,
+		Argv: append([]string{"kelyfos", "shim"}, argv...), Version: Version,
+	}
+	cfg, err := loadPolicy()
+	if err != nil {
+		return err
+	}
+	if cfg != nil {
+		pol.PolicyPath = cfg.Path
+		if cfg.Image != "" && !typed["image"] {
+			pol.Flavor = cfg.Image
+		}
+		if cfg.Arch != "" && !typed["arch"] {
+			pol.Arch = cfg.Arch
+		}
+		if len(cfg.Allow) > 0 && !typed["allow"] {
+			pol.Allow = cfg.Allow
+		}
+		// The caps have no flags on this command at all, so there is no request
+		// to check against a ceiling: the declared value is the value, which is
+		// what docs/resources.md says of every flagless limit. An SDK client
+		// cannot ask for a bigger machine, and that is the point.
+		if cfg.ResCPUs > 0 {
+			pol.Vcpus = cfg.ResCPUs
+		} else if cfg.Vcpus > 0 {
+			pol.Vcpus = cfg.Vcpus
+		}
+		if cfg.ResMemMiB > 0 {
+			pol.MemMiB = cfg.ResMemMiB
+		} else if cfg.MemMiB > 0 {
+			pol.MemMiB = cfg.MemMiB
+		}
+		pol.CPUQuota = cfg.ResCPUQuota
+		pol.ScratchBytes = cfg.ResScratchByte
+		pol.IO = sandbox.IOLimits{
+			NetMbpsRx: cfg.ResNetMbpsRx, NetMbpsTx: cfg.ResNetMbpsTx,
+			DiskIOPS: cfg.ResDiskIOPS, DiskMbps: cfg.ResDiskMbps,
+		}
+		if len(cfg.Secrets) > 0 {
+			for _, spec := range cfg.Secrets {
+				sec, err := egress.ParseSecret(spec)
+				if err != nil {
+					return err
+				}
+				if !containsDomain(pol.Allow, sec.Domain) {
+					return fmt.Errorf("%s: secret %s binds %s, which is not in the allowlist",
+						cfg.Path, spec, sec.Domain)
+				}
+				pol.Secrets = append(pol.Secrets, *sec)
+			}
+		}
+		if pol.ScratchBytes > 0 && pol.ScratchBytes > int64(pol.MemMiB)<<20 {
+			line, _ := cfg.Ceiling("scratch")
+			return fmt.Errorf("scratch = %d bytes at %s:%d is larger than the %d MiB the machine has",
+				pol.ScratchBytes, cfg.Path, line, pol.MemMiB)
+		}
+	}
+
+	srv := shim.New(pol)
 	defer srv.Close()
 
 	ln, err := net.Listen("tcp", *addr)
@@ -56,13 +122,21 @@ commands. See docs/e2b-shim.md.
 	http := &http.Server{Handler: srv.Handler()}
 
 	fmt.Printf("kelyfos E2B shim listening on http://%s\n", ln.Addr())
-	fmt.Printf("  sandboxes: image %s, arch %s", *flavor, *arch)
-	if list := splitAllow(*allow); len(list) > 0 {
-		fmt.Printf(", egress %s", strings.Join(list, ", "))
+	if pol.PolicyPath != "" {
+		fmt.Printf("policy: %s\n", pol.PolicyPath)
+	}
+	fmt.Printf("  sandboxes: image %s, arch %s, %d vcpu, %d MiB", pol.Flavor, pol.Arch, pol.Vcpus, pol.MemMiB)
+	if pol.CPUQuota > 0 {
+		fmt.Printf(", cpu %d%%", pol.CPUQuota)
+	}
+	if len(pol.Allow) > 0 {
+		fmt.Printf(", egress %s", strings.Join(pol.Allow, ", "))
 	} else {
 		fmt.Print(", no egress")
 	}
-	fmt.Println("\n\nCtrl-C to stop; every sandbox the shim created is stopped with it.")
+	fmt.Println()
+	fmt.Println("  every sandbox it creates gets its own flight recorder; kelyfos log --list shows them")
+	fmt.Println("\nCtrl-C to stop; every sandbox the shim created is stopped with it.")
 
 	go func() { _ = http.Serve(ln) }()
 

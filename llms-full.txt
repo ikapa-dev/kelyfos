@@ -505,11 +505,10 @@ and read and write arbitrary paths inside a running guest.** That is a local
 privilege surface the rest of the CLI does not have, and `--addr` is the only
 thing between it and the network.
 
-Two further facts about shim sandboxes, both recorded as defects in F-D27 rather
-than defended here: they get **no flight recorder**, so nothing done through the
-shim is in any audit record; and they read no `kelyfos.toml`, so none of the
-resource caps above apply to them. Run it when you need it and stop it when you
-do not.
+The sandboxes it creates are policed like any other: since F-D33 the shim reads
+`kelyfos.toml`, the caps above apply to them, and each one writes its own flight
+recorder. What remains is the port itself, and it is the whole of the exposure —
+run it when you need it and stop it when you do not.
 
 ### The supply chain of what you run *inside*
 `--allow github.com` means the agent can fetch and execute whatever is at
@@ -2864,8 +2863,8 @@ description: the REST subset for existing E2B SDK code, and what it deliberately
 
 # The E2B-compatible shim
 
-**Status:** best-effort subset, v0.x. Implemented at P3-4 and unchanged since;
-it predates resource caps (v0.4) and teams (v0.5) and supports neither.
+**Status:** best-effort subset, v0.x. Implemented at P3-4; brought under the
+project's policy and the flight recorder at F-D33.
 
 KelyfOS is not an E2B clone and this is not a reimplementation of their product.
 It exists for one reason: someone with code already written against the E2B SDK
@@ -2899,19 +2898,32 @@ print(sbx.files.read("/work/hello.txt"))
 sbx.kill()
 ```
 
-Every `Sandbox.create()` boots a real Firecracker microVM: read-only root, no
-login, and no egress unless the shim was started with `--allow`.
+Every `Sandbox.create()` boots a real Firecracker microVM with the same
+guarantees as any other KelyfOS sandbox: read-only root, no login, no egress
+unless the policy grants it, the project's resource caps, and a flight recorder
+of its own.
 
-**Two guarantees a shim sandbox does not get, and they are the two this project
-is loudest about.** It has **no flight recorder** — nothing done through the
-shim appears in any audit record — and it reads **no `kelyfos.toml`**, so none
-of the resource caps in [`docs/resources.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/resources.md) apply to it. The
-shim also authenticates nobody: while it is running, any process that can reach
-its port can boot, kill and rummage through sandboxes. Both are recorded as
-defects in F-D27 rather than defended; until they are fixed, treat `kelyfos
-shim` as a compatibility bridge for code you already trust, on a machine you
-already trust, and not as a way to run an agent under KelyfOS's guarantees.
-`kelyfos run` is that.
+**The policy file applies here.** The shim reads `kelyfos.toml` the way
+`kelyfos run` does: `[resources]` caps every sandbox it creates, `allow` and
+`secrets` decide what those sandboxes may reach, and the flags on
+`kelyfos shim` are the operator's, not the client's. There is no request
+parameter that widens any of it — an SDK client cannot ask for a bigger machine
+or another domain, which is the point of the door being in the wall rather than
+beside it (F-D5, F-D33).
+
+**Every sandbox gets its own record.** `session.start` when it is created,
+`session.ready` when the guest answers, a `file.write` with `via: shim` for
+every file the SDK writes, an `egress.attempt` for every connection it tries,
+and `session.end` when it is killed. `kelyfos log --list` shows them and
+`kelyfos log --verify` checks the chain, exactly as for a sandbox `kelyfos run`
+started.
+
+**One thing the shim still does not do is authenticate anybody.** While it is
+running, any process on the machine that can reach its port can boot sandboxes,
+kill them, and read and write files inside them. `--addr` binds loopback by
+default and is the only thing between it and the network. That is a property of
+being an unauthenticated local API, not an oversight, and
+[`docs/threat-model.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/threat-model.md) says so.
 
 ## What is implemented
 
@@ -3443,9 +3455,10 @@ not, because the current SDK runs those over Connect RPC with protobuf rather
 than REST. Use `kelyfos mcp` for commands — it is KelyfOS's actual interface and
 a published standard rather than one product's internal API.
 
-Two things a shim sandbox does **not** get, which
-[`e2b-shim.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/e2b-shim.md) states and this recipe will not pretend otherwise
-about: no flight recorder, and no `kelyfos.toml` resource caps.
+A shim sandbox is a sandbox like any other: the project's `kelyfos.toml` caps
+it, and it writes its own flight recorder — `kelyfos log --list` will show the
+one this recipe creates. What the shim does not do is authenticate anybody, so
+treat the port the way you would any unauthenticated local API.
 
 <!-- recipe: e2b-shim -->
 
@@ -3605,11 +3618,16 @@ this page says so rather than printing it anyway.
 | **The MCP bridge** | `kelyfos mcp` copies bytes between your standard streams and the guest's MCP server | You are writing an agent, or you already have an MCP client. This is the interface the product is designed around. |
 | **The E2B shim** | an E2B-compatible REST subset on a local port | You have code already written against the E2B SDK and want it to work against a self-hosted box without a rewrite. |
 
-They are not layered on each other and they do not have equal guarantees. The
-CLI and the bridge both write the flight recorder; **the shim does not**, and it
-reads no `kelyfos.toml`, so a shim sandbox has neither an audit record nor a
-resource cap ([`e2b-shim.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/e2b-shim.md)). If the audit trail is why you are
-here, the shim is not the door.
+All three go through the same wall. Each reads the project's `kelyfos.toml`,
+each is capped by its `[resources]`, and each writes a flight recorder — there
+is no entry path that skips the policy, which is the invariant F-D5 states for
+MCP and F-D33 applied to the shim.
+
+They do differ in what they can express. The shim serves a fixed REST subset and
+cannot run commands at all; the bridge gives an agent the full tool surface; the
+CLI gives you everything including the things no tool exposes, like `fork` and
+`team up`. And the shim authenticates nobody, so its port is a local privilege
+surface the other two do not have.
 
 ### The one flag that shapes everything else
 
@@ -3992,6 +4010,14 @@ That timeout writes **no event**. `outcome: timeout` in the record means an ask
 nobody answered; a recv that found nothing is not an outcome, because no message
 was involved. Do not wait for the transcript to tell you an agent has gone
 quiet.
+
+### Assuming a shim sandbox is unpoliced
+
+It is not, since F-D33: `kelyfos shim` reads the project's `kelyfos.toml`,
+`[resources]` caps every sandbox it creates, and each one writes its own flight
+recorder. What it does not do is authenticate its caller. If you are embedding
+it, bind it to loopback and treat reaching that port as equivalent to running
+`kelyfos` on the machine.
 
 ### Running commands through the E2B shim
 
@@ -4948,7 +4974,7 @@ A file written through a tool, recorded by hash rather than content. Written by 
 | `path` | string | path inside the guest |
 | `bytes` | integer | size written |
 | `sha256` | string | digest of the content |
-| `via` | string | write_file or upload |
+| `via` | string | write_file or upload for an MCP tool, shim for the E2B surface |
 | `agent` | string | which machine produced it; present inside a team *(in a team)* |
 
 ## `egress.attempt`
