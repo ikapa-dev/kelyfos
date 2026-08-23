@@ -29,14 +29,14 @@ both allowlist ceilings are checked (F-D39).
 
 ## The E4→E5 seam carries a platform-refresh pair (John's ruling)
 Both F-D35 premises accepted as falsified. After E4's exit and v0.7, before E5-0:
-1. **Buildroot → 2025.02.x** (newest point release then), superseding D11. Gates:
-   both arches rebuilt, acceptance suite, docs and cookbook green, and boot and
-   restore benchmarks re-run **on the bare-KVM reference** with the bars holding.
-   Fallback: stay frozen on 2026.02.3 and say so truthfully in versions.mk (F-D40).
+1. **Buildroot → 2025.02.x**, superseding D11. Gates: both arches rebuilt,
+   acceptance suite, docs and cookbook green, boot and restore benchmarks re-run
+   **on the bare-KVM reference** with the bars holding. Fallback: stay frozen on
+   2026.02.3 and say so truthfully in versions.mk (F-D40).
 2. **Bubble Tea + Lip Gloss → v2**, superseding F-D23, timeboxed to one task.
    Acceptance: E2-8 watch re-run under a real PTY, identical behaviour, -race
    clean. Fallback: revert to frozen v1 with a new reopening condition (F-D41).
-Buildroot first, then Bubble Tea, then the seam dependency check, then E5-0.
-The HN post is still John's to send; P4 stays parked unless he promotes it.
+Buildroot first, then Bubble Tea, then the seam check, then E5-0. The HN post is
+still John's to send; P4 stays parked unless he promotes it.
 
 Steering needed: no.
