@@ -7,33 +7,36 @@ Updated 2026-08-23 · tree clean, synced with origin/main
 - PLAN-FEATURES.html — 25/42. **E1–E3 closed, v0.6 released. Epic E4 active, 0/9.**
 
 ## Now
-The dependency seam check (versions.mk vs upstream, `go list -m -u all`,
-`govulncheck`), then E4-0 — `docs/mcp-surface.md`, spec before code.
+E4-0 — `docs/mcp-surface.md`, spec before code. The seam dependency check is
+done: every pin current, `govulncheck` clean (F-D35).
 
 ## This session
-Refreshed the HN post, now at v0.6 (John's to send). E3-0: seven audits read every
-doc against its code; `docs/README.md` is the entry map and F-D27 routed the
-findings — corrections landed across seven documents. E3-1: `docs/reference/` is
-generated from the product, CI fails on drift (F-D28). E3-2: `llms.txt` (spec v2,
-conformance tested) + `llms-full.txt`. E3-3 and E3-4: eight cookbook recipes and
-`docs/integrating.md`, each recipe run before it was written down — **8 passed, 0
-failed**. E3-5: the docs-only exam **passed first try** and found ten defects,
-nine of them fixed here (F-D29..32). **v0.6 tagged and published.**
+Epic E3 built and closed, **v0.6 tagged and published**. `docs/reference/` is
+generated from the product with CI failing on drift (F-D28); `llms.txt` follows
+spec v2 with conformance tested (F-D29); eight cookbook recipes, each run before
+it was written down (F-D30); `docs/integrating.md` (F-D31); and the docs-only
+exam **passed first try**, finding ten defects (F-D32).
 
 ## The F-D33 hardening batch — done
-John's ruling after the exam, six items, one commit each. The shim now reads
-`kelyfos.toml`, enforces the caps and writes a recorder; plain HTTP records
-`mode: plain` instead of claiming it was tunnelled; a bridge that closes
-mid-call answers with an error instead of silence; the two inert spawn-budget
-keys are refused; `fork` closes its sessions; and three smalls (list ordering,
-report arrow, blank image). One parked in F-D34: refused-key line numbers.
+John's ruling after the exam, six commits. The shim reads `kelyfos.toml`,
+enforces the caps and writes a recorder; plain HTTP records `mode: plain`
+instead of claiming it was tunnelled; a bridge that closes mid-call answers with
+an error instead of silence; the two inert spawn-budget keys are refused; `fork`
+closes its sessions; three smalls fixed, one parked (F-D34). 8/8 recipes still
+pass. CI caught a racy test of mine that this machine hid; fixed under `-race`.
 
 ## Blocked / debts
 - P4-4, P4-5 [BLOCKED] — Phase 4 backlog, parked unless John promotes it.
 - Per-agent `idle_timeout` still refused (F-D20); lifting it is its own task (F-D22).
 
-## Waiting on John
-The HN post (his to send). Whether P4 is promoted. Whether the four defects
-above are fixed inside E3 or wait for their own epic.
+## Waiting on John — two version-policy calls (F-D35)
+1. **Buildroot.** D11 pinned 2026.02.3 as "the LTS line". buildroot.org now lists
+   LTS as **2025.02.16**; 2026.02 is on no track and took no release when stable
+   and LTS both did. Stay frozen, drop to an older supported LTS, or follow stable?
+2. **Bubble Tea v1.** F-D23's third condition fired — no advisory, but v1 is
+   dormant (bubbletea 11 months, lipgloss 17) while v2 ships. Taking it means
+   rewriting `host/watch.go` on no task, plus a vanity module path. Now or not?
 
-Steering needed: no
+Also his: the HN post, and whether P4 is ever promoted.
+
+Steering needed: YES — the two calls above. Neither blocks E4.

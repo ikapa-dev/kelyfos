@@ -1381,6 +1381,36 @@
         keeps today. That is parser work rather than a one-line fix, and a hardening batch is not the place to grow the
         parser. It is worth doing when something else opens that file.</td>
         <td class="mono">the F-D33 batch commits</td></tr>
+        <tr><td class="mono">F-D35</td><td class="mono">2026-08-23</td>
+        <td><b>The E3&rarr;E4 seam dependency check. Every pin is the newest of its line and nothing is stale &mdash;
+        and the check falsified the premise of two earlier decisions, which is the part worth recording.</b>
+        Buildroot 2026.02.3, Linux 6.18.45, Firecracker v1.16.1 and Go 1.27.0 are each current;
+        <code>go list -m -u all</code> offers no update for any of the three direct modules; and
+        <code>govulncheck ./...</code> reports no vulnerabilities. On the ordinary reading, nothing to do.
+        <b>(1) D11&rsquo;s reason for its Buildroot pin is no longer true.</b> D11 chose 2026.02.3 as
+        &ldquo;the yearly .02 long-term-supported line&rdquo;. buildroot.org today lists three tracks &mdash;
+        candidate 2026.08-rc1, stable 2026.05.1, and <b>long-term support 2025.02.16</b> &mdash; and 2026.02 appears on
+        none of them. The 2026.02 line looks finished rather than supported: its last patch was 2026-06-16, and on
+        2026-07-15 both the stable and the LTS lines took a release while it took none. The pin is still the newest
+        2026.02.x that exists, so nothing is out of date in the narrow sense; what is wrong is the sentence explaining
+        why that line was chosen. Every option now costs something &mdash; stay on a frozen line, move to a genuinely
+        supported LTS that is a year older, or follow stable and give up the LTS argument entirely &mdash; and D11 was
+        John&rsquo;s version policy rather than an implementation detail, so the choice goes to him rather than being
+        absorbed by a routine check.
+        <b>(2) F-D23&rsquo;s condition for staying on Bubble Tea v1 has fired.</b> F-D23 declined the v2 move and
+        wrote down what would reopen it: &ldquo;a v2 API this project actually needs, an advisory on a v1 pin, or the
+        v1 line ceasing to receive releases.&rdquo; There is still no advisory &mdash; the Go vulnerability index and
+        OSV both return nothing for either module at these versions. But bubbletea&rsquo;s newest v1 is v1.3.10 from
+        2025-09-17 and lipgloss&rsquo;s is v1.1.0 from 2025-03-12, eleven and seventeen months ago, while v2 has
+        shipped steadily through 2026. That is the third condition, and it is the one that has happened.
+        <i>What is deliberately not done here.</i> Taking v2 means rewriting <code>host/watch.go</code> against a new
+        API, on no task, inside a check whose whole purpose is to be uneventful &mdash; which is the exact thing D25
+        and F-D23 both argued against, and it would additionally take a dependency on a vanity module path F-D26
+        flagged and this project has never resolved. Nor is it deferred to &ldquo;the next TUI task&rdquo;, because
+        after E2-8 there is no such task queued, and a deferral with no date is what F-D26 called turning a decision
+        into a habit. So it is answered by being put to John with the evidence, which is the one option that neither
+        rewrites a TUI for nothing nor lets the condition pass unremarked for a third time.</td>
+        <td class="mono">go list -m -u all; govulncheck; buildroot.org/download.html; vuln.go.dev</td></tr>
     <!-- Claude Code: append rows above this line. -->
       <tr><td class="mono">F-D10</td><td class="mono">2026-08-22</td>
         <td>The resource knobs E1-0 goes looking for shipped <b>partly</b>: <code>--vcpus</code>/<code>--mem</code> and
@@ -3399,6 +3429,57 @@ $ gofmt -l . ; go vet ./... ; go test ./...
    kelyfos v0.5-17-g65be6c6, both flavors built
    from the commit under test
    transcript committed at docs/exam/</pre></td></tr>
+        <tr><td class="mono">2026-08-23</td><td class="mono">&mdash;</td>
+        <td><b>The F-D33 hardening batch, and the E3&rarr;E4 seam dependency check.</b>
+        Six commits, one per item, all after the v0.6 tag as John ruled. The shim reads
+        <code>kelyfos.toml</code>, enforces its caps and writes a recorder per sandbox; plain HTTP records
+        <code>mode: plain</code> rather than borrowing the word for traffic the proxy could not read; a bridge that
+        closes mid-call answers with an explicit error instead of silence; the two inert spawn-budget keys are refused
+        by name; <code>fork</code> closes the sessions it opens; and three smalls are fixed with one parked (F-D34).
+        Two things (a) turned up that were worse than the reported defect: the shim&rsquo;s <code>--allow</code> was
+        <b>inert</b> &mdash; it set the allowlist and never built a network, so a shim started with one reported egress
+        and had no NIC &mdash; and with no proxy there was nothing that could have recorded egress even if there had
+        been traffic.
+        <b>The seam check found nothing stale and two false premises</b>, recorded in F-D35: the Buildroot line D11
+        picked as &ldquo;long-term-supported&rdquo; is not what buildroot.org calls LTS today, and F-D23&rsquo;s
+        condition for staying on Bubble Tea v1 has fired. Both go to John rather than being decided inside a
+        currency check.
+        <b>And CI caught a test of mine that my machine hid.</b> The test added with (b) read a shared slice the
+        moment the client returned while the proxy reports from its own goroutine — it passed here and failed on the
+        runner. Fixed with a channel and verified under <code>-race -count=5</code>. The behaviour was right
+        throughout; the test was not.</td>
+        <td class="mono"><pre>the shim, before and after, same kelyfos.toml
+declaring cpus = 1 and mem = "384M":
+
+  before   2 cores · 498992 kB · 3 events,
+           all written by kelyfos exec
+  after    1 core  · 370300 kB · 6 events,
+           session start / ready / write / end
+           session b03942c2: chain intact
+
+the exam's silent case, replayed:
+  {"id":2,"result":{"content":[{"type":"text",
+   "text":"kelyfos: the bridge to this sandbox
+   closed before team_ask answered…"}],
+   "isError":true}}
+
+fork sessions, after (e):
+  02ccf378  14 events  shutdown
+  24d7115b  14 events  shutdown
+  43d37e3e  14 events  shutdown
+
+$ bash dev/cookbook.sh
+  8 passed, 0 failed
+$ go test -race -count=3 ./...
+  clean
+
+seam check:
+  buildroot   2026.02.3  newest of its line
+  linux       6.18.45    newest 6.18.x, longterm
+  firecracker v1.16.1    newest stable
+  go          1.27.0     newest stable
+  go list -m -u all      no update, 3 direct deps
+  govulncheck ./...      No vulnerabilities found.</pre></td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
