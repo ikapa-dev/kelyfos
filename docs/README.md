@@ -144,9 +144,9 @@ name the edit and never make it (F-D5).
 *Reference:* none of it — the catalog itself is generated to
 [`reference/denials.md`](reference/denials.md), and this page links to it rather
 than repeating it, which is the arrangement E3-1 exists to make possible.
-*Thin:* inbound forwarding’s refusals are not in the catalog because the feature
-is not built (E5-5); the page says so rather than implying coverage it does not
-have.
+*Thin:* nothing material. The catalog covers every refusal the product makes,
+which is checked by the build rather than by reading (`make docs` fails when an
+entry is raised nowhere), and E5-5 added its own the moment forwarding existed.
 
 ### `teams.md` — several agents at once
 

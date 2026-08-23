@@ -53,6 +53,7 @@ const (
 	TypeRunReview       = "run.review"
 	TypeShellStart      = "shell.start"
 	TypeShellEnd        = "shell.end"
+	TypeForwardAccept   = "forward.accept"
 )
 
 // ReasonServeMCP marks a session.start as a server's own session rather than a
@@ -177,6 +178,12 @@ type Event struct {
 	Added    int `json:"added,omitempty"`
 	Modified int `json:"modified,omitempty"`
 	Deleted  int `json:"deleted,omitempty"`
+
+	// forward.accept (E5-5). Port is the host port the connection arrived on
+	// and GuestPort is where it was carried to; Peer is who connected. A
+	// connection is the unit somebody would ask about, so this is written per
+	// connection and never per packet or per byte.
+	GuestPort int `json:"guest_port,omitempty"`
 }
 
 type EvError struct {

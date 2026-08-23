@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -375,6 +376,13 @@ func printEvent(line []byte, asJSON bool) {
 			code = *e.Code
 		}
 		fmt.Printf("%s  %sshell closed   exit %d after %d ms\n", ts, who, code, e.DurationMS)
+	case recorder.TypeForwardAccept:
+		outcome := "carried"
+		if e.Reason != "" {
+			outcome = "REFUSED  " + e.Reason
+		}
+		fmt.Printf("%s  %sforward        %s -> guest %d  from %s  %s\n",
+			ts, who, "host "+strconv.Itoa(e.Port), e.GuestPort, e.Peer, outcome)
 	case recorder.TypeRunReview:
 		fmt.Printf("%s  %sreview          %s · %d added, %d modified, %d deleted → %s\n",
 			ts, who, e.Outcome, e.Added, e.Modified, e.Deleted, e.Path)

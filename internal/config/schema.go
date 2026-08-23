@@ -123,6 +123,7 @@ func Sections() []Section {
 		{Name: "team.store", Header: "[team.store]", Doc: "the permissioned key/blob store shared by the team"},
 		{Name: "team.store.key", Header: "[[team.store.key]]", Repeated: true, Doc: "who may read and write one key or glob"},
 		{Name: "plugin", Header: "[[plugin]]", Repeated: true, Doc: "one MCP server to run inside the guest; its tools are advertised as <name>_<tool>"},
+		{Name: "forward", Header: "[[forward]]", Repeated: true, Doc: "one host port carried to a guest-local port over vsock; the firewall is untouched"},
 	}
 }
 
@@ -167,6 +168,13 @@ func Schema() []Key {
 			Doc: "what the supervisor launches, resolved inside that plugin's directory"},
 		Key{Section: "plugin", Name: "args", Type: TypeStrings, Default: "no arguments", Sample: `["server.js"]`,
 			Doc: "arguments to the command"},
+	)
+
+	out = append(out,
+		Key{Section: "forward", Name: "host", Type: TypeInt, Default: "", Sample: "8080",
+			Doc: "port on this machine's loopback; --p-bind is the only way to bind anything else"},
+		Key{Section: "forward", Name: "guest", Type: TypeInt, Default: "", Sample: "80",
+			Doc: "guest-local port the supervisor dials on 127.0.0.1 inside the sandbox"},
 	)
 
 	out = append(out,

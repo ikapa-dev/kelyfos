@@ -175,6 +175,10 @@ func (c *Config) header(line, where string) (string, error) {
 		c.Team.Store.Keys = append(c.Team.Store.Keys, TeamStoreKey{Line: lineOf(where)})
 		return name, nil
 
+	case array && name == "forward":
+		c.Forwards = append(c.Forwards, Forward{Line: lineOf(where)})
+		return "forward", nil
+
 	case array && name == "plugin":
 		c.Plugins = append(c.Plugins, Plugin{Line: lineOf(where)})
 		return "plugin", nil
@@ -193,8 +197,9 @@ func (c *Config) header(line, where string) (string, error) {
 		kind = "[[" + name + "]]"
 	}
 	return "", fmt.Errorf("%s: unknown section %s; this file understands [sandbox], [resources], "+
-		"[team] with [team.resources], [[team.agent]] with [team.agent.resources] and "+
-		"[team.agent.spawn], [[team.edge]], [team.store] and [[team.store.key]]", where, kind)
+		"[mcp], [[forward]], [[plugin]], [team] with [team.resources], [[team.agent]] with "+
+		"[team.agent.resources] and [team.agent.spawn], [[team.edge]], [team.store] and "+
+		"[[team.store.key]]", where, kind)
 }
 
 func (c *Config) ensureTeam() {

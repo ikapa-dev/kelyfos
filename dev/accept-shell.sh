@@ -21,7 +21,7 @@ PASSES=0 FAILURES=0
 SUMMARY=()
 
 cleanup() {
-  pkill -f "$BIN/kelyfos run" 2>/dev/null
+  pkill -f "kelyfos run" 2>/dev/null
   sleep 1
   for p in $(pgrep firecracker 2>/dev/null); do kill "$p" 2>/dev/null; done
   rm -rf "$WORK"

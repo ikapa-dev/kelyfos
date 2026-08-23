@@ -153,6 +153,7 @@ Two ranges, chosen so the direction of a channel is readable from its number:
 | `10002` | `mcp` | host → guest | P2-2 | MCP server. §6 |
 | `10003` | `control` | host → guest | P2-1 | Lifecycle and resync RPCs. §5.4 |
 | `10004` | `shell` | host → guest | E5-3 | One interactive terminal per connection. §5.7 |
+| `10005` | `forward` | host → guest | E5-5 | One forwarded TCP connection per connection. §5.8 |
 | `10100` | `ready` | guest → host | P1-3 | Boot-to-ready signal and heartbeats. §5.3 |
 | `10101` | `events` | guest → host | P2-4 | Guest-side event stream into the flight recorder. §5.5 |
 | `10102` | `team` | guest → host | E2-1 | Team messaging: the guest asks, the host routes. §5.6 |
@@ -482,6 +483,45 @@ different thing from a shell that ended — the same distinction §5.2 draws for
 session: a shell left running on a terminal nobody is reading is a process that
 never ends.
 
+### 5.8 `forward` — port 10005, host → guest
+
+One connection is one forwarded TCP connection. Added by E5-5 as an **additive
+revision**, on the same terms as §5.7.
+
+Two lines of JSON, and then the connection is the bytes:
+
+```
+host  → guest   {"v":1,"op":"open","port":80}
+guest → host    {"v":1,"ok":true}
+                …the stream, in both directions, unframed…
+```
+
+A refusal is the same line with `"ok":false` and an `error` saying what the
+guest's own dial returned:
+
+```
+guest → host    {"v":1,"ok":false,"error":"nothing answered on port 80 inside the sandbox: …"}
+```
+
+Neither line may exceed **4 KiB**, which is more than a port number and a
+sentence need and bounds what an unterminated line can make the other side
+buffer.
+
+**After the handshake there is no framing at all**, and that is deliberate: a
+TCP bridge that framed its payload would be re-implementing TCP inside TCP. It
+also means both ends must keep reading with the *same* buffered reader that read
+the handshake line — a second reader drops whatever the first had already
+buffered, which for a server that speaks first is the beginning of its greeting.
+A half-close is passed through in both directions, because a client that has
+finished sending and is waiting to read needs the other end to see EOF.
+
+**The guest dials its own loopback**, `127.0.0.1:<port>`, and never its NIC. That
+is the whole reason inbound forwarding is possible at all without weakening
+anything: the packet is created inside the machine, so nothing arrives across the
+TAP, the nftables ruleset that makes the network egress-only never has to make an
+exception, and `nft list ruleset` is identical with a forward and without one
+(F-D7, docs/networking.md §3).
+
 
 ## 6. MCP over vsock
 
@@ -554,6 +594,7 @@ logs it with every session and refuses a `v` it does not implement.
 | `events` feeds the hash-chained recorder | P2-4 |
 | `resync` applied on every snapshot restore; per-fork `vsock_override` | P3-1, P3-2 |
 | Supervisor re-dials `10100`, `10101` and `10102` after a snapshot reset | P3-1, E2-1 |
+| A forward's stream is unframed, and the handshake reader keeps reading it | E5-5 |
 | `team` channel serves §5.6, and the guest prefers the host's `agent` | E2-1, E2-9 |
 
 ---

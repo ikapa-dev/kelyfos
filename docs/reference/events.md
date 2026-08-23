@@ -266,6 +266,18 @@ That shell ended, with what it exited with and how long it lasted. Written by th
 | `reason` | string | why it could not be opened *(it failed)* |
 | `agent` | string | which team member's sandbox *(in a team)* |
 
+## `forward.accept`
+
+Somebody connected to a forwarded port. The connection is carried over vsock to the guest's own loopback, so nothing crossed the TAP and the firewall is the same with a forward as without one (F-D7). Written by the **host**.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `port` | integer | the host port the connection arrived on |
+| `guest_port` | integer | the guest-local port it was carried to |
+| `peer` | string | who connected, as address:port |
+| `reason` | string | why it could not be carried *(the guest refused it)* |
+| `agent` | string | which team member's sandbox *(in a team)* |
+
 ## `run.review`
 
 Somebody was shown what a sandbox did to a workspace and decided whether to write it back. A declined review is recorded exactly like an accepted one: a transcript that held only the accepted ones would be a record of agreement. Written by the **host**.

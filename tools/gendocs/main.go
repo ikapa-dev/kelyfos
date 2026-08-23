@@ -382,8 +382,15 @@ func cliPage(cmds []Command) string {
 		}
 		b.WriteString("| Flag | Type | Default | Meaning |\n| --- | --- | --- | --- |\n")
 		for _, f := range c.Flags {
-			fmt.Fprintf(&b, "| `--%s` | %s | %s | %s |\n",
-				f.Name, or(f.Type, "—"), or(f.Default, "—"), or(cell(f.Doc), "—"))
+			// A one-letter flag is written with one dash, because that is how
+			// anybody writes it and how the CLI's own help prints it. Go's flag
+			// package accepts either for both, so this is about the reader.
+			dashes := "--"
+			if len(f.Name) == 1 {
+				dashes = "-"
+			}
+			fmt.Fprintf(&b, "| `%s%s` | %s | %s | %s |\n",
+				dashes, f.Name, or(f.Type, "—"), or(f.Default, "—"), or(cell(f.Doc), "—"))
 		}
 	}
 	return b.String()

@@ -66,6 +66,11 @@ type Config struct {
 	// they are packed and launched in.
 	Plugins []Plugin
 
+	// [[forward]] — host port to guest-local port, one entry each (E5-5,
+	// F-D7). Order is the order they were written; each is a listener the host
+	// binds once the sandbox is ready.
+	Forwards []Forward
+
 	// Time budgets (E1-6). Zero means no budget.
 	ResMaxRuntime  time.Duration
 	ResIdleTimeout time.Duration
@@ -143,6 +148,13 @@ func Load(path string) (*Config, error) {
 
 		if section == "plugin" {
 			if err := cfg.pluginKey(key, value, where); err != nil {
+				return nil, err
+			}
+			continue
+		}
+
+		if section == "forward" {
+			if err := cfg.forwardKey(key, value, where); err != nil {
 				return nil, err
 			}
 			continue

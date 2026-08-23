@@ -130,6 +130,17 @@ port 8443 is not permitted, to api.stripe.com or to anywhere else [egress.port]
 
 Named: `host`, `port`. The values above are an example.
 
+## `forward.closed`
+
+A connection reached a forwarded port and nothing inside the sandbox was listening.
+
+```
+a connection to the forwarded port 8080 found nothing listening on port 80 inside the sandbox [forward.closed]
+    start the server in the guest before connecting, or forward the port it is actually on — a forward carries a connection, it does not start anything
+```
+
+Named: `guest`, `host`. The values above are an example.
+
 ## `secret.unbound`
 
 A secret was bound to a domain the sandbox cannot reach, so it could never be sent.

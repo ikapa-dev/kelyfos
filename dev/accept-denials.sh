@@ -40,7 +40,7 @@ shaped() {
 
 WORK="$(mktemp -d)"
 cleanup() {
-  pkill -f "$BIN/kelyfos run" 2>/dev/null
+  pkill -f "kelyfos run" 2>/dev/null
   sleep 1
   for p in $(pgrep firecracker 2>/dev/null); do kill "$p" 2>/dev/null; done
   rm -rf "$WORK"
@@ -113,7 +113,7 @@ else
   kelyfos log --session "$session" > log.txt 2>/dev/null
   check "$(grep -q 'api.stripe.com' log.txt && echo yes || echo no)" \
         "and the refusal is in the record, not only on the guest's terminal"
-  pkill -f "$BIN/kelyfos run" 2>/dev/null; sleep 2
+  pkill -f "kelyfos run" 2>/dev/null; sleep 2
 fi
 
 say "every ID a refusal printed is a heading in the generated reference"

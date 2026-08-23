@@ -76,7 +76,7 @@ func TestSchemaDescribesNothingExtra(t *testing.T) {
 		TypeTeamSpawn: true, TypeMCPHostCall: true, TypeMCPHostResult: true,
 		TypePluginCall: true, TypePluginCrash: true,
 		TypeSessionPause: true, TypeSessionResume: true, TypeRunReview: true,
-		TypeShellStart: true, TypeShellEnd: true,
+		TypeShellStart: true, TypeShellEnd: true, TypeForwardAccept: true,
 	}
 	for _, e := range Types() {
 		if !real[e.Type] {

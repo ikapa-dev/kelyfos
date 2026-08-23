@@ -241,6 +241,17 @@ func Types() []EventType {
 				{Name: "reason", Type: "string", Doc: "why it could not be opened", When: "it failed"},
 				{Name: "agent", Type: "string", Doc: "which team member's sandbox", When: "in a team"},
 			}},
+		{Type: TypeForwardAccept, Source: SourceHost,
+			Doc: "somebody connected to a forwarded port. The connection is carried over vsock " +
+				"to the guest's own loopback, so nothing crossed the TAP and the firewall is " +
+				"the same with a forward as without one (F-D7)",
+			Fields: []Field{
+				{Name: "port", Type: "integer", Doc: "the host port the connection arrived on"},
+				{Name: "guest_port", Type: "integer", Doc: "the guest-local port it was carried to"},
+				{Name: "peer", Type: "string", Doc: "who connected, as address:port"},
+				{Name: "reason", Type: "string", Doc: "why it could not be carried", When: "the guest refused it"},
+				{Name: "agent", Type: "string", Doc: "which team member's sandbox", When: "in a team"},
+			}},
 		{Type: TypeRunReview, Source: SourceHost,
 			Doc: "somebody was shown what a sandbox did to a workspace and decided whether to " +
 				"write it back. A declined review is recorded exactly like an accepted one: a " +

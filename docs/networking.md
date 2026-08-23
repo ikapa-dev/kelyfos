@@ -81,6 +81,30 @@ Two details are deliberate and easy to get wrong:
 The `counter` on each drop is what makes `kelyfos log` able to say a packet was
 blocked rather than merely not allowed.
 
+### 3.1 A forwarded port adds nothing to this
+
+`kelyfos run -p 8080:80` makes a server inside the sandbox reachable from the
+host, and **the ruleset above is unchanged** — same table, same chains, same
+rules, byte for byte. There is no `dnat`, no accept, and no rule anywhere that
+mentions a forwarded port.
+
+It works because no packet crosses the TAP. The host binds a listener on its own
+loopback; each connection it accepts becomes a vsock connection to the
+supervisor; the supervisor dials `127.0.0.1` **inside the guest**. The packet
+that reaches the server is created inside the machine, on its own loopback, so
+there is nothing at the interface for a firewall rule to have an opinion about
+(F-D7, `protocol.md` §5.8).
+
+That is the whole reason the feature is allowed to exist. The network layer's
+guarantee is that nothing reaches the guest from outside, it is enforced here,
+and a forward that added a rule would be a hole in it. `dev/accept-forward.sh`
+captures the ruleset with two forwards and with none and diffs them.
+
+Loopback is also where the *host* listener binds. `--p-bind 0.0.0.0` is the way
+to put it on the LAN, it warns every time, and no key in `kelyfos.toml` does it:
+a LAN exposure should be something somebody typed in the session where it
+happened rather than a line in a file somebody inherited.
+
 ## 4. No DNS in the guest (decision D16)
 
 There is no DNS responder on the TAP address, nothing in the guest's

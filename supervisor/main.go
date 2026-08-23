@@ -134,6 +134,14 @@ func main() {
 	} else {
 		go serveShell(ln, rp)
 	}
+	// One connection is one forwarded TCP connection, dialled to this
+	// machine's own loopback. Nothing crosses the TAP, so the firewall is
+	// untouched by a forward (F-D7).
+	if ln, err := vsock.Listen(proto.PortForward); err != nil {
+		logf("cannot listen on forward port %d: %v", proto.PortForward, err)
+	} else {
+		go serveForward(ln)
+	}
 	if ln, err := vsock.Listen(proto.PortControl); err != nil {
 		logf("cannot listen on control port %d: %v", proto.PortControl, err)
 	} else {

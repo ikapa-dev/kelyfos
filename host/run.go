@@ -60,9 +60,14 @@ func runWithSandbox(argv []string, reviewDeclinedOut *bool) error {
 		noSync      = fs.Bool("no-sync-back", false, "do not write the workspace back to the host on shutdown")
 		reviewFirst = fs.Bool("review", false, "show what changed and ask before writing the workspace back")
 		secrets     multiFlag
+		forwards    multiFlag
+		pBind       = fs.String("p-bind", loopback, "address the forwarded ports bind to. "+
+			"0.0.0.0 exposes them to every machine that can reach this one, and says so, every time.")
 	)
 	fs.Var(&secrets, "secret", "attach a credential to a domain: NAME@domain[:bearer|basic]. "+
 		"The value is read from the host environment and never enters the guest. Repeatable.")
+	fs.Var(&forwards, "p", "carry a host port to a guest-local port: host:guest, as in 8080:80. "+
+		"The transport is vsock, not the network, so the firewall is untouched. Repeatable.")
 	fs.Usage = func() {
 		fmt.Fprintln(fs.Output(), `usage: kelyfos run [flags]
        kelyfos run [flags] -- <command>...
@@ -236,6 +241,14 @@ status. This is how you hand an agent a sandbox and nothing else:
 			DiskIOPS:  cfg.ResDiskIOPS,
 			DiskMbps:  cfg.ResDiskMbps,
 		}
+	}
+
+	// What this run forwards, resolved before anything boots so a bad -p or a
+	// half-written [[forward]] is refused at the command line rather than after
+	// a machine has already started.
+	theForwards, err := resolveForwards(forwards, cfg)
+	if err != nil {
+		return err
 	}
 
 	if *cpus == 0 {
@@ -636,6 +649,17 @@ status. This is how you hand an agent a sandbox and nothing else:
 	}
 	if opts.Workspace != nil {
 		fmt.Printf("  workspace   %s -> /work\n", opts.Workspace.HostDir)
+	}
+	// Bound after the guest is ready, because a listener that accepts before
+	// the supervisor is listening would answer a connection it cannot carry.
+	// Closed at teardown, because a port that outlives its sandbox answers for
+	// a machine that no longer exists.
+	if len(theForwards) > 0 {
+		fwd := newForwarder(sb.State.UDSPath, *pBind, rec, "")
+		defer fwd.close()
+		if err := fwd.start(theForwards); err != nil {
+			return err
+		}
 	}
 	if maxRuntime > 0 {
 		fmt.Printf("  max runtime %s\n", maxRuntime)

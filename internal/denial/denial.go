@@ -241,6 +241,18 @@ var (
 			"file": "/home/you/project/kelyfos.toml"},
 	}
 
+	// --- forwards: what is listening at the other end ---------------------
+
+	ForwardClosed = Denial{
+		ID:  "forward.closed",
+		Doc: "a connection reached a forwarded port and nothing inside the sandbox was listening",
+		Msg: "a connection to the forwarded port <host> found nothing listening on port " +
+			"<guest> inside the sandbox",
+		Fix: "start the server in the guest before connecting, or forward the port it is " +
+			"actually on — a forward carries a connection, it does not start anything",
+		Sample: V{"host": "8080", "guest": "80"},
+	}
+
 	// --- teams: the edges, the store and the spawn budget -----------------
 
 	TeamEdge = Denial{
@@ -295,6 +307,7 @@ func All() []Denial {
 		BudgetSandboxes,
 		CeilingFlag, CeilingResume, CeilingSnapshot, CeilingSnapshotUnknown, CeilingTool,
 		EgressHost, EgressPort,
+		ForwardClosed,
 		SecretUnallowed,
 		TeamEdge, TeamSpawnBudget, TeamSpawnImage, TeamSpawnNone, TeamStore,
 	}

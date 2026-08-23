@@ -1135,6 +1135,30 @@ Two details are deliberate and easy to get wrong:
 The `counter` on each drop is what makes `kelyfos log` able to say a packet was
 blocked rather than merely not allowed.
 
+### 3.1 A forwarded port adds nothing to this
+
+`kelyfos run -p 8080:80` makes a server inside the sandbox reachable from the
+host, and **the ruleset above is unchanged** — same table, same chains, same
+rules, byte for byte. There is no `dnat`, no accept, and no rule anywhere that
+mentions a forwarded port.
+
+It works because no packet crosses the TAP. The host binds a listener on its own
+loopback; each connection it accepts becomes a vsock connection to the
+supervisor; the supervisor dials `127.0.0.1` **inside the guest**. The packet
+that reaches the server is created inside the machine, on its own loopback, so
+there is nothing at the interface for a firewall rule to have an opinion about
+(F-D7, `protocol.md` §5.8).
+
+That is the whole reason the feature is allowed to exist. The network layer's
+guarantee is that nothing reaches the guest from outside, it is enforced here,
+and a forward that added a rule would be a hole in it. `dev/accept-forward.sh`
+captures the ruleset with two forwards and with none and diffs them.
+
+Loopback is also where the *host* listener binds. `--p-bind 0.0.0.0` is the way
+to put it on the LAN, it warns every time, and no key in `kelyfos.toml` does it:
+a LAN exposure should be something somebody typed in the session where it
+happened rather than a line in a file somebody inherited.
+
 ## 4. No DNS in the guest (decision D16)
 
 There is no DNS responder on the TAP address, nothing in the guest's
@@ -2086,12 +2110,6 @@ recorder with its reason, and every refused tool call is in the transcript
 (E4-4), so a refusal is auditable whether or not the person it landed on
 mentions it. See [`events.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/events.md).
 
-## What is not covered yet
-
-Inbound port forwarding (`-p`) arrives at E5-5, and its refusals join this
-catalog when it does — the catalog is complete for the refusals that exist, not
-for the ones that are planned.
-
 
 ---
 title: Flight recorder
@@ -2488,6 +2506,30 @@ somebody pastes a token to test something, or types a password into a prompt
 that does not echo but does arrive as keystrokes. Recording that by default
 would make the honest thing — using the shell — the risky thing.
 
+### `forward.accept`
+Somebody connected to a forwarded port. Written from E5-5.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `port` | integer | The host port the connection arrived on. |
+| `guest_port` | integer | The guest-local port it was carried to. |
+| `peer` | string | Who connected, as `address:port`. |
+| `reason` | string | Why it could not be carried, when the guest refused it. |
+| `agent` | string | Present inside a team: whose sandbox. |
+
+**Per connection, not per packet and not per byte.** A connection is the unit
+somebody would ask about — who reached this port, and when — and a per-packet
+record would bury that in a log nobody reads.
+
+A connection that could not be carried is written with the same type and a
+`reason`: the accept happened, the carry did not. The usual reason is that
+nothing was listening inside the sandbox yet, which is `forward.closed` in
+[`denials.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/denials.md).
+
+Nothing here says anything crossed the network, because nothing did. The
+transport is vsock and the guest dials its own loopback, so the nftables ruleset
+is identical with a forward and without one (F-D7, `networking.md` §3).
+
 ### `run.review`
 Somebody was shown what a sandbox did to a workspace and decided whether to
 write it back. Written from E5-2.
@@ -2603,6 +2645,7 @@ team session must be found by id or with `--list`.
 | `session.pause` and `session.resume`, one chain across a pause | E5-1 |
 | `run.review` for every decision, including the declined ones | E5-2 |
 | `shell.start` / `shell.end` always, contents only with `--transcript` | E5-3 |
+| `forward.accept` per connection, carried or refused | E5-5 |
 | Signed exports verifiable offline | P4-3 |
 
 
@@ -2767,6 +2810,7 @@ Two ranges, chosen so the direction of a channel is readable from its number:
 | `10002` | `mcp` | host → guest | P2-2 | MCP server. §6 |
 | `10003` | `control` | host → guest | P2-1 | Lifecycle and resync RPCs. §5.4 |
 | `10004` | `shell` | host → guest | E5-3 | One interactive terminal per connection. §5.7 |
+| `10005` | `forward` | host → guest | E5-5 | One forwarded TCP connection per connection. §5.8 |
 | `10100` | `ready` | guest → host | P1-3 | Boot-to-ready signal and heartbeats. §5.3 |
 | `10101` | `events` | guest → host | P2-4 | Guest-side event stream into the flight recorder. §5.5 |
 | `10102` | `team` | guest → host | E2-1 | Team messaging: the guest asks, the host routes. §5.6 |
@@ -3096,6 +3140,45 @@ different thing from a shell that ended — the same distinction §5.2 draws for
 session: a shell left running on a terminal nobody is reading is a process that
 never ends.
 
+### 5.8 `forward` — port 10005, host → guest
+
+One connection is one forwarded TCP connection. Added by E5-5 as an **additive
+revision**, on the same terms as §5.7.
+
+Two lines of JSON, and then the connection is the bytes:
+
+```
+host  → guest   {"v":1,"op":"open","port":80}
+guest → host    {"v":1,"ok":true}
+                …the stream, in both directions, unframed…
+```
+
+A refusal is the same line with `"ok":false` and an `error` saying what the
+guest's own dial returned:
+
+```
+guest → host    {"v":1,"ok":false,"error":"nothing answered on port 80 inside the sandbox: …"}
+```
+
+Neither line may exceed **4 KiB**, which is more than a port number and a
+sentence need and bounds what an unterminated line can make the other side
+buffer.
+
+**After the handshake there is no framing at all**, and that is deliberate: a
+TCP bridge that framed its payload would be re-implementing TCP inside TCP. It
+also means both ends must keep reading with the *same* buffered reader that read
+the handshake line — a second reader drops whatever the first had already
+buffered, which for a server that speaks first is the beginning of its greeting.
+A half-close is passed through in both directions, because a client that has
+finished sending and is waiting to read needs the other end to see EOF.
+
+**The guest dials its own loopback**, `127.0.0.1:<port>`, and never its NIC. That
+is the whole reason inbound forwarding is possible at all without weakening
+anything: the packet is created inside the machine, so nothing arrives across the
+TAP, the nftables ruleset that makes the network egress-only never has to make an
+exception, and `nft list ruleset` is identical with a forward and without one
+(F-D7, docs/networking.md §3).
+
 
 ## 6. MCP over vsock
 
@@ -3168,6 +3251,7 @@ logs it with every session and refuses a `v` it does not implement.
 | `events` feeds the hash-chained recorder | P2-4 |
 | `resync` applied on every snapshot restore; per-fork `vsock_override` | P3-1, P3-2 |
 | Supervisor re-dials `10100`, `10101` and `10102` after a snapshot reset | P3-1, E2-1 |
+| A forward's stream is unframed, and the handshake reader keeps reading it | E5-5 |
 | `team` channel serves §5.6, and the guest prefers the host's `agent` | E2-1, E2-9 |
 
 ---
@@ -5756,9 +5840,9 @@ name the edit and never make it (F-D5).
 *Reference:* none of it — the catalog itself is generated to
 [`reference/denials.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/reference/denials.md), and this page links to it rather
 than repeating it, which is the arrangement E3-1 exists to make possible.
-*Thin:* inbound forwarding’s refusals are not in the catalog because the feature
-is not built (E5-5); the page says so rather than implying coverage it does not
-have.
+*Thin:* nothing material. The catalog covers every refusal the product makes,
+which is checked by the build rather than by reading (`make docs` fails when an
+entry is raised nowhere), and E5-5 added its own the moment forwarding existed.
 
 ### `teams.md` — several agents at once
 
@@ -5966,6 +6050,8 @@ kelyfos run [flags]
 | `--max-runtime` | string | no limit | stop the sandbox after this long, e.g. 30m |
 | `--mem` | string | 512 | guest memory, e.g. 2G or 512M; a bare number is MiB |
 | `--no-sync-back` | boolean | — | do not write the workspace back to the host on shutdown |
+| `-p` | value | — | carry a host port to a guest-local port: host:guest, as in 8080:80. The transport is vsock, not the network, so the firewall is untouched. Repeatable. |
+| `--p-bind` | string | "127.0.0.1" | address the forwarded ports bind to. 0.0.0.0 exposes them to every machine that can reach this one, and says so, every time. |
 | `--ready-timeout` | duration | 30s | how long to wait for the guest to become ready |
 | `--review` | boolean | — | show what changed and ask before writing the workspace back |
 | `--secret` | value | — | attach a credential to a domain: NAME@domain[:bearer\|basic]. The value is read from the host environment and never enters the guest. Repeatable. |
@@ -6120,7 +6206,7 @@ kelyfos fork [flags]
 | --- | --- | --- | --- |
 | `--arch` | string | the build host's architecture | guest architecture |
 | `--image` | string | "dev" | image flavor the snapshot was taken from |
-| `--n` | int | 2 | how many forks to create |
+| `-n` | int | 2 | how many forks to create |
 | `--name` | string | "default" | snapshot to fork from |
 
 ## kelyfos team up
@@ -6420,6 +6506,15 @@ One MCP server to run inside the guest; its tools are advertised as <name>_<tool
 | `path` | string | — | host directory packed into the read-only plugins device, resolved against this file |
 | `command` | string | — | what the supervisor launches, resolved inside that plugin's directory |
 | `args` | string array | no arguments | arguments to the command |
+
+## `[[forward]]`
+
+One host port carried to a guest-local port over vsock; the firewall is untouched.
+
+| Key | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `host` | integer | — | port on this machine's loopback; --p-bind is the only way to bind anything else |
+| `guest` | integer | — | guest-local port the supervisor dials on 127.0.0.1 inside the sandbox |
 
 
 ---
@@ -6961,6 +7056,18 @@ That shell ended, with what it exited with and how long it lasted. Written by th
 | `reason` | string | why it could not be opened *(it failed)* |
 | `agent` | string | which team member's sandbox *(in a team)* |
 
+## `forward.accept`
+
+Somebody connected to a forwarded port. The connection is carried over vsock to the guest's own loopback, so nothing crossed the TAP and the firewall is the same with a forward as without one (F-D7). Written by the **host**.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `port` | integer | the host port the connection arrived on |
+| `guest_port` | integer | the guest-local port it was carried to |
+| `peer` | string | who connected, as address:port |
+| `reason` | string | why it could not be carried *(the guest refused it)* |
+| `agent` | string | which team member's sandbox *(in a team)* |
+
 ## `run.review`
 
 Somebody was shown what a sandbox did to a workspace and decided whether to write it back. A declined review is recorded exactly like an accepted one: a transcript that held only the accepted ones would be a record of agreement. Written by the **host**.
@@ -7183,6 +7290,17 @@ port 8443 is not permitted, to api.stripe.com or to anywhere else [egress.port]
 ```
 
 Named: `host`, `port`. The values above are an example.
+
+## `forward.closed`
+
+A connection reached a forwarded port and nothing inside the sandbox was listening.
+
+```
+a connection to the forwarded port 8080 found nothing listening on port 80 inside the sandbox [forward.closed]
+    start the server in the guest before connecting, or forward the port it is actually on — a forward carries a connection, it does not start anything
+```
+
+Named: `guest`, `host`. The values above are an example.
 
 ## `secret.unbound`
 

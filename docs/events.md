@@ -387,6 +387,30 @@ somebody pastes a token to test something, or types a password into a prompt
 that does not echo but does arrive as keystrokes. Recording that by default
 would make the honest thing — using the shell — the risky thing.
 
+### `forward.accept`
+Somebody connected to a forwarded port. Written from E5-5.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `port` | integer | The host port the connection arrived on. |
+| `guest_port` | integer | The guest-local port it was carried to. |
+| `peer` | string | Who connected, as `address:port`. |
+| `reason` | string | Why it could not be carried, when the guest refused it. |
+| `agent` | string | Present inside a team: whose sandbox. |
+
+**Per connection, not per packet and not per byte.** A connection is the unit
+somebody would ask about — who reached this port, and when — and a per-packet
+record would bury that in a log nobody reads.
+
+A connection that could not be carried is written with the same type and a
+`reason`: the accept happened, the carry did not. The usual reason is that
+nothing was listening inside the sandbox yet, which is `forward.closed` in
+[`denials.md`](denials.md).
+
+Nothing here says anything crossed the network, because nothing did. The
+transport is vsock and the guest dials its own loopback, so the nftables ruleset
+is identical with a forward and without one (F-D7, `networking.md` §3).
+
 ### `run.review`
 Somebody was shown what a sandbox did to a workspace and decided whether to
 write it back. Written from E5-2.
@@ -502,4 +526,5 @@ team session must be found by id or with `--list`.
 | `session.pause` and `session.resume`, one chain across a pause | E5-1 |
 | `run.review` for every decision, including the declined ones | E5-2 |
 | `shell.start` / `shell.end` always, contents only with `--transcript` | E5-3 |
+| `forward.accept` per connection, carried or refused | E5-5 |
 | Signed exports verifiable offline | P4-3 |

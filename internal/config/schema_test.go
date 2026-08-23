@@ -28,6 +28,8 @@ func sectionHeader(section string) string {
 		return "[" + section + "]\n"
 	case "plugin":
 		return "[[plugin]]\n"
+	case "forward":
+		return "[[forward]]\n"
 	case "team.agent", "team.edge", "team.store.key":
 		return "[[" + section + "]]\n"
 	case "team.agent.resources", "team.agent.spawn", "team.agent.spawn.resources":
@@ -109,6 +111,7 @@ func TestSchemaCoversTheParser(t *testing.T) {
 	// looking (E4-6).
 	keyFuncs := map[string]bool{
 		"Load": true, "teamKey": true, "assignResources": true, "pluginKey": true,
+		"forwardKey": true,
 	}
 
 	var missing []string
@@ -251,6 +254,7 @@ func keyFunctions(t *testing.T) map[string]bool {
 func TestEveryKeyFunctionIsScanned(t *testing.T) {
 	scanned := map[string]bool{
 		"Load": true, "teamKey": true, "assignResources": true, "pluginKey": true,
+		"forwardKey": true,
 	}
 	for name := range keyFunctions(t) {
 		if !scanned[name] {

@@ -126,7 +126,7 @@
      improvements to the existing product land here as epics. Inert until its gate opens.</p>
   <div class="meta">
     owner: <b>John</b> &nbsp;&middot;&nbsp; developer: <b>Claude Code</b> &nbsp;&middot;&nbsp;
-    status: <b class="ok" id="meta-status">Epic E5 — active, 5/8 (v0.7 released; next: E5-5, inbound port forwarding)</b> &nbsp;&middot;&nbsp;
+    status: <b class="ok" id="meta-status">Epic E5 — active, 6/8 (v0.7 released; next: E5-6, run history)</b> &nbsp;&middot;&nbsp;
     last updated: <b id="meta-updated">2026-08-23</b><br>
     repo file: <b>PLAN-FEATURES.html</b> (lives at the repository root next to <code>PLAN.html</code>)<br>
     <span class="quiet">Companion to PLAN.html — same protocol, same rules, later timeline.</span>
@@ -166,7 +166,7 @@
     <span class="bl-name">All epics</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">E5-5 &mdash; inbound port forwarding per F-D7: <code>-p host:guest</code> over a vsock bridge, so the TAP and nftables stay egress-only</b></div>
+  <div class="focusline">Current focus: <b id="focus">E5-6 &mdash; run history: <code>kelyfos runs</code> and <code>rerun</code> built from the session logs that already exist, and <code>logs -f</code></b></div>
 </div>
 
 <!-- ====================================================== 1. ACTIVATION GATE -->
@@ -606,7 +606,7 @@
         resource ceiling, team edge, spawn budget, forward attempt) carries a structured error with a human fix line —
         <code>blocked: api.stripe.com — add allow = ["api.stripe.com"] to kelyfos.toml, or rerun with --allow api.stripe.com</code>.
         One error catalog in the docs; the E3 generated reference picks it up automatically.</span></li>
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">E5-5</span><span class="tk">Inbound port forwarding per F-D7: <code>-p host:guest</code> (repeatable) and
         <code>[[forward]]</code> toml entries. Host listener binds <code>127.0.0.1</code> only; <code>--p-bind 0.0.0.0</code> is
         the explicit, loudly-warned LAN exposure. Transport is a vsock bridge (host listener &harr; supervisor &harr;
@@ -4331,6 +4331,29 @@ $ gofmt -l . ; go vet ./... ; go test ./...
         refusal, nothing the reader types changes it, and a fix line reading &ldquo;try again&rdquo; is how people
         learn to stop reading fix lines. <code>docs/denials.md</code> says so, and says that inbound forwarding&rsquo;s
         refusals are absent because the feature is (E5-5) rather than implying a coverage it does not have.</td></tr>
+        <tr><td class="mono">2026-08-23</td><td class="mono">E5-5</td>
+        <td><b>A port on this machine reaches a server inside the sandbox, and the firewall does not know it
+        happened.</b> Seventeen checks, and the two that matter most are the ones about what did <i>not</i> change: the
+        nftables ruleset is captured from a networked sandbox with no forwards and again from one with two, normalised
+        for the per-sandbox name, interface, address and proxy port, and diffed &mdash; identical. Nothing in it
+        mentions a forwarded port, there is no <code>dnat</code> anywhere, and the egress-only chains are still in
+        force while ports are forwarded.
+        <b>It works because no packet crosses the TAP.</b> The host binds a listener on its own loopback, each
+        accepted connection becomes a vsock connection to the supervisor, and the supervisor dials
+        <code>127.0.0.1</code> <i>inside the guest</i> &mdash; so the packet the server receives was created inside the
+        machine. The guest&rsquo;s own <code>/proc/net/dev</code> is the evidence: loopback carried it. That is the
+        whole of F-D7, and it is why the feature could exist at all without weakening the one guarantee the network
+        layer makes.
+        <b>Two lines of JSON and then no framing at all</b>, documented as <code>docs/protocol.md</code> §5.8: an open
+        naming the guest port, a reply saying whether anything was listening, and after that the connection is the
+        bytes, because a TCP bridge that framed its payload would be re-implementing TCP inside TCP. Both ends keep
+        reading with the same buffered reader that read the handshake, which is the difference between a working
+        forward and one that loses the first bytes of a server&rsquo;s greeting.
+        <b>The refusals are E5-4&rsquo;s, one day old and already earning it.</b> Nothing listening in the guest is
+        <code>forward.closed</code>, printed once with its fix; half a <code>[[forward]]</code> pair and a doubly-claimed
+        host port are refused naming the line. <code>--p-bind 0.0.0.0</code> warns every time and is checked doing it,
+        and no key in the file can do the same thing &mdash; a LAN exposure is something somebody typed, not something
+        somebody inherited. Teardown closes the listeners, and the acceptance proves the port stops answering.</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>

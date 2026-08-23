@@ -171,3 +171,12 @@ One MCP server to run inside the guest; its tools are advertised as <name>_<tool
 | `path` | string | — | host directory packed into the read-only plugins device, resolved against this file |
 | `command` | string | — | what the supervisor launches, resolved inside that plugin's directory |
 | `args` | string array | no arguments | arguments to the command |
+
+## `[[forward]]`
+
+One host port carried to a guest-local port over vsock; the firewall is untouched.
+
+| Key | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `host` | integer | — | port on this machine's loopback; --p-bind is the only way to bind anything else |
+| `guest` | integer | — | guest-local port the supervisor dials on 127.0.0.1 inside the sandbox |

@@ -65,6 +65,8 @@ kelyfos run [flags]
 | `--max-runtime` | string | no limit | stop the sandbox after this long, e.g. 30m |
 | `--mem` | string | 512 | guest memory, e.g. 2G or 512M; a bare number is MiB |
 | `--no-sync-back` | boolean | — | do not write the workspace back to the host on shutdown |
+| `-p` | value | — | carry a host port to a guest-local port: host:guest, as in 8080:80. The transport is vsock, not the network, so the firewall is untouched. Repeatable. |
+| `--p-bind` | string | "127.0.0.1" | address the forwarded ports bind to. 0.0.0.0 exposes them to every machine that can reach this one, and says so, every time. |
 | `--ready-timeout` | duration | 30s | how long to wait for the guest to become ready |
 | `--review` | boolean | — | show what changed and ask before writing the workspace back |
 | `--secret` | value | — | attach a credential to a domain: NAME@domain[:bearer\|basic]. The value is read from the host environment and never enters the guest. Repeatable. |
@@ -219,7 +221,7 @@ kelyfos fork [flags]
 | --- | --- | --- | --- |
 | `--arch` | string | the build host's architecture | guest architecture |
 | `--image` | string | "dev" | image flavor the snapshot was taken from |
-| `--n` | int | 2 | how many forks to create |
+| `-n` | int | 2 | how many forks to create |
 | `--name` | string | "default" | snapshot to fork from |
 
 ## kelyfos team up

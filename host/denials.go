@@ -70,3 +70,17 @@ func (b *blockedOnce) say(a egress.Attempt) {
 	b.mu.Unlock()
 	fmt.Fprintf(b.w, "kelyfos: %s\n", text)
 }
+
+// sayText prints an already-rendered refusal, once. It is the same rule for the
+// same reason: the advice is the key, so a forward refused on every connection
+// is one thing to fix rather than one line per attempt.
+func (b *blockedOnce) sayText(text string) {
+	b.mu.Lock()
+	if b.seen[text] {
+		b.mu.Unlock()
+		return
+	}
+	b.seen[text] = true
+	b.mu.Unlock()
+	fmt.Fprintf(b.w, "kelyfos: %s\n", text)
+}

@@ -101,9 +101,3 @@ Refusals are also events. Every one of the egress denials appears in the flight
 recorder with its reason, and every refused tool call is in the transcript
 (E4-4), so a refusal is auditable whether or not the person it landed on
 mentions it. See [`events.md`](events.md).
-
-## What is not covered yet
-
-Inbound port forwarding (`-p`) arrives at E5-5, and its refusals join this
-catalog when it does — the catalog is complete for the refusals that exist, not
-for the ones that are planned.
