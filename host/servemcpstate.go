@@ -4,10 +4,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/p4r4n0rm4l/KelyfOS/internal/denial"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/egress"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/mcp"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
@@ -240,14 +242,12 @@ func (s *hostServer) restoreAllow(name string, asked []string, meta *sandbox.Sna
 	}
 	for _, d := range list {
 		if !containsDomain(meta.Allow, d) {
-			return nil, fmt.Errorf("allow %q is not in snapshot %q's own allowlist (%s). A restore "+
-				"may narrow what the frozen machine could reach and never widen it",
-				d, name, describeAllow(meta.Allow))
+			return nil, denial.AllowSnapshot.Err(denial.V{
+				"domain": d, "name": name, "permitted": describeAllow(meta.Allow)})
 		}
 		if s.policy != nil && !containsDomain(s.policy.Allow, d) {
-			return nil, fmt.Errorf("allow %q is not in this project's allowlist. %s permits %s, and "+
-				"a snapshot taken under some other policy does not carry its own permission with it",
-				d, s.policy.Path, describeAllow(s.policy.Allow))
+			return nil, denial.AllowProject.Err(denial.V{
+				"domain": d, "file": s.policy.Path, "permitted": describeAllow(s.policy.Allow)})
 		}
 	}
 	return list, nil
@@ -266,22 +266,20 @@ func (s *hostServer) checkSnapshotFits(name string, meta *sandbox.SnapshotMeta) 
 		return nil
 	}
 	if meta.VcpuCount == 0 && meta.MemMiB == 0 {
-		return fmt.Errorf("snapshot %q does not record how large its machine is — it was taken by "+
-			"an older kelyfos — and %s sets a ceiling that cannot be checked against nothing.\n"+
-			"    take the snapshot again with this version, and it will say",
-			name, cfg.Path)
+		return denial.CeilingSnapshotUnknown.Err(denial.V{"name": name, "file": cfg.Path})
 	}
 	if cfg.ResCPUs > 0 && meta.VcpuCount > cfg.ResCPUs {
 		line, _ := cfg.Ceiling("cpus")
-		return fmt.Errorf("snapshot %q holds a %d vcpu machine, over the ceiling cpus = %d set at "+
-			"%s:%d. A restore cannot resize it; take the snapshot from a smaller sandbox",
-			name, meta.VcpuCount, cfg.ResCPUs, cfg.Path, line)
+		return denial.CeilingSnapshot.Err(denial.V{
+			"name": name, "held": fmt.Sprintf("%d vcpu", meta.VcpuCount), "key": "cpus",
+			"limit": strconv.Itoa(cfg.ResCPUs), "file": cfg.Path, "line": strconv.Itoa(line)})
 	}
 	if cfg.ResMemMiB > 0 && meta.MemMiB > cfg.ResMemMiB {
 		line, _ := cfg.Ceiling("mem")
-		return fmt.Errorf("snapshot %q holds a %d MiB machine, over the ceiling mem = %d MiB set at "+
-			"%s:%d. A restore cannot resize it; take the snapshot from a smaller sandbox",
-			name, meta.MemMiB, cfg.ResMemMiB, cfg.Path, line)
+		return denial.CeilingSnapshot.Err(denial.V{
+			"name": name, "held": fmt.Sprintf("%d MiB", meta.MemMiB), "key": "mem",
+			"limit": fmt.Sprintf("%d MiB", cfg.ResMemMiB), "file": cfg.Path,
+			"line": strconv.Itoa(line)})
 	}
 	return nil
 }
@@ -414,10 +412,9 @@ func (s *hostServer) room(n int) error {
 	have := len(s.boxes)
 	s.mu.Unlock()
 	if have+n > s.max {
-		return fmt.Errorf("this server has %d sandbox(es) running, %d more were asked for, and "+
-			"[mcp] max_sandboxes is %d. Stop some with sandbox_stop, or raise the limit in %s — "+
-			"which is a change a person makes to a file, not something a tool here can do.",
-			have, n, s.max, s.policyPath())
+		return denial.BudgetSandboxes.Err(denial.V{
+			"running": strconv.Itoa(have), "asked": strconv.Itoa(n),
+			"limit": strconv.Itoa(s.max), "file": s.policyPath()})
 	}
 	return nil
 }
@@ -426,8 +423,9 @@ func (s *hostServer) adopt(b *servedBox) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if len(s.boxes) >= s.max {
-		return fmt.Errorf("this server already has %d sandbox(es) running and [mcp] max_sandboxes "+
-			"is %d; another call took the last slot while this one was working.", s.max, s.max)
+		return denial.BudgetSandboxes.Err(denial.V{
+			"running": strconv.Itoa(s.max), "asked": "1",
+			"limit": strconv.Itoa(s.max), "file": s.policyPath()})
 	}
 	s.boxes[b.sb.State.ID] = b
 	return nil

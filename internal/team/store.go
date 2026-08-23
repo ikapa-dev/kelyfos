@@ -5,6 +5,8 @@ import (
 	"sort"
 	"strings"
 	"sync"
+
+	"github.com/p4r4n0rm4l/KelyfOS/internal/denial"
 )
 
 // Store is a team's shared state: a host-side key/blob store with per-key
@@ -98,7 +100,8 @@ func (s *Store) Get(agent, key string) ([]byte, error) {
 	if !s.mayRead(agent, key) {
 		s.record(Event{Type: TypeStore, From: agent, To: key, Kind: KindGet,
 			Outcome: OutcomeRefused, Reason: "denied"})
-		return nil, &Error{Kind: "denied", Message: agent + " may not read " + key}
+		return nil, &Error{Kind: "denied", Message: denial.TeamStore.Render(
+			denial.V{"agent": agent, "verb": "read", "key": key})}
 	}
 	s.mu.RLock()
 	v, ok := s.data[key]
@@ -121,7 +124,8 @@ func (s *Store) Put(agent, key string, value []byte) error {
 	if !s.mayWrite(agent, key) {
 		s.record(Event{Type: TypeStore, From: agent, To: key, Kind: KindPut,
 			Bytes: len(value), Outcome: OutcomeRefused, Reason: "denied"})
-		return &Error{Kind: "denied", Message: agent + " may not write " + key}
+		return &Error{Kind: "denied", Message: denial.TeamStore.Render(
+			denial.V{"agent": agent, "verb": "write", "key": key})}
 	}
 	if len(value) > MaxValueBytes {
 		s.record(Event{Type: TypeStore, From: agent, To: key, Kind: KindPut,

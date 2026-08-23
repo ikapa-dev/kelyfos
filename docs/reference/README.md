@@ -14,6 +14,7 @@ lists cannot be one that was removed.
 | [tools.md](tools.md) | the guest supervisor's `tools/list` answer |
 | [events.md](events.md) | the flight recorder's event schema |
 | [exit-codes.md](exit-codes.md) | the exit statuses the CLI returns |
+| [denials.md](denials.md) | the refusal catalog, and the fix line each one carries |
 
 The prose that explains *why* any of it is shaped this way is in the documents
 [one level up](../README.md); this directory is the part a machine should read

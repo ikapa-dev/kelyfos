@@ -15,6 +15,7 @@ Apache-2.0. Single-host developer tool; not hardened yet — the threat model be
 - [Resource limits](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/resources.md): how much machine an agent gets: units, precedence, and what enforces each cap
 - [Egress](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/networking.md): why a sandbox has no NIC by default, what --allow builds, and why there is no DNS
 - [Agent teams](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/teams.md): several agents on one host: the schema, the broker, the store, the budget
+- [Refusals](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/denials.md): why every refusal names its own fix, and what the ID in brackets is for
 - [Flight recorder](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/events.md): the audit record: why the host writes it, and what the hash chain proves
 - [Host/guest protocol](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/protocol.md): the vsock transport, the port map, and every channel's messages
 - [The MCP surface](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/mcp-surface.md): MCP in both directions: kelyfos as a tool for any client, and plugins inside the guest
@@ -30,9 +31,10 @@ Apache-2.0. Single-host developer tool; not hardened yet — the threat model be
 - [MCP tools](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/reference/tools.md): every tool a guest exposes, with its input schema
 - [Event types](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/reference/events.md): every flight-recorder event, with its payload fields
 - [Exit codes](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/reference/exit-codes.md): what each status the CLI returns means
+- [Denials](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/reference/denials.md): every refusal KelyfOS makes, with the fix line each one carries
 
 ## Optional
 
-- [Everything in one file](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/llms-full.txt): every page above concatenated, roughly 84k tokens, for a client that would rather spend context than fetch
+- [Everything in one file](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/llms-full.txt): every page above concatenated, roughly 88k tokens, for a client that would rather spend context than fetch
 - [Build plan and decision log](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/PLAN.html): HTML. Phases 0-4, every decision with its rationale and the command output behind each claim
 - [Feature plan and decision log](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/PLAN-FEATURES.html): HTML. The epics after the build plan, same protocol

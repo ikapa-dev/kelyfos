@@ -33,6 +33,7 @@ import (
 	"strings"
 
 	"github.com/p4r4n0rm4l/KelyfOS/internal/config"
+	"github.com/p4r4n0rm4l/KelyfOS/internal/denial"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/exitcode"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/mcp"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
@@ -63,6 +64,9 @@ func run(bin, sup, out, repo string) error {
 	if err := checkDispatch(repo, cmds); err != nil {
 		return err
 	}
+	if err := checkDenialsRaised(repo); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(out, 0o755); err != nil {
 		return err
 	}
@@ -71,6 +75,7 @@ func run(bin, sup, out, repo string) error {
 		"README.md":     indexPage(),
 		"cli.md":        cliPage(cmds),
 		"config.md":     configPage(),
+		"denials.md":    denialsPage(),
 		"events.md":     eventsPage(),
 		"exit-codes.md": exitPage(),
 	}
@@ -344,6 +349,7 @@ lists cannot be one that was removed.
 | [tools.md](tools.md) | the guest supervisor's ` + "`tools/list`" + ` answer |
 | [events.md](events.md) | the flight recorder's event schema |
 | [exit-codes.md](exit-codes.md) | the exit statuses the CLI returns |
+| [denials.md](denials.md) | the refusal catalog, and the fix line each one carries |
 
 The prose that explains *why* any of it is shaped this way is in the documents
 [one level up](../README.md); this directory is the part a machine should read
@@ -445,6 +451,148 @@ func writeFields(b *strings.Builder, fields []recorder.Field) {
 		}
 		fmt.Fprintf(b, "| `%s` | %s | %s |\n", f.Name, f.Type, doc)
 	}
+}
+
+// denialsPage is the refusal catalog (E5-4). Every entry is printed as it is
+// actually raised — message, ID and fix line, rendered with the entry's own
+// sample values — so this page is a page of real refusals rather than a page of
+// templates. What a reader matches against what their terminal showed them is
+// the same string, built by the same code.
+func denialsPage() string {
+	var b strings.Builder
+	b.WriteString(banner)
+	b.WriteString("\n# Denials\n\n" +
+		"Every refusal KelyfOS makes, with the fix. A refusal prints its ID in brackets;\n" +
+		"that ID is the heading to look for here.\n\n" +
+		"Failures are not here. \"The upstream did not answer\" is not a refusal, has no\n" +
+		"fix line, and nothing you type changes it.\n")
+	for _, d := range denial.All() {
+		fmt.Fprintf(&b, "\n## `%s`\n\n%s.\n\n```\n%s\n```\n",
+			d.ID, sentence(d.Doc), d.Render(d.Sample))
+		if p := d.Placeholders(); len(p) > 0 {
+			fmt.Fprintf(&b, "\nNamed: %s. The values above are an example.\n", code(p))
+		}
+	}
+	return b.String()
+}
+
+// sentence makes a catalog Doc — written lowercase, like every other table in
+// this repository — stand on its own under a heading.
+func sentence(s string) string {
+	s = strings.TrimSuffix(s, ".")
+	if s == "" {
+		return s
+	}
+	return strings.ToUpper(s[:1]) + s[1:]
+}
+
+func code(names []string) string {
+	out := make([]string, len(names))
+	for i, n := range names {
+		out[i] = "`" + n + "`"
+	}
+	return strings.Join(out, ", ")
+}
+
+// checkDenialsRaised fails the build when a catalog entry is raised nowhere.
+//
+// The catalog is only worth having if it is the refusals the product actually
+// makes. An entry nothing raises is a promise in the documentation with no code
+// behind it, which is exactly the failure the generated reference exists to
+// prevent (F-D4) — so it is checked in the same place, by reading which
+// `denial.X` identifiers the non-test source mentions.
+func checkDenialsRaised(repo string) error {
+	names, err := denialNames(filepath.Join(repo, "internal", "denial", "denial.go"))
+	if err != nil {
+		return err
+	}
+	raised := map[string]bool{}
+	fset := token.NewFileSet()
+	for _, dir := range []string{"host", "internal", "supervisor"} {
+		err := filepath.WalkDir(filepath.Join(repo, dir), func(path string, e os.DirEntry, err error) error {
+			if err != nil || e.IsDir() || !strings.HasSuffix(path, ".go") ||
+				strings.HasSuffix(path, "_test.go") ||
+				strings.Contains(path, filepath.Join("internal", "denial")) {
+				return err
+			}
+			f, err := parser.ParseFile(fset, path, nil, 0)
+			if err != nil {
+				return err
+			}
+			ast.Inspect(f, func(n ast.Node) bool {
+				sel, ok := n.(*ast.SelectorExpr)
+				if !ok {
+					return true
+				}
+				if id, ok := sel.X.(*ast.Ident); ok && id.Name == "denial" {
+					raised[sel.Sel.Name] = true
+				}
+				return true
+			})
+			return nil
+		})
+		if err != nil {
+			return err
+		}
+	}
+	var unraised []string
+	for name, id := range names {
+		if !raised[name] {
+			unraised = append(unraised, id)
+		}
+	}
+	if len(unraised) > 0 {
+		sort.Strings(unraised)
+		return fmt.Errorf("the denial catalog lists %s, and nothing raises %s.\n"+
+			"A refusal documented but never made is a promise with no code behind it: "+
+			"raise it where it belongs, or delete the entry from internal/denial",
+			strings.Join(quoteAll(unraised), ", "), plural(len(unraised), "it", "them"))
+	}
+	return nil
+}
+
+// denialNames reads the catalog's own source for the Go identifier of each
+// entry and the ID it carries, so the check can report the ID a person reads
+// rather than the variable a programmer typed.
+func denialNames(path string) (map[string]string, error) {
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, path, nil, 0)
+	if err != nil {
+		return nil, err
+	}
+	names := map[string]string{}
+	ast.Inspect(file, func(n ast.Node) bool {
+		vs, ok := n.(*ast.ValueSpec)
+		if !ok || len(vs.Names) != 1 || len(vs.Values) != 1 {
+			return true
+		}
+		lit, ok := vs.Values[0].(*ast.CompositeLit)
+		if !ok {
+			return true
+		}
+		if id, ok := lit.Type.(*ast.Ident); !ok || id.Name != "Denial" {
+			return true
+		}
+		for _, el := range lit.Elts {
+			kv, ok := el.(*ast.KeyValueExpr)
+			if !ok {
+				continue
+			}
+			if k, ok := kv.Key.(*ast.Ident); !ok || k.Name != "ID" {
+				continue
+			}
+			if s, ok := kv.Value.(*ast.BasicLit); ok && s.Kind == token.STRING {
+				if v, err := strconv.Unquote(s.Value); err == nil {
+					names[vs.Names[0].Name] = v
+				}
+			}
+		}
+		return true
+	})
+	if len(names) == 0 {
+		return nil, fmt.Errorf("no denial entries found in %s", path)
+	}
+	return names, nil
 }
 
 func exitPage() string {

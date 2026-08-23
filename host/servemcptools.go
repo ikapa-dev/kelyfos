@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/p4r4n0rm4l/KelyfOS/internal/config"
+	"github.com/p4r4n0rm4l/KelyfOS/internal/denial"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/egress"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/mcp"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
@@ -271,9 +273,10 @@ func (s *hostServer) resolve(a *runArgs) (sandbox.Options, error) {
 	if a.CPUs > 0 {
 		if cfg.ResCPUs > 0 && a.CPUs > cfg.ResCPUs {
 			line, _ := cfg.Ceiling("cpus")
-			return opts, fmt.Errorf("cpus %d exceeds the ceiling cpus = %d set at %s:%d\n"+
-				"    ask for fewer, or raise the ceiling in the policy file",
-				a.CPUs, cfg.ResCPUs, cfg.Path, line)
+			return opts, denial.CeilingTool.Err(denial.V{
+				"field": "cpus", "asked": strconv.Itoa(a.CPUs), "key": "cpus",
+				"limit": strconv.Itoa(cfg.ResCPUs), "file": cfg.Path,
+				"line": strconv.Itoa(line)})
 		}
 		opts.VcpuCount = a.CPUs
 	}
@@ -290,9 +293,10 @@ func (s *hostServer) resolve(a *runArgs) (sandbox.Options, error) {
 		}
 		if cfg.ResMemMiB > 0 && n > cfg.ResMemMiB {
 			line, _ := cfg.Ceiling("mem")
-			return opts, fmt.Errorf("mem %s exceeds the ceiling mem = %d MiB set at %s:%d\n"+
-				"    ask for less, or raise the ceiling in the policy file",
-				a.Mem, cfg.ResMemMiB, cfg.Path, line)
+			return opts, denial.CeilingTool.Err(denial.V{
+				"field": "mem", "asked": a.Mem, "key": "mem",
+				"limit": fmt.Sprintf("%d MiB", cfg.ResMemMiB), "file": cfg.Path,
+				"line": strconv.Itoa(line)})
 		}
 		opts.MemMiB = n
 	}
@@ -303,9 +307,8 @@ func (s *hostServer) resolve(a *runArgs) (sandbox.Options, error) {
 	if a.Allow != nil {
 		for _, d := range a.Allow {
 			if !containsDomain(cfg.Allow, d) {
-				return opts, fmt.Errorf("allow %q is not in this project's allowlist. %s permits %s, "+
-					"and a tool call may narrow that list but never add to it",
-					d, cfg.Path, describeAllow(cfg.Allow))
+				return opts, denial.AllowProject.Err(denial.V{
+					"domain": d, "file": cfg.Path, "permitted": describeAllow(cfg.Allow)})
 			}
 		}
 		opts.Allow = a.Allow

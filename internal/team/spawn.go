@@ -2,7 +2,11 @@ package team
 
 import (
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
+
+	"github.com/p4r4n0rm4l/KelyfOS/internal/denial"
 )
 
 // Budget is what an agent with team.spawn may ask for at runtime. It is the
@@ -64,7 +68,7 @@ func (b *Broker) Spawn(spawner, image string) (SpawnRequest, error) {
 		b.record(Event{Type: TypeSpawn, From: spawner, Kind: KindSpawn,
 			Outcome: OutcomeRefused, Reason: "no_spawn_budget"})
 		return SpawnRequest{}, &Error{Kind: "denied",
-			Message: spawner + " has no spawn budget; one is granted in the policy file, not at runtime"}
+			Message: denial.TeamSpawnNone.Render(denial.V{"agent": spawner})}
 	}
 	live := b.spawnedBy[spawner]
 	if len(live) >= budget.Max {
@@ -72,8 +76,8 @@ func (b *Broker) Spawn(spawner, image string) (SpawnRequest, error) {
 		b.record(Event{Type: TypeSpawn, From: spawner, Kind: KindSpawn,
 			Outcome: OutcomeRefused, Reason: "budget_exhausted"})
 		return SpawnRequest{}, &Error{Kind: "denied",
-			Message: fmt.Sprintf("%s already has %d of its %d spawned workers running",
-				spawner, len(live), budget.Max)}
+			Message: denial.TeamSpawnBudget.Render(denial.V{"agent": spawner,
+				"live": strconv.Itoa(len(live)), "max": strconv.Itoa(budget.Max)})}
 	}
 	if image == "" && len(budget.Images) > 0 {
 		image = budget.Images[0]
@@ -83,8 +87,8 @@ func (b *Broker) Spawn(spawner, image string) (SpawnRequest, error) {
 		b.record(Event{Type: TypeSpawn, From: spawner, Kind: KindSpawn,
 			Outcome: OutcomeRefused, Reason: "image_not_permitted"})
 		return SpawnRequest{}, &Error{Kind: "denied",
-			Message: fmt.Sprintf("%s may not spawn the %q image; its budget permits %v",
-				spawner, image, budget.Images)}
+			Message: denial.TeamSpawnImage.Render(denial.V{"agent": spawner, "image": image,
+				"permitted": strings.Join(budget.Images, ", ")})}
 	}
 
 	b.spawnSeq++

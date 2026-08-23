@@ -10,11 +10,13 @@ import (
 	"os/signal"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/p4r4n0rm4l/KelyfOS/internal/config"
+	"github.com/p4r4n0rm4l/KelyfOS/internal/denial"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/report"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/sandbox"
@@ -509,23 +511,22 @@ func frozenFitsCurrent(name string, frozen, current *config.Config) error {
 	}
 	if current.ResCPUs > 0 && frozen.ResCPUs > current.ResCPUs {
 		line, _ := current.Ceiling("cpus")
-		return fmt.Errorf("session %q was paused under cpus = %d, and %s:%d now sets a ceiling of "+
-			"%d. A resume runs the frozen policy, so it cannot be a way past the current one.\n"+
-			"    raise the ceiling, or start a new sandbox",
-			name, frozen.ResCPUs, current.Path, line, current.ResCPUs)
+		return denial.CeilingResume.Err(denial.V{
+			"name": name, "key": "cpus", "frozen": strconv.Itoa(frozen.ResCPUs),
+			"limit": strconv.Itoa(current.ResCPUs), "file": current.Path,
+			"line": strconv.Itoa(line)})
 	}
 	if current.ResMemMiB > 0 && frozen.ResMemMiB > current.ResMemMiB {
 		line, _ := current.Ceiling("mem")
-		return fmt.Errorf("session %q was paused under mem = %d MiB, and %s:%d now sets a ceiling "+
-			"of %d MiB. A resume runs the frozen policy, so it cannot be a way past the current "+
-			"one.\n    raise the ceiling, or start a new sandbox",
-			name, frozen.ResMemMiB, current.Path, line, current.ResMemMiB)
+		return denial.CeilingResume.Err(denial.V{
+			"name": name, "key": "mem", "frozen": fmt.Sprintf("%d MiB", frozen.ResMemMiB),
+			"limit": fmt.Sprintf("%d MiB", current.ResMemMiB), "file": current.Path,
+			"line": strconv.Itoa(line)})
 	}
 	for _, d := range frozen.Allow {
 		if !containsDomain(current.Allow, d) {
-			return fmt.Errorf("session %q was paused with %q in its allowlist and %s no longer "+
-				"permits it. A resume runs the frozen policy, so it cannot be a way past the "+
-				"current one.", name, d, current.Path)
+			return denial.AllowResume.Err(denial.V{
+				"name": name, "domain": d, "file": current.Path})
 		}
 	}
 	return nil

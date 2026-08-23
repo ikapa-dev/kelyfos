@@ -63,6 +63,8 @@ func docSet() []doc {
 			Summary: "why a sandbox has no NIC by default, what --allow builds, and why there is no DNS"},
 		{Path: "docs/teams.md", Title: "Agent teams", Full: true,
 			Summary: "several agents on one host: the schema, the broker, the store, the budget"},
+		{Path: "docs/denials.md", Title: "Refusals", Full: true,
+			Summary: "why every refusal names its own fix, and what the ID in brackets is for"},
 		{Path: "docs/events.md", Title: "Flight recorder", Full: true,
 			Summary: "the audit record: why the host writes it, and what the hash chain proves"},
 		{Path: "docs/protocol.md", Title: "Host/guest protocol", Full: true,
@@ -94,6 +96,8 @@ func referenceSet() []doc {
 			Summary: "every flight-recorder event, with its payload fields"},
 		{Path: "docs/reference/exit-codes.md", Title: "Exit codes", Full: true,
 			Summary: "what each status the CLI returns means"},
+		{Path: "docs/reference/denials.md", Title: "Denials", Full: true,
+			Summary: "every refusal KelyfOS makes, with the fix line each one carries"},
 	}
 }
 

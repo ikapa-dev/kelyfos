@@ -19,6 +19,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/p4r4n0rm4l/KelyfOS/internal/denial"
 )
 
 // Modes recorded per allowed connection (decision D6).
@@ -220,13 +222,16 @@ func (p *Proxy) handle(client net.Conn) {
 	switch {
 	case !p.Policy.allowsHost(host):
 		p.report(Attempt{Host: host, Port: port, Reason: ReasonNotAllowed})
+		// The fix line goes to the guest, which is where it is needed: this
+		// body is what curl prints and what an agent reads back (E5-4).
 		writeStatus(client, http.StatusForbidden,
-			"kelyfos: "+host+" is not in this sandbox's allowlist")
+			"kelyfos: "+denial.EgressHost.Render(denial.V{"host": host}))
 		return
 	case !p.Policy.allowsPort(port):
 		p.report(Attempt{Host: host, Port: port, Reason: ReasonBadPort})
 		writeStatus(client, http.StatusForbidden,
-			fmt.Sprintf("kelyfos: port %d is not permitted", port))
+			"kelyfos: "+denial.EgressPort.Render(denial.V{
+				"host": host, "port": strconv.Itoa(port)}))
 		return
 	}
 

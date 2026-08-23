@@ -21,8 +21,8 @@ both the ceiling and the file and line it came from:
 
 ```
 $ kelyfos run --cpus 8
-kelyfos: --cpus 8 exceeds the ceiling cpus = 2 set at ./kelyfos.toml:6
-    lower the flag, or raise the ceiling in the policy file
+kelyfos: --cpus 8 exceeds the ceiling cpus = 2 set at ./kelyfos.toml:6 [ceiling.flag]
+    lower the flag, or raise the ceiling in ./kelyfos.toml
 ```
 
 Refusing beats clamping because clamping is a silent lie: the agent would run

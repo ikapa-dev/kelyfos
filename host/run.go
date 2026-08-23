@@ -10,12 +10,14 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"syscall"
 	"time"
 
 	"github.com/p4r4n0rm4l/KelyfOS/internal/config"
+	"github.com/p4r4n0rm4l/KelyfOS/internal/denial"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/egress"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/exitcode"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/proto"
@@ -173,9 +175,10 @@ status. This is how you hand an agent a sandbox and nothing else:
 				diskCeiling = cfg.ResDiskByte
 			} else if diskCeiling > cfg.ResDiskByte {
 				line, _ := cfg.Ceiling("disk")
-				return fmt.Errorf("--disk %s exceeds the ceiling disk = %d bytes set at %s:%d\n"+
-					"    lower the flag, or raise the ceiling in the policy file",
-					*disk, cfg.ResDiskByte, cfg.Path, line)
+				return denial.CeilingFlag.Err(denial.V{
+					"flag": "disk", "asked": *disk, "key": "disk",
+					"limit": fmt.Sprintf("%d bytes", cfg.ResDiskByte),
+					"file":  cfg.Path, "line": strconv.Itoa(line)})
 			}
 		}
 		if len(cfg.Allow) > 0 && !typed["allow"] {
@@ -222,9 +225,9 @@ status. This is how you hand an agent a sandbox and nothing else:
 			}
 			if *b.into > b.limit {
 				line, _ := cfg.Ceiling(b.key)
-				return fmt.Errorf("--%s %s exceeds the ceiling %s = %s set at %s:%d\n"+
-					"    lower the flag, or raise the ceiling in the policy file",
-					b.flag, *b.into, b.key, b.limit, cfg.Path, line)
+				return denial.CeilingFlag.Err(denial.V{
+					"flag": b.flag, "asked": b.into.String(), "key": b.key,
+					"limit": b.limit.String(), "file": cfg.Path, "line": strconv.Itoa(line)})
 			}
 		}
 		ioLimits = sandbox.IOLimits{
@@ -316,7 +319,7 @@ status. This is how you hand an agent a sandbox and nothing else:
 			}
 			// A secret is only useful for a domain traffic may reach at all.
 			if !containsDomain(list, sec.Domain) {
-				return fmt.Errorf("--secret %s: %s is not in --allow", spec, sec.Domain)
+				return denial.SecretUnallowed.Err(denial.V{"spec": spec, "domain": sec.Domain})
 			}
 			policy.Secrets = append(policy.Secrets, sec)
 		}
@@ -535,7 +538,12 @@ status. This is how you hand an agent a sandbox and nothing else:
 			// field, in any form (docs/events.md §4).
 			_ = rec.Append(recorder.Event{Type: recorder.TypeSecretUse, Name: name, Host: host})
 		}
+		blocked := newBlockedOnce(os.Stderr)
 		proxy.OnEvent = func(a egress.Attempt) {
+			// The person watching the run is the one with the policy file
+			// open, and for CONNECT they are often the only reader who gets
+			// the fix line at all (E5-4).
+			blocked.say(a)
 			allowed := a.Allowed
 			_ = rec.Append(recorder.Event{
 				Type: recorder.TypeEgressAttempt,
@@ -941,9 +949,9 @@ func ceiling(key, flagName string, cfg *config.Config, limit int, flagVal *int, 
 	}
 	if *flagVal > limit {
 		line, _ := cfg.Ceiling(key)
-		return fmt.Errorf("--%s %s exceeds the ceiling %s = %s set at %s:%d\n"+
-			"    lower the flag, or raise the ceiling in the policy file",
-			flagName, show(*flagVal), key, show(limit), cfg.Path, line)
+		return denial.CeilingFlag.Err(denial.V{
+			"flag": flagName, "asked": show(*flagVal), "key": key, "limit": show(limit),
+			"file": cfg.Path, "line": strconv.Itoa(line)})
 	}
 	return nil
 }

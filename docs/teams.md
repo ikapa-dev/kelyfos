@@ -261,8 +261,10 @@ machine, not a promise of one. A spawn outside the budget is an error the
 asking agent receives, with the budget in the message so a model can adjust
 rather than retry blindly:
 
-    denied: master already has 2 of its 2 spawned workers running
-    denied: master may not spawn the "base" image; its budget permits [dev]
+    denied: master already has 2 of its 2 spawned workers running [team.spawn_budget]
+        let one finish, or raise max in [team.agent.spawn] for master in the team file
+    denied: master may not spawn the base image; its budget permits dev [team.spawn_image]
+        add "base" to image in [team.agent.spawn] for master in the team file
 
 An agent with no budget does not see the tool. The check that matters is
 host-side either way: an agent that calls a tool it was never shown still gets a

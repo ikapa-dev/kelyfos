@@ -126,7 +126,9 @@ write into `/work` expecting the file to reach the host. Use
 `allow` is the one parameter where "ask for less" needs saying out loud: the
 policy's allowlist is the set of domains this project may reach, and a call may
 narrow it for one sandbox. It may never add to it. A call naming a domain the
-policy does not list is refused and audited, and the refusal names the domain.
+policy does not list is refused and audited, and the refusal names the domain,
+the file that permits what it permits, and the edit that would allow it —
+`[allow.project]` in [`denials.md`](denials.md).
 
 **`sandbox_stop`** — stop one sandbox and clean up.
 `{sandbox: string}` → confirmation. Stopping a sandbox this server did not

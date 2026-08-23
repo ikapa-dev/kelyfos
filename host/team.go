@@ -735,7 +735,9 @@ func bootAgent(ctx context.Context, a plannedAgent, broker *team.Broker, rec *re
 			_ = rec.Append(recorder.Event{Type: recorder.TypeSecretUse,
 				Agent: a.name, Name: name, Host: host})
 		}
+		blocked := newBlockedOnce(os.Stderr)
 		rig.proxy.OnEvent = func(at egress.Attempt) {
+			blocked.say(at)
 			allowed := at.Allowed
 			_ = rec.Append(recorder.Event{
 				Type: recorder.TypeEgressAttempt, Agent: a.name,

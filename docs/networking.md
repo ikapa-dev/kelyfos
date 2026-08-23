@@ -149,7 +149,11 @@ hoped for.
 - `CONNECT host:port` and absolute-URI HTTP requests are accepted only when
   `host` matches the allowlist. A bare hostname matches itself and its
   subdomains, so `--allow github.com` also permits `api.github.com`.
-- Ports are restricted to 80 and 443.
+- Ports are restricted to 80 and 443. No policy key widens that.
+- A refusal is answered with `403` and a body naming the domain and the edit
+  that would allow it (`[egress.host]` in [`denials.md`](denials.md)). For plain
+  HTTP the guest reads it; for a refused `CONNECT` most clients discard the
+  body, so the host prints the same refusal once, on its own stderr.
 - Every attempt is written to the flight recorder as an `egress.attempt` event,
   allowed or blocked, with the reason and the byte counts
   (`docs/events.md` §4).

@@ -314,7 +314,9 @@ at: `kelyfos log --list | grep serve-mcp | head -1` is the server's own record.
 ### A secret bound to a domain that is not allowed
 
 ```
---secret GITHUB_TOKEN@api.github.com: api.github.com is not in --allow
+kelyfos: --secret GITHUB_TOKEN@api.github.com: api.github.com is not in --allow [secret.unbound]
+    add api.github.com to --allow, or drop the secret — a credential for a domain
+    the sandbox cannot reach is a credential nothing will ever use
 ```
 
 Binding a credential does not permit the domain. `--allow` is the policy;

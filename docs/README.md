@@ -11,8 +11,8 @@ kind it is, and this page says where each one is still thin.
 The rule the directory is built on (F-D4): **the reference half is generated
 from the source and CI fails on drift; hand-written prose is reserved for
 concepts and recipes.** [`reference/`](reference/) is the generated half — every
-command, flag, toml key, MCP tool, event type and exit code, extracted by
-`make docs` and checked on every commit. The pages beside it are the
+command, flag, toml key, MCP tool, event type, exit code and refusal, extracted
+by `make docs` and checked on every commit. The pages beside it are the
 hand-written half, and this page says where each is still thin.
 
 ## Start here
@@ -24,6 +24,7 @@ hand-written half, and this page says where each is still thin.
 | deciding how much machine an agent gets | [`resources.md`](resources.md) |
 | running several agents together | [`teams.md`](teams.md) |
 | auditing what an agent did | [`events.md`](events.md) |
+| stuck on something KelyfOS refused | [`denials.md`](denials.md), then [`reference/denials.md`](reference/denials.md) for the exact one |
 | keeping an agent off the network | [`networking.md`](networking.md) |
 | after something that works, right now | [`cookbook.md`](cookbook.md) — eleven recipes, each one runnable as it stands |
 | putting KelyfOS inside something else | [`integrating.md`](integrating.md) |
@@ -35,12 +36,13 @@ hand-written half, and this page says where each is still thin.
 
 | Document | Kind | What it answers |
 | --- | --- | --- |
-| [`reference/`](reference/) | **generated** | Every command, flag, `kelyfos.toml` key, MCP tool, event type and exit code, with types and defaults. Extracted from the source; CI fails on drift. |
+| [`reference/`](reference/) | **generated** | Every command, flag, `kelyfos.toml` key, MCP tool, event type, exit code and refusal, with types and defaults. Extracted from the source; CI fails on drift. |
 | [`protocol.md`](protocol.md) | mixed | How the host and the guest talk: Firecracker's hybrid vsock, the port map, newline-delimited JSON framing, and every channel's message shape. |
 | [`events.md`](events.md) | mixed | What the flight recorder writes: the common fields, the hash chain, and every event type with its payload. |
 | [`networking.md`](networking.md) | mixed | Why a sandbox has no NIC by default, what `--allow` builds, the nftables template, and why the guest has no DNS. |
 | [`resources.md`](resources.md) | mixed | Every resource cap: units, precedence, what enforces it, and what happens when it is reached. |
 | [`teams.md`](teams.md) | mixed | The `[team]` schema, the host broker and its edge rules, the team store, the collective budget, and how a team boots. |
+| [`denials.md`](denials.md) | mixed | Why every refusal names its own fix, what the ID in brackets is for, and what deliberately is not in the catalog. |
 | [`qol.md`](qol.md) | concept | The v0.8 specification, written before the code: named sessions and their store, the workspace manifest, the PTY channel, and why inbound forwarding does not touch the firewall. |
 | [`mcp-surface.md`](mcp-surface.md) | concept | MCP in both directions: `serve-mcp` as a tool for any client, and `[[plugin]]` servers inside the guest. Specification, written before the code. |
 | [`threat-model.md`](threat-model.md) | concept | What KelyfOS defends against and — the longer half — what it does not. |
@@ -133,6 +135,18 @@ the two proof scripts.
 ceilings; `[resources] cpus` is not checked for positivity; the per-agent
 `max_runtime` path in a team behaves differently from the single-run one and only
 the latter is described.
+
+### `denials.md` — why a refusal names its fix
+
+*Concept:* why a refusal is three parts and not one; why the ID is stable when
+the prose is not; why a failure is deliberately not a refusal; why a fix line may
+name the edit and never make it (F-D5).
+*Reference:* none of it — the catalog itself is generated to
+[`reference/denials.md`](reference/denials.md), and this page links to it rather
+than repeating it, which is the arrangement E3-1 exists to make possible.
+*Thin:* inbound forwarding’s refusals are not in the catalog because the feature
+is not built (E5-5); the page says so rather than implying coverage it does not
+have.
 
 ### `teams.md` — several agents at once
 

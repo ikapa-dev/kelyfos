@@ -126,7 +126,7 @@
      improvements to the existing product land here as epics. Inert until its gate opens.</p>
   <div class="meta">
     owner: <b>John</b> &nbsp;&middot;&nbsp; developer: <b>Claude Code</b> &nbsp;&middot;&nbsp;
-    status: <b class="ok" id="meta-status">Epic E5 — active, 4/8 (v0.7 released; next: E5-4, actionable denials)</b> &nbsp;&middot;&nbsp;
+    status: <b class="ok" id="meta-status">Epic E5 — active, 5/8 (v0.7 released; next: E5-5, inbound port forwarding)</b> &nbsp;&middot;&nbsp;
     last updated: <b id="meta-updated">2026-08-23</b><br>
     repo file: <b>PLAN-FEATURES.html</b> (lives at the repository root next to <code>PLAN.html</code>)<br>
     <span class="quiet">Companion to PLAN.html — same protocol, same rules, later timeline.</span>
@@ -166,7 +166,7 @@
     <span class="bl-name">All epics</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">E5-4 &mdash; actionable denials: every refusal carries a fix line a person can paste, from one catalog the generated reference picks up</b></div>
+  <div class="focusline">Current focus: <b id="focus">E5-5 &mdash; inbound port forwarding per F-D7: <code>-p host:guest</code> over a vsock bridge, so the TAP and nftables stay egress-only</b></div>
 </div>
 
 <!-- ====================================================== 1. ACTIVATION GATE -->
@@ -601,7 +601,7 @@
         supervisor allocates the PTY, spawns the flavor&rsquo;s shell, raw-mode passthrough with window-resize forwarding.
         Audit per F-D8: <code>shell.start/end</code> with duration always; contents only with <code>--transcript</code>,
         which stores the full terminal stream beside the session log.</span></li>
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">E5-4</span><span class="tk">Actionable denials, everywhere: every refusal (egress deny, unbound secret,
         resource ceiling, team edge, spawn budget, forward attempt) carries a structured error with a human fix line —
         <code>blocked: api.stripe.com — add allow = ["api.stripe.com"] to kelyfos.toml, or rerun with --allow api.stripe.com</code>.
@@ -1827,6 +1827,24 @@
         restore bars re-earned on the bare-KVM reference &mdash; a kernel is the thing boot time is most sensitive
         to.</td>
         <td class="mono">kernel.org sha256sums.asc, versions.mk</td></tr>
+        <tr><td class="mono">F-D53</td><td class="mono">2026-08-23</td>
+        <td><b>A refusal the client throws away is printed on the host instead &mdash; once, keyed on the advice.</b>
+        E5-4 promised every refusal a fix line, and the acceptance found the promise half-kept in the one case the
+        plan itself uses as its example. The egress proxy answers a refused request with <code>403</code> and a body
+        naming the domain and the edit; for plain HTTP the guest reads it, and for a refused <code>CONNECT</code>
+        curl prints <code>Received HTTP code 403 from proxy after CONNECT</code> and discards the body. The fix line
+        was written, sent, and never seen.
+        <i>Alternatives.</i> Put the advice in the status line&rsquo;s reason phrase or a header &mdash; curl shows
+        neither without <code>-v</code>, and neither does anything else. Leave it to the record &mdash; true, and
+        useless at the moment somebody is stuck. Do nothing, on the grounds that the guest is not the audience &mdash;
+        which would make the plan&rsquo;s own headline example the one refusal that does not work.
+        <i>Chosen.</i> The host prints the refusal with its fix the first time it happens, because the person watching
+        the run is the one with the policy file open. Deduplicated on <b>the rendered advice</b> rather than on the
+        attempt: a client that retries forty times, or that tries a host on 80 and again on 443, is one line to add to
+        one file. Every attempt is still recorded; it is the advice that is printed once.
+        <i>Revisit when</i> a guest-side client library is worth teaching about the body &mdash; the body is already
+        correct, so that would be an addition and not a change.</td>
+        <td class="mono">host/denials.go, dev/accept-denials.sh, docs/denials.md</td></tr>
     <!-- Claude Code: append rows above this line. -->
       <tr><td class="mono">F-D10</td><td class="mono">2026-08-22</td>
         <td>The resource knobs E1-0 goes looking for shipped <b>partly</b>: <code>--vcpus</code>/<code>--mem</code> and
@@ -4292,6 +4310,27 @@ $ gofmt -l . ; go vet ./... ; go test ./...
         acceptance runs a shell both ways to prove it: with the flag there is a stream file holding the output, and
         without it there is no such file and the record contains none of what was typed. A shell is where somebody
         pastes a token to test something; recording that by default would make the honest thing the risky thing.</td></tr>
+        <tr><td class="mono">2026-08-23</td><td class="mono">E5-4</td>
+        <td><b>Every refusal names its own fix, from one catalog, and the reference is generated from it.</b>
+        Seventeen entries in <code>internal/denial</code>, each holding the message and the remedy as one record so
+        they cannot drift apart: egress by host and by port, an unbound secret, four kinds of ceiling, three
+        allowlist edges, the sandbox budget, and five team refusals. Every refusal now prints in three parts &mdash;
+        what was refused, a stable ID in brackets, and a fix line indented beneath naming something to type or edit.
+        <b>Two checks, in opposite directions.</b> <code>make docs</code> generates
+        <code>docs/reference/denials.md</code> from the catalog and CI fails on the diff, so the documentation cannot
+        describe a refusal the product does not make; the same run fails the build when a catalog entry is raised
+        nowhere in the source, proved by adding one and watching it fail. Every example on that page is rendered by
+        the code that raises it, so what a reader matches is the string their terminal showed them.
+        <b>The acceptance found the promise half-kept in the plan&rsquo;s own headline example</b>, which is F-D53:
+        the proxy writes the fix into its <code>403</code>, and curl discards the body of a refused
+        <code>CONNECT</code> before anyone reads it. Plain HTTP carries it through and HTTPS does not, so the host now
+        prints the refusal once &mdash; deduplicated on the advice rather than the attempt, because a client that
+        retries forty times is one line to add to one file. Twelve acceptance checks against a real guest, all
+        passing, including the two that prove which reader gets told.
+        <b>What is deliberately not in the catalog</b> is failures. &ldquo;The upstream did not answer&rdquo; is not a
+        refusal, nothing the reader types changes it, and a fix line reading &ldquo;try again&rdquo; is how people
+        learn to stop reading fix lines. <code>docs/denials.md</code> says so, and says that inbound forwarding&rsquo;s
+        refusals are absent because the feature is (E5-5) rather than implying a coverage it does not have.</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/p4r4n0rm4l/KelyfOS/internal/config"
+	"github.com/p4r4n0rm4l/KelyfOS/internal/denial"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/mcp"
 )
 
@@ -65,10 +66,12 @@ func TestServeMCPArgumentsMayNotAskForMore(t *testing.T) {
 		args  runArgs
 		wants []string
 	}{
-		{"cpus above the ceiling", runArgs{CPUs: 8}, []string{"cpus", "ceiling", "kelyfos.toml:"}},
-		{"mem above the ceiling", runArgs{Mem: "4G"}, []string{"mem", "ceiling", "kelyfos.toml:"}},
+		{"cpus above the ceiling", runArgs{CPUs: 8},
+			[]string{"cpus", "ceiling", "kelyfos.toml:", "[ceiling.tool]"}},
+		{"mem above the ceiling", runArgs{Mem: "4G"},
+			[]string{"mem", "ceiling", "kelyfos.toml:", "[ceiling.tool]"}},
 		{"a domain the policy never listed", runArgs{Allow: []string{"evil.example.net"}},
-			[]string{"evil.example.net", "never add to it"}},
+			[]string{"evil.example.net", "never widen it", "[allow.project]"}},
 		{"an image the project does not declare", runArgs{Image: "base"},
 			[]string{"base", "declares"}},
 	} {
@@ -80,6 +83,15 @@ func TestServeMCPArgumentsMayNotAskForMore(t *testing.T) {
 		for _, want := range tc.wants {
 			if !strings.Contains(err.Error(), want) {
 				t.Errorf("%s: the refusal does not mention %q:\n%v", tc.name, want, err)
+			}
+		}
+		// E5-4: a refusal from the catalog is recognisable as itself and
+		// carries a fix line. The image case is not from the catalog — an
+		// image the project never declared is a mistake, not a policy — so
+		// only the ones that are get held to it.
+		if r, ok := denial.Of(err); ok {
+			if !strings.Contains(err.Error(), "\n    ") {
+				t.Errorf("%s: %s has no fix line:\n%v", tc.name, r.ID(), err)
 			}
 		}
 	}

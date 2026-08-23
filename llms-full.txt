@@ -18,6 +18,7 @@ Contents, in reading order:
 - `docs/resources.md` — how much machine an agent gets: units, precedence, and what enforces each cap
 - `docs/networking.md` — why a sandbox has no NIC by default, what --allow builds, and why there is no DNS
 - `docs/teams.md` — several agents on one host: the schema, the broker, the store, the budget
+- `docs/denials.md` — why every refusal names its own fix, and what the ID in brackets is for
 - `docs/events.md` — the audit record: why the host writes it, and what the hash chain proves
 - `docs/protocol.md` — the vsock transport, the port map, and every channel's messages
 - `docs/mcp-surface.md` — MCP in both directions: kelyfos as a tool for any client, and plugins inside the guest
@@ -30,6 +31,7 @@ Contents, in reading order:
 - `docs/reference/tools.md` — every tool a guest exposes, with its input schema
 - `docs/reference/events.md` — every flight-recorder event, with its payload fields
 - `docs/reference/exit-codes.md` — what each status the CLI returns means
+- `docs/reference/denials.md` — every refusal KelyfOS makes, with the fix line each one carries
 
 
 
@@ -607,8 +609,8 @@ both the ceiling and the file and line it came from:
 
 ```
 $ kelyfos run --cpus 8
-kelyfos: --cpus 8 exceeds the ceiling cpus = 2 set at ./kelyfos.toml:6
-    lower the flag, or raise the ceiling in the policy file
+kelyfos: --cpus 8 exceeds the ceiling cpus = 2 set at ./kelyfos.toml:6 [ceiling.flag]
+    lower the flag, or raise the ceiling in ./kelyfos.toml
 ```
 
 Refusing beats clamping because clamping is a silent lie: the agent would run
@@ -1201,7 +1203,11 @@ hoped for.
 - `CONNECT host:port` and absolute-URI HTTP requests are accepted only when
   `host` matches the allowlist. A bare hostname matches itself and its
   subdomains, so `--allow github.com` also permits `api.github.com`.
-- Ports are restricted to 80 and 443.
+- Ports are restricted to 80 and 443. No policy key widens that.
+- A refusal is answered with `403` and a body naming the domain and the edit
+  that would allow it (`[egress.host]` in [`denials.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/denials.md)). For plain
+  HTTP the guest reads it; for a refused `CONNECT` most clients discard the
+  body, so the host prints the same refusal once, on its own stderr.
 - Every attempt is written to the flight recorder as an `egress.attempt` event,
   allowed or blocked, with the reason and the byte counts
   (`docs/events.md` §4).
@@ -1523,8 +1529,10 @@ machine, not a promise of one. A spawn outside the budget is an error the
 asking agent receives, with the budget in the message so a model can adjust
 rather than retry blindly:
 
-    denied: master already has 2 of its 2 spawned workers running
-    denied: master may not spawn the "base" image; its budget permits [dev]
+    denied: master already has 2 of its 2 spawned workers running [team.spawn_budget]
+        let one finish, or raise max in [team.agent.spawn] for master in the team file
+    denied: master may not spawn the base image; its budget permits dev [team.spawn_image]
+        add "base" to image in [team.agent.spawn] for master in the team file
 
 An agent with no budget does not see the tool. The check that matters is
 host-side either way: an agent that calls a tool it was never shown still gets a
@@ -1966,6 +1974,123 @@ orchestrator waiting on a quiet agent should not expect the record to say so.
 | `log --verify` over the whole team, `log --export team.html` | E2-7 |
 | Multi-lane `kelyfos watch` | E2-8 |
 | The committed demo, including a refused edge | E2-9 |
+
+
+---
+title: Refusals
+url: https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/denials.md
+description: why every refusal names its own fix, and what the ID in brackets is for
+---
+
+# Refusals
+
+*Concept, with one generated half: [`reference/denials.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/reference/denials.md)
+is the catalog itself, written by `make docs` from the code that raises it.*
+
+A sandbox is a thing that says no. It says no to a domain nobody allowed, to a
+flag above a ceiling, to a message along an edge that was never declared. Each
+of those refusals is the product working correctly, and each of them lands on
+somebody who now has to work out what to type instead.
+
+So every refusal KelyfOS makes names its own fix:
+
+```
+$ curl http://api.stripe.com/v1/charges
+kelyfos: api.stripe.com is not in this sandbox's allowlist [egress.host]
+    add allow = ["api.stripe.com"] to kelyfos.toml, or rerun with --allow api.stripe.com
+```
+
+Three parts, always in this order.
+
+**The refusal.** What was asked for and why it was not permitted, naming the
+specifics — the domain, the ceiling, the file and the line it came from. A
+refusal that says "not permitted" and stops has told the reader only that they
+are stuck.
+
+**The ID**, in brackets. It is stable, it is the heading to look up in
+[`reference/denials.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/reference/denials.md), and it is what a program matches
+on. Prose is written for people and gets rewritten; an ID does not.
+
+**The fix**, indented on its own line, naming something the reader can type or
+edit. One line, because a refusal is read in a hurry.
+
+## Where they come from
+
+One catalog, `internal/denial`, holding the message and the fix together as one
+record. They cannot drift apart, because they are not two things in two files.
+
+Two checks keep it honest, and they run in opposite directions:
+
+- `make docs` regenerates [`reference/denials.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/reference/denials.md) from
+  the catalog, and CI fails on any diff (F-D4). The documentation cannot
+  describe a refusal the product does not make.
+- The same run fails the build if a catalog entry is raised nowhere in the
+  source. A refusal documented but never made is a promise with no code behind
+  it.
+
+Every example on that page is rendered by the code that raises it, so what you
+match against what your terminal showed you is the same string.
+
+## What is not in the catalog
+
+**Failures are not refusals.** "The upstream did not answer" is not a decision
+KelyfOS made; nothing the reader types changes it; and a fix line reading "try
+again" is how people learn to stop reading fix lines. Those errors say what
+happened and stop.
+
+**A fix line never widens the policy on anyone's behalf.** It says what to edit;
+a person edits it. This is the same invariant the MCP tool surface is held to
+(F-D5): the ceiling in `kelyfos.toml` is not something the software can talk
+itself past, and a refusal that offered to raise it would be exactly that.
+
+## For programs
+
+A refusal is a `*denial.Refusal`, carrying its ID and the values it named:
+
+```go
+if r, ok := denial.Of(err); ok && r.ID() == "budget.sandboxes" {
+    // wait for a slot rather than reporting a failure
+}
+```
+
+Team refusals cross the broker as a `team.Error`, whose `Message` is the same
+rendered text — ID, fix line and all — so an agent reading the error it was
+handed has the fix in front of it too.
+
+## Who gets told, when the client will not show it
+
+An egress refusal is written to whatever made the request, and for HTTPS that is
+usually where it stops. A refused `CONNECT` is answered with `403` and a body,
+and curl prints `Received HTTP code 403 from proxy after CONNECT` and throws the
+body away; most other clients do the same. Plain HTTP carries it through
+untouched, because there the refusal *is* the response, and so does a
+secret-bound domain, where the proxy terminates TLS and answers inside it.
+
+The other reader is the person watching the run, and they are the one with the
+policy file open. So the first time a domain is refused, the host prints the
+refusal and its fix line to its own stderr:
+
+```
+$ kelyfos run --allow example.com
+kelyfos: api.stripe.com is not in this sandbox's allowlist [egress.host]
+    add allow = ["api.stripe.com"] to kelyfos.toml, or rerun with --allow api.stripe.com
+```
+
+Once — deduplicated on the advice rather than on the attempt. A program that
+retries forty times, or that tries the same host on 80 and again on 443, is one
+line to add to one file, and saying so forty times is noise dressed as detail.
+Every attempt is still in the record; it is the *advice* that is printed once.
+
+Refusals are also events. Every one of the egress denials appears in the flight
+recorder with its reason, and every refused tool call is in the transcript
+(E4-4), so a refusal is auditable whether or not the person it landed on
+mentions it. See [`events.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/events.md).
+
+## What is not covered yet
+
+Inbound port forwarding (`-p`) arrives at E5-5, and its refusals join this
+catalog when it does — the catalog is complete for the refusals that exist, not
+for the ones that are planned.
 
 
 ---
@@ -3196,7 +3321,9 @@ write into `/work` expecting the file to reach the host. Use
 `allow` is the one parameter where "ask for less" needs saying out loud: the
 policy's allowlist is the set of domains this project may reach, and a call may
 narrow it for one sandbox. It may never add to it. A call naming a domain the
-policy does not list is refused and audited, and the refusal names the domain.
+policy does not list is refused and audited, and the refusal names the domain,
+the file that permits what it permits, and the edit that would allow it —
+`[allow.project]` in [`denials.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/denials.md).
 
 **`sandbox_stop`** — stop one sandbox and clean up.
 `{sandbox: string}` → confirmation. Stopping a sandbox this server did not
@@ -5318,7 +5445,9 @@ at: `kelyfos log --list | grep serve-mcp | head -1` is the server's own record.
 ### A secret bound to a domain that is not allowed
 
 ```
---secret GITHUB_TOKEN@api.github.com: api.github.com is not in --allow
+kelyfos: --secret GITHUB_TOKEN@api.github.com: api.github.com is not in --allow [secret.unbound]
+    add api.github.com to --allow, or drop the secret — a credential for a domain
+    the sandbox cannot reach is a credential nothing will ever use
 ```
 
 Binding a credential does not permit the domain. `--allow` is the policy;
@@ -5494,8 +5623,8 @@ kind it is, and this page says where each one is still thin.
 The rule the directory is built on (F-D4): **the reference half is generated
 from the source and CI fails on drift; hand-written prose is reserved for
 concepts and recipes.** [`reference/`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/reference/README.md) is the generated half — every
-command, flag, toml key, MCP tool, event type and exit code, extracted by
-`make docs` and checked on every commit. The pages beside it are the
+command, flag, toml key, MCP tool, event type, exit code and refusal, extracted
+by `make docs` and checked on every commit. The pages beside it are the
 hand-written half, and this page says where each is still thin.
 
 ## Start here
@@ -5507,6 +5636,7 @@ hand-written half, and this page says where each is still thin.
 | deciding how much machine an agent gets | [`resources.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/resources.md) |
 | running several agents together | [`teams.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/teams.md) |
 | auditing what an agent did | [`events.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/events.md) |
+| stuck on something KelyfOS refused | [`denials.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/denials.md), then [`reference/denials.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/reference/denials.md) for the exact one |
 | keeping an agent off the network | [`networking.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/networking.md) |
 | after something that works, right now | [`cookbook.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/cookbook.md) — eleven recipes, each one runnable as it stands |
 | putting KelyfOS inside something else | [`integrating.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/integrating.md) |
@@ -5518,12 +5648,13 @@ hand-written half, and this page says where each is still thin.
 
 | Document | Kind | What it answers |
 | --- | --- | --- |
-| [`reference/`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/reference/README.md) | **generated** | Every command, flag, `kelyfos.toml` key, MCP tool, event type and exit code, with types and defaults. Extracted from the source; CI fails on drift. |
+| [`reference/`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/reference/README.md) | **generated** | Every command, flag, `kelyfos.toml` key, MCP tool, event type, exit code and refusal, with types and defaults. Extracted from the source; CI fails on drift. |
 | [`protocol.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/protocol.md) | mixed | How the host and the guest talk: Firecracker's hybrid vsock, the port map, newline-delimited JSON framing, and every channel's message shape. |
 | [`events.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/events.md) | mixed | What the flight recorder writes: the common fields, the hash chain, and every event type with its payload. |
 | [`networking.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/networking.md) | mixed | Why a sandbox has no NIC by default, what `--allow` builds, the nftables template, and why the guest has no DNS. |
 | [`resources.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/resources.md) | mixed | Every resource cap: units, precedence, what enforces it, and what happens when it is reached. |
 | [`teams.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/teams.md) | mixed | The `[team]` schema, the host broker and its edge rules, the team store, the collective budget, and how a team boots. |
+| [`denials.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/denials.md) | mixed | Why every refusal names its own fix, what the ID in brackets is for, and what deliberately is not in the catalog. |
 | [`qol.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/qol.md) | concept | The v0.8 specification, written before the code: named sessions and their store, the workspace manifest, the PTY channel, and why inbound forwarding does not touch the firewall. |
 | [`mcp-surface.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/mcp-surface.md) | concept | MCP in both directions: `serve-mcp` as a tool for any client, and `[[plugin]]` servers inside the guest. Specification, written before the code. |
 | [`threat-model.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/threat-model.md) | concept | What KelyfOS defends against and — the longer half — what it does not. |
@@ -5616,6 +5747,18 @@ the two proof scripts.
 ceilings; `[resources] cpus` is not checked for positivity; the per-agent
 `max_runtime` path in a team behaves differently from the single-run one and only
 the latter is described.
+
+### `denials.md` — why a refusal names its fix
+
+*Concept:* why a refusal is three parts and not one; why the ID is stable when
+the prose is not; why a failure is deliberately not a refusal; why a fix line may
+name the edit and never make it (F-D5).
+*Reference:* none of it — the catalog itself is generated to
+[`reference/denials.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/reference/denials.md), and this page links to it rather
+than repeating it, which is the arrangement E3-1 exists to make possible.
+*Thin:* inbound forwarding’s refusals are not in the catalog because the feature
+is not built (E5-5); the page says so rather than implying coverage it does not
+have.
 
 ### `teams.md` — several agents at once
 
@@ -6901,3 +7044,208 @@ status through unchanged, so `kelyfos exec` can exit with anything.
 | `126` | the command was found in the guest and could not be executed |
 | `127` | the command does not exist in the guest |
 | `137` | the guest's OOM killer ran during this sandbox's life (128 + SIGKILL) |
+
+
+---
+title: Denials
+url: https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/reference/denials.md
+description: every refusal KelyfOS makes, with the fix line each one carries
+---
+
+<!-- Generated by `make docs`. Do not edit: your changes will be overwritten,
+     and CI fails when this file disagrees with the source (F-D4). -->
+
+# Denials
+
+Every refusal KelyfOS makes, with the fix. A refusal prints its ID in brackets;
+that ID is the heading to look for here.
+
+Failures are not here. "The upstream did not answer" is not a refusal, has no
+fix line, and nothing you type changes it.
+
+## `allow.project`
+
+A tool call asked for a domain the project's policy file does not permit.
+
+```
+allow api.stripe.com is not in this project's allowlist; /home/you/project/kelyfos.toml permits github.com, api.github.com [allow.project]
+    add api.stripe.com to allow in /home/you/project/kelyfos.toml — a tool may narrow what the policy permits and may never widen it
+```
+
+Named: `domain`, `file`, `permitted`. The values above are an example.
+
+## `allow.resume`
+
+A paused session's frozen allowlist names a domain the current policy no longer permits.
+
+```
+session before-the-migration was paused with api.stripe.com in its allowlist, and /home/you/project/kelyfos.toml no longer permits it; a resume runs the frozen policy, so it cannot be a way past the current one [allow.resume]
+    add api.stripe.com back to allow in /home/you/project/kelyfos.toml, or start a new sandbox rather than resuming
+```
+
+Named: `domain`, `file`, `name`. The values above are an example.
+
+## `allow.snapshot`
+
+A restore asked for a domain the frozen machine itself could not reach.
+
+```
+allow api.stripe.com is not in snapshot before-the-migration's own allowlist (github.com) [allow.snapshot]
+    restore with a subset of github.com; a restore may narrow what the frozen machine could reach and never widen it
+```
+
+Named: `domain`, `name`, `permitted`. The values above are an example.
+
+## `budget.sandboxes`
+
+An MCP client asked for a sandbox beyond [mcp] max_sandboxes.
+
+```
+this server has 4 sandbox(es) running, 1 more were asked for, and [mcp] max_sandboxes is 4 [budget.sandboxes]
+    stop some with sandbox_stop, or raise max_sandboxes in /home/you/project/kelyfos.toml — which is a change a person makes to a file, not something a tool here can do
+```
+
+Named: `asked`, `file`, `limit`, `running`. The values above are an example.
+
+## `ceiling.flag`
+
+A command-line flag asked for more than the policy file's [resources] ceiling permits.
+
+```
+--cpus 8 exceeds the ceiling cpus = 4 set at /home/you/project/kelyfos.toml:12 [ceiling.flag]
+    lower the flag, or raise the ceiling in /home/you/project/kelyfos.toml
+```
+
+Named: `asked`, `file`, `flag`, `key`, `limit`, `line`. The values above are an example.
+
+## `ceiling.resume`
+
+A paused session's frozen policy asks for more than the current policy's ceiling, and a resume runs the frozen one.
+
+```
+session before-the-migration was paused under cpus = 8, and /home/you/project/kelyfos.toml:12 now sets a ceiling of 4; a resume runs the frozen policy, so it cannot be a way past the current one [ceiling.resume]
+    raise the ceiling in /home/you/project/kelyfos.toml, or start a new sandbox rather than resuming
+```
+
+Named: `file`, `frozen`, `key`, `limit`, `line`, `name`. The values above are an example.
+
+## `ceiling.snapshot`
+
+A snapshot holds a machine larger than the ceiling now in force.
+
+```
+snapshot before-the-migration holds a 8 vcpu machine, over the ceiling cpus = 4 set at /home/you/project/kelyfos.toml:12, and a restore cannot resize it [ceiling.snapshot]
+    take the snapshot again from a smaller sandbox, or raise the ceiling in /home/you/project/kelyfos.toml
+```
+
+Named: `file`, `held`, `key`, `limit`, `line`, `name`. The values above are an example.
+
+## `ceiling.snapshot_unknown`
+
+A snapshot does not record how large its machine is, and a ceiling cannot be checked against nothing.
+
+```
+snapshot before-the-migration does not record how large its machine is — it was taken by an older kelyfos — and /home/you/project/kelyfos.toml sets a ceiling that cannot be checked against nothing [ceiling.snapshot_unknown]
+    take the snapshot again with this version, and it will say
+```
+
+Named: `file`, `name`. The values above are an example.
+
+## `ceiling.tool`
+
+An MCP tool call asked for more than the policy file's [resources] ceiling permits.
+
+```
+cpus 8 exceeds the ceiling cpus = 4 set at /home/you/project/kelyfos.toml:12 [ceiling.tool]
+    ask for less — or raise the ceiling in /home/you/project/kelyfos.toml, which is a change a person makes to a file and not something a tool here can do
+```
+
+Named: `asked`, `field`, `file`, `key`, `limit`, `line`. The values above are an example.
+
+## `egress.host`
+
+A guest tried to reach a domain the sandbox's allowlist does not permit.
+
+```
+api.stripe.com is not in this sandbox's allowlist [egress.host]
+    add allow = ["api.stripe.com"] to kelyfos.toml, or rerun with --allow api.stripe.com
+```
+
+Named: `host`. The values above are an example.
+
+## `egress.port`
+
+A guest tried to reach a permitted domain on a port the proxy does not carry.
+
+```
+port 8443 is not permitted, to api.stripe.com or to anywhere else [egress.port]
+    use 80 or 443 — those are the two ports the egress proxy carries, and no policy key widens that today
+```
+
+Named: `host`, `port`. The values above are an example.
+
+## `secret.unbound`
+
+A secret was bound to a domain the sandbox cannot reach, so it could never be sent.
+
+```
+--secret STRIPE_KEY@api.stripe.com: api.stripe.com is not in --allow [secret.unbound]
+    add api.stripe.com to --allow, or drop the secret — a credential for a domain the sandbox cannot reach is a credential nothing will ever use
+```
+
+Named: `domain`, `spec`. The values above are an example.
+
+## `team.edge`
+
+An agent addressed another agent it has no declared edge to.
+
+```
+this team has no edge from worker-1 to worker-2 [team.edge]
+    add [[team.edge]] with from = "worker-1" and to = "worker-2" to the team file, if that path is meant to exist
+```
+
+Named: `from`, `to`. The values above are an example.
+
+## `team.spawn_budget`
+
+An agent asked to spawn a worker while its budget was already full.
+
+```
+master already has 4 of its 4 spawned workers running [team.spawn_budget]
+    let one finish, or raise max in [team.agent.spawn] for master in the team file
+```
+
+Named: `agent`, `live`, `max`. The values above are an example.
+
+## `team.spawn_image`
+
+An agent asked to spawn a worker from an image its budget does not list.
+
+```
+master may not spawn the python image; its budget permits dev [team.spawn_image]
+    add "python" to image in [team.agent.spawn] for master in the team file
+```
+
+Named: `agent`, `image`, `permitted`. The values above are an example.
+
+## `team.spawn_none`
+
+An agent asked to spawn a worker without any spawn budget at all.
+
+```
+master has no spawn budget [team.spawn_none]
+    grant one with [team.agent.spawn] under that agent in the team file — a budget is written before the run, never asked for during it
+```
+
+Named: `agent`. The values above are an example.
+
+## `team.store`
+
+An agent touched a store key a [[team.store.key]] rule does not grant it.
+
+```
+worker-1 may not read plan [team.store]
+    add "worker-1" to read in the [[team.store.key]] rule that matches plan, in the team file
+```
+
+Named: `agent`, `key`, `verb`. The values above are an example.

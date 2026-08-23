@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/p4r4n0rm4l/KelyfOS/internal/denial"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/proto"
 )
 
@@ -335,7 +336,7 @@ func (b *Broker) deliver(from, to string, body []byte, kind, correlate string) e
 	case !b.topo.Allows(from, to):
 		b.record(b.describe(from, to, body, kind, OutcomeRefused, "no_edge"))
 		return &Error{Kind: "no_edge",
-			Message: fmt.Sprintf("this team has no edge from %s to %s", from, to)}
+			Message: denial.TeamEdge.Render(denial.V{"from": from, "to": to})}
 	}
 
 	b.mu.Lock()
