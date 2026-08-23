@@ -97,7 +97,18 @@ TAP="$(python3 -c "import json;print(json.load(open('$RUN_ROOT/$SB/sandbox.json'
 grep -E "^  (cpu|scratch|net limit|egress|workspace)" "$PROJ/run.log" | sed 's/^/        /'
 pass "the sandbox booted under the committed policy (sandbox $SB)"
 
+# The acceptance list asks for host *cgroup* stats, so that is what is read when
+# there is a cgroup to read — which there is here, because cpu_quota created
+# one. /proc is the fallback for a sandbox without a quota, and measures the
+# same process.
+CGROUP="$(python3 -c "import json;print(json.load(open('$RUN_ROOT/$SB/sandbox.json')).get('cgroup_path',''))")"
+[ -n "$CGROUP" ] && echo "        cgroup: $CGROUP" && echo "        cpu.max: $(cat "$CGROUP/cpu.max" 2>/dev/null)"
+
 cpu_seconds() {
+  if [ -n "$CGROUP" ] && [ -r "$CGROUP/cpu.stat" ]; then
+    awk '/^usage_usec/{printf "%.2f\n", $2/1000000}' "$CGROUP/cpu.stat"
+    return
+  fi
   python3 -c '
 import sys
 with open(f"/proc/{sys.argv[1]}/stat") as f: blob = f.read()
