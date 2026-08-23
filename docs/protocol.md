@@ -152,7 +152,7 @@ Two ranges, chosen so the direction of a channel is readable from its number:
 | `10001` | `exec` | host → guest | P1-6 | One command per connection. §5.2 |
 | `10002` | `mcp` | host → guest | P2-2 | MCP server. §6 |
 | `10003` | `control` | host → guest | P2-1 | Lifecycle and resync RPCs. §5.4 |
-| `10004` | `shell` | host → guest | E5-3 | Interactive PTY. Reserved by E5-0; see `docs/qol.md` §3 for the shape, and this section when it is built. |
+| `10004` | `shell` | host → guest | E5-3 | One interactive terminal per connection. §5.7 |
 | `10100` | `ready` | guest → host | P1-3 | Boot-to-ready signal and heartbeats. §5.3 |
 | `10101` | `events` | guest → host | P2-4 | Guest-side event stream into the flight recorder. §5.5 |
 | `10102` | `team` | guest → host | E2-1 | Team messaging: the guest asks, the host routes. §5.6 |
@@ -435,6 +435,53 @@ A refusal is an `Error` with one of the kinds in §4 plus `no_edge`,
 not send something is told so, and told why.
 
 ---
+
+
+### 5.7 `shell` — port 10004, host → guest
+
+One connection is one interactive terminal. Added by E5-3 as an **additive
+revision**: a supervisor without it refuses the connection, and everything else
+on every other channel is unchanged.
+
+**This is the one channel that is not newline-delimited JSON**, and the reason is
+the traffic. A terminal stream is binary, high-rate and latency-sensitive; base64
+inside a JSON envelope would cost a third of the bandwidth and a copy per
+keystroke to carry bytes that are already bytes. So the framing is:
+
+```
+| kind: 1 byte | length: 4 bytes, big-endian | payload: length bytes |
+```
+
+`kind` is `1` for **data** — raw terminal bytes, in either direction — and `2`
+for **control**, whose payload is one JSON object. A frame longer than **1 MiB**
+is refused and ends the connection: a terminal writes in small bursts, a paste
+is the largest thing it sends, and a length prefix that cannot be trusted cannot
+be resynchronised from.
+
+Control frames, all of them small and rare:
+
+| Direction | Shape | When |
+| --- | --- | --- |
+| host → guest | `{"op":"open","cwd":…,"cols":…,"rows":…}` | first frame, and the only one that starts anything |
+| host → guest | `{"op":"resize","cols":…,"rows":…}` | the host's window changed |
+| guest → host | `{"op":"exit","code":…,"signal":…}` | the shell ended |
+
+**A resize is a control frame and not an escape sequence** because of who has to
+be told: `TIOCSWINSZ` on the pty, by the kernel, so that full-screen programs
+redraw. An escape sequence would be something the *shell* had to understand.
+
+The supervisor allocates the pty, opens the slave, and spawns the shell with
+`Setsid` and `Setctty` so it is a session leader with that terminal as its
+controlling one — which is what makes job control, line editing and `isatty()`
+work. Without it a shell on a pipe has none of them and every program it runs
+decides it is not interactive.
+
+**A closed connection with no exit frame is a supervisor that died**, which is a
+different thing from a shell that ended — the same distinction §5.2 draws for
+`exec`. When the *host* hangs up, the guest sends `SIGHUP` to the shell's
+session: a shell left running on a terminal nobody is reading is a process that
+never ends.
+
 
 ## 6. MCP over vsock
 

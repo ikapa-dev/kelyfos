@@ -126,6 +126,14 @@ func main() {
 	} else {
 		go serveMCP(ln, rp)
 	}
+	// One connection is one interactive shell. Bound with the others, before
+	// readiness, for the reason they all are: the host may connect the instant
+	// it sees the ready frame.
+	if ln, err := vsock.Listen(proto.PortShell); err != nil {
+		logf("cannot listen on shell port %d: %v", proto.PortShell, err)
+	} else {
+		go serveShell(ln, rp)
+	}
 	if ln, err := vsock.Listen(proto.PortControl); err != nil {
 		logf("cannot listen on control port %d: %v", proto.PortControl, err)
 	} else {

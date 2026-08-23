@@ -363,6 +363,18 @@ func printEvent(line []byte, asJSON bool) {
 			strings.TrimSpace(outcome), e.DurationMS)
 	case recorder.TypePluginCrash:
 		fmt.Printf("%s  %splugin stopped %s  %s\n", ts, who, e.Name, e.Reason)
+	case recorder.TypeShellStart:
+		where := ""
+		if e.Path != "" {
+			where = " · recording to " + e.Path
+		}
+		fmt.Printf("%s  %sshell opened   %s\n", ts, who, strings.TrimSpace(where))
+	case recorder.TypeShellEnd:
+		code := 0
+		if e.Code != nil {
+			code = *e.Code
+		}
+		fmt.Printf("%s  %sshell closed   exit %d after %d ms\n", ts, who, code, e.DurationMS)
 	case recorder.TypeRunReview:
 		fmt.Printf("%s  %sreview          %s · %d added, %d modified, %d deleted → %s\n",
 			ts, who, e.Outcome, e.Added, e.Modified, e.Deleted, e.Path)

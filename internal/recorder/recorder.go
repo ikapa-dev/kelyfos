@@ -51,6 +51,8 @@ const (
 	TypeSessionPause    = "session.pause"
 	TypeSessionResume   = "session.resume"
 	TypeRunReview       = "run.review"
+	TypeShellStart      = "shell.start"
+	TypeShellEnd        = "shell.end"
 )
 
 // ReasonServeMCP marks a session.start as a server's own session rather than a

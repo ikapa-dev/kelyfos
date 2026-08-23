@@ -21,6 +21,7 @@ const (
 	PortExec    = 10001 // host -> guest
 	PortMCP     = 10002 // host -> guest
 	PortControl = 10003 // host -> guest
+	PortShell   = 10004 // host -> guest
 	PortReady   = 10100 // guest -> host
 	PortEvents  = 10101 // guest -> host
 	PortTeam    = 10102 // guest -> host

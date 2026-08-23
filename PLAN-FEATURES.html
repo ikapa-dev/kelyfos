@@ -126,7 +126,7 @@
      improvements to the existing product land here as epics. Inert until its gate opens.</p>
   <div class="meta">
     owner: <b>John</b> &nbsp;&middot;&nbsp; developer: <b>Claude Code</b> &nbsp;&middot;&nbsp;
-    status: <b class="ok" id="meta-status">Epic E5 — active, 3/8 (v0.7 released; next: E5-3, the interactive shell)</b> &nbsp;&middot;&nbsp;
+    status: <b class="ok" id="meta-status">Epic E5 — active, 4/8 (v0.7 released; next: E5-4, actionable denials)</b> &nbsp;&middot;&nbsp;
     last updated: <b id="meta-updated">2026-08-23</b><br>
     repo file: <b>PLAN-FEATURES.html</b> (lives at the repository root next to <code>PLAN.html</code>)<br>
     <span class="quiet">Companion to PLAN.html — same protocol, same rules, later timeline.</span>
@@ -166,7 +166,7 @@
     <span class="bl-name">All epics</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">E5-3 &mdash; <code>kelyfos shell</code>: an interactive PTY over the new channel, raw passthrough with resize forwarding, and contents recorded only with <code>--transcript</code></b></div>
+  <div class="focusline">Current focus: <b id="focus">E5-4 &mdash; actionable denials: every refusal carries a fix line a person can paste, from one catalog the generated reference picks up</b></div>
 </div>
 
 <!-- ====================================================== 1. ACTIVATION GATE -->
@@ -596,7 +596,7 @@
         With <code>--review</code>, the summary prints and sync-back waits for confirmation — decline routes results to the
         existing <code>.kelyfos-out</code> fallback (P3-10&rsquo;s mechanism, reused), so the host directory is untouched until
         an explicit yes. The decision is a <code>run.review</code> audit event.</span></li>
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">E5-3</span><span class="tk"><code>kelyfos shell</code>: interactive PTY over the existing vsock channel —
         supervisor allocates the PTY, spawns the flavor&rsquo;s shell, raw-mode passthrough with window-resize forwarding.
         Audit per F-D8: <code>shell.start/end</code> with duration always; contents only with <code>--transcript</code>,
@@ -4271,6 +4271,27 @@ $ gofmt -l . ; go vet ./... ; go test ./...
         <b>69 ms</b> median over 10 runs, snapshot restore <b>33 ms</b>. Boot was 90 ms on 6.18.45 and restore was 29;
         both are still far inside their targets, and the README now quotes the numbers that were actually measured
         rather than the ones it used to.</td></tr>
+        <tr><td class="mono">2026-08-23</td><td class="mono">E5-3</td>
+        <td><b><code>kelyfos shell</code>: a real terminal inside a sandbox, proved by the things only a terminal
+        has.</b> Thirteen checks through a pseudo-terminal: a command runs and answers, <code>tty</code> names
+        <code>/dev/pts/0</code> rather than a pipe, <code>stty size</code> agrees with the size the host asked for,
+        resizing the host&rsquo;s window changes what the guest&rsquo;s kernel reports, and <code>exit 7</code> comes
+        back as exit 7.
+        <b>The channel is the one place this protocol is not newline-delimited JSON</b>, and
+        <code>docs/protocol.md</code> §5.7 now says why: a terminal stream is binary, high-rate and
+        latency-sensitive, so data frames carry raw bytes and only the rare structured things — open, resize, exit —
+        are JSON. One byte of kind, four of length, then the payload; a frame over 1 MiB ends the connection, because a
+        length prefix that cannot be trusted cannot be resynchronised from.
+        <b>A resize is a control frame and not an escape sequence</b>, because of who has to be told: the pty, by the
+        kernel, so full-screen programs redraw. An escape sequence would be something the shell had to understand.
+        <b>The shell is a session leader with the pty as its controlling terminal</b> — <code>Setsid</code> and
+        <code>Setctty</code> — which is what makes job control and line editing work at all. Without them a shell on a
+        pipe has neither, and every program it runs decides it is not interactive.
+        <b>And the promise F-D8 made is kept and checked.</b> The record always says a shell was opened, for how long,
+        and how it ended. It holds nothing of what was typed or shown unless <code>--transcript</code> is given, and the
+        acceptance runs a shell both ways to prove it: with the flag there is a stream file holding the output, and
+        without it there is no such file and the record contains none of what was typed. A shell is where somebody
+        pastes a token to test something; recording that by default would make the honest thing the risky thing.</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>

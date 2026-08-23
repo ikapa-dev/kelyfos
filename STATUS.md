@@ -4,10 +4,10 @@ Updated 2026-08-23 · tree clean, synced with origin/main
 
 ## Plans
 - PLAN.html — 36/43. P4 backlog non-blocking, parked (P4-4/P4-5 [BLOCKED]).
-- PLAN-FEATURES.html — 37/42. **E1–E4 closed, v0.7 released. Epic E5 at 3/8.**
+- PLAN-FEATURES.html — 38/42. **E1–E4 closed, v0.7 released. Epic E5 at 4/8.**
 
 ## Now
-E5-3 — `kelyfos shell`: the PTY channel, per `docs/qol.md` §3.
+E5-4 — actionable denials: one catalog, a fix line on every refusal.
 
 ## This session
 E1–E3 closed, **v0.6 released**; then the F-D33 batch and the E3→E4 seam check.

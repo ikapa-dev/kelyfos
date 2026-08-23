@@ -365,6 +365,28 @@ second is the part a reader most wants when something has gone wrong. A refused
 call is recorded exactly like a permitted one: a ceiling nobody can see being
 enforced is a ceiling nobody can audit.
 
+### `shell.start` and `shell.end`
+An interactive shell was opened in a sandbox, and ended. Written from E5-3.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `path` | string | Where the terminal stream is being written, when `--transcript` was given. |
+| `code` | integer | On `shell.end`: the shell's exit status. |
+| `signal` | string | On `shell.end`: the signal that ended it, when it was signalled. |
+| `duration_ms` | integer | On `shell.end`: how long it was open. |
+| `agent` | string | Present inside a team: whose sandbox. |
+
+**What was typed and shown is not here.** The record says a shell was opened,
+for how long, and how it ended — which is what an auditor needs to know that it
+happened. The contents are stored only with `--transcript`, in a file beside the
+log rather than inside the chain, because a hash-chained record is for facts
+about what happened and a terminal stream is an artefact.
+
+The default is off (F-D8), and not out of squeamishness: a shell is where
+somebody pastes a token to test something, or types a password into a prompt
+that does not echo but does arrive as keystrokes. Recording that by default
+would make the honest thing — using the shell — the risky thing.
+
 ### `run.review`
 Somebody was shown what a sandbox did to a workspace and decided whether to
 write it back. Written from E5-2.
@@ -479,4 +501,5 @@ team session must be found by id or with `--list`.
 | `plugin.call` per plugin tool call, `plugin.crash` when one ends | E4-7 |
 | `session.pause` and `session.resume`, one chain across a pause | E5-1 |
 | `run.review` for every decision, including the declined ones | E5-2 |
+| `shell.start` / `shell.end` always, contents only with `--transcript` | E5-3 |
 | Signed exports verifiable offline | P4-3 |

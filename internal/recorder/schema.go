@@ -224,6 +224,23 @@ func Types() []EventType {
 				{Name: "boot_ms", Type: "integer", Doc: "how long the restore took, through the resync round trip"},
 				{Name: "reason", Type: "string", Doc: "what differed between the frozen policy and the one in force", When: "they differ"},
 			}},
+		{Type: TypeShellStart, Source: SourceHost,
+			Doc: "an interactive shell was opened in this sandbox. What was typed and shown is " +
+				"NOT here: a shell is where somebody pastes a token to test something, and " +
+				"recording that by default would make the honest thing the risky thing (F-D8)",
+			Fields: []Field{
+				{Name: "path", Type: "string", Doc: "where the terminal stream is being written", When: "--transcript was given"},
+				{Name: "agent", Type: "string", Doc: "which team member's sandbox", When: "in a team"},
+			}},
+		{Type: TypeShellEnd, Source: SourceHost,
+			Doc: "that shell ended, with what it exited with and how long it lasted",
+			Fields: []Field{
+				{Name: "code", Type: "integer", Doc: "the shell's exit status"},
+				{Name: "signal", Type: "string", Doc: "the signal that ended it", When: "it was signalled"},
+				{Name: "duration_ms", Type: "integer", Doc: "how long the shell was open"},
+				{Name: "reason", Type: "string", Doc: "why it could not be opened", When: "it failed"},
+				{Name: "agent", Type: "string", Doc: "which team member's sandbox", When: "in a team"},
+			}},
 		{Type: TypeRunReview, Source: SourceHost,
 			Doc: "somebody was shown what a sandbox did to a workspace and decided whether to " +
 				"write it back. A declined review is recorded exactly like an accepted one: a " +

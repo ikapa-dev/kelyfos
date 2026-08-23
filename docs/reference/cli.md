@@ -19,6 +19,7 @@ Go's `flag` accepts one dash or two, so `-image` and `--image` are the same flag
 | [`kelyfos resume`](#kelyfos-resume) | bring a paused session back |
 | [`kelyfos sessions`](#kelyfos-sessions) | list paused sessions, or discard one |
 | [`kelyfos diff`](#kelyfos-diff) | what a sandbox has done to its workspace |
+| [`kelyfos shell`](#kelyfos-shell) | an interactive terminal inside a sandbox |
 | [`kelyfos fork`](#kelyfos-fork) | restore one snapshot into several sandboxes |
 | [`kelyfos team up`](#kelyfos-team-up) | run several agents with the paths between them written down and enforced |
 | [`kelyfos team ps`](#kelyfos-team-ps) | run several agents with the paths between them written down and enforced |
@@ -190,6 +191,21 @@ kelyfos diff [flags]
 | Flag | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `--sandbox` | string | the only running one | sandbox id |
+
+## kelyfos shell
+
+An interactive terminal inside a sandbox.
+
+```
+kelyfos shell [flags]
+```
+
+| Flag | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `--cwd` | string | — | working directory inside the guest |
+| `--sandbox` | string | the only running one | sandbox id |
+| `--timeout` | duration | 15s | how long to wait for the sandbox channel |
+| `--transcript` | boolean | — | record everything the terminal shows, beside the session log |
 
 ## kelyfos fork
 

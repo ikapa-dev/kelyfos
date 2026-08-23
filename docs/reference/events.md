@@ -245,6 +245,27 @@ A paused session was brought back. Written by the **host**.
 | `boot_ms` | integer | how long the restore took, through the resync round trip |
 | `reason` | string | what differed between the frozen policy and the one in force *(they differ)* |
 
+## `shell.start`
+
+An interactive shell was opened in this sandbox. What was typed and shown is NOT here: a shell is where somebody pastes a token to test something, and recording that by default would make the honest thing the risky thing (F-D8). Written by the **host**.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `path` | string | where the terminal stream is being written *(--transcript was given)* |
+| `agent` | string | which team member's sandbox *(in a team)* |
+
+## `shell.end`
+
+That shell ended, with what it exited with and how long it lasted. Written by the **host**.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `code` | integer | the shell's exit status |
+| `signal` | string | the signal that ended it *(it was signalled)* |
+| `duration_ms` | integer | how long the shell was open |
+| `reason` | string | why it could not be opened *(it failed)* |
+| `agent` | string | which team member's sandbox *(in a team)* |
+
 ## `run.review`
 
 Somebody was shown what a sandbox did to a workspace and decided whether to write it back. A declined review is recorded exactly like an accepted one: a transcript that held only the accepted ones would be a record of agreement. Written by the **host**.
