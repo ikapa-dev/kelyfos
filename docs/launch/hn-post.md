@@ -86,3 +86,14 @@ ready to paste. Update the boot number if the benchmark moves before launch.
      mounts, the overlay and the MCP listener binding. The harness is in the repo.
 - Do not editorialise the security posture upward in replies. The threat model
   is the answer, and it is deliberately unflattering.
+- Independent validation worth citing if the premise is challenged: Microsoft's
+  Azure SRE Agent architecture post, "Stop restricting the agent. Start
+  restricting its environment" (commandline.microsoft.com, 2026-08-21). It
+  reaches the same conclusion from production — agent code in isolated
+  microVMs with the policy machinery outside the agent's reach, and credentials
+  that never enter the sandbox — which is the exact shape of this project.
+  Cite it as convergent evidence that the environment is the right place to put
+  the policy, not as an endorsement of KelyfOS; they have never heard of it.
+  Two things they do that KelyfOS does not are parked in PLAN-FEATURES.html §4
+  (per-call credential handles, output-side secret scrubbing) — mention them as
+  known gaps if someone asks, rather than being caught not knowing.

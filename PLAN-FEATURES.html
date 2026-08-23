@@ -668,6 +668,33 @@
     <li style="display:list-item"><b>Host-wide / cross-team fair-share scheduling.</b> The within-team case was absorbed into
         E2-6 (team cgroup hierarchy) under F-D3. Arbitrating between <i>unrelated</i> teams or across hosts remains fleet-orchestrator
         territory — still parked, still requires its own renegotiation with John by name.</li>
+    <li style="display:list-item"><b>Per-call credential handles.</b> Evolve the P2-6 / D6 secret injection from
+        &ldquo;the proxy holds the value for the whole run and attaches it to any allowed request to the bound domain&rdquo;
+        toward a handle the guest is given per call: <i>call-bound</i> (valid for one tool invocation),
+        <i>destination-locked</i> (one endpoint, not one domain), <i>scope-limited</i> (the operations that call needs),
+        and <i>single-use</i>. The value still never enters the guest either way, so this is not a new guarantee &mdash;
+        it is a much smaller window on the existing one. Today&rsquo;s honest limit, already written into the launch post,
+        is that a prompt-injected agent which cannot <i>read</i> the token can still <i>spend</i> it against the bound
+        domain for the entire session; a call-bound handle is what shrinks that from a session to a request.
+        Source: Microsoft&rsquo;s Azure SRE Agent architecture post, &ldquo;Stop restricting the agent. Start restricting its
+        environment&rdquo; (commandline.microsoft.com, 2026-08-21), which describes exactly this shape &mdash; opaque,
+        call-bound, destination-locked, scope-limited, single-use, injected at the boundary &mdash; running in production.
+        Two questions to settle in a decision before any code: who mints and redeems the handle when the proxy is the only
+        party that ever sees plaintext, and what &ldquo;a call&rdquo; even means when the caller is <code>exec</code> running
+        arbitrary agent-written code rather than a tool with a schema.</li>
+    <li style="display:list-item"><b>Output-side secret scrubbing.</b> KelyfOS keeps secret <i>values</i> out of the guest and out of
+        the audit log by construction rather than by scrubbing: the value is an unexported field, <code>Secret.String()</code>
+        omits it, and nothing serializes it &mdash; so there is presently nothing to redact. This idea covers the case
+        construction does not reach: a legitimate, allowlisted, secret-bound call whose <i>response</i> carries a credential,
+        which then lands in the guest, in the agent&rsquo;s context, and in everything the agent writes afterwards. Extend the
+        recorder&rsquo;s recognition of known secret material so that recognized secrets in tool and egress output are scrubbed
+        <i>before they reach the guest</i>, not only before the audit log. Same source as above; Microsoft describes inspecting
+        and scrubbing sensitive tool output before it enters model context, and describes it as being piloted rather than
+        shipped &mdash; which is the honest maturity level for it here too. Open questions before promotion: what the
+        recogniser is (the bound secrets are exact strings and easy; general credential patterns are a false-positive machine
+        that would corrupt a legitimate byte stream), and that it can only ever apply to traffic the proxy can read &mdash;
+        TLS-terminated domains and <code>exec</code> output &mdash; never to the tunnelled majority, which must be said out
+        loud so the feature is not mistaken for a general guarantee.</li>
     <li style="display:list-item"><b>KelyfOS as an MCP server for agent hosts</b> — promoted to Epic E4 (F-D5).</li>
     <li style="display:list-item"><b>MCP plugins inside the guest</b> — promoted to Epic E4; delivery decided in F-D6.</li>
     <li style="display:list-item"><b>Zero-friction start: <code>kelyfos init</code> + allowlist presets + packaged installs.</b>
@@ -865,6 +892,33 @@
         an agent that calls a tool it was never shown still produces a <code>team.spawn</code> refusal record.
         The flag rides the kernel command line for the same reason the agent's name does &mdash; it is the one thing
         inside the guest that the guest did not write, so a guest cannot grant itself a budget by asserting one.</td></tr>
+        <tr><td class="mono">F-D19</td><td class="mono">2026-08-23</td>
+        <td><b>Standing ruling from John, superseding F-D17&rsquo;s &ldquo;cannot be met&rdquo; clause.</b> F-D17 stays in
+        the log exactly as written and its honest-reporting stance stands; what changes is the scope of its conclusion.
+        <code>kelyfos team up</code> gains a <b>fork fast path for exactly those agents whose policy grants no egress</b>.
+        For each distinct image among the no-egress agents: boot one NIC-less template, snapshot it once, and fork the N
+        workers from it, each with its own vsock endpoint through the <code>vsock_override</code> that P3-2 already passes
+        (a per-sandbox UDS path in this implementation &mdash; the hybrid-vsock equivalent of the ruling&rsquo;s &ldquo;distinct
+        CIDs&rdquo;), with the per-fork entropy and clock resync D19 already requires. Agents that <i>were</i> granted egress
+        continue to cold-boot concurrently, unchanged. No network-namespace work, no P4-1 dependency, no second network path
+        &mdash; this is P3-2&rsquo;s vsock-only fork used as designed. The E2 acceptance test&rsquo;s &ldquo;total spawn time
+        &lt; 1 s&rdquo; bar is then <b>measured</b> on the bare-KVM reference (D15) rather than pre-declared: if it passes it
+        passes; if it fails the measured number is reported as not met, with the reason. E2-5&rsquo;s budgeted runtime spawns
+        stay cold boots; if a spawn budget&rsquo;s image whitelist ever contains no-egress images the same fast path may serve
+        it later &mdash; a parking-lot item, not work.</td>
+        <td>The ruling narrows F-D17&rsquo;s claim rather than contradicting its evidence. Everything F-D17 measured is still
+        true: a fork cannot carry a NIC, because the guest&rsquo;s address and default route live inside the memory image every
+        fork shares, and a team agent with an <code>allow</code> list needs a NIC. What it over-claimed is the conclusion. It
+        treated a team as one population and argued that one honest path beats two &mdash; &ldquo;a second boot path whose
+        availability depends on a policy field&rdquo; &mdash; when the population actually splits on a field the host reads
+        from the toml <i>before it boots anything</i>. That is the difference between a runtime surprise and a plan-time fact,
+        and it is the whole of the disagreement. The demo E2-9 asks for is the shape this serves: four workers that split a
+        task, coordinate through the team store and talk only to their master need no network of their own, and the acceptance
+        test says in its own words that they &ldquo;spawn via fork&rdquo;. Choosing the path per agent also keeps the divergence
+        visible rather than hidden &mdash; which boot path each agent took is a fact about that agent, and it belongs in
+        <code>team ps</code> and in the flight recorder like every other fact about it. The cost is honest and is F-D17&rsquo;s
+        cost, now paid deliberately: there are two boot paths in <code>team up</code>, and a team of egress-granted agents gets
+        no benefit at all from this work.</td></tr>
     <!-- Claude Code: append rows above this line. -->
       <tr><td class="mono">F-D10</td><td class="mono">2026-08-22</td>
         <td>The resource knobs E1-0 goes looking for shipped <b>partly</b>: <code>--vcpus</code>/<code>--mem</code> and
@@ -1873,6 +1927,40 @@ $ kelyfos log --session f72b69da --export team.html
   team messages / team refused / REFUSED worker-1 → worker-2   all rendered
 
 $ go test ./... -race     all packages ok</pre></td></tr>
+        <tr><td class="mono">2026-08-23</td><td class="mono">&mdash;</td>
+        <td>Two parking-lot entries added from outside evidence, and one note to the launch post. Microsoft published
+        an architecture piece on the Azure SRE Agent &mdash; &ldquo;Stop restricting the agent. Start restricting its
+        environment&rdquo;, Sanchit Mehta and Vishesh Agarwal, CoreAI, commandline.microsoft.com, 2026-08-21 &mdash; whose
+        thesis is the sentence this project was built around: <i>the environment is the policy</i>. Their four enforcement
+        layers are agent code in isolated microVMs with the policy machinery outside it, credentials that never enter the
+        sandbox, risk-classified approval, and role-scoped authority. The first two are what KelyfOS already ships. Two
+        things they do that KelyfOS does not are now parked, <b>not built</b>: (1) <b>per-call credential handles</b> &mdash;
+        opaque, call-bound, destination-locked, scope-limited, single-use &mdash; which would shrink the run-long
+        spend-but-not-read window that P2-6 leaves open down to a single request; (2) <b>output-side secret scrubbing</b>,
+        for the case where an allowed call <i>returns</i> a credential and construction cannot help, because there is
+        nothing to redact until something hands you one. Both entries carry their open questions, because neither is a
+        weekend. The <code>docs/launch/hn-post.md</code> notes section gains a line saying the article is independent
+        production validation of the premise and is fair to cite &mdash; the poster&rsquo;s call, not the build&rsquo;s.
+        Nothing here changes any epic or any code.</td>
+        <td class="mono"><pre>fetched 2026-08-23, commandline.microsoft.com
+  "Stop Restricting the Agent. Start Restricting Its Environment"
+  Sanchit Mehta, Vishesh Agarwal (CoreAI, Microsoft), 2026-08-21
+  credentials: opaque handles, call-bound, destination-locked,
+               scope-limited, single-use, injected at the boundary
+  output:      "inspecting and scrubbing sensitive tool output
+                before it enters model context" (piloting)
+PLAN-FEATURES.html &sect;4 +2 entries; docs/launch/hn-post.md +1 note</pre></td></tr>
+        <tr><td class="mono">2026-08-23</td><td class="mono">&mdash;</td>
+        <td>John&rsquo;s standing ruling on the E2 spawn bar recorded as <b>F-D19</b>, before any code, per &sect;8 rule 5.
+        F-D17 said the &lt; 1 s bar &ldquo;cannot be met&rdquo;; the ruling says that is true only of agents that have a NIC,
+        and a team agent granted no egress does not have one &mdash; so there is no network identity to collide and the
+        vsock-only fork P3-2 already ships applies to it unchanged. <code>team up</code> will therefore fork the no-egress
+        agents from a per-image template snapshot and go on cold-booting the egress-granted ones concurrently, and the bar
+        will be <i>measured</i> on the bare-KVM reference rather than declared either way in advance. F-D17 is left in the log
+        as written &mdash; it is the record of what was true when it was written and of the evidence behind it &mdash; and its
+        honest-reporting stance is what the new decision inherits. Also noted there: the same fast path is <i>not</i> being
+        built for E2-5&rsquo;s runtime spawns, which stay cold boots.</td>
+        <td class="mono">PLAN-FEATURES.html &sect;5 F-D19; supersedes the<br>&ldquo;cannot be met&rdquo; clause of F-D17 only</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
