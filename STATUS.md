@@ -18,10 +18,9 @@ limit at 1 MiB against a promised 8 MiB (F-D38) and a restore held to no ceiling
 (F-D39); the team tools, needing `team up` split (F-D42); the audit lane (F-D43);
 two client recipes, which found a client-launched server could run with no ceiling
 (F-D44); the plugins device (F-D45); the plugin runtime and its two fixes (F-D46);
-and both doors at once, in CI.
-
-Exit: 22/22 acceptance checks, 11/11 recipes, and three exams — two blind readers
-and John's live client — whose 22 findings are in `docs/exam/` (F-D47, F-D48).
+and both doors at once, in CI. Exit: 22/22 acceptance checks, 11/11 recipes, and
+three exams — two blind readers and John's live client — whose 22 findings are in
+`docs/exam/`.
 
 ## Blocked / debts
 - P4-4, P4-5 [BLOCKED]. `idle_timeout` refused (F-D20; F-D22). IMAGE_DIR per-arch not per-flavor: parked.
@@ -35,8 +34,8 @@ Both F-D35 premises falsified. After E4's exit and v0.7, before E5-0:
    acceptance suite, docs and cookbook green, and the boot and restore benchmarks
    re-run **on bare KVM** with the bars holding. Fallback: freeze (F-D40).
 2. **Bubble Tea + Lip Gloss → v2**, superseding F-D23, timeboxed to one task.
-   Acceptance: E2-8 watch re-run under a real PTY, identical behaviour, -race
-   clean. Fallback: frozen v1 with a new reopening condition (F-D41).
+   Acceptance: E2-8 watch under a real PTY, identical behaviour, -race clean.
+   Fallback: frozen v1 with a new reopening condition (F-D41).
 Buildroot first, then Bubble Tea, then the seam check, then E5-0. The HN post is John's.
 
 Steering needed: no.
