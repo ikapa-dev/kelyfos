@@ -7,21 +7,19 @@ Updated 2026-08-23 · tree clean, synced with origin/main
 - PLAN-FEATURES.html — 18/42. E1 closed (v0.4). Epic E2 active, 9/10.
 
 ## Now
-Epic E2 — agent teams (v0.5). Next: **E2-9**, the scripted proof demo, and
-with it the F-D19 fork fast path so the spawn bar has something to measure.
-Then E2 acceptance, the exit checklist and v0.5.
+Epic E2 — agent teams (v0.5). Next: **E2-9**, the scripted proof demo, and with
+it the F-D19 fork fast path so the spawn bar has something to measure. Then E2
+acceptance, the exit checklist and v0.5.
 
 ## New this session
-- Parking lot +2 from Microsoft's Azure SRE Agent post: per-call credential
-  handles, output-side secret scrubbing. Neither is being built.
+- Parking lot +2 from Microsoft's Azure SRE Agent post; neither is being built.
 - **F-D19** John's ruling on the fork fast path for no-egress agents.
 - **E2-4 correction**: four per-agent keys were parsed and dropped; now
   applied, with three combinations refused at the file (F-D20).
 - **E2-6** team cgroup hierarchy (F-D21); `dev/prove-team.sh` 6/6 green.
-- **E2-7** one chain per team (F-D22), lanes in the export; two doc/code
-  disagreements fixed on the way.
-- **E2-8** multi-lane `kelyfos watch`. F-D23 declines the Bubble Tea v2 move
-  D25 parked for this task. `go list -m -u all` and `govulncheck` clean.
+- **E2-7** one chain per team (F-D22), lanes in the export.
+- **E2-8** multi-lane `kelyfos watch`; F-D23 declines the Bubble Tea v2 move
+  D25 parked for this task.
 
 ## Blocked / debts
 - P4-4, P4-5 [BLOCKED] — Phase 4 backlog, parked unless John promotes it.
@@ -33,8 +31,8 @@ Then E2 acceptance, the exit checklist and v0.5.
   (F-D23); versions.mk pins vs upstream still to check at the seam.
 
 ## Next
-E2-9 demo + F-D19 fast path → E2 acceptance → exit checklist → v0.5 →
-finish the dependency refresh → Epic E3.
+E2-9 → E2 acceptance → exit checklist → v0.5 → finish the dependency refresh
+→ Epic E3.
 
 ## Waiting on John
 The HN post for v0.3/v0.4 (his to send). Whether P4 is ever promoted.
