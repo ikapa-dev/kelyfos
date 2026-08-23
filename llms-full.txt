@@ -4729,6 +4729,7 @@ Go's `flag` accepts one dash or two, so `-image` and `--image` are the same flag
 | [`kelyfos run`](#kelyfos-run) | boot a sandbox and keep it running |
 | [`kelyfos exec`](#kelyfos-exec) | run a command inside a running sandbox |
 | [`kelyfos mcp`](#kelyfos-mcp) | bridge an MCP client's stdio to a sandbox |
+| [`kelyfos serve-mcp`](#kelyfos-serve-mcp) | serve KelyfOS itself as an MCP server |
 | [`kelyfos snapshot save`](#kelyfos-snapshot-save) | save a sandbox's state, or bring it back |
 | [`kelyfos snapshot restore`](#kelyfos-snapshot-restore) | save a sandbox's state, or bring it back |
 | [`kelyfos fork`](#kelyfos-fork) | restore one snapshot into several sandboxes |
@@ -4810,6 +4811,18 @@ kelyfos mcp [flags]
 | --- | --- | --- | --- |
 | `--sandbox` | string | the only running one | sandbox id |
 | `--timeout` | duration | 15s | how long to wait for the sandbox channel |
+
+## kelyfos serve-mcp
+
+Serve KelyfOS itself as an MCP server.
+
+```
+kelyfos serve-mcp [flags]
+```
+
+| Flag | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `--arch` | string | the build host's architecture | guest architecture (aarch64\|x86_64) |
 
 ## kelyfos snapshot save
 
@@ -5029,6 +5042,14 @@ Several agents on one host, and the paths between them.
 | --- | --- | --- | --- |
 | `name` | string | — | the team's name; required, and it names the cgroup slice |
 | `record_payloads` | boolean | false | write message bodies into the record as well as their hashes |
+
+## `[mcp]`
+
+Limits on the outward MCP server, kelyfos serve-mcp.
+
+| Key | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `max_sandboxes` | integer | 4 | how many sandboxes one `kelyfos serve-mcp` may have running at once |
 
 ## `[team.resources]`
 
@@ -5288,6 +5309,53 @@ Request a new worker agent, within the budget this agent's policy granted: a cou
 | Parameter | Type | Required | Meaning |
 | --- | --- | --- | --- |
 | `image` | string | no | Image flavor for the worker. Defaults to the first your budget permits. |
+
+---
+
+## Driving KelyfOS from outside: `kelyfos serve-mcp`
+
+These are the host's tools, not a guest's. An MCP client that runs
+`kelyfos serve-mcp` gets them, and can boot sandboxes rather than work inside
+one. Everything they do is bounded by the project's `kelyfos.toml`, and none of
+them can widen it (`docs/mcp-surface.md`).
+
+### `sandbox_run`
+
+Boot a hardware-isolated microVM and return its id. Anything run inside it cannot reach this machine. It has no network at all unless the project's policy grants one. Every argument here may ask for less than the policy allows and never for more; a request above a ceiling is refused and names the ceiling.
+
+| Parameter | Type | Required | Meaning |
+| --- | --- | --- | --- |
+| `allow` | array of string | no | Domains this sandbox may reach. Must be a subset of the policy's allowlist. |
+| `cpus` | integer | no | Cores the guest sees. At most what the policy allows. |
+| `image` | string | no | Image flavor. Defaults to the project's. |
+| `mem` | string | no | Guest memory, e.g. "512M". At most what the policy allows. |
+
+### `sandbox_exec`
+
+Run a command inside a sandbox and return its output and exit code. Give `command` for a shell command line, or `argv` to run a program directly with no shell. A non-zero exit is a result, not an error: read exit_code.
+
+| Parameter | Type | Required | Meaning |
+| --- | --- | --- | --- |
+| `argv` | array of string | no | Argument vector, executed with no shell. |
+| `command` | string | no | Shell command line, run as /bin/sh -c "<command>". |
+| `cwd` | string | no | Working directory inside the guest. Defaults to /. |
+| `sandbox` | string | **yes** | The sandbox id from sandbox_run. |
+| `stdin` | string | no | Text written to the command's standard input. |
+| `timeout_ms` | integer | no | Kill the command after this many milliseconds. |
+
+### `sandbox_stop`
+
+Stop a sandbox this server started and release its resources.
+
+| Parameter | Type | Required | Meaning |
+| --- | --- | --- | --- |
+| `sandbox` | string | **yes** | The sandbox id. |
+
+### `sandbox_list`
+
+The sandboxes this server has started and not yet stopped, with the policy each is running under.
+
+No parameters.
 
 
 ---

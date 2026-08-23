@@ -56,6 +56,11 @@ type Config struct {
 	// which is half the guest's RAM.
 	ResScratchByte int64
 
+	// [mcp] — the outward MCP server's own limits (E4-1). Zero means the
+	// default; the parser refuses a non-positive value rather than accepting a
+	// limit that permits nothing.
+	MCPMaxSandboxes int
+
 	// Time budgets (E1-6). Zero means no budget.
 	ResMaxRuntime  time.Duration
 	ResIdleTimeout time.Duration
@@ -130,6 +135,19 @@ func Load(path string) (*Config, error) {
 		}
 		key = strings.TrimSpace(key)
 		value = strings.TrimSpace(value)
+
+		if section == "mcp" {
+			switch key {
+			case "max_sandboxes":
+				cfg.MCPMaxSandboxes, err = parseRate(value, where, key)
+			default:
+				return nil, unknownKey(where, key, "mcp")
+			}
+			if err != nil {
+				return nil, err
+			}
+			continue
+		}
 
 		if strings.HasPrefix(section, "team") {
 			if err := cfg.teamKey(section, key, value, where); err != nil {

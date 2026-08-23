@@ -126,7 +126,7 @@
      improvements to the existing product land here as epics. Inert until its gate opens.</p>
   <div class="meta">
     owner: <b>John</b> &nbsp;&middot;&nbsp; developer: <b>Claude Code</b> &nbsp;&middot;&nbsp;
-    status: <b class="ok" id="meta-status">Epic E4 — active, 1/9 (v0.6 released; next: E4-1, <code>serve-mcp</code> core)</b> &nbsp;&middot;&nbsp;
+    status: <b class="ok" id="meta-status">Epic E4 — active, 2/9 (v0.6 released; next: E4-2, file and state tools)</b> &nbsp;&middot;&nbsp;
     last updated: <b id="meta-updated">2026-08-23</b><br>
     repo file: <b>PLAN-FEATURES.html</b> (lives at the repository root next to <code>PLAN.html</code>)<br>
     <span class="quiet">Companion to PLAN.html — same protocol, same rules, later timeline.</span>
@@ -166,7 +166,7 @@
     <span class="bl-name">All epics</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">E4-1 — <code>kelyfos serve-mcp</code> core: <code>sandbox_run</code>, <code>sandbox_exec</code>, <code>sandbox_stop</code>, <code>sandbox_list</code>, concurrent sandboxes with ids, <code>max_sandboxes</code> enforced, ceilings refused in the E1-1 style</b></div>
+  <div class="focusline">Current focus: <b id="focus">E4-2 — file and state tools over existing machinery: <code>sandbox_read_file</code>, <code>sandbox_write_file</code>, <code>sandbox_snapshot</code>, <code>sandbox_fork</code>, <code>sandbox_restore</code></b></div>
 </div>
 
 <!-- ====================================================== 1. ACTIVATION GATE -->
@@ -498,7 +498,7 @@
         the plugins-drive layout and per-plugin manifest; session/concurrency model with <code>max_sandboxes</code> (toml
         <code>[mcp]</code> section, small default). Framing note carried over: MCP stdio is newline-delimited JSON-RPC — settled (verified against the official
         MCP spec, all revisions through 2025-11-25, during the build-plan review rounds); do not relitigate.</span></li>
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">E4-1</span><span class="tk"><code>kelyfos serve-mcp</code> core: stdio MCP server wrapping the existing host
         machinery — <code>sandbox_run</code> (boot with the project&rsquo;s toml policy), <code>sandbox_exec</code>,
         <code>sandbox_stop</code>, <code>sandbox_list</code>; multiple concurrent sandboxes with ids; <code>max_sandboxes</code>
@@ -3575,6 +3575,60 @@ $ gofmt -l . ; go vet ./... ; go test ./...
   clean · clean · all packages ok
 $ python3 tools/check-plan.py
   PLAN.html is coherent</pre></td></tr>
+        <tr><td class="mono">2026-08-23</td><td class="mono">E4-1</td>
+        <td><b><code>kelyfos serve-mcp</code>: KelyfOS is now a tool any MCP client can use.</b> One config line and a
+        client's agent gains <code>sandbox_run</code>, <code>sandbox_exec</code>, <code>sandbox_stop</code> and
+        <code>sandbox_list</code> — a real MCP server on its own standard streams, not the byte copier
+        <code>kelyfos mcp</code> is.
+        <b>The policy ceiling is the whole of it, and it is visible in the transcript rather than asserted.</b> A call
+        asking for eight cores against a two-core ceiling is refused naming the ceiling <i>and the line of the file it
+        came from</i>, in the E1-1 style, because a caller who cannot see the file needs both to act. A call naming a
+        domain the project never listed is refused the same way. A call asking for <i>less</i> — one core, a narrowed
+        allowlist — is granted, which is the point of having arguments at all.
+        <b>Every sandbox it creates writes its own flight recorder</b>, and every <code>sandbox_exec</code> is a
+        <code>command.start</code>/<code>command.exit</code> pair with <code>via: serve-mcp</code>. That is F-D33's
+        invariant applied to the newest door before the door had a chance to skip it.
+        <b>Concurrency is real rather than serialised.</b> MCP assumes a client may have several calls in flight and
+        orders none of them, so tool calls run on their own goroutines behind one writer — visible in the run below,
+        where the answer to request 4 arrives before the answer to request 3. <code>max_sandboxes</code> is checked
+        again under the lock after a boot, because two calls could both pass a check made before it.
+        Seven unit tests pin the ceiling logic without needing a machine, including that no tool named
+        <code>set_policy</code> or <code>allow_domain</code> exists and that every tool name survives the strictest
+        downstream character set (F-D36).
+        <b>One thing E4-5 would otherwise have inherited, done now because leaving it would make the reference
+        incomplete the moment the tools existed:</b> <code>make docs</code> now drives <code>serve-mcp</code> over the
+        protocol and renders its <code>tools/list</code> answer beside the guest's, so
+        <code>docs/reference/tools.md</code> covers both surfaces. The command itself and
+        <code>[mcp] max_sandboxes</code> appeared in the reference with no work at all, which is F-D4 paying off
+        exactly as E4-5 predicted it would.</td>
+        <td class="mono"><pre>$ kelyfos serve-mcp        (policy: cpus = 2,
+  allow = [api.github.com, example.com],
+  [mcp] max_sandboxes = 2)
+
+id=2 tools: sandbox_run sandbox_exec sandbox_stop
+            sandbox_list
+id=3 isError: cpus 8 exceeds the ceiling cpus = 2
+      set at /tmp/…/kelyfos.toml:6
+        ask for fewer, or raise the ceiling in
+        the policy file
+id=4 isError: allow "evil.example.net" is not in
+      this project's allowlist
+id=5 ok: sandbox c4981809 ready in 827 ms
+      (dev, 1 vcpu, 512 MiB, egress example.com)
+id=6 ok: sandbox 639707b1 ready in 841 ms
+      (dev, 2 vcpu, 512 MiB, egress …)
+id=7 isError: this server already has 2
+      sandbox(es) running and [mcp]
+      max_sandboxes is 2
+id=9 ok: both listed
+
+note the ordering: 4 answered before 3, because
+tool calls run concurrently
+
+$ go test ./host/ -run TestServeMCP
+  7 tests, all PASS
+$ gofmt -l . ; go vet ./... ; go test ./...
+  clean · clean · all packages ok</pre></td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>

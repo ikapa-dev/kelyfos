@@ -20,6 +20,7 @@ usage:
   kelyfos run [flags]              boot a sandbox and keep it running
   kelyfos exec [flags] <command>   run a command inside a running sandbox
   kelyfos mcp [flags]              bridge an MCP client's stdio to a sandbox
+  kelyfos serve-mcp [flags]        serve KelyfOS itself as an MCP server
   kelyfos snapshot save|restore    save a sandbox's state, or bring it back
   kelyfos fork [flags]             restore one snapshot into several sandboxes
   kelyfos team up|ps|down          run several agents with the paths between
@@ -49,6 +50,8 @@ func main() {
 		err = execCmd(os.Args[2:])
 	case "mcp":
 		err = mcpCmd(os.Args[2:])
+	case "serve-mcp":
+		err = serveMCPCmd(os.Args[2:])
 	case "snapshot":
 		err = snapshotCmd(os.Args[2:])
 	case "fork":

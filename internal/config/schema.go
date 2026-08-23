@@ -113,6 +113,7 @@ func Sections() []Section {
 		{Name: "", Header: "(bare) or [sandbox]", Doc: "what to boot, and what it may reach"},
 		{Name: "resources", Header: "[resources]", Doc: "hard ceilings for a single run: a flag may ask for less, never more"},
 		{Name: "team", Header: "[team]", Doc: "several agents on one host, and the paths between them"},
+		{Name: "mcp", Header: "[mcp]", Doc: "limits on the outward MCP server, kelyfos serve-mcp"},
 		{Name: "team.resources", Header: "[team.resources]", Doc: "the collective budget — cpu_quota is the only cap a team can share"},
 		{Name: "team.agent", Header: "[[team.agent]]", Repeated: true, Doc: "one agent, or count of them"},
 		{Name: "team.agent.resources", Header: "[team.agent.resources]", Doc: "that agent's own caps: exactly the [resources] keys"},
@@ -149,6 +150,11 @@ func Schema() []Key {
 	}
 	out := inSection("", keys)
 	out = append(out, inSection("resources", resourceKeys())...)
+
+	out = append(out,
+		Key{Section: "mcp", Name: "max_sandboxes", Type: TypeInt, Default: "4", Sample: "2",
+			Doc: "how many sandboxes one `kelyfos serve-mcp` may have running at once"},
+	)
 
 	out = append(out,
 		Key{Section: "team", Name: "name", Type: TypeString, Default: "", Sample: `"reviewers"`,

@@ -129,7 +129,7 @@ func (c *Config) header(line, where string) (string, error) {
 	}
 
 	switch {
-	case !array && (name == "sandbox" || name == "resources"):
+	case !array && (name == "sandbox" || name == "resources" || name == "mcp"):
 		return name, nil
 
 	case !array && name == "team":

@@ -75,7 +75,7 @@ func run(bin, sup, out, repo string) error {
 		"exit-codes.md": exitPage(),
 	}
 	if sup != "" {
-		page, err := toolsPage(sup)
+		page, err := toolsPage(sup, bin)
 		if err != nil {
 			return err
 		}
@@ -466,7 +466,42 @@ type toolDump struct {
 	TeamSpawn []mcp.Tool `json:"team_spawn"`
 }
 
-func toolsPage(sup string) (string, error) {
+// hostTools asks `kelyfos serve-mcp` for its own tools/list, over the protocol,
+// the way a client would. Driving the server rather than reading a table means
+// the page cannot describe a surface the server does not actually advertise —
+// which is the same reason the guest's half comes from --dump-tools (E4-1).
+func hostTools(bin string) ([]mcp.Tool, error) {
+	cmd := exec.Command(bin, "serve-mcp")
+	cmd.Stdin = strings.NewReader(strings.Join([]string{
+		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"gendocs","version":"1"}}}`,
+		`{"jsonrpc":"2.0","method":"notifications/initialized"}`,
+		`{"jsonrpc":"2.0","id":2,"method":"tools/list"}`,
+		"",
+	}, "\n"))
+	var buf strings.Builder
+	cmd.Stdout = &buf
+	if err := cmd.Run(); err != nil {
+		if _, ok := err.(*exec.ExitError); !ok {
+			return nil, err
+		}
+	}
+	for _, line := range strings.Split(buf.String(), "\n") {
+		if !strings.Contains(line, `"tools"`) {
+			continue
+		}
+		var resp struct {
+			Result struct {
+				Tools []mcp.Tool `json:"tools"`
+			} `json:"result"`
+		}
+		if err := json.Unmarshal([]byte(line), &resp); err == nil && len(resp.Result.Tools) > 0 {
+			return resp.Result.Tools, nil
+		}
+	}
+	return nil, fmt.Errorf("serve-mcp did not answer tools/list")
+}
+
+func toolsPage(sup, bin string) (string, error) {
 	text, err := capture(sup, "--dump-tools")
 	if err != nil {
 		return "", fmt.Errorf("asking the supervisor for its tools: %w", err)
@@ -485,6 +520,11 @@ func toolsPage(sup string) (string, error) {
 		"for a sandbox in a team, and `team_spawn` only for an agent whose policy\n" +
 		"granted a spawn budget. A tool that is always advertised and always fails\n" +
 		"teaches a model to ignore failures, so it is not advertised (F-D18).\n")
+
+	host, err := hostTools(bin)
+	if err != nil {
+		return "", fmt.Errorf("asking serve-mcp for its tools: %w", err)
+	}
 
 	groups := []struct {
 		title string
@@ -527,7 +567,51 @@ func toolsPage(sup string) (string, error) {
 			}
 		}
 	}
+	// The other direction: what a client attached to `kelyfos serve-mcp` sees.
+	// Two surfaces in one page because a reader asking "what tools are there"
+	// means both, and the difference between them is which side of the wall the
+	// caller is on.
+	b.WriteString("\n---\n\n## Driving KelyfOS from outside: `kelyfos serve-mcp`\n\n" +
+		"These are the host's tools, not a guest's. An MCP client that runs\n" +
+		"`kelyfos serve-mcp` gets them, and can boot sandboxes rather than work inside\n" +
+		"one. Everything they do is bounded by the project's `kelyfos.toml`, and none of\n" +
+		"them can widen it (`docs/mcp-surface.md`).\n")
+	writeTools(&b, host)
+
 	return b.String(), nil
+}
+
+// writeTools renders one group of tools with their parameters.
+func writeTools(b *strings.Builder, tools []mcp.Tool) {
+	for _, t := range tools {
+		fmt.Fprintf(b, "\n### `%s`\n\n%s\n\n", t.Name, t.Description)
+		if len(t.InputSchema.Properties) == 0 {
+			b.WriteString("No parameters.\n")
+			continue
+		}
+		required := map[string]bool{}
+		for _, r := range t.InputSchema.Required {
+			required[r] = true
+		}
+		names := make([]string, 0, len(t.InputSchema.Properties))
+		for n := range t.InputSchema.Properties {
+			names = append(names, n)
+		}
+		sort.Strings(names)
+		b.WriteString("| Parameter | Type | Required | Meaning |\n| --- | --- | --- | --- |\n")
+		for _, n := range names {
+			p := t.InputSchema.Properties[n]
+			typ := p.Type
+			if p.Items != nil {
+				typ += " of " + p.Items.Type
+			}
+			req := "no"
+			if required[n] {
+				req = "**yes**"
+			}
+			fmt.Fprintf(b, "| `%s` | %s | %s | %s |\n", n, typ, req, cell(p.Description))
+		}
+	}
 }
 
 // cell makes a string safe inside a markdown table: a pipe would end the column

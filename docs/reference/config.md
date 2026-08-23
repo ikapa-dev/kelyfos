@@ -48,6 +48,14 @@ Several agents on one host, and the paths between them.
 | `name` | string | — | the team's name; required, and it names the cgroup slice |
 | `record_payloads` | boolean | false | write message bodies into the record as well as their hashes |
 
+## `[mcp]`
+
+Limits on the outward MCP server, kelyfos serve-mcp.
+
+| Key | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `max_sandboxes` | integer | 4 | how many sandboxes one `kelyfos serve-mcp` may have running at once |
+
 ## `[team.resources]`
 
 The collective budget — cpu_quota is the only cap a team can share.

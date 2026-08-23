@@ -12,6 +12,7 @@ Go's `flag` accepts one dash or two, so `-image` and `--image` are the same flag
 | [`kelyfos run`](#kelyfos-run) | boot a sandbox and keep it running |
 | [`kelyfos exec`](#kelyfos-exec) | run a command inside a running sandbox |
 | [`kelyfos mcp`](#kelyfos-mcp) | bridge an MCP client's stdio to a sandbox |
+| [`kelyfos serve-mcp`](#kelyfos-serve-mcp) | serve KelyfOS itself as an MCP server |
 | [`kelyfos snapshot save`](#kelyfos-snapshot-save) | save a sandbox's state, or bring it back |
 | [`kelyfos snapshot restore`](#kelyfos-snapshot-restore) | save a sandbox's state, or bring it back |
 | [`kelyfos fork`](#kelyfos-fork) | restore one snapshot into several sandboxes |
@@ -93,6 +94,18 @@ kelyfos mcp [flags]
 | --- | --- | --- | --- |
 | `--sandbox` | string | the only running one | sandbox id |
 | `--timeout` | duration | 15s | how long to wait for the sandbox channel |
+
+## kelyfos serve-mcp
+
+Serve KelyfOS itself as an MCP server.
+
+```
+kelyfos serve-mcp [flags]
+```
+
+| Flag | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `--arch` | string | the build host's architecture | guest architecture (aarch64\|x86_64) |
 
 ## kelyfos snapshot save
 

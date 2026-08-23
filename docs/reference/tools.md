@@ -144,3 +144,50 @@ Request a new worker agent, within the budget this agent's policy granted: a cou
 | Parameter | Type | Required | Meaning |
 | --- | --- | --- | --- |
 | `image` | string | no | Image flavor for the worker. Defaults to the first your budget permits. |
+
+---
+
+## Driving KelyfOS from outside: `kelyfos serve-mcp`
+
+These are the host's tools, not a guest's. An MCP client that runs
+`kelyfos serve-mcp` gets them, and can boot sandboxes rather than work inside
+one. Everything they do is bounded by the project's `kelyfos.toml`, and none of
+them can widen it (`docs/mcp-surface.md`).
+
+### `sandbox_run`
+
+Boot a hardware-isolated microVM and return its id. Anything run inside it cannot reach this machine. It has no network at all unless the project's policy grants one. Every argument here may ask for less than the policy allows and never for more; a request above a ceiling is refused and names the ceiling.
+
+| Parameter | Type | Required | Meaning |
+| --- | --- | --- | --- |
+| `allow` | array of string | no | Domains this sandbox may reach. Must be a subset of the policy's allowlist. |
+| `cpus` | integer | no | Cores the guest sees. At most what the policy allows. |
+| `image` | string | no | Image flavor. Defaults to the project's. |
+| `mem` | string | no | Guest memory, e.g. "512M". At most what the policy allows. |
+
+### `sandbox_exec`
+
+Run a command inside a sandbox and return its output and exit code. Give `command` for a shell command line, or `argv` to run a program directly with no shell. A non-zero exit is a result, not an error: read exit_code.
+
+| Parameter | Type | Required | Meaning |
+| --- | --- | --- | --- |
+| `argv` | array of string | no | Argument vector, executed with no shell. |
+| `command` | string | no | Shell command line, run as /bin/sh -c "<command>". |
+| `cwd` | string | no | Working directory inside the guest. Defaults to /. |
+| `sandbox` | string | **yes** | The sandbox id from sandbox_run. |
+| `stdin` | string | no | Text written to the command's standard input. |
+| `timeout_ms` | integer | no | Kill the command after this many milliseconds. |
+
+### `sandbox_stop`
+
+Stop a sandbox this server started and release its resources.
+
+| Parameter | Type | Required | Meaning |
+| --- | --- | --- | --- |
+| `sandbox` | string | **yes** | The sandbox id. |
+
+### `sandbox_list`
+
+The sandboxes this server has started and not yet stopped, with the policy each is running under.
+
+No parameters.
