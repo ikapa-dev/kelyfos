@@ -31,8 +31,7 @@ three exams — two blind readers and John's live client — whose 22 findings a
 ## The E4→E5 seam: a platform-refresh pair (John's ruling)
 Both F-D35 premises falsified. After E4's exit and v0.7, before E5-0:
 1. **Buildroot → 2025.02.x**, superseding D11. Gates: both arches rebuilt, the
-   acceptance suite, docs and cookbook green, and the boot and restore benchmarks
-   re-run **on bare KVM** with the bars holding. Fallback: freeze (F-D40).
+   acceptance suite, docs and cookbook green, and the boot and restore benchmarks re-run **on bare KVM** with the bars holding. Fallback: freeze (F-D40).
 2. **Bubble Tea + Lip Gloss → v2**, superseding F-D23, timeboxed to one task.
    Acceptance: E2-8 watch under a real PTY, identical behaviour, -race clean.
    Fallback: frozen v1 with a new reopening condition (F-D41).
