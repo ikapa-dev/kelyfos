@@ -27,6 +27,15 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      flavor:
+        description: >-
+          Which image flavor to build. The default is what CI checks on every
+          push; a release needs `dev`, which is the flavor the quickstart, the
+          cookbook and every recipe name.
+        type: choice
+        options: [base, dev]
+        default: base
   schedule:
     # Mondays, 04:23 UTC — the cache-free full build. An odd minute on purpose:
     # GitHub drops scheduled runs that pile up on the hour.
@@ -231,7 +240,7 @@ jobs:
         run: bash dev/install-build-deps.sh
 
       - name: Build the guest image
-        run: make image ARCH=${{ matrix.arch }}
+        run: make image ARCH=${{ matrix.arch }} FLAVOR=${{ inputs.flavor || 'base' }}
 
       # Printed rather than asserted: a hit rate is a fact about the cache, not a
       # property of the build, and a weekly run is meant to show 0%.
@@ -316,7 +325,7 @@ jobs:
           set -o pipefail
           make cli
           ./bin/kelyfos doctor --arch x86_64
-          ./bin/kelyfos run --arch x86_64 --image base > run.log 2>&1 &
+          ./bin/kelyfos run --arch x86_64 --image "${{ inputs.flavor || 'base' }}" > run.log 2>&1 &
           RUN_PID=$!
           for i in $(seq 1 150); do grep -q "ready in" run.log && break; sleep 0.2; done
           cat run.log
