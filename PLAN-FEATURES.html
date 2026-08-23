@@ -126,7 +126,7 @@
      improvements to the existing product land here as epics. Inert until its gate opens.</p>
   <div class="meta">
     owner: <b>John</b> &nbsp;&middot;&nbsp; developer: <b>Claude Code</b> &nbsp;&middot;&nbsp;
-    status: <b class="ok" id="meta-status">Epic E3 — active, 0/6 (v0.5 released; next: E3-0, the docs inventory)</b> &nbsp;&middot;&nbsp;
+    status: <b class="ok" id="meta-status">Epic E3 — active, 1/6 (v0.5 released; next: E3-1, the generated reference)</b> &nbsp;&middot;&nbsp;
     last updated: <b id="meta-updated">2026-08-23</b><br>
     repo file: <b>PLAN-FEATURES.html</b> (lives at the repository root next to <code>PLAN.html</code>)<br>
     <span class="quiet">Companion to PLAN.html — same protocol, same rules, later timeline.</span>
@@ -166,7 +166,7 @@
     <span class="bl-name">All epics</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">E3-0 — the docs inventory: what exists, what is concept vs reference, and <code>docs/README.md</code> as the entry map</b></div>
+  <div class="focusline">Current focus: <b id="focus">E3-1 — <code>make docs</code>: generate the CLI, toml, MCP-tool, event and exit-code reference from the source, and fail CI on any drift</b></div>
 </div>
 
 <!-- ====================================================== 1. ACTIVATION GATE -->
@@ -428,7 +428,7 @@
      exit codes — so it cannot drift; CI fails if committed docs disagree with the source. Ordered after E2 because it must
      document teams. Estimate: 2&ndash;3 weekends.</p>
   <ul class="tasks">
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">E3-0</span><span class="tk">Docs inventory: list every doc the build produced (protocol.md, networking.md,
         events.md, resources.md, teams.md, threat model), mark what is concept vs reference vs missing, and write
         <code>docs/README.md</code> as the human/LLM entry map.</span></li>
@@ -1128,6 +1128,39 @@
         waiting for one would mean the cache never fills. And a template is written to a temporary directory and
         renamed into place, so a half-written image is never a cache hit and two concurrent team-ups cannot serve each
         other a partial one.</td></tr>
+        <tr><td class="mono">F-D27</td><td class="mono">2026-08-23</td>
+        <td>E3-0&rsquo;s inventory is done by <b>reading every document against the code it describes</b> rather than by
+        listing filenames, and what it found splits into three classes with three different owners. <b>(1) Reference
+        drift</b> &mdash; an event enum carrying two values the code never emits while omitting four it does, a tool count
+        of six where there are eight, a wait argument documented as <code>timeout</code> when it is
+        <code>timeout_ms</code>, a channel missing an entire RPC &mdash; belongs to E3-1, and the inventory&rsquo;s list
+        is what will make the generator&rsquo;s coverage checkable rather than assumed. <b>(2) Wrong prose</b> &mdash;
+        sentences a reader would act on and be wrong &mdash; is corrected in the commit immediately after this one,
+        before E3-1 generates anything and well before E3-2 folds these files into <code>llms-full.txt</code> verbatim.
+        <b>(3) Code defects</b> are recorded here and in STATUS.md and are <b>not</b> fixed inside a documentation epic;
+        the prose is made to say what the code does today, and names the defect.
+        <i>Why the inventory reads code at all.</i> E3-0 asks for concept vs reference vs <b>missing</b>, and only two of
+        those three can be answered from the documents themselves. Missing is a fact about the product rather than about
+        the prose: the six file and exec MCP tools have no specification anywhere, fourteen flags are named in no
+        document, and three <code>KELYFOS_*</code> environment variables the CLI reads appear nowhere &mdash; none of
+        which is visible from inside <code>docs/</code>. An inventory that never opened the source would have reported a
+        tidy directory.
+        <i>Why the corrections are their own commit.</i> An entry map is a promise that these documents are the answer,
+        so publishing one over sentences already proved false would be the failure this project refuses everywhere else.
+        But repairing prose is not inventorying it, and merging the two would leave no commit that says only what was
+        found. E3-0 ticks on the map and the findings; the repairs land next, with their own row and their own evidence.
+        <i>Why the code defects wait.</i> Four were found and each is real. <code>kelyfos shim</code> opens no flight
+        recorder and reads no <code>kelyfos.toml</code>, so a shim sandbox has neither an audit record nor a resource cap
+        while <code>docs/e2b-shim.md</code> promises it &ldquo;the same guarantees as any other KelyfOS sandbox&rdquo;.
+        The plain-HTTP proxy path records <code>mode: tunnelled</code> though it parses, rewrites and re-issues the
+        request, which understates what the proxy read and is the one place D6&rsquo;s binding condition (2) does not
+        hold. <code>[team.agent.spawn.resources]</code> accepts <code>idle_timeout</code> and <code>max_runtime</code>
+        and enforces neither, which is precisely the silent inertness F-D10 and F-D20 exist to prevent. And a sandbox
+        made by <code>kelyfos fork</code> gets a <code>session.start</code> and never a <code>session.end</code>. None of
+        them is a documentation change, and doing product work inside a documentation epic because the documentation
+        epic is what happened to find it is how an epic stops being about anything. They are written down instead, which
+        is the only thing that makes a defect survive being noticed.</td>
+        <td class="mono">docs/README.md; the E3-0 progress row</td></tr>
     <!-- Claude Code: append rows above this line. -->
       <tr><td class="mono">F-D10</td><td class="mono">2026-08-22</td>
         <td>The resource knobs E1-0 goes looking for shipped <b>partly</b>: <code>--vcpus</code>/<code>--mem</code> and
@@ -2725,6 +2758,48 @@ PASS  the warm path is faster than the cold one: 215 ms against 366 ms
 for comparison, the same bar before F-D26 (run 32630824099): 1098 ms
   109 ms boot + 927 ms template snapshot + 57&ndash;61 ms per fork
 nested dev host after F-D26: cold 3855 ms, warm 1338 ms (D15: informational)</pre></td></tr>
+        <tr><td class="mono">2026-08-23</td><td class="mono">E3-0</td>
+        <td><b>The docs inventory, and <code>docs/README.md</code> as the entry map.</b> Every document under
+        <code>docs/</code> classified concept / reference / mixed, with the reference half of each named &mdash; that is
+        the half a generator owns at E3-1 and the half that can drift. The map serves both readers the epic is for: a
+        &ldquo;start here&rdquo; table by intent, one line on what each document answers, and a per-document account of
+        where it is thin.
+        <b>The inventory was taken against the code rather than against the directory</b>, because
+        &ldquo;missing&rdquo; is a fact about the product and not about the prose. What has no documentation at all:
+        <code>kelyfos version</code> and <code>kelyfos help</code>; fourteen flags, including every one
+        <code>exec</code> has; <code>sandbox.arch</code>, <code>resources.net_mbps_tx</code> and
+        <code>resources.disk_iops</code>; the schemas of all fourteen MCP tools; exit codes 2, 126, 127 and both meanings
+        of 1; and the three <code>KELYFOS_*</code> environment variables. That list is E3-1&rsquo;s input.
+        <b>Findings routed in F-D27</b> &mdash; reference drift to E3-1&rsquo;s generator, wrong prose to the next
+        commit, four code defects recorded rather than fixed inside a documentation epic. The prose errors are named in
+        the map itself, so the map is not quietly recommending documents it has just proved wrong.
+        One tidy: <code>docs/.gitkeep</code> removed. The directory has not been empty since P1-0 and now has a README.</td>
+        <td class="mono"><pre>$ ls docs/*.md | wc -l
+  8   (7 + the new README)
+
+$ grep -rn 'docs/[a-z-]*\.md' --include='*.go' .
+  79 citations across 37 files
+  &mdash; doc section numbers are load-bearing
+
+seven audits in parallel, one per document plus a
+surface sweep, each read against the packages that
+implement it:
+
+  protocol.md    4 drift · 9 coverage gaps
+  events.md      6 drift · 2 dead enum values,
+                 4 real ones undocumented
+  networking.md  7 drift · 6 gaps
+                 (untouched since P2-5)
+  resources.md   9 drift (disk semantics wrong)
+  teams.md       6 drift · schema otherwise exact
+  threat-model   DoS section wrong since v0.4
+  e2b-shim.md    1 false guarantee
+  README.md      6 drift, incl. "Status: v0.3"
+
+$ go vet ./... &amp;&amp; go test ./...
+  all packages ok
+$ python3 tools/check-plan.py
+  PLAN.html is coherent</pre></td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>

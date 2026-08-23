@@ -254,7 +254,8 @@ cold-booted — a fork cannot carry a network identity, and they have none.
 
 | | |
 | --- | --- |
-| [`PLAN.html`](PLAN.html) | the living plan, every decision and the full progress log |
+| [`docs/README.md`](docs/README.md) | the entry map: what each document is, and where it is thin |
+| [`PLAN.html`](PLAN.html) · [`PLAN-FEATURES.html`](PLAN-FEATURES.html) | the living plan — every decision and the full progress log, phases then epics |
 | [`docs/threat-model.md`](docs/threat-model.md) | what is defended, and what is not |
 | [`docs/protocol.md`](docs/protocol.md) | the host/guest wire protocol |
 | [`docs/events.md`](docs/events.md) | the audit event schema |
