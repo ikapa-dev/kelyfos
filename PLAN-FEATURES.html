@@ -1803,6 +1803,30 @@
         <i>Revisit when</i> v2 gains something <code>watch</code> wants, which is now a normal upgrade rather than a
         migration.</td>
         <td class="mono">dev/accept-watch.sh, charm.land/bubbletea/v2</td></tr>
+        <tr><td class="mono">F-D52</td><td class="mono">2026-08-23</td>
+        <td><b>The guest kernel goes to 6.18.46 &mdash; and the bump found that a version change could not rebuild
+        anything.</b>
+        <i>The check.</i> At the seam, everything except Buildroot: Go is 1.27.0 and pinned to 1.27.0; Firecracker is
+        v1.16.1 and pinned to v1.16.1; <code>govulncheck</code> reports nothing; the only module updates available are
+        indirect ones nothing here calls. The kernel had moved one point release inside the same longterm line, which
+        is exactly the bump the seam rule permits. The pinned digest for 6.18.45 was checked against kernel.org&rsquo;s
+        <code>sha256sums.asc</code> and matches, so the old pin was sound; 6.18.46&rsquo;s digest comes from the same
+        file.
+        <i>What the bump found.</i> Bumping <code>LINUX_VERSION</code> and rebuilding produced an image whose guest
+        answered <code>uname -r</code> with <b>6.18.45</b>. The Buildroot <code>.config</code> is generated from the
+        fragments with the kernel version substituted in, and its prerequisites were the fragments and the Buildroot
+        tree &mdash; not <code>versions.mk</code>. So a version bump regenerated nothing, Buildroot rebuilt nothing, and
+        the image was stamped as new while running the old kernel. Silently.
+        <i>Why that is worse than it sounds.</i> The comment above that rule says an edit to the config &ldquo;cannot be
+        silently ignored by a stale build directory&rdquo; &mdash; which was true of the fragments and false of the
+        versions they are filled with. Every pinned-version bump this project has ever made through that path would
+        have needed a manual <code>make clean</code> nobody wrote down. <code>versions.mk</code> is a prerequisite now.
+        <i>How it was caught.</i> By asking the guest what it was running rather than by reading the build log, which
+        said everything it should have said. The same habit that found the E4 exit&rsquo;s worst defect.
+        <i>Gates.</i> Both architectures rebuilt from the new kernel, the acceptance suites re-run, and the boot and
+        restore bars re-earned on the bare-KVM reference &mdash; a kernel is the thing boot time is most sensitive
+        to.</td>
+        <td class="mono">kernel.org sha256sums.asc, versions.mk</td></tr>
     <!-- Claude Code: append rows above this line. -->
       <tr><td class="mono">F-D10</td><td class="mono">2026-08-22</td>
         <td>The resource knobs E1-0 goes looking for shipped <b>partly</b>: <code>--vcpus</code>/<code>--mem</code> and

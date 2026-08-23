@@ -7,7 +7,7 @@ Updated 2026-08-23 · tree clean, synced with origin/main
 - PLAN-FEATURES.html — 34/42. **E1–E4 closed; v0.7 released. Next: the seam.**
 
 ## Now
-The E4→E5 seam pair: Buildroot to 2025.02.x, then Bubble Tea v2.
+The seam dependency check, then Epic E5. Buildroot is queued (upstream outage).
 
 ## This session
 E1–E3 closed, **v0.6 released**; then the F-D33 batch and the E3→E4 seam check.

@@ -111,7 +111,13 @@ $(BR_SRC)/Makefile:
 # The per-arch configuration, assembled from the shared fragment plus the arch
 # fragment. Regenerated whenever either fragment changes, so an edit to the
 # config cannot be silently ignored by a stale build directory.
-$(BUILD_DIR)/.config: $(BR_SRC)/Makefile $(BR_FRAGMENTS)
+#
+# versions.mk is a prerequisite for the same reason and was missing: the kernel
+# version is substituted into this config, so bumping LINUX_VERSION and
+# rebuilding produced an image running the *old* kernel and said nothing. Found
+# at the E4→E5 seam by bumping 6.18.45 to 6.18.46 and asking the guest what it
+# was running.
+$(BUILD_DIR)/.config: $(BR_SRC)/Makefile $(BR_FRAGMENTS) $(CURDIR)/versions.mk
 	@mkdir -p $(BUILD_DIR)
 	@echo "==> configuring buildroot for ARCH=$(ARCH)"
 	@cat $(BR_FRAGMENTS) \

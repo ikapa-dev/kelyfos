@@ -21,8 +21,8 @@ BUILDROOT_SHA256 ?= 5a59e7501b0b4ec52c41f4bfa79412320e0b37eae5f719605a258e8d0c6f
 # --- Guest kernel ----------------------------------------------------------
 # 6.18 is the newest longterm line on kernel.org. Pinned to an exact patch
 # release; digest from the kernel.org sha256sums.asc for v6.x.
-LINUX_VERSION ?= 6.18.45
-LINUX_SHA256 ?= 30fa4a56579ca614ac125a12614f7f6466f87ab1278aef7b951dd74156deab33
+LINUX_VERSION ?= 6.18.46
+LINUX_SHA256 ?= f5d44b93808b02cc2969c5404ba081d97523719c9fd2ba2de6db318b4141cca0
 
 # --- Firecracker -----------------------------------------------------------
 # The VMM the guest is built for. Plan floor is >= 1.7. Release tarballs ship

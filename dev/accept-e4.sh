@@ -201,7 +201,17 @@ if ! timeout 400 python3 drive.py; then
 fi
 
 box="$(python3 -c 'import json;print(json.load(open("facts.json"))["sandbox"])')"
-server="$(kelyfos log --list | grep serve-mcp | head -1 | awk '{print $1}')"
+server="$(kelyfos log --list | grep serve-mcp | sed -n 1p | awk '{print $1}')"
+
+# The records are read once into files, and every check below greps the file.
+#
+# Not a tidiness preference: `kelyfos log | grep -q` has grep exiting on its
+# first match, which SIGPIPEs the log, which under `pipefail` makes the whole
+# pipeline fail — so a check can report "no" for a line that is present, and
+# does so more often the longer the record gets. It cost one confusing failure
+# here, and it is the same defect the cookbook recipes had.
+kelyfos log --session "$box" > machine.log 2>/dev/null
+kelyfos log --session "$server" > server.log 2>/dev/null
 fact() { python3 -c "import json;v=json.load(open('facts.json'))['$1'];print(v if isinstance(v,str) else json.dumps(v,indent=1))"; }
 
 say "1. a scripted client lists tools, boots a sandbox, and runs a command"
@@ -214,7 +224,7 @@ say "2. a domain outside the project toml is refused, and audited"
 echo "     $(fact allow_message | head -1)"
 check "$([ "$(fact allow_refused)" = "true" ] && echo yes || echo no)" "the request was refused"
 check "$(fact allow_message | grep -q 'never add to it' && echo yes || echo no)" "the refusal says the rule"
-check "$(kelyfos log --session "$server" | grep -q 'client result  sandbox_run refused' && echo yes || echo no)" \
+check "$(grep -q 'client result  sandbox_run refused' server.log && echo yes || echo no)" \
       "the refusal is an mcp.host.* audit event"
 
 say "3. max_sandboxes + 1 is refused, and audited"
@@ -228,7 +238,7 @@ echo "     inner tools: $(fact inner_tools)"
 echo "     $(fact plugin_said)"
 check "$(fact inner_tools | grep -q demo_echo && echo yes || echo no)" "demo_echo is advertised"
 check "$([ "$(fact plugin_ok)" = "true" ] && echo yes || echo no)" "calling it succeeded"
-check "$(kelyfos log --session "$box" | grep -q 'plugin call    demo_echo' && echo yes || echo no)" \
+check "$(grep -q 'plugin call    demo_echo' machine.log && echo yes || echo no)" \
       "the audit event names the plugin"
 
 say "4b. every tool that returns data returns it in structuredContent"
@@ -245,7 +255,7 @@ echo "     $(fact plugin_dead_message | head -1)"
 check "$([ "$(fact plugin_dead_error)" = "true" ] && echo yes || echo no)" "its tools now fail"
 check "$(fact plugin_dead_message | grep -q 'no longer running' && echo yes || echo no)" \
       "the error says the plugin is gone"
-check "$(kelyfos log --session "$box" | grep -q 'plugin stopped demo' && echo yes || echo no)" \
+check "$(grep -q 'plugin stopped demo' machine.log && echo yes || echo no)" \
       "plugin.crash is in the record"
 check "$([ "$(fact exec_after_crash)" = "true" ] && echo yes || echo no)" "exec still works"
 
