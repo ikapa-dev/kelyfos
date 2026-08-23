@@ -205,12 +205,31 @@ else
   fi
   CAPPED_CORES="${TEAM_CORES:-0}"
   down
-  # The parent goes away with the team. A leaked cgroup is silent otherwise —
-  # rmdir refuses a populated one and the error is discarded by design.
-  if [ -n "${TEAM_CGROUP:-}" ] && [ ! -d "$TEAM_CGROUP" ]; then
-    pass "teardown removed the team's slice: $TEAM_CGROUP is gone"
-  elif [ -n "${TEAM_CGROUP:-}" ]; then
-    fail "the team's slice outlived the team: $TEAM_CGROUP is still there"
+  # The thing that must not outlive the team is the *cap*, not the directory.
+  #
+  # On the direct path KelyfOS rmdirs the parent itself, and a leaked cgroup
+  # would otherwise be silent: rmdir refuses a populated one and the error is
+  # discarded by design. On the systemd path the parent is a slice unit, KelyfOS
+  # takes its runtime property back and systemd collects the empty slice when it
+  # gets to it — which is not instant, and asserting on the directory alone
+  # failed a correct teardown here before this comment existed.
+  if [ -n "${TEAM_CGROUP:-}" ]; then
+    for _ in $(seq 1 40); do
+      [ -d "$TEAM_CGROUP" ] || break
+      sleep 0.25
+    done
+    if [ ! -d "$TEAM_CGROUP" ]; then
+      pass "teardown removed the team's slice: $TEAM_CGROUP is gone"
+    else
+      LEFTCAP="$(cat "$TEAM_CGROUP/cpu.max" 2>/dev/null || echo "gone")"
+      LEFTPROCS="$(cat "$TEAM_CGROUP"/*/cgroup.procs "$TEAM_CGROUP/cgroup.procs" 2>/dev/null | wc -l)"
+      echo "        the slice is still present: cpu.max=$LEFTCAP, $LEFTPROCS process(es) in it"
+      if [ "$LEFTCAP" = "gone" ] || { [ "${LEFTCAP%% *}" = "max" ] && [ "$LEFTPROCS" -eq 0 ]; }; then
+        pass "teardown took the team's cap back; the empty slice is systemd's to collect"
+      else
+        fail "the team's cap outlived the team: $TEAM_CGROUP still reads $LEFTCAP"
+      fi
+    fi
   fi
 fi
 

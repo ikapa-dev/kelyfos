@@ -243,7 +243,7 @@ func teamUp(argv []string) error {
 		err error
 	}
 	results := make(chan booted, len(plan.agents))
-	var wg sync.WaitGroup
+	var wg, templates sync.WaitGroup
 	for _, i := range cold {
 		wg.Add(1)
 		go func(i int) {
@@ -260,13 +260,20 @@ func teamUp(argv []string) error {
 		go func(idx []int) {
 			defer wg.Done()
 			a := plan.agents[idx[0]]
-			snapDir, boot, snap, err := bootTemplate(ctx, a, sessionID, *arch, *timeout)
+			tmpl, snapDir, boot, snap, err := bootTemplate(ctx, a, sessionID, *arch, *timeout)
 			if err != nil {
 				for _, i := range idx {
 					results <- booted{i, nil, err}
 				}
 				return
 			}
+			// Stopped alongside the fan-out rather than before it. Tracked so
+			// teardown cannot outrun it and leave a Firecracker behind.
+			templates.Add(1)
+			go func() {
+				defer templates.Done()
+				_ = tmpl.Shutdown(10 * time.Second)
+			}()
 			// Printed because it is the whole engineering content of the fast
 			// path: a reader who sees only the total cannot tell whether it is
 			// one cold boot plus four cheap restores, or something else.
@@ -290,7 +297,15 @@ func teamUp(argv []string) error {
 		}(idx)
 	}
 	wg.Wait()
+	// Stopped here, at the moment the last agent answered. That is when the
+	// team is up and it is what the user waited for; a template still powering
+	// itself off in the background is not something anybody is waiting for, and
+	// counting it would be measuring our own tidying up.
+	total := time.Since(started)
 	close(results)
+	// Waited for before the state file is written, so a reader counting
+	// Firecracker processes counts the team and nothing else.
+	templates.Wait()
 
 	// Collected in declaration order, so the output reads like the file and a
 	// failure names the agent the user wrote rather than whichever lost a race.
@@ -329,7 +344,6 @@ func teamUp(argv []string) error {
 		_ = rec.Append(recorder.Event{Type: recorder.TypeSessionReady, Agent: rig.name,
 			Image: plan.agents[i].image, Via: rig.via, BootMS: rig.sb.State.BootReadyMS})
 	}
-	total := time.Since(started)
 	if forked := len(plan.agents) - len(cold); forked > 0 {
 		fmt.Printf("team up in %d ms  (%d forked from %d template(s), %d cold)\n",
 			total.Milliseconds(), forked, len(groups), len(cold))
@@ -646,17 +660,17 @@ func bootAgent(ctx context.Context, a plannedAgent, broker *team.Broker, rec *re
 // a real agent's name for a narrower reason — the guest lists its team tools at
 // all only when `kelyfos.agent` is set, and a fork must come up with them.
 func bootTemplate(ctx context.Context, a plannedAgent, sessionID, arch string,
-	timeout time.Duration) (snapDir string, boot, snap time.Duration, err error) {
+	timeout time.Duration) (tmpl *sandbox.Sandbox, snapDir string, boot, snap time.Duration, err error) {
 
 	// Structural rather than incidental: forkable() already excludes an agent
 	// with a workspace, and if that ever changes this is where the damage would
 	// start — every fork would get a copy of one agent's files.
 	if a.workspace != "" {
-		return "", 0, 0, fmt.Errorf("internal: %s has a workspace and cannot be a fork template", a.name)
+		return nil, "", 0, 0, fmt.Errorf("internal: %s has a workspace and cannot be a fork template", a.name)
 	}
 	id, err := sandbox.NewID()
 	if err != nil {
-		return "", 0, 0, err
+		return nil, "", 0, 0, err
 	}
 	sb, err := sandbox.New(sandbox.Options{
 		ID: id, Arch: arch, Flavor: a.image, Agent: a.name, MaySpawn: a.spawn != nil,
@@ -666,32 +680,44 @@ func bootTemplate(ctx context.Context, a plannedAgent, sessionID, arch string,
 		Quiet: true,
 	})
 	if err != nil {
-		return "", 0, 0, err
+		return nil, "", 0, 0, err
 	}
-	defer func() { _ = sb.Shutdown(5 * time.Second) }()
+	// Stopped synchronously only on the paths that fail, where correctness
+	// matters and nothing is waiting. On the path that works the caller stops
+	// it, off the critical path — see below.
+	stopNow := func() { _ = sb.Shutdown(5 * time.Second) }
 	started := time.Now()
 	if err := sb.Start(ctx); err != nil {
-		return "", 0, 0, err
+		stopNow()
+		return nil, "", 0, 0, err
 	}
 	readyCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	if _, err := sb.WaitReady(readyCtx); err != nil {
-		return "", 0, 0, fmt.Errorf("the fork template never became ready: %w", err)
+		stopNow()
+		return nil, "", 0, 0, fmt.Errorf("the fork template never became ready: %w", err)
 	}
 	boot = time.Since(started)
 	snapped := time.Now()
 	snapDir = filepath.Join(sandbox.Root(), "snapshots", "team-"+sessionID+"-"+id)
 	if _, _, err := sb.Snapshot(snapDir); err != nil {
+		stopNow()
 		_ = os.RemoveAll(snapDir)
-		return "", 0, 0, fmt.Errorf("snapshot the fork template: %w", err)
+		return nil, "", 0, 0, fmt.Errorf("snapshot the fork template: %w", err)
 	}
 	if err := sandbox.WriteSnapshotMeta(snapDir, sandbox.SnapshotMeta{
 		Arch: arch, Flavor: a.image,
 	}); err != nil {
+		stopNow()
 		_ = os.RemoveAll(snapDir)
-		return "", 0, 0, err
+		return nil, "", 0, 0, err
 	}
-	return snapDir, boot, time.Since(snapped), nil
+	// The template is handed back running. Everything the forks need is now on
+	// disk, and asking a machine to power itself off takes as long as it takes:
+	// on the reference runner it was five seconds, and it was five seconds
+	// spent between "the image exists" and "the first fork starts" — the whole
+	// team's spawn time paying for a machine nobody is waiting for (E2-9).
+	return sb, snapDir, boot, time.Since(snapped), nil
 }
 
 // forkAgent restores one member from a template's snapshot.
