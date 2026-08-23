@@ -308,7 +308,7 @@ machine took.
 | [`llms.txt`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/llms.txt) · [`llms-full.txt`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/llms-full.txt) | for machine readers: an index per the llmstxt.org spec, and the whole set in one 54k-token file |
 | [`docs/reference/`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/reference/README.md) | every command, flag, toml key, MCP tool, event and exit code — generated from the source |
 | [`PLAN.html`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/PLAN.html) · [`PLAN-FEATURES.html`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/PLAN-FEATURES.html) | the living plan — every decision and the full progress log, phases then epics |
-| [`docs/cookbook.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/cookbook.md) | eleven recipes that work: run one, allowlist a domain, fork, build a team, point a client at it, write a plugin, verify the log |
+| [`docs/cookbook.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/cookbook.md) | fourteen recipes that work: run one, allowlist a domain, fork, build a team, point a client at it, write a plugin, verify the log, pause and resume, review a diff, forward a port |
 | [`docs/integrating.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/integrating.md) | building on it: the four ways in, orchestrator patterns, common mistakes |
 | [`docs/mcp-surface.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/mcp-surface.md) | MCP in both directions: `serve-mcp` as a tool for any client, `[[plugin]]` servers inside the guest |
 | [`docs/threat-model.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/threat-model.md) | what is defended, and what is not |
@@ -4229,7 +4229,7 @@ description: eight complete recipes, each one a script CI runs on a real machine
 
 # KelyfOS cookbook
 
-Thirteen recipes, each one complete, each one runnable as it stands.
+Fourteen recipes, each one complete, each one runnable as it stands.
 
 These are not illustrations. `bash dev/cookbook.sh` extracts every script below
 and runs it on a real machine, and CI runs the same thing — so a recipe that
@@ -5434,6 +5434,53 @@ echo "diff showed A/M/D; --review left the directory alone and diverted the resu
 
 ---
 
+## 14. Look at the web app the agent is building
+
+`-p` carries a port on your machine to a port inside the sandbox. It does not
+start anything: something in there has to be listening, and starting a
+*long-running* process through `kelyfos exec` is the part worth having written
+down, because the obvious spelling blocks forever.
+
+<!-- recipe: forward-a-port -->
+
+```bash
+set -euo pipefail
+
+work="$(mktemp -d)"; cd "$work"
+
+# No --allow anywhere in this recipe. A forward is not a network feature: the
+# transport is vsock and the supervisor dials the guest's own loopback, so this
+# works on a sandbox with no network interface at all — which is most of them.
+kelyfos run --image dev -p 8080:80 -- bash -c '
+  set -e
+
+  # Something to serve.
+  kelyfos exec "mkdir -p /tmp/site; echo \"<h1>built in a sandbox</h1>\" > /tmp/site/index.html"
+
+  # Start it in the background INSIDE the guest. setsid detaches it from the
+  # exec channel and the redirect frees the pipes, so `kelyfos exec` returns
+  # instead of waiting for a server that never exits. Without both, this call
+  # hangs and the recipe never reaches the next line.
+  kelyfos exec "cd /tmp/site; setsid python3 -m http.server 80 --bind 127.0.0.1 >/dev/null 2>&1 &
+    sleep 1; echo started"
+
+  # From the host, over the forward.
+  curl -s http://127.0.0.1:8080/index.html
+
+  # The listener is on loopback. Reaching it from another machine is a separate,
+  # explicit decision: --p-bind 0.0.0.0, which warns every time it is used and
+  # has no equivalent key in kelyfos.toml.
+'
+
+# Two things this did NOT do, and both are the point. No nftables rule was added
+# — `nft list ruleset` is identical with a forward and without one — and no
+# packet crossed the TAP, because the packet the server answered was created
+# inside the machine, on its own loopback.
+echo "reached a server inside the sandbox without touching the firewall"
+```
+
+---
+
 ## Running them yourself
 
 ```
@@ -5928,7 +5975,7 @@ different protocol stack from the REST endpoints the shim serves. Use
 
 ## 7. Where to look next
 
-- [`cookbook.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/cookbook.md) — eleven recipes that run, including the Python
+- [`cookbook.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/cookbook.md) — fourteen recipes that run, including the Python
   client above
 - [`reference/`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/reference/README.md) — every command, flag, key, tool, event and exit
   code, generated from the source
@@ -5965,14 +6012,14 @@ hand-written half, and this page says where each is still thin.
 | If you are… | Read, in order |
 | --- | --- |
 | trying it for the first time | the repository [`README.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/README.md) quickstart, then [`threat-model.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/threat-model.md) before trusting it with anything |
-| an LLM or an agent framework | [`../llms.txt`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/llms.txt) — an index per the llmstxt.org spec — or [`../llms-full.txt`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/llms-full.txt), which is every page below in one file, about 48,000 tokens |
+| an LLM or an agent framework | [`../llms.txt`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/llms.txt) — an index per the llmstxt.org spec — or [`../llms-full.txt`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/llms-full.txt), which is every page below in one file, about 93,000 tokens |
 | deciding how much machine an agent gets | [`resources.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/resources.md) |
 | running several agents together | [`teams.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/teams.md) |
 | auditing what an agent did | [`events.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/events.md) |
 | stuck on something KelyfOS refused | [`denials.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/denials.md), then [`reference/denials.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/reference/denials.md) for the exact one |
 | running something long and walking away | [`denials.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/denials.md) on `--notify`, and [`events.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/events.md) §6 for the history afterwards |
 | keeping an agent off the network | [`networking.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/networking.md) |
-| after something that works, right now | [`cookbook.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/cookbook.md) — eleven recipes, each one runnable as it stands |
+| after something that works, right now | [`cookbook.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/cookbook.md) — fourteen recipes, each one runnable as it stands |
 | putting KelyfOS inside something else | [`integrating.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/integrating.md) |
 | building KelyfOS into something else | [`protocol.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/protocol.md), then [`e2b-shim.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/e2b-shim.md) |
 | driving KelyfOS from an MCP client | [`mcp-surface.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/mcp-surface.md) — `serve-mcp` and `[[plugin]]`, and [recipe 9](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/cookbook.md) for the configuration |
@@ -5992,11 +6039,11 @@ hand-written half, and this page says where each is still thin.
 | [`qol.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/qol.md) | concept | The v0.8 specification, written before the code: named sessions and their store, the workspace manifest, the PTY channel, and why inbound forwarding does not touch the firewall. |
 | [`mcp-surface.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/mcp-surface.md) | concept | MCP in both directions: `serve-mcp` as a tool for any client, and `[[plugin]]` servers inside the guest. Specification, written before the code. |
 | [`threat-model.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/threat-model.md) | concept | What KelyfOS defends against and — the longer half — what it does not. |
-| [`cookbook.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/cookbook.md) | recipes | Eleven complete, copy-pasteable recipes. Every one is a script CI extracts and runs on a real machine. |
+| [`cookbook.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/cookbook.md) | recipes | Fourteen complete, copy-pasteable recipes. Every one is a script CI extracts and runs on a real machine. |
 | [`integrating.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/integrating.md) | mixed | For building on KelyfOS: the four ways in, orchestrator patterns, and a long list of the mistakes people actually make. |
 | [`e2b-shim.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/e2b-shim.md) | mixed | The E2B-compatible REST subset: what it implements, what it does not, and why. |
 | [`../llms.txt`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/llms.txt) | **generated** | The index a machine reads first: every page above as a link with a one-line description, per the llmstxt.org spec. |
-| [`../llms-full.txt`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/llms-full.txt) | **generated** | Every page above concatenated, each with its source URL. About 54,000 tokens — a quarter of a 200k context window. |
+| [`../llms-full.txt`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/llms-full.txt) | **generated** | Every page above concatenated, each with its source URL. About 93,000 tokens — measured by `make docs`, and re-measured at every epic exit because it is exactly the kind of number that goes stale quietly. |
 | [`launch/hn-post.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/launch/hn-post.md) | not documentation | The launch post draft. Unposted, and the maintainer's to send. |
 
 The plan files at the repository root — [`PLAN.html`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/PLAN.html) for phases 0–4
@@ -6010,7 +6057,7 @@ resolve there. [`STATUS.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfO
 
 **Concept.** Hand-written, and about a design or a trade-off. Nothing in the
 source can confirm or refute it. Kept honest by review, and by the fact that the
-code cites it back: 79 comments across 37 Go files name a document and a section,
+code cites it back: 139 comments across 61 Go files name a document and a section,
 so a section number here is load-bearing rather than decorative.
 
 **Reference.** Statements of fact that also exist in the source — a port number,
@@ -6110,7 +6157,7 @@ the second; `[team.agent.spawn.resources]` accepts two keys nothing enforces
 (F-D27); `team ps` has no sample output; the store's `not_found` is described as
 "not a refusal" and is recorded as one.
 
-### `cookbook.md` — eleven things that work
+### `cookbook.md` — fourteen things that work
 
 *Recipes:* one sandbox; an allowlist and an injected credential; a workspace
 round-trip; snapshot and fork; a three-agent team with an ask round-trip and a
@@ -6120,7 +6167,12 @@ on the official MCP Python SDK; the configuration that points Claude Code and
 VS Code at `serve-mcp`, checked by running exactly what each file names; and the
 same SDK driving the host rather than a guest, ending in the record the server
 kept of its own calls; and both MCP directions at once, with a plugin written out
-in full, ending in the two transcripts that hold what each side did.
+in full, ending in the two transcripts that hold what each side did; pausing a
+machine and picking the same one up with its scratch intact, under the policy it
+was frozen with; seeing what an agent changed before keeping it, including what
+`--review` does when there is nobody to ask; and reaching a server inside a
+sandbox that has no network, including how to start a long-running process
+through `kelyfos exec` without hanging on it.
 *Thin:* nothing hidden — every script is extracted and executed by
 `dev/cookbook.sh` and by the `cookbook` workflow, so a recipe that stops working
 fails rather than misleading anyone.

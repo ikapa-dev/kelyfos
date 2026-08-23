@@ -41,5 +41,23 @@ promising CI would catch exactly this. It could not: CI checks that the
 reference matches its source table, and the source table was wrong. A generator
 guarantees consistency, not truth. The exam is what checks truth.
 
+### 2026-08-23, Epic E4's exit — [`2026-08-23-mcp-surface.md`](2026-08-23-mcp-surface.md)
+
+Two readers, given the documentation and nothing else, asked to drive KelyfOS
+from an MCP client and to ship a plugin that runs inside a sandbox. Both said
+no: neither could finish from the documents. Twenty-two findings, and the
+lesson that outlived them — **the pages a generator cannot reach go stale, and
+the part no page describes is the part nothing checks.**
+
+### 2026-08-23, Epic E5's exit — [`2026-08-23-daily-driver.md`](2026-08-23-daily-driver.md)
+
+Two tasks attempted from the documents — pause and resume a machine, and look at
+a web app inside a sandbox — plus a mechanical sweep of every claim a machine can
+check. The first task completed; the second did not, and the reason is the
+lesson: **a feature can be completely and correctly documented and still be
+unusable, because the sentence a reader needs is about something else.** Nothing
+showed how to start a long-running process inside a guest, which is what `-p`
+exists for. Seven findings, all fixed before the tag.
+
 These files are evidence and are not run by anything. `dev/cookbook.sh` does not
 look here.

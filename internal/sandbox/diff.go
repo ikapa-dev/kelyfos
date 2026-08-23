@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -293,6 +294,17 @@ func lcs(a, b []string) int {
 
 // FormatChanges renders a comparison the way `git diff --numstat` reads,
 // because that is the shape people already know.
+// signed writes a byte delta with the same minus sign the line counts use.
+// Two glyphs in one column — an ASCII hyphen for bytes and U+2212 for lines —
+// is the kind of thing nobody reports and everybody notices (found by the E5
+// exit exam).
+func signed(n int64) string {
+	if n < 0 {
+		return "−" + strconv.FormatInt(-n, 10)
+	}
+	return "+" + strconv.FormatInt(n, 10)
+}
+
 func FormatChanges(changes []Change) string {
 	if len(changes) == 0 {
 		return "  no changes\n"
@@ -311,7 +323,7 @@ func FormatChanges(changes []Change) string {
 		detail := ""
 		switch {
 		case c.Binary && c.Bytes != 0:
-			detail = fmt.Sprintf("%+d bytes", c.Bytes)
+			detail = signed(c.Bytes) + " bytes"
 		case c.Binary:
 			detail = "binary"
 		case c.Added > 0 && c.Removed > 0:
@@ -321,7 +333,7 @@ func FormatChanges(changes []Change) string {
 		case c.Removed > 0:
 			detail = fmt.Sprintf("−%d", c.Removed)
 		case c.Bytes != 0:
-			detail = fmt.Sprintf("%+d bytes", c.Bytes)
+			detail = signed(c.Bytes) + " bytes"
 		}
 		if c.Mode != "" {
 			if detail != "" {

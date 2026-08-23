@@ -1,6 +1,6 @@
 # KelyfOS cookbook
 
-Thirteen recipes, each one complete, each one runnable as it stands.
+Fourteen recipes, each one complete, each one runnable as it stands.
 
 These are not illustrations. `bash dev/cookbook.sh` extracts every script below
 and runs it on a real machine, and CI runs the same thing — so a recipe that
@@ -1201,6 +1201,53 @@ grep -q "^original$" ws2/file.txt
 # ...and the results are beside it, for you to look at.
 grep -q written-by-the-agent ws2.kelyfos-out/file.txt
 echo "diff showed A/M/D; --review left the directory alone and diverted the results"
+```
+
+---
+
+## 14. Look at the web app the agent is building
+
+`-p` carries a port on your machine to a port inside the sandbox. It does not
+start anything: something in there has to be listening, and starting a
+*long-running* process through `kelyfos exec` is the part worth having written
+down, because the obvious spelling blocks forever.
+
+<!-- recipe: forward-a-port -->
+
+```bash
+set -euo pipefail
+
+work="$(mktemp -d)"; cd "$work"
+
+# No --allow anywhere in this recipe. A forward is not a network feature: the
+# transport is vsock and the supervisor dials the guest's own loopback, so this
+# works on a sandbox with no network interface at all — which is most of them.
+kelyfos run --image dev -p 8080:80 -- bash -c '
+  set -e
+
+  # Something to serve.
+  kelyfos exec "mkdir -p /tmp/site; echo \"<h1>built in a sandbox</h1>\" > /tmp/site/index.html"
+
+  # Start it in the background INSIDE the guest. setsid detaches it from the
+  # exec channel and the redirect frees the pipes, so `kelyfos exec` returns
+  # instead of waiting for a server that never exits. Without both, this call
+  # hangs and the recipe never reaches the next line.
+  kelyfos exec "cd /tmp/site; setsid python3 -m http.server 80 --bind 127.0.0.1 >/dev/null 2>&1 &
+    sleep 1; echo started"
+
+  # From the host, over the forward.
+  curl -s http://127.0.0.1:8080/index.html
+
+  # The listener is on loopback. Reaching it from another machine is a separate,
+  # explicit decision: --p-bind 0.0.0.0, which warns every time it is used and
+  # has no equivalent key in kelyfos.toml.
+'
+
+# Two things this did NOT do, and both are the point. No nftables rule was added
+# — `nft list ruleset` is identical with a forward and without one — and no
+# packet crossed the TAP, because the packet the server answered was created
+# inside the machine, on its own loopback.
+echo "reached a server inside the sandbox without touching the firewall"
 ```
 
 ---

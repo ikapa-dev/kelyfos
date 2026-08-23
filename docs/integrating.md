@@ -464,7 +464,7 @@ different protocol stack from the REST endpoints the shim serves. Use
 
 ## 7. Where to look next
 
-- [`cookbook.md`](cookbook.md) — eleven recipes that run, including the Python
+- [`cookbook.md`](cookbook.md) — fourteen recipes that run, including the Python
   client above
 - [`reference/`](reference/) — every command, flag, key, tool, event and exit
   code, generated from the source

@@ -57,12 +57,21 @@ machine again, under a name a person chose.
   workspace.ext4     the workspace disk, when there was one
   plugins.ext4       the plugins device, when there was one
   kelyfos.toml       the policy this machine was running under, frozen
-  session            the flight-recorder session id this machine belonged to
+  named.json         what the *pause* was: the name, the sandbox and session ids,
+                     when it was paused, and which policy file was frozen
 ```
 
 The first five are exactly what `snapshot save` already writes, which is the
 point: `pause` is `snapshot save` plus a teardown plus two more files, not a
 second mechanism.
+
+> **Corrected after the epic (E5 exit exam).** This section originally listed a
+> `session` file holding the flight-recorder id. What shipped keeps that id
+> inside `named.json` with the rest of the pause's own metadata, because a file
+> holding one string is a file to keep in step for no benefit — and because the
+> two JSON files then have one owner each: `meta.json` belongs to the snapshot
+> layer that writes it, `named.json` to the pause. The rule this page states in
+> its own header applies: during the epic the page wins, after it the code does.
 
 **`<name>` is checked, not trusted.** Letters, digits, dot, dash and underscore,
 at most 64, not starting with a dot — the same rule `sandbox_snapshot` applies,
@@ -158,10 +167,17 @@ At shutdown the guest tree is walked again and compared entry by entry:
 ```
  M src/main.go        +18 −4
  A src/parse.go       +96
- D testdata/old.json  −214
+ D testdata/old.json  −214 bytes
 ```
 
 `A`/`M`/`D`, then numstat for text and a byte delta for anything that is not.
+
+> **Corrected after the epic (E5 exit exam).** The deletion line originally read
+> `−214`, implying a line count. A deletion is compared against the manifest,
+> which holds each file's size and digest and not its line count, so lines are
+> not available for a file that is no longer there — the byte delta is. The same
+> exam found the two minus signs in that column disagreeing, an ASCII hyphen for
+> bytes and U+2212 for lines, and made them one.
 Mode changes are `M` with the modes named. A file whose contents are identical
 and whose mode changed is still a change, because it is one.
 
