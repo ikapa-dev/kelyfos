@@ -157,6 +157,10 @@ type GuestEvent struct {
 	Outcome    string `json:"outcome,omitempty"`
 	DurationMS int64  `json:"duration_ms,omitempty"`
 	Message    string `json:"message,omitempty"`
+	// Args is the redacted summary of what the tool was asked for, in the same
+	// shape the outward door records: every key, with anything carrying content
+	// replaced by its size.
+	Args string `json:"args,omitempty"`
 }
 
 // Guest event types. Deliberately the same strings the flight recorder uses:

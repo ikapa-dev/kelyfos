@@ -60,6 +60,7 @@ func pluginEvent(ev proto.GuestEvent) recorder.Event {
 		out.Tool = ev.Tool
 		out.Outcome = ev.Outcome
 		out.DurationMS = ev.DurationMS
+		out.Args = ev.Args
 	case proto.GuestEventPluginCrash:
 		out.Type = recorder.TypePluginCrash
 		out.Reason = ev.Message

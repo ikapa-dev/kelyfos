@@ -260,6 +260,7 @@ An agent called a tool belonging to a plugin running inside the guest. The super
 | `tool` | string | the plugin's own name for the tool, without the prefix |
 | `outcome` | string | ok or error |
 | `duration_ms` | integer | how long the plugin took |
+| `args` | string | the arguments, with anything carrying content replaced by its size |
 | `agent` | string | which member's plugin it was *(in a team)* |
 
 ## `plugin.crash`

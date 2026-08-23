@@ -103,3 +103,66 @@ func TestACrashedPluginKeepsItsToolsListed(t *testing.T) {
 		}
 	}
 }
+
+// The other half of the collision the separator rule closes. A plugin named
+// `read` exporting `file` would put a second `read_file` in tools/list that
+// dispatch could never reach, because the built-in switch runs first — two
+// entries with one name, one of them dead (F-D49).
+func TestAPluginCannotShadowABuiltIn(t *testing.T) {
+	for _, name := range []string{"exec", "read_file", "write_file", "list_dir",
+		"upload", "download", "team_send", "team_peers", "team_spawn"} {
+		if !builtinTool(name) {
+			t.Errorf("%q is a built-in tool and is not recognised as one, so a plugin could "+
+				"shadow it", name)
+		}
+	}
+	// A namespaced name that is not a built-in must still be allowed, or the
+	// check would cost every plugin its tools.
+	for _, name := range []string{"demo_echo", "browser_navigate", "read_thing"} {
+		if builtinTool(name) {
+			t.Errorf("%q is not a built-in and was treated as one", name)
+		}
+	}
+}
+
+// The team tools count even in a sandbox that is not in a team: a name that
+// would collide in a team must not be advertised out of one, or the same plugin
+// would work in one sandbox and be silently short a tool in another.
+func TestTheTeamToolsCountAsBuiltInEverywhere(t *testing.T) {
+	saved := theTeam
+	theTeam = nil
+	defer func() { theTeam = saved }()
+	if !builtinTool("team_send") {
+		t.Error("team_send is not protected outside a team, so a plugin could take the name " +
+			"in one sandbox and lose it in another")
+	}
+}
+
+// The inward door records what the outward door records. A transcript that says
+// which plugin was asked for which tool, and not with what, answers half the
+// question a reader has (F-D49).
+func TestPluginArgumentsAreRecordedAndRedacted(t *testing.T) {
+	got := summarisePluginArgs([]byte(`{"url":"https://example.com","depth":2}`))
+	if got != "depth=2 url=https://example.com" {
+		t.Errorf("got %q, want the keys in order", got)
+	}
+
+	// Content never enters the record, on any tool, including one nobody here
+	// has seen.
+	body := strings.Repeat("secret", 100)
+	got = summarisePluginArgs([]byte(`{"path":"/x","content":"` + body + `"}`))
+	if strings.Contains(got, "secret") {
+		t.Errorf("the record holds a plugin call's content:\n%s", got)
+	}
+	if !strings.Contains(got, "content=<600 bytes>") {
+		t.Errorf("the summary does not size what it withheld:\n%s", got)
+	}
+
+	// And nothing at all is not an error.
+	if summarisePluginArgs(nil) != "" {
+		t.Error("a call with no arguments produced a summary")
+	}
+	if !strings.Contains(summarisePluginArgs([]byte(`{"broken":`)), "unparseable") {
+		t.Error("malformed arguments were not reported as such")
+	}
+}

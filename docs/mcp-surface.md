@@ -491,10 +491,13 @@ API. Uppercase is allowed there and not in the plugin name, because the plugin
 name has one more job to do: being unambiguous as a prefix.
 
 A `[[plugin]]` whose name is already taken by another is refused when the file
-is read, naming both lines. A plugin *tool* that collides with a built-in — a
-plugin called `read` exporting `file` — is not yet refused, and is shadowed by
-the built-in instead; that is a defect the E4 exit exam found and a hardening
-batch closes.
+is read, naming both lines. And a plugin *tool* whose namespaced name collides
+with a built-in — a plugin called `read` exporting `file` — is dropped at boot
+with a line saying why, because two entries with one name in `tools/list` is
+worse than one missing tool: dispatch reaches the built-in and the plugin's is
+unreachable. The team tools count as built-ins even in a sandbox that is not in
+a team, so the same plugin does not work in one sandbox and come up short in
+another.
 
 **The prefix is the declared name, never the plugin's own.** A plugin announces
 a `serverInfo.name` at initialize, and that name is not used for anything — the
@@ -609,9 +612,12 @@ plugin was asked for which tool, rather than only that a tool was called.
 `plugin.call` records the plugin, the tool without its prefix, the outcome and
 how long it took; `plugin.crash` records the plugin and what it exited with.
 
-It does **not** record the arguments, where the outward `mcp.host.call` records
-a redacted summary of them. That asymmetry is not a decision, it is a gap the E4
-exit exam found, and a hardening batch closes it. Both are
+It records the arguments too, in the same redacted shape the outward
+`mcp.host.call` uses: every key, with anything carrying content — `content`,
+`stdin`, `data` — replaced by its size. The summariser walks whatever it is
+given rather than knowing the tools, so an argument a plugin adds later appears
+without anyone remembering, and one carrying content is withheld even on a tool
+nobody here has seen. Both are
 reported by the supervisor and written by the host, exactly as `resource.oom`
 is and for the same reason: a guest that could write its own audit trail could
 forge it.

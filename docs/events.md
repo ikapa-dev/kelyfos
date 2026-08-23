@@ -375,6 +375,7 @@ happened and is not trusted to record it.
 | --- | --- | --- |
 | `name` | string | The plugin, as the policy file declared it. Never the name the plugin announces about itself. |
 | `tool` | string | On `plugin.call`: the plugin's own name for the tool, without the prefix. |
+| `args` | string | On `plugin.call`: the arguments, with anything carrying content replaced by its size — the same rule and the same shape as `mcp.host.call`. |
 | `outcome` | string | On `plugin.call`: `ok` or `error`. |
 | `duration_ms` | integer | On `plugin.call`: how long the plugin took to answer. |
 | `reason` | string | On `plugin.crash`: what it exited with. |

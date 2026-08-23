@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -191,6 +192,18 @@ func (p *plugin) handshake() error {
 			// will rewrite is worse than a missing tool, because the rewriting
 			// is silent and can collide.
 			logf("plugin %s: tool %q is not advertised — %q is not a name every client accepts",
+				p.entry.Name, t.Name, full)
+			continue
+		}
+		// The other half of the collision F-D36 argued about. The plugin name
+		// rule stops one plugin's prefix from swallowing another's; this stops
+		// a prefix from swallowing a built-in. A plugin called `read` exporting
+		// `file` would otherwise put a second `read_file` in tools/list that
+		// dispatch could never reach, because the built-in switch runs first —
+		// two entries with one name, one of them dead (F-D49).
+		if builtinTool(full) {
+			logf("plugin %s: tool %q is not advertised — %q is a built-in tool of this sandbox, "+
+				"and two tools with one name is worse than one missing tool",
 				p.entry.Name, t.Name, full)
 			continue
 		}
@@ -379,6 +392,7 @@ func callPluginTool(p *plugin, tool string, args json.RawMessage, report func(pr
 		V: proto.Version, Type: proto.GuestEventPluginCall,
 		Name: p.entry.Name, Tool: tool, Outcome: outcome,
 		DurationMS: time.Since(started).Milliseconds(),
+		Args:       summarisePluginArgs(args),
 	})
 	if err != nil {
 		return mcp.Errorf("plugin %s failed to answer %s: %v", p.entry.Name, tool, err)
@@ -413,4 +427,89 @@ func prefixedLog(prefix string) io.Writer {
 		}
 	}()
 	return w
+}
+
+// builtinTool reports whether a name is one the sandbox already answers.
+//
+// Read from the tool definitions rather than listed here, so a built-in added
+// later is covered without anyone remembering this function exists. The team
+// tools are included whether or not this sandbox is in a team: a name that would
+// collide in a team is a name that must not be advertised out of one, or the
+// same plugin would work in one sandbox and be silently short a tool in another.
+func builtinTool(name string) bool {
+	for _, t := range toolDefinitions() {
+		if t.Name == name {
+			return true
+		}
+	}
+	for _, t := range teamToolDefinitions(true) {
+		if t.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// contentKeys are the arguments a record must never hold, because they carry
+// content rather than intent. The same list the outward door uses, for the same
+// reason: what was written is recorded by size, never by value.
+var contentKeys = map[string]bool{"content": true, "stdin": true, "data": true}
+
+// summarisePluginArgs renders a plugin call's arguments for the record.
+//
+// The inward twin of the host's summariser, and deliberately the same shape: a
+// transcript that says which plugin was asked for which tool, and not with what,
+// answers half the question a reader has. It walks whatever it is given rather
+// than knowing the tools, so an argument a plugin adds later appears without
+// anyone remembering, and one carrying content is withheld even on a tool nobody
+// here has seen (F-D49).
+func summarisePluginArgs(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return fmt.Sprintf("<unparseable, %d bytes>", len(raw))
+	}
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, k := range keys {
+		if str, ok := m[k].(string); ok && contentKeys[k] {
+			parts = append(parts, fmt.Sprintf("%s=<%d bytes>", k, len(str)))
+			continue
+		}
+		parts = append(parts, k+"="+compactArg(m[k]))
+	}
+	return strings.Join(parts, " ")
+}
+
+func compactArg(v any) string {
+	switch t := v.(type) {
+	case string:
+		if len(t) > 120 {
+			return fmt.Sprintf("%q…(%d bytes)", t[:120], len(t))
+		}
+		return t
+	case []any:
+		parts := make([]string, 0, len(t))
+		for _, e := range t {
+			parts = append(parts, compactArg(e))
+		}
+		return "[" + strings.Join(parts, ",") + "]"
+	case float64:
+		if t == float64(int64(t)) {
+			return fmt.Sprintf("%d", int64(t))
+		}
+		return fmt.Sprintf("%g", t)
+	default:
+		blob, err := json.Marshal(v)
+		if err != nil {
+			return "?"
+		}
+		return string(blob)
+	}
 }

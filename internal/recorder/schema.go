@@ -242,6 +242,7 @@ func Types() []EventType {
 				{Name: "tool", Type: "string", Doc: "the plugin's own name for the tool, without the prefix"},
 				{Name: "outcome", Type: "string", Doc: "ok or error"},
 				{Name: "duration_ms", Type: "integer", Doc: "how long the plugin took"},
+				{Name: "args", Type: "string", Doc: "the arguments, with anything carrying content replaced by its size"},
 				{Name: "agent", Type: "string", Doc: "which member's plugin it was", When: "in a team"},
 			}},
 		{Type: TypePluginCrash, Source: SourceGuest,

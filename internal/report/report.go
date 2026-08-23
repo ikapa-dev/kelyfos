@@ -237,8 +237,12 @@ func Render(w io.Writer, sessionID string, events []recorder.Event, verifyErr er
 			}
 			v.Rows = append(v.Rows, Row{ts, kind, title, detail, "", !allowed})
 		case recorder.TypePluginCall:
-			v.Rows = append(v.Rows, Row{ts, "plugin", e.Name + "_" + e.Tool,
-				fmt.Sprintf("%s · %d ms", e.Outcome, e.DurationMS), "", e.Outcome != "ok"})
+			detail := fmt.Sprintf("%s · %d ms", e.Outcome, e.DurationMS)
+			if e.Args != "" {
+				detail = e.Args + " · " + detail
+			}
+			v.Rows = append(v.Rows, Row{ts, "plugin", e.Name + "_" + e.Tool, detail, "",
+				e.Outcome != "ok"})
 		case recorder.TypePluginCrash:
 			v.Rows = append(v.Rows, Row{ts, "plugin", "plugin " + e.Name + " stopped",
 				e.Reason, "", true})
@@ -512,8 +516,11 @@ func buildLanes(events []recorder.Event) ([]string, []LaneRow) {
 			if e.Outcome != "ok" {
 				kind = "team-refused"
 			}
-			add(LaneRow{ts, kind, e.Name + "_" + e.Tool,
-				fmt.Sprintf("%s · %d ms", e.Outcome, e.DurationMS), "",
+			detail := fmt.Sprintf("%s · %d ms", e.Outcome, e.DurationMS)
+			if e.Args != "" {
+				detail = e.Args + " · " + detail
+			}
+			add(LaneRow{ts, kind, e.Name + "_" + e.Tool, detail, "",
 				e.Outcome != "ok", laneOf(e.Agent), false})
 		case recorder.TypePluginCrash:
 			add(LaneRow{ts, "team-refused", "plugin " + e.Name + " stopped", e.Reason, "",

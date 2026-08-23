@@ -355,10 +355,11 @@ func printEvent(line []byte, asJSON bool) {
 		fmt.Printf("%s  %sclient result  %s %s (%d ms)\n", ts, who, e.Name, outcome, e.DurationMS)
 	case recorder.TypePluginCall:
 		outcome := e.Outcome
-		if outcome == "error" {
-			outcome = "error "
+		what := e.Name + "_" + e.Tool
+		if e.Args != "" {
+			what += " " + e.Args
 		}
-		fmt.Printf("%s  %splugin call    %s_%s  %s (%d ms)\n", ts, who, e.Name, e.Tool,
+		fmt.Printf("%s  %splugin call    %s  %s (%d ms)\n", ts, who, what,
 			strings.TrimSpace(outcome), e.DurationMS)
 	case recorder.TypePluginCrash:
 		fmt.Printf("%s  %splugin stopped %s  %s\n", ts, who, e.Name, e.Reason)
