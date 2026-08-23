@@ -268,6 +268,14 @@ An agent with no budget does not see the tool. The check that matters is
 host-side either way: an agent that calls a tool it was never shown still gets a
 refusal, and that refusal is in the record (F-D18).
 
+Two keys are refused inside `[team.agent.spawn.resources]`, by name and with
+what to write instead. `idle_timeout` is unenforceable for F-D20's reason — a
+team shares one flight recorder, so the host cannot tell which agent went quiet.
+And `max_runtime` there is `[team.agent.spawn] lifetime` under another name;
+`lifetime` is the one that is enforced, and two timers with one meaning is a way
+to disagree with yourself. Both used to parse and do nothing, which is the
+failure a refusal exists to prevent (F-D33).
+
 **A spawned worker has no egress, no secrets and no workspace — ever.** A spawn
 budget can declare a count, an image whitelist, a lifetime and resource caps,
 and there is nowhere in it to declare a network. So a worker created at runtime

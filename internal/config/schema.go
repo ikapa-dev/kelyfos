@@ -202,7 +202,18 @@ func Schema() []Key {
 		Key{Section: "team.agent.spawn", Name: "lifetime", Type: TypeDuration, Default: "no lifetime", Sample: `"10m"`,
 			Doc: "how long a spawned worker lives before the host despawns it"},
 	)
-	out = append(out, inSection("team.agent.spawn.resources", resourceKeys())...)
+	for _, k := range resourceKeys() {
+		k.Section = "team.agent.spawn.resources"
+		switch k.Name {
+		case "idle_timeout":
+			k.RefusedLater = "refused before boot (F-D20, F-D33): a team shares one flight recorder, " +
+				"so the host cannot tell which agent went quiet — use [team.agent.spawn] lifetime"
+		case "max_runtime":
+			k.RefusedLater = "refused before boot (F-D33): this is [team.agent.spawn] lifetime under " +
+				"another name, and lifetime is the one that is enforced"
+		}
+		out = append(out, k)
+	}
 
 	out = append(out,
 		Key{Section: "team.edge", Name: "from", Type: TypeString, Sample: `"master"`,

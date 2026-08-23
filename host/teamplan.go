@@ -242,6 +242,30 @@ func checkAgentPolicy(path string, a config.TeamAgent) error {
 			"    use max_runtime, which is per agent and does work",
 			where)
 	}
+
+	// The same two keys under a spawn budget were accepted and then enforced by
+	// nothing, which is the failure F-D10 and F-D20 both exist to prevent: a
+	// limits file whose limit is inert is worse than one that has no limit in
+	// it. Refusing is also the correct answer rather than merely the cheap one
+	// (F-D33). idle_timeout is unenforceable here for exactly F-D20's reason,
+	// and max_runtime is a second name for a key the budget already has —
+	// `lifetime` is how long a spawned worker lives, and two timers with one
+	// meaning is a way to disagree with yourself.
+	if a.Spawn != nil {
+		if a.Spawn.Resources.IdleTimeout > 0 {
+			return fmt.Errorf("%s: idle_timeout is not available in a spawn budget (F-D20, F-D33)\n"+
+				"    a team shares one flight recorder, so the host cannot tell which agent went quiet;\n"+
+				"    use [team.agent.spawn] lifetime, which bounds how long a spawned worker lives",
+				where)
+		}
+		if a.Spawn.Resources.MaxRuntime > 0 {
+			return fmt.Errorf("%s: max_runtime in a spawn budget is [team.agent.spawn] lifetime "+
+				"under another name (F-D33)\n"+
+				"    write lifetime = %q in [team.agent.spawn]; it is the key that bounds how long\n"+
+				"    a spawned worker lives, and it is enforced",
+				where, a.Spawn.Resources.MaxRuntime.String())
+		}
+	}
 	return nil
 }
 

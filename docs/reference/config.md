@@ -122,8 +122,8 @@ The caps a spawned worker gets.
 | `net_mbps_tx` | integer | unthrottled | outbound network rate, decimal megabits — Firecracker token bucket |
 | `disk_iops` | integer | unthrottled | operations per second, on each block device — Firecracker token bucket |
 | `disk_mbps` | integer | unthrottled | bytes per second, decimal megabytes, on each block device |
-| `max_runtime` | duration | no budget | wall-clock budget; expiry is SIGTERM, grace, sync-back, exit 124 |
-| `idle_timeout` | duration | no budget | no tool call and no proxy traffic for this long ends the run |
+| `max_runtime` | duration | no budget | wall-clock budget; expiry is SIGTERM, grace, sync-back, exit 124 · **refused before boot (F-D33): this is [team.agent.spawn] lifetime under another name, and lifetime is the one that is enforced** |
+| `idle_timeout` | duration | no budget | no tool call and no proxy traffic for this long ends the run · **refused before boot (F-D20, F-D33): a team shares one flight recorder, so the host cannot tell which agent went quiet — use [team.agent.spawn] lifetime** |
 
 ## `[[team.edge]]`
 

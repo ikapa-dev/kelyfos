@@ -1526,6 +1526,14 @@ An agent with no budget does not see the tool. The check that matters is
 host-side either way: an agent that calls a tool it was never shown still gets a
 refusal, and that refusal is in the record (F-D18).
 
+Two keys are refused inside `[team.agent.spawn.resources]`, by name and with
+what to write instead. `idle_timeout` is unenforceable for F-D20's reason — a
+team shares one flight recorder, so the host cannot tell which agent went quiet.
+And `max_runtime` there is `[team.agent.spawn] lifetime` under another name;
+`lifetime` is the one that is enforced, and two timers with one meaning is a way
+to disagree with yourself. Both used to parse and do nothing, which is the
+failure a refusal exists to prevent (F-D33).
+
 **A spawned worker has no egress, no secrets and no workspace — ever.** A spawn
 budget can declare a count, an image whitelist, a lifetime and resource caps,
 and there is nowhere in it to declare a network. So a worker created at runtime
@@ -4693,8 +4701,8 @@ The caps a spawned worker gets.
 | `net_mbps_tx` | integer | unthrottled | outbound network rate, decimal megabits — Firecracker token bucket |
 | `disk_iops` | integer | unthrottled | operations per second, on each block device — Firecracker token bucket |
 | `disk_mbps` | integer | unthrottled | bytes per second, decimal megabytes, on each block device |
-| `max_runtime` | duration | no budget | wall-clock budget; expiry is SIGTERM, grace, sync-back, exit 124 |
-| `idle_timeout` | duration | no budget | no tool call and no proxy traffic for this long ends the run |
+| `max_runtime` | duration | no budget | wall-clock budget; expiry is SIGTERM, grace, sync-back, exit 124 · **refused before boot (F-D33): this is [team.agent.spawn] lifetime under another name, and lifetime is the one that is enforced** |
+| `idle_timeout` | duration | no budget | no tool call and no proxy traffic for this long ends the run · **refused before boot (F-D20, F-D33): a team shares one flight recorder, so the host cannot tell which agent went quiet — use [team.agent.spawn] lifetime** |
 
 ## `[[team.edge]]`
 

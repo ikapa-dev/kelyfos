@@ -459,3 +459,36 @@ func TestForkPlanIsStableAndComplete(t *testing.T) {
 		}
 	}
 }
+
+// A key the file accepts and nothing enforces is worse than one it refuses: the
+// user believes a limit is in force and it is not. These two were exactly that
+// until F-D33, so they are refused now, and the refusal has to say what to
+// write instead.
+func TestSpawnBudgetRefusesTheKeysNothingEnforced(t *testing.T) {
+	for _, tc := range []struct {
+		key   string
+		set   func(*config.SpawnBudget)
+		wants string
+	}{
+		{"idle_timeout", func(b *config.SpawnBudget) { b.Resources.IdleTimeout = 5 * time.Minute }, "lifetime"},
+		{"max_runtime", func(b *config.SpawnBudget) { b.Resources.MaxRuntime = 30 * time.Minute }, "lifetime"},
+	} {
+		budget := &config.SpawnBudget{Max: 1, Images: []string{"dev"}}
+		tc.set(budget)
+		_, err := planFrom(t, &config.Team{
+			Name:   "t",
+			Agents: []config.TeamAgent{{Name: "master", Count: 1, Spawn: budget}},
+		})
+		if err == nil {
+			t.Errorf("%s in a spawn budget was accepted, and nothing enforces it", tc.key)
+			continue
+		}
+		if !strings.Contains(err.Error(), tc.key) {
+			t.Errorf("the refusal does not name %s: %v", tc.key, err)
+		}
+		if !strings.Contains(err.Error(), tc.wants) {
+			t.Errorf("the refusal for %s does not say what to use instead (%q): %v",
+				tc.key, tc.wants, err)
+		}
+	}
+}
