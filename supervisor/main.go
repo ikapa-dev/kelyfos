@@ -113,6 +113,13 @@ func main() {
 		startPlugins(thePlugins, rp, reportGuestEvent)
 	}
 
+	// Loopback, always. A guest with no NIC still has to be able to talk to
+	// itself — a forwarded port dials 127.0.0.1 inside this machine — and the
+	// kernel leaves `lo` down when there is no `ip=` argument to process.
+	if err := bringUpLoopback(); err != nil {
+		logf("cannot bring up loopback: %v", err)
+	}
+
 	// Listeners are bound before readiness is announced. The host is entitled
 	// to connect the instant it sees the ready frame, and a race there looks
 	// like a mysterious connection refusal.

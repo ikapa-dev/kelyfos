@@ -1871,6 +1871,30 @@
         <i>Revisit when</i> listing gets slow enough to notice, which needs thousands of sessions; the fix then is a
         cache that can be deleted without losing anything, not a record that can disagree.</td>
         <td class="mono">host/runs.go, dev/accept-runs.sh, docs/events.md §6</td></tr>
+        <tr><td class="mono">F-D55</td><td class="mono">2026-08-23</td>
+        <td><b>The guest's loopback interface is brought up at boot, always &mdash; found by the E5 exit, fixed
+        before the tag.</b>
+        <i>What was wrong.</i> A sandbox with no <code>--allow</code> has no NIC and no kernel <code>ip=</code>
+        argument, and the kernel leaves <code>lo</code> DOWN. Nothing inside such a machine could bind or reach
+        <code>127.0.0.1</code>. E5-5's own acceptance did not catch it because every sandbox in it was booted with
+        <code>--allow example.com</code>; the epic acceptance used a bare one, which is the commonest kind, and
+        <code>-p 8080:80</code> found nothing listening because nothing could listen.
+        <i>Why it matters more than the symptom.</i> The whole argument for F-D7 is that a forward is not a network
+        feature &mdash; the transport is vsock and the guest dials itself. A version of that which requires a network
+        interface to work is the argument refuting itself.
+        <i>Alternatives.</i> Have the host pass an <code>ip=127.0.0.1</code> argument, which is a network
+        configuration for a machine that has no network and would read as one; or bring <code>lo</code> up lazily
+        when the first forward arrives, which leaves every other reason to want loopback unserved and makes the
+        behaviour depend on a flag.
+        <i>Chosen.</i> The supervisor brings <code>lo</code> up unconditionally before it announces readiness,
+        <code>SIOCGIFFLAGS</code> then <code>SIOCSIFFLAGS</code> through <code>golang.org/x/sys/unix</code>, which was
+        already a dependency &mdash; reading the flags first rather than assuming them, so nothing the kernel already
+        set is cleared. No packet on <code>lo</code> can leave the machine by definition, so this grants nothing that
+        the sandbox boundary was holding back.
+        <i>The lesson for the acceptances</i> is the one this project keeps relearning in new clothes: a feature
+        tested only in the configuration it was developed in is tested in one configuration. The check now runs
+        against a sandbox with no network, which is where it should have run first.</td>
+        <td class="mono">supervisor/loopback.go, dev/accept-forward.sh, docs/networking.md &sect;3.0</td></tr>
     <!-- Claude Code: append rows above this line. -->
       <tr><td class="mono">F-D10</td><td class="mono">2026-08-22</td>
         <td>The resource knobs E1-0 goes looking for shipped <b>partly</b>: <code>--vcpus</code>/<code>--mem</code> and

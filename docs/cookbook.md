@@ -1,6 +1,6 @@
 # KelyfOS cookbook
 
-Eleven recipes, each one complete, each one runnable as it stands.
+Thirteen recipes, each one complete, each one runnable as it stands.
 
 These are not illustrations. `bash dev/cookbook.sh` extracts every script below
 and runs it on a real machine, and CI runs the same thing — so a recipe that
@@ -1070,6 +1070,137 @@ kelyfos log --verify --session "$server"
 kelyfos log --session "$box" --export machine.html
 kelyfos log --session "$server" --export client.html
 echo "exported $(wc -c < machine.html) and $(wc -c < client.html) bytes of self-contained HTML"
+```
+
+---
+
+## 12. Stop for the day, and pick the same machine up tomorrow
+
+A paused session is not a fresh sandbox with your files copied in. It is the
+same machine: the same memory, the same processes, the same half-finished thing
+in `/tmp` that no workspace would have carried.
+
+<!-- recipe: pause-and-resume -->
+
+```bash
+set -euo pipefail
+
+work="$(mktemp -d)"; cd "$work"
+mkdir -p project && cd project
+cat > kelyfos.toml <<'TOML'
+[sandbox]
+image = "dev"
+
+[resources]
+cpus = 2
+TOML
+
+# Boot a machine and put something into its scratch — the tmpfs overlay, which
+# lives in guest RAM and belongs to no workspace. If this survives, the whole
+# machine survived.
+kelyfos run &
+run_pid=$!
+for _ in $(seq 1 60); do kelyfos exec "true" >/dev/null 2>&1 && break; sleep 1; done
+
+kelyfos exec "echo 'the thing I was in the middle of' > /tmp/scratch-note"
+kelyfos exec "cat /tmp/scratch-note"
+
+# Freeze it under a name. The sandbox stops; the state does not.
+kelyfos pause --as before-the-migration
+wait "$run_pid" 2>/dev/null || true
+
+# It is listed, with what it costs on disk — a paused session holds your files
+# inside it, so the size is in the listing rather than somewhere you have to go
+# and look.
+kelyfos sessions
+
+# Change the policy while it is paused. This is the interesting case: a resumed
+# machine's memory was built under the OLD policy — its proxy address, its
+# environment, its open file descriptors — so that is what it runs under, and
+# kelyfos says so rather than quietly using either one. Note where the key goes:
+# `cpus` belongs to [resources] and `allow` does not, so the whole file is
+# rewritten rather than appended to.
+cat > kelyfos.toml <<'TOML'
+[sandbox]
+image = "dev"
+allow = ["example.com"]
+
+[resources]
+cpus = 4
+TOML
+
+kelyfos resume before-the-migration &
+resume_pid=$!
+for _ in $(seq 1 60); do kelyfos exec "true" >/dev/null 2>&1 && break; sleep 1; done
+
+# The scratch file is still there. Not restored from a workspace — it was never
+# in one.
+kelyfos exec "cat /tmp/scratch-note"
+
+# Stop it the way Ctrl-C would.
+kill -TERM "$resume_pid" 2>/dev/null || true
+wait "$resume_pid" 2>/dev/null || true
+
+# Discard it when you are done. It says what it is about to throw away.
+kelyfos sessions rm before-the-migration
+echo "paused, resumed with its scratch intact, and discarded"
+```
+
+---
+
+## 13. See what the agent changed before you keep it
+
+An agent with a workspace writes to it. `kelyfos diff` says what it has written
+so far, while it is still running; `--review` asks before any of it reaches your
+directory.
+
+<!-- recipe: review-the-diff -->
+
+```bash
+set -euo pipefail
+
+work="$(mktemp -d)"; cd "$work"
+mkdir -p ws
+echo "one"   > ws/keep.txt
+echo "two"   > ws/change.txt
+echo "three" > ws/remove.txt
+
+# A sandbox with the directory attached, doing what an agent would do to it.
+kelyfos run --image dev --workspace ./ws -- bash -c '
+  set -e
+  kelyfos exec "echo added > /work/new.txt"
+  kelyfos exec "echo two-changed > /work/change.txt"
+  kelyfos exec "rm /work/remove.txt"
+  kelyfos exec "sync"
+
+  # From the host, while the machine is still up: what has reached the disk.
+  kelyfos diff
+'
+
+# The sync-back happened, because nothing asked it not to.
+cat ws/new.txt
+grep -q two-changed ws/change.txt
+test ! -e ws/remove.txt
+echo "--- and now the same run, with --review ---"
+
+# --review shows the same summary and waits for a yes before writing anything
+# back. With nobody there to ask — a script, a CI job — it does NOT quietly sync
+# and does NOT quietly skip: it routes the results beside the directory and says
+# so, with a non-zero exit. A flag whose whole purpose is asking a person is a
+# trap the moment it answers on their behalf.
+mkdir -p ws2 && echo "original" > ws2/file.txt
+set +e
+kelyfos run --image dev --workspace ./ws2 --review -- \
+  bash -c 'kelyfos exec "echo written-by-the-agent > /work/file.txt; sync" >/dev/null'
+review_status=$?
+set -e
+test "$review_status" -ne 0
+
+# The host directory is untouched...
+grep -q "^original$" ws2/file.txt
+# ...and the results are beside it, for you to look at.
+grep -q written-by-the-agent ws2.kelyfos-out/file.txt
+echo "diff showed A/M/D; --review left the directory alone and diverted the results"
 ```
 
 ---

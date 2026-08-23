@@ -149,6 +149,36 @@ out="$(curl -s --max-time 5 http://127.0.0.1:18080/ 2>&1; echo "exit=$?")"
 check "$(grep -q 'exit=[1-9]' <<<"$out" && echo yes || echo no)" \
       "the forwarded port stops answering when the sandbox goes"
 
+say "and it works on a sandbox with no network at all"
+# The shape a forward is most useful for, and the one that was broken until the
+# E5 exit found it: with no --allow there is no NIC and no kernel `ip=`
+# argument, so the guest's own loopback stayed DOWN and nothing could bind it
+# (F-D55). A forward is not a network feature and must not need one.
+halt
+rm -f run.log
+(timeout 300 kelyfos run -p 18083:8080 > run.log 2>&1 &)
+for i in $(seq 1 90); do grep -q "Ctrl-C" run.log 2>/dev/null && break; sleep 1; done
+if ! grep -q "Ctrl-C" run.log; then
+  fail "the no-network sandbox never came up"
+  tail -5 run.log
+else
+  kelyfos exec 'ip addr show lo 2>&1 | sed -n 1p' | sed 's/^/  /'
+  kelyfos exec 'mkdir -p /tmp/www; echo no-network-needed > /tmp/www/index.html;
+    cd /tmp/www; setsid python3 -m http.server 8080 --bind 127.0.0.1 >/dev/null 2>&1 &
+    sleep 1; echo started' >/dev/null 2>&1
+  sleep 2
+  body="$(curl -s --max-time 10 http://127.0.0.1:18083/index.html)"
+  echo "  $body"
+  check "$(grep -q 'no-network-needed' <<<"$body" && echo yes || echo no)" \
+        "a forward reaches a server in a sandbox that has no network interface"
+  # Captured first rather than piped into grep -q: under pipefail, grep closing
+  # the pipe early sends SIGPIPE to its producer and fails the pipeline.
+  lo_state="$(kelyfos exec 'ip addr show lo' 2>&1)"
+  check "$(grep -q 'UP' <<<"$lo_state" && echo yes || echo no)" \
+        "because the supervisor brings the guest's loopback up whether or not there is a NIC"
+  halt
+fi
+
 say "a LAN exposure is loud, every time"
 if ! boot -p 18082:8080 --p-bind 0.0.0.0; then
   fail "the sandbox with --p-bind never came up"

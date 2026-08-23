@@ -81,6 +81,18 @@ Two details are deliberate and easy to get wrong:
 The `counter` on each drop is what makes `kelyfos log` able to say a packet was
 blocked rather than merely not allowed.
 
+### 3.0 The guest always has a loopback interface
+
+`lo` is brought up by the supervisor at boot, whether or not this sandbox has a
+NIC. Without it the kernel leaves loopback DOWN on a machine with no `ip=`
+argument, and nothing inside can bind or reach `127.0.0.1` — which the E5 exit
+found the hard way, because a forwarded port dials exactly that (F-D55).
+
+Loopback is not a network path to anywhere: no packet on `lo` can leave the
+machine, by definition. Leaving it down denies a sandbox the ability to talk to
+itself — a local server, a runtime's own health check, a test suite binding
+`127.0.0.1` — and buys nothing.
+
 ### 3.1 A forwarded port adds nothing to this
 
 `kelyfos run -p 8080:80` makes a server inside the sandbox reachable from the

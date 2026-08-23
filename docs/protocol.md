@@ -515,7 +515,10 @@ buffered, which for a server that speaks first is the beginning of its greeting.
 A half-close is passed through in both directions, because a client that has
 finished sending and is waiting to read needs the other end to see EOF.
 
-**The guest dials its own loopback**, `127.0.0.1:<port>`, and never its NIC. That
+**The guest dials its own loopback**, `127.0.0.1:<port>`, and never its NIC —
+which the supervisor brings up at boot whether or not the sandbox has a network,
+because otherwise a forward into the commonest kind of sandbox could not work at
+all (F-D55, `networking.md` §3.0). That
 is the whole reason inbound forwarding is possible at all without weakening
 anything: the packet is created inside the machine, so nothing arrives across the
 TAP, the nftables ruleset that makes the network egress-only never has to make an
