@@ -126,7 +126,7 @@
      improvements to the existing product land here as epics. Inert until its gate opens.</p>
   <div class="meta">
     owner: <b>John</b> &nbsp;&middot;&nbsp; developer: <b>Claude Code</b> &nbsp;&middot;&nbsp;
-    status: <b class="ok" id="meta-status">Epic E5 — active, 8/8 (v0.7 released; next: the E5 exit checklist and v0.8)</b> &nbsp;&middot;&nbsp;
+    status: <b class="ok" id="meta-status">Epic E5 — CLOSED, 8/8. v0.8 released. 42/42 tasks; all five epics done.</b> &nbsp;&middot;&nbsp;
     last updated: <b id="meta-updated">2026-08-23</b><br>
     repo file: <b>PLAN-FEATURES.html</b> (lives at the repository root next to <code>PLAN.html</code>)<br>
     <span class="quiet">Companion to PLAN.html — same protocol, same rules, later timeline.</span>
@@ -166,7 +166,7 @@
     <span class="bl-name">All epics</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">Epic E5 exit &mdash; the recreate-and-verify acceptance end to end, the docs duties, then tag v0.8</b></div>
+  <div class="focusline">Current focus: <b id="focus">v0.8 released. Next, per the product owner&rsquo;s ruling: close this plan out, then promote P4-1 and P4-2 into PLAN.html as a hardening phase for v0.9</b></div>
 </div>
 
 <!-- ====================================================== 1. ACTIVATION GATE -->
@@ -4443,6 +4443,35 @@ $ gofmt -l . ; go vet ./... ; go test ./...
         <b>The fallback is the terminal bell</b>, which needs nothing installed and is written only into a terminal,
         and the run says in its header which of the three it found &mdash; a notification that never arrives is
         otherwise indistinguishable from one that was never asked for.</td></tr>
+        <tr><td class="mono">2026-08-23</td><td class="mono">E5 exit</td>
+        <td><b>The epic&rsquo;s own nine-item list, run end to end, plus the exam that found what the list could
+        not.</b> <code>dev/accept-e5.sh</code>: 33 checks, all passing &mdash; a paused session resumed with every
+        kelyfos process killed in between and its scratch file still there; a resume naming the two ways the policy
+        had changed; <code>--review</code> over an add, an edit and a delete answered both ways, with the host
+        directory byte-identical after a no; a shell that is a terminal and records only what it promised; a blocked
+        domain and a ceiling violation both handing back something to paste; a forwarded port; the history and a
+        rerun; <code>--notify</code> through a recording notifier; and <code>log --verify</code> over every session it
+        made, with every event type the epic added present in one of them. The per-task acceptances re-run green
+        beside it: shell 13, denials 12, forward 19, runs 18, notify 22. Fourteen cookbook recipes, all extracted and
+        executed.
+        <b>The acceptance found a defect the feature&rsquo;s own tests could not (F-D55).</b> Every sandbox in E5-5&rsquo;s
+        acceptance had <code>--allow</code>; the epic&rsquo;s used a bare one, which is the commonest kind, and found the
+        guest&rsquo;s loopback interface DOWN &mdash; so nothing inside could bind <code>127.0.0.1</code> and a forward
+        into such a machine could not work. That is the F-D7 argument refuting itself: a forward that is not a network
+        feature must not require a network. Fixed before the tag; the check now runs where it should have run first.
+        <b>The docs exam is the third form of one lesson.</b> E3-5: generation gives consistency, not truth. E4: the
+        part no page describes is the part nothing checks. E5: <b>a feature can be completely and correctly
+        documented and still be unusable</b>, because the sentence a reader needs is about something else. Nothing
+        showed how to start a long-running process inside a guest, which is the one thing <code>-p</code> requires;
+        the reader typed the obvious spelling and it hung. Seven findings, all fixed, including three counts written
+        into prose that had gone stale under every mechanical gate in CI &mdash; the token estimate by 45,000.
+        <b>And a flake that had been waiting years.</b> The x86_64 build failed with
+        <code>make: write error: stdout</code>: <code>make --version | head -1</code> under <code>pipefail</code>,
+        the exact class the cookbook has warned about since E3-3 and whose recipes were swept then while the scripts
+        around them were not. Eighteen pipes in nine files, now <code>sed -n '1,Np'</code>.
+        <b>Exit: v0.8.</b> Docs regenerated and CI-checked, llms-full.txt at about 93,000 tokens (re-measured, and the
+        two places that quoted 48,000 and 54,000 corrected), fourteen recipes green, the exam transcript committed at
+        <code>docs/exam/2026-08-23-daily-driver.md</code>.</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
