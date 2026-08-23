@@ -697,6 +697,14 @@
         loud so the feature is not mistaken for a general guarantee.</li>
     <li style="display:list-item"><b>KelyfOS as an MCP server for agent hosts</b> — promoted to Epic E4 (F-D5).</li>
     <li style="display:list-item"><b>MCP plugins inside the guest</b> — promoted to Epic E4; delivery decided in F-D6.</li>
+    <li style="display:list-item"><b>One image directory per flavor, not per architecture.</b>
+        <code>IMAGE_DIR</code> resolves to <code>out/&lt;arch&gt;</code>, so a machine holds exactly one flavor at a
+        time in the default cache and a second is reachable only by pointing <code>--image-dir</code> at it. D21
+        considered a flavor-scoped path and rejected it: it invalidates every existing cache and snapshot
+        <code>workspace_path</code>, and it would not have stopped a hand-placed rootfs being mislabelled, which the
+        manifest does. That reasoning still holds. What changed is that E3-5 wanted a machine carrying both flavors and
+        could not simply have one. Whether it is worth a migration is a question for whoever next needs two at once.
+        Surfaced by the E3-5 exam setup; parked by F-D33.</li>
     <li style="display:list-item"><b>Zero-friction start: <code>kelyfos init</code> + allowlist presets + packaged installs.</b>
         <code>init</code> detects the project and writes a working toml; presets like <code>@python</code>/<code>@node</code>/<code>@github</code>
         expand to the ecosystem&rsquo;s domains; prebuilt image artifacts on releases plus a Homebrew formula so no user ever
@@ -1318,6 +1326,37 @@
         boot story was observable between its two runs. It spent seventeen of those minutes breaking things on purpose
         because the task itself had cost so little, which is where nine of the ten defects came from.</td>
         <td class="mono">docs/exam/; the E3-5 progress row</td></tr>
+        <tr><td class="mono">F-D33</td><td class="mono">2026-08-23</td>
+        <td><b>Ruling from John on the E3-5 findings: a hardening batch, after the tag and before anything else.</b>
+        The exam&rsquo;s product findings are defects surfaced by a documentation epic, not documentation defects, so
+        they do not reopen E3 &mdash; E3 closed as planned and v0.6 shipped. They are now their own batch, one commit
+        per fix, sitting between the release and the dependency seam check. Docs and recipes are regenerated per F-D9
+        wherever behaviour changes.
+        <b>The invariant the batch is really about, stated by John as the reason:</b> <i>no entry path may bypass the
+        wall.</i> F-D5 already says a <code>serve-mcp</code> tool can never widen policy because the project&rsquo;s
+        toml is the ceiling. The same rule applied to the shim means the shim reads <code>kelyfos.toml</code>, enforces
+        the caps and writes the flight recorder like every other entry path &mdash;
+        <b>its documentation&rsquo;s promise becomes true rather than the promise being deleted</b>, which is the
+        opposite of what E3-0 did with it and is the right way round now that there is time to do the work.
+        The batch, in John&rsquo;s order.
+        <b>(a)</b> The shim goes through the same policy and recorder machinery as every other entry path.
+        <b>(b)</b> Plain-HTTP egress stops recording <code>mode: tunnelled</code> and records what is true, with a
+        distinct value, so D6&rsquo;s condition (2) holds everywhere: <i>the audit log must never understate the
+        host&rsquo;s visibility.</i>
+        <b>(c)</b> A blocking MCP tool whose channel closes early returns an explicit error result, never silence.
+        <b>(d)</b> <code>[team.agent.spawn.resources]</code> keys that are accepted and not enforced are either
+        enforced or refused at parse with an actionable message &mdash; <i>silently unenforced policy is worse than
+        absent policy</i> &mdash; chosen by cost, with the choice logged.
+        <b>(e)</b> <code>kelyfos fork</code> writes <code>session.end</code> like every other lifecycle.
+        <b>(f)</b> The remaining smalls fixed where trivial, parked with one line each otherwise.
+        <b>Two scope rulings that keep the batch from growing.</b> The per-arch-not-per-flavor image directory is a
+        parking-lot entry rather than batch work. And nothing here touches a performance path, so no re-measurement is
+        owed &mdash; a batch that quietly acquired a benchmark would be a different batch.
+        <b>One re-check owed at the end:</b> after (a) and (b) land, <code>docs/launch/hn-post.md</code>&rsquo;s claims
+        are read again verbatim, because those two fixes are exactly the difference between &ldquo;every action is
+        recorded&rdquo; being aspirational and being true. A launch post is the one document where that distinction is
+        load-bearing.</td>
+        <td class="mono">docs/exam/2026-08-23-transcript.md</td></tr>
     <!-- Claude Code: append rows above this line. -->
       <tr><td class="mono">F-D10</td><td class="mono">2026-08-22</td>
         <td>The resource knobs E1-0 goes looking for shipped <b>partly</b>: <code>--vcpus</code>/<code>--mem</code> and
