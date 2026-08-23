@@ -1511,6 +1511,46 @@
         snapshots directory.
         <i>Revisit when</i> a restore can resize a machine, which would make this a clamp instead of a refusal.</td>
         <td class="mono">host/servemcpstate.go, internal/sandbox/sandbox.go</td></tr>
+        <tr><td class="mono">F-D40</td><td class="mono">2026-08-23</td>
+        <td><b>Buildroot moves to the genuinely supported LTS line, 2025.02.x, at the E4&rarr;E5 seam. Supersedes D11,
+        which stays in the log untouched.</b> <i>John&rsquo;s ruling; the premise F-D35 reported is accepted as
+        falsified.</i>
+        <i>The reason, stated for the record.</i> D11&rsquo;s intent was &ldquo;a line that receives security fixes for
+        years with minimal hops&rdquo;. Under Buildroot&rsquo;s biennial model that line is <b>2025.02</b> &mdash; a
+        three-year window with a dedicated LTS security workflow &mdash; and not 2026.02, which was born a three-month
+        quarterly and is finished. Going a year back in base versions is the acceptable price for a minimal guest whose
+        kernel is pinned separately.
+        <i>When.</i> At the seam: after E4&rsquo;s exit and the v0.7 release, before E5-0. Nothing in Epic E4 is
+        touched, and the newest 2025.02 point release at the time of the move is the one taken.
+        <i>Gates, all binding.</i> A full image rebuild on both architectures; the image acceptance suite; docs drift
+        and every cookbook recipe green; and the boot and restore benchmarks re-run <b>on the bare-KVM reference</b>
+        with the bars holding. A Buildroot hop changes the rootfs and the toolchain, so the numbers are re-earned rather
+        than assumed.
+        <i>Fallback, decided in advance.</i> If the rebuild surfaces a real blocker &mdash; the toolchain cannot build
+        the pinned kernel, or a required package or feature is absent &mdash; stay frozen on 2026.02.3, record the
+        blocker as the reason, and say in <code>versions.mk</code> that the line is deliberately frozen. The comment
+        there must be a true sentence either way.
+        <i>Parking lot.</i> Migrate to the 2027.02 LTS after its first point release lands; the one-year overlap of the
+        two LTS windows is the migration room.</td>
+        <td class="mono">buildroot.org, F-D35</td></tr>
+        <tr><td class="mono">F-D41</td><td class="mono">2026-08-23</td>
+        <td><b>Bubble Tea and Lip Gloss move to v2 at the same seam, immediately after the Buildroot hop. Supersedes
+        F-D23, which stays in the log untouched.</b> <i>John&rsquo;s ruling; F-D23&rsquo;s third reopening condition
+        fired, so the decision reopens and resolves rather than being deferred again.</i>
+        <i>Why this slot and no other.</i> E5 is the interactive-surface epic &mdash; the shell, <code>logs -f</code>,
+        review. Landing v2 once, immediately before the epic that builds on it, is the only slot that is neither a
+        rewrite on no task nor an undated deferral. <b>Timeboxed to one task-sized effort.</b>
+        <i>Acceptance.</i> The E2-8 watch acceptance re-run under a real PTY, behaviour identical, and
+        <code>-race</code> clean.
+        <i>The vanity-path concern is addressed rather than ignored.</i> The module proxy&rsquo;s immutable cache plus
+        <code>go.sum</code> pinning is the mitigation, and this decision says so out loud.
+        <i>Fallback, decided in advance.</i> If the timebox is exceeded or <code>watch</code> regresses: revert, stay on
+        the frozen v1 &mdash; no advisories today, and <code>govulncheck</code> watches &mdash; and set a new reopening
+        condition, which is an advisory on the v1 pins or an E5 task needing a v2-only API.
+        <i>Sequencing inside the seam.</i> Buildroot first, because it is image-level and carries the bench gates; then
+        this, which is host-only and has no image impact; independent commits; then the ordinary seam dependency check;
+        then E5-0.</td>
+        <td class="mono">F-D23, F-D35</td></tr>
     <!-- Claude Code: append rows above this line. -->
       <tr><td class="mono">F-D10</td><td class="mono">2026-08-22</td>
         <td>The resource knobs E1-0 goes looking for shipped <b>partly</b>: <code>--vcpus</code>/<code>--mem</code> and
