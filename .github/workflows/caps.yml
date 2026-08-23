@@ -41,15 +41,17 @@ jobs:
           sudo udevadm trigger --name-match=kvm
           ls -l /dev/kvm
 
-      # A CPU quota needs a cgroup with the cpu controller available in it. On a
-      # runner the root cgroup has the controller but does not delegate it
-      # downward, so nothing can be created with a cpu.max until it does.
-      - name: Make the cpu controller available to child cgroups
+      # Printed, not fixed. KelyfOS enables the cpu controller on the root cgroup
+      # itself when it needs to and is root, which is the only cgroup that may
+      # both hold processes and delegate controllers; doing it here as well
+      # would hide whether that path works. What this step buys is a readable
+      # record of the cgroup layout when something does go wrong.
+      - name: Show the cgroup layout
         run: |
           set -eux
           cat /sys/fs/cgroup/cgroup.controllers
-          echo "+cpu" | sudo tee /sys/fs/cgroup/cgroup.subtree_control || true
           cat /sys/fs/cgroup/cgroup.subtree_control
+          cat /proc/self/cgroup
 
       - name: Cache Buildroot downloads
         uses: actions/cache@v4

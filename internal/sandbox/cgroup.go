@@ -57,18 +57,22 @@ func pickMode() (mode, string, error) {
 			"drop --cpu-quota or use a cgroup v2 host")
 	}
 	if root := os.Getenv("KELYFOS_CGROUP_ROOT"); root != "" {
-		return modeDirect, root, hasCPUController(root)
+		return modeDirect, root, delegatesCPU(root)
 	}
 	// Root, or a container where the root cgroup is delegated: do it ourselves,
 	// so CI and rootless containers do not need systemd present.
 	own, err := ownCgroupPath()
 	if err == nil && unix.Access(own, unix.W_OK) == nil {
-		if err := hasCPUController(own); err == nil {
+		if err := delegatesCPU(own); err == nil {
 			return modeDirect, own, nil
 		}
 	}
+	// As root the root cgroup is the reliable parent, and the only one exempt
+	// from cgroup v2's rule that a cgroup may hold processes or distribute
+	// controllers but not both — which is exactly why the cgroup this process
+	// is already in usually cannot be used.
 	if os.Getuid() == 0 {
-		if err := hasCPUController("/sys/fs/cgroup"); err == nil {
+		if err := delegateCPU("/sys/fs/cgroup"); err == nil {
 			return modeDirect, "/sys/fs/cgroup", nil
 		}
 	}
@@ -137,8 +141,54 @@ func (s *Slice) Close() {
 	_ = os.Remove(s.Path)
 }
 
-// hasCPUController checks the cpu controller is actually available in a cgroup
-// directory, so a quota cannot be silently accepted where nothing enforces it.
+// delegatesCPU checks that a cgroup hands the cpu controller to its *children*,
+// which is the only question that matters when the plan is to create one.
+//
+// cgroup v2 keeps two lists and they answer different questions:
+// cgroup.controllers is what this cgroup has, and cgroup.subtree_control is what
+// it passes down. A child gets a cpu.max only if the parent's subtree_control
+// names cpu, and reading the wrong one of these is not a theoretical mistake —
+// it is what this function was doing until a GitHub runner proved it. There the
+// job's own cgroup reports the cpu controller and delegates nothing, so KelyfOS
+// happily created a directory it could not then write cpu.max into, and every
+// sandbox with a quota failed to start three steps later with a bare permission
+// denied.
+func delegatesCPU(dir string) error {
+	b, err := os.ReadFile(filepath.Join(dir, "cgroup.subtree_control"))
+	if err != nil {
+		return fmt.Errorf("read %s/cgroup.subtree_control: %w", dir, err)
+	}
+	for _, c := range strings.Fields(string(b)) {
+		if c == "cpu" {
+			return nil
+		}
+	}
+	return fmt.Errorf("%s does not delegate the cpu controller to its children (subtree_control: %q), "+
+		"so a cgroup created there cannot have a quota", dir, strings.TrimSpace(string(b)))
+}
+
+// delegateCPU is delegatesCPU with one attempt to fix it.
+//
+// Only ever called on the root cgroup, and only as root, because a cgroup that
+// holds processes cannot start distributing controllers — the kernel refuses
+// with EBUSY, and every cgroup this process could otherwise use holds at least
+// this process. The root cgroup is the documented exception to that rule.
+func delegateCPU(dir string) error {
+	if err := delegatesCPU(dir); err == nil {
+		return nil
+	}
+	if err := hasCPUController(dir); err != nil {
+		return err
+	}
+	sub := filepath.Join(dir, "cgroup.subtree_control")
+	if err := os.WriteFile(sub, []byte("+cpu"), 0o644); err != nil {
+		return fmt.Errorf("enable the cpu controller for children of %s: %w", dir, err)
+	}
+	return delegatesCPU(dir)
+}
+
+// hasCPUController checks the cpu controller is available in a cgroup directory
+// at all. Necessary but not sufficient — see delegatesCPU for the difference.
 func hasCPUController(dir string) error {
 	b, err := os.ReadFile(filepath.Join(dir, "cgroup.controllers"))
 	if err != nil {

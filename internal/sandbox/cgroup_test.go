@@ -1,6 +1,10 @@
 package sandbox
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
 
 // The percentage never reaches the kernel: E1-2 fixes the translation exactly,
 // and these are the numbers it names.
@@ -50,5 +54,41 @@ func TestWrapArgvBuildsTheScopeRequest(t *testing.T) {
 	}
 	if out := (*Slice)(nil).WrapArgv([]string{"firecracker"}); len(out) != 1 {
 		t.Errorf("nil slice rewrote argv: %v", out)
+	}
+}
+
+// The difference between "this cgroup has the cpu controller" and "this cgroup
+// gives the cpu controller to its children" is the whole of the bug a bare-KVM
+// runner found, so it is pinned here with the two files that decide it.
+func TestDelegationIsCheckedNotAvailability(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, body string) {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// A GitHub runner's own cgroup: it has cpu, and hands nothing down.
+	write("cgroup.controllers", "cpuset cpu io memory pids\n")
+	write("cgroup.subtree_control", "\n")
+	if err := hasCPUController(dir); err != nil {
+		t.Fatalf("the controller is present, so this check should pass: %v", err)
+	}
+	if err := delegatesCPU(dir); err == nil {
+		t.Error("a cgroup that delegates nothing was accepted as a place to create a quota")
+	}
+
+	// Once it delegates, it is usable.
+	write("cgroup.subtree_control", "cpu memory\n")
+	if err := delegatesCPU(dir); err != nil {
+		t.Errorf("a cgroup that delegates cpu was rejected: %v", err)
+	}
+
+	// And a cgroup without the controller at all cannot delegate it, however
+	// hard it is asked.
+	write("cgroup.controllers", "cpuset io memory pids\n")
+	write("cgroup.subtree_control", "\n")
+	if err := delegateCPU(dir); err == nil {
+		t.Error("a cgroup with no cpu controller was talked into delegating one")
 	}
 }

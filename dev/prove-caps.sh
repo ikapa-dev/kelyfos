@@ -194,13 +194,29 @@ fi
 say "2. Memory — the cap is VM hardware; the proof is that hitting it is legible"
 dir="$WORK/mem"
 if start "$dir" --mem 256M; then
-  "$KELYFOS" exec --sandbox "$SB" "stress-ng --vm 1 --vm-bytes 400M --vm-keep --timeout 20s" >/dev/null 2>&1
+  # Not stress-ng, for this one cap, and the reason is worth stating: its vm
+  # stressor is built to *survive* memory pressure. It catches a failed mapping,
+  # adapts, and reports a successful run either way — measured here, "--vm 4
+  # --vm-bytes 100M" produced zero kills on aarch64 while claiming to pass, and
+  # "--vm 1 --vm-bytes 400M" produced three on aarch64 and none at all on
+  # x86_64, where the overcommit heuristic turned the single large mapping away
+  # at the door rather than letting it be killed. A test whose instrument is
+  # designed to avoid the outcome being tested is not a test.
+  #
+  # A plain allocator loop has no such opinions: each megabyte passes the
+  # heuristic on its own, they accumulate, and the kernel does what the kernel
+  # does. python3 is in the dev flavor for the same reason stress-ng is.
+  out="$("$KELYFOS" exec --sandbox "$SB" \
+      'python3 -c "b=[bytearray(1048576) for _ in range(512)]; print(len(b))"' 2>&1)"
   sleep 2
   stop
   if "$KELYFOS" log --session "$SB" 2>/dev/null | grep -q "OOM-killed"; then
-    "$KELYFOS" log --session "$SB" | grep "OOM-killed" | sed 's/^/        /'
+    "$KELYFOS" log --session "$SB" | grep "OOM-killed" | head -3 | sed 's/^/        /'
     pass "the guest OOM-killer fired and the host recorded it by name"
   else
+    # Print what the stressor said. A memory test that fails silently is a test
+    # that will be re-run rather than read.
+    echo "$out" | tail -6 | sed 's/^/        /'
     fail "no resource.oom event was recorded"
   fi
 else
