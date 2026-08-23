@@ -42,7 +42,7 @@ step() {
   local n="$1" what="$2" log="$3"; shift 3
   local line=""
   for marker in "$@"; do
-    line="$(grep -E "^  (PASS|SKIP|FAIL)  .*$marker" "$log" | head -1)"
+    line="$(grep -E "^  (PASS|SKIP|FAIL)  .*$marker" "$log" | sed -n '1,1p')"
     [ -n "$line" ] && break
   done
   if [ -z "$line" ]; then
@@ -59,7 +59,7 @@ step() {
 
 say "KelyfOS Epic E2 — acceptance test (agent teams)"
 echo "  arch        $ARCH"
-echo "  kelyfos     $("$KELYFOS" version 2>/dev/null | head -1)"
+echo "  kelyfos     $("$KELYFOS" version 2>/dev/null | sed -n '1,1p')"
 echo "  host        $(uname -srm), $(nproc) cpus"
 if command -v systemd-detect-virt >/dev/null 2>&1; then
   VIRT="$(systemd-detect-virt || true)"

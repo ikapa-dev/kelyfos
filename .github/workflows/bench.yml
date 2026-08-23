@@ -83,7 +83,7 @@ jobs:
             echo '```'
             echo "runner    : $(uname -srm)"
             echo "cpu       : $(nproc) x $(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2- | xargs)"
-            echo "firecracker: $(firecracker --version 2>&1 | head -1)"
+            echo "firecracker: $(firecracker --version 2>&1 | sed -n '1,1p')"
             echo "go        : $(go version)"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"

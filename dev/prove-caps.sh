@@ -119,7 +119,7 @@ print(f"{gross:.2f} {steady:.2f}")
 
 say "KelyfOS resource caps — enforcement proof (E1-8)"
 echo "  arch        $ARCH"
-echo "  kelyfos     $("$KELYFOS" version 2>/dev/null | head -1)"
+echo "  kelyfos     $("$KELYFOS" version 2>/dev/null | sed -n '1,1p')"
 echo "  host        $(uname -srm), $(nproc) cpus"
 # Worth printing rather than assuming, because it decides whether any of the
 # numbers below mean anything (D15). x86 advertises a hypervisor flag; aarch64
@@ -211,7 +211,7 @@ if start "$dir" --mem 256M; then
   sleep 2
   stop
   if "$KELYFOS" log --session "$SB" 2>/dev/null | grep -q "OOM-killed"; then
-    "$KELYFOS" log --session "$SB" | grep "OOM-killed" | head -3 | sed 's/^/        /'
+    "$KELYFOS" log --session "$SB" | grep "OOM-killed" | sed -n '1,3p' | sed 's/^/        /'
     pass "the guest OOM-killer fired and the host recorded it by name"
   else
     # Print what the stressor said. A memory test that fails silently is a test

@@ -5514,6 +5514,13 @@ exiting early sends SIGPIPE to whatever is feeding it and fails the whole
 pipeline — so a recipe written with `head` passes while its output is short and
 starts failing, for a reason unrelated to what it teaches, the day it is not.
 
+It is not a hypothetical. `dev/install-build-deps.sh` ran `make --version |
+head -1` for years and failed a CI build during the v0.8 release with
+`make: write error: stdout` — because `make --version` prints four lines, `head`
+closed the pipe after the first, and the exit status of a dependency install
+became a race. Every `head -N` in `dev/` and in the workflows is now
+`sed -n '1,Np'`.
+
 
 ---
 title: Building on KelyfOS

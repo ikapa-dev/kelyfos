@@ -29,7 +29,7 @@ sudo -E apt-get install -y --no-install-recommends \
 # Go 1.22, too old to honour a go.mod toolchain directive. See versions.mk.
 bash "$(dirname "${BASH_SOURCE[0]}")/install-go.sh"
 
-make --version | head -1
-gcc --version | head -1
-cmake --version | head -1
+make --version | sed -n '1,1p'
+gcc --version | sed -n '1,1p'
+cmake --version | sed -n '1,1p'
 go version

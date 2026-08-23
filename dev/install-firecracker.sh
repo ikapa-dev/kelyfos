@@ -51,4 +51,4 @@ sudo install -m 0755 "$release_dir/firecracker-${version}-${arch}" "$prefix/fire
 sudo install -m 0755 "$release_dir/jailer-${version}-${arch}"      "$prefix/jailer"
 
 "$prefix/firecracker" --version
-"$prefix/jailer" --version | head -1
+"$prefix/jailer" --version | sed -n '1,1p'

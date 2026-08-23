@@ -216,19 +216,19 @@ fact() { python3 -c "import json;v=json.load(open('facts.json'))['$1'];print(v i
 
 say "1. a scripted client lists tools, boots a sandbox, and runs a command"
 echo "     tools:  $(fact outer_tools)"
-echo "     uname:  $(fact uname | head -1)"
+echo "     uname:  $(fact uname | sed -n '1,1p')"
 check "$([ "$(fact run_error)" = "false" ] && echo yes || echo no)" "sandbox_run succeeded"
 check "$(fact uname | grep -q Linux && echo yes || echo no)" "sandbox_exec returned the guest kernel string"
 
 say "2. a domain outside the project toml is refused, and audited"
-echo "     $(fact allow_message | head -1)"
+echo "     $(fact allow_message | sed -n '1,1p')"
 check "$([ "$(fact allow_refused)" = "true" ] && echo yes || echo no)" "the request was refused"
 check "$(fact allow_message | grep -q 'never add to it' && echo yes || echo no)" "the refusal says the rule"
 check "$(grep -q 'client result  sandbox_run refused' server.log && echo yes || echo no)" \
       "the refusal is an mcp.host.* audit event"
 
 say "3. max_sandboxes + 1 is refused, and audited"
-echo "     $(fact third_message | head -1)"
+echo "     $(fact third_message | sed -n '1,1p')"
 check "$([ "$(fact second_ok)" = "true" ] && echo yes || echo no)" "the second sandbox was allowed"
 check "$([ "$(fact third_refused)" = "true" ] && echo yes || echo no)" "the third was refused"
 check "$(fact third_message | grep -q max_sandboxes && echo yes || echo no)" "the refusal names the limit"
@@ -251,7 +251,7 @@ check "$(fact list_structured | grep -q '"sandbox"' && echo yes || echo no)" \
       "sandbox_list's rows are in structuredContent"
 
 say "5. killing the plugin costs its tools and nothing else"
-echo "     $(fact plugin_dead_message | head -1)"
+echo "     $(fact plugin_dead_message | sed -n '1,1p')"
 check "$([ "$(fact plugin_dead_error)" = "true" ] && echo yes || echo no)" "its tools now fail"
 check "$(fact plugin_dead_message | grep -q 'no longer running' && echo yes || echo no)" \
       "the error says the plugin is gone"

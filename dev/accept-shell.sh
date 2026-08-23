@@ -99,7 +99,7 @@ PY
 
 say "a shell, a terminal, a resize and an exit status"
 code="$(timeout 200 python3 drive.py --transcript 2>/dev/null | tail -1)"
-sed -e 's/\x1b\[[0-9;?]*[A-Za-z]//g' shell.out | grep -vE '^\s*$' | sed 's/^/  | /' | head -12
+sed -e 's/\x1b\[[0-9;?]*[A-Za-z]//g' shell.out | grep -vE '^\s*$' | sed 's/^/  | /' | sed -n '1,12p'
 
 check "$([ "$code" = "7" ] && echo yes || echo no)" "the shell's exit status comes back (7)"
 check "$(grep -q 'hello-from-the-shell' shell.out && echo yes || echo no)" "a command ran and its output came back"
@@ -113,7 +113,7 @@ grep -E 'shell' log.txt | sed 's/^/  /'
 check "$(grep -q 'shell opened' log.txt && echo yes || echo no)" "the fact of the shell is always recorded"
 check "$(grep -q 'shell closed   exit 7' log.txt && echo yes || echo no)" "and how it ended"
 
-stream="$(ls ~/.cache/kelyfos/sessions/"$session"/shell-*.stream 2>/dev/null | head -1)"
+stream="$(ls ~/.cache/kelyfos/sessions/"$session"/shell-*.stream 2>/dev/null | sed -n '1,1p')"
 check "$([ -n "$stream" ] && echo yes || echo no)" "--transcript wrote the terminal stream"
 check "$([ -n "$stream" ] && grep -q 'hello-from-the-shell' "$stream" && echo yes || echo no)" \
       "and the stream holds what was shown"

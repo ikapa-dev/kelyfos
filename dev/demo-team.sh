@@ -73,7 +73,7 @@ via() { python3 -c "import json;print([a.get('via','') for a in json.load(open('
 
 say "KelyfOS agent teams — Epic E2 proof demo (E2-9)"
 echo "  arch        $ARCH"
-echo "  kelyfos     $("$KELYFOS" version 2>/dev/null | head -1)"
+echo "  kelyfos     $("$KELYFOS" version 2>/dev/null | sed -n '1,1p')"
 echo "  host        $(uname -srm), $(nproc) cpus"
 if command -v systemd-detect-virt >/dev/null 2>&1; then
   VIRT="$(systemd-detect-virt || true)"
@@ -119,7 +119,7 @@ down() {
   for _ in $(seq 1 120); do [ -f "$RUN_ROOT/team.json" ] || break; sleep 0.5; done
   wait "$UPPID" 2>/dev/null
 }
-ms() { sed -n 's/^team up in \([0-9]*\) ms.*/\1/p' "$PROJ/$1" | head -1; }
+ms() { sed -n 's/^team up in \([0-9]*\) ms.*/\1/p' "$PROJ/$1" | sed -n '1,1p'; }
 
 say "1. kelyfos team up — the cold path, then the warm one"
 # Cold-first, fork-warm (F-D26): with no cached template every agent boots cold,

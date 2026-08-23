@@ -135,7 +135,7 @@ stress_all() {
 
 say "KelyfOS team resource budget — enforcement proof (E2-6)"
 echo "  arch        $ARCH"
-echo "  kelyfos     $("$KELYFOS" version 2>/dev/null | head -1)"
+echo "  kelyfos     $("$KELYFOS" version 2>/dev/null | sed -n '1,1p')"
 echo "  host        $(uname -srm), $(nproc) cpus"
 if command -v systemd-detect-virt >/dev/null 2>&1; then
   VIRT="$(systemd-detect-virt || true)"
