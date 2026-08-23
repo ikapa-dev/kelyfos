@@ -99,6 +99,16 @@ jobs:
           sudo -E env "PATH=$PATH" "HOME=$HOME" ARCH="$ARCH" \
             bash dev/prove-caps.sh 2>&1 | tee caps.log
 
+      # The epic's acceptance list, run where its two measured steps mean
+      # something. The behaviour it checks is the same everywhere; the CPU quota
+      # and the download throughput are not (D15).
+      - name: Run Epic E1's acceptance list
+        if: always()
+        run: |
+          set -o pipefail
+          sudo -E env "PATH=$PATH" "HOME=$HOME" ARCH="$ARCH" \
+            bash dev/accept-e1.sh 2>&1 | tee accept.log
+
       - name: Publish the verdict
         if: always()
         run: |
@@ -108,13 +118,23 @@ jobs:
             echo '```'
             sed -e 's/\x1b\[[0-9;]*m//g' caps.log
             echo '```'
+            if [ -f accept.log ]; then
+              echo
+              echo "### Epic E1 acceptance — bare-KVM reference"
+              echo
+              echo '```'
+              sed -e 's/\x1b\[[0-9;]*m//g' accept.log
+              echo '```'
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: caps-${{ env.ARCH }}
-          path: caps.log
+          path: |
+            caps.log
+            accept.log
           if-no-files-found: warn
 
       # Saved explicitly, and with if: always(), because a post step is skipped
