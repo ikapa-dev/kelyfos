@@ -380,10 +380,24 @@ circular: writing it under `[team.resources]` tells you to move it to
 `team_ask` and `team_recv` answer when the *other side* acts, not when the
 request is written. If your client closes the MCP session before then — a
 `printf | kelyfos mcp` pipeline whose stdin ends immediately, for instance — the
-call produces **no result and no error**: the bridge simply goes away. Hold the
-channel open for at least as long as the tool's own `timeout_ms`. The cookbook's
-team recipe does this with a trailing `sleep`, and the Python SDK does it for you
-by keeping the session open.
+bridge waits a few seconds for an answer already on its way, and then **answers
+the call itself** with an error result naming the tool:
+
+```json
+{"jsonrpc":"2.0","id":2,"result":{"content":[{"type":"text",
+ "text":"kelyfos: the bridge to this sandbox closed before team_ask answered…"}],
+ "isError":true}}
+```
+
+That is a normal tool result with `isError` set, so an SDK surfaces it the way
+it surfaces any other failing call rather than raising a transport error. It
+used to be silence, which is worse than either: a caller told nothing concludes
+the call is still running, or that it succeeded and returned nothing (F-D33).
+
+Still hold the channel open for at least as long as the tool's own `timeout_ms`
+— an error result is a diagnosis, not an answer. The cookbook's team recipe does
+this with a trailing `sleep`; the Python SDK does it for you by keeping the
+session open.
 
 The record is not a workaround here either. An ask that goes unanswered is
 written when the host-side timeout fires, which is `timeout_ms` later, not when

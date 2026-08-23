@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"io"
+	"sort"
 	"strings"
 	"sync"
 
@@ -39,6 +40,27 @@ type pendingCall struct {
 
 func newObserver(rec *recorder.Recorder, agent string) *observer {
 	return &observer{rec: rec, agent: agent, calls: map[string]*pendingCall{}}
+}
+
+// outstanding lists the tool calls the client asked for and never got an answer
+// to, newest last. It exists so the bridge can answer them itself rather than
+// leaving a caller waiting on a channel that has already gone (F-D33).
+func (o *observer) outstanding() []pendingID {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	out := make([]pendingID, 0, len(o.calls))
+	for id, c := range o.calls {
+		out = append(out, pendingID{ID: id, Tool: c.tool})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out
+}
+
+// pendingID is one unanswered call: the JSON-RPC id to answer against, and the
+// tool it was for, so the error can say which.
+type pendingID struct {
+	ID   string
+	Tool string
 }
 
 // tee returns a reader that yields exactly what it was given, while feeding a

@@ -5,7 +5,8 @@ ready to paste. It tracks the repo: the numbers below are the ones the CI
 benchmark last published, with the run ids, and they get re-checked before the
 post goes out.
 
-Current as of **v0.5** (agent teams as code, released 2026-08-23).
+Current as of **v0.6** (documentation an LLM can build from, released
+2026-08-23), plus the hardening batch that followed it.
 
 ---
 
@@ -48,7 +49,9 @@ Current as of **v0.5** (agent teams as code, released 2026-08-23).
 >
 > **The audit record is written by the host.** A guest that could write its own
 > log could write a flattering one, so it cannot write one at all. Every event
-> is hash-chained JSONL, and `kelyfos log --verify` checks the chain. It is
+> is hash-chained JSONL, and `kelyfos log --verify` checks the chain. Every way
+> in writes it — the CLI, the MCP bridge, and the E2B-compatible shim — because
+> an entry path that skips the record is a hole rather than a shortcut. It is
 > tamper-evident, not tamper-proof, and the docs say so.
 >
 > **A team is an edge list, not a network.** v0.5 added a `[team]` section to
@@ -114,9 +117,11 @@ Current as of **v0.5** (agent teams as code, released 2026-08-23).
      be one command from having one.
   2. *"TLS termination means you MITM my traffic."* → only for domains a secret
      is explicitly bound to, the CA is generated per-run and never persisted,
-     nothing but the trust anchor enters the guest, and every egress event is
-     recorded as terminated or tunnelled so you can prove which was which.
-     docs/networking.md documents the cert-pinning limitation.
+     nothing but the trust anchor enters the guest, and every egress event
+     records how much the proxy could read — `terminated` for a session it
+     decrypted, `plain` for an ordinary HTTP request it necessarily parsed,
+     `tunnelled` only for one it relayed unopened — so you can prove which was
+     which. docs/networking.md documents the cert-pinning limitation.
   3. *"90 ms is just Firecracker's number."* → Firecracker's own claim is about
      the VMM; this is measured to guest-ready over vsock, which includes init,
      mounts, the overlay and the MCP listener binding. The harness is in the repo.

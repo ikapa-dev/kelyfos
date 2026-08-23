@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/p4r4n0rm4l/KelyfOS/internal/mcp"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/proto"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/sandbox"
@@ -71,27 +73,70 @@ which clients are required not to treat as failure.
 	defer rec.Close()
 	obs := newObserver(rec, st.Agent)
 
-	// Two copies, and the first one to end takes the bridge down with it.
-	errc := make(chan error, 2)
+	// Two copies. The client's ending means "no more requests" and must not
+	// end the bridge: a blocking tool answers when the other side acts, so
+	// tearing down the moment stdin closes throws away an answer that is
+	// already on its way. The guest's ending is what finishes the session.
+	fromClient := make(chan error, 1)
+	fromGuest := make(chan error, 1)
 
 	go func() {
 		_, err := io.Copy(conn, tee(os.Stdin, obs.fromClient))
-		// The client closing stdin means "no more requests". Half-close so the
-		// guest sees EOF and can finish, rather than waiting on a peer that is
-		// never going to speak again.
+		// Half-close so the guest sees EOF and can finish, rather than waiting
+		// on a peer that is never going to speak again.
 		if hc, ok := conn.(interface{ CloseWrite() error }); ok {
 			_ = hc.CloseWrite()
 		}
-		errc <- err
+		fromClient <- err
 	}()
 	go func() {
 		_, err := io.Copy(os.Stdout, tee(conn, obs.fromGuest))
-		errc <- err
+		fromGuest <- err
 	}()
 
-	err = <-errc
+	select {
+	case err = <-fromGuest:
+	case err = <-fromClient:
+		// The client stopped talking. Give the guest a bounded chance to
+		// answer what is already outstanding before deciding nobody will.
+		select {
+		case err = <-fromGuest:
+		case <-time.After(mcpDrainGrace):
+		}
+	}
 	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, net.ErrClosed) {
 		return err
 	}
+	return answerOutstanding(os.Stdout, obs)
+}
+
+// mcpDrainGrace is how long the bridge waits for the guest to answer calls that
+// were still in flight when the client stopped talking. Long enough for a tool
+// that was about to return, short enough not to hang a script.
+const mcpDrainGrace = 5 * time.Second
+
+// answerOutstanding answers, on the bridge's own behalf, every tool call the
+// guest never got to answer.
+//
+// The alternative is silence, and silence is the worst of the three possible
+// outcomes: a caller told nothing concludes the call is still running, or that
+// it succeeded and returned nothing. Both are wrong, and neither is
+// recoverable. An error result is something a model can act on and a script can
+// branch on (F-D33).
+func answerOutstanding(w io.Writer, obs *observer) error {
+	pending := obs.outstanding()
+	if len(pending) == 0 {
+		return nil
+	}
+	enc := json.NewEncoder(w)
+	for _, p := range pending {
+		_ = enc.Encode(mcp.NewResponse(json.RawMessage(p.ID), mcp.Errorf(
+			"kelyfos: the bridge to this sandbox closed before %s answered. "+
+				"The call may or may not have run inside the guest; the flight recorder is "+
+				"the account of what did. A blocking tool answers when the other side acts, "+
+				"so keep the channel open at least as long as its timeout_ms.", p.Tool)))
+	}
+	fmt.Fprintf(os.Stderr, "kelyfos: %d tool call(s) were unanswered when the bridge closed; "+
+		"each was answered with an error rather than left silent\n", len(pending))
 	return nil
 }
