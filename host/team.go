@@ -882,7 +882,7 @@ func teamPS(argv []string) error {
 		time.Since(st.StartedAt).Truncate(time.Second), st.Session)
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "AGENT\tSANDBOX\tBOOT\tCPU\tMEM\tDISK WRITTEN\tEGRESS\tREACHES")
+	fmt.Fprintln(w, "AGENT\tSANDBOX\tBOOT\tCPU/CAP\tMEM/CAP\tDISK WRITTEN\tEGRESS\tREACHES")
 	for _, a := range st.Agents {
 		cpu, mem, disk := "—", "—", "—"
 		// "none" rather than a blank: an agent with no network interface is a
@@ -892,8 +892,20 @@ func teamPS(argv []string) error {
 		state, err := sandbox.Load(a.Sandbox)
 		if err == nil {
 			if u, err := state.Sample(); err == nil {
+				// Consumption beside the cap it was consumed under. A figure
+				// without its ceiling is half a figure, and joining the two
+				// later means trusting that nothing changed in between (E1-7).
 				cpu = fmt.Sprintf("%.1fs", u.CPUSeconds)
+				switch {
+				case state.CPUQuota > 0:
+					cpu += fmt.Sprintf("/%d%%", state.CPUQuota)
+				case state.VcpuCount > 0:
+					cpu += fmt.Sprintf("/%dc", state.VcpuCount)
+				}
 				mem = report.HumanKiB(u.RSSKiB)
+				if state.MemMiB > 0 {
+					mem += fmt.Sprintf("/%dM", state.MemMiB)
+				}
 				disk = humanBytes(u.DiskWriteBytes)
 			}
 			out = "none"

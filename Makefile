@@ -77,7 +77,7 @@ KERNEL_ARTIFACT := vmlinux
 endif
 
 .DEFAULT_GOAL := help
-.PHONY: help versions toolchain kernel supervisor cli image run bench prove-caps prove-team demo-team clean test test-integration linux-only fetch-kernel
+.PHONY: help versions toolchain kernel supervisor cli image run bench prove-caps prove-team demo-team accept-e2 clean test test-integration linux-only fetch-kernel
 
 help: ## Show this target list
 	@echo "KelyfOS — targets (ARCH=$(ARCH), FLAVOR=$(FLAVOR))"
@@ -224,6 +224,11 @@ prove-team: linux-only cli ## Drive a five-agent team past its collective CPU ca
 demo-team: linux-only cli ## Run the agent-teams proof demo end to end
 	@echo "note: binding numbers come from the bare-KVM CI runner (D15); this run is informational"
 	ARCH=$(ARCH) bash $(CURDIR)/dev/demo-team.sh
+
+# Epic E2's acceptance list, run in its own order and with its own numbers.
+accept-e2: linux-only cli ## Run Epic E2's acceptance test end to end
+	@echo "note: binding numbers come from the bare-KVM CI runner (D15); this run is informational"
+	ARCH=$(ARCH) bash $(CURDIR)/dev/accept-e2.sh
 
 run: cli ## Boot a microVM from the built image under Firecracker
 	$(OUT_DIR)/kelyfos run --image $(FLAVOR) --arch $(ARCH)

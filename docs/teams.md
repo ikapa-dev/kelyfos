@@ -467,7 +467,9 @@ otherwise silently add a level and cap something other than the team.
 
 `kelyfos team ps` prints the parent's own accounting — CPU used and CPU
 throttled — read from the cgroup the cap is written on, so the number and the
-limit cannot be about different things.
+limit cannot be about different things. Each agent's row carries its own
+consumption beside its own ceiling, for the same reason: a figure without the
+cap it was measured against is half a figure.
 
 ---
 

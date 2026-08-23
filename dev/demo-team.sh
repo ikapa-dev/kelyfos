@@ -88,54 +88,17 @@ fi
 # ------------------------------------------------------------------ the team --
 PROJ="$WORK/team"
 mkdir -p "$PROJ/ws"
-cat > "$PROJ/kelyfos.toml" <<'TOML'
-[team]
-name = "suppliers"
-record_payloads = true
-
-# The master is the only agent that may reach the network, so it is the only
-# one that cannot be forked: a fork cannot carry a network identity (F-D19).
-[[team.agent]]
-name = "master"
-image = "dev"
-allow = ["example.com"]
-workspace = "./ws"
-  [team.agent.resources]
-  cpus = 1
-  mem  = "512M"
-  # One extra worker, from the dev image only, and that is the whole budget.
-  # The decision to spawn is the master's; what it may spawn is the user's.
-  [team.agent.spawn]
-  max   = 1
-  image = ["dev"]
-    [team.agent.spawn.resources]
-    cpus = 1
-    mem  = "256M"
-
-# Four workers with no egress at all. They are forked from one template.
-[[team.agent]]
-name  = "worker"
-image = "dev"
-count = 4
-  [team.agent.resources]
-  cpus = 1
-  mem  = "384M"
-
-# A star: every worker may talk to the master and the master to every worker.
-# No worker may talk to another worker, and step 5 proves it.
-[[team.edge]]
-from = "master"
-to   = "worker-*"
-
-[team.store]
-enabled = true
-
-[[team.store.key]]
-name  = "findings/*"
-write = ["worker-*"]
-read  = ["master"]
-TOML
-sed 's/^/        /' "$PROJ/kelyfos.toml"
+# The toml is a committed file, not a heredoc: the acceptance test says "the
+# committed demo toml", and a policy a reader can open and edit is worth more
+# than one buried in a script. It is copied rather than used in place so the run
+# has its own workspace directory.
+TOML="${DEMO_TOML:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/demo-team.toml}"
+if [ ! -f "$TOML" ]; then
+  echo "no demo policy at $TOML"; exit 1
+fi
+cp "$TOML" "$PROJ/kelyfos.toml"
+echo "        $TOML"
+grep -v '^ *#' "$PROJ/kelyfos.toml" | grep -v '^ *$' | sed 's/^/        /' 
 
 say "1. kelyfos team up — five machines, four of them forked"
 rm -f "$RUN_ROOT/team.json"

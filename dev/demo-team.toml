@@ -1,0 +1,65 @@
+# KelyfOS — the team Epic E2's proof demo boots (E2-9).
+#
+# Five machines on one host with the paths between them written down. No guest
+# has a network path to any other guest: every message travels the host, is
+# checked against the edge list below, and lands in one audit record.
+#
+# `kelyfos team up` in a directory holding this file boots the graph;
+# `bash dev/demo-team.sh` boots it and then proves every clause of it.
+
+[team]
+name = "suppliers"
+# Message bodies are captured here because this is a demo and the point is to
+# read it afterwards. The default is off: a team moving customer data should be
+# able to prove what moved without keeping a second copy of it.
+record_payloads = true
+
+# The master is the only agent that may reach the network, and so the only one
+# that cannot be forked: a fork cannot carry a network identity, because the
+# guest's address lives inside the memory image every fork would share (F-D19).
+[[team.agent]]
+name = "master"
+image = "dev"
+allow = ["example.com"]
+workspace = "./ws"
+
+  [team.agent.resources]
+  cpus = 1
+  mem  = "512M"
+
+  # One extra worker, from the dev image only, and that is the whole budget.
+  # The decision to spawn is the master's; what it may spawn is the user's.
+  [team.agent.spawn]
+  max   = 1
+  image = ["dev"]
+
+    [team.agent.spawn.resources]
+    cpus = 1
+    mem  = "256M"
+
+# Four workers with no egress at all. They are booted once as a template and
+# forked, because there is no network identity to collide.
+[[team.agent]]
+name  = "worker"
+image = "dev"
+count = 4
+
+  [team.agent.resources]
+  cpus = 1
+  mem  = "384M"
+
+# A star. Every worker may talk to the master and the master to every worker;
+# no worker may talk to another worker, and the demo proves it by trying.
+[[team.edge]]
+from = "master"
+to   = "worker-*"
+
+[team.store]
+enabled = true
+
+# Each worker may write its findings; only the master may read them. A worker
+# reading another worker's findings is refused, and the refusal is recorded.
+[[team.store.key]]
+name  = "findings/*"
+write = ["worker-*"]
+read  = ["master"]
