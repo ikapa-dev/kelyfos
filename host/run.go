@@ -61,6 +61,7 @@ func runWithSandbox(argv []string, reviewDeclinedOut *bool) error {
 		reviewFirst = fs.Bool("review", false, "show what changed and ask before writing the workspace back")
 		secrets     multiFlag
 		forwards    multiFlag
+		policyPath  = fs.String("policy", "", "the kelyfos.toml to run under (default: the nearest one, found by walking up)")
 		pBind       = fs.String("p-bind", loopback, "address the forwarded ports bind to. "+
 			"0.0.0.0 exposes them to every machine that can reach this one, and says so, every time.")
 	)
@@ -147,7 +148,7 @@ status. This is how you hand an agent a sandbox and nothing else:
 	var ioLimits sandbox.IOLimits
 	var scratchBytes int64
 
-	cfg, cfgErr := loadPolicy()
+	cfg, cfgErr := loadPolicyAt(*policyPath)
 	if cfgErr != nil {
 		return cfgErr
 	}
@@ -457,6 +458,9 @@ status. This is how you hand an agent a sandbox and nothing else:
 		return err
 	}
 	reason := "error"
+	// What this run exited with, when it is known: a `runs` listing that could
+	// not say whether a run succeeded would be a list of dates.
+	var exitCode *int
 	defer func() {
 		// A pause does not end the session — it is the same machine, coming
 		// back — so the chain stays open. Closing it would make `--verify`
@@ -468,7 +472,7 @@ status. This is how you hand an agent a sandbox and nothing else:
 		}
 		_ = rec.Append(recorder.Event{
 			Type: recorder.TypeSessionEnd, Reason: reason,
-			DurationMS: rec.Since().Milliseconds(),
+			DurationMS: rec.Since().Milliseconds(), Code: exitCode,
 		})
 		_ = rec.Close()
 	}()
@@ -536,9 +540,16 @@ status. This is how you hand an agent a sandbox and nothing else:
 		}
 	}()
 
+	// Cwd travels with argv because argv alone does not reproduce a run: a
+	// --workspace is relative, and the policy file is found by walking up from
+	// wherever the command was typed. `kelyfos rerun` needs both (E5-6).
+	startCwd, _ := os.Getwd()
+	// Beside the record, so `kelyfos rerun` reproduces the run and not merely
+	// the command line (E5-6).
+	freezeRunPolicy(sb.State.ID, cfg)
 	if err := rec.Append(recorder.Event{
 		Type: recorder.TypeSessionStart, Image: *flavor, Arch: *arch,
-		Kelyfos: Version, Argv: os.Args,
+		Kelyfos: Version, Argv: os.Args, Cwd: startCwd,
 	}); err != nil {
 		return err
 	}
@@ -768,6 +779,9 @@ status. This is how you hand an agent a sandbox and nothing else:
 			// literally what the OOM killer sent.
 			code = exitOOMKilled
 		}
+		// After the OOM adjustment, not before: the record has to hold what
+		// kelyfos actually exited with.
+		exitCode = &code
 		if code != 0 {
 			// Returned, never os.Exit: this function's deferred teardown is
 			// what stops the VM, syncs the workspace back and closes the
@@ -800,10 +814,16 @@ status. This is how you hand an agent a sandbox and nothing else:
 	}
 	switch {
 	case timedOut != "":
-		return &exitError{exitTimedOut}
+		code := exitTimedOut
+		exitCode = &code
+		return &exitError{code}
 	case oomKills.Load() > 0:
-		return &exitError{exitOOMKilled}
+		code := exitOOMKilled
+		exitCode = &code
+		return &exitError{code}
 	}
+	zero := 0
+	exitCode = &zero
 	return nil
 }
 
@@ -924,7 +944,23 @@ func containsDomain(allow []string, domain string) bool {
 // loadPolicy finds and reads a project's kelyfos.toml, if it has one. Absence
 // is normal and silent; a file that exists but is wrong is an error, because a
 // policy that fails to apply is worse than no policy at all.
-func loadPolicy() (*config.Config, error) {
+func loadPolicy() (*config.Config, error) { return loadPolicyAt("") }
+
+// loadPolicyAt reads a named policy file, or finds one by walking up from the
+// working directory when no name is given.
+//
+// A named file that is not there is an error rather than a silent fall back to
+// "no policy, no ceiling" — the same rule serve-mcp follows (E4-1), and for the
+// same reason: somebody who named a file is relying on it.
+func loadPolicyAt(named string) (*config.Config, error) {
+	if named != "" {
+		if _, err := os.Stat(named); err != nil {
+			return nil, fmt.Errorf("--policy %s: %w\n"+
+				"    a named policy that is not there is an error, never a run with no ceiling",
+				named, err)
+		}
+		return config.Load(named)
+	}
 	cwd, err := os.Getwd()
 	if err != nil {
 		return nil, nil

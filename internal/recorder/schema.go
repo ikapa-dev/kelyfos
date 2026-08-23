@@ -60,6 +60,7 @@ func Types() []EventType {
 				{Name: "arch", Type: "string", Doc: "aarch64 or x86_64"},
 				{Name: "kelyfos", Type: "string", Doc: "CLI version"},
 				{Name: "argv", Type: "string array", Doc: "how the sandbox was launched, for reproduction"},
+				{Name: "cwd", Type: "string", Doc: "the directory it was launched from, which argv alone does not capture", When: "kelyfos run"},
 				{Name: "reason", Type: "string", Doc: "where the machine came from", When: "restore and fork"},
 			}},
 		{Type: TypeSessionReady, Source: SourceHost,
@@ -78,6 +79,7 @@ func Types() []EventType {
 			Fields: []Field{
 				{Name: "reason", Type: "string", Doc: "shutdown, interrupted, vm_exited, command_exited, timeout, error"},
 				{Name: "duration_ms", Type: "integer", Doc: "session length"},
+				{Name: "code", Type: "integer", Doc: "what kelyfos exited with, after the OOM adjustment", When: "kelyfos run knows"},
 			}},
 		{Type: TypeCommandStart, Source: SourceHost,
 			Doc: "a command was submitted, before it runs",

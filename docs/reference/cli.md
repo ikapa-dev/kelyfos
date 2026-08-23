@@ -25,7 +25,9 @@ Go's `flag` accepts one dash or two, so `-image` and `--image` are the same flag
 | [`kelyfos team ps`](#kelyfos-team-ps) | run several agents with the paths between them written down and enforced |
 | [`kelyfos team down`](#kelyfos-team-down) | run several agents with the paths between them written down and enforced |
 | [`kelyfos shim`](#kelyfos-shim) | serve an E2B-compatible REST subset |
-| [`kelyfos log`](#kelyfos-log) | replay, follow or verify a session's record |
+| [`kelyfos runs`](#kelyfos-runs) | what has run here, from the records themselves |
+| [`kelyfos rerun`](#kelyfos-rerun) | run a recorded session again, under its own policy |
+| [`kelyfos log`](#kelyfos-log) | replay, follow (-f) or verify a session's record (kelyfos logs is the same command) |
 | [`kelyfos watch`](#kelyfos-watch) | live view of a sandbox (reads the record only) |
 | [`kelyfos bench`](#kelyfos-bench) | measure cold boot-to-ready over several runs |
 | [`kelyfos version`](#kelyfos-version) | print the version and exit |
@@ -67,6 +69,7 @@ kelyfos run [flags]
 | `--no-sync-back` | boolean | — | do not write the workspace back to the host on shutdown |
 | `-p` | value | — | carry a host port to a guest-local port: host:guest, as in 8080:80. The transport is vsock, not the network, so the firewall is untouched. Repeatable. |
 | `--p-bind` | string | "127.0.0.1" | address the forwarded ports bind to. 0.0.0.0 exposes them to every machine that can reach this one, and says so, every time. |
+| `--policy` | string | the nearest one, found by walking up | the kelyfos.toml to run under |
 | `--ready-timeout` | duration | 30s | how long to wait for the guest to become ready |
 | `--review` | boolean | — | show what changed and ask before writing the workspace back |
 | `--secret` | value | — | attach a credential to a domain: NAME@domain[:bearer\|basic]. The value is read from the host environment and never enters the guest. Repeatable. |
@@ -272,9 +275,35 @@ kelyfos shim [flags]
 | `--arch` | string | the build host's architecture | guest architecture |
 | `--image` | string | "dev" | image flavor for sandboxes the shim creates |
 
+## kelyfos runs
+
+What has run here, from the records themselves.
+
+```
+kelyfos runs [flags]
+```
+
+| Flag | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `--all` | boolean | — | show every recorded session |
+| `--full` | boolean | — | print the whole command rather than one line of it |
+| `-n` | int | 20 | how many to show, newest first (0 = all) |
+
+## kelyfos rerun
+
+Run a recorded session again, under its own policy.
+
+```
+kelyfos rerun <id>
+```
+
+| Flag | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `--print` | boolean | — | print what would run, and do not run it |
+
 ## kelyfos log
 
-Replay, follow or verify a session's record.
+Replay, follow (-f) or verify a session's record (kelyfos logs is the same command).
 
 ```
 kelyfos log [flags]

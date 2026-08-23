@@ -23,12 +23,13 @@ import (
 func logCmd(argv []string) error {
 	fs := flag.NewFlagSet("kelyfos log", flag.ExitOnError)
 	var (
-		id     = fs.String("session", "", "session id (default: the most recent)")
-		follow = fs.Bool("follow", false, "stream events as they are recorded")
-		verify = fs.Bool("verify", false, "check the hash chain and report the first break")
-		asJSON = fs.Bool("json", false, "print the raw events instead of a readable replay")
-		list   = fs.Bool("list", false, "list recorded sessions")
-		export = fs.String("export", "", "write a self-contained HTML report to this path")
+		id          = fs.String("session", "", "session id (default: the most recent)")
+		follow      = fs.Bool("follow", false, "stream events as they are recorded")
+		followShort = fs.Bool("f", false, "alias for --follow")
+		verify      = fs.Bool("verify", false, "check the hash chain and report the first break")
+		asJSON      = fs.Bool("json", false, "print the raw events instead of a readable replay")
+		list        = fs.Bool("list", false, "list recorded sessions")
+		export      = fs.String("export", "", "write a self-contained HTML report to this path")
 	)
 	fs.Usage = func() {
 		fmt.Fprint(fs.Output(), `usage: kelyfos log [flags]
@@ -42,6 +43,10 @@ docs/events.md.
 	}
 	if err := fs.Parse(argv); err != nil {
 		return err
+	}
+
+	if *followShort {
+		*follow = true
 	}
 
 	if *list {

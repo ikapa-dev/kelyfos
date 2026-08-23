@@ -4,10 +4,10 @@ Updated 2026-08-23 · tree clean, synced with origin/main
 
 ## Plans
 - PLAN.html — 36/43. P4 backlog non-blocking, parked (P4-4/P4-5 [BLOCKED]).
-- PLAN-FEATURES.html — 40/42. **E1–E4 closed, v0.7 released. Epic E5 at 6/8.**
+- PLAN-FEATURES.html — 41/42. **E1–E4 closed, v0.7 released. Epic E5 at 7/8.**
 
 ## Now
-E5-6 — run history: `kelyfos runs`, `rerun`, and `logs -f`.
+E5-7 — `--notify` on finish, block, timeout and a waiting review prompt.
 
 ## This session
 E1–E3 closed, **v0.6 released**; then the F-D33 batch and the E3→E4 seam check. Epic E4, all
@@ -19,7 +19,8 @@ client-launched server could run with no ceiling (F-D44); the plugins device and
 `docs/exam/`. **v0.7 tagged and published**, and the batch those exams routed after it is done
 (F-D49). Epic E5 so far: the v0.8 spec, named sessions, diff and review, `kelyfos shell`, one
 refusal catalog whose acceptance found the plan's own headline fix line never reaching the
-client (F-D53), and inbound forwarding — proved by diffing nftables with two forwards and none.
+client (F-D53); inbound forwarding — proved by diffing nftables with two forwards and none;
+and a run history that is the session records read back rather than a second index (F-D54).
 
 ## Blocked / debts
 - P4-4, P4-5 [BLOCKED]. `idle_timeout` refused (F-D20; F-D22). IMAGE_DIR per-arch not per-flavor: parked.

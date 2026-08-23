@@ -126,7 +126,7 @@
      improvements to the existing product land here as epics. Inert until its gate opens.</p>
   <div class="meta">
     owner: <b>John</b> &nbsp;&middot;&nbsp; developer: <b>Claude Code</b> &nbsp;&middot;&nbsp;
-    status: <b class="ok" id="meta-status">Epic E5 — active, 6/8 (v0.7 released; next: E5-6, run history)</b> &nbsp;&middot;&nbsp;
+    status: <b class="ok" id="meta-status">Epic E5 — active, 7/8 (v0.7 released; next: E5-7, --notify)</b> &nbsp;&middot;&nbsp;
     last updated: <b id="meta-updated">2026-08-23</b><br>
     repo file: <b>PLAN-FEATURES.html</b> (lives at the repository root next to <code>PLAN.html</code>)<br>
     <span class="quiet">Companion to PLAN.html — same protocol, same rules, later timeline.</span>
@@ -166,7 +166,7 @@
     <span class="bl-name">All epics</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">E5-6 &mdash; run history: <code>kelyfos runs</code> and <code>rerun</code> built from the session logs that already exist, and <code>logs -f</code></b></div>
+  <div class="focusline">Current focus: <b id="focus">E5-7 &mdash; <code>--notify</code>: a desktop notification on finish, block, timeout or a waiting review prompt, carrying exit status and duration</b></div>
 </div>
 
 <!-- ====================================================== 1. ACTIVATION GATE -->
@@ -612,7 +612,7 @@
         the explicit, loudly-warned LAN exposure. Transport is a vsock bridge (host listener &harr; supervisor &harr;
         guest-local port), so TAP and nftables stay egress-only and the network-layer no-inbound invariant holds. Every
         accepted connection is a <code>forward.accept</code> event with peer address; teardown closes all listeners.</span></li>
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">E5-6</span><span class="tk">Run history: a local index built from the session logs that already exist —
         <code>kelyfos runs</code> (id, time, image, command, exit, duration), <code>kelyfos rerun &lt;id&gt;</code> re-executing
         with the recorded image, frozen policy, and command, printing a provenance line. Plus <code>kelyfos logs -f</code>:
@@ -1845,6 +1845,32 @@
         <i>Revisit when</i> a guest-side client library is worth teaching about the body &mdash; the body is already
         correct, so that would be an addition and not a change.</td>
         <td class="mono">host/denials.go, dev/accept-denials.sh, docs/denials.md</td></tr>
+        <tr><td class="mono">F-D54</td><td class="mono">2026-08-23</td>
+        <td><b>The run history is the session records read back, and never a second index.</b>
+        E5-6 asked for <code>kelyfos runs</code> and <code>rerun</code>. The obvious implementation is a small
+        database written as each run starts and finishes &mdash; a JSON file, or SQLite, keyed by session.
+        <i>Alternatives.</i> An index file, which is fast to list and is a second record that can disagree with the
+        first; an index rebuilt lazily when it looks stale, which is the same thing plus a staleness heuristic; or no
+        history at all, leaving <code>kelyfos log --list</code>, which cannot say what a run did or what it exited
+        with.
+        <i>Chosen.</i> Read the records. One pass per session file, taking only <code>session.start</code> and
+        <code>session.end</code>, so a session with a hundred thousand events costs what a short one does. The
+        acceptance states the property as a count &mdash; one row per session directory, no more and no fewer &mdash;
+        which an index would fail the first time somebody deleted a record by hand.
+        <b>Two things had to be recorded that were not.</b> <code>session.start</code> now carries <code>cwd</code>,
+        because <code>argv</code> alone does not reproduce a run: <code>--workspace .</code> is relative and the policy
+        file is found by walking up from wherever the command was typed. <code>session.end</code> now carries
+        <code>code</code>, after the OOM adjustment, so the listing shows what the shell saw rather than what the
+        command returned before KelyfOS had its say. Both are existing <code>Event</code> fields, so no hash order
+        changed.
+        <b>And the policy is frozen per run</b>, a few kilobytes beside the record, for the reason the paused-session
+        freeze exists (docs/qol.md §1.2): a rerun that re-read whatever <code>kelyfos.toml</code> says now would
+        reproduce the command and not the run, silently. That needed <code>--policy</code> on <code>run</code>, which
+        <code>serve-mcp</code> already had &mdash; and a named file that is not there is an error rather than a run
+        with no ceiling, which is the rule E4-1 set.
+        <i>Revisit when</i> listing gets slow enough to notice, which needs thousands of sessions; the fix then is a
+        cache that can be deleted without losing anything, not a record that can disagree.</td>
+        <td class="mono">host/runs.go, dev/accept-runs.sh, docs/events.md §6</td></tr>
     <!-- Claude Code: append rows above this line. -->
       <tr><td class="mono">F-D10</td><td class="mono">2026-08-22</td>
         <td>The resource knobs E1-0 goes looking for shipped <b>partly</b>: <code>--vcpus</code>/<code>--mem</code> and
@@ -4354,6 +4380,25 @@ $ gofmt -l . ; go vet ./... ; go test ./...
         host port are refused naming the line. <code>--p-bind 0.0.0.0</code> warns every time and is checked doing it,
         and no key in the file can do the same thing &mdash; a LAN exposure is something somebody typed, not something
         somebody inherited. Teardown closes the listeners, and the acceptance proves the port stops answering.</td></tr>
+        <tr><td class="mono">2026-08-23</td><td class="mono">E5-6</td>
+        <td><b>The history was already being written; this task learned to read it.</b> <code>kelyfos runs</code>
+        lists what has run here &mdash; id, time, image, exit, duration, command &mdash; and writes nothing at all.
+        The acceptance states that as a count rather than a claim: one row per session directory, no more and no
+        fewer, which is a property an index file would fail the first time somebody deleted a record by hand (F-D54).
+        <b>Two facts had to start being recorded before a rerun could mean anything.</b>
+        <code>session.start</code> now carries <code>cwd</code>, because <code>argv</code> alone does not reproduce a
+        run: <code>--workspace .</code> is relative and the policy file is found by walking up from wherever the
+        command was typed. <code>session.end</code> now carries <code>code</code>, taken after the OOM adjustment, so
+        the listing shows what the shell saw. Both reuse existing <code>Event</code> fields, so no hash order moved.
+        <b>And the policy is frozen per run</b>, beside the record, the way a paused session's is: eighteen checks,
+        and the one that matters most edits <code>kelyfos.toml</code> between the run and the rerun and proves the
+        edit changed nothing. <code>rerun</code> prints a provenance line naming the command, the directory and the
+        frozen policy before it does anything, then replaces this process rather than spawning one, so there is one
+        exit status and one signal target. A prefix of four characters finds a session; a prefix matching two is
+        refused with both.
+        <b><code>logs -f</code> was mostly already there</b> &mdash; <code>--follow</code> has existed since P2 &mdash;
+        so this added the short flag, the name people actually type, and a check that it is plain line-oriented text
+        rather than JSON: the greppable sibling of <code>watch</code>, which draws a screen.</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>

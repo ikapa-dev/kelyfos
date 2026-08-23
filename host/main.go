@@ -31,7 +31,10 @@ usage:
   kelyfos team up|ps|down          run several agents with the paths between
                                    them written down and enforced
   kelyfos shim [flags]             serve an E2B-compatible REST subset
-  kelyfos log [flags]              replay, follow or verify a session's record
+  kelyfos runs [flags]             what has run here, from the records themselves
+  kelyfos rerun <id>               run a recorded session again, under its own policy
+  kelyfos log [flags]              replay, follow (-f) or verify a session's record
+                                   (kelyfos logs is the same command)
   kelyfos watch [flags]            live view of a sandbox (reads the record only)
   kelyfos bench [flags]            measure cold boot-to-ready over several runs
   kelyfos version                  print the version and exit
@@ -73,7 +76,13 @@ func main() {
 		err = forkCmd(os.Args[2:])
 	case "shim":
 		err = shimCmd(os.Args[2:])
-	case "log":
+	case "runs":
+		err = runsCmd(os.Args[2:])
+	case "rerun":
+		err = rerunCmd(os.Args[2:])
+	// `logs` is `log`, because both names get typed and neither should be an
+	// unknown command. One implementation, so the two cannot behave differently.
+	case "log", "logs":
 		err = logCmd(os.Args[2:])
 	case "team":
 		err = teamCmd(os.Args[2:])

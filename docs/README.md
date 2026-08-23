@@ -38,7 +38,7 @@ hand-written half, and this page says where each is still thin.
 | --- | --- | --- |
 | [`reference/`](reference/) | **generated** | Every command, flag, `kelyfos.toml` key, MCP tool, event type, exit code and refusal, with types and defaults. Extracted from the source; CI fails on drift. |
 | [`protocol.md`](protocol.md) | mixed | How the host and the guest talk: Firecracker's hybrid vsock, the port map, newline-delimited JSON framing, and every channel's message shape. |
-| [`events.md`](events.md) | mixed | What the flight recorder writes: the common fields, the hash chain, and every event type with its payload. |
+| [`events.md`](events.md) | mixed | What the flight recorder writes: the common fields, the hash chain, every event type with its payload, and why `kelyfos runs` is the record read back rather than a second one. |
 | [`networking.md`](networking.md) | mixed | Why a sandbox has no NIC by default, what `--allow` builds, the nftables template, and why the guest has no DNS. |
 | [`resources.md`](resources.md) | mixed | Every resource cap: units, precedence, what enforces it, and what happens when it is reached. |
 | [`teams.md`](teams.md) | mixed | The `[team]` schema, the host broker and its edge rules, the team store, the collective budget, and how a team boots. |
@@ -102,7 +102,9 @@ MCP tool; no timeout in the system is written down except the heartbeat.
 ### `events.md` — the audit record
 
 *Concept:* why the host writes every event and the guest writes none; what
-tamper-evidence buys and what it does not; why a refused message is its own type.
+tamper-evidence buys and what it does not; why a refused message is its own type;
+why the run history is the records read back and never a second index, and what
+a rerun has to carry to deserve the name.
 *Reference:* the common-field table, every per-type payload table, and the
 canonical form the hash is computed over.
 *Thin:* nothing material. The per-type field tables are the reference half and

@@ -270,8 +270,11 @@ func checkDispatch(repo string, cmds []Command) error {
 	for _, c := range cmds {
 		documented[strings.Fields(c.Name)[0]] = true
 	}
-	// Aliases of a documented command, not commands of their own.
-	for _, alias := range []string{"--version", "-v", "-h", "--help"} {
+	// Aliases of a documented command, not commands of their own. `logs` is
+	// `log`: both names get typed, one implementation answers to both, and the
+	// usage block says so on the line for `log` rather than giving the same
+	// flag table twice.
+	for _, alias := range []string{"--version", "-v", "-h", "--help", "logs"} {
 		documented[alias] = true
 	}
 

@@ -32,6 +32,7 @@ Opens the file, and records what the sandbox is. Written by the **host**.
 | `arch` | string | aarch64 or x86_64 |
 | `kelyfos` | string | CLI version |
 | `argv` | string array | how the sandbox was launched, for reproduction |
+| `cwd` | string | the directory it was launched from, which argv alone does not capture *(kelyfos run)* |
 | `reason` | string | where the machine came from *(restore and fork)* |
 
 ## `session.ready`
@@ -56,6 +57,7 @@ Closes the file. Written by the **host**.
 | --- | --- | --- |
 | `reason` | string | shutdown, interrupted, vm_exited, command_exited, timeout, error |
 | `duration_ms` | integer | session length |
+| `code` | integer | what kelyfos exited with, after the OOM adjustment *(kelyfos run knows)* |
 
 ## `command.start`
 

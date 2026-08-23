@@ -97,6 +97,11 @@ Opens the file. Records what the sandbox is.
 | `arch` | string | `aarch64` or `x86_64`. |
 | `kelyfos` | string | CLI version. |
 | `argv` | array of string | How the sandbox was launched, for reproduction. |
+| `cwd` | string | The directory it was launched from, on `kelyfos run`. |
+
+`cwd` is there because `argv` alone does not reproduce a run: `--workspace .` is
+relative, and the policy file is found by walking up from wherever the command
+was typed. `kelyfos rerun` needs both, and §11 says what else it needs.
 
 ### `session.ready`
 The guest announced itself.
@@ -117,6 +122,7 @@ Closes the file.
 | --- | --- | --- |
 | `reason` | string | `shutdown`, `interrupted`, `vm_exited`, `command_exited`, `timeout`, `error`. |
 | `duration_ms` | integer | Session length. |
+| `code` | integer | What `kelyfos` exited with, when `kelyfos run` knows — after the OOM adjustment, so it is what the shell saw. |
 
 `command_exited` is the `kelyfos run [flags] -- <command>` form (D23): the
 sandbox's lifetime was that command's, and the command finished.
@@ -471,7 +477,10 @@ what happened.
 ## 5. Reading the file
 
 - `kelyfos log` replays a session in order.
-- `kelyfos log --follow` streams events as they are recorded.
+- `kelyfos log --follow`, or `-f`, streams events as they are recorded. It is
+  plain text and line-oriented on purpose — the greppable sibling of
+  `kelyfos watch`, which draws a screen. `kelyfos logs` is the same command
+  under the name people type.
 - `kelyfos log --verify` checks the chain and reports the first break.
 - `kelyfos log --list` lists recorded sessions, newest first, marking the ones
   that hold a team (`team of N`) and the ones belonging to a `kelyfos serve-mcp`
@@ -502,11 +511,67 @@ one. And `--session <agent-id>` redirects to the team's record while that
 sandbox still exists — once the team is down the run directory is gone, and the
 team session must be found by id or with `--list`.
 
-## 6. Conformance
+## 6. The record is also the history
+
+`kelyfos runs` lists what has run on this machine, newest first, and
+`kelyfos rerun <id>` runs one of them again.
+
+**Neither of them writes anything.** There is no run database, no index file and
+no history log: `runs` reads the session records that were already being
+written, one pass per session, taking only the two events it needs. That is one
+decision and it has one reason — a separate index would be a thing to keep in
+step, to migrate, and eventually to find out of date, while the session logs are
+already written, already chained, and already the thing anyone would check. The
+acceptance states it as a count: one row per session directory, no more and no
+fewer.
+
+```
+$ kelyfos runs
+ID        WHEN              IMAGE  EXIT  TOOK    COMMAND
+fc34cacd  2026-08-23 21:57  dev    3     837ms   kelyfos run -- make test
+2dbb9208  2026-08-23 21:46  dev    —     23.1s   kelyfos run --allow github.com
+41e476a0  2026-08-23 21:46  —      open  —       (attached) /bin/sh -c echo hello
+```
+
+`open` is a session with no `session.end` yet, and it is deliberately not shown
+as `0`: "still running" and "succeeded" are the two states a reader most needs
+to tell apart. A row marked `(attached)` is a chain that begins with a command
+rather than a `session.start` — a machine somebody exec'd into, whose own launch
+is recorded elsewhere. It is listed rather than hidden, because it happened.
+
+### 6.1 What makes a rerun a rerun
+
+Three things travel with a run, and `rerun` needs all three:
+
+| | Where it comes from |
+| --- | --- |
+| the command | `argv` on `session.start` |
+| the directory | `cwd` on `session.start` — `--workspace .` is relative, and the policy file is found by walking up |
+| the policy | a copy of `kelyfos.toml`, frozen beside the record when the run started |
+
+The frozen copy is the part that makes the word honest. A rerun that re-read
+whatever `kelyfos.toml` says now would reproduce the command and not the run,
+and it would do it silently — so the policy is frozen at session start, `rerun`
+passes it with `--policy`, and it prints a provenance line naming all three
+before it does anything:
+
+```
+kelyfos: rerunning session fc34cacd from 2026-08-23 21:57:06
+    command   kelyfos run --policy …/sessions/fc34cacd/kelyfos.toml -- make test
+    directory /home/you/project
+    policy    …/sessions/fc34cacd/kelyfos.toml (frozen when that run started)
+```
+
+`--print` stops there. Otherwise the process is *replaced* rather than spawned,
+so the rerun is this process: one exit status, one signal target, and nothing in
+between for the two to get out of step.
+
+## 7. Conformance
 
 | Requirement | Task |
 | --- | --- |
 | Events written host-side, chained, with the types in §4 | P2-4 |
+| `kelyfos runs` and `rerun` read the records and write nothing | E5-6 |
 | `kelyfos log`, `--follow`, `--verify` | P2-4 |
 | `egress.attempt` with `mode`, `secret.use` by name | P2-5, P2-6 |
 | `resource.oom` reported by the guest, written by the host | E1-4 |
