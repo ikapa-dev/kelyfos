@@ -284,7 +284,7 @@ The first thing the supervisor does once mounts are up. The host is listening on
 frame arrives is the definition of **boot-to-ready** measured in P1-7.
 
 ```json
-{"v":1,"type":"ready","boot_id":"7f3a…","arch":"arm64","kernel":"6.18.45","supervisor":"0.1.0","monotonic_ns":41233000,"overlay":true}
+{"v":1,"type":"ready","boot_id":"7f3a…","arch":"arm64","kernel":"6.12.105","supervisor":"0.1.0","monotonic_ns":41233000,"overlay":true}
 ```
 
 then, every 5 s:

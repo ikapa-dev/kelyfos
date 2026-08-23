@@ -129,7 +129,7 @@
   <div class="meta">
     owner: <b>John</b> &nbsp;·&nbsp; developer: <b>Claude Code</b> &nbsp;·&nbsp;
     status: <b class="amber" id="meta-status">v0.8 released — phases 0–3 done; PLAN-FEATURES complete and closed; Phase 5 (hardening, v0.9) active</b> &nbsp;·&nbsp;
-    last updated: <b id="meta-updated">2026-08-23</b><br>
+    last updated: <b id="meta-updated">2026-08-24</b><br>
     repo file: <b>PLAN.html</b> (commit this document at the repository root — it is the single source of truth)<br>
     <span class="quiet">KelyfOS — from κέλυφος (kélyfos), "shell": the guest OS wrapped around the agent. Formerly working-titled "agos" (D4 → D10).</span>
   </div>
@@ -1395,6 +1395,16 @@ after:
         make one sentence in the README unnecessary, and it is not finished until that sentence is replaced by
         another that is also true. Promotion and its boundaries are D27.</td>
         <td class="mono">PLAN.html &sect;6 Phase 5, D27</td></tr>
+        <tr><td class="mono">2026-08-24</td><td class="mono">&mdash;</td>
+        <td><b>The queued Buildroot hop landed, and it took the kernel with it.</b> buildroot.org answered 200 for
+        the first time since the outage, which under F-D50 executes F-D40 at that boundary. Buildroot
+        2026.02.3 &rarr; <b>2025.02.17</b> (the LTS line, EOL March 2028, per the project&rsquo;s own download
+        page); Linux 6.18.46 &rarr; <b>6.12.105</b>, because 2025.02.x supports kernel header series only to 6.12
+        and kernel.org gives 6.12 and 6.18 the same projected EOL of December 2028. Digests from the PGP-signed
+        message and from <code>sha256sums.asc</code>, both cross-checked against values this project already
+        trusted. Full aarch64 rebuild from a fresh tree, config verified symbol by symbol, then 117 acceptance
+        checks across six suites and fourteen cookbook recipes, all green.</td>
+        <td class="mono">versions.mk, D28</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
@@ -1538,6 +1548,47 @@ after:
         <td>The product owner&rsquo;s ruling of 2026-08-23, given while Epic E5&rsquo;s exit was in flight and
         explicitly not touching it. <i>Revisit when</i> v0.9 is tagged: what is left in P4 is then either promoted
         with the same explicitness or written off.</td></tr>
+        <tr><td class="mono">D28</td><td class="mono">2026-08-24</td>
+        <td><b>Buildroot moves to the LTS line and the guest kernel moves back to 6.12, because the LTS line cannot
+        express 6.18 &mdash; and both are longterm to the same date.</b>
+        <i>The trigger.</i> F-D40 ruled the hop to Buildroot 2025.02.x and F-D50 queued it behind an origin outage,
+        to execute at the first task boundary after the origin answered. It answered on 2026-08-24 and this is that
+        boundary.
+        <i>The facts, read rather than assumed.</i> buildroot.org&rsquo;s download page lists exactly three
+        releases: candidate 2026.08-rc1, stable 2026.05.1 (EOL September 2026), and <b>long-term support
+        2025.02.17, EOL March 2028</b>. The 2026.02.x line this project built on is on neither list. The tarball&rsquo;s
+        digest comes from its PGP-signed message, signed by the same key that signed the 2026.02.3 release already
+        trusted here, and that message&rsquo;s digest for 2026.02.3 matches the value this file pinned before the
+        change &mdash; which is how the transcription method was checked against a known-good value rather than
+        asserted.
+        <i>The blocker F-D40 anticipated, and it is structural rather than a build failure.</i> Buildroot 2025.02.x
+        offers kernel header series up to <b>6.12</b>. KelyfOS built 6.18.46, and the config fragment templates the
+        series from the pin precisely so that a kernel the Buildroot does not list fails loudly &mdash; which it
+        did, on the first attempt, exactly as its comment said it would.
+        <i>Alternatives.</i> Stay frozen on 2026.02.3, which F-D40 pre-authorised: that keeps 6.18 and leaves the
+        build on a line the project itself does not list as supported, which is the condition F-D35 objected to and
+        which only worsens. Or pin the header series to 6.12 while building 6.18: a supported arrangement in general
+        &mdash; headers older than the running kernel is normal &mdash; but it makes the fragment tell Buildroot
+        something other than the truth about the kernel, and deliberately weakens the check that just did its job.
+        <i>Chosen: 2025.02.17 with Linux 6.12.105.</i> The deciding fact is kernel.org&rsquo;s own table: <b>6.12 and
+        6.18 are both longterm with a projected EOL of December 2028</b>. The move costs six release cycles of
+        kernel and buys a build system on the line its maintainers support until March 2028, with toolchain, headers
+        and kernel all agreeing and the loud-failure property intact. Paying maintenance risk to keep a kernel whose
+        support window ends on the same date would be paying for nothing. This supersedes F-D52&rsquo;s reasoning,
+        which was right that 6.18 is the newest longterm line and wrong to treat newest as the requirement.
+        <i>Evidence.</i> Full aarch64 rebuild from a fresh tree: every requested kernel symbol present, kernel
+        13 058 560 bytes, rootfs under budget, supervisor is PID 1, and the guest reports 6.12.105. Then
+        accept-denials 12/12, accept-shell 13/13, accept-runs 18/18, accept-notify 22/22, accept-forward 19/19,
+        accept-e5 33/33, and all fourteen cookbook recipes. x86_64 and the boot smoke test are CI&rsquo;s;
+        the boot and restore bars are re-measured on the bare-KVM reference (D15) because a version change on the
+        boot path is exactly where a bar is never assumed.
+        <i>One operational note worth keeping:</i> the first attempt died with <code>No space left on device</code>
+        after two Buildroot trees and three build directories filled the dev VM. Stale per-arch build trees are
+        disposable and were disposed of; nothing was lost, but a build that fails for disk rather than for code
+        costs an hour of reading the wrong logs.</td>
+        <td>F-D40 (PLAN-FEATURES, closed), F-D50 for the queue and the retry rule, F-D52 for the kernel reasoning
+        this supersedes. <i>Revisit when</i> the Buildroot LTS line gains a header series at or above the kernel
+        line KelyfOS wants, or when 2026.02.x appears on buildroot.org as supported.</td></tr>
     <!-- Claude Code: append rows above this line. -->
   </table>
 </section>

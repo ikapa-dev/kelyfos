@@ -26,14 +26,13 @@ nftables with two forwards and none; a run history that is the records read back
 - P4-4, P4-5 [BLOCKED]. `idle_timeout` refused (F-D20; F-D22). IMAGE_DIR per-arch not per-flavor: parked.
 
 ## The E4→E5 seam
-**Bubble Tea + Lip Gloss v2: done** (F-D41 executed as F-D51) — five PTY checks, behaviour
-identical to v1 by running both, `-race` clean two ways. **Kernel 6.18.46**, and the bump
-found that a version change regenerated no config and rebuilt no kernel (F-D52); bars
-re-earned on bare KVM: boot 69 ms, restore 33 ms. **Buildroot → 2025.02.x: queued** (F-D40)
-— the origin 503s on the tarball, an upstream outage rather than this machine, and it timed
-out again at this boundary. One HEAD per task boundary; the first 200 executes the hop with
-every gate. `versions.mk` stays untouched until it lands, because its fallback sentence
-would be untrue. After 14 days: any transport, verified against the signed `.sign`. The HN
-post is John's.
+## Toolchain
+**Buildroot 2026.02.3 → 2025.02.17** (D28), the line buildroot.org itself lists as LTS, EOL
+March 2028. It supports kernel header series only to 6.12, so the guest kernel went back
+6.18.46 → **6.12.105** — kernel.org gives both the same projected EOL, December 2028, so the
+move costs six release cycles and buys a supported build system. Full aarch64 rebuild, 117
+acceptance checks across six suites and 14 recipes green; x86_64 and the boot/restore bars
+are CI's, dispatched. Bubble Tea v2 landed earlier at the seam (F-D41/F-D51). The HN post is
+John's.
 
 Steering needed: no.
