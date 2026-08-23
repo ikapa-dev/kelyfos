@@ -544,9 +544,17 @@ func restrictSnapshot(paths ...string) {
 // SnapshotMeta travels with a snapshot so a later restore knows what the machine
 // was, rather than making the caller remember.
 type SnapshotMeta struct {
-	Arch         string `json:"arch"`
-	Flavor       string `json:"flavor"`
-	HasWorkspace bool   `json:"has_workspace"`
+	Arch   string `json:"arch"`
+	Flavor string `json:"flavor"`
+	// VcpuCount and MemMiB are what the frozen machine holds. A restore cannot
+	// change them: Firecracker takes the machine configuration from the state
+	// file, not from the options it is handed. They are recorded so a door with
+	// a ceiling to enforce has something to check against, rather than
+	// discovering afterwards that it just restored a machine twice the size its
+	// policy allows (E4-2).
+	VcpuCount    int  `json:"vcpu_count,omitempty"`
+	MemMiB       int  `json:"mem_mib,omitempty"`
+	HasWorkspace bool `json:"has_workspace"`
 	// WorkspacePath is where the workspace disk lived when the snapshot was
 	// taken. It has to be recorded because Firecracker insists that a block
 	// device's backing file exists at its original path before a snapshot will
@@ -626,7 +634,7 @@ func SnapshotRunning(st *State, dir string) (statePath, memPath string, err erro
 		return "", "", err
 	}
 
-	meta := SnapshotMeta{Arch: st.Arch, Flavor: st.Flavor}
+	meta := SnapshotMeta{Arch: st.Arch, Flavor: st.Flavor, VcpuCount: st.VcpuCount, MemMiB: st.MemMiB}
 	if st.TAP != "" {
 		meta.HasNetwork = true
 		meta.IfaceID = "eth0"

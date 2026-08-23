@@ -114,8 +114,8 @@ func TestServeMCPWithoutAPolicy(t *testing.T) {
 // widen policy.
 func TestServeMCPToolSurface(t *testing.T) {
 	tools := hostToolDefinitions()
-	if len(tools) != 4 {
-		t.Errorf("E4-1 names four tools, found %d", len(tools))
+	if len(tools) != 9 {
+		t.Errorf("E4-1 and E4-2 name nine tools between them, found %d", len(tools))
 	}
 	for _, tool := range tools {
 		if len(tool.Name) > 64 {

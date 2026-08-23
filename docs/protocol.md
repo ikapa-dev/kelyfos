@@ -187,6 +187,14 @@ connection: an unbounded line buffer is a memory-exhaustion bug waiting for the
 first `cat /dev/urandom`. Writers therefore chunk: no single frame carries more
 than **64 KiB** of pre-encoded bytes.
 
+The MCP channel (port 10002) is the exception, and its limit is **16 MiB**.
+Nothing on that channel is chunked — a `read_file` result is a whole file on one
+line — and the per-call limit on a file is 8 MiB, so a 1 MiB frame would refuse
+messages the tools above it promise to carry. Sixteen leaves room for JSON
+escaping around eight and still bounds the buffer. Both directions and every
+reader on the channel use the same number (`proto.MaxMCPLine`), so a message one
+side will send is a message the other side will accept.
+
 **Unknown fields are ignored.** Every message carries `"v": 1`; a reader that
 sees a `v` it does not know MUST fail the message rather than guess.
 

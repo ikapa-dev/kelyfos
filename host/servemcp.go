@@ -112,7 +112,11 @@ type servedBox struct {
 }
 
 func (b *servedBox) close(reason string) {
-	_ = b.sb.Shutdown(5 * time.Second)
+	// A box can be half-built: a restore that failed after its network was up
+	// has everything here except a machine.
+	if b.sb != nil {
+		_ = b.sb.Shutdown(5 * time.Second)
+	}
 	if b.proxy != nil {
 		b.proxy.Close()
 	}
@@ -181,7 +185,7 @@ func (s *hostServer) closeAll() {
 // `sandbox_list` behind it (docs/mcp-surface.md §2.3).
 func (s *hostServer) serve(in io.Reader, out io.Writer) error {
 	s.out = json.NewEncoder(out)
-	r := proto.NewReader(in)
+	r := proto.NewReaderLimit(in, proto.MaxMCPLine)
 	var wg sync.WaitGroup
 	defer wg.Wait()
 
@@ -226,10 +230,13 @@ func (s *hostServer) dispatch(req *mcp.Request) *mcp.Response {
 			Capabilities:    mcp.Capabilities{Tools: &mcp.ToolsCapability{}},
 			ServerInfo:      mcp.Info{Name: "kelyfos", Title: "KelyfOS", Version: Version},
 			Instructions: "KelyfOS runs commands inside hardware-isolated microVMs. Boot one with " +
-				"sandbox_run, work in it with sandbox_exec, and stop it with sandbox_stop. Anything " +
-				"you run in a sandbox cannot reach this machine, and cannot reach the network unless " +
-				"the project's policy allows it. That policy is a file and no tool here can change " +
-				"it: a request for more than it permits is refused and says so.",
+				"sandbox_run, work in it with sandbox_exec and the file tools, and stop it with " +
+				"sandbox_stop. A sandbox worth keeping can be frozen with sandbox_snapshot and " +
+				"brought back in milliseconds with sandbox_restore, or forked into several copies " +
+				"of one prepared state with sandbox_fork. Anything you run in a sandbox cannot " +
+				"reach this machine, and cannot reach the network unless the project's policy " +
+				"allows it. That policy is a file and no tool here can change it: a request for " +
+				"more than it permits is refused and says so.",
 		})
 
 	case "notifications/initialized", "notifications/cancelled":
@@ -277,6 +284,16 @@ func (s *hostServer) callTool(p *mcp.CallToolParams) *mcp.CallToolResult {
 		return s.toolStop(args)
 	case "sandbox_list":
 		return s.toolList()
+	case "sandbox_read_file":
+		return s.toolReadFile(args)
+	case "sandbox_write_file":
+		return s.toolWriteFile(args)
+	case "sandbox_snapshot":
+		return s.toolSnapshot(args)
+	case "sandbox_restore":
+		return s.toolRestore(args)
+	case "sandbox_fork":
+		return s.toolFork(args)
 	}
 	return mcp.Errorf("unknown tool %q", p.Name)
 }

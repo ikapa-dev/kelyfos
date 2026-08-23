@@ -134,8 +134,18 @@ status is non-zero, and `structuredContent: {exit_code, stdout, stderr, signal}`
 **`sandbox_read_file`** — `{sandbox, path}` → the contents.
 **`sandbox_write_file`** — `{sandbox, path, content}` → bytes written.
 
-Both are the supervisor's own RPCs with a sandbox id in front. The 8 MiB
-per-call cap the guest tools have applies here too, for the same reason.
+Both are the supervisor's own RPCs with a sandbox id in front, and that is
+meant literally: the host opens the guest's own MCP channel and calls the tool,
+rather than reimplementing it and growing a second idea of what the limit is.
+The 8 MiB per-call cap the guest tools have therefore applies here too, for the
+same reason and in the same words — and the frame limit on the channel is set
+from it, so the cap is what refuses a large file rather than the transport
+(§4). Measured end to end at 512 KiB, 2 MiB, 4 MiB and 8 MiB; 9 MiB is refused
+by the guest, naming the limit in bytes.
+
+A write is recorded in the sandbox's flight recorder by path, size and digest,
+with `via: serve-mcp` — never by content. A read is not recorded, for the same
+reason a read is not recorded anywhere else: the record is of what changed.
 
 #### State
 
@@ -148,6 +158,31 @@ running.
 sandbox cannot be forked, because the guest's address lives inside the memory
 image every fork shares. The refusal says so rather than producing N machines
 that each believe they are the same host.
+
+Four more refusals belong to this door rather than to the machinery under it,
+because they are all consequences of the caller being a model on the far side of
+the wall rather than a person at a shell:
+
+- **A snapshot name is checked, not trusted.** A name becomes a directory, so it
+  is letters, digits, dot, dash and underscore, at most 64 of them, not starting
+  with a dot. `../evil` is refused for the slash it contains.
+- **A restored machine is held to the policy's ceiling.** Firecracker takes vcpu
+  and memory from the state file, so a restore cannot shrink a machine to fit:
+  the only honest answers are to allow it or refuse it. Snapshots record what
+  they hold; one taken by an older `kelyfos` does not, and where a ceiling is set
+  that unknown is refused rather than waved through.
+- **A restore may narrow an allowlist and never widen one**, against two
+  ceilings: the project's policy, and the snapshot's own list. A snapshot taken
+  under some other policy does not carry its permission with it.
+- **A networked snapshot cannot be restored while its original is running.** The
+  guest's address and proxy port are inside the memory image (D22), so exactly
+  one machine can hold them; the refusal names the sandbox that has it.
+
+Restoring is what makes the rest of it worth having: measured on the development
+machine, a restore is **~150 ms** against **~800 ms** for a cold boot, and two
+forks of one snapshot come up in **~230 ms** of wall clock between them. Those
+are nested-virtualisation figures and informational only — the bars that bind
+are measured on the bare-KVM reference (D15).
 
 #### Teams
 
@@ -350,6 +385,16 @@ newline-delimited JSON-RPC — one message per line, no embedded newlines, and
 explicitly not LSP `Content-Length` framing. This was verified against the
 official specification across every revision through 2025-11-25 during the build
 plan's review rounds, and `docs/protocol.md` §6 carries it.
+
+**Frames are bounded at 16 MiB on this channel**, rather than at the 1 MiB the
+rest of the protocol uses. Nothing here is chunked — a `read_file` result is a
+whole file on one line — and the per-call limit on a file is 8 MiB, so a 1 MiB
+frame would refuse messages the tools above it promise to carry. Sixteen leaves
+room for JSON escaping around eight and still bounds the buffer. Every reader
+*and writer* on both sides of the channel takes the number from one constant
+(`proto.MaxMCPLine`), because a writer that will send more than the reader
+opposite it accepts is a connection that dies mid-answer — which is what a
+caller sees as an unexplained EOF. `docs/protocol.md` §3 carries it.
 
 **`serve-mcp` implements revision 2025-11-25**, the same revision the guest's
 server advertises, so the product speaks one revision in both directions.

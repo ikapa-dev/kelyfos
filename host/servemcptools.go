@@ -63,6 +63,37 @@ func hostToolDefinitions() []mcp.Tool {
 			},
 		},
 		{
+			Name:  "sandbox_read_file",
+			Title: "Read a file from a sandbox",
+			Description: "Read a text file out of a sandbox and return its contents. This is the " +
+				"sandbox's own read_file with an id in front, so it refuses a file over 8 MiB for " +
+				"the same reason: work with something that large in place, using sandbox_exec.",
+			InputSchema: mcp.Schema{
+				Type: "object",
+				Properties: map[string]mcp.Property{
+					"sandbox": str("The sandbox id from sandbox_run."),
+					"path":    str("Absolute path inside the guest."),
+				},
+				Required: []string{"sandbox", "path"},
+			},
+		},
+		{
+			Name:  "sandbox_write_file",
+			Title: "Write a file into a sandbox",
+			Description: "Write text to a path inside a sandbox, creating parent directories and " +
+				"replacing anything already there. At most 8 MiB per call. The write is recorded " +
+				"in the session's audit log by path, size and digest — never by content.",
+			InputSchema: mcp.Schema{
+				Type: "object",
+				Properties: map[string]mcp.Property{
+					"sandbox": str("The sandbox id from sandbox_run."),
+					"path":    str("Absolute path inside the guest."),
+					"content": str("The text to write."),
+				},
+				Required: []string{"sandbox", "path", "content"},
+			},
+		},
+		{
 			Name:        "sandbox_stop",
 			Title:       "Stop a sandbox",
 			Description: "Stop a sandbox this server started and release its resources.",
@@ -78,6 +109,54 @@ func hostToolDefinitions() []mcp.Tool {
 			Description: "The sandboxes this server has started and not yet stopped, with the " +
 				"policy each is running under.",
 			InputSchema: mcp.Schema{Type: "object"},
+		},
+		{
+			Name:  "sandbox_snapshot",
+			Title: "Snapshot a sandbox",
+			Description: "Freeze a sandbox under a name so it can be restored or forked later. " +
+				"The sandbox keeps running and is unaffected. Snapshots outlive this server, and " +
+				"a name that already exists is overwritten.",
+			InputSchema: mcp.Schema{
+				Type: "object",
+				Properties: map[string]mcp.Property{
+					"sandbox": str("The sandbox id to freeze."),
+					"name":    str("A name for the snapshot: letters, digits, dot, dash, underscore."),
+				},
+				Required: []string{"sandbox", "name"},
+			},
+		},
+		{
+			Name:  "sandbox_restore",
+			Title: "Restore a snapshot",
+			Description: "Bring a snapshot back as a new sandbox, which takes milliseconds rather " +
+				"than a boot. Returns the new sandbox's id. `allow` may narrow what the restored " +
+				"machine can reach and can never widen it — not beyond the project's policy, and " +
+				"not beyond what the snapshot itself was allowed.",
+			InputSchema: mcp.Schema{
+				Type: "object",
+				Properties: map[string]mcp.Property{
+					"name": str("The snapshot name."),
+					"allow": {Type: "array", Description: "Narrow the restored machine's allowlist. Defaults to the snapshot's own.",
+						Items: &mcp.Property{Type: "string"}},
+				},
+				Required: []string{"name"},
+			},
+		},
+		{
+			Name:  "sandbox_fork",
+			Title: "Fork a snapshot",
+			Description: "Restore one snapshot into several sandboxes at once. Each fork resumes " +
+				"from the same prepared state and then diverges, sharing nothing. A snapshot taken " +
+				"from a sandbox with network access cannot be forked, because the guest's address " +
+				"is inside the memory image every fork would share; restore it singly instead.",
+			InputSchema: mcp.Schema{
+				Type: "object",
+				Properties: map[string]mcp.Property{
+					"name":  str("The snapshot name."),
+					"count": {Type: "integer", Description: "How many forks to make. At least 1."},
+				},
+				Required: []string{"name", "count"},
+			},
 		},
 	}
 }
@@ -104,33 +183,20 @@ func (s *hostServer) toolRun(raw json.RawMessage) *mcp.CallToolResult {
 		return mcp.Errorf("%v", err)
 	}
 
-	s.mu.Lock()
-	if len(s.boxes) >= s.max {
-		n := len(s.boxes)
-		s.mu.Unlock()
-		return mcp.Errorf("this server already has %d sandbox(es) running and [mcp] max_sandboxes "+
-			"is %d. Stop one with sandbox_stop, or raise the limit in %s — which is a change a "+
-			"person makes to a file, not something a tool here can do.",
-			n, s.max, s.policyPath())
+	if err := s.room(1); err != nil {
+		return mcp.Errorf("%v", err)
 	}
-	s.mu.Unlock()
 
 	b, err := s.boot(opts)
 	if err != nil {
 		return mcp.Errorf("sandbox_run: %v", err)
 	}
-
-	// Re-check under the lock: two concurrent calls could both have passed the
-	// check above, and the limit is a limit.
-	s.mu.Lock()
-	if len(s.boxes) >= s.max {
-		s.mu.Unlock()
+	// Checked again at registration: two concurrent calls could both have
+	// passed the check above, and the limit is a limit.
+	if err := s.adopt(b); err != nil {
 		b.close("error")
-		return mcp.Errorf("this server already has %d sandbox(es) running and [mcp] max_sandboxes "+
-			"is %d; another call took the last slot while this one was booting.", s.max, s.max)
+		return mcp.Errorf("%v", err)
 	}
-	s.boxes[b.sb.State.ID] = b
-	s.mu.Unlock()
 
 	id := b.sb.State.ID
 	return &mcp.CallToolResult{
@@ -329,20 +395,7 @@ func (s *hostServer) boot(opts sandbox.Options) (*servedBox, error) {
 		Type: recorder.TypeSessionStart, Image: opts.Flavor, Arch: opts.Arch,
 		Kelyfos: Version, Argv: s.argv, Reason: "created through serve-mcp",
 	})
-	if b.proxy != nil {
-		rec := b.rec
-		b.proxy.OnSecret = func(name, host string) {
-			_ = rec.Append(recorder.Event{Type: recorder.TypeSecretUse, Name: name, Host: host})
-		}
-		b.proxy.OnEvent = func(at egress.Attempt) {
-			allowed := at.Allowed
-			_ = rec.Append(recorder.Event{
-				Type: recorder.TypeEgressAttempt, Host: at.Host, Port: at.Port,
-				Allowed: &allowed, Reason: at.Reason, Mode: at.Mode,
-				BytesIn: at.BytesIn, BytesOut: at.BytesOut,
-			})
-		}
-	}
+	b.wireAudit()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -496,4 +549,25 @@ func (s *hostServer) box(id string) (*servedBox, error) {
 		return nil, fmt.Errorf("no sandbox %q was started by this server; sandbox_list shows the ones that were", id)
 	}
 	return b, nil
+}
+
+// wireAudit points the egress proxy at this sandbox's recorder. Every door that
+// builds a machine calls it, because a sandbox whose proxy reports to nobody is
+// a sandbox with no audit trail — and there is no such thing here (D6, F-D33).
+func (b *servedBox) wireAudit() {
+	if b.proxy == nil || b.rec == nil {
+		return
+	}
+	rec := b.rec
+	b.proxy.OnSecret = func(name, host string) {
+		_ = rec.Append(recorder.Event{Type: recorder.TypeSecretUse, Name: name, Host: host})
+	}
+	b.proxy.OnEvent = func(at egress.Attempt) {
+		allowed := at.Allowed
+		_ = rec.Append(recorder.Event{
+			Type: recorder.TypeEgressAttempt, Host: at.Host, Port: at.Port,
+			Allowed: &allowed, Reason: at.Reason, Mode: at.Mode,
+			BytesIn: at.BytesIn, BytesOut: at.BytesOut,
+		})
+	}
 }

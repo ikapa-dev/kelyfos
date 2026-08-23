@@ -66,7 +66,7 @@ A command was submitted, before it runs. Written by the **host**.
 | `call` | string | correlates this command's three events |
 | `cmd` | string array | argv as submitted, including any /bin/sh -c wrapper |
 | `cwd` | string | working directory inside the guest |
-| `via` | string | exec or mcp — which interface asked |
+| `via` | string | which door asked: exec, mcp, or serve-mcp |
 | `agent` | string | which machine produced it; present inside a team *(in a team)* |
 
 ## `command.output`
@@ -103,7 +103,7 @@ A file written through a tool, recorded by hash rather than content. Written by 
 | `path` | string | path inside the guest |
 | `bytes` | integer | size written |
 | `sha256` | string | digest of the content |
-| `via` | string | write_file or upload for an MCP tool, shim for the E2B surface |
+| `via` | string | which door the write came through: write_file or upload for a guest MCP tool, serve-mcp for an outside MCP client, shim for the E2B surface |
 | `agent` | string | which machine produced it; present inside a team *(in a team)* |
 
 ## `egress.attempt`

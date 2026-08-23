@@ -741,6 +741,7 @@ func bootTemplate(ctx context.Context, a plannedAgent, sessionID, arch string,
 	}
 	if err := sandbox.WriteSnapshotMeta(snapDir, sandbox.SnapshotMeta{
 		Arch: arch, Flavor: a.image,
+		VcpuCount: sb.State.VcpuCount, MemMiB: sb.State.MemMiB,
 	}); err != nil {
 		stopNow()
 		_ = os.RemoveAll(snapDir)

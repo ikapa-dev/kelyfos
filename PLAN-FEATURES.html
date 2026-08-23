@@ -126,7 +126,7 @@
      improvements to the existing product land here as epics. Inert until its gate opens.</p>
   <div class="meta">
     owner: <b>John</b> &nbsp;&middot;&nbsp; developer: <b>Claude Code</b> &nbsp;&middot;&nbsp;
-    status: <b class="ok" id="meta-status">Epic E4 — active, 2/9 (v0.6 released; next: E4-2, file and state tools)</b> &nbsp;&middot;&nbsp;
+    status: <b class="ok" id="meta-status">Epic E4 — active, 3/9 (v0.6 released; next: E4-3, team tools)</b> &nbsp;&middot;&nbsp;
     last updated: <b id="meta-updated">2026-08-23</b><br>
     repo file: <b>PLAN-FEATURES.html</b> (lives at the repository root next to <code>PLAN.html</code>)<br>
     <span class="quiet">Companion to PLAN.html — same protocol, same rules, later timeline.</span>
@@ -166,7 +166,7 @@
     <span class="bl-name">All epics</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">E4-2 — file and state tools over existing machinery: <code>sandbox_read_file</code>, <code>sandbox_write_file</code>, <code>sandbox_snapshot</code>, <code>sandbox_fork</code>, <code>sandbox_restore</code></b></div>
+  <div class="focusline">Current focus: <b id="focus">E4-3 — team tools: <code>team_up</code>, <code>team_ps</code>, <code>team_down</code> as thin wrappers over E2, still bounded by the team toml</b></div>
 </div>
 
 <!-- ====================================================== 1. ACTIVATION GATE -->
@@ -503,7 +503,7 @@
         machinery — <code>sandbox_run</code> (boot with the project&rsquo;s toml policy), <code>sandbox_exec</code>,
         <code>sandbox_stop</code>, <code>sandbox_list</code>; multiple concurrent sandboxes with ids; <code>max_sandboxes</code>
         enforced; requests exceeding the toml ceilings refused with the E1-1 error style.</span></li>
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">E4-2</span><span class="tk">File and state tools over existing machinery: <code>sandbox_read_file</code> /
         <code>sandbox_write_file</code> (supervisor RPCs), <code>sandbox_snapshot</code> / <code>sandbox_fork</code> /
         <code>sandbox_restore</code> (P3 snapshot layer).</span></li>
@@ -1459,6 +1459,58 @@
         <i>Revisit when</i> a client this project cares about requires 2026-07-28, or when the guest server is being
         rewritten for another reason and the two moves can be paid for once.</td>
         <td class="mono">modelcontextprotocol.io/specification/versioning</td></tr>
+        <tr><td class="mono">F-D38</td><td class="mono">2026-08-23</td>
+        <td><b>The host&rsquo;s file tools call the guest&rsquo;s own file tools, and the MCP channel gets a frame limit
+        of its own &mdash; 16 MiB, one constant, every reader <i>and writer</i> on both sides.</b>
+        <i>The first choice.</i> <code>sandbox_read_file</code> and <code>sandbox_write_file</code> could have been
+        written out here over <code>sandbox.Exec</code> and <code>base64</code>, which is what the E2B shim does and
+        which works. Instead the host opens the guest&rsquo;s MCP channel and calls <code>read_file</code> and
+        <code>write_file</code>, so there is one 8 MiB cap, one answer to whether a parent directory is created, and one
+        wording for every failure. Two implementations of a limit are two limits, eventually.
+        <i>What that surfaced.</i> The promise in E4-0&rsquo;s own document &mdash; &ldquo;the 8 MiB per-call cap the
+        guest tools have applies here too&rdquo; &mdash; was false on the wire. <code>proto.MaxLine</code> is 1 MiB,
+        which is right for the exec channel because exec chunks, and wrong for MCP because a <code>read_file</code>
+        result is a whole file on one line. A 2 MiB read failed with an unexplained EOF: the guest&rsquo;s
+        <i>writer</i> refused the frame and closed the connection, so the host saw a dead socket and had nothing to say
+        about why. The write direction failed the same way one layer up and killed the whole server.
+        <i>Alternatives.</i> Cap the tools at 1 MiB and document that instead &mdash; honest, and it makes the tool
+        useless for the files agents actually move. Chunk MCP results &mdash; a protocol change to the MCP transport,
+        which E4-0 explicitly does not reopen. Raise <code>MaxLine</code> everywhere &mdash; it exists to stop
+        <code>cat /dev/urandom</code> exhausting memory on the exec channel, and that reason is still good.
+        <i>What was done.</i> <code>proto.MaxMCPLine = 16 &lt;&lt; 20</code>, used by the supervisor&rsquo;s MCP session
+        both ways, by <code>serve-mcp</code>&rsquo;s inbound reader, by the host&rsquo;s guest client, and by the
+        bridge&rsquo;s observer &mdash; which had quietly been carrying a <i>third</i> number, 8 MiB, low enough to
+        break a legitimate 8 MiB write on the <code>kelyfos mcp</code> path. Sixteen leaves room for JSON escaping
+        around eight and still bounds the buffer, because the far side of this channel is the side that is not trusted.
+        <i>Evidence.</i> 512 KiB, 2 MiB, 4 MiB and 8 MiB written and read back through <code>serve-mcp</code> with
+        matching SHA-256 and matching byte counts on disk; 9 MiB refused by the guest, naming the limit in bytes.
+        <i>Revisit when</i> a tool needs to move more than 8 MiB, which is a case for streaming rather than a bigger
+        line.</td>
+        <td class="mono">bin/statedrive.py, bin/bigprobe.py</td></tr>
+        <tr><td class="mono">F-D39</td><td class="mono">2026-08-23</td>
+        <td><b>A restore is an entry path, so it is held to the policy ceiling &mdash; and a snapshot now records how
+        large the machine it holds is, because otherwise the ceiling cannot be checked.</b>
+        <i>The hole.</i> Firecracker takes vcpu count and memory from the snapshot&rsquo;s state file, not from the
+        options a restore is handed. A restore therefore cannot resize a machine to fit, and until this task nothing
+        looked: a snapshot taken under a policy that allowed eight cores could be restored under one that allows two,
+        through a door whose entire purpose is that the policy is a wall (F-D5). The same held for egress &mdash; a
+        snapshot carries its own allowlist, and restoring it used that list without asking the current policy anything.
+        <i>What was done.</i> <code>SnapshotMeta</code> gains <code>vcpu_count</code> and <code>mem_mib</code>, written
+        by every path that takes a snapshot. <code>serve-mcp</code> refuses a snapshot over the ceiling, naming the
+        ceiling and the line it was set on. A restore&rsquo;s allowlist is checked against two ceilings, not one: the
+        project&rsquo;s policy, and the snapshot&rsquo;s own list &mdash; a machine frozen unable to reach somewhere
+        does not gain the ability by being thawed, and a snapshot taken under another policy does not carry its
+        permission with it.
+        <i>The awkward case, decided rather than avoided.</i> A snapshot taken by an older <code>kelyfos</code> does not
+        say how large it is. Where a ceiling is set, that unknown is <b>refused</b>, with a message saying to take the
+        snapshot again &mdash; not allowed with a warning. A wall with an exception in it is not a wall, and snapshots
+        are cheap to retake. Where no ceiling is set there is nothing to check and nothing to refuse.
+        <i>Scope.</i> The command line is not held to this: its names and its snapshots come from a person at their own
+        shell, where there is no privilege boundary to enforce. The boundary is <code>serve-mcp</code>, and that is
+        where the checks live &mdash; including the one that refuses a snapshot name that could walk out of the
+        snapshots directory.
+        <i>Revisit when</i> a restore can resize a machine, which would make this a clamp instead of a refusal.</td>
+        <td class="mono">host/servemcpstate.go, internal/sandbox/sandbox.go</td></tr>
     <!-- Claude Code: append rows above this line. -->
       <tr><td class="mono">F-D10</td><td class="mono">2026-08-22</td>
         <td>The resource knobs E1-0 goes looking for shipped <b>partly</b>: <code>--vcpus</code>/<code>--mem</code> and
@@ -3629,6 +3681,36 @@ $ go test ./host/ -run TestServeMCP
   7 tests, all PASS
 $ gofmt -l . ; go vet ./... ; go test ./...
   clean · clean · all packages ok</pre></td></tr>
+        <tr><td class="mono">2026-08-23</td><td class="mono">E4-2</td>
+        <td><b>Five more tools, and the two walls they leaned on turned out to have holes in them.</b>
+        <code>sandbox_read_file</code>, <code>sandbox_write_file</code>, <code>sandbox_snapshot</code>,
+        <code>sandbox_restore</code> and <code>sandbox_fork</code> sit over machinery that already existed &mdash; the
+        supervisor&rsquo;s file RPCs and P3&rsquo;s snapshot layer &mdash; so almost none of this task was new
+        mechanism. It was finding out what the doors let through.
+        <b>The file tools call the guest&rsquo;s own file tools</b> rather than reimplementing them, which is what
+        E4-0&rsquo;s document says and what it now does. That immediately falsified the document&rsquo;s other claim:
+        the 8 MiB per-call cap could not apply, because the shared frame limit is 1 MiB and a <code>read_file</code>
+        result is a whole file on one line. A 2 MiB read died with a bare EOF. F-D38 has the whole of it; the outcome is
+        one constant for the MCP channel, on every reader and writer at both ends, and 512 KiB / 2 MiB / 4 MiB / 8 MiB
+        now measured through with matching digests. The consolidation also removed a third limit nobody had noticed, in
+        the <code>kelyfos mcp</code> bridge&rsquo;s observer, low enough to have broken a legitimate 8 MiB write.
+        <b>A restore was not being held to the policy at all.</b> Firecracker takes a machine&rsquo;s size from the
+        state file, so a snapshot taken under a looser policy restored at its own size, and its own allowlist was used
+        without asking the current policy anything. Snapshots now record what they hold, both ceilings are checked, and
+        a snapshot too old to say is refused rather than waved through (F-D39). Names are checked too: a snapshot name
+        becomes a directory, and this one arrives from a model.
+        <b>Everything a door creates is recorded like everything else.</b> A restored or forked machine opens its own
+        chain, wired to its recorder and its proxy <i>before</i> it resumes &mdash; a restored guest runs the instant
+        <code>Restore</code> returns, and an audit trail that starts a moment later has a hole at the front of it.
+        <code>session.start</code> now renders its reason, so a fork&rsquo;s log says it is a fork.
+        <b>Proved live</b> on the development machine: a sandbox written to and read back, snapshotted while still
+        running, forked twice into machines that saw the same prepared file and then diverged independently, and
+        restored into a third; then the same again with egress, where the restored machine reached
+        <code>example.com</code> through a proxy rebound on the address the memory image expects. Restore ~150 ms
+        against ~800 ms for a cold boot, two forks in ~230 ms of wall clock &mdash; nested-virt figures, informational
+        only. The refusals were exercised in the same run: 9 MiB, a directory, <code>../evil</code>, a networked
+        snapshot forked, an allowlist widened, and a restore of a snapshot whose original still holds its address, which
+        now names the sandbox to stop instead of failing with a bind error from inside the proxy.</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>

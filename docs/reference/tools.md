@@ -178,6 +178,25 @@ Run a command inside a sandbox and return its output and exit code. Give `comman
 | `stdin` | string | no | Text written to the command's standard input. |
 | `timeout_ms` | integer | no | Kill the command after this many milliseconds. |
 
+### `sandbox_read_file`
+
+Read a text file out of a sandbox and return its contents. This is the sandbox's own read_file with an id in front, so it refuses a file over 8 MiB for the same reason: work with something that large in place, using sandbox_exec.
+
+| Parameter | Type | Required | Meaning |
+| --- | --- | --- | --- |
+| `path` | string | **yes** | Absolute path inside the guest. |
+| `sandbox` | string | **yes** | The sandbox id from sandbox_run. |
+
+### `sandbox_write_file`
+
+Write text to a path inside a sandbox, creating parent directories and replacing anything already there. At most 8 MiB per call. The write is recorded in the session's audit log by path, size and digest — never by content.
+
+| Parameter | Type | Required | Meaning |
+| --- | --- | --- | --- |
+| `content` | string | **yes** | The text to write. |
+| `path` | string | **yes** | Absolute path inside the guest. |
+| `sandbox` | string | **yes** | The sandbox id from sandbox_run. |
+
 ### `sandbox_stop`
 
 Stop a sandbox this server started and release its resources.
@@ -191,3 +210,30 @@ Stop a sandbox this server started and release its resources.
 The sandboxes this server has started and not yet stopped, with the policy each is running under.
 
 No parameters.
+
+### `sandbox_snapshot`
+
+Freeze a sandbox under a name so it can be restored or forked later. The sandbox keeps running and is unaffected. Snapshots outlive this server, and a name that already exists is overwritten.
+
+| Parameter | Type | Required | Meaning |
+| --- | --- | --- | --- |
+| `name` | string | **yes** | A name for the snapshot: letters, digits, dot, dash, underscore. |
+| `sandbox` | string | **yes** | The sandbox id to freeze. |
+
+### `sandbox_restore`
+
+Bring a snapshot back as a new sandbox, which takes milliseconds rather than a boot. Returns the new sandbox's id. `allow` may narrow what the restored machine can reach and can never widen it — not beyond the project's policy, and not beyond what the snapshot itself was allowed.
+
+| Parameter | Type | Required | Meaning |
+| --- | --- | --- | --- |
+| `allow` | array of string | no | Narrow the restored machine's allowlist. Defaults to the snapshot's own. |
+| `name` | string | **yes** | The snapshot name. |
+
+### `sandbox_fork`
+
+Restore one snapshot into several sandboxes at once. Each fork resumes from the same prepared state and then diverges, sharing nothing. A snapshot taken from a sandbox with network access cannot be forked, because the guest's address is inside the memory image every fork would share; restore it singly instead.
+
+| Parameter | Type | Required | Meaning |
+| --- | --- | --- | --- |
+| `count` | integer | **yes** | How many forks to make. At least 1. |
+| `name` | string | **yes** | The snapshot name. |

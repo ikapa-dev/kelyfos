@@ -22,7 +22,7 @@ func serveMCP(ln net.Listener, rp *reaper) {
 		}
 		go func() {
 			defer conn.Close()
-			(&mcpSession{w: proto.NewWriter(conn), rp: rp}).serve(conn)
+			(&mcpSession{w: proto.NewWriterLimit(conn, proto.MaxMCPLine), rp: rp}).serve(conn)
 		}()
 	}
 }
@@ -44,7 +44,7 @@ func (s *mcpSession) send(v any) error {
 }
 
 func (s *mcpSession) serve(conn net.Conn) {
-	r := proto.NewReader(conn)
+	r := proto.NewReaderLimit(conn, proto.MaxMCPLine)
 	for {
 		var req mcp.Request
 		if err := r.Read(&req); err != nil {

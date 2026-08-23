@@ -2536,6 +2536,14 @@ connection: an unbounded line buffer is a memory-exhaustion bug waiting for the
 first `cat /dev/urandom`. Writers therefore chunk: no single frame carries more
 than **64 KiB** of pre-encoded bytes.
 
+The MCP channel (port 10002) is the exception, and its limit is **16 MiB**.
+Nothing on that channel is chunked — a `read_file` result is a whole file on one
+line — and the per-call limit on a file is 8 MiB, so a 1 MiB frame would refuse
+messages the tools above it promise to carry. Sixteen leaves room for JSON
+escaping around eight and still bounds the buffer. Both directions and every
+reader on the channel use the same number (`proto.MaxMCPLine`), so a message one
+side will send is a message the other side will accept.
+
 **Unknown fields are ignored.** Every message carries `"v": 1`; a reader that
 sees a `v` it does not know MUST fail the message rather than guess.
 
@@ -3008,8 +3016,18 @@ status is non-zero, and `structuredContent: {exit_code, stdout, stderr, signal}`
 **`sandbox_read_file`** — `{sandbox, path}` → the contents.
 **`sandbox_write_file`** — `{sandbox, path, content}` → bytes written.
 
-Both are the supervisor's own RPCs with a sandbox id in front. The 8 MiB
-per-call cap the guest tools have applies here too, for the same reason.
+Both are the supervisor's own RPCs with a sandbox id in front, and that is
+meant literally: the host opens the guest's own MCP channel and calls the tool,
+rather than reimplementing it and growing a second idea of what the limit is.
+The 8 MiB per-call cap the guest tools have therefore applies here too, for the
+same reason and in the same words — and the frame limit on the channel is set
+from it, so the cap is what refuses a large file rather than the transport
+(§4). Measured end to end at 512 KiB, 2 MiB, 4 MiB and 8 MiB; 9 MiB is refused
+by the guest, naming the limit in bytes.
+
+A write is recorded in the sandbox's flight recorder by path, size and digest,
+with `via: serve-mcp` — never by content. A read is not recorded, for the same
+reason a read is not recorded anywhere else: the record is of what changed.
 
 #### State
 
@@ -3022,6 +3040,31 @@ running.
 sandbox cannot be forked, because the guest's address lives inside the memory
 image every fork shares. The refusal says so rather than producing N machines
 that each believe they are the same host.
+
+Four more refusals belong to this door rather than to the machinery under it,
+because they are all consequences of the caller being a model on the far side of
+the wall rather than a person at a shell:
+
+- **A snapshot name is checked, not trusted.** A name becomes a directory, so it
+  is letters, digits, dot, dash and underscore, at most 64 of them, not starting
+  with a dot. `../evil` is refused for the slash it contains.
+- **A restored machine is held to the policy's ceiling.** Firecracker takes vcpu
+  and memory from the state file, so a restore cannot shrink a machine to fit:
+  the only honest answers are to allow it or refuse it. Snapshots record what
+  they hold; one taken by an older `kelyfos` does not, and where a ceiling is set
+  that unknown is refused rather than waved through.
+- **A restore may narrow an allowlist and never widen one**, against two
+  ceilings: the project's policy, and the snapshot's own list. A snapshot taken
+  under some other policy does not carry its permission with it.
+- **A networked snapshot cannot be restored while its original is running.** The
+  guest's address and proxy port are inside the memory image (D22), so exactly
+  one machine can hold them; the refusal names the sandbox that has it.
+
+Restoring is what makes the rest of it worth having: measured on the development
+machine, a restore is **~150 ms** against **~800 ms** for a cold boot, and two
+forks of one snapshot come up in **~230 ms** of wall clock between them. Those
+are nested-virtualisation figures and informational only — the bars that bind
+are measured on the bare-KVM reference (D15).
 
 #### Teams
 
@@ -3224,6 +3267,16 @@ newline-delimited JSON-RPC — one message per line, no embedded newlines, and
 explicitly not LSP `Content-Length` framing. This was verified against the
 official specification across every revision through 2025-11-25 during the build
 plan's review rounds, and `docs/protocol.md` §6 carries it.
+
+**Frames are bounded at 16 MiB on this channel**, rather than at the 1 MiB the
+rest of the protocol uses. Nothing here is chunked — a `read_file` result is a
+whole file on one line — and the per-call limit on a file is 8 MiB, so a 1 MiB
+frame would refuse messages the tools above it promise to carry. Sixteen leaves
+room for JSON escaping around eight and still bounds the buffer. Every reader
+*and writer* on both sides of the channel takes the number from one constant
+(`proto.MaxMCPLine`), because a writer that will send more than the reader
+opposite it accepts is a connection that dies mid-answer — which is what a
+caller sees as an unexplained EOF. `docs/protocol.md` §3 carries it.
 
 **`serve-mcp` implements revision 2025-11-25**, the same revision the guest's
 server advertises, so the product speaks one revision in both directions.
@@ -5343,6 +5396,25 @@ Run a command inside a sandbox and return its output and exit code. Give `comman
 | `stdin` | string | no | Text written to the command's standard input. |
 | `timeout_ms` | integer | no | Kill the command after this many milliseconds. |
 
+### `sandbox_read_file`
+
+Read a text file out of a sandbox and return its contents. This is the sandbox's own read_file with an id in front, so it refuses a file over 8 MiB for the same reason: work with something that large in place, using sandbox_exec.
+
+| Parameter | Type | Required | Meaning |
+| --- | --- | --- | --- |
+| `path` | string | **yes** | Absolute path inside the guest. |
+| `sandbox` | string | **yes** | The sandbox id from sandbox_run. |
+
+### `sandbox_write_file`
+
+Write text to a path inside a sandbox, creating parent directories and replacing anything already there. At most 8 MiB per call. The write is recorded in the session's audit log by path, size and digest — never by content.
+
+| Parameter | Type | Required | Meaning |
+| --- | --- | --- | --- |
+| `content` | string | **yes** | The text to write. |
+| `path` | string | **yes** | Absolute path inside the guest. |
+| `sandbox` | string | **yes** | The sandbox id from sandbox_run. |
+
 ### `sandbox_stop`
 
 Stop a sandbox this server started and release its resources.
@@ -5356,6 +5428,33 @@ Stop a sandbox this server started and release its resources.
 The sandboxes this server has started and not yet stopped, with the policy each is running under.
 
 No parameters.
+
+### `sandbox_snapshot`
+
+Freeze a sandbox under a name so it can be restored or forked later. The sandbox keeps running and is unaffected. Snapshots outlive this server, and a name that already exists is overwritten.
+
+| Parameter | Type | Required | Meaning |
+| --- | --- | --- | --- |
+| `name` | string | **yes** | A name for the snapshot: letters, digits, dot, dash, underscore. |
+| `sandbox` | string | **yes** | The sandbox id to freeze. |
+
+### `sandbox_restore`
+
+Bring a snapshot back as a new sandbox, which takes milliseconds rather than a boot. Returns the new sandbox's id. `allow` may narrow what the restored machine can reach and can never widen it — not beyond the project's policy, and not beyond what the snapshot itself was allowed.
+
+| Parameter | Type | Required | Meaning |
+| --- | --- | --- | --- |
+| `allow` | array of string | no | Narrow the restored machine's allowlist. Defaults to the snapshot's own. |
+| `name` | string | **yes** | The snapshot name. |
+
+### `sandbox_fork`
+
+Restore one snapshot into several sandboxes at once. Each fork resumes from the same prepared state and then diverges, sharing nothing. A snapshot taken from a sandbox with network access cannot be forked, because the guest's address is inside the memory image every fork would share; restore it singly instead.
+
+| Parameter | Type | Required | Meaning |
+| --- | --- | --- | --- |
+| `count` | integer | **yes** | How many forks to make. At least 1. |
+| `name` | string | **yes** | The snapshot name. |
 
 
 ---
@@ -5432,7 +5531,7 @@ A command was submitted, before it runs. Written by the **host**.
 | `call` | string | correlates this command's three events |
 | `cmd` | string array | argv as submitted, including any /bin/sh -c wrapper |
 | `cwd` | string | working directory inside the guest |
-| `via` | string | exec or mcp — which interface asked |
+| `via` | string | which door asked: exec, mcp, or serve-mcp |
 | `agent` | string | which machine produced it; present inside a team *(in a team)* |
 
 ## `command.output`
@@ -5469,7 +5568,7 @@ A file written through a tool, recorded by hash rather than content. Written by 
 | `path` | string | path inside the guest |
 | `bytes` | integer | size written |
 | `sha256` | string | digest of the content |
-| `via` | string | write_file or upload for an MCP tool, shim for the E2B surface |
+| `via` | string | which door the write came through: write_file or upload for a guest MCP tool, serve-mcp for an outside MCP client, shim for the E2B surface |
 | `agent` | string | which machine produced it; present inside a team *(in a team)* |
 
 ## `egress.attempt`

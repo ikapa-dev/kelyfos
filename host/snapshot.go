@@ -103,26 +103,7 @@ func snapshotRestore(argv []string) error {
 		if len(list) == 0 {
 			return fmt.Errorf("snapshot %q was taken from a networked sandbox but recorded no allowlist; pass --allow", *name)
 		}
-		sandboxID, err := sandbox.NewID()
-		if err != nil {
-			return err
-		}
-		opts.ID = sandboxID
-		opts.Allow = list
-		// Re-use the addressing the snapshot recorded, not a fresh /30: the
-		// guest's HTTPS_PROXY is in the memory image and cannot be changed
-		// from out here (D22).
-		if meta.HostIP != "" {
-			opts.Net, err = sandbox.NewNetworkFor(sandboxID, meta.HostIP, meta.GuestIP, meta.Netmask, meta.HostMAC)
-		} else {
-			opts.Net, err = sandbox.NewNetwork(sandboxID)
-		}
-		if err != nil {
-			return err
-		}
-		defer opts.Net.Down()
-
-		policy := egress.Policy{Allow: list}
+		var vetted []*egress.Secret
 		for _, spec := range secrets {
 			sec, err := egress.ParseSecret(spec)
 			if err != nil {
@@ -131,30 +112,13 @@ func snapshotRestore(argv []string) error {
 			if !containsDomain(list, sec.Domain) {
 				return fmt.Errorf("--secret %s: %s is not in the allowlist", spec, sec.Domain)
 			}
-			policy.Secrets = append(policy.Secrets, sec)
+			vetted = append(vetted, sec)
 		}
-		if len(policy.Secrets) > 0 {
-			if ca, err = egress.NewCA(); err != nil {
-				return err
-			}
-		}
-		proxy = &egress.Proxy{Policy: policy, CA: ca}
-		// Same reasoning as the address: the port is baked into the guest's
-		// proxy environment, so the restored proxy has to bind the one the
-		// snapshot recorded rather than whatever the kernel offers.
-		bind := opts.Net.HostIP.String() + ":0"
-		if meta.ProxyPort != 0 {
-			bind = fmt.Sprintf("%s:%d", opts.Net.HostIP, meta.ProxyPort)
-		}
-		port, err := proxy.Listen(bind)
-		if err != nil {
-			return fmt.Errorf("bind the egress proxy on %s (the address this snapshot's guest expects): %w", bind, err)
-		}
-		opts.ProxyPort = port
-		if err := opts.Net.Restrict(port); err != nil {
+		var err error
+		if proxy, ca, err = restoreNetwork(meta, list, vetted, &opts); err != nil {
 			return err
 		}
-		go proxy.Serve()
+		defer opts.Net.Down()
 		defer proxy.Close()
 	}
 
@@ -219,4 +183,78 @@ func sizeOf(fi os.FileInfo) int64 {
 		return 0
 	}
 	return fi.Size()
+}
+
+// restoreNetwork plugs a restored machine back into the network the snapshot
+// recorded, filling in the parts of opts that describe it. Both doors that can
+// restore one — the command line and `serve-mcp` — go through here, because a
+// restored machine's addressing is a set of details that have to agree exactly
+// and two copies of them would eventually stop agreeing.
+//
+// The caller keeps the cleanup: on success opts.Net and the returned proxy are
+// live and belong to whatever now owns the machine. On failure this cleans up
+// after itself and returns nothing to close.
+func restoreNetwork(meta *sandbox.SnapshotMeta, allow []string, secrets []*egress.Secret, opts *sandbox.Options) (*egress.Proxy, *egress.CA, error) {
+	id := opts.ID
+	if id == "" {
+		var err error
+		if id, err = sandbox.NewID(); err != nil {
+			return nil, nil, err
+		}
+		opts.ID = id
+	}
+	opts.Allow = allow
+
+	var err error
+
+	// Re-use the addressing the snapshot recorded, not a fresh /30: the guest's
+	// HTTPS_PROXY is in the memory image and cannot be changed from out here
+	// (D22).
+	if meta.HostIP != "" {
+		opts.Net, err = sandbox.NewNetworkFor(id, meta.HostIP, meta.GuestIP, meta.Netmask, meta.HostMAC)
+	} else {
+		opts.Net, err = sandbox.NewNetwork(id)
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+	fail := func(err error) (*egress.Proxy, *egress.CA, error) {
+		opts.Net.Down()
+		opts.Net = nil
+		return nil, nil, err
+	}
+
+	var ca *egress.CA
+	policy := egress.Policy{Allow: allow, Secrets: secrets}
+	if len(policy.Secrets) > 0 {
+		if ca, err = egress.NewCA(); err != nil {
+			return fail(err)
+		}
+	}
+	proxy := &egress.Proxy{Policy: policy, CA: ca}
+	// Same reasoning as the address: the port is baked into the guest's proxy
+	// environment, so the restored proxy has to bind the one the snapshot
+	// recorded rather than whatever the kernel offers.
+	bind := opts.Net.HostIP.String() + ":0"
+	if meta.ProxyPort != 0 {
+		bind = fmt.Sprintf("%s:%d", opts.Net.HostIP, meta.ProxyPort)
+	}
+	port, err := proxy.Listen(bind)
+	if err != nil {
+		// The address is not a choice: the frozen guest has it in its memory
+		// image and will dial it whatever this side does (D22). A bind failure
+		// here almost always means the machine the snapshot came from is still
+		// running on it.
+		return fail(fmt.Errorf("bind the egress proxy on %s, which is the address this snapshot's "+
+			"guest expects and not something that can be moved: %w\n"+
+			"    if the sandbox this snapshot was taken from is still running, stop it first",
+			bind, err))
+	}
+	opts.ProxyPort = port
+	if err := opts.Net.Restrict(port); err != nil {
+		proxy.Close()
+		return fail(err)
+	}
+	go proxy.Serve()
+	return proxy, ca, nil
 }

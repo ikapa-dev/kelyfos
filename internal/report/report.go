@@ -140,8 +140,14 @@ func Render(w io.Writer, sessionID string, events []recorder.Event, verifyErr er
 				shown = "per agent"
 				v.Summary.Image = shown
 			}
-			v.Rows = append(v.Rows, Row{ts, "session", "session start",
-				fmt.Sprintf("image %s · arch %s · kelyfos %s", shown, e.Arch, e.Kelyfos), "", false})
+			detail := fmt.Sprintf("image %s · arch %s · kelyfos %s", shown, e.Arch, e.Kelyfos)
+			// A restored or forked machine says what it came from here, and a
+			// cold boot records no reason at all, so this adds nothing to the
+			// common case and everything to the one that needs it.
+			if e.Reason != "" {
+				detail += " · " + e.Reason
+			}
+			v.Rows = append(v.Rows, Row{ts, "session", "session start", detail, "", false})
 		case recorder.TypeSessionReady:
 			// A team writes one of these per member, so the header's single set
 			// of boot figures would end up being whichever agent was last —

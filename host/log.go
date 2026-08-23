@@ -318,7 +318,14 @@ func printEvent(line []byte, asJSON bool) {
 	}
 	switch e.Type {
 	case recorder.TypeSessionStart:
-		fmt.Printf("%s  session start   image=%s arch=%s kelyfos=%s\n", ts, e.Image, e.Arch, e.Kelyfos)
+		// The reason is how a restored or forked machine says what it is. A
+		// cold boot writes none, so this stays quiet for the common case and
+		// tells the whole story for the one where it matters.
+		why := ""
+		if e.Reason != "" {
+			why = " " + e.Reason
+		}
+		fmt.Printf("%s  session start   image=%s arch=%s kelyfos=%s%s\n", ts, e.Image, e.Arch, e.Kelyfos, why)
 	case recorder.TypeSessionReady:
 		// A team member's ready line says how it started, not what booted: the
 		// kernel and supervisor are the same for every member and the boot path

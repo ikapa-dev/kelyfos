@@ -12,6 +12,7 @@ import (
 	"sync"
 
 	"github.com/p4r4n0rm4l/KelyfOS/internal/mcp"
+	"github.com/p4r4n0rm4l/KelyfOS/internal/proto"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
 )
 
@@ -69,7 +70,7 @@ func tee(r io.Reader, sink func([]byte)) io.Reader {
 	pr, pw := io.Pipe()
 	go func() {
 		sc := bufio.NewScanner(io.TeeReader(r, pw))
-		sc.Buffer(make([]byte, 0, 64<<10), 8<<20)
+		sc.Buffer(make([]byte, 0, 64<<10), proto.MaxMCPLine)
 		for sc.Scan() {
 			line := append([]byte(nil), sc.Bytes()...)
 			sink(line)

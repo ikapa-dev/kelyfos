@@ -41,6 +41,23 @@ const (
 	MaxChunk = 64 << 10
 )
 
+// MaxMCPLine is the frame limit on the MCP channels, which is not MaxLine.
+//
+// MaxLine is right for exec, where nothing arrives whole: output is chunked at
+// MaxChunk and reassembled by the reader, so no single frame is large. An MCP
+// tool result is not chunked — read_file answers with a whole file on one line
+// — and the per-call limit on a file is 8 MiB (supervisor/tools.go). A 1 MiB
+// frame there would refuse messages the tools above it promise to carry, and
+// the promise or the limit would have to be the thing that gives.
+//
+// Sixteen leaves room for JSON escaping around eight, and still bounds it,
+// because this channel crosses the wall and the far side is not trusted to be
+// reasonable about how much it sends. Every MCP reader and writer on both sides
+// uses this one constant, so there is one answer to "how big can a message be"
+// rather than one per file, and no writer can send what the reader opposite it
+// will refuse (docs/protocol.md §3).
+const MaxMCPLine = 16 << 20
+
 // ErrLineTooLong is returned when a peer sends a frame beyond MaxLine.
 var ErrLineTooLong = errors.New("proto: frame exceeds maximum line length")
 
@@ -237,9 +254,18 @@ const (
 
 // Writer emits newline-delimited JSON. Callers must not share one across
 // goroutines without their own locking.
-type Writer struct{ w io.Writer }
+type Writer struct {
+	w   io.Writer
+	max int
+}
 
-func NewWriter(w io.Writer) *Writer { return &Writer{w: w} }
+func NewWriter(w io.Writer) *Writer { return &Writer{w: w, max: MaxLine} }
+
+// NewWriterLimit is NewWriter with a frame limit of the caller's choosing, and
+// it has to be the same number the far side's reader was given: a writer that
+// will send more than a reader will accept is a connection that dies mid-answer,
+// which is what a caller sees as an unexplained EOF.
+func NewWriterLimit(w io.Writer, max int) *Writer { return &Writer{w: w, max: max} }
 
 // Write marshals v and appends the delimiting newline. encoding/json escapes
 // any newline inside a string value as \n, two characters on the wire, so the
@@ -249,7 +275,7 @@ func (p *Writer) Write(v any) error {
 	if err != nil {
 		return fmt.Errorf("proto: marshal: %w", err)
 	}
-	if len(b)+1 > MaxLine {
+	if len(b)+1 > p.max {
 		return ErrLineTooLong
 	}
 	b = append(b, '\n')
@@ -260,9 +286,13 @@ func (p *Writer) Write(v any) error {
 // Reader reads newline-delimited JSON with a hard bound on line length.
 type Reader struct{ s *bufio.Scanner }
 
-func NewReader(r io.Reader) *Reader {
+func NewReader(r io.Reader) *Reader { return NewReaderLimit(r, MaxLine) }
+
+// NewReaderLimit is NewReader with a frame limit of the caller's choosing. The
+// MCP channels use it with MaxMCPLine; nothing else should need it.
+func NewReaderLimit(r io.Reader, max int) *Reader {
 	s := bufio.NewScanner(r)
-	s.Buffer(make([]byte, 0, 64<<10), MaxLine)
+	s.Buffer(make([]byte, 0, 64<<10), max)
 	return &Reader{s: s}
 }
 
