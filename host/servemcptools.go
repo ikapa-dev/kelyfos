@@ -394,7 +394,7 @@ func (s *hostServer) boot(opts sandbox.Options) (*servedBox, error) {
 	}
 	_ = b.rec.Append(recorder.Event{
 		Type: recorder.TypeSessionStart, Image: opts.Flavor, Arch: opts.Arch,
-		Kelyfos: Version, Argv: s.argv, Reason: "created through serve-mcp",
+		Kelyfos: Version, Argv: s.argv, Reason: "created through serve-mcp session " + s.auditID,
 	})
 	b.wireAudit()
 

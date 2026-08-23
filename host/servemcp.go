@@ -65,10 +65,15 @@ line it came from. See docs/mcp-surface.md.
 	if err != nil {
 		return err
 	}
+	if err := srv.openAudit(); err != nil {
+		return err
+	}
 	defer srv.closeAll()
 
 	// The policy banner goes to stderr: stdout is the protocol.
 	fmt.Fprintf(os.Stderr, "kelyfos serve-mcp — %s\n", srv.describe())
+	fmt.Fprintf(os.Stderr, "kelyfos: this session's record is %s — `kelyfos log --session %s`\n",
+		srv.auditID, srv.auditID)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -99,6 +104,12 @@ type hostServer struct {
 	tmu     sync.Mutex
 	team    *teamRig
 	teamLog *syncBuffer
+
+	// audit is the server's own session: every client tool call, permitted or
+	// refused, in one chain (E4-4). The recorder is safe under concurrent
+	// appends, which matters because tool calls run on their own goroutines.
+	auditID string
+	audit   *recorder.Recorder
 
 	wmu sync.Mutex // one writer, because tool calls may be concurrent
 	out *json.Encoder
@@ -193,6 +204,7 @@ func (s *hostServer) closeAll() {
 	for _, b := range boxes {
 		b.close("shutdown")
 	}
+	s.closeAudit()
 }
 
 // serve reads newline-delimited JSON-RPC and answers it. Requests are handled
@@ -289,6 +301,16 @@ func (s *hostServer) dispatch(req *mcp.Request) *mcp.Response {
 // it and adapt (docs/mcp-surface.md §2.4). Only an unknown tool or an
 // unparseable argument object is a protocol error.
 func (s *hostServer) callTool(p *mcp.CallToolParams) *mcp.CallToolResult {
+	// One place, so no tool can be added that skips the record — the same
+	// reason the guest's events are written by the host and not by the guest
+	// (F-D33, docs/mcp-surface.md §2.5).
+	done := s.auditCall(p)
+	res := s.dispatchTool(p)
+	done(res)
+	return res
+}
+
+func (s *hostServer) dispatchTool(p *mcp.CallToolParams) *mcp.CallToolResult {
 	args := p.Arguments
 	if len(args) == 0 {
 		args = json.RawMessage("{}")

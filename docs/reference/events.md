@@ -225,3 +225,27 @@ A worker created or retired at runtime, or a request that the budget refused. Wr
 | `kind` | string | spawn or despawn |
 | `outcome` | string | delivered or refused |
 | `reason` | string | no_spawn_budget, budget_exhausted, image_not_permitted *(refused)* |
+
+## `mcp.host.call`
+
+An outside MCP client asked kelyfos serve-mcp for a tool. These live in the server's own session rather than in a sandbox's, because the calls that matter most — the one that chose a machine's limits, and the ones that were refused — belong to no sandbox at the moment they are made. Written by the **host**.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `call` | string | correlates this call with its result |
+| `name` | string | the tool asked for |
+| `agent` | string | the sandbox the call names *(it names one)* |
+| `args` | string | the arguments, with anything carrying content replaced by its size |
+
+## `mcp.host.result`
+
+What that call came back with. A refused call is recorded exactly like a permitted one — a policy ceiling nobody can see being enforced is a ceiling nobody can audit. Written by the **host**.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `call` | string | the call this answers |
+| `name` | string | the tool |
+| `agent` | string | the sandbox, including one this call created *(there is one)* |
+| `outcome` | string | ok or error |
+| `duration_ms` | integer | how long the call took |
+| `error` | object | kind and message *(the outcome is error)* |

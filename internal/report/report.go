@@ -33,6 +33,11 @@ type View struct {
 	Lanes     []string
 	LaneRows  []LaneRow
 	LaneWidth template.CSS
+	// Served marks a serve-mcp session, whose lanes are sandboxes rather than
+	// agents. The drawing is identical; the words around it are not, and a page
+	// that called six sandboxes a team would be wrong on the one point the lane
+	// view exists to make (E4-4).
+	Served bool
 }
 
 // LaneRow is one entry in the team view. It is the same information the
@@ -137,7 +142,13 @@ func Render(w io.Writer, sessionID string, events []recorder.Event, verifyErr er
 			// hole where a value should be (F-D33).
 			shown := e.Image
 			if shown == "" {
+				// A server's session has no single flavor either, and its
+				// machines are sandboxes rather than agents. Saying which
+				// beats rendering a hole (F-D33).
 				shown = "per agent"
+				if e.Reason == recorder.ReasonServeMCP {
+					shown, v.Served = "per sandbox", true
+				}
 				v.Summary.Image = shown
 			}
 			detail := fmt.Sprintf("image %s · arch %s · kelyfos %s", shown, e.Arch, e.Kelyfos)
@@ -490,6 +501,23 @@ func buildLanes(events []recorder.Event) ([]string, []LaneRow) {
 			add(LaneRow{ts, "session", "usage receipt",
 				fmt.Sprintf("%.2f CPU-seconds \u00b7 peak RSS %s", e.CPUSeconds, HumanKiB(e.PeakRSSKiB)),
 				"", false, laneOf(e.Agent), false})
+		case recorder.TypeMCPHostCall:
+			add(LaneRow{ts, "client", "client called " + e.Name, e.Args, "",
+				false, laneOf(e.Agent), false})
+		case recorder.TypeMCPHostResult:
+			// A refused call is drawn like a refused message, because it is the
+			// same thing: the wall saying no, where a reader can see it.
+			if e.Outcome != "ok" {
+				detail := fmt.Sprintf("%d ms", e.DurationMS)
+				if e.Error != nil {
+					detail = e.Error.Message
+				}
+				add(LaneRow{ts, "team-refused", "REFUSED " + e.Name, detail, "",
+					true, laneOf(e.Agent), false})
+				break
+			}
+			add(LaneRow{ts, "client", e.Name + " ok", fmt.Sprintf("%d ms", e.DurationMS), "",
+				false, laneOf(e.Agent), false})
 		case recorder.TypeSessionReady:
 			// The one row that says how this machine came to exist. F-D19 asks
 			// for the two boot paths to be visible rather than inferred, and a

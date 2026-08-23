@@ -274,9 +274,42 @@ it, "an agent did some work in a sandbox" would be recorded and "an agent
 decided to create a sandbox with these limits" would not, and the second is the
 part a reader most wants when something has gone wrong.
 
-The event types are named in `docs/events.md` when E4-4 adds them. The rule they
-follow is the one every other event follows: the host writes them, the client
-does not, and a refused call is recorded exactly like a permitted one.
+Two event types carry it, and they mirror `command.start` / `command.exit`
+because they are the same shape of fact:
+
+| Event | What it says |
+| --- | --- |
+| `mcp.host.call` | a client asked for a tool: which one, with what arguments, and the sandbox it names if it names one |
+| `mcp.host.result` | what came back: `ok` or `error`, how long it took, and the refusal in the case of an error |
+
+`docs/reference/events.md` carries their fields, generated from the same table
+the code uses.
+
+**They live in the server's own session**, not in each sandbox's. The calls that
+matter most belong to no sandbox at the moment they are made: the one that
+chose a machine's limits, before the machine exists, and every call that was
+refused, which never gets one. `serve-mcp` prints its session id to stderr at
+startup, each sandbox's `session.start` names the server session it was created
+through, and a team raised here does the same — so a reader can go from either
+end to the other.
+
+`kelyfos log --session <server-id> --export` renders that session with **one
+lane per sandbox**, exactly as a team's transcript renders one lane per agent —
+the same machinery, because it is the same question: which machine did this
+belong to. A call naming no sandbox spans every lane. A refused call is drawn
+like a refused message, because it is the same thing: the wall saying no, where
+a reader can see it.
+
+**The record never holds content.** A call's arguments are summarised with
+anything carrying content — `content`, `stdin` — replaced by its size, which is
+the rule `file.write` already follows. The summariser walks whatever it is
+given rather than knowing the tools, so an argument added later shows up in the
+log without anyone remembering to add it, and one carrying content is withheld
+even on a tool that does not exist yet.
+
+The rest of the rule is the one every other event follows: the host writes them,
+the client does not, and a refused call is recorded exactly like a permitted
+one — a ceiling nobody can see being enforced is a ceiling nobody can audit.
 
 ---
 

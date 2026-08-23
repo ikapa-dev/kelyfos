@@ -184,7 +184,7 @@ func (s *hostServer) toolRestore(raw json.RawMessage) *mcp.CallToolResult {
 	}
 	_ = b.rec.Append(recorder.Event{
 		Type: recorder.TypeSessionStart, Image: opts.Flavor, Arch: opts.Arch,
-		Kelyfos: Version, Argv: s.argv, Reason: "restored from " + a.Name + " through serve-mcp",
+		Kelyfos: Version, Argv: s.argv, Reason: "restored from " + a.Name + " through serve-mcp session " + s.auditID,
 	})
 	b.wireAudit()
 
@@ -364,7 +364,7 @@ func (s *hostServer) toolFork(raw json.RawMessage) *mcp.CallToolResult {
 		if b.rec, err = recorder.Open(sandbox.Root(), r.sb.State.ID); err == nil {
 			_ = b.rec.Append(recorder.Event{
 				Type: recorder.TypeSessionStart, Image: meta.Flavor, Arch: arch,
-				Kelyfos: Version, Argv: s.argv, Reason: "forked from " + a.Name + " through serve-mcp",
+				Kelyfos: Version, Argv: s.argv, Reason: "forked from " + a.Name + " through serve-mcp session " + s.auditID,
 			})
 			_ = b.rec.Append(recorder.Event{
 				Type: recorder.TypeSessionReady, BootMS: r.elapsed.Milliseconds(),

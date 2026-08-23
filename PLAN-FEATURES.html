@@ -126,7 +126,7 @@
      improvements to the existing product land here as epics. Inert until its gate opens.</p>
   <div class="meta">
     owner: <b>John</b> &nbsp;&middot;&nbsp; developer: <b>Claude Code</b> &nbsp;&middot;&nbsp;
-    status: <b class="ok" id="meta-status">Epic E4 — active, 4/9 (v0.6 released; next: E4-4, the mcp.host.* audit lane)</b> &nbsp;&middot;&nbsp;
+    status: <b class="ok" id="meta-status">Epic E4 — active, 5/9 (v0.6 released; next: E4-5, client recipes)</b> &nbsp;&middot;&nbsp;
     last updated: <b id="meta-updated">2026-08-23</b><br>
     repo file: <b>PLAN-FEATURES.html</b> (lives at the repository root next to <code>PLAN.html</code>)<br>
     <span class="quiet">Companion to PLAN.html — same protocol, same rules, later timeline.</span>
@@ -166,7 +166,7 @@
     <span class="bl-name">All epics</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">E4-4 — the outward audit lane: every client tool call becomes an <code>mcp.host.*</code> flight-recorder event, rendered beside guest activity by <code>kelyfos log --export</code></b></div>
+  <div class="focusline">Current focus: <b id="focus">E4-5 — client recipes: working configuration for Claude Code and one more MCP client, added to the cookbook and CI-executed like every other recipe</b></div>
 </div>
 
 <!-- ====================================================== 1. ACTIVATION GATE -->
@@ -510,7 +510,7 @@
     <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">E4-3</span><span class="tk">Team tools: <code>team_up</code> / <code>team_ps</code> / <code>team_down</code> as thin
         wrappers over E2 — an external agent can raise and retire a whole declared team, still bounded by the team toml.</span></li>
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">E4-4</span><span class="tk">Audit lane for the outward direction: every client tool call is a flight-recorder
         event (<code>mcp.host.*</code>) — the external agent&rsquo;s use of the sandbox is itself in the transcript, and
         <code>kelyfos log --export</code> renders the client lane alongside guest activity.</span></li>
@@ -1578,6 +1578,37 @@
         was then re-run under <code>-race</code> clean.
         <i>Revisit when</i> a machine can hold more than one team, which would make <code>team.json</code> a list.</td>
         <td class="mono">host/team.go, host/servemcpteam.go</td></tr>
+        <tr><td class="mono">F-D43</td><td class="mono">2026-08-23</td>
+        <td><b>The outward audit lane lives in the server&rsquo;s own session, not duplicated into each sandbox&rsquo;s
+        &mdash; and E4-0&rsquo;s sentence about it was rewritten rather than met.</b>
+        <i>What E4-0 said.</i> &ldquo;<code>kelyfos log --export</code> renders the client&rsquo;s lane beside the
+        guest&rsquo;s.&rdquo; Read literally that means one export holding both, which means writing every
+        <code>mcp.host.*</code> event into the sandbox&rsquo;s chain as well as somewhere central &mdash; because the
+        calls that matter most belong to no sandbox when they are made. The one that chooses a machine&rsquo;s limits
+        happens before the machine exists, and a refused call never gets one at all.
+        <i>The rule that settles it.</i> Each chain records what that party did. A refused call did nothing to any
+        machine: nothing happened to the sandbox, and the attempt is a fact about the client. So it belongs in the
+        client&rsquo;s record and nowhere else. A <code>serve-mcp</code> process is therefore a session in the same
+        sense a <code>kelyfos run</code> is &mdash; it starts, it does things, it ends &mdash; and its machines are
+        sandboxes the way a team&rsquo;s are agents.
+        <i>What makes the two readable together.</i> A cross-link, not a copy. The server prints its session id to
+        stderr at startup; every sandbox it creates names that session in its own <code>session.start</code>; a team
+        raised through it does the same; and each sandbox&rsquo;s events already carry <code>via: serve-mcp</code>. From
+        either end a reader can reach the other, and neither chain holds a second copy of the other&rsquo;s facts.
+        <i>What it cost, said plainly.</i> A reader auditing one sandbox does not see the calls that were refused
+        against it. That is the deliberate consequence of the rule above, and the alternative &mdash; the same event in
+        two chains, hashed into both &mdash; buys a completeness that is really duplication.
+        <i>The export was free.</i> <code>agent</code> already names the machine an event belongs to, and the lane
+        builder already groups by it, so a server session renders one lane per sandbox with no new machinery: same
+        drawing, different words around it. A call naming no sandbox spans every lane; a refused call is drawn like a
+        refused message.
+        <i>And content never enters it.</i> Arguments are summarised with anything carrying content replaced by its
+        size &mdash; <code>file.write</code>&rsquo;s rule, applied to arguments. The summariser walks what it is given
+        rather than knowing the tools, so a new argument appears without anyone remembering, and one carrying content is
+        withheld even on a tool that does not exist yet.
+        <i>Revisit when</i> a reader needs one page holding both, which is a rendering problem &mdash; two chains, one
+        view &mdash; and not a reason to write the events twice.</td>
+        <td class="mono">host/servemcpaudit.go, docs/events.md</td></tr>
     <!-- Claude Code: append rows above this line. -->
       <tr><td class="mono">F-D10</td><td class="mono">2026-08-22</td>
         <td>The resource knobs E1-0 goes looking for shipped <b>partly</b>: <code>--vcpus</code>/<code>--mem</code> and
@@ -3802,6 +3833,30 @@ $ gofmt -l . ; go vet ./... ; go test ./...
         from a zero.
         <b>The command line is unchanged and was proved so:</b> the same five agents, the same table, the same clean
         teardown, before and after the refactor.</td></tr>
+        <tr><td class="mono">2026-08-23</td><td class="mono">E4-4</td>
+        <td><b>An outside agent&rsquo;s use of a sandbox is now itself in a transcript.</b> Every tool call is
+        <code>mcp.host.call</code> and <code>mcp.host.result</code> in the server&rsquo;s own flight recorder &mdash;
+        the pair mirrors <code>command.start</code>/<code>command.exit</code> because it is the same shape of fact. They
+        go through one function, so no tool can be added later that skips the record, and a test reads the source to
+        keep it that way.
+        <b>A refused call is recorded exactly like a permitted one.</b> That is the half with the most value and the
+        least chance of being written by accident: a ceiling nobody can see being enforced is a ceiling nobody can
+        audit. The live run&rsquo;s transcript carries seven refusals beside sixty-five ordinary calls &mdash; a 9 MiB
+        write over the cap, a read of a directory, <code>../evil</code> as a snapshot name, a networked snapshot forked,
+        an allowlist widened, a restore colliding with a running machine, and an exec aimed at a team member.
+        <b>The record never holds content.</b> Arguments are summarised with <code>content</code> and <code>stdin</code>
+        replaced by their size, which is <code>file.write</code>&rsquo;s rule applied to arguments. The summariser walks
+        whatever it is handed rather than knowing the tools, so an argument added next month is visible without anyone
+        remembering, and one carrying content is withheld even on a tool that does not exist yet.
+        <b>E4-0 promised one export holding both lanes; that promise was rewritten rather than met</b>, and F-D43 says
+        why: each chain records what that party did, a refused call did nothing to any machine, and the alternative buys
+        completeness by writing the same event into two chains. What links them is a cross-reference &mdash; the server
+        prints its session id, every sandbox and team it creates names that session in its own
+        <code>session.start</code>, and every event they write already carries <code>via: serve-mcp</code>.
+        <b>The lane view came for free.</b> <code>agent</code> already names the machine an event belongs to, so a server
+        session exports with one lane per sandbox using the machinery a team&rsquo;s transcript uses; only the words
+        around it changed. <code>--verify</code> and <code>--list</code> learned the difference too, because calling a
+        <code>serve-mcp</code> session &ldquo;a team of 1&rdquo; was a plain untruth the listing was printing.</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>

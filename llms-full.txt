@@ -2055,6 +2055,11 @@ team it appears on every type except `session.start` and `session.end`, which
 are about the team as a whole. A reader that sees no `agent` is looking at a
 single sandbox's session, or at one of those two.
 
+A `kelyfos serve-mcp` process is a session in the same sense, and its machines
+are sandboxes rather than agents: `agent` there carries the sandbox id a call
+was about. It is the same question in both cases — which machine did this belong
+to — which is why it is the same field and the same lane in an export (E4-4).
+
 ## 4. Event types
 
 ### `session.start`
@@ -2299,6 +2304,41 @@ did not need help holding — what this event adds is that hitting it is legible
 instead of a process that silently vanished. `kelyfos run` exits **137** when a
 session saw one and would otherwise have exited 0.
 
+### `mcp.host.call` and `mcp.host.result`
+An outside MCP client asked `kelyfos serve-mcp` for a tool, and what it got.
+Written from E4-4, and the pair mirrors `command.start` / `command.exit` because
+it is the same shape of fact: something was asked for, and something came back.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `call` | string | Correlates the two. |
+| `name` | string | The tool. |
+| `agent` | string | The sandbox the call named, or the one its answer created. Absent when it concerns no single machine. |
+| `args` | string | On `mcp.host.call`: the arguments, with anything carrying content replaced by its size. |
+| `outcome` | string | On `mcp.host.result`: `ok` or `error`. |
+| `duration_ms` | integer | On `mcp.host.result`: how long the call took. |
+| `error` | object | On `mcp.host.result`: `kind` and `message`, when the outcome is `error`. |
+
+These live in the **server's own session**, not in the sandbox each call was
+about. The calls that matter most belong to no sandbox at the moment they are
+made: the one that chose a machine's limits, before the machine exists, and
+every call that was refused, which never gets one. Each sandbox created through
+that door names the server's session in its own `session.start`, and `serve-mcp`
+prints the id to stderr when it starts, so a reader can go from either end to
+the other.
+
+**The arguments never carry content.** `content` and `stdin` are replaced by
+their size, which is the rule `file.write` follows for the same reason. The
+summariser walks whatever arguments it is given rather than knowing the tools,
+so an argument added later appears without anyone remembering to add it here,
+and one carrying content is withheld even on a tool that does not exist yet.
+
+Without this pair the record would say *an agent ran a command in a sandbox* and
+would not say *an agent decided to create a sandbox with these limits* — and the
+second is the part a reader most wants when something has gone wrong. A refused
+call is recorded exactly like a permitted one: a ceiling nobody can see being
+enforced is a ceiling nobody can audit.
+
 ---
 
 ## 5. Reading the file
@@ -2314,6 +2354,11 @@ session saw one and would otherwise have exited 0.
 
 A session that is still running has no `session.end`. That is not corruption:
 a reader should present the session as open rather than truncated.
+
+A `serve-mcp` session exports the same way, with **one lane per sandbox** —
+the same machinery a team's transcript uses, because it is the same question.
+A call naming no sandbox spans every lane, and a refused call is drawn like a
+refused message.
 
 **A team is one session**, so `--verify` over a team session verifies the whole
 team: every member's commands, messages, store accesses and egress attempts are
@@ -2346,6 +2391,8 @@ team session must be found by id or with `--list`.
 | `session.ready` per team member, saying `cold` or `fork` | E2-9 |
 | HTML session export built only from this file | P3-8 |
 | Live TUI built only from this file | P3-9 |
+| `mcp.host.call` and `mcp.host.result` for every client tool call, refused or not | E4-4 |
+| `--export` of a server session with a lane per sandbox | E4-4 |
 | Signed exports verifiable offline | P4-3 |
 
 
@@ -3164,9 +3211,42 @@ it, "an agent did some work in a sandbox" would be recorded and "an agent
 decided to create a sandbox with these limits" would not, and the second is the
 part a reader most wants when something has gone wrong.
 
-The event types are named in `docs/events.md` when E4-4 adds them. The rule they
-follow is the one every other event follows: the host writes them, the client
-does not, and a refused call is recorded exactly like a permitted one.
+Two event types carry it, and they mirror `command.start` / `command.exit`
+because they are the same shape of fact:
+
+| Event | What it says |
+| --- | --- |
+| `mcp.host.call` | a client asked for a tool: which one, with what arguments, and the sandbox it names if it names one |
+| `mcp.host.result` | what came back: `ok` or `error`, how long it took, and the refusal in the case of an error |
+
+`docs/reference/events.md` carries their fields, generated from the same table
+the code uses.
+
+**They live in the server's own session**, not in each sandbox's. The calls that
+matter most belong to no sandbox at the moment they are made: the one that
+chose a machine's limits, before the machine exists, and every call that was
+refused, which never gets one. `serve-mcp` prints its session id to stderr at
+startup, each sandbox's `session.start` names the server session it was created
+through, and a team raised here does the same — so a reader can go from either
+end to the other.
+
+`kelyfos log --session <server-id> --export` renders that session with **one
+lane per sandbox**, exactly as a team's transcript renders one lane per agent —
+the same machinery, because it is the same question: which machine did this
+belong to. A call naming no sandbox spans every lane. A refused call is drawn
+like a refused message, because it is the same thing: the wall saying no, where
+a reader can see it.
+
+**The record never holds content.** A call's arguments are summarised with
+anything carrying content — `content`, `stdin` — replaced by its size, which is
+the rule `file.write` already follows. The summariser walks whatever it is
+given rather than knowing the tools, so an argument added later shows up in the
+log without anyone remembering to add it, and one carrying content is withheld
+even on a tool that does not exist yet.
+
+The rest of the rule is the one every other event follows: the host writes them,
+the client does not, and a refused call is recorded exactly like a permitted
+one — a ceiling nobody can see being enforced is a ceiling nobody can audit.
 
 ---
 
@@ -5742,6 +5822,30 @@ A worker created or retired at runtime, or a request that the budget refused. Wr
 | `kind` | string | spawn or despawn |
 | `outcome` | string | delivered or refused |
 | `reason` | string | no_spawn_budget, budget_exhausted, image_not_permitted *(refused)* |
+
+## `mcp.host.call`
+
+An outside MCP client asked kelyfos serve-mcp for a tool. These live in the server's own session rather than in a sandbox's, because the calls that matter most — the one that chose a machine's limits, and the ones that were refused — belong to no sandbox at the moment they are made. Written by the **host**.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `call` | string | correlates this call with its result |
+| `name` | string | the tool asked for |
+| `agent` | string | the sandbox the call names *(it names one)* |
+| `args` | string | the arguments, with anything carrying content replaced by its size |
+
+## `mcp.host.result`
+
+What that call came back with. A refused call is recorded exactly like a permitted one — a policy ceiling nobody can see being enforced is a ceiling nobody can audit. Written by the **host**.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `call` | string | the call this answers |
+| `name` | string | the tool |
+| `agent` | string | the sandbox, including one this call created *(there is one)* |
+| `outcome` | string | ok or error |
+| `duration_ms` | integer | how long the call took |
+| `error` | object | kind and message *(the outcome is error)* |
 
 
 ---

@@ -285,3 +285,55 @@ func TestPerAgentReadyDoesNotBecomeTheSessionsBootFigures(t *testing.T) {
 		t.Error("an agent's boot time was rendered as the whole session's")
 	}
 }
+
+// A serve-mcp session's machines are sandboxes, and its transcript draws them
+// the way a team's draws agents — same machinery, same question: which machine
+// did this belong to (E4-4).
+func TestAServerSessionBecomesLanesOfSandboxes(t *testing.T) {
+	events := []recorder.Event{
+		{Type: recorder.TypeSessionStart, Reason: recorder.ReasonServeMCP, TS: "2026-08-23T10:00:00.000Z"},
+		{Type: recorder.TypeMCPHostCall, Name: "sandbox_run", Args: "cpus=1", TS: "2026-08-23T10:00:01.000Z"},
+		{Type: recorder.TypeMCPHostResult, Name: "sandbox_run", Agent: "aaa111", Outcome: "ok",
+			DurationMS: 800, TS: "2026-08-23T10:00:02.000Z"},
+		{Type: recorder.TypeMCPHostCall, Name: "sandbox_exec", Agent: "aaa111",
+			Args: "sandbox=aaa111", TS: "2026-08-23T10:00:03.000Z"},
+		{Type: recorder.TypeMCPHostResult, Name: "sandbox_exec", Agent: "bbb222", Outcome: "error",
+			Error: &recorder.EvError{Kind: "tool", Message: "cpus 8 exceeds the ceiling"},
+			TS:    "2026-08-23T10:00:04.000Z"},
+	}
+	lanes, rows := buildLanes(events)
+	if len(lanes) != 2 || lanes[0] != "aaa111" || lanes[1] != "bbb222" {
+		t.Fatalf("lanes = %v, want one per sandbox in first-appearance order", lanes)
+	}
+
+	// A call that names no sandbox belongs to none of them and must not land in
+	// the first lane, for the reason an agentless team event must not.
+	var wide, refused int
+	for _, r := range rows {
+		if r.Kind == "client" && strings.Contains(string(r.Place), "grid-column:2/") {
+			wide++
+		}
+		if r.Kind == "team-refused" {
+			refused++
+			if !strings.Contains(r.Detail, "exceeds the ceiling") {
+				t.Errorf("a refusal was drawn without saying what was refused: %q", r.Detail)
+			}
+		}
+	}
+	if wide != 1 {
+		t.Errorf("%d client rows span every lane, want the one call that named no sandbox", wide)
+	}
+	if refused != 1 {
+		t.Errorf("%d refusals drawn, want 1", refused)
+	}
+
+	// And the header says what kind of machines these are, rather than
+	// borrowing the team's word or leaving a hole.
+	html := render(t, events)
+	if !strings.Contains(html, "per sandbox") {
+		t.Error("a server session's summary does not say its image is per sandbox")
+	}
+	if strings.Contains(html, "per agent") {
+		t.Error("a server session's summary calls its sandboxes agents")
+	}
+}

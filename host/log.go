@@ -143,20 +143,29 @@ func listSessions() error {
 		events, _ := recorder.Read(f)
 		f.Close()
 		state := "open"
+		served := false
 		agents := map[string]bool{}
 		for _, ev := range events {
 			if ev.Type == recorder.TypeSessionEnd {
 				state = ev.Reason
 			}
+			if ev.Type == recorder.TypeSessionStart && ev.Reason == recorder.ReasonServeMCP {
+				served = true
+			}
 			if ev.Agent != "" {
 				agents[ev.Agent] = true
 			}
 		}
-		// A team session is worth marking in the listing: it is one chain
-		// covering several machines, and a reader looking for "the worker's
-		// log" needs to know there is not one.
+		// A session covering several machines is worth marking: it is one chain
+		// for all of them, and a reader looking for "the worker's log" needs to
+		// know there is not one. Which noun depends on what kind of session it
+		// is — a team's machines are agents, a server's are sandboxes — and
+		// calling a serve-mcp session "a team of 1" would be a plain untruth.
 		what := ""
-		if len(agents) > 0 {
+		switch {
+		case served:
+			what = fmt.Sprintf("  serve-mcp, %d sandbox(es)", len(agents))
+		case len(agents) > 0:
 			what = fmt.Sprintf("  team of %d", len(agents))
 		}
 		rows = append(rows, row{name: e.Name(), mod: info.ModTime(),
@@ -217,8 +226,12 @@ func verifySession(id, path string) error {
 	// it against the team they declared and see nothing is missing (E2-7).
 	agents, err := sessionAgents(path)
 	if err == nil && len(agents) > 0 {
-		fmt.Printf("session %s: chain intact, %d events verified across %d agents (%s)\n",
-			id, n, len(agents), strings.Join(agents, ", "))
+		noun := "agents"
+		if served, _ := sessionIsServed(path); served {
+			noun = "sandboxes"
+		}
+		fmt.Printf("session %s: chain intact, %d events verified across %d %s (%s)\n",
+			id, n, len(agents), noun, strings.Join(agents, ", "))
 		return nil
 	}
 	fmt.Printf("session %s: chain intact, %d events verified\n", id, n)
@@ -325,7 +338,21 @@ func printEvent(line []byte, asJSON bool) {
 		if e.Reason != "" {
 			why = " " + e.Reason
 		}
-		fmt.Printf("%s  session start   image=%s arch=%s kelyfos=%s%s\n", ts, e.Image, e.Arch, e.Kelyfos, why)
+		// A session with no single image — a team's, a server's — says nothing
+		// rather than "image=" followed by a hole.
+		image := ""
+		if e.Image != "" {
+			image = "image=" + e.Image + " "
+		}
+		fmt.Printf("%s  session start   %sarch=%s kelyfos=%s%s\n", ts, image, e.Arch, e.Kelyfos, why)
+	case recorder.TypeMCPHostCall:
+		fmt.Printf("%s  %sclient call    %s\n", ts, who, strings.TrimSpace(e.Name+" "+e.Args))
+	case recorder.TypeMCPHostResult:
+		outcome := e.Outcome
+		if e.Error != nil {
+			outcome = "refused: " + e.Error.Message
+		}
+		fmt.Printf("%s  %sclient result  %s %s (%d ms)\n", ts, who, e.Name, outcome, e.DurationMS)
 	case recorder.TypeSessionReady:
 		// A team member's ready line says how it started, not what booted: the
 		// kernel and supervisor are the same for every member and the boot path
@@ -460,4 +487,25 @@ func shortHash(h string) string {
 		return h[:12]
 	}
 	return h
+}
+
+// sessionIsServed reports whether a session belongs to a serve-mcp process
+// rather than to a machine or a team. Its session.start says so, which is why
+// the reason is written rather than inferred from what the session contains.
+func sessionIsServed(path string) (bool, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return false, err
+	}
+	defer f.Close()
+	events, err := recorder.Read(f)
+	if err != nil {
+		return false, err
+	}
+	for _, e := range events {
+		if e.Type == recorder.TypeSessionStart {
+			return e.Reason == recorder.ReasonServeMCP, nil
+		}
+	}
+	return false, nil
 }

@@ -121,8 +121,12 @@ type teamOptions struct {
 	timeout time.Duration
 	// argv goes into the record's session.start, so the transcript says what
 	// asked for this team rather than always naming the command line.
-	argv  []string
-	owner string
+	argv []string
+	// reason goes into the record's session.start. serve-mcp names its own
+	// session here, so a team's transcript points back at the conversation that
+	// asked for it, the way a sandbox's does (E4-4).
+	reason string
+	owner  string
 	// out is where progress goes. The command line passes os.Stdout; serve-mcp
 	// must not, because there stdout is the protocol.
 	out io.Writer
@@ -215,7 +219,7 @@ func raiseTeam(parent context.Context, opt teamOptions) (*teamRig, error) {
 		}
 	}()
 	_ = rec.Append(recorder.Event{Type: recorder.TypeSessionStart, Arch: arch,
-		Kelyfos: Version, Argv: opt.argv})
+		Kelyfos: Version, Argv: opt.argv, Reason: opt.reason})
 
 	// The broker records on whichever goroutine delivered the message, and the
 	// recorder takes an exclusive lock per append, which is exactly the

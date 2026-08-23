@@ -103,6 +103,7 @@ func (s *hostServer) toolTeamUp() *mcp.CallToolResult {
 	rig, err := raiseTeam(context.Background(), teamOptions{
 		cfg: s.policy, arch: s.arch, timeout: teamReadyTimeout,
 		argv: s.argv, owner: ownerServeMCP, out: s.teamLog,
+		reason: "raised through serve-mcp session " + s.auditID,
 	})
 	if err != nil {
 		s.teamLog = nil

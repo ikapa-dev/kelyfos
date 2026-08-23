@@ -44,7 +44,15 @@ const (
 	TypeTeamRefused     = "team.refused"
 	TypeTeamStore       = "team.store"
 	TypeTeamSpawn       = "team.spawn"
+	TypeMCPHostCall     = "mcp.host.call"
+	TypeMCPHostResult   = "mcp.host.result"
 )
+
+// ReasonServeMCP marks a session.start as a server's own session rather than a
+// machine's: its lanes are the sandboxes it made, the way a team session's
+// lanes are its agents. Both the host that writes it and the report that reads
+// it take the string from here, so the two cannot drift (E4-4).
+const ReasonServeMCP = "serve-mcp"
 
 // Sources.
 const (
@@ -142,6 +150,14 @@ type Event struct {
 	DiskWriteBytes int64   `json:"disk_write_bytes,omitempty"`
 	VcpuCount      int     `json:"vcpu_count,omitempty"`
 	CPUQuota       int     `json:"cpu_quota_percent,omitempty"`
+
+	// mcp.host.* (E4-4). Args is a redacted summary of a client tool call's
+	// arguments — every key it was given, with anything carrying content
+	// replaced by its size, because the rule for what a record may hold is the
+	// same here as it is for file.write. Appended at the end for the reason the
+	// resource.oom block gives: this order is the order the hash is computed
+	// over.
+	Args string `json:"args,omitempty"`
 }
 
 type EvError struct {

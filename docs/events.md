@@ -81,6 +81,11 @@ team it appears on every type except `session.start` and `session.end`, which
 are about the team as a whole. A reader that sees no `agent` is looking at a
 single sandbox's session, or at one of those two.
 
+A `kelyfos serve-mcp` process is a session in the same sense, and its machines
+are sandboxes rather than agents: `agent` there carries the sandbox id a call
+was about. It is the same question in both cases — which machine did this belong
+to — which is why it is the same field and the same lane in an export (E4-4).
+
 ## 4. Event types
 
 ### `session.start`
@@ -325,6 +330,41 @@ did not need help holding — what this event adds is that hitting it is legible
 instead of a process that silently vanished. `kelyfos run` exits **137** when a
 session saw one and would otherwise have exited 0.
 
+### `mcp.host.call` and `mcp.host.result`
+An outside MCP client asked `kelyfos serve-mcp` for a tool, and what it got.
+Written from E4-4, and the pair mirrors `command.start` / `command.exit` because
+it is the same shape of fact: something was asked for, and something came back.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `call` | string | Correlates the two. |
+| `name` | string | The tool. |
+| `agent` | string | The sandbox the call named, or the one its answer created. Absent when it concerns no single machine. |
+| `args` | string | On `mcp.host.call`: the arguments, with anything carrying content replaced by its size. |
+| `outcome` | string | On `mcp.host.result`: `ok` or `error`. |
+| `duration_ms` | integer | On `mcp.host.result`: how long the call took. |
+| `error` | object | On `mcp.host.result`: `kind` and `message`, when the outcome is `error`. |
+
+These live in the **server's own session**, not in the sandbox each call was
+about. The calls that matter most belong to no sandbox at the moment they are
+made: the one that chose a machine's limits, before the machine exists, and
+every call that was refused, which never gets one. Each sandbox created through
+that door names the server's session in its own `session.start`, and `serve-mcp`
+prints the id to stderr when it starts, so a reader can go from either end to
+the other.
+
+**The arguments never carry content.** `content` and `stdin` are replaced by
+their size, which is the rule `file.write` follows for the same reason. The
+summariser walks whatever arguments it is given rather than knowing the tools,
+so an argument added later appears without anyone remembering to add it here,
+and one carrying content is withheld even on a tool that does not exist yet.
+
+Without this pair the record would say *an agent ran a command in a sandbox* and
+would not say *an agent decided to create a sandbox with these limits* — and the
+second is the part a reader most wants when something has gone wrong. A refused
+call is recorded exactly like a permitted one: a ceiling nobody can see being
+enforced is a ceiling nobody can audit.
+
 ---
 
 ## 5. Reading the file
@@ -340,6 +380,11 @@ session saw one and would otherwise have exited 0.
 
 A session that is still running has no `session.end`. That is not corruption:
 a reader should present the session as open rather than truncated.
+
+A `serve-mcp` session exports the same way, with **one lane per sandbox** —
+the same machinery a team's transcript uses, because it is the same question.
+A call naming no sandbox spans every lane, and a refused call is drawn like a
+refused message.
 
 **A team is one session**, so `--verify` over a team session verifies the whole
 team: every member's commands, messages, store accesses and egress attempts are
@@ -372,4 +417,6 @@ team session must be found by id or with `--list`.
 | `session.ready` per team member, saying `cold` or `fork` | E2-9 |
 | HTML session export built only from this file | P3-8 |
 | Live TUI built only from this file | P3-9 |
+| `mcp.host.call` and `mcp.host.result` for every client tool call, refused or not | E4-4 |
+| `--export` of a server session with a lane per sandbox | E4-4 |
 | Signed exports verifiable offline | P4-3 |

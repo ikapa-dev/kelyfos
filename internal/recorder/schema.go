@@ -209,5 +209,28 @@ func Types() []EventType {
 				{Name: "outcome", Type: "string", Doc: "delivered or refused"},
 				{Name: "reason", Type: "string", Doc: "no_spawn_budget, budget_exhausted, image_not_permitted", When: "refused"},
 			}},
+		{Type: TypeMCPHostCall, Source: SourceHost,
+			Doc: "an outside MCP client asked kelyfos serve-mcp for a tool. These live in the " +
+				"server's own session rather than in a sandbox's, because the calls that matter " +
+				"most — the one that chose a machine's limits, and the ones that were refused — " +
+				"belong to no sandbox at the moment they are made",
+			Fields: []Field{
+				{Name: "call", Type: "string", Doc: "correlates this call with its result"},
+				{Name: "name", Type: "string", Doc: "the tool asked for"},
+				{Name: "agent", Type: "string", Doc: "the sandbox the call names", When: "it names one"},
+				{Name: "args", Type: "string", Doc: "the arguments, with anything carrying content replaced by its size"},
+			}},
+		{Type: TypeMCPHostResult, Source: SourceHost,
+			Doc: "what that call came back with. A refused call is recorded exactly like a " +
+				"permitted one — a policy ceiling nobody can see being enforced is a ceiling " +
+				"nobody can audit",
+			Fields: []Field{
+				{Name: "call", Type: "string", Doc: "the call this answers"},
+				{Name: "name", Type: "string", Doc: "the tool"},
+				{Name: "agent", Type: "string", Doc: "the sandbox, including one this call created", When: "there is one"},
+				{Name: "outcome", Type: "string", Doc: "ok or error"},
+				{Name: "duration_ms", Type: "integer", Doc: "how long the call took"},
+				{Name: "error", Type: "object", Doc: "kind and message", When: "the outcome is error"},
+			}},
 	}
 }

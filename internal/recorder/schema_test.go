@@ -73,7 +73,7 @@ func TestSchemaDescribesNothingExtra(t *testing.T) {
 		TypeFileWrite: true, TypeEgressAttempt: true, TypeSecretUse: true,
 		TypeResourceOOM: true, TypeResourceTimeout: true, TypeResourceSummary: true,
 		TypeTeamMessage: true, TypeTeamRefused: true, TypeTeamStore: true,
-		TypeTeamSpawn: true,
+		TypeTeamSpawn: true, TypeMCPHostCall: true, TypeMCPHostResult: true,
 	}
 	for _, e := range Types() {
 		if !real[e.Type] {

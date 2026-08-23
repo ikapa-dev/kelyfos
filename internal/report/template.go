@@ -11,6 +11,9 @@ const reportHTML = `<!DOCTYPE html>
   :root{
     --bg:#10161d; --panel:#161e28; --line:#26313f; --text:#c9d4de; --muted:#71818f;
     --amber:#f0a63c; --ok:#58c470; --warn:#d96a5f;
+    /* The outward client's own lane: what an outside agent asked for, which is
+       a different kind of fact from what happened inside a machine (E4-4). */
+    --client:#7fb3d5;
     --mono:ui-monospace,"SF Mono","Cascadia Code",Consolas,monospace;
     --sans:-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
   }
@@ -57,6 +60,7 @@ const reportHTML = `<!DOCTYPE html>
   .secret .title{color:var(--amber)}
   .session .title{color:var(--muted);font-weight:400}
   .store .title{color:var(--amber)}
+  .client .title{color:var(--client)}
 
   /* ---------- team lanes ---------- */
   /* One column per agent plus a time gutter. A message between two agents is
@@ -139,11 +143,19 @@ const reportHTML = `<!DOCTYPE html>
 </table>
 
 {{if .Lanes}}
-<h2>Team lanes</h2>
+<h2>{{if .Served}}Sandbox lanes{{else}}Team lanes{{end}}</h2>
+{{if .Served}}
+<p class="lanes-note">One column per sandbox, in the order they were created. A
+call that names no sandbox spans every column; a refused call is drawn like a
+refused message, because it is the same thing — the wall saying no, where a
+reader can see it. Everything below came from the same chain the badge above
+verifies: one record of what the client asked for, beside what happened.</p>
+{{else}}
 <p class="lanes-note">One column per agent, in boot order. A message between two
 agents spans the columns it connects; store accesses sit inline in the lane of
 the agent that made them. Everything below came from the same chain the badge
 above verifies — one record for the whole team, not five to correlate.</p>
+{{end}}
 <div class="lanes" style="{{.LaneWidth}}">
   <div class="lane-head gutter">time</div>
   {{range .Lanes}}<div class="lane-head">{{.}}</div>{{end}}
