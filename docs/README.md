@@ -25,7 +25,8 @@ hand-written half, and this page says where each is still thin.
 | running several agents together | [`teams.md`](teams.md) |
 | auditing what an agent did | [`events.md`](events.md) |
 | keeping an agent off the network | [`networking.md`](networking.md) |
-| after something that works, right now | [`cookbook.md`](cookbook.md) — seven recipes, each one runnable as it stands |
+| after something that works, right now | [`cookbook.md`](cookbook.md) — eight recipes, each one runnable as it stands |
+| putting KelyfOS inside something else | [`integrating.md`](integrating.md) |
 | building KelyfOS into something else | [`protocol.md`](protocol.md), then [`e2b-shim.md`](e2b-shim.md) |
 | judging whether to trust it | [`threat-model.md`](threat-model.md) |
 
@@ -40,7 +41,8 @@ hand-written half, and this page says where each is still thin.
 | [`resources.md`](resources.md) | mixed | Every resource cap: units, precedence, what enforces it, and what happens when it is reached. |
 | [`teams.md`](teams.md) | mixed | The `[team]` schema, the host broker and its edge rules, the team store, the collective budget, and how a team boots. |
 | [`threat-model.md`](threat-model.md) | concept | What KelyfOS defends against and — the longer half — what it does not. |
-| [`cookbook.md`](cookbook.md) | recipes | Seven complete, copy-pasteable recipes. Every one is a script CI extracts and runs on a real machine. |
+| [`cookbook.md`](cookbook.md) | recipes | Eight complete, copy-pasteable recipes. Every one is a script CI extracts and runs on a real machine. |
+| [`integrating.md`](integrating.md) | mixed | For building on KelyfOS: the three ways in, orchestrator patterns, and a long list of the mistakes people actually make. |
 | [`e2b-shim.md`](e2b-shim.md) | mixed | The E2B-compatible REST subset: what it implements, what it does not, and why. |
 | [`../llms.txt`](../llms.txt) | **generated** | The index a machine reads first: every page above as a link with a one-line description, per the llmstxt.org spec. |
 | [`../llms-full.txt`](../llms-full.txt) | **generated** | Every page above concatenated, each with its source URL. About 54,000 tokens — a quarter of a 200k context window. |
@@ -142,16 +144,27 @@ the second; `[team.agent.spawn.resources]` accepts two keys nothing enforces
 (F-D27); `team ps` has no sample output; the store's `not_found` is described as
 "not a refusal" and is recorded as one.
 
-### `cookbook.md` — seven things that work
+### `cookbook.md` — eight things that work
 
 *Recipes:* one sandbox; an allowlist and an injected credential; a workspace
 round-trip; snapshot and fork; a three-agent team with an ask round-trip and a
 refused edge; reading and verifying the record, including watching one altered
-byte break the chain; and driving a sandbox from the E2B SDK.
+byte break the chain; driving a sandbox from the E2B SDK; and an orchestrator
+built on the official MCP Python SDK.
 *Thin:* nothing hidden — every script is extracted and executed by
 `dev/cookbook.sh` and by the `cookbook` workflow, so a recipe that stops working
-fails rather than misleading. What it does not have is a recipe for embedding
-KelyfOS in another program, which is E3-4's.
+fails rather than misleading anyone.
+
+### `integrating.md` — for building on it
+
+*Concept:* which of the three ways in to choose and what each one costs you;
+why `run -- <command>` is the shape to build on; what KelyfOS will not do for
+you. *Reference:* the error messages in the common-mistakes section, quoted so
+that searching for one lands here.
+*Thin:* it prints no JavaScript client, because nothing in this repository
+executes one and a transcribed snippet is the failure F-D4 exists to prevent.
+What it gives instead is the client configuration, which is verified, and the
+wire shape, which the cookbook demonstrates.
 
 ### `threat-model.md` — what to trust
 
@@ -193,10 +206,11 @@ specification, not a description.
 `KELYFOS_CGROUP_ROOT` are read by the CLI and named nowhere. `KELYFOS_SANDBOX`
 is the one an integrator needs, and E3-4 is its home.
 
-**The integration guide.** How to call KelyfOS from Python or JavaScript, how
-to build an orchestrator on top of it, and the mistakes worth warning about.
-That is E3-4. The cookbook now covers the seven things a reader most often wants
-to do; what it does not cover is being *embedded* in something else.
+**A JavaScript client that has been run.** [`integrating.md`](integrating.md)
+covers the configuration route and the wire format, and deliberately prints no
+TypeScript SDK code, because nothing here executes any. Closing that means
+adding Node to the cookbook's environment, which is a real cost for one recipe
+and has not been paid.
 
 ## How these documents are kept true
 

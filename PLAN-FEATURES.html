@@ -126,7 +126,7 @@
      improvements to the existing product land here as epics. Inert until its gate opens.</p>
   <div class="meta">
     owner: <b>John</b> &nbsp;&middot;&nbsp; developer: <b>Claude Code</b> &nbsp;&middot;&nbsp;
-    status: <b class="ok" id="meta-status">Epic E3 — active, 4/6 (v0.5 released; next: E3-4, the integration guide)</b> &nbsp;&middot;&nbsp;
+    status: <b class="ok" id="meta-status">Epic E3 — active, 5/6 (v0.5 released; next: E3-5, the docs-only exam)</b> &nbsp;&middot;&nbsp;
     last updated: <b id="meta-updated">2026-08-23</b><br>
     repo file: <b>PLAN-FEATURES.html</b> (lives at the repository root next to <code>PLAN.html</code>)<br>
     <span class="quiet">Companion to PLAN.html — same protocol, same rules, later timeline.</span>
@@ -166,7 +166,7 @@
     <span class="bl-name">All epics</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">E3-4 — the integration guide for agent builders: calling KelyfOS from Python and JS, the MCP bridge, the shim, and the common mistakes the build log already knows about</b></div>
+  <div class="focusline">Current focus: <b id="focus">E3-5 — the exam: a fresh agent, given only the released artifacts and the docs, builds a three-agent orchestrator with the source tree withheld</b></div>
 </div>
 
 <!-- ====================================================== 1. ACTIVATION GATE -->
@@ -448,7 +448,7 @@
         + inject a secret; workspace mode; snapshot &amp; fork; build a 3-agent team with an <code>ask</code> round-trip; read and
         verify the audit log; use the E2B-compatible shim from Python. Each recipe is a literal script that CI extracts and
         executes — a recipe that stops working fails the build.</span></li>
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">E3-4</span><span class="tk">Integration guide for agent builders: calling <code>kelyfos</code> from Python/JS,
         the MCP stdio bridge, the shim, and the patterns for building an orchestrator <i>on top</i> (spawn-under-budget,
         team toml generation). Includes a &ldquo;common mistakes&rdquo; section fed by real errors from the build&rsquo;s progress log.</span></li>
@@ -1255,6 +1255,31 @@
         <code>head -1</code> gives an arbitrary one. The recipes use the default &ldquo;most recent&rdquo; instead.
         The ordering is worth fixing and is not E3-3&rsquo;s to fix; it is recorded here.</td>
         <td class="mono">the E3-3 progress row</td></tr>
+        <tr><td class="mono">F-D31</td><td class="mono">2026-08-23</td>
+        <td>E3-4&rsquo;s integration guide <b>prints no JavaScript client</b>, and says so in the guide itself
+        rather than quietly omitting it. E3-4 asks for &ldquo;calling <code>kelyfos</code> from Python/JS&rdquo;;
+        the Python half is a cookbook recipe CI executes, and the JavaScript half is the client configuration —
+        which is verified, being this repository&rsquo;s own <code>.mcp.json</code> — plus the wire shape, which the
+        team recipe demonstrates with a pipe. What is missing is a TypeScript SDK snippet, and it is missing on purpose.
+        <i>Why.</i> Nothing in this repository executes JavaScript: there is no Node on the build host and none in CI.
+        A TypeScript snippet would therefore be transcribed from memory into a document whose entire premise is that
+        an LLM can build from it without reading source &mdash; which is precisely the confidently-wrong reference F-D4
+        was written to prevent. The Python half proves the point: the first version of it named
+        <code>serverInfo</code>, <code>structuredContent</code> and <code>isError</code>, because that is what the wire
+        format calls them, and the SDK&rsquo;s Python models are snake_case. It failed on the first run. A JavaScript
+        snippet nobody ran would have had errors of exactly that kind and nothing to catch them.
+        <i>What it would cost to close.</i> Node in the cookbook workflow and a ninth recipe. That is a real cost for
+        one recipe and it has not been paid; the gap is listed in <code>docs/README.md</code> where the other gaps are,
+        rather than papered over.
+        <i>One thing added rather than described.</i> The guide needed a worked orchestrator, so the orchestrator
+        became the eighth cookbook recipe — the official MCP Python SDK 2.0.0 driving a real sandbox through
+        <code>kelyfos mcp</code> — and the guide quotes it. A pattern in a guide that CI does not run is a pattern that
+        will be wrong within two releases; this one fails the build instead.
+        <i>Where the mistakes came from.</i> The common-mistakes section is not invented. Every entry is an error this
+        project actually hit, most of them in its own build log, and each is quoted with the message a reader will see
+        so that searching for it lands on the answer &mdash; including the three E3-3 turned up
+        (F-D30) and the parser refusals whose text is in the source.</td>
+        <td class="mono">the E3-4 progress row</td></tr>
     <!-- Claude Code: append rows above this line. -->
       <tr><td class="mono">F-D10</td><td class="mono">2026-08-22</td>
         <td>The resource knobs E1-0 goes looking for shipped <b>partly</b>: <code>--vcpus</code>/<code>--mem</code> and
@@ -3109,6 +3134,61 @@ $ go test ./tools/... ; gofmt -l . ; go vet ./...
 llms-full.txt regenerated with the cookbook in it:
   54 306 tokens (cl100k) · 54 283 (o200k)
   = 27% of a 200k window</pre></td></tr>
+        <tr><td class="mono">2026-08-23</td><td class="mono">E3-4</td>
+        <td><b><code>docs/integrating.md</code> — for putting KelyfOS inside something else.</b> The three ways in
+        (the CLI, the MCP bridge, the E2B shim) with what each one costs: the shim writes no record and reads no
+        <code>kelyfos.toml</code>, so if the audit trail is why you are here, it is not the door. Then the shape to
+        build on — <code>run -- &lt;command&gt;</code>, which has a defined exit point, unlike the alternative every
+        integration reaches for first. Then orchestrator patterns: generate the team file rather than hand-writing it,
+        grant a spawn budget rather than deciding for the agent, read the record rather than the output. Then what
+        KelyfOS will not do, so nobody designs around a thing that is not there.
+        <b>The Python client is a cookbook recipe, not a snippet.</b> It became the eighth recipe —
+        the official MCP Python SDK 2.0.0 driving a real sandbox through <code>kelyfos mcp</code> — so CI runs it.
+        That decision paid for itself immediately: the first version named <code>serverInfo</code>,
+        <code>structuredContent</code> and <code>isError</code>, because that is what the wire calls them, and the
+        SDK&rsquo;s Python models are snake_case. It failed on the first run and would have shipped wrong.
+        <b>No JavaScript client is printed</b>, and the guide says so where a reader will look for one (F-D31).
+        Nothing here executes JavaScript, and a transcribed TypeScript snippet in a document whose premise is
+        &ldquo;build from this without reading source&rdquo; is the exact failure F-D4 exists to prevent. What is
+        given instead is verified: the client configuration, which is this repository&rsquo;s own
+        <code>.mcp.json</code>, and the wire shape, which the team recipe demonstrates with a pipe.
+        <b>Fourteen common mistakes, every one of them real.</b> Sourced from this project&rsquo;s own build log and
+        from the parser&rsquo;s own refusal strings, each quoted with the message a reader will actually see so that
+        searching for it lands on the answer — including the three E3-3 found and the F-D20/F-D21 refusal pair that
+        currently points at itself.</td>
+        <td class="mono"><pre>$ bash dev/cookbook.sh
+  PASS  allowlist-and-secret   (2s)
+  PASS  audit-log              (1s)
+  PASS  e2b-shim               (4s)
+  PASS  one-sandbox            (1s)
+  PASS  python-mcp-client      (5s)
+  PASS  snapshot-and-fork      (3s)
+  PASS  three-agent-team      (37s)
+  PASS  workspace              (1s)
+
+  8 passed, 0 failed
+
+the new recipe, in its own words:
+  connected to kelyfos 0.2.0-p2
+  tools: exec read_file write_file list_dir upload
+         download
+  exec said: 42
+  round-tripped a file: 42
+  a failing command is a result, not an exception:
+      isError 3
+  session 111c3bdc: chain intact, 10 events verified
+
+first attempt, kept because it is the argument for
+making it a recipe rather than a snippet:
+  AttributeError: 'InitializeResult' object has no
+  attribute 'serverInfo'. Did you mean: 'server_info'?
+
+llms-full.txt regenerated:
+  59 892 tokens (cl100k) · 59 873 (o200k)
+  = 30% of a 200k window
+
+$ gofmt -l . ; go vet ./... ; go test ./...
+  clean · clean · all packages ok</pre></td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>

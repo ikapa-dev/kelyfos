@@ -523,6 +523,75 @@ echo "the E2B SDK drove a KelyfOS sandbox"
 
 ---
 
+## 8. Drive a sandbox from Python, with the official MCP SDK
+
+The MCP bridge is how an orchestrator you write reaches a guest. `kelyfos mcp`
+copies bytes between its own standard streams and the sandbox's MCP server, so
+any off-the-shelf MCP client talks to the guest directly: no host, no port, no
+API key, because the transport is a subprocess.
+
+This is the pattern behind
+[`integrating.md`](integrating.md), and it is the one to copy if you are
+building something on top of KelyfOS rather than using it from a terminal.
+
+<!-- recipe: python-mcp-client -->
+
+```bash
+set -euo pipefail
+work="$(mktemp -d)"
+cd "$work"
+trap 'rm -rf "$work"' EXIT
+
+python3 -m venv .venv
+./.venv/bin/pip install --quiet mcp
+
+# The orchestrator. It boots nothing itself: `kelyfos run -- <command>` gives it
+# a sandbox and sets KELYFOS_SANDBOX, and `kelyfos mcp` bridges this process's
+# standard streams to that guest's MCP server. The bridge is a byte-level
+# pass-through, so an off-the-shelf MCP client talks to the guest directly.
+cat > orchestrator.py <<'PY'
+import asyncio, os
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
+
+async def main():
+    # No host, no port, no API key: the transport is a subprocess.
+    params = StdioServerParameters(command="kelyfos", args=["mcp"], env=dict(os.environ))
+    async with stdio_client(params) as (read, write):
+        async with ClientSession(read, write) as session:
+            info = await session.initialize()
+            print("connected to", info.server_info.name, info.server_info.version)
+
+            tools = await session.list_tools()
+            print("tools:", " ".join(t.name for t in tools.tools))
+
+            out = await session.call_tool("exec", {"command": "python3 -c 'print(6*7)'"})
+            print("exec said:", out.content[0].text.strip())
+            assert out.structured_content["exit_code"] == 0
+
+            await session.call_tool("write_file", {"path": "/tmp/answer.txt", "content": "42\n"})
+            back = await session.call_tool("read_file", {"path": "/tmp/answer.txt"})
+            print("round-tripped a file:", back.content[0].text.strip())
+
+            # A tool that fails comes back as a tool result with isError set,
+            # not as a transport error: the model is meant to see it and adapt.
+            bad = await session.call_tool("exec", {"command": "exit 3"})
+            print("a failing command is a result, not an exception:",
+                  "isError" if bad.is_error else "no error", bad.structured_content["exit_code"])
+
+asyncio.run(main())
+PY
+
+kelyfos run --image dev -- ./.venv/bin/python orchestrator.py
+
+echo
+echo "== and the host recorded every one of those calls =="
+kelyfos log | grep -E 'via mcp|\$ ' | head -6
+kelyfos log --verify
+```
+
+---
+
 ## Running them yourself
 
 ```

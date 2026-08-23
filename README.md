@@ -263,7 +263,8 @@ machine took.
 | [`llms.txt`](llms.txt) · [`llms-full.txt`](llms-full.txt) | for machine readers: an index per the llmstxt.org spec, and the whole set in one 54k-token file |
 | [`docs/reference/`](docs/reference/) | every command, flag, toml key, MCP tool, event and exit code — generated from the source |
 | [`PLAN.html`](PLAN.html) · [`PLAN-FEATURES.html`](PLAN-FEATURES.html) | the living plan — every decision and the full progress log, phases then epics |
-| [`docs/cookbook.md`](docs/cookbook.md) | seven recipes that work: run one, allowlist a domain, fork, build a team, verify the log |
+| [`docs/cookbook.md`](docs/cookbook.md) | eight recipes that work: run one, allowlist a domain, fork, build a team, verify the log |
+| [`docs/integrating.md`](docs/integrating.md) | building on it: the three ways in, orchestrator patterns, common mistakes |
 | [`docs/threat-model.md`](docs/threat-model.md) | what is defended, and what is not |
 | [`docs/protocol.md`](docs/protocol.md) | the host/guest wire protocol |
 | [`docs/events.md`](docs/events.md) | the audit event schema |

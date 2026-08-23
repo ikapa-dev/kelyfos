@@ -70,7 +70,9 @@ func docSet() []doc {
 		{Path: "docs/e2b-shim.md", Title: "E2B-compatible shim", Full: true,
 			Summary: "the REST subset for existing E2B SDK code, and what it deliberately omits"},
 		{Path: "docs/cookbook.md", Title: "Cookbook", Full: true,
-			Summary: "seven complete recipes, each one a script CI runs on a real machine"},
+			Summary: "eight complete recipes, each one a script CI runs on a real machine"},
+		{Path: "docs/integrating.md", Title: "Building on KelyfOS", Full: true,
+			Summary: "for putting KelyfOS inside something else: the three ways in, orchestrator patterns, and the mistakes people actually make"},
 		{Path: "docs/README.md", Title: "Documentation map", Full: true,
 			Summary: "what every document is, and — deliberately — where each is still thin"},
 	}
