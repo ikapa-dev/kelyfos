@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 )
 
 // Workspace is a host directory made available inside the sandbox.
@@ -84,6 +85,11 @@ func PackWorkspace(hostDir, imagePath string, maxSize int64) (*Workspace, error)
 	if err != nil {
 		return nil, err
 	}
+	// The manifest is recorded here because the walk has already happened and
+	// this is the only moment the tree is known to be what was packed (E5-2).
+	if err := writeWorkspaceManifest(abs, imagePath, time.Now().UTC().Format(time.RFC3339)); err != nil {
+		return nil, fmt.Errorf("record the workspace manifest: %w", err)
+	}
 	return &Workspace{HostDir: abs, ImagePath: imagePath, fingerprint: fp}, nil
 }
 
@@ -106,14 +112,36 @@ func AdoptWorkspace(hostDir, imagePath string) *Workspace {
 // their editor during the run would be the single most destructive thing this
 // tool could do, and it would do it silently.
 func (w *Workspace) SyncBack() (dest string, diverted bool, err error) {
-	now, err := Fingerprint(w.HostDir)
+	staged, err := w.Stage()
 	if err != nil {
 		return "", false, err
 	}
-	dest = w.HostDir
+	defer staged.Discard()
+	return staged.Commit()
+}
+
+// Staged is an extracted workspace: the image's contents on the host, before
+// anything has been put in place.
+//
+// It exists so a review can look at what came back and then decide, without
+// extracting a multi-gigabyte image twice (E5-2).
+type Staged struct {
+	w        *Workspace
+	tree     string
+	dest     string
+	diverted bool
+}
+
+// Stage extracts the image and works out where it would land.
+func (w *Workspace) Stage() (*Staged, error) {
+	now, err := Fingerprint(w.HostDir)
+	if err != nil {
+		return nil, err
+	}
+	s := &Staged{w: w, dest: w.HostDir}
 	if now != w.fingerprint {
-		dest = w.HostDir + ".kelyfos-out"
-		diverted = true
+		s.dest = w.HostDir + ".kelyfos-out"
+		s.diverted = true
 	}
 
 	// The dump has to land in an empty directory. debugfs rdump refuses to
@@ -121,24 +149,61 @@ func (w *Workspace) SyncBack() (dest string, diverted bool, err error) {
 	// while making directory" and carries on, which quietly leaves every nested
 	// file at its pre-run contents while the top-level ones look updated. That
 	// failure is worse than an error because it looks like success.
-	tmp := w.HostDir + ".kelyfos-sync"
-	_ = os.RemoveAll(tmp)
-	if err := os.MkdirAll(tmp, 0o755); err != nil {
-		return "", diverted, err
+	s.tree = w.HostDir + ".kelyfos-sync"
+	_ = os.RemoveAll(s.tree)
+	if err := os.MkdirAll(s.tree, 0o755); err != nil {
+		return nil, err
 	}
-	defer os.RemoveAll(tmp)
 
 	// debugfs reads the image without mounting it, so the write-back needs no
 	// privileges. It does complain about being unable to restore ownership,
 	// which is expected and harmless: files written by root in the guest come
 	// back owned by whoever is running kelyfos.
-	cmd := exec.Command("debugfs", "-R", "rdump / "+tmp, w.ImagePath)
+	cmd := exec.Command("debugfs", "-R", "rdump / "+s.tree, w.ImagePath)
 	if out, err := cmd.CombinedOutput(); err != nil {
-		return "", diverted, fmt.Errorf("sync workspace back: %w: %s", err, strings.TrimSpace(string(out)))
+		_ = os.RemoveAll(s.tree)
+		return nil, fmt.Errorf("read the workspace image: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 	// lost+found is an ext4 artefact, not the user's content.
-	_ = os.RemoveAll(filepath.Join(tmp, "lost+found"))
+	_ = os.RemoveAll(filepath.Join(s.tree, "lost+found"))
+	return s, nil
+}
 
+// Diverted reports that the host directory changed while the sandbox ran, so a
+// commit will write beside it rather than over it.
+func (s *Staged) Diverted() (bool, string) { return s.diverted, s.dest }
+
+// Changes is what the sandbox did to the workspace, against the manifest
+// recorded when it was packed.
+func (s *Staged) Changes() ([]Change, error) {
+	m, err := ReadWorkspaceManifest(s.w.ImagePath)
+	if err != nil {
+		return nil, err
+	}
+	// The pre-run copy of each file, for the line counts. The host directory is
+	// it, when nothing has edited it — and when something has, the diversion
+	// above has already said so and the counts fall back to bytes.
+	oldRoot = s.w.HostDir
+	defer func() { oldRoot = "" }()
+	return CompareTree(m, s.tree)
+}
+
+// Divert puts the extracted tree beside the host directory rather than over it,
+// whatever the fingerprint said. It is what a declined review does: the host
+// directory is untouched until somebody says yes, and the work is still there.
+func (s *Staged) Divert() (string, error) {
+	s.dest = s.w.HostDir + ".kelyfos-out"
+	s.diverted = true
+	dest, _, err := s.Commit()
+	return dest, err
+}
+
+// Discard throws the extraction away without putting it anywhere.
+func (s *Staged) Discard() { _ = os.RemoveAll(s.tree) }
+
+// Commit puts the extracted tree where it belongs.
+func (s *Staged) Commit() (dest string, diverted bool, err error) {
+	w, tmp, dest, diverted := s.w, s.tree, s.dest, s.diverted
 	// Swap rather than merge: the image is the authoritative post-run state, so
 	// a file the agent deleted should be gone rather than resurrected. The old
 	// copy is kept until the new one is in place.
@@ -154,6 +219,7 @@ func (w *Workspace) SyncBack() (dest string, diverted bool, err error) {
 		return "", diverted, err
 	}
 	_ = os.RemoveAll(old)
+	s.tree = "" // moved into place; there is nothing left to discard
 	return dest, diverted, nil
 }
 

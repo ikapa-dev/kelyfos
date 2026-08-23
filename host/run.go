@@ -25,25 +25,39 @@ import (
 )
 
 func runCmd(argv []string) error {
+	// The review's answer decides the exit status, and the review happens in a
+	// deferred function that runs after every return in here. So the status is
+	// set by the defer and applied by this wrapper, which is the only way to
+	// have a decision made during teardown change what the process exits with.
+	var declined bool
+	err := runWithSandbox(argv, &declined)
+	if err == nil && declined {
+		return errReviewDeclined
+	}
+	return err
+}
+
+func runWithSandbox(argv []string, reviewDeclinedOut *bool) error {
 	fs := flag.NewFlagSet("kelyfos run", flag.ExitOnError)
 	var (
-		arch    = fs.String("arch", sandbox.HostArch(), "guest architecture (aarch64|x86_64)")
-		flavor  = fs.String("image", "base", "image flavor")
-		imgDir  = fs.String("image-dir", "", "directory holding the kernel and rootfs (default: the build output)")
-		vcpus   = fs.Int("vcpus", 0, "alias for --cpus, kept so v0.3 command lines keep working")
-		cpus    = fs.Int("cpus", 0, "virtual CPUs the guest sees (default 2)")
-		disk    = fs.String("disk", "", "ceiling on the packed workspace image, e.g. 2G (default: no ceiling)")
-		quota   = fs.String("cpu-quota", "", "host CPU time cap as a share of one core, e.g. 150% (default: uncapped)")
-		memStr  = fs.String("mem", "", "guest memory, e.g. 2G or 512M; a bare number is MiB (default 512)")
-		maxRun  = fs.String("max-runtime", "", "stop the sandbox after this long, e.g. 30m (default: no limit)")
-		idleFor = fs.String("idle-timeout", "", "stop the sandbox after this long with no activity, e.g. 5m (default: no limit)")
-		console = fs.Bool("console", false, "stream the guest serial console")
-		verbose = fs.Bool("verbose-boot", false, "drop the quiet parameter from the kernel command line")
-		timeout = fs.Duration("ready-timeout", 30*time.Second, "how long to wait for the guest to become ready")
-		allow   = fs.String("allow", "", "comma-separated egress allowlist, e.g. github.com,pypi.org. Without it the sandbox has no network interface at all.")
-		wsDir   = fs.String("workspace", "", "host directory to make available at /work inside the sandbox")
-		noSync  = fs.Bool("no-sync-back", false, "do not write the workspace back to the host on shutdown")
-		secrets multiFlag
+		arch        = fs.String("arch", sandbox.HostArch(), "guest architecture (aarch64|x86_64)")
+		flavor      = fs.String("image", "base", "image flavor")
+		imgDir      = fs.String("image-dir", "", "directory holding the kernel and rootfs (default: the build output)")
+		vcpus       = fs.Int("vcpus", 0, "alias for --cpus, kept so v0.3 command lines keep working")
+		cpus        = fs.Int("cpus", 0, "virtual CPUs the guest sees (default 2)")
+		disk        = fs.String("disk", "", "ceiling on the packed workspace image, e.g. 2G (default: no ceiling)")
+		quota       = fs.String("cpu-quota", "", "host CPU time cap as a share of one core, e.g. 150% (default: uncapped)")
+		memStr      = fs.String("mem", "", "guest memory, e.g. 2G or 512M; a bare number is MiB (default 512)")
+		maxRun      = fs.String("max-runtime", "", "stop the sandbox after this long, e.g. 30m (default: no limit)")
+		idleFor     = fs.String("idle-timeout", "", "stop the sandbox after this long with no activity, e.g. 5m (default: no limit)")
+		console     = fs.Bool("console", false, "stream the guest serial console")
+		verbose     = fs.Bool("verbose-boot", false, "drop the quiet parameter from the kernel command line")
+		timeout     = fs.Duration("ready-timeout", 30*time.Second, "how long to wait for the guest to become ready")
+		allow       = fs.String("allow", "", "comma-separated egress allowlist, e.g. github.com,pypi.org. Without it the sandbox has no network interface at all.")
+		wsDir       = fs.String("workspace", "", "host directory to make available at /work inside the sandbox")
+		noSync      = fs.Bool("no-sync-back", false, "do not write the workspace back to the host on shutdown")
+		reviewFirst = fs.Bool("review", false, "show what changed and ask before writing the workspace back")
+		secrets     multiFlag
 	)
 	fs.Var(&secrets, "secret", "attach a credential to a domain: NAME@domain[:bearer|basic]. "+
 		"The value is read from the host environment and never enters the guest. Repeatable.")
@@ -370,7 +384,36 @@ status. This is how you hand an agent a sandbox and nothing else:
 				fmt.Printf("workspace not written back (--no-sync-back); image kept at %s\n", ws.ImagePath)
 				return
 			}
-			dest, diverted, err := ws.SyncBack()
+			staged, err := ws.Stage()
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "kelyfos: workspace sync-back failed: %v\n", err)
+				return
+			}
+			defer staged.Discard()
+
+			// With --review the summary prints and this waits. Declining routes
+			// the results beside the directory rather than over it, using the
+			// diversion mechanism that already exists (docs/qol.md §2.3).
+			if *reviewFirst {
+				out := review(staged, ws.HostDir)
+				_, dest := staged.Diverted()
+				if !out.Sync {
+					where, err := staged.Divert()
+					if err != nil {
+						fmt.Fprintf(os.Stderr, "kelyfos: %v\n", err)
+					} else {
+						fmt.Printf("\nnothing was written back to %s.\nthe results are at %s\n",
+							ws.HostDir, where)
+					}
+					recordReview(sandboxID, out, where)
+					*reviewDeclinedOut = true
+					_ = os.Remove(ws.ImagePath)
+					return
+				}
+				recordReview(sandboxID, out, dest)
+			}
+
+			dest, diverted, err := staged.Commit()
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "kelyfos: workspace sync-back failed: %v\n", err)
 				return

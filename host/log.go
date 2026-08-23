@@ -363,6 +363,9 @@ func printEvent(line []byte, asJSON bool) {
 			strings.TrimSpace(outcome), e.DurationMS)
 	case recorder.TypePluginCrash:
 		fmt.Printf("%s  %splugin stopped %s  %s\n", ts, who, e.Name, e.Reason)
+	case recorder.TypeRunReview:
+		fmt.Printf("%s  %sreview          %s · %d added, %d modified, %d deleted → %s\n",
+			ts, who, e.Outcome, e.Added, e.Modified, e.Deleted, e.Path)
 	case recorder.TypeSessionPause:
 		fmt.Printf("%s  %spaused          as %q in %d ms\n", ts, who, e.Name, e.DurationMS)
 	case recorder.TypeSessionResume:

@@ -245,6 +245,18 @@ A paused session was brought back. Written by the **host**.
 | `boot_ms` | integer | how long the restore took, through the resync round trip |
 | `reason` | string | what differed between the frozen policy and the one in force *(they differ)* |
 
+## `run.review`
+
+Somebody was shown what a sandbox did to a workspace and decided whether to write it back. A declined review is recorded exactly like an accepted one: a transcript that held only the accepted ones would be a record of agreement. Written by the **host**.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `outcome` | string | accepted, declined, no_terminal, or no_manifest |
+| `path` | string | where the results went, or would have gone |
+| `added` | integer | files added |
+| `modified` | integer | files modified |
+| `deleted` | integer | files deleted |
+
 ## `mcp.host.call`
 
 An outside MCP client asked kelyfos serve-mcp for a tool. These live in the server's own session rather than in a sandbox's, because the calls that matter most — the one that chose a machine's limits, and the ones that were refused — belong to no sandbox at the moment they are made. Written by the **host**.

@@ -126,7 +126,7 @@
      improvements to the existing product land here as epics. Inert until its gate opens.</p>
   <div class="meta">
     owner: <b>John</b> &nbsp;&middot;&nbsp; developer: <b>Claude Code</b> &nbsp;&middot;&nbsp;
-    status: <b class="ok" id="meta-status">Epic E5 — active, 2/8 (v0.7 released; next: E5-2, diff and review)</b> &nbsp;&middot;&nbsp;
+    status: <b class="ok" id="meta-status">Epic E5 — active, 3/8 (v0.7 released; next: E5-3, the interactive shell)</b> &nbsp;&middot;&nbsp;
     last updated: <b id="meta-updated">2026-08-23</b><br>
     repo file: <b>PLAN-FEATURES.html</b> (lives at the repository root next to <code>PLAN.html</code>)<br>
     <span class="quiet">Companion to PLAN.html — same protocol, same rules, later timeline.</span>
@@ -166,7 +166,7 @@
     <span class="bl-name">All epics</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">E5-2 &mdash; <code>kelyfos diff</code> and <code>run --review</code>: the workspace manifest, an A/M/D summary, and a sync-back that waits for a person</b></div>
+  <div class="focusline">Current focus: <b id="focus">E5-3 &mdash; <code>kelyfos shell</code>: an interactive PTY over the new channel, raw passthrough with resize forwarding, and contents recorded only with <code>--transcript</code></b></div>
 </div>
 
 <!-- ====================================================== 1. ACTIVATION GATE -->
@@ -590,7 +590,7 @@
         toml changed since pause, warn and use the frozen copy (resumed VMs run under the policy they were paused with).
         Workspace sync-back happens at final shutdown after resume, never at pause. <code>kelyfos sessions</code> lists
         name/age/size; <code>sessions rm</code> deletes.</span></li>
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">E5-2</span><span class="tk"><code>kelyfos diff</code> + <code>run --review</code>: the P3-10 packing step
         records the manifest for free; at shutdown the guest tree is compared against it and rendered as A/M/D with numstat.
         With <code>--review</code>, the summary prints and sync-back waits for confirmation — decline routes results to the
@@ -4252,6 +4252,25 @@ $ gofmt -l . ; go vet ./... ; go test ./...
         differences rather than reporting that there were some — <i>cpus 2 → 4, allow gained api.github.com</i> — and a
         frozen policy that would outrun the current ceiling is refused, which is F-D39&rsquo;s hole closed before it
         could be dug again.</td></tr>
+        <tr><td class="mono">2026-08-23</td><td class="mono">E5-2</td>
+        <td><b><code>kelyfos diff</code> and <code>run --review</code>, and the bench bars re-earned under the new
+        kernel.</b> A workspace now carries a manifest recorded at pack time, and both commands read the same
+        comparison: what the sandbox did, against what was packed. Live, on a real machine:
+        <code>A added.txt +1 · D gone.txt −10 bytes · M keep.txt +2 −1</code> — a real longest-common-subsequence, not
+        a subtraction, so a file that gained a line and lost one reads as both rather than as nothing.
+        <b>The review was proved through a terminal, both ways.</b> Answering <b>y</b> syncs and exits 0; answering
+        <b>n</b> leaves the host directory exactly as it was and puts the results beside it, exits 1, and says where
+        they are. With nobody to ask — no terminal on stdin — it declines and says <i>that</i>, because a flag whose
+        whole purpose is asking a person becomes a trap the moment it answers on their behalf. All three are
+        <code>run.review</code> events: <code>accepted</code>, <code>declined</code>, <code>no_terminal</code>, with the
+        counts the person was shown.
+        <b>One extraction, not two.</b> The image is dumped once into a staging tree; the review reads it, and the same
+        tree is either moved into place or moved beside it. A multi-gigabyte workspace extracted twice to answer one
+        question would be a design nobody would defend out loud.
+        <b>The bars are re-earned on the bare-KVM reference under 6.18.46</b> (F-D52&rsquo;s gate): cold boot-to-ready
+        <b>69 ms</b> median over 10 runs, snapshot restore <b>33 ms</b>. Boot was 90 ms on 6.18.45 and restore was 29;
+        both are still far inside their targets, and the README now quotes the numbers that were actually measured
+        rather than the ones it used to.</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>

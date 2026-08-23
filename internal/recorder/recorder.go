@@ -50,6 +50,7 @@ const (
 	TypePluginCrash     = "plugin.crash"
 	TypeSessionPause    = "session.pause"
 	TypeSessionResume   = "session.resume"
+	TypeRunReview       = "run.review"
 )
 
 // ReasonServeMCP marks a session.start as a server's own session rather than a
@@ -168,6 +169,12 @@ type Event struct {
 	// what was called, without the prefix, because the prefix is already in
 	// Name and repeating it would make the two disagree eventually.
 	Tool string `json:"tool,omitempty"`
+
+	// run.review (E5-2). The counts a person was shown before they decided,
+	// so the record holds what the decision was about and not only what it was.
+	Added    int `json:"added,omitempty"`
+	Modified int `json:"modified,omitempty"`
+	Deleted  int `json:"deleted,omitempty"`
 }
 
 type EvError struct {

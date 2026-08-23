@@ -18,6 +18,7 @@ Go's `flag` accepts one dash or two, so `-image` and `--image` are the same flag
 | [`kelyfos pause`](#kelyfos-pause) | freeze a running sandbox under a name |
 | [`kelyfos resume`](#kelyfos-resume) | bring a paused session back |
 | [`kelyfos sessions`](#kelyfos-sessions) | list paused sessions, or discard one |
+| [`kelyfos diff`](#kelyfos-diff) | what a sandbox has done to its workspace |
 | [`kelyfos fork`](#kelyfos-fork) | restore one snapshot into several sandboxes |
 | [`kelyfos team up`](#kelyfos-team-up) | run several agents with the paths between them written down and enforced |
 | [`kelyfos team ps`](#kelyfos-team-ps) | run several agents with the paths between them written down and enforced |
@@ -64,6 +65,7 @@ kelyfos run [flags]
 | `--mem` | string | 512 | guest memory, e.g. 2G or 512M; a bare number is MiB |
 | `--no-sync-back` | boolean | — | do not write the workspace back to the host on shutdown |
 | `--ready-timeout` | duration | 30s | how long to wait for the guest to become ready |
+| `--review` | boolean | — | show what changed and ask before writing the workspace back |
 | `--secret` | value | — | attach a credential to a domain: NAME@domain[:bearer\|basic]. The value is read from the host environment and never enters the guest. Repeatable. |
 | `--vcpus` | int | — | alias for --cpus, kept so v0.3 command lines keep working |
 | `--verbose-boot` | boolean | — | drop the quiet parameter from the kernel command line |
@@ -176,6 +178,18 @@ kelyfos sessions [rm <name>]
 ```
 
 No flags.
+
+## kelyfos diff
+
+What a sandbox has done to its workspace.
+
+```
+kelyfos diff [flags]
+```
+
+| Flag | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `--sandbox` | string | the only running one | sandbox id |
 
 ## kelyfos fork
 

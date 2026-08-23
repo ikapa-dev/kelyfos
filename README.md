@@ -11,7 +11,7 @@ edit.
 ![KelyfOS in a terminal](docs/media/demo.gif)
 
 > **Status: v0.7, early development, building in the open.** Cold boot-to-ready
-> is **90 ms** median and snapshot restore **29 ms** (10 runs each, x86_64 on a
+> is **69 ms** median and snapshot restore **33 ms** (10 runs each, x86_64 on a
 > bare-KVM CI runner); a five-agent team comes up in **366 ms**. **Not hardened
 > yet** — read [`docs/threat-model.md`](docs/threat-model.md) before trusting it
 > with anything.
@@ -245,7 +245,7 @@ machine took.
 
 | | |
 | --- | --- |
-| `kelyfos snapshot save\|restore` | freeze a prepared machine, bring it back in ~29 ms |
+| `kelyfos snapshot save\|restore` | freeze a prepared machine, bring it back in ~33 ms |
 | `kelyfos fork -n 4` | four divergent copies of one snapshot, sharing its memory image |
 | `kelyfos run --workspace ./dir` | your files at `/work`, written back on clean shutdown |
 | `kelyfos log --export report.html` | a self-contained session report you can send to someone |

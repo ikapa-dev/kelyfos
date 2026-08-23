@@ -4,10 +4,10 @@ Updated 2026-08-23 · tree clean, synced with origin/main
 
 ## Plans
 - PLAN.html — 36/43. P4 backlog non-blocking, parked (P4-4/P4-5 [BLOCKED]).
-- PLAN-FEATURES.html — 36/42. **E1–E4 closed, v0.7 released. Epic E5 at 2/8.**
+- PLAN-FEATURES.html — 37/42. **E1–E4 closed, v0.7 released. Epic E5 at 3/8.**
 
 ## Now
-E5-2 — `kelyfos diff` and `run --review`, per `docs/qol.md` §2.
+E5-3 — `kelyfos shell`: the PTY channel, per `docs/qol.md` §3.
 
 ## This session
 E1–E3 closed, **v0.6 released**; then the F-D33 batch and the E3→E4 seam check.
@@ -29,7 +29,7 @@ after it is done (F-D49).
 **Bubble Tea + Lip Gloss v2: done** (F-D41 executed as F-D51) — five PTY checks,
 behaviour identical to v1 by running both, `-race` clean two ways. **Kernel
 6.18.46**, and the bump found that a version change regenerated no config and
-rebuilt no kernel (F-D52). **Buildroot → 2025.02.x: queued** (F-D40) — the origin
+rebuilt no kernel (F-D52); bars re-earned on bare KVM: boot 69 ms, restore 33 ms. **Buildroot → 2025.02.x: queued** (F-D40) — the origin
 503s on the tarball, an upstream outage rather than this machine. One HEAD per
 task boundary; the first 200 executes the hop with every gate. `versions.mk`
 stays untouched until it lands, because its fallback sentence would be untrue.

@@ -52,7 +52,7 @@ edit.
 ![KelyfOS in a terminal](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/media/demo.gif)
 
 > **Status: v0.7, early development, building in the open.** Cold boot-to-ready
-> is **90 ms** median and snapshot restore **29 ms** (10 runs each, x86_64 on a
+> is **69 ms** median and snapshot restore **33 ms** (10 runs each, x86_64 on a
 > bare-KVM CI runner); a five-agent team comes up in **366 ms**. **Not hardened
 > yet** — read [`docs/threat-model.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/threat-model.md) before trusting it
 > with anything.
@@ -286,7 +286,7 @@ machine took.
 
 | | |
 | --- | --- |
-| `kelyfos snapshot save\|restore` | freeze a prepared machine, bring it back in ~29 ms |
+| `kelyfos snapshot save\|restore` | freeze a prepared machine, bring it back in ~33 ms |
 | `kelyfos fork -n 4` | four divergent copies of one snapshot, sharing its memory image |
 | `kelyfos run --workspace ./dir` | your files at `/work`, written back on clean shutdown |
 | `kelyfos log --export report.html` | a self-contained session report you can send to someone |
@@ -2341,6 +2341,22 @@ second is the part a reader most wants when something has gone wrong. A refused
 call is recorded exactly like a permitted one: a ceiling nobody can see being
 enforced is a ceiling nobody can audit.
 
+### `run.review`
+Somebody was shown what a sandbox did to a workspace and decided whether to
+write it back. Written from E5-2.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `outcome` | string | `accepted`, `declined`, `no_terminal`, or `no_manifest`. |
+| `path` | string | Where the results went, or would have gone. |
+| `added` / `modified` / `deleted` | integer | The counts the person was shown. |
+
+**A declined review is recorded exactly like an accepted one.** It is the one
+place this product asks a person to make a judgement, and a transcript holding
+only the accepted ones would be a record of agreement rather than of what
+happened. `no_terminal` is the same decision made by nobody: `--review` with
+nothing to ask does not sync, does not silently divert, and says both.
+
 ### `session.pause` and `session.resume`
 The machine was frozen under a name and stopped, and later brought back. Written
 from E5-1.
@@ -2438,6 +2454,7 @@ team session must be found by id or with `--list`.
 | `--export` of a server session with a lane per sandbox | E4-4 |
 | `plugin.call` per plugin tool call, `plugin.crash` when one ends | E4-7 |
 | `session.pause` and `session.resume`, one chain across a pause | E5-1 |
+| `run.review` for every decision, including the declined ones | E5-2 |
 | Signed exports verifiable offline | P4-3 |
 
 
@@ -5689,6 +5706,7 @@ Go's `flag` accepts one dash or two, so `-image` and `--image` are the same flag
 | [`kelyfos pause`](#kelyfos-pause) | freeze a running sandbox under a name |
 | [`kelyfos resume`](#kelyfos-resume) | bring a paused session back |
 | [`kelyfos sessions`](#kelyfos-sessions) | list paused sessions, or discard one |
+| [`kelyfos diff`](#kelyfos-diff) | what a sandbox has done to its workspace |
 | [`kelyfos fork`](#kelyfos-fork) | restore one snapshot into several sandboxes |
 | [`kelyfos team up`](#kelyfos-team-up) | run several agents with the paths between them written down and enforced |
 | [`kelyfos team ps`](#kelyfos-team-ps) | run several agents with the paths between them written down and enforced |
@@ -5735,6 +5753,7 @@ kelyfos run [flags]
 | `--mem` | string | 512 | guest memory, e.g. 2G or 512M; a bare number is MiB |
 | `--no-sync-back` | boolean | — | do not write the workspace back to the host on shutdown |
 | `--ready-timeout` | duration | 30s | how long to wait for the guest to become ready |
+| `--review` | boolean | — | show what changed and ask before writing the workspace back |
 | `--secret` | value | — | attach a credential to a domain: NAME@domain[:bearer\|basic]. The value is read from the host environment and never enters the guest. Repeatable. |
 | `--vcpus` | int | — | alias for --cpus, kept so v0.3 command lines keep working |
 | `--verbose-boot` | boolean | — | drop the quiet parameter from the kernel command line |
@@ -5847,6 +5866,18 @@ kelyfos sessions [rm <name>]
 ```
 
 No flags.
+
+## kelyfos diff
+
+What a sandbox has done to its workspace.
+
+```
+kelyfos diff [flags]
+```
+
+| Flag | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `--sandbox` | string | the only running one | sandbox id |
 
 ## kelyfos fork
 
@@ -6679,6 +6710,18 @@ A paused session was brought back. Written by the **host**.
 | `name` | string | the session's name |
 | `boot_ms` | integer | how long the restore took, through the resync round trip |
 | `reason` | string | what differed between the frozen policy and the one in force *(they differ)* |
+
+## `run.review`
+
+Somebody was shown what a sandbox did to a workspace and decided whether to write it back. A declined review is recorded exactly like an accepted one: a transcript that held only the accepted ones would be a record of agreement. Written by the **host**.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `outcome` | string | accepted, declined, no_terminal, or no_manifest |
+| `path` | string | where the results went, or would have gone |
+| `added` | integer | files added |
+| `modified` | integer | files modified |
+| `deleted` | integer | files deleted |
 
 ## `mcp.host.call`
 

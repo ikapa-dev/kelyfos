@@ -365,6 +365,22 @@ second is the part a reader most wants when something has gone wrong. A refused
 call is recorded exactly like a permitted one: a ceiling nobody can see being
 enforced is a ceiling nobody can audit.
 
+### `run.review`
+Somebody was shown what a sandbox did to a workspace and decided whether to
+write it back. Written from E5-2.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `outcome` | string | `accepted`, `declined`, `no_terminal`, or `no_manifest`. |
+| `path` | string | Where the results went, or would have gone. |
+| `added` / `modified` / `deleted` | integer | The counts the person was shown. |
+
+**A declined review is recorded exactly like an accepted one.** It is the one
+place this product asks a person to make a judgement, and a transcript holding
+only the accepted ones would be a record of agreement rather than of what
+happened. `no_terminal` is the same decision made by nobody: `--review` with
+nothing to ask does not sync, does not silently divert, and says both.
+
 ### `session.pause` and `session.resume`
 The machine was frozen under a name and stopped, and later brought back. Written
 from E5-1.
@@ -462,4 +478,5 @@ team session must be found by id or with `--list`.
 | `--export` of a server session with a lane per sandbox | E4-4 |
 | `plugin.call` per plugin tool call, `plugin.crash` when one ends | E4-7 |
 | `session.pause` and `session.resume`, one chain across a pause | E5-1 |
+| `run.review` for every decision, including the declined ones | E5-2 |
 | Signed exports verifiable offline | P4-3 |

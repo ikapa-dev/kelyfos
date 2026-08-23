@@ -224,6 +224,17 @@ func Types() []EventType {
 				{Name: "boot_ms", Type: "integer", Doc: "how long the restore took, through the resync round trip"},
 				{Name: "reason", Type: "string", Doc: "what differed between the frozen policy and the one in force", When: "they differ"},
 			}},
+		{Type: TypeRunReview, Source: SourceHost,
+			Doc: "somebody was shown what a sandbox did to a workspace and decided whether to " +
+				"write it back. A declined review is recorded exactly like an accepted one: a " +
+				"transcript that held only the accepted ones would be a record of agreement",
+			Fields: []Field{
+				{Name: "outcome", Type: "string", Doc: "accepted, declined, no_terminal, or no_manifest"},
+				{Name: "path", Type: "string", Doc: "where the results went, or would have gone"},
+				{Name: "added", Type: "integer", Doc: "files added"},
+				{Name: "modified", Type: "integer", Doc: "files modified"},
+				{Name: "deleted", Type: "integer", Doc: "files deleted"},
+			}},
 		{Type: TypeMCPHostCall, Source: SourceHost,
 			Doc: "an outside MCP client asked kelyfos serve-mcp for a tool. These live in the " +
 				"server's own session rather than in a sandbox's, because the calls that matter " +

@@ -25,6 +25,7 @@ usage:
   kelyfos pause --as <name>        freeze a running sandbox under a name
   kelyfos resume <name>            bring a paused session back
   kelyfos sessions [rm <name>]     list paused sessions, or discard one
+  kelyfos diff [flags]             what a sandbox has done to its workspace
   kelyfos fork [flags]             restore one snapshot into several sandboxes
   kelyfos team up|ps|down          run several agents with the paths between
                                    them written down and enforced
@@ -55,6 +56,8 @@ func main() {
 		err = mcpCmd(os.Args[2:])
 	case "serve-mcp":
 		err = serveMCPCmd(os.Args[2:])
+	case "diff":
+		err = diffCmd(os.Args[2:])
 	case "pause":
 		err = pauseCmd(os.Args[2:])
 	case "resume":
