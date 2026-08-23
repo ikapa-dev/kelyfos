@@ -205,6 +205,13 @@ func llmsFull(repo string) (string, error) {
 // and because this corpus is full of em dashes — counting its bytes would
 // inflate the estimate by the width of its punctuation.
 //
+// Re-measured at the E4 exit, on a corpus that had grown by 61%: 298,395
+// characters, 77,480 tokens (cl100k_base) and 77,447 (o200k_base), which is
+// 3.851 and 3.853 characters per token. The pinned 3.83 is therefore 0.6%
+// low per token and the printed estimate 0.6% high — the safe direction for a
+// reader deciding whether this fits in a context window, and not enough drift
+// to be worth repinning a number whose provenance is its value.
+//
 // The question the number answers is only "does this fit in a context window",
 // and the measured counts with the commands that produced them are in the
 // progress log, where a claim of that kind belongs.
