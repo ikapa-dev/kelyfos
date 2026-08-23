@@ -21,8 +21,7 @@ was 1 MiB against a promised 8 MiB (F-D38), and a restore met no ceiling at all
 (F-D42), which caught a write to stdout — the protocol, on that path. E4-4 the
 audit lane; E4-0's promise of one export holding both lanes was rewritten rather
 than met (F-D43). E4-5 two client recipes, which found a client-launched server
-could run with no ceiling (F-D44). E4-6 the plugins device, read-only and shared
-across forks (F-D45). 10/10 cookbook recipes pass.
+could run with no ceiling (F-D44). E4-6 the plugins device (F-D45). 10/10 pass.
 
 ## Blocked / debts
 - P4-4, P4-5 [BLOCKED]. `idle_timeout` refused (F-D20; F-D22). IMAGE_DIR per-arch not per-flavor: parked.
