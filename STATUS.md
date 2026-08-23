@@ -1,10 +1,10 @@
 # KelyfOS — session status
 
-Updated 2026-08-23 03:05 UTC · HEAD 7bf77a1 · tree clean, synced with origin/main
+Updated 2026-08-23 03:07 UTC · HEAD b8cc83c · tree clean, synced with origin/main
 
 ## Plans
 - PLAN.html — 36/43. P4 backlog non-blocking and parked (P4-4/P4-5 [BLOCKED]).
-- PLAN-FEATURES.html — 10/42. Epic E1 closed (v0.4 released). Epic E2 active, 6/10.
+- PLAN-FEATURES.html — 15/42. Epic E1 closed (v0.4 released). Epic E2 active, 6/10.
 
 ## Now
 Epic E2 — agent teams (v0.5). Next task: **E2-6**, the team resource budget:
