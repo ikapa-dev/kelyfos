@@ -41,6 +41,9 @@ const (
 
 var isPID1 = os.Getpid() == 1
 
+// theTeam is this sandbox's team membership, or nil when it has none.
+var theTeam *teamClient
+
 func main() {
 	start := monotonic()
 
@@ -62,6 +65,12 @@ func main() {
 	if isPID1 {
 		rp.start()
 	}
+
+	// The team channel, when the host put this sandbox in a team. Package-level
+	// because the MCP session needs it and there is exactly one per machine —
+	// a guest belongs to one team or to none, and it is told which on the
+	// kernel command line rather than being allowed to decide.
+	theTeam = newTeamClient()
 
 	shutdown := make(chan struct{}, 1)
 

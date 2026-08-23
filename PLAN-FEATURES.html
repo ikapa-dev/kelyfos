@@ -126,7 +126,7 @@
      improvements to the existing product land here as epics. Inert until its gate opens.</p>
   <div class="meta">
     owner: <b>John</b> &nbsp;&middot;&nbsp; developer: <b>Claude Code</b> &nbsp;&middot;&nbsp;
-    status: <b class="ok" id="meta-status">Epic E2 — active, 2/10 (next: E2-2, the guest tools)</b> &nbsp;&middot;&nbsp;
+    status: <b class="ok" id="meta-status">Epic E2 — active, 3/10 (next: E2-3, the team store)</b> &nbsp;&middot;&nbsp;
     last updated: <b id="meta-updated">2026-08-23</b><br>
     repo file: <b>PLAN-FEATURES.html</b> (lives at the repository root next to <code>PLAN.html</code>)<br>
     <span class="quiet">Companion to PLAN.html — same protocol, same rules, later timeline.</span>
@@ -166,7 +166,7 @@
     <span class="bl-name">All epics</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">E2-2 — the six team MCP tools in the supervisor, so a question arrives as a tool call</b></div>
+  <div class="focusline">Current focus: <b id="focus">E2-3 — the team store: a host-side key/blob store with per-key access rules</b></div>
 </div>
 
 <!-- ====================================================== 1. ACTIVATION GATE -->
@@ -344,7 +344,7 @@
         per-VM vsock channels, enforcing the edge list. Every message becomes a flight-recorder event — metadata always
         (from, to, size, hash); payload capture is a per-team toml switch so sensitive teams can log hashes only.
         Refused sends (no edge) are their own event type.</span></li>
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">E2-2</span><span class="tk">Guest side: the supervisor exposes team capability as MCP tools —
         <code>team_send</code>, <code>team_recv</code>, <code>team_ask</code> (ask a peer a question and wait for the answer;
         the broker correlates the reply and enforces the timeout), <code>team_reply</code>, <code>team_peers</code>,
@@ -1632,6 +1632,44 @@ new in the protocol (docs/protocol.md §5.6) and the schema (docs/events.md):
   10102  team  guest -&gt; host  E2-1
   team.message / team.refused  with agent, peer, kind, outcome, bytes,
                                sha256, reason, and data only on capture</pre></td></tr>
+        <tr><td class="mono">2026-08-23</td><td class="mono">E2-2</td>
+        <td>The guest side: a client for the port-10102 channel and the team tools on top of it. Every one of them is a
+        thin pass to the host and decides nothing, because the guest is not the side that gets to decide &mdash; not
+        whether a message may be sent, not whether a correlation exists, not what goes in the record.
+        <b>Three choices worth their lines.</b> An incoming question comes back from <code>team_recv</code> with its
+        correlation tag and a note saying to answer it with <code>team_reply</code>, so answering is one more tool call
+        rather than a protocol a model has to be taught. The tools are listed <i>only</i> for a sandbox that is in a team,
+        because a tool that is always advertised and always fails teaches a model to ignore failures, which is the last
+        habit this project wants to teach. And a guest learns its own agent name from the kernel command line, like the
+        proxy address before it: the one thing inside the guest that the guest did not write, so an agent cannot rename
+        itself into another agent's edges.
+        One connection, held for the life of the sandbox, with the call serialised on it &mdash; the ordering the spec
+        promises is per-edge FIFO, and a second connection would be a second order. It re-dials after a drop, because a
+        snapshot restore severs every channel and only the guest can re-dial.
+        The test that asks whether the tool names are the ones the spec names caught a real slip on its first run: the
+        prefix check had been loosened to <code>strings.HasPrefix</code> during a refactor and was claiming the bare string
+        <code>"team_"</code>. Harmless today; the sort of thing that is not harmless once a dispatch grows.</td>
+        <td class="mono"><pre>$ go test ./supervisor/ -v
+--- PASS: TestTeamToolsAreTheSixTheSpecNames
+--- PASS: TestRequiredArgumentsAreDeclared
+--- PASS: TestTeamToolsOnANonTeamSandboxRefusePolitely
+--- PASS: TestUnknownTeamToolIsNamed
+--- PASS: TestIsTeamToolDoesNotOverreach
+      (which failed first: isTeamTool claimed the bare prefix "team_")
+ok  supervisor
+
+the surface, as a model sees it:
+  team_send        to, body                    -&gt; delivered / an error naming why
+  team_recv        timeout_ms                  -&gt; from, body, and on a question
+                                                  a correlate plus what to do
+  team_ask         to, body, timeout_ms        -&gt; the answer, or a timeout
+  team_reply       correlate, body             -&gt; answered
+  team_peers       -                           -&gt; only what this agent may
+                                                  initiate to
+  team_store_get   key                         -&gt; the value, or a refusal
+  team_store_put   key, value                  -&gt; stored
+
+listed only when kelyfos.agent is on the kernel command line.</pre></td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>

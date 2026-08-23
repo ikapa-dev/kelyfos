@@ -206,7 +206,18 @@ its siblings.
 
 The shared-knowledge mechanism, §4.
 
-### 3.6 Errors are explicit
+### 3.6 How an agent is told which agent it is
+
+On the kernel command line, as `kelyfos.agent=<name>`, for the same reason the
+proxy address arrives that way: it is the one thing inside the guest that the
+guest did not write. An agent cannot rename itself into another agent's edges,
+and the host does not have to trust a name a guest asserts.
+
+A sandbox with no `kelyfos.agent` is not in a team, and the six tools above are
+not listed for it at all. A tool that is always advertised and always fails
+teaches a model to ignore failures.
+
+### 3.7 Errors are explicit
 
 Every refusal is an error the calling agent receives and can act on, never a
 silent drop:

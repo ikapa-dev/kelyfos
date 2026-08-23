@@ -90,7 +90,14 @@ func (s *mcpSession) dispatch(req *mcp.Request) *mcp.Response {
 		return mcp.NewResponse(req.ID, struct{}{})
 
 	case "tools/list":
-		return mcp.NewResponse(req.ID, mcp.ToolsListResult{Tools: toolDefinitions()})
+		// The team tools are listed only for a sandbox that is in a team. A
+		// tool that is always advertised and always fails teaches a model to
+		// ignore failures, which is the last habit this project wants to teach.
+		tools := toolDefinitions()
+		if theTeam != nil {
+			tools = append(tools, teamToolDefinitions()...)
+		}
+		return mcp.NewResponse(req.ID, mcp.ToolsListResult{Tools: tools})
 
 	case "tools/call":
 		if req.IsNotification() {
@@ -129,6 +136,9 @@ func (s *mcpSession) callTool(p *mcp.CallToolParams) *mcp.CallToolResult {
 	case "download":
 		return toolDownload(args)
 	default:
+		if isTeamTool(p.Name) {
+			return callTeamTool(theTeam, p.Name, args)
+		}
 		return mcp.Errorf("unknown tool %q", p.Name)
 	}
 }
