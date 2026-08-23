@@ -165,7 +165,14 @@ func (b *Broker) Serve(agent string, req proto.TeamRequest) proto.TeamResponse {
 		return proto.TeamResponse{OK: true}
 
 	case proto.OpTeamPeers:
-		return proto.TeamResponse{OK: true, Peers: b.Peers(agent)}
+		// The name travels back with the peers. A guest knows its own name only
+		// from the kernel command line, and a forked guest shares the memory
+		// image — and therefore the command line — of the template it came
+		// from, so its idea of who it is can be a whole agent out of date. The
+		// host has always been the side that decides which agent a channel
+		// belongs to; this is the one place the guest was still answering that
+		// question for itself (E2-9, F-D19).
+		return proto.TeamResponse{OK: true, Peers: b.Peers(agent), Agent: agent}
 
 	case proto.OpTeamStoreGet:
 		v, err := b.StoreGet(agent, req.Key)

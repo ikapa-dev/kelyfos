@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/p4r4n0rm4l/KelyfOS/internal/config"
@@ -242,6 +243,62 @@ func checkAgentPolicy(path string, a config.TeamAgent) error {
 			where)
 	}
 	return nil
+}
+
+// forkable reports whether this agent can be started as a fork of a shared
+// template instead of booted from cold (F-D19).
+//
+// The thing a fork cannot carry is a network identity: the guest's address and
+// default route live inside the memory image every fork shares, so N networked
+// forks would be N machines that believe they are the same host — which is what
+// F-D17 recorded and why `kelyfos fork` refuses a networked snapshot. An agent
+// its policy granted no egress has no such identity to collide with, and that
+// is the whole of the ruling.
+//
+// A workspace disqualifies an agent for a different reason: a fork gets a copy
+// of the template's disk, and the template's disk would be whichever agent's
+// directory happened to be packed into it. Handing agent B a copy of agent A's
+// files is worse than a slower boot.
+func (a plannedAgent) forkable() bool {
+	return len(a.allow) == 0 && a.workspace == ""
+}
+
+// forkKey identifies agents that can share one template: everything baked into
+// a memory image, and nothing else.
+//
+// cpu_quota is deliberately absent. It is a host-side cgroup on the VMM process
+// rather than anything inside the machine, so two agents with different quotas
+// can still be forks of one snapshot — each gets its own slice at restore.
+func (a plannedAgent) forkKey() string {
+	return fmt.Sprintf("%s|%d|%d|%d|%d|%d|%d|%d|%t",
+		a.image, a.res.CPUs, a.res.MemMiB, a.res.ScratchByte,
+		a.res.NetMbpsRx, a.res.NetMbpsTx, a.res.DiskIOPS, a.res.DiskMbps,
+		a.spawn != nil)
+}
+
+// forkPlan splits the team into the agents that will be forked, grouped by the
+// template they share, and the ones that will cold-boot.
+//
+// A group of one is sent back to the cold path on purpose: a template costs a
+// boot and a snapshot, so forking a single agent is strictly slower than
+// booting it. The saving starts at two.
+func (p *teamPlan) forkPlan() (groups map[string][]int, cold []int) {
+	groups = map[string][]int{}
+	for i, a := range p.agents {
+		if a.forkable() {
+			groups[a.forkKey()] = append(groups[a.forkKey()], i)
+		} else {
+			cold = append(cold, i)
+		}
+	}
+	for k, idx := range groups {
+		if len(idx) < 2 {
+			cold = append(cold, idx...)
+			delete(groups, k)
+		}
+	}
+	sort.Ints(cold)
+	return groups, cold
 }
 
 // spawnResources is the caps a worker spawned by this agent gets: the budget's

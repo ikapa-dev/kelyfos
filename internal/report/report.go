@@ -135,6 +135,15 @@ func Render(w io.Writer, sessionID string, events []recorder.Event, verifyErr er
 			v.Rows = append(v.Rows, Row{ts, "session", "session start",
 				fmt.Sprintf("image %s · arch %s · kelyfos %s", e.Image, e.Arch, e.Kelyfos), "", false})
 		case recorder.TypeSessionReady:
+			// A team writes one of these per member, so the header's single set
+			// of boot figures would end up being whichever agent was last —
+			// with the kernel and supervisor blank, because the team's copy
+			// records how the machine started rather than what booted (E2-9).
+			if e.Agent != "" {
+				v.Rows = append(v.Rows, Row{ts, "session", e.Agent + " ready",
+					fmt.Sprintf("%d ms · %s · image %s", e.BootMS, bootPath(e.Via), e.Image), "", false})
+				break
+			}
 			v.Summary.BootMS, v.Summary.Kernel, v.Summary.Supervisor = e.BootMS, e.Kernel, e.Supervisor
 			overlay := "overlay unknown"
 			if e.Overlay != nil {
@@ -459,6 +468,12 @@ func buildLanes(events []recorder.Event) ([]string, []LaneRow) {
 			add(LaneRow{ts, "session", "usage receipt",
 				fmt.Sprintf("%.2f CPU-seconds \u00b7 peak RSS %s", e.CPUSeconds, HumanKiB(e.PeakRSSKiB)),
 				"", false, laneOf(e.Agent), false})
+		case recorder.TypeSessionReady:
+			// The one row that says how this machine came to exist. F-D19 asks
+			// for the two boot paths to be visible rather than inferred, and a
+			// transcript that does not carry it is where it would go missing.
+			add(LaneRow{ts, "session", "ready in " + fmt.Sprintf("%d ms", e.BootMS),
+				bootPath(e.Via), "", false, laneOf(e.Agent), false})
 		case recorder.TypeSessionStart:
 			add(LaneRow{ts, "session", "team session start",
 				fmt.Sprintf("arch %s \u00b7 kelyfos %s", e.Arch, e.Kelyfos), "", false, wide, false})
@@ -496,6 +511,20 @@ func HumanKiB(kib int64) string {
 	default:
 		return fmt.Sprintf("%d KiB", kib)
 	}
+}
+
+// bootPath spells out how a machine started, for a reader who should not have
+// to know what "via" means.
+func bootPath(via string) string {
+	switch via {
+	case "fork":
+		return "forked from a shared template"
+	case "cold":
+		return "cold boot"
+	case "":
+		return ""
+	}
+	return via
 }
 
 // quotaNote says what a receipt's CPU number was measured against, when there

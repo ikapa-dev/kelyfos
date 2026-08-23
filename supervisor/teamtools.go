@@ -193,11 +193,11 @@ func callTeamTool(c *teamClient, name string, raw json.RawMessage) *mcp.CallTool
 		return text("answered")
 
 	case "team_peers":
-		peers, err := c.peers()
+		name, peers, err := c.peers()
 		if err != nil {
 			return mcp.Errorf("%v", err)
 		}
-		return structured(strings.Join(peers, " "), map[string]any{"agent": c.agent, "peers": peers})
+		return structured(strings.Join(peers, " "), map[string]any{"agent": name, "peers": peers})
 
 	case "team_spawn":
 		// Not refused here even when this agent has no budget: the host is the

@@ -64,7 +64,7 @@ forbids it, but because there is nothing to send it over.
 | key | type | meaning |
 | --- | --- | --- |
 | `name` | string | Identifies the team in the audit record and in `kelyfos team ps`. Required. |
-| `record_payloads` | bool | Whether message bodies are captured. Default `false`; see §7. |
+| `record_payloads` | bool | Whether message bodies are captured. Default `false`; see §8. |
 | `[team.resources]` | table | The collective cap the whole team shares. One key, `cpu_quota`; see §6. |
 
 ### 1.2 `[[team.agent]]`
@@ -471,7 +471,51 @@ limit cannot be about different things.
 
 ---
 
-## 7. What the record contains
+## 7. How a team boots
+
+`kelyfos team up` starts its agents by one of two paths, chosen per agent from
+the policy file before anything runs.
+
+An agent whose policy grants it **egress** is **cold-booted**, concurrently with
+every other agent. It cannot be forked, and the reason is physics rather than
+effort: a fork resumes from a memory image, and the guest's address and default
+route live *inside* that image — so N networked forks would be N machines each
+believing it is the same host. `kelyfos fork` refuses a networked snapshot for
+exactly this reason.
+
+An agent granted **no egress** has no network identity to collide with, so a
+group of them is booted **once** as a template, snapshotted, and restored as
+many times as there are agents in the group. The template is a mould: it is
+never in the roster, never appears in the transcript as an agent, has no team
+channel of its own, and is stopped and deleted as soon as its image is on disk.
+
+Agents share a template only when everything baked into a memory image matches —
+image flavor, cores, RAM, scratch size, the I/O rates, and whether the agent has
+a spawn budget. `cpu_quota` deliberately does not count: it is a host-side cgroup
+on the VMM process rather than anything inside the machine, so forks of one
+snapshot can still have different quotas, and each gets its own slice. A
+`workspace` disqualifies an agent from forking for a different reason: a fork
+copies the template's disk, and handing agent B a copy of agent A's files is
+worse than a slower boot. A group of one is cold-booted too — a template costs a
+boot and a snapshot, so forking a single agent is strictly slower.
+
+**A fork is not told who it is by its own image.** Every fork of one template
+carries that template's kernel command line, including its `kelyfos.agent=`
+name. This does not matter, because the host has always been the side that
+decides which agent a channel belongs to: the broker is called with the name the
+*host* bound to that machine's team channel, and a guest's opinion of its own
+name is never read off the wire. The one place a guest used to answer that
+question for itself — the `agent` field `team_peers` returns — now comes back
+from the host with the peers.
+
+Which path each machine took is not left to be inferred. It is printed by
+`team up`, carried in `kelyfos team ps` under `BOOT`, and written into the
+team's chain as a `session.ready` event per agent with `via: "fork"` or
+`via: "cold"`.
+
+---
+
+## 8. What the record contains
 
 Every team event goes into the same hash-chained flight recorder a single
 session uses (`docs/events.md`), so a team produces one verifiable transcript
@@ -495,7 +539,7 @@ Off by default. A team passing customer data between agents should be able to
 prove what moved without keeping a second copy of it, and a hash lets a claim
 about a message be checked later without the message being stored.
 
-### 7.1 Reading it back
+### 8.1 Reading it back
 
 `kelyfos log --verify` over a team session verifies the whole team, because
 there is only one chain to verify. It says how many agents it covered and names
@@ -520,7 +564,7 @@ the team's record and says so. After `team down` the run directories are gone,
 so the team session is found by its own id or with `kelyfos log --list`, which
 marks the sessions that hold a team.
 
-### 7.2 Watching it live
+### 8.2 Watching it live
 
 `kelyfos watch` on a team session shows one lane per agent, side by side: each
 agent's commands and their output, its files, its egress attempts, and what it
@@ -538,7 +582,7 @@ columns, says how wide the terminal would have to be, and shows one column with
 each line labelled by the agent it came from — the information without the
 layout, rather than the layout without the information.
 
-### 7.3 The recorder is not a delivery buffer
+### 8.3 The recorder is not a delivery buffer
 
 These two facts are orthogonal and are stated together because they look
 contradictory at a glance:
@@ -554,7 +598,7 @@ that is what the outcome field is for.
 
 ---
 
-## 8. Conformance
+## 9. Conformance
 
 | Requirement | Task |
 | --- | --- |

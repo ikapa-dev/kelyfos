@@ -99,6 +99,8 @@ The guest announced itself.
 | `boot_ms` | integer | Host-measured boot-to-ready. |
 | `kernel` | string | Guest kernel release. |
 | `supervisor` | string | Supervisor version. |
+| `agent` | string | Present inside a team: one of these per member. |
+| `via` | string | Present inside a team: `cold` or `fork` — how this member was started (F-D19). |
 | `overlay` | boolean | Whether the writable overlay came up. |
 
 ### `session.end`
@@ -214,7 +216,7 @@ lets a later claim about a message be checked either way.
 
 These events say what happened to a message, not what will happen to it. The
 recorder is not a delivery buffer: delivery is at-most-once and nothing is ever
-redelivered from the log (`docs/teams.md` §6.1).
+redelivered from the log (`docs/teams.md` §8.3).
 
 ### `team.store`
 One access to the team store, permitted or not. Written from E2-3.
@@ -350,6 +352,7 @@ team session must be found by id or with `--list`.
 | `team.spawn` for every worker requested, granted or refused | E2-5 |
 | One chain per team, every member's events in it carrying `agent` | E2-7 |
 | `--verify` over a team, `--export` with a lane per agent | E2-7 |
+| `session.ready` per team member, saying `cold` or `fork` | E2-9 |
 | HTML session export built only from this file | P3-8 |
 | Live TUI built only from this file | P3-9 |
 | Signed exports verifiable offline | P4-3 |

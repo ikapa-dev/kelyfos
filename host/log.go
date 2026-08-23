@@ -305,6 +305,14 @@ func printEvent(line []byte, asJSON bool) {
 	case recorder.TypeSessionStart:
 		fmt.Printf("%s  session start   image=%s arch=%s kelyfos=%s\n", ts, e.Image, e.Arch, e.Kelyfos)
 	case recorder.TypeSessionReady:
+		// A team member's ready line says how it started, not what booted: the
+		// kernel and supervisor are the same for every member and the boot path
+		// is not (E2-9, F-D19).
+		if e.Agent != "" {
+			fmt.Printf("%s  ready           %s%d ms  via=%s image=%s\n",
+				ts, who, e.BootMS, e.Via, e.Image)
+			break
+		}
 		overlay := "overlay=?"
 		if e.Overlay != nil {
 			overlay = fmt.Sprintf("overlay=%t", *e.Overlay)

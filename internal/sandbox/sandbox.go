@@ -94,6 +94,10 @@ type Options struct {
 	// not in a team and the channel is not bound at all — a guest that dials it
 	// finds nothing, which is the truthful answer.
 	OnTeamRequest func(proto.TeamRequest) proto.TeamResponse
+	// ReadyTimeout bounds how long a restore waits for the machine to answer.
+	// Zero keeps the default. It exists because `team up --ready-timeout` is a
+	// promise about every agent, and four of five of them may be forks (E2-9).
+	ReadyTimeout time.Duration
 	// OnGuestEvent receives what the guest reports on the events channel
 	// (docs/protocol.md §5.5). The caller decides what to record; the guest
 	// never writes the flight recorder itself (docs/events.md §1).
@@ -555,6 +559,20 @@ func snapshotMetaPath(dir string) string  { return filepath.Join(dir, "meta.json
 func snapshotWorkspace(dir string) string { return filepath.Join(dir, "workspace.ext4") }
 
 // ReadSnapshotMeta loads what was recorded alongside a snapshot.
+// WriteSnapshotMeta records what a snapshot is, for a caller that took one
+// through (*Sandbox).Snapshot rather than through SnapshotRunning — which is
+// the team's fork template (E2-9). Without it a restore has nothing to say
+// about the machine it is loading, and a snapshot with no metadata is treated
+// as one with no network and no workspace, which is true here and must be true
+// on purpose rather than by omission.
+func WriteSnapshotMeta(dir string, meta SnapshotMeta) error {
+	blob, err := json.MarshalIndent(meta, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(snapshotMetaPath(dir), blob, 0o600)
+}
+
 func ReadSnapshotMeta(dir string) (*SnapshotMeta, error) {
 	blob, err := os.ReadFile(snapshotMetaPath(dir))
 	if err != nil {
@@ -697,6 +715,13 @@ func Restore(snapDir string, opts Options) (*Sandbox, time.Duration, error) {
 			UDSPath: filepath.Join(runDir, "v.sock"),
 			APIPath: filepath.Join(runDir, "fc.sock"),
 			RunDir:  runDir, StartedAt: time.Now(),
+			// Carried from the options rather than from the memory image,
+			// because the image is shared: every fork of one snapshot has the
+			// same machine baked into it and a different job in the team. The
+			// host is the side that knows which fork is which agent (E2-9).
+			Agent: opts.Agent, Session: opts.Session,
+			VcpuCount: opts.VcpuCount, MemMiB: opts.MemMiB,
+			ScratchByte: opts.ScratchBytes,
 		},
 	}
 	// The guest's channels must exist before it runs again: a restored guest
@@ -712,11 +737,28 @@ func Restore(snapDir string, opts Options) (*Sandbox, time.Duration, error) {
 		s.cleanup()
 		return nil, 0, err
 	}
+	// A forked team member dials its team channel the moment it resumes, and
+	// without this there is nothing on the other end — the fork would come up
+	// as a machine in a team that could not speak to it.
+	if err := s.listenTeam(); err != nil {
+		s.cleanup()
+		return nil, 0, err
+	}
 	s.api = newAPI(s.State.APIPath)
 
 	started := time.Now()
-	cmd := exec.Command("firecracker", "--api-sock", s.State.APIPath)
+	argv := s.opts.CPUSlice.WrapArgv([]string{"firecracker", "--api-sock", s.State.APIPath})
+	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	// The same placement a cold boot gets: at clone time on the direct path, so
+	// a quota that starts a moment late is not a quota with a hole in it (E1-2).
+	if s.opts.CPUSlice.Direct() {
+		cmd.SysProcAttr.UseCgroupFD = true
+		cmd.SysProcAttr.CgroupFD = s.opts.CPUSlice.FD()
+	}
+	if s.opts.CPUSlice != nil {
+		s.State.CPUQuota = s.opts.CPUSlice.Percent
+	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		s.cleanup()
@@ -732,11 +774,24 @@ func Restore(snapDir string, opts Options) (*Sandbox, time.Duration, error) {
 	go s.drainConsole(stdout)
 	go func() { s.waitErr = cmd.Wait(); close(s.done) }()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	wait := 30 * time.Second
+	if opts.ReadyTimeout > 0 {
+		wait = opts.ReadyTimeout
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), wait)
 	defer cancel()
 	if err := s.api.waitReady(ctx); err != nil {
 		_ = s.Shutdown(2 * time.Second)
 		return nil, 0, err
+	}
+	// Read the quota back rather than trusting that asking for it worked, and
+	// before the machine resumes rather than after.
+	if s.opts.CPUSlice != nil {
+		if err := s.opts.CPUSlice.Confirm(cmd.Process.Pid); err != nil {
+			_ = s.Shutdown(2 * time.Second)
+			return nil, 0, err
+		}
+		s.State.CGroupPath = s.opts.CPUSlice.Path
 	}
 	// Firecracker will not load a snapshot unless every block device's backing
 	// file is present at the path recorded in it — the drive can only be

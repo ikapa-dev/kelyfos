@@ -172,7 +172,10 @@ type TeamResponse struct {
 	From  string   `json:"from,omitempty"`
 	Body  string   `json:"body,omitempty"` // base64
 	Peers []string `json:"peers,omitempty"`
-	// Agent names the worker a spawn produced.
+	// Agent names the worker a spawn produced — and, on a peers reply, the
+	// agent the host considers the asker to be. The guest prefers this to its
+	// own kernel-command-line name, which a fork inherits from its template
+	// (E2-9).
 	Agent string `json:"agent,omitempty"`
 	// Correlate on a delivered question is the tag a reply must carry back.
 	Correlate string `json:"correlate,omitempty"`

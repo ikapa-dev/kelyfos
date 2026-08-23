@@ -126,7 +126,7 @@
      improvements to the existing product land here as epics. Inert until its gate opens.</p>
   <div class="meta">
     owner: <b>John</b> &nbsp;&middot;&nbsp; developer: <b>Claude Code</b> &nbsp;&middot;&nbsp;
-    status: <b class="ok" id="meta-status">Epic E2 — active, 9/10 (next: E2-9, the proof demo)</b> &nbsp;&middot;&nbsp;
+    status: <b class="ok" id="meta-status">Epic E2 — active, 10/10 (next: the E2 acceptance test and v0.5)</b> &nbsp;&middot;&nbsp;
     last updated: <b id="meta-updated">2026-08-23</b><br>
     repo file: <b>PLAN-FEATURES.html</b> (lives at the repository root next to <code>PLAN.html</code>)<br>
     <span class="quiet">Companion to PLAN.html — same protocol, same rules, later timeline.</span>
@@ -166,7 +166,7 @@
     <span class="bl-name">All epics</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">E2-9 — the proof demo, and the F-D19 fork fast path for no-egress agents</b></div>
+  <div class="focusline">Current focus: <b id="focus">Epic E2 acceptance — run the list verbatim, then the exit checkpoint and tag v0.5</b></div>
 </div>
 
 <!-- ====================================================== 1. ACTIVATION GATE -->
@@ -382,7 +382,7 @@
     <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">E2-8</span><span class="tk"><code>kelyfos watch</code> multi-lane team view: one lane per agent (exec activity,
         egress, resource use vs caps) plus a message-flow ticker. Supersedes the build plan&rsquo;s P4-6 idea for the team case.</span></li>
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">E2-9</span><span class="tk">Proof demo, scripted and committed: 1 master + 4 fork-spawned workers; master splits a
         task via <code>team_send</code>, one worker <code>team_ask</code>s the master a clarifying question mid-task,
         workers coordinate results through the team store, master assembles the answer.
@@ -1034,6 +1034,38 @@
         both. Adopting a major version whose only argument is that it exists would be paying an API rewrite for nothing,
         during the task that has the most reason to be about something else. D25&rsquo;s own phrasing left this open;
         this closes it, with a condition rather than a date.</td></tr>
+        <tr><td class="mono">F-D24</td><td class="mono">2026-08-23</td>
+        <td>Building F-D19&rsquo;s fork fast path settled four things the ruling did not specify.
+        (1) <b>What makes agents share a template</b>: everything baked into a memory image &mdash; image flavor, cores,
+        RAM, scratch, the I/O rates, and whether the agent has a spawn budget. <code>cpu_quota</code> is deliberately
+        excluded, because it is a host-side cgroup on the VMM process rather than anything inside the machine, so forks
+        of one snapshot may hold different quotas and each gets its own slice at restore.
+        (2) <b>A <code>workspace</code> disqualifies an agent from forking</b>, for a reason unrelated to networking: a
+        fork copies the template&rsquo;s disk, and the template&rsquo;s disk is whichever agent&rsquo;s directory was
+        packed into it.
+        (3) <b>A group of one cold-boots.</b> A template costs a boot and a snapshot, so forking a single agent is
+        strictly slower than booting it; the saving starts at two.
+        (4) <b>A fork is not told who it is by its own image</b>, and does not need to be. The host has always decided
+        which agent a channel belongs to. The one place a guest still answered that question for itself &mdash; the
+        <code>agent</code> field <code>team_peers</code> returns &mdash; now comes back from the host with the peers.</td>
+        <td>The ruling was right that the obstacle is network identity and that a NIC-less agent has none. What it could
+        not know from outside the code is that <code>Restore</code> was written for <code>kelyfos fork</code>, which
+        restores machines that are nobody in particular: it bound no team channel, carried no agent name, no session, no
+        cgroup. A forked team member with no team channel is a machine in a team that nothing can speak to, so the fast
+        path is only available at all once <code>Restore</code> carries the same identity a cold boot does. That is the
+        real work the ruling implied and did not name, and it is worth recording because it is the part a later reader
+        would assume was free.
+        The identity question looked like the blocker and was not. Every fork of one template carries that
+        template&rsquo;s kernel command line, <code>kelyfos.agent=</code> included &mdash; so on the first live run all
+        four workers reported themselves as <code>worker-1</code>. Nothing about the team was actually wrong: the peers
+        each one got back were its own, the messages routed correctly, the store rules held, because
+        <code>broker.Serve</code> is called with the name the <i>host</i> bound to that machine&rsquo;s channel and a
+        guest&rsquo;s opinion of its own name is never read off the wire. The defect was one echoed field, and the fix
+        makes the host authoritative there too rather than teaching the guest to rename itself &mdash; which is the same
+        stance as everywhere else: the guest is told things it cannot verify, and asserts nothing the host will believe.
+        The exclusions are deliberately conservative. Forking is an optimisation, and an optimisation that quietly hands
+        one agent another&rsquo;s files or another&rsquo;s spawn budget would be paying for milliseconds with the
+        product&rsquo;s only real claim.</td></tr>
     <!-- Claude Code: append rows above this line. -->
       <tr><td class="mono">F-D10</td><td class="mono">2026-08-22</td>
         <td>The resource knobs E1-0 goes looking for shipped <b>partly</b>: <code>--vcpus</code>/<code>--mem</code> and
@@ -2309,6 +2341,102 @@ at 40 columns, the same session:
 $ go list -m -u all | grep charm     no update in either v1 line
 $ govulncheck ./...                  No vulnerabilities found.
 $ go test ./... -race                all packages ok (8 new tests in host)</pre></td></tr>
+        <tr><td class="mono">2026-08-23</td><td class="mono">&mdash;</td>
+        <td>D25&rsquo;s parked Bubble Tea v2 move discharged in PLAN.html as <b>D26</b>, pointing at F-D23 for the
+        reasoning. Two corrections of fact were found while answering it, and both strengthen the decline. The pinned v1
+        modules are the newest release of their line &mdash; <code>go list -m -u all</code> offers no update for either
+        &mdash; and <code>govulncheck ./...</code> reports no vulnerabilities. And the v2 modules are not at the path
+        D25 and F-D23 both give them: their own <code>go.mod</code> files say <code>charm.land/bubbletea/v2</code> and
+        <code>charm.land/lipgloss/v2</code>. Taking v2 would mean depending on a vanity domain this project has never
+        resolved, which is a supply-chain fact neither row could weigh because both had it wrong. F-D23 stays as
+        written; D26 carries the correction, because log rows are immutable and the way to fix one is to append the
+        thing that is true.</td>
+        <td class="mono"><pre>$ go list -m -u all | grep charmbracelet
+github.com/charmbracelet/bubbletea v1.3.10      &lt;- no update offered
+github.com/charmbracelet/lipgloss  v1.1.0       &lt;- no update offered
+$ govulncheck ./...
+No vulnerabilities found.
+$ curl -s proxy.golang.org/github.com/charmbracelet/bubbletea/v2/@v/v2.0.9.mod
+module charm.land/bubbletea/v2
+$ curl -s proxy.golang.org/github.com/charmbracelet/lipgloss/v2/@v/v2.0.6.mod
+module charm.land/lipgloss/v2</pre></td></tr>
+        <tr><td class="mono">2026-08-23</td><td class="mono">E2-9</td>
+        <td><b>The proof demo, and with it F-D19&rsquo;s fork fast path.</b> One master and four workers, the workers
+        forked from a single template because their policy grants them no egress and a fork cannot carry a network
+        identity. The master splits the work over <code>team_send</code>, a worker asks it a clarifying question
+        mid-task and waits, the workers coordinate through the permissioned store, the master assembles. A worker then
+        tries to reach a worker it has no edge to and is refused; an agent with no budget tries to spawn and is refused;
+        the master spawns outside its image whitelist and is refused, spawns within its budget and succeeds, spawns
+        again and is refused. Every refusal is checked twice: the message the agent saw, and the machine-readable reason
+        in the record, which is the half an agent cannot check for itself. <b>20 passed, 0 failed, 1 skipped</b> &mdash;
+        the skip is the sub-second bar, which is not this machine&rsquo;s to decide.
+        <b>The fast path required more than the ruling could know from outside the code</b>, and F-D24 records it:
+        <code>Restore</code> was written for <code>kelyfos fork</code>, which restores machines that are nobody in
+        particular, so it bound no team channel and carried no agent name, no session and no cgroup. A forked team
+        member with no team channel is a machine in a team that nothing can speak to.
+        <b>Four defects found by building it, two of them by an independent read of the working tree.</b> Forked agents
+        were creating their own top-level cgroups instead of joining the team&rsquo;s &mdash; the collective cap would
+        have held a tree with nobody in it and said so while being wrong; <code>dev/prove-team.sh</code> re-run is the
+        regression that proves the fix. The boot path was in <code>team.json</code> and in the terminal but nowhere in
+        the exported transcript, which is precisely where F-D19 asks it to be visible. <code>--ready-timeout</code> and
+        Ctrl-C reached the cold half only. And the first live run showed all four workers reporting themselves as
+        <code>worker-1</code>: harmless, because the host has always decided which agent a channel belongs to, but it
+        was the one place a guest still answered that question for itself, and the answer now comes from the host.
+        <b>The number.</b> On this nested host the template costs 1114 ms to boot and 150 ms to snapshot, each fork then
+        restores in about 400 ms, and the whole team is up in 1760 ms against a cold-boot baseline of roughly 2.2 s per
+        machine. That is over the 1 s bar and is reported as such: the bar binds on the bare-KVM reference (D15) and is
+        measured there, not here.</td>
+        <td class="mono"><pre>$ ARCH=aarch64 bash dev/demo-team.sh        (aarch64, nested &mdash; D15)
+team suppliers: 5 agents, 8 edges
+  template     dev template booted in 1114 ms, snapshotted in 150 ms, forked 4
+  master       8713c88e ready in 1269 ms
+               egress example.com &middot; workspace ./ws
+  worker-1     e976661e ready in 409 ms  (forked)
+  worker-2     0b33ae34 ready in 406 ms  (forked)
+  worker-3     2b0b5938 ready in 372 ms  (forked)
+  worker-4     faed7c8c ready in 432 ms  (forked)
+team up in 1760 ms  (4 forked from 1 template(s), 1 cold)
+PASS  the no-egress workers were forked and the egress-granted master was not
+SKIP  1760 ms is over the 1 s bar on a nested host; the runner decides (D15)
+PASS  the template's image was deleted and all four forks kept running on it
+
+AGENT     SANDBOX   BOOT  CPU   MEM     DISK WRITTEN  EGRESS       REACHES
+master    8713c88e  cold  1.2s  37 MiB  4 KiB         example.com  worker-1 …
+worker-1  e976661e  fork  0.5s  17 MiB  0 B           none         master
+                                 ^ a fork's resident set is a third of a cold
+                                   boot's: the memory image is shared until it
+                                   is written to
+
+master ?&gt; worker-1  "do we count discontinued lines?"
+worker-1 &lt;- master  "no, current lines only"
+worker-1 -&gt; worker-2  no_edge: this team has no edge from worker-1 to worker-2
+worker-1 spawn      denied: worker-1 has no spawn budget
+master   spawn base denied: its budget permits [dev]
+master   spawn dev  master-spawn-1        &lt;- the one the budget allows
+master   spawn dev  denied: already has 1 of its 1
+master-spawn-1 reaches: master             &lt;- one edge, to its spawner
+
+$ kelyfos team down
+  master       workspace written back to &hellip;/team/ws
+  ws/report.txt: assembled: 28 lines across 4 suppliers
+
+$ kelyfos log --session bbfd9fbe --verify
+session bbfd9fbe: chain intact, 35 events verified across 6 agents
+                  (master, worker-1..4, master-spawn-1)
+  team REFUSED worker-1 -&gt; worker-2  (no_edge)
+  team REFUSED worker-1 may not spawn  (no_spawn_budget)
+  team REFUSED master may not spawn  (image_not_permitted)
+  team REFUSED master may not spawn  (budget_exhausted)
+  ready events: 1 cold, 4 forked
+$ kelyfos log --session bbfd9fbe --export team.html
+  agent lanes rendered: 6 &middot; refused flows: 1
+
+$ bash dev/prove-team.sh   (re-run: all five agents are now forked)
+PASS  the collective cap held: 1.97 cores' worth vs cpu_quota = 200%
+PASS  the hierarchy is real: the children's CPU time adds up to the parent's
+  6 passed, 0 failed, 0 skipped
+
+$ go test ./... -race     all packages ok</pre></td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>

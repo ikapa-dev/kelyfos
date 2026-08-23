@@ -323,3 +323,139 @@ func TestATeamWithNoCPUNumbersNeedsNoSlice(t *testing.T) {
 		}
 	}
 }
+
+// An agent granted egress cannot be forked — the guest's address lives inside
+// the memory image every fork would share (F-D17, F-D19). An agent granted none
+// can, and a workspace disqualifies one for a different reason entirely.
+func TestOnlyAgentsWithNothingBakedInAreForkable(t *testing.T) {
+	cases := map[string]struct {
+		a    config.TeamAgent
+		fork bool
+	}{
+		"no egress, no workspace": {config.TeamAgent{Name: "w", Count: 1}, true},
+		"granted egress":          {config.TeamAgent{Name: "w", Count: 1, Allow: []string{"example.com"}}, false},
+		"given a host directory":  {config.TeamAgent{Name: "w", Count: 1, Workspace: "/tmp/x"}, false},
+		"egress and a workspace":  {config.TeamAgent{Name: "w", Count: 1, Allow: []string{"a.com"}, Workspace: "/tmp/x"}, false},
+	}
+	for what, c := range cases {
+		plan, err := planFrom(t, &config.Team{Name: "t", Agents: []config.TeamAgent{c.a}})
+		if err != nil {
+			t.Fatalf("%s: %v", what, err)
+		}
+		if got := plan.agents[0].forkable(); got != c.fork {
+			t.Errorf("%s: forkable = %v, want %v", what, got, c.fork)
+		}
+	}
+}
+
+// A template is only shareable by agents whose machines are identical. cpu_quota
+// is the deliberate exception: it is a host-side cgroup, not part of the image.
+func TestTheForkKeyCoversWhatIsBakedInAndNothingElse(t *testing.T) {
+	base := config.AgentResources{CPUs: 2, MemMiB: 512, ScratchByte: 1 << 20}
+	plan, err := planFrom(t, &config.Team{Name: "t", Agents: []config.TeamAgent{
+		{Name: "a", Count: 1, Resources: base},
+		{Name: "b", Count: 1, Resources: base},
+		{Name: "c", Count: 1, Resources: func() config.AgentResources {
+			r := base
+			r.CPUQuota = 150 // host-side: must NOT split the group
+			return r
+		}()},
+		{Name: "d", Count: 1, Resources: func() config.AgentResources {
+			r := base
+			r.MemMiB = 1024 // baked in: must split the group
+			return r
+		}()},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := func(name string) string {
+		for _, a := range plan.agents {
+			if a.name == name {
+				return a.forkKey()
+			}
+		}
+		t.Fatalf("no agent %q", name)
+		return ""
+	}
+	if key("a") != key("b") {
+		t.Error("two identical agents did not share a template")
+	}
+	if key("a") != key("c") {
+		t.Error("a different cpu_quota split a template; it is a host cgroup, not part of the image")
+	}
+	if key("a") == key("d") {
+		t.Error("a different mem shared a template; mem is the machine's hardware")
+	}
+}
+
+// The saving starts at two: a template costs a boot and a snapshot, so forking
+// one agent is strictly slower than booting it.
+func TestAGroupOfOneColdBoots(t *testing.T) {
+	plan, err := planFrom(t, &config.Team{Name: "t", Agents: []config.TeamAgent{
+		{Name: "master", Count: 1, Allow: []string{"example.com"}},
+		{Name: "solo", Count: 1, Resources: config.AgentResources{MemMiB: 256}},
+		{Name: "worker", Count: 4, Resources: config.AgentResources{MemMiB: 384}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	groups, cold := plan.forkPlan()
+	if len(groups) != 1 {
+		t.Fatalf("got %d fork groups, want 1 (the four workers)", len(groups))
+	}
+	for _, idx := range groups {
+		if len(idx) != 4 {
+			t.Errorf("the fork group has %d members, want 4", len(idx))
+		}
+	}
+	var coldNames []string
+	for _, i := range cold {
+		coldNames = append(coldNames, plan.agents[i].name)
+	}
+	if got := strings.Join(coldNames, " "); got != "master solo" {
+		t.Errorf("cold-booted %q, want the egress-granted master and the lone worker", got)
+	}
+	// Every agent is accounted for exactly once, or a team would come up short.
+	seen := len(cold)
+	for _, idx := range groups {
+		seen += len(idx)
+	}
+	if seen != len(plan.agents) {
+		t.Errorf("the boot plan covers %d of %d agents", seen, len(plan.agents))
+	}
+}
+
+// The plan covers every agent exactly once and the cold list is stable, because
+// the order the terminal prints is the order the file declares.
+func TestForkPlanIsStableAndComplete(t *testing.T) {
+	plan, err := planFrom(t, &config.Team{Name: "t", Agents: []config.TeamAgent{
+		{Name: "master", Count: 1, Allow: []string{"a.com"}},
+		{Name: "alpha", Count: 3, Resources: config.AgentResources{MemMiB: 256}},
+		{Name: "beta", Count: 2, Resources: config.AgentResources{MemMiB: 512}},
+		{Name: "keeper", Count: 1, Workspace: "/tmp/k"},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 5; i++ {
+		groups, cold := plan.forkPlan()
+		if len(groups) != 2 {
+			t.Fatalf("got %d groups, want two (three alphas, two betas)", len(groups))
+		}
+		var names []string
+		for _, i := range cold {
+			names = append(names, plan.agents[i].name)
+		}
+		if got := strings.Join(names, " "); got != "master keeper" {
+			t.Fatalf("cold list = %q, want a stable \"master keeper\"", got)
+		}
+		seen := len(cold)
+		for _, idx := range groups {
+			seen += len(idx)
+		}
+		if seen != len(plan.agents) {
+			t.Fatalf("the plan covers %d of %d agents", seen, len(plan.agents))
+		}
+	}
+}

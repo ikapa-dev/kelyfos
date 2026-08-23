@@ -141,12 +141,24 @@ func (c *teamClient) reply(correlate string, body []byte) error {
 	return err
 }
 
-func (c *teamClient) peers() ([]string, error) {
+// peers returns who this agent may reach, and who the host says this agent is.
+//
+// The second half matters because of forks. This guest learned its name from
+// the kernel command line, and a forked guest shares the memory image — and so
+// the command line — of the template it was made from, so that name can be a
+// whole agent out of date. The host has always decided which agent a channel
+// belongs to; taking the name from the same answer keeps the guest from
+// contradicting it (E2-9, F-D19).
+func (c *teamClient) peers() (name string, peers []string, err error) {
 	resp, err := c.call(proto.TeamRequest{Op: proto.OpTeamPeers})
 	if err != nil {
-		return nil, err
+		return "", nil, err
 	}
-	return resp.Peers, nil
+	name = resp.Agent
+	if name == "" {
+		name = c.agent
+	}
+	return name, resp.Peers, nil
 }
 
 func (c *teamClient) spawn(image string) (string, error) {

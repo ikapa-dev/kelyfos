@@ -77,7 +77,7 @@ KERNEL_ARTIFACT := vmlinux
 endif
 
 .DEFAULT_GOAL := help
-.PHONY: help versions toolchain kernel supervisor cli image run bench prove-caps prove-team clean test test-integration linux-only fetch-kernel
+.PHONY: help versions toolchain kernel supervisor cli image run bench prove-caps prove-team demo-team clean test test-integration linux-only fetch-kernel
 
 help: ## Show this target list
 	@echo "KelyfOS — targets (ARCH=$(ARCH), FLAVOR=$(FLAVOR))"
@@ -218,6 +218,12 @@ prove-caps: linux-only cli ## Drive every resource cap past its limit and check 
 prove-team: linux-only cli ## Drive a five-agent team past its collective CPU cap and check it held
 	@echo "note: binding numbers come from the bare-KVM CI runner (D15); this run is informational"
 	ARCH=$(ARCH) bash $(CURDIR)/dev/prove-team.sh
+
+# Epic E2's proof: a real five-agent team doing real work, driven through the
+# real MCP tools on five real microVMs (E2-9).
+demo-team: linux-only cli ## Run the agent-teams proof demo end to end
+	@echo "note: binding numbers come from the bare-KVM CI runner (D15); this run is informational"
+	ARCH=$(ARCH) bash $(CURDIR)/dev/demo-team.sh
 
 run: cli ## Boot a microVM from the built image under Firecracker
 	$(OUT_DIR)/kelyfos run --image $(FLAVOR) --arch $(ARCH)

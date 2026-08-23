@@ -1381,6 +1381,29 @@ after:
         current release of their line and neither carries an advisory. E1-7 adds a resources lane to <code>kelyfos watch</code>
         and E2-8 rebuilds it as a multi-lane team view, so the file is going to be rewritten on purpose soon enough; that
         is when the v2 API should be adopted, if it is adopted at all, and the work will be paid for once instead of twice.</td></tr>
+        <tr><td class="mono">D26</td><td class="mono">2026-08-23</td>
+        <td><b>D25 is discharged: the Bubble Tea v2 / Lip Gloss v2 move is declined, not deferred again.</b> KelyfOS
+        stays on <code>bubbletea v1.3.10</code> and <code>lipgloss v1.1.0</code>. The full reasoning is
+        <b>F-D23</b> in PLAN-FEATURES.html; this row exists so a reader of <i>this</i> file does not find D25&rsquo;s
+        condition still open and pointing at a task that has already happened.
+        Two corrections of fact to D25 while it is being answered. The v1 pins are the newest release of their line
+        (<code>go list -m -u all</code> offers no update for either), and <code>govulncheck ./...</code> is clean. And
+        the v2 modules are <b>not</b> at the path D25 gives them: their <code>go.mod</code> files say
+        <code>charm.land/bubbletea/v2</code> and <code>charm.land/lipgloss/v2</code>, not
+        <code>github.com/charmbracelet/&hellip;/v2</code>.</td>
+        <td>D25 named its own revisit point &mdash; &ldquo;E1-7&hellip; and E2-8 rebuilds it as a multi-lane team view;
+        that is when the v2 API should be adopted, <i>if it is adopted at all</i>.&rdquo; E1-7 passed without the question
+        being asked, and E2-8 has now rebuilt the file. Leaving it open a third time would turn a decision into a habit,
+        and log rows are immutable, so the only way to discharge a stale condition is to append the answer.
+        The answer is that E2-8 needed nothing v2 has: the multi-lane view is fixed-width columns, a bounded ticker and
+        a status line, and the one library call that carries weight &mdash; measuring a styled string in terminal
+        columns &mdash; exists in both. Adopting a major version whose only argument is that it exists would be paying
+        an API rewrite for nothing, in the middle of the task with the most reason to be about something else. That is
+        D25&rsquo;s own argument, applied to the moment D25 pointed at.
+        The module-path correction matters more than it looks: taking v2 would mean depending on a vanity domain this
+        project has never resolved, which is a supply-chain fact neither D25 nor F-D23 could weigh because both had it
+        wrong. F-D23&rsquo;s condition for revisiting stands and is better than a date: a v2 API this project actually
+        needs, an advisory on a v1 pin, or the v1 line ceasing to receive releases.</td></tr>
     <!-- Claude Code: append rows above this line. -->
   </table>
 </section>

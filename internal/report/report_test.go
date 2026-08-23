@@ -236,3 +236,52 @@ func TestTheTimeGutterIsPinnedToColumnOne(t *testing.T) {
 		t.Error("the lane view's time gutter is not pinned to column 1")
 	}
 }
+
+// F-D19 asks for the two boot paths to be visible rather than inferred, and a
+// transcript that does not carry it is exactly where it would go missing.
+func TestTheBootPathIsInTheTranscript(t *testing.T) {
+	cold := ev(recorder.TypeSessionReady, "master")
+	cold.Via, cold.BootMS, cold.Image = "cold", 1283, "dev"
+	forked := ev(recorder.TypeSessionReady, "worker-1")
+	forked.Via, forked.BootMS, forked.Image = "fork", 411, "dev"
+
+	_, rows := buildLanes([]recorder.Event{cold, forked})
+	if len(rows) != 2 {
+		t.Fatalf("got %d lane rows, want one per agent", len(rows))
+	}
+	if !strings.Contains(rows[0].Detail, "cold boot") {
+		t.Errorf("the cold boot is not spelled out: %q", rows[0].Detail)
+	}
+	if !strings.Contains(rows[1].Detail, "forked from a shared template") {
+		t.Errorf("the fork is not spelled out: %q", rows[1].Detail)
+	}
+	if !strings.Contains(rows[1].Title, "411 ms") {
+		t.Errorf("the fork's readiness time is missing: %q", rows[1].Title)
+	}
+
+	// And in the flat timeline, without overwriting the header's single set of
+	// boot figures with whichever agent happened to be last.
+	html := render(t, []recorder.Event{cold, forked})
+	for _, want := range []string{"master ready", "worker-1 ready", "forked from a shared template"} {
+		if !strings.Contains(html, want) {
+			t.Errorf("the report is missing %q", want)
+		}
+	}
+}
+
+// A team's per-agent ready events must not become the session's boot figures:
+// the header would show whichever agent was last, with a blank kernel.
+func TestPerAgentReadyDoesNotBecomeTheSessionsBootFigures(t *testing.T) {
+	a := ev(recorder.TypeSessionReady, "master")
+	a.Via, a.BootMS = "cold", 1283
+	b := ev(recorder.TypeSessionReady, "worker-1")
+	b.Via, b.BootMS = "fork", 411
+	var buf bytes.Buffer
+	if err := Render(&buf, "s1", []recorder.Event{a, b}, nil); err != nil {
+		t.Fatal(err)
+	}
+	// 411 is worker-1's, and it must not be reported as the session's boot time.
+	if strings.Contains(buf.String(), `<div class="n">411</div>`) {
+		t.Error("an agent's boot time was rendered as the whole session's")
+	}
+}

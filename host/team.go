@@ -68,6 +68,8 @@ type teamState struct {
 	Agents    []struct {
 		Name    string `json:"name"`
 		Sandbox string `json:"sandbox"`
+		// Via is how this machine started: "cold" or "fork" (F-D19).
+		Via string `json:"via,omitempty"`
 	} `json:"agents"`
 	Edges []string `json:"edges"`
 	// CGroup is the team's parent slice, when it has one. omitempty and read
@@ -200,6 +202,7 @@ func teamUp(argv []string) error {
 		if err != nil {
 			return err
 		}
+		rig.via = "cold"
 		sb := rig.sb
 		crew.add(rig, req.Spawner+" -> "+req.Name, req.Name+" -> "+req.Spawner)
 		fmt.Printf("  %-12s %s spawned by %s, ready in %d ms\n",
@@ -223,11 +226,17 @@ func teamUp(argv []string) error {
 		return nil
 	}
 
-	// Booted together, not one after another. Each agent is an independent
-	// machine with its own TAP, its own image and its own caps, and nothing
-	// about the second depends on the first — so a team of five costs one boot
-	// rather than five (F-D17 on why this is not fork-based).
+	// Two paths, chosen per agent and decided before anything starts.
+	//
+	// An agent its policy granted egress cold-boots, because a fork cannot carry
+	// a network identity — the guest's address lives inside the memory image
+	// every fork shares (F-D17). An agent granted none has no identity to
+	// collide, so a group of them is booted once as a template, snapshotted, and
+	// restored N times (F-D19). Both paths run concurrently with each other;
+	// within a group the template has to finish first, because it is what the
+	// forks are made of.
 	started := time.Now()
+	groups, cold := plan.forkPlan()
 	type booted struct {
 		i   int
 		rig *agentRig
@@ -235,13 +244,50 @@ func teamUp(argv []string) error {
 	}
 	results := make(chan booted, len(plan.agents))
 	var wg sync.WaitGroup
-	for i, a := range plan.agents {
+	for _, i := range cold {
 		wg.Add(1)
-		go func(i int, a plannedAgent) {
+		go func(i int) {
 			defer wg.Done()
-			rig, err := bootAgent(ctx, a, broker, rec, teamSlice, *arch, *timeout)
+			rig, err := bootAgent(ctx, plan.agents[i], broker, rec, teamSlice, *arch, *timeout)
+			if rig != nil {
+				rig.via = "cold"
+			}
 			results <- booted{i, rig, err}
-		}(i, a)
+		}(i)
+	}
+	for _, idx := range groups {
+		wg.Add(1)
+		go func(idx []int) {
+			defer wg.Done()
+			a := plan.agents[idx[0]]
+			snapDir, boot, snap, err := bootTemplate(ctx, a, sessionID, *arch, *timeout)
+			if err != nil {
+				for _, i := range idx {
+					results <- booted{i, nil, err}
+				}
+				return
+			}
+			// Printed because it is the whole engineering content of the fast
+			// path: a reader who sees only the total cannot tell whether it is
+			// one cold boot plus four cheap restores, or something else.
+			fmt.Printf("  %-12s %s template booted in %d ms, snapshotted in %d ms, forked %d\n",
+				"template", a.image, boot.Milliseconds(), snap.Milliseconds(), len(idx))
+			// The template's image is a temporary: it exists to be copied and
+			// is gone before the team is up. Leaving one behind per run would
+			// accumulate half-gigabyte files nobody asked for.
+			defer os.RemoveAll(snapDir)
+			var fwg sync.WaitGroup
+			for _, i := range idx {
+				fwg.Add(1)
+				go func(i int) {
+					defer fwg.Done()
+					rig, err := forkAgent(ctx, plan.agents[i], snapDir, broker, rec,
+						teamSlice, *arch, *timeout)
+					results <- booted{i, rig, err}
+				}(i)
+			}
+			fwg.Wait()
+		}(idx)
 	}
 	wg.Wait()
 	close(results)
@@ -268,13 +314,28 @@ func teamUp(argv []string) error {
 		return bootErr
 	}
 	for i, rig := range order {
-		fmt.Printf("  %-12s %s ready in %d ms\n",
-			plan.agents[i].name, rig.sb.State.ID, rig.sb.State.BootReadyMS)
+		how := ""
+		if rig.via == "fork" {
+			how = "  (forked)"
+		}
+		fmt.Printf("  %-12s %s ready in %d ms%s\n",
+			plan.agents[i].name, rig.sb.State.ID, rig.sb.State.BootReadyMS, how)
 		if d := describeAgent(plan.agents[i], rig, plan.budget.CPUQuota > 0); d != "" {
 			fmt.Printf("  %-12s %s\n", "", d)
 		}
+		// Which path a machine took is a fact about that machine, so it belongs
+		// in the record beside everything else about it rather than only in the
+		// terminal that happened to be watching (F-D19).
+		_ = rec.Append(recorder.Event{Type: recorder.TypeSessionReady, Agent: rig.name,
+			Image: plan.agents[i].image, Via: rig.via, BootMS: rig.sb.State.BootReadyMS})
 	}
-	fmt.Printf("team up in %d ms\n", time.Since(started).Milliseconds())
+	total := time.Since(started)
+	if forked := len(plan.agents) - len(cold); forked > 0 {
+		fmt.Printf("team up in %d ms  (%d forked from %d template(s), %d cold)\n",
+			total.Milliseconds(), forked, len(groups), len(cold))
+	} else {
+		fmt.Printf("team up in %d ms\n", total.Milliseconds())
+	}
 
 	// On the systemd path the parent's directory is systemd's to choose, so it
 	// is learned from where a child actually landed rather than predicted; then
@@ -341,6 +402,10 @@ type agentRig struct {
 	ws    *sandbox.Workspace
 	slice *sandbox.Slice
 	rec   *recorder.Recorder
+	// via is how this machine started: "cold" or "fork". F-D19 asks for the
+	// two paths to be visible rather than inferred, so it travels into
+	// team.json, into `team ps`, and into the transcript.
+	via string
 }
 
 // stop unwinds one member in the reverse of the order it was built. The machine
@@ -564,6 +629,135 @@ func bootAgent(ctx context.Context, a plannedAgent, broker *team.Broker, rec *re
 	return rig, nil
 }
 
+// bootTemplate boots the machine a group of agents will be forked from, and
+// returns the snapshot directory holding it. The template itself does not
+// survive: it is a mould, it is never in the roster, it never appears in the
+// transcript as an agent, and it is stopped as soon as its image is on disk.
+//
+// It is booted with no team channel and no cgroup on purpose. It has no work to
+// do and nothing to say to the broker; giving it either would put a machine in
+// the team that the user never declared.
+//
+// That it is safe rests on one property, written down here because it is
+// load-bearing and easy to break: the guest dials its team channel *lazily*, on
+// the first team tool call, and nothing calls one on a template. If the guest
+// ever dialled at boot instead, the failed connection would be frozen into the
+// memory image and inherited by every fork made from it. The template is given
+// a real agent's name for a narrower reason — the guest lists its team tools at
+// all only when `kelyfos.agent` is set, and a fork must come up with them.
+func bootTemplate(ctx context.Context, a plannedAgent, sessionID, arch string,
+	timeout time.Duration) (snapDir string, boot, snap time.Duration, err error) {
+
+	// Structural rather than incidental: forkable() already excludes an agent
+	// with a workspace, and if that ever changes this is where the damage would
+	// start — every fork would get a copy of one agent's files.
+	if a.workspace != "" {
+		return "", 0, 0, fmt.Errorf("internal: %s has a workspace and cannot be a fork template", a.name)
+	}
+	id, err := sandbox.NewID()
+	if err != nil {
+		return "", 0, 0, err
+	}
+	sb, err := sandbox.New(sandbox.Options{
+		ID: id, Arch: arch, Flavor: a.image, Agent: a.name, MaySpawn: a.spawn != nil,
+		VcpuCount: a.res.CPUs, MemMiB: a.res.MemMiB, ScratchBytes: a.res.ScratchByte,
+		IO: sandbox.IOLimits{NetMbpsRx: a.res.NetMbpsRx, NetMbpsTx: a.res.NetMbpsTx,
+			DiskIOPS: a.res.DiskIOPS, DiskMbps: a.res.DiskMbps},
+		Quiet: true,
+	})
+	if err != nil {
+		return "", 0, 0, err
+	}
+	defer func() { _ = sb.Shutdown(5 * time.Second) }()
+	started := time.Now()
+	if err := sb.Start(ctx); err != nil {
+		return "", 0, 0, err
+	}
+	readyCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	if _, err := sb.WaitReady(readyCtx); err != nil {
+		return "", 0, 0, fmt.Errorf("the fork template never became ready: %w", err)
+	}
+	boot = time.Since(started)
+	snapped := time.Now()
+	snapDir = filepath.Join(sandbox.Root(), "snapshots", "team-"+sessionID+"-"+id)
+	if _, _, err := sb.Snapshot(snapDir); err != nil {
+		_ = os.RemoveAll(snapDir)
+		return "", 0, 0, fmt.Errorf("snapshot the fork template: %w", err)
+	}
+	if err := sandbox.WriteSnapshotMeta(snapDir, sandbox.SnapshotMeta{
+		Arch: arch, Flavor: a.image,
+	}); err != nil {
+		_ = os.RemoveAll(snapDir)
+		return "", 0, 0, err
+	}
+	return snapDir, boot, time.Since(snapped), nil
+}
+
+// forkAgent restores one member from a template's snapshot.
+//
+// Everything that makes this machine *this agent* is supplied here rather than
+// read out of the image: its name, the session it records into, its own cgroup
+// slice, and its own team channel bound to its own name. The image is shared;
+// the identity is not, and the host is the side that holds it.
+func forkAgent(ctx context.Context, a plannedAgent, snapDir string, broker *team.Broker,
+	rec *recorder.Recorder, slice *sandbox.TeamSlice, arch string,
+	timeout time.Duration) (*agentRig, error) {
+
+	// A Ctrl-C during a fan-out should stop the fan-out, not be discovered
+	// four machines later.
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	id, err := sandbox.NewID()
+	if err != nil {
+		return nil, err
+	}
+	rig := &agentRig{name: a.name, rec: rec, via: "fork"}
+	ok := false
+	defer func() {
+		if !ok {
+			rig.slice.Close()
+		}
+	}()
+	opts := sandbox.Options{
+		ID: id, Arch: arch, Flavor: a.image, Agent: a.name, Session: rec.Session(),
+		MaySpawn:  a.spawn != nil,
+		VcpuCount: a.res.CPUs, MemMiB: a.res.MemMiB, ScratchBytes: a.res.ScratchByte,
+		Quiet: true,
+		OnTeamRequest: func(req proto.TeamRequest) proto.TeamResponse {
+			return broker.Serve(a.name, req)
+		},
+	}
+	// Inside the team's slice, exactly as a cold-booted agent is. A fork that
+	// created its own top-level cgroup would be capped individually and bounded
+	// by nothing — the collective cap would hold a tree with nobody in it, and
+	// would say so while being wrong (E2-6).
+	switch {
+	case slice != nil:
+		child, err := slice.Agent(id, a.res.CPUQuota, sandbox.DefaultCPUWeight)
+		if err != nil {
+			return nil, err
+		}
+		rig.slice = child
+		opts.CPUSlice = child
+	case a.res.CPUQuota > 0:
+		child, err := sandbox.NewCPUSlice(id, a.res.CPUQuota)
+		if err != nil {
+			return nil, fmt.Errorf("cpu_quota: %w", err)
+		}
+		rig.slice = child
+		opts.CPUSlice = child
+	}
+	sb, _, err := sandbox.Restore(snapDir, opts)
+	if err != nil {
+		return nil, err
+	}
+	rig.sb = sb
+	ok = true
+	return rig, nil
+}
+
 // describeAgent is the one-line summary `up` prints under each member: what it
 // was given, said in the same words `kelyfos run` uses for a single sandbox.
 // Silence would read as "nothing was applied", which is exactly the mistake
@@ -660,7 +854,8 @@ func (r *roster) write() error {
 		st.Agents = append(st.Agents, struct {
 			Name    string `json:"name"`
 			Sandbox string `json:"sandbox"`
-		}{rig.name, rig.sb.State.ID})
+			Via     string `json:"via,omitempty"`
+		}{rig.name, rig.sb.State.ID, rig.via})
 	}
 	r.mu.Unlock()
 
@@ -687,7 +882,7 @@ func teamPS(argv []string) error {
 		time.Since(st.StartedAt).Truncate(time.Second), st.Session)
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "AGENT\tSANDBOX\tCPU\tMEM\tDISK WRITTEN\tEGRESS\tREACHES")
+	fmt.Fprintln(w, "AGENT\tSANDBOX\tBOOT\tCPU\tMEM\tDISK WRITTEN\tEGRESS\tREACHES")
 	for _, a := range st.Agents {
 		cpu, mem, disk := "—", "—", "—"
 		// "none" rather than a blank: an agent with no network interface is a
@@ -706,7 +901,12 @@ func teamPS(argv []string) error {
 				out = strings.Join(state.Allow, ",")
 			}
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", a.Name, a.Sandbox, cpu, mem, disk, out,
+		via := a.Via
+		if via == "" {
+			via = "—"
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			a.Name, a.Sandbox, via, cpu, mem, disk, out,
 			strings.Join(reaches(st, a.Name), " "))
 	}
 	_ = w.Flush()
