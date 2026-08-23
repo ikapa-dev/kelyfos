@@ -816,6 +816,24 @@
         another agent, which is a request the guest has to originate. The host is the only participant that can answer it:
         it is the only one holding the edge list, the other guests' channels, and the audit chain. A guest asks; a guest is
         never asked to route, and no guest ever receives a connection from another guest because there is no path for one.</td></tr>
+        <tr><td class="mono">F-D16</td><td class="mono">2026-08-23</td>
+        <td>The <code>[team]</code> schema is read by <b>extending KelyfOS's own parser</b>, not by taking a TOML library.
+        The parser gains array-of-tables (<code>[[team.agent]]</code>) and one level of nested table
+        (<code>[team.agent.resources]</code>), and goes on refusing everything it does not recognise, by name and line.
+        Revisit if the schema ever needs inline tables, dotted keys or datetimes: at that point the subset stops being a
+        subset a person can hold in their head, and <code>github.com/BurntSushi/toml</code> is the one to take.</td>
+        <td>Both alternatives were checked rather than assumed. <code>BurntSushi/toml v1.6.0</code> (2025-12-18, MIT, 5.0k
+        stars, no transitive dependencies) and <code>pelletier/go-toml/v2 v2.4.3</code> (2026-07-05, MIT, 2.0k stars) are
+        both current, both maintained, and either would parse this schema correctly today and every schema after it. The
+        argument against is not their quality; it is what this particular file is. <code>kelyfos.toml</code> is
+        <i>policy</i> &mdash; who may talk to whom, what may leave the network, which secrets exist. This project's whole
+        pitch is that the policy is enforced and auditable, and for that job a parser a reader can audit in ten minutes is
+        worth more than a general one nobody here will read. The usual objection to hand-rolling &mdash; that it will
+        misparse something &mdash; is blunted by the rule the parser already follows everywhere: anything it does not
+        understand is an error naming the line, never a silent skip. The failure mode is a refusal, not a misreading, and a
+        refusal is the failure mode this project picks everywhere else. The cost is honest: every schema growth is parser
+        work, and a user who writes valid TOML outside the subset is told no. That is the trade, and the condition for
+        reversing it is written above rather than left to taste.</td></tr>
     <!-- Claude Code: append rows above this line. -->
       <tr><td class="mono">F-D10</td><td class="mono">2026-08-22</td>
         <td>The resource knobs E1-0 goes looking for shipped <b>partly</b>: <code>--vcpus</code>/<code>--mem</code> and
