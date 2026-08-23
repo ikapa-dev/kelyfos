@@ -42,6 +42,7 @@ const (
 	TypeResourceSummary = "resource.summary"
 	TypeTeamMessage     = "team.message"
 	TypeTeamRefused     = "team.refused"
+	TypeTeamStore       = "team.store"
 )
 
 // Sources.

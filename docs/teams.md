@@ -252,9 +252,27 @@ enabled = true
 ```
 
 Unlisted keys are readable and writable by the whole team. A listed key is
-readable and writable only by what it lists. Every access — permitted or not —
-is an event in the flight recorder, which is the difference between shared state
-and shared state you can account for afterwards.
+readable and writable only by what it lists, so **adding a rule can only narrow
+access, never widen it** — the direction a policy file should be able to move a
+permission in. The first rule whose key matches decides, so a reader can stop at
+the first line that mentions the key.
+
+Every access — permitted or not — is an event in the flight recorder, which is
+the difference between shared state and shared state you can account for
+afterwards.
+
+Two limits, neither of them a security boundary (the sandbox is that): a value
+is at most 1 MiB and a team's store at most 64 MiB. A store with no bound is a
+way for one agent to make the host hold an unbounded amount of data on the
+team's behalf, and a team that hits a limit gets an error rather than a host that
+has quietly swallowed a gigabyte.
+
+**Absence is not a refusal.** Reading a key that was never written is
+`not_found`; reading one you may not read is `denied`. An agent that cannot tell
+the two apart retries the wrong problem.
+
+Nothing in the tool surface enumerates keys. A key *name* can itself be
+information one agent has and another does not.
 
 ### 4.1 Why a store rather than shared memory or a shared disk
 

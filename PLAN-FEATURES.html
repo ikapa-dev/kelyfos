@@ -126,7 +126,7 @@
      improvements to the existing product land here as epics. Inert until its gate opens.</p>
   <div class="meta">
     owner: <b>John</b> &nbsp;&middot;&nbsp; developer: <b>Claude Code</b> &nbsp;&middot;&nbsp;
-    status: <b class="ok" id="meta-status">Epic E2 — active, 3/10 (next: E2-3, the team store)</b> &nbsp;&middot;&nbsp;
+    status: <b class="ok" id="meta-status">Epic E2 — active, 4/10 (next: E2-4, kelyfos team up)</b> &nbsp;&middot;&nbsp;
     last updated: <b id="meta-updated">2026-08-23</b><br>
     repo file: <b>PLAN-FEATURES.html</b> (lives at the repository root next to <code>PLAN.html</code>)<br>
     <span class="quiet">Companion to PLAN.html — same protocol, same rules, later timeline.</span>
@@ -166,7 +166,7 @@
     <span class="bl-name">All epics</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">E2-3 — the team store: a host-side key/blob store with per-key access rules</b></div>
+  <div class="focusline">Current focus: <b id="focus">E2-4 — <code>kelyfos team up | ps | down</code>: where the broker first meets real VMs</b></div>
 </div>
 
 <!-- ====================================================== 1. ACTIVATION GATE -->
@@ -352,7 +352,7 @@
         MCP tool events, so answering is natural for an LLM.
         <code>team_peers</code> returns only the agents this node can <i>initiate</i> to (edge-direction rule in E2-0) — an agent
         cannot enumerate the rest of the team.</span></li>
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">E2-3</span><span class="tk">Team store: host-side key/blob store per team, the &ldquo;shared knowledge&rdquo; mechanism.
         Per-key access rules (owner / listed agents / whole team). Stated plainly in the docs, as two separate facts with separate reasons:
         cross-VM shared RAM is impossible here because Firecracker ships no shared-memory device (its minimal model — F-D1&rsquo;s
@@ -1670,6 +1670,41 @@ the surface, as a model sees it:
   team_store_put   key, value                  -&gt; stored
 
 listed only when kelyfos.agent is on the kernel command line.</pre></td></tr>
+        <tr><td class="mono">2026-08-23</td><td class="mono">E2-3</td>
+        <td>The team store: host-side, per-key access rules, every access recorded whether it was permitted or not. The
+        two impossibilities it exists to replace were already written down at E2-0 as two facts with two reasons, and the
+        code repeats them where someone changing it will read them &mdash; no shared RAM because Firecracker ships no
+        shared-memory device and its minimal model is the security posture; no dual read-write ext4 because ext4 is not a
+        cluster filesystem, which is true on any hypervisor and has nothing to do with Firecracker. Read-only
+        multi-mounting is fine and the fork design already relies on it.
+        <b>Four decisions the implementation had to make, all of them written into the doc as well.</b> A key no rule
+        mentions belongs to the whole team, and a rule can therefore only ever <i>narrow</i> access &mdash; which is the
+        direction a policy file should be able to move a permission in. The first matching rule decides, so a reader can
+        stop at the first line that mentions the key. <b>Absence is not a refusal</b>: reading a key that was never
+        written is <code>not_found</code> and reading one you may not read is <code>denied</code>, because an agent that
+        cannot tell the two apart retries the wrong problem. And nothing in the tool surface enumerates keys, because a key
+        name is itself information one agent has and another does not.
+        Two limits, neither of them a security boundary: 1 MiB a value, 64 MiB a team. A store with no bound is a way for
+        one agent to make the host hold an unbounded amount of data on the team's behalf, and the test that overwrites one
+        key eighty times is there because the obvious implementation of a total counts every overwrite as new.
+        Values never reach the flight recorder. The store is shared state, not a second copy of it, and a log that mirrored
+        every write would be exactly that.</td>
+        <td class="mono"><pre>$ go test -race ./internal/team/
+--- PASS: TestStoreRulesNarrowAccessAndNeverWidenIt
+      worker writes findings/*        ok
+      worker reads them back          denied   (the master's to read)
+      worker overwrites "plan"        denied   (the master's to write)
+      worker reads "plan"             ok       (read = ["*"])
+      anyone touches "scratchpad"     ok       (no rule mentions it)
+--- PASS: TestEveryStoreAccessIsRecorded          3 accesses, 3 events
+--- PASS: TestAbsenceIsNotARefusal                not_found, not denied
+--- PASS: TestStoreRulesNamingNobodyAreRefusedAtBuildTime
+--- PASS: TestStoreIsBounded                      80 overwrites of one 1 MiB key
+--- PASS: TestABrokerWithNoStoreSaysSo
+ok  internal/team  1.804s   (20 tests)
+
+new in the schema: team.store with agent, peer (the key), kind, outcome,
+reason and bytes — and never the value.</pre></td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>

@@ -58,6 +58,11 @@ const (
 // becoming a message broker with durability guarantees it would then have to
 // keep, and the audit log is not the queue in disguise — it records outcomes.
 type Broker struct {
+	// Store is the team's shared state, or nil for a team without one. Set
+	// after New, because a team may have no store and a broker with a nil one
+	// should refuse store calls rather than pretend to have lost the data.
+	Store *Store
+
 	topo    *Topology
 	record  func(Event)
 	capture bool
@@ -166,6 +171,22 @@ func (b *Broker) Reply(from, tag string, body []byte) error {
 	default:
 	}
 	return nil
+}
+
+// StoreGet and StorePut are the broker's face on the team store, so a guest
+// reaches everything through one channel and one set of refusals.
+func (b *Broker) StoreGet(agent, key string) ([]byte, error) {
+	if b.Store == nil {
+		return nil, &Error{Kind: "denied", Message: "this team has no store"}
+	}
+	return b.Store.Get(agent, key)
+}
+
+func (b *Broker) StorePut(agent, key string, value []byte) error {
+	if b.Store == nil {
+		return &Error{Kind: "denied", Message: "this team has no store"}
+	}
+	return b.Store.Put(agent, key, value)
 }
 
 // Recv takes the next message for an agent.

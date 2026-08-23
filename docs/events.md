@@ -202,6 +202,21 @@ These events say what happened to a message, not what will happen to it. The
 recorder is not a delivery buffer: delivery is at-most-once and nothing is ever
 redelivered from the log (`docs/teams.md` §6.1).
 
+### `team.store`
+One access to the team store, permitted or not. Written from E2-3.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `agent` | string | Who asked. |
+| `peer` | string | The key — the store's equivalent of the other end. |
+| `kind` | string | `get` or `put`. |
+| `outcome` | string | `delivered` or `refused`. |
+| `reason` | string | `denied`, `no_such_key`, `value_too_large`, `store_full`. |
+| `bytes` | integer | Size of the value read or written. |
+
+Values are never recorded. The store is shared state, not a second copy of it,
+and a log that mirrored every write would be exactly that.
+
 ### `resource.summary`
 The usage receipt, written once at teardown. Written from E1-7.
 
@@ -282,6 +297,7 @@ a reader should present the session as open rather than truncated.
 | `resource.timeout` naming the budget that fired | E1-6 |
 | `resource.summary` usage receipt at teardown | E1-7 |
 | `team.message` and `team.refused` for every inter-agent message | E2-1 |
+| `team.store` for every store access, permitted or not | E2-3 |
 | HTML session export built only from this file | P3-8 |
 | Live TUI built only from this file | P3-9 |
 | Signed exports verifiable offline | P4-3 |
