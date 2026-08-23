@@ -4,11 +4,10 @@ Updated 2026-08-23 · tree clean, synced with origin/main
 
 ## Plans
 - PLAN.html — 36/43. P4 backlog non-blocking, parked (P4-4/P4-5 [BLOCKED]).
-- PLAN-FEATURES.html — 34/42. **E1–E4 closed; v0.7 released. Next: the seam.**
+- PLAN-FEATURES.html — 35/42. **E1–E4 closed, v0.7 released. Epic E5 at 1/8.**
 
 ## Now
-Seam check done (kernel 6.18.46, F-D52); the bench is re-earning the bars. Next:
-E5-0. Buildroot is queued behind an upstream outage.
+E5-1 — named sessions: `pause --as`, `resume`, `sessions`, per `docs/qol.md` §1.
 
 ## This session
 E1–E3 closed, **v0.6 released**; then the F-D33 batch and the E3→E4 seam check.

@@ -41,6 +41,7 @@ hand-written half, and this page says where each is still thin.
 | [`networking.md`](networking.md) | mixed | Why a sandbox has no NIC by default, what `--allow` builds, the nftables template, and why the guest has no DNS. |
 | [`resources.md`](resources.md) | mixed | Every resource cap: units, precedence, what enforces it, and what happens when it is reached. |
 | [`teams.md`](teams.md) | mixed | The `[team]` schema, the host broker and its edge rules, the team store, the collective budget, and how a team boots. |
+| [`qol.md`](qol.md) | concept | The v0.8 specification, written before the code: named sessions and their store, the workspace manifest, the PTY channel, and why inbound forwarding does not touch the firewall. |
 | [`mcp-surface.md`](mcp-surface.md) | concept | MCP in both directions: `serve-mcp` as a tool for any client, and `[[plugin]]` servers inside the guest. Specification, written before the code. |
 | [`threat-model.md`](threat-model.md) | concept | What KelyfOS defends against and — the longer half — what it does not. |
 | [`cookbook.md`](cookbook.md) | recipes | Eleven complete, copy-pasteable recipes. Every one is a script CI extracts and runs on a real machine. |
@@ -184,6 +185,18 @@ it, and the audit lane in each direction.
 they are that shape. Where it and the code disagree, the code is right and the
 page is a bug — the E4 exit exam found four such places and they are listed in
 [`exam/2026-08-23-mcp-surface.md`](exam/2026-08-23-mcp-surface.md).
+
+### `qol.md` — the v0.8 specification
+
+*Concept throughout, and written before the code exists*, the way `teams.md` was
+at E2-0 and `mcp-surface.md` was at E4-0: the four pieces of Epic E5 whose shape
+has to be agreed in advance — the named-session store and its frozen policy, the
+workspace manifest two commands share, the PTY channel as an additive protocol
+revision, and the vsock transport that lets inbound forwarding exist without a
+single nftables rule.
+*Thin:* it describes nothing that runs yet, and says so. The four features that
+are wrappers over existing machinery are not in it, because there is nothing to
+decide about them.
 
 ### `threat-model.md` — what to trust
 

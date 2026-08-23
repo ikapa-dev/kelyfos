@@ -126,7 +126,7 @@
      improvements to the existing product land here as epics. Inert until its gate opens.</p>
   <div class="meta">
     owner: <b>John</b> &nbsp;&middot;&nbsp; developer: <b>Claude Code</b> &nbsp;&middot;&nbsp;
-    status: <b class="ok" id="meta-status">Epic E4 — closed, v0.7 released (hardening batch, then the seam pair)</b> &nbsp;&middot;&nbsp;
+    status: <b class="ok" id="meta-status">Epic E5 — active, 1/8 (v0.7 released; next: E5-1, named sessions)</b> &nbsp;&middot;&nbsp;
     last updated: <b id="meta-updated">2026-08-23</b><br>
     repo file: <b>PLAN-FEATURES.html</b> (lives at the repository root next to <code>PLAN.html</code>)<br>
     <span class="quiet">Companion to PLAN.html — same protocol, same rules, later timeline.</span>
@@ -166,7 +166,7 @@
     <span class="bl-name">All epics</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">The seam: Buildroot is <b>[BLOCKED]</b> &mdash; <code>buildroot.org</code> is unreachable from here (F-D50) &mdash; so Bubble Tea v2 goes first (F-D41)</b></div>
+  <div class="focusline">Current focus: <b id="focus">E5-1 &mdash; named sessions: <code>pause --as</code>, <code>resume</code>, <code>sessions</code>, with the policy frozen at pause and the workspace written back only at final shutdown</b></div>
 </div>
 
 <!-- ====================================================== 1. ACTIVATION GATE -->
@@ -577,7 +577,7 @@
      Estimate: 3&ndash;4 weekends (the shell PTY and port forwarding carry the substance; the rest are wrappers over
      existing machinery).</p>
   <ul class="tasks">
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">E5-0</span><span class="tk"><code>docs/qol.md</code> — spec first for the pieces that need shape:
         session-store layout (<code>~/.kelyfos/sessions/&lt;name&gt;/</code> holding memory + disk snapshots, the workspace
         image, and a frozen copy of the policy toml); the workspace-manifest format for diff (path, mode, size, content hash);
@@ -4192,6 +4192,33 @@ $ gofmt -l . ; go vet ./... ; go test ./...
         got: a declared <code>[sandbox] workspace</code> ignored in silence, a plugin tool colliding with a built-in
         shadowed rather than refused, and <code>plugin.call</code> carrying no arguments where
         <code>mcp.host.call</code> carries a redacted summary.</td></tr>
+        <tr><td class="mono">2026-08-23</td><td class="mono">E5-0</td>
+        <td><b><code>docs/qol.md</code>: the four shapes that have to be agreed before anything is built, and the four
+        that do not.</b> Epic E5 is eight features and only half of them decide anything &mdash; actionable denials, run
+        history, <code>logs -f</code> and <code>--notify</code> are wrappers over machinery that exists. The spec covers
+        the other four and says why the rest are absent, because a specification that describes everything equally
+        hides which parts were choices.
+        <b>Named sessions freeze the policy at pause.</b> The reasoning is written down rather than assumed: a resumed
+        machine is the <i>same machine</i>, and its memory holds an environment built under the old policy — a guest
+        whose <code>HTTPS_PROXY</code> points at a port the new policy does not open is not a machine running under the
+        new policy, it is a machine that no longer works in a way that looks like a bug in KelyfOS. The policy travels
+        with the snapshot exactly as the addressing does (D22), the resume names the differences rather than reporting
+        that there were some, and the current ceiling still applies to what a resume may ask for &mdash; the hole
+        E4-2 found in <code>sandbox_restore</code> (F-D39), closed before it can be dug again.
+        <b>Sync-back at final shutdown, never at pause</b>, so a host directory does not change under somebody who did
+        not ask for it and then change again later. The consequence &mdash; a paused session holds your files inside it
+        &mdash; is said out loud rather than discovered.
+        <b>The shell channel is reserved rather than described twice.</b> Port 10004 is in
+        <code>docs/protocol.md</code>&rsquo;s table now, pointing at the spec, as an additive revision: a supervisor
+        without it refuses the connection and everything else works. Its framing is settled here — raw bytes for the
+        stream because a terminal is binary and latency-sensitive, JSON for control because a resize is something the
+        <i>kernel</i> is told rather than something the shell reads.
+        <b>Inbound forwarding does not touch the firewall at all.</b> The transport is vsock: host listener &rarr;
+        supervisor &rarr; the guest&rsquo;s own loopback, so no packet crosses the TAP in either direction and
+        <code>nft list ruleset</code> is identical with a forward and without one. That is F-D7 and it is the whole
+        reason the feature can exist.
+        <b>The manifest digest is of contents</b>, not of modification times, and the spec says why: that distinction
+        has already cost this project one defect (F-D45), and writing it down is cheaper than finding it again.</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>

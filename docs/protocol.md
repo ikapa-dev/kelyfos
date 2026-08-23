@@ -152,6 +152,7 @@ Two ranges, chosen so the direction of a channel is readable from its number:
 | `10001` | `exec` | host → guest | P1-6 | One command per connection. §5.2 |
 | `10002` | `mcp` | host → guest | P2-2 | MCP server. §6 |
 | `10003` | `control` | host → guest | P2-1 | Lifecycle and resync RPCs. §5.4 |
+| `10004` | `shell` | host → guest | E5-3 | Interactive PTY. Reserved by E5-0; see `docs/qol.md` §3 for the shape, and this section when it is built. |
 | `10100` | `ready` | guest → host | P1-3 | Boot-to-ready signal and heartbeats. §5.3 |
 | `10101` | `events` | guest → host | P2-4 | Guest-side event stream into the flight recorder. §5.5 |
 | `10102` | `team` | guest → host | E2-1 | Team messaging: the guest asks, the host routes. §5.6 |
