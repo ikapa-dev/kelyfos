@@ -53,7 +53,7 @@ edit.
 
 ![KelyfOS in a terminal](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/media/demo.gif)
 
-> **Status: v0.7, early development, building in the open.** Cold boot-to-ready
+> **Status: v0.8, early development, building in the open.** Cold boot-to-ready
 > is **69 ms** median and snapshot restore **33 ms** (10 runs each, x86_64 on a
 > bare-KVM CI runner); a five-agent team comes up in **366 ms**. **Not hardened
 > yet** — read [`docs/threat-model.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/threat-model.md) before trusting it
@@ -299,6 +299,18 @@ machine took.
 | `kelyfos shim` | an [E2B-compatible subset](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/e2b-shim.md) for existing SDK code |
 | `kelyfos bench` | reproducible boot and restore timings |
 | `kelyfos run --max-runtime 30m` | a wall-clock budget; expiry is SIGTERM, grace, sync-back, exit 124 |
+
+And the parts that make it a thing you reach for rather than tolerate (v0.8):
+
+| | |
+| --- | --- |
+| `kelyfos pause --as <name>` / `resume` | stop for the day and pick up the *same machine* — its memory, its scratch, its half-finished thing — under the policy it was frozen with |
+| `kelyfos diff` / `run --review` | what the agent changed, and a yes before any of it reaches your directory |
+| `kelyfos shell` | a real terminal inside the sandbox: job control, line editing, resize. Recorded only with `--transcript` |
+| `kelyfos run -p 8080:80` | reach a server inside the sandbox. Over vsock, so the firewall is untouched and it works with no network at all |
+| `kelyfos runs` / `rerun <id>` | what has run here, and run one again under its own frozen policy |
+| every refusal | names the fix: `add allow = ["api.stripe.com"] to kelyfos.toml, or rerun with --allow api.stripe.com` |
+| `--notify` | a desktop notification when a run finishes, is blocked, times out, or is waiting for your answer |
 
 ## Documentation
 
