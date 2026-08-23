@@ -10,20 +10,17 @@ Updated 2026-08-23 · tree clean, synced with origin/main
 E4-5 — client recipes for Claude Code and one more MCP client, CI-executed.
 
 ## This session
-Epic E3 closed and **v0.6 released**: a generated reference with CI failing on
-drift, `llms.txt` at spec v2, eight cookbook recipes each run before being
-written down, and a docs exam that passed first try and found ten defects. Then
-the F-D33 batch, the seam check, and E4-0's spec.
+E1–E3 built and closed, **v0.6 released**: a generated reference with CI failing
+on drift, `llms.txt` at spec v2, eight CI-run cookbook recipes, and a docs exam
+that found ten defects. Then the F-D33 batch and the E3→E4 seam check.
 
-E4-1 put serve-mcp live, the ceiling refusing in the E1-1 style. E4-2 added five
-tools and found two holes: the MCP frame limit was 1 MiB while its tools promised
-8 MiB (F-D38), and a restore met no ceiling at all (F-D39). E4-3 split `team up`
-so both doors raise a team the same way (F-D42); its first live run caught a
-write to stdout — the protocol, on that path — and a race in my own buffering.
-E4-4 put every client tool call in a transcript, refusals included; E4-0 had
-promised one export holding both lanes, and that was rewritten rather than met,
-because a refused call did nothing to any machine and each chain should record
-what that party did (F-D43).
+Epic E4 so far. E4-0 the spec (F-D36, F-D37). E4-1 serve-mcp live, the ceiling
+refusing in the E1-1 style. E4-2 five file and state tools, which found the MCP
+frame limit at 1 MiB against a promised 8 MiB (F-D38) and a restore held to no
+ceiling at all (F-D39). E4-3 the team tools, which needed `team up` split into
+raising and waiting (F-D42) and caught a write to stdout — the protocol, on that
+path — and a race in my own buffering. E4-4 the outward audit lane, where E4-0's
+promise of one export holding both lanes was rewritten rather than met (F-D43).
 
 ## Blocked / debts
 - P4-4, P4-5 [BLOCKED]. `idle_timeout` refused (F-D20; F-D22). IMAGE_DIR is per-arch not per-flavor: parked.
