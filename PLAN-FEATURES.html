@@ -166,7 +166,7 @@
     <span class="bl-name">All epics</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">The post-tag hardening batch (F-D49): the ignored <code>workspace</code> key, the shadowed plugin tool, and <code>plugin.call</code>&rsquo;s missing arguments &mdash; then the seam pair</b></div>
+  <div class="focusline">Current focus: <b id="focus">The seam: Buildroot is <b>[BLOCKED]</b> &mdash; <code>buildroot.org</code> is unreachable from here (F-D50) &mdash; so Bubble Tea v2 goes first (F-D41)</b></div>
 </div>
 
 <!-- ====================================================== 1. ACTIVATION GATE -->
@@ -1750,6 +1750,32 @@
         redaction.
         <i>Not in it.</i> Nothing that touches a performance path, so no bar is re-measured and none is owed.</td>
         <td class="mono">docs/exam/2026-08-23-mcp-surface.md</td></tr>
+        <tr><td class="mono">F-D50</td><td class="mono">2026-08-23</td>
+        <td><b>The Buildroot hop is <span class="mono">[BLOCKED]</span>: <code>buildroot.org</code> is unreachable from
+        this machine, so the move F-D40 ordered cannot be attempted, let alone gated.</b>
+        <i>What was tried.</i> Four URLs across two hosts &mdash; <code>https://buildroot.org/downloads/</code>,
+        <code>https://www.buildroot.org/downloads/</code>, the same over plain HTTP, and
+        <code>https://sources.buildroot.net/</code> &mdash; from inside the build VM and from the host, plus a
+        <code>WebFetch</code> of the download page. Every one timed out. DNS resolves
+        (<code>buildroot.org &rarr; 138.201.205.61</code>), so this is a network path that does not exist here rather
+        than a name that does not.
+        <i>Why that stops everything.</i> The canonical release tarball cannot be fetched, so its sha256 cannot be
+        verified &mdash; and the whole point of the pin is that the hash is checked against what the project publishes.
+        Without the tarball there is no toolchain, no rebuild on either architecture, no acceptance suite and no
+        benchmarks: not one of F-D40&rsquo;s gates can be met. The GitHub mirror has the tag and would answer, but a
+        GitHub-generated archive is not the release tarball, is not byte-stable across time, and pinning it would
+        quietly change what the pin is a pin <i>of</i>.
+        <i>What was deliberately not done.</i> F-D40&rsquo;s fallback &mdash; stay frozen on 2026.02.3 and say in
+        <code>versions.mk</code> that the line is deliberately frozen &mdash; is for a blocker that is <i>evidence
+        about the move</i>: a toolchain that cannot build the kernel, a package that is gone. This is not that. Writing
+        &ldquo;deliberately frozen&rdquo; into that file would make it say something untrue, because the line is not
+        frozen by a decision, it is unattempted for want of a route to the server. <code>versions.mk</code> is left
+        exactly as it was.
+        <i>What John needs.</i> Network access to <code>buildroot.org</code> from a machine that can also run the build,
+        or a decision to take the tarball from somewhere else with the provenance change written down. Until then D11
+        stands in the log and F-D40 stands unexecuted; neither is wrong, and the plan should not pretend the move
+        happened.</td>
+        <td class="mono">curl from Lima and host, 2026-08-23</td></tr>
     <!-- Claude Code: append rows above this line. -->
       <tr><td class="mono">F-D10</td><td class="mono">2026-08-22</td>
         <td>The resource knobs E1-0 goes looking for shipped <b>partly</b>: <code>--vcpus</code>/<code>--mem</code> and
