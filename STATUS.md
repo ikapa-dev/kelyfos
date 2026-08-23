@@ -7,8 +7,7 @@ Updated 2026-08-23 · tree clean, synced with origin/main
 - PLAN-FEATURES.html — 25/42. **E1–E3 closed, v0.6 released. Epic E4 active, 0/9.**
 
 ## Now
-E4-0 — `docs/mcp-surface.md`, spec before code. Seam check done: every pin
-current, `govulncheck` clean (F-D35).
+E4-0 — `docs/mcp-surface.md`, spec before code. Seam check done (F-D35).
 
 ## This session
 Epic E3 built and closed, **v0.6 tagged and published**: `docs/reference/`
@@ -35,6 +34,6 @@ caught a racy test of mine this machine hid; fixed and verified under `-race`.
 2. **Bubble Tea v1.** F-D23's third condition fired — no advisory, but v1 is
    dormant (bubbletea 11 months, lipgloss 17) while v2 ships. Taking it means
    rewriting `host/watch.go` on no task, plus a vanity module path. Now or not?
-Also his: the HN post, and whether P4 is promoted.
+3. The HN post, still his to send. And whether P4 is ever promoted.
 
 Steering needed: YES — the two calls above. Neither blocks E4.
