@@ -3,6 +3,7 @@ package sandbox
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -90,5 +91,84 @@ func TestDelegationIsCheckedNotAvailability(t *testing.T) {
 	write("cgroup.subtree_control", "\n")
 	if err := delegateCPU(dir); err == nil {
 		t.Error("a cgroup with no cpu controller was talked into delegating one")
+	}
+}
+
+// A team places its scopes in a slice systemd owns, and every child carries an
+// equal weight. The single-run request above must be unchanged by that, which
+// is what TestWrapArgvBuildsTheScopeRequest is now also guarding.
+func TestWrapArgvPlacesTheScopeInTheTeamSlice(t *testing.T) {
+	s := &Slice{Percent: 150, Weight: DefaultCPUWeight, name: "kelyfos-abc",
+		mode: modeSystemd, sliceUnit: "kelyfos-team-demo.slice"}
+	want := []string{"systemd-run", "--user", "--scope", "--quiet",
+		"--unit", "kelyfos-abc", "--slice", "kelyfos-team-demo.slice",
+		"-p", "CPUQuota=150%", "-p", "CPUWeight=100", "--", "firecracker"}
+	got := s.WrapArgv([]string{"firecracker"})
+	if len(got) != len(want) {
+		t.Fatalf("got %v", got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("arg %d: got %q want %q\nfull: %v", i, got[i], want[i], got)
+		}
+	}
+
+	// An agent with no quota of its own is bounded by the team's, so the
+	// CPUQuota property must be absent rather than sent as zero — which systemd
+	// would read as a request, not as an absence.
+	none := &Slice{Weight: DefaultCPUWeight, name: "kelyfos-def",
+		mode: modeSystemd, sliceUnit: "kelyfos-team-demo.slice"}
+	for _, arg := range none.WrapArgv([]string{"firecracker"}) {
+		if arg == "CPUQuota=0%" || arg == "CPUQuota=" {
+			t.Fatalf("an agent with no quota asked for one: %v", none.WrapArgv([]string{"firecracker"}))
+		}
+	}
+}
+
+// The dash is systemd's hierarchy separator, so a team called "foo-bar" would
+// silently add a level and cap something other than the team. The team's own
+// name is always exactly one component.
+func TestATeamNameIsAlwaysOneSliceComponent(t *testing.T) {
+	for _, name := range []string{"demo", "foo-bar", "Ops Team", "a/b", "", "..", "réviseurs"} {
+		got := teamSliceName(name)
+		tail, ok := strings.CutPrefix(got, "kelyfos-team-")
+		if !ok {
+			t.Fatalf("teamSliceName(%q) = %q, which is not under the KelyfOS root", name, got)
+		}
+		if tail == "" {
+			t.Errorf("teamSliceName(%q) named nothing", name)
+		}
+		if strings.ContainsAny(tail, "-/. ") {
+			t.Errorf("teamSliceName(%q) = %q, whose team part is more than one component", name, got)
+		}
+	}
+}
+
+// A child with no quota of its own has no cpu.max to compare, so placement is
+// the only thing left to check — and it has to be checked, because Close
+// removes whatever path the confirm adopted.
+func TestPlacementIsCheckedWhenThereIsNoQuota(t *testing.T) {
+	cases := []struct {
+		name, landed, parent, unit string
+		ok                         bool
+	}{
+		{"direct, inside the team slice", "/sys/fs/cgroup/kt/kelyfos-a", "/sys/fs/cgroup/kt", "", true},
+		{"direct, the team slice itself", "/sys/fs/cgroup/kt", "/sys/fs/cgroup/kt", "", true},
+		{"direct, somewhere else", "/sys/fs/cgroup/other/x", "/sys/fs/cgroup/kt", "", false},
+		{"direct, a sibling with the same prefix", "/sys/fs/cgroup/kt2/x", "/sys/fs/cgroup/kt", "", false},
+		{"systemd, in the team's slice", "/sys/fs/cgroup/u/kelyfos-team-d.slice/kelyfos-a.scope",
+			"", "kelyfos-team-d.slice", true},
+		{"systemd, in another slice", "/sys/fs/cgroup/u/app.slice/kelyfos-a.scope",
+			"", "kelyfos-team-d.slice", false},
+		{"no parent expected", "/sys/fs/cgroup/anywhere", "", "", true},
+	}
+	for _, c := range cases {
+		err := underParent(c.landed, c.parent, c.unit)
+		if c.ok && err != nil {
+			t.Errorf("%s: rejected a correct placement: %v", c.name, err)
+		}
+		if !c.ok && err == nil {
+			t.Errorf("%s: accepted a process that landed in %q", c.name, c.landed)
+		}
 	}
 }

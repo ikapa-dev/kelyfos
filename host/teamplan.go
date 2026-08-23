@@ -19,6 +19,7 @@ import (
 type teamPlan struct {
 	name     string
 	capture  bool
+	budget   config.TeamBudget
 	agents   []plannedAgent
 	topo     *team.Topology
 	edgeText []string
@@ -58,7 +59,10 @@ func planTeam(cfg *config.Config) (*teamPlan, error) {
 		return nil, fmt.Errorf("%s: a team with no [[team.agent]] has nothing to run", cfg.Path)
 	}
 
-	plan := &teamPlan{name: t.Name, capture: t.RecordPayloads}
+	plan := &teamPlan{name: t.Name, capture: t.RecordPayloads, budget: t.Budget}
+	if err := checkTeamBudget(cfg); err != nil {
+		return nil, err
+	}
 	seen := map[string]bool{}
 	for _, a := range t.Agents {
 		if a.Name == "" {
@@ -133,6 +137,67 @@ func planTeam(cfg *config.Config) (*teamPlan, error) {
 		plan.storeEnabled, plan.storeRules = true, rules
 	}
 	return plan, nil
+}
+
+// checkTeamBudget refuses an agent that asks for more CPU time than the team it
+// runs in. The parent slice would hold it anyway — that is what a hierarchy is
+// for — but a ceiling written above another ceiling and quietly ignored is the
+// kind of number a reader will later trust.
+//
+// The *sum* is deliberately not checked. Five agents at 100% under a team cap of
+// 200% is legal and is the configuration worth writing: each may burst to its
+// own ceiling while the others idle, and the parent holds the total. Refusing
+// oversubscription would forbid the only reason a shared budget exists (F-D21).
+func checkTeamBudget(cfg *config.Config) error {
+	limit := cfg.Team.Budget.CPUQuota
+	if limit <= 0 {
+		return nil
+	}
+	teamLine, _ := cfg.Team.Ceiling("cpu_quota")
+	for _, a := range cfg.Team.Agents {
+		for _, ask := range []struct {
+			what string
+			pct  int
+		}{
+			{"cpu_quota", a.Resources.CPUQuota},
+			{"spawn budget's cpu_quota", spawnQuota(a)},
+		} {
+			if ask.pct > limit {
+				return fmt.Errorf("%s:%d: agent %q asks for %s = %q, more than the team's "+
+					"cpu_quota = %q set at %s:%d\n"+
+					"    an agent cannot be given more CPU time than the team it runs in",
+					cfg.Path, a.Line, a.Name, ask.what, pct(ask.pct), pct(limit), cfg.Path, teamLine)
+			}
+		}
+	}
+	return nil
+}
+
+func spawnQuota(a config.TeamAgent) int {
+	if a.Spawn == nil {
+		return 0
+	}
+	return a.Spawn.Resources.CPUQuota
+}
+
+func pct(n int) string { return fmt.Sprintf("%d%%", n) }
+
+// needsSlice reports whether this team has any CPU number at all. A team that
+// declared none gets no cgroup machinery, so it can run on a host with no
+// systemd user session and no delegated cgroup — which is most containers.
+func (p *teamPlan) needsSlice() bool {
+	if p.budget.CPUQuota > 0 {
+		return true
+	}
+	for _, a := range p.agents {
+		if a.res.CPUQuota > 0 {
+			return true
+		}
+		if a.spawn != nil && a.spawn.Resources.CPUQuota > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // checkAgentPolicy refuses, before anything boots, the combinations this host

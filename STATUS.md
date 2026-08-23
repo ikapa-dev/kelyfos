@@ -3,26 +3,27 @@
 Updated 2026-08-23 · tree clean, synced with origin/main
 ## Plans
 - PLAN.html — 36/43. P4 backlog non-blocking, parked (P4-4/P4-5 [BLOCKED]).
-- PLAN-FEATURES.html — 15/42. E1 closed (v0.4). Epic E2 active, 6/10.
+- PLAN-FEATURES.html — 16/42. E1 closed (v0.4). Epic E2 active, 7/10.
 
 ## Now
-Epic E2 — agent teams (v0.5). Next task: **E2-6**, the team resource budget:
-one parent cgroup v2 slice per team, the per-agent E1-2 slices as its children,
-`cpu.weight` dividing contention inside the team.
+Epic E2 — agent teams (v0.5). Next task: **E2-7**, the team transcript:
+`kelyfos log --verify` over the whole team chain, and `--export team.html`
+rendering per-agent lanes with the message flow between them.
 
 ## New this session
 - Parking lot +2 from Microsoft's Azure SRE Agent post (2026-08-21): per-call
   credential handles, output-side secret scrubbing. Neither is being built.
 - **F-D19** records John's ruling on the fork fast path for no-egress agents.
 - **E2-4 correction**: `allow`, `secrets`, `workspace` and `cpu_quota` were
-  parsed per agent and then dropped on the floor — proved on real machines,
-  now actually applied, with three combinations refused at the file. F-D20
-  records why `idle_timeout` is one of the refusals.
+  parsed per agent and then dropped on the floor. Now applied; three
+  combinations refused at the file. F-D20 covers `idle_timeout`.
+- **E2-6** team cgroup hierarchy, F-D21. `dev/prove-team.sh` is 6/6 green even
+  nested — five guests generate demand a single sandbox cannot.
 
 ## Last two
-- E2-5 spawn under a declared budget — one edge to the spawner, host-enforced
-  lifetime, every spawn and refusal audited.
-- E2-4 `kelyfos team up | ps | down`, and its correction above.
+- E2-6 the team's collective cap: one parent slice, per-agent slices beneath
+  it, equal `cpu.weight`, measured on the parent's own `cpu.stat`.
+- E2-5 spawn under a declared budget, host-enforced lifetime, all audited.
 
 ## Blocked / debts
 - P4-4, P4-5 [BLOCKED] — Phase 4 backlog, parked unless John promotes it.

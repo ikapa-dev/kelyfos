@@ -99,6 +99,16 @@ jobs:
           sudo -E env "PATH=$PATH" "HOME=$HOME" ARCH="$ARCH" \
             bash dev/prove-caps.sh 2>&1 | tee caps.log
 
+      # A team's collective cap needs five guests' worth of demand to be
+      # exceedable at all, so it needs this environment even more than a single
+      # sandbox's quota does (E2-6, D15).
+      - name: Prove the team budget
+        if: always()
+        run: |
+          set -o pipefail
+          sudo -E env "PATH=$PATH" "HOME=$HOME" ARCH="$ARCH" \
+            bash dev/prove-team.sh 2>&1 | tee team.log
+
       # The epic's acceptance list, run where its two measured steps mean
       # something. The behaviour it checks is the same everywhere; the CPU quota
       # and the download throughput are not (D15).
@@ -118,6 +128,14 @@ jobs:
             echo '```'
             sed -e 's/\x1b\[[0-9;]*m//g' caps.log
             echo '```'
+            if [ -f team.log ]; then
+              echo
+              echo "### Team budget — bare-KVM reference"
+              echo
+              echo '```'
+              sed -e 's/\x1b\[[0-9;]*m//g' team.log
+              echo '```'
+            fi
             if [ -f accept.log ]; then
               echo
               echo "### Epic E1 acceptance — bare-KVM reference"
@@ -134,6 +152,7 @@ jobs:
           name: caps-${{ env.ARCH }}
           path: |
             caps.log
+            team.log
             accept.log
           if-no-files-found: warn
 

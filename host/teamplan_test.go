@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -239,5 +240,86 @@ func TestIdleTimeoutIsRefusedPerAgentAndMaxRuntimeIsNot(t *testing.T) {
 	}
 	if plan.agents[0].res.MaxRuntime != 30*time.Second {
 		t.Errorf("max_runtime did not reach the plan: %v", plan.agents[0].res.MaxRuntime)
+	}
+}
+
+// An agent cannot be given more CPU time than the team it runs in. The parent
+// slice would hold it anyway, but a ceiling written above another ceiling and
+// then quietly ignored is a number a reader will later trust.
+func TestAnAgentCannotOutgrowItsTeam(t *testing.T) {
+	tm := &config.Team{
+		Name:    "t",
+		Budget:  config.TeamBudget{CPUQuota: 200},
+		ResLine: map[string]int{"cpu_quota": 4},
+		Agents: []config.TeamAgent{{
+			Name: "master", Count: 1, Line: 14,
+			Resources: config.AgentResources{CPUQuota: 250},
+		}},
+	}
+	_, err := planFrom(t, tm)
+	if err == nil {
+		t.Fatal("an agent was given more CPU time than its whole team")
+	}
+	for _, want := range []string{"250%", "200%", "kelyfos.toml:14", "kelyfos.toml:4"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %q: %v", want, err)
+		}
+	}
+	// A spawn budget's template is checked the same way: a worker the master is
+	// allowed to create cannot be bigger than the team either.
+	tm.Agents[0].Resources.CPUQuota = 100
+	tm.Agents[0].Spawn = &config.SpawnBudget{Max: 2, Resources: config.AgentResources{CPUQuota: 400}}
+	if _, err := planFrom(t, tm); err == nil {
+		t.Error("a spawn budget was allowed to outgrow the team")
+	}
+}
+
+// The sum is deliberately not checked. Five agents at 100% under a team cap of
+// 200% is the configuration worth writing: each may burst to its own ceiling
+// while the others idle, and the parent holds the total (F-D21). This test is
+// the decision — without it someone will later "fix" the missing arithmetic.
+func TestPerAgentQuotasMayOversubscribeTheTeam(t *testing.T) {
+	agents := make([]config.TeamAgent, 0, 5)
+	for i := 0; i < 5; i++ {
+		agents = append(agents, config.TeamAgent{
+			Name: fmt.Sprintf("a%d", i), Count: 1,
+			Resources: config.AgentResources{CPUQuota: 100},
+		})
+	}
+	if _, err := planFrom(t, &config.Team{
+		Name: "t", Budget: config.TeamBudget{CPUQuota: 200}, Agents: agents,
+	}); err != nil {
+		t.Fatalf("five agents at 100%% under a 200%% team cap were refused: %v", err)
+	}
+}
+
+// A team that declared no CPU number anywhere gets no cgroup machinery, so it
+// runs on a host with no systemd user session and no delegated cgroup.
+func TestATeamWithNoCPUNumbersNeedsNoSlice(t *testing.T) {
+	plain, err := planFrom(t, &config.Team{
+		Name: "t", Agents: []config.TeamAgent{{Name: "a", Count: 1}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plain.needsSlice() {
+		t.Error("a team with no cpu_quota anywhere asked for a cgroup")
+	}
+	for what, tm := range map[string]*config.Team{
+		"a team budget": {Name: "t", Budget: config.TeamBudget{CPUQuota: 200},
+			Agents: []config.TeamAgent{{Name: "a", Count: 1}}},
+		"one agent's quota": {Name: "t", Agents: []config.TeamAgent{
+			{Name: "a", Count: 1, Resources: config.AgentResources{CPUQuota: 50}}}},
+		"a spawn budget's quota": {Name: "t", Agents: []config.TeamAgent{
+			{Name: "a", Count: 1, Spawn: &config.SpawnBudget{
+				Max: 1, Resources: config.AgentResources{CPUQuota: 50}}}}},
+	} {
+		p, err := planFrom(t, tm)
+		if err != nil {
+			t.Fatalf("%s: %v", what, err)
+		}
+		if !p.needsSlice() {
+			t.Errorf("%s did not ask for a cgroup", what)
+		}
 	}
 }

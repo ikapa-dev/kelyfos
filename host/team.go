@@ -70,6 +70,10 @@ type teamState struct {
 		Sandbox string `json:"sandbox"`
 	} `json:"agents"`
 	Edges []string `json:"edges"`
+	// CGroup is the team's parent slice, when it has one. omitempty and read
+	// tolerantly, so a team.json written by an older binary still parses.
+	CGroup   string `json:"cgroup,omitempty"`
+	CPUQuota int    `json:"cpu_quota_percent,omitempty"`
 }
 
 func teamStatePath() string { return filepath.Join(sandbox.Root(), "run", "team.json") }
@@ -138,7 +142,20 @@ func teamUp(argv []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	crew := &roster{plan: plan, session: sessionID, edges: plan.edgeText}
+	// The collective cap, built before any agent so that every agent is inside
+	// it from the instant it exists — a budget that arrives after the machines
+	// is a budget with a hole in it. A team that declared no CPU numbers at all
+	// gets no cgroup machinery, and so needs neither systemd nor a delegated
+	// cgroup to run (E2-6).
+	var teamSlice *sandbox.TeamSlice
+	if plan.needsSlice() {
+		teamSlice, err = sandbox.NewTeamSlice(plan.name, plan.budget.CPUQuota)
+		if err != nil {
+			return err
+		}
+	}
+
+	crew := &roster{plan: plan, session: sessionID, edges: plan.edgeText, slice: teamSlice}
 	teardown := func() {
 		// Reverse order, so the agent booted last is stopped first — the same
 		// order a single run's defers would have taken. Spawned workers are in
@@ -150,6 +167,12 @@ func teamUp(argv []string) error {
 			if err := running[i].stop(10 * time.Second); err != nil {
 				fmt.Fprintf(os.Stderr, "kelyfos: %s: %v\n", running[i].name, err)
 			}
+		}
+		// The parent goes last and its failure is reported: rmdir refuses a
+		// populated cgroup, so a teardown in the wrong order would otherwise
+		// leak one directory per run and say nothing at all.
+		if err := teamSlice.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "kelyfos: %v\n", err)
 		}
 		_ = os.Remove(teamStatePath())
 	}
@@ -173,7 +196,7 @@ func teamUp(argv []string) error {
 		// own network to a machine the user never wrote down (E2-5).
 		res := plan.spawnResources(req.Spawner)
 		rig, err := bootAgent(ctx, plannedAgent{name: req.Name, image: req.Image, res: res},
-			broker, rec, *arch, *timeout)
+			broker, rec, teamSlice, *arch, *timeout)
 		if err != nil {
 			return err
 		}
@@ -216,7 +239,7 @@ func teamUp(argv []string) error {
 		wg.Add(1)
 		go func(i int, a plannedAgent) {
 			defer wg.Done()
-			rig, err := bootAgent(ctx, a, broker, rec, *arch, *timeout)
+			rig, err := bootAgent(ctx, a, broker, rec, teamSlice, *arch, *timeout)
 			results <- booted{i, rig, err}
 		}(i, a)
 	}
@@ -247,11 +270,28 @@ func teamUp(argv []string) error {
 	for i, rig := range order {
 		fmt.Printf("  %-12s %s ready in %d ms\n",
 			plan.agents[i].name, rig.sb.State.ID, rig.sb.State.BootReadyMS)
-		if d := describeAgent(plan.agents[i], rig); d != "" {
+		if d := describeAgent(plan.agents[i], rig, plan.budget.CPUQuota > 0); d != "" {
 			fmt.Printf("  %-12s %s\n", "", d)
 		}
 	}
 	fmt.Printf("team up in %d ms\n", time.Since(started).Milliseconds())
+
+	// On the systemd path the parent's directory is systemd's to choose, so it
+	// is learned from where a child actually landed rather than predicted; then
+	// the cap is read back rather than assumed to have been applied (F-D11).
+	if teamSlice != nil {
+		for _, rig := range order {
+			teamSlice.Resolve(rig.sb.State.CGroupPath)
+		}
+		if err := teamSlice.Confirm(); err != nil {
+			return err
+		}
+		if plan.budget.CPUQuota > 0 {
+			fmt.Printf("  %-12s %d%% of one core's CPU time for the whole team, divided by equal weight\n",
+				"team cap", plan.budget.CPUQuota)
+		}
+		fmt.Printf("  %-12s %s\n", "cgroup", teamSlice.Path)
+	}
 
 	// A max_runtime is a host-side cap on one agent's wall clock, enforced here
 	// for the same reason the spawn lifetime is: the budget is the user's, and
@@ -338,7 +378,7 @@ func (r *agentRig) stop(timeout time.Duration) error {
 // out of this function that fail — a half-built member with a live TAP and no
 // machine on the end of it is worse than none.
 func bootAgent(ctx context.Context, a plannedAgent, broker *team.Broker, rec *recorder.Recorder,
-	arch string, timeout time.Duration) (*agentRig, error) {
+	slice *sandbox.TeamSlice, arch string, timeout time.Duration) (*agentRig, error) {
 
 	id, err := sandbox.NewID()
 	if err != nil {
@@ -376,15 +416,26 @@ func bootAgent(ctx context.Context, a plannedAgent, broker *team.Broker, rec *re
 	}
 
 	// The CPU quota is a host-side cap on the VMM process, exactly as a single
-	// run applies it (E1-2, F-D11). Per agent, because contention inside a team
-	// is the thing a team budget exists to divide.
-	if a.res.CPUQuota > 0 {
-		slice, err := sandbox.NewCPUSlice(id, a.res.CPUQuota)
+	// run applies it (E1-2, F-D11) — but inside the team's slice, so the two
+	// ceilings compose in the kernel rather than in arithmetic here. Every agent
+	// gets a child, including one with no quota of its own: being inside the
+	// collective cap is the point, and a child with no cpu.max is exactly
+	// "bounded only by the team" (E2-6).
+	switch {
+	case slice != nil:
+		child, err := slice.Agent(id, a.res.CPUQuota, sandbox.DefaultCPUWeight)
+		if err != nil {
+			return nil, err
+		}
+		rig.slice = child
+		opts.CPUSlice = child
+	case a.res.CPUQuota > 0:
+		child, err := sandbox.NewCPUSlice(id, a.res.CPUQuota)
 		if err != nil {
 			return nil, fmt.Errorf("cpu_quota: %w", err)
 		}
-		rig.slice = slice
-		opts.CPUSlice = slice
+		rig.slice = child
+		opts.CPUSlice = child
 	}
 
 	// Egress is per agent and opt-in, built in the same order `run` builds it:
@@ -483,7 +534,7 @@ func bootAgent(ctx context.Context, a plannedAgent, broker *team.Broker, rec *re
 // was given, said in the same words `kelyfos run` uses for a single sandbox.
 // Silence would read as "nothing was applied", which is exactly the mistake
 // this whole change exists to stop.
-func describeAgent(a plannedAgent, rig *agentRig) string {
+func describeAgent(a plannedAgent, rig *agentRig, teamCapped bool) string {
 	var parts []string
 	if rig.net != nil {
 		parts = append(parts, "egress "+strings.Join(a.allow, ","))
@@ -491,8 +542,13 @@ func describeAgent(a plannedAgent, rig *agentRig) string {
 			parts = append(parts, "secret "+sec.Name+"->"+sec.Domain)
 		}
 	}
-	if rig.slice != nil {
+	switch {
+	case rig.slice != nil && rig.slice.Percent > 0:
 		parts = append(parts, fmt.Sprintf("cpu %d%%", rig.slice.Percent))
+	case rig.slice != nil && teamCapped:
+		// Not "cpu 0%", which reads as no CPU at all. This agent has no ceiling
+		// of its own and is bounded by the team's.
+		parts = append(parts, "cpu bounded by the team")
 	}
 	if rig.ws != nil {
 		parts = append(parts, "workspace "+a.workspace)
@@ -514,6 +570,7 @@ type roster struct {
 	started time.Time
 	running []*agentRig
 	edges   []string
+	slice   *sandbox.TeamSlice
 }
 
 func (r *roster) add(rig *agentRig, edges ...string) {
@@ -562,6 +619,9 @@ func (r *roster) write() error {
 	}
 	st := teamState{Name: r.plan.name, PID: os.Getpid(), Session: r.session,
 		StartedAt: r.started, Edges: append([]string(nil), r.edges...)}
+	if r.slice != nil {
+		st.CGroup, st.CPUQuota = r.slice.Path, r.slice.Percent
+	}
 	for _, rig := range r.running {
 		st.Agents = append(st.Agents, struct {
 			Name    string `json:"name"`
@@ -616,6 +676,25 @@ func teamPS(argv []string) error {
 			strings.Join(reaches(st, a.Name), " "))
 	}
 	_ = w.Flush()
+
+	// The collective figure, read from the parent slice's own accounting rather
+	// than summed from the agents: the parent is what the cap is on, so it is
+	// the only number that cannot disagree with the limit it is measured
+	// against (E2-6). A team with no CPU numbers has no slice and no line.
+	if st.CGroup != "" {
+		cap := "no collective cap"
+		if st.CPUQuota > 0 {
+			cap = fmt.Sprintf("cap %d%% of one core", st.CPUQuota)
+		}
+		used := "\u2014"
+		if stat, err := sandbox.CPUStatAt(st.CGroup); err == nil {
+			used = fmt.Sprintf("%.1fs used", float64(stat["usage_usec"])/1e6)
+			if t := stat["throttled_usec"]; t > 0 {
+				used += fmt.Sprintf(", %.1fs throttled", float64(t)/1e6)
+			}
+		}
+		fmt.Printf("\nteam budget  %s \u00b7 %s\n  %s\n", cap, used, st.CGroup)
+	}
 
 	fmt.Println("\nedges")
 	for _, e := range st.Edges {

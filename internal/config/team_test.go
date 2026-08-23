@@ -161,6 +161,9 @@ func TestTheSubsetRefusesWhatItDoesNotUnderstand(t *testing.T) {
 		"a count below one":                             "[[team.agent]]\ncount = 0\n",
 		"an unterminated header":                        "[team\n",
 		"an empty header":                               "[]\n",
+		"an unknown key in the team budget":             "[team.resources]\ncpu_quata = \"200%\"\n",
+		"a per-agent cap written at team level":         "[team.resources]\nmem = \"2G\"\n",
+		"a team quota that is not a percentage":         "[team.resources]\ncpu_quota = 200\n",
 	}
 	for what, body := range cases {
 		_, err := loadString(t, body)
@@ -200,5 +203,61 @@ name = "a"
 		r.CPUQuota != 150 || r.NetMbpsRx != 10 || r.NetMbpsTx != 5 || r.DiskIOPS != 500 ||
 		r.DiskMbps != 50 || r.MaxRuntime != 30*time.Minute || r.IdleTimeout != 5*time.Minute {
 		t.Errorf("resources = %+v", r)
+	}
+}
+
+// [team.resources] is the collective budget and is bound to the team, not to an
+// element above it — so unlike [team.agent.resources] it may be written
+// anywhere in the file (E2-6, F-D21).
+func TestTheTeamBudgetParsesWhereverItIsWritten(t *testing.T) {
+	before := writeAndLoad(t, `
+[team]
+name = "t"
+
+  [team.resources]
+  cpu_quota = "200%"
+
+[[team.agent]]
+name = "a"
+`)
+	after := writeAndLoad(t, `
+[team]
+name = "t"
+
+[[team.agent]]
+name = "a"
+
+  [team.resources]
+  cpu_quota = "200%"
+`)
+	for what, cfg := range map[string]*Config{"before the agents": before, "after the agents": after} {
+		if cfg.Team.Budget.CPUQuota != 200 {
+			t.Errorf("%s: cpu_quota = %d, want 200", what, cfg.Team.Budget.CPUQuota)
+		}
+		line, ok := cfg.Team.Ceiling("cpu_quota")
+		if !ok || line == 0 {
+			t.Errorf("%s: the budget forgot which line it was written on (%d, %v)", what, line, ok)
+		}
+	}
+	// A team that declared no budget has none, rather than a zero that would
+	// read as a cap of nothing.
+	plain := writeAndLoad(t, "[team]\nname = \"t\"\n[[team.agent]]\nname = \"a\"\n")
+	if plain.Team.Budget.CPUQuota != 0 {
+		t.Errorf("a team with no [team.resources] got a budget: %+v", plain.Team.Budget)
+	}
+}
+
+// A per-agent cap written at team level is a wrong mental model rather than a
+// typo, so the refusal answers the question actually being asked instead of
+// saying "unknown key".
+func TestAPerAgentCapAtTeamLevelSaysWhereItBelongs(t *testing.T) {
+	_, err := loadString(t, "[team.resources]\nmem = \"2G\"\n")
+	if err == nil {
+		t.Fatal("mem was accepted as a team-wide cap")
+	}
+	for _, want := range []string{"per-agent cap", "[team.agent.resources]"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not mention %q: %v", want, err)
+		}
 	}
 }

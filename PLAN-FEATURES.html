@@ -126,7 +126,7 @@
      improvements to the existing product land here as epics. Inert until its gate opens.</p>
   <div class="meta">
     owner: <b>John</b> &nbsp;&middot;&nbsp; developer: <b>Claude Code</b> &nbsp;&middot;&nbsp;
-    status: <b class="ok" id="meta-status">Epic E2 — active, 6/10 (next: E2-6, team cgroup hierarchy)</b> &nbsp;&middot;&nbsp;
+    status: <b class="ok" id="meta-status">Epic E2 — active, 7/10 (next: E2-7, team transcript)</b> &nbsp;&middot;&nbsp;
     last updated: <b id="meta-updated">2026-08-23</b><br>
     repo file: <b>PLAN-FEATURES.html</b> (lives at the repository root next to <code>PLAN.html</code>)<br>
     <span class="quiet">Companion to PLAN.html — same protocol, same rules, later timeline.</span>
@@ -166,7 +166,7 @@
     <span class="bl-name">All epics</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">E2-6 — the team resource budget: one parent cgroup slice per team, per-agent slices as its children</b></div>
+  <div class="focusline">Current focus: <b id="focus">E2-7 — the team transcript: <code>log --verify</code> over the whole chain, <code>--export team.html</code> with per-agent lanes</b></div>
 </div>
 
 <!-- ====================================================== 1. ACTIVATION GATE -->
@@ -370,7 +370,7 @@
         The host enforces the budget; every spawn/despawn is an audit event. A spawned worker attaches with exactly
         one edge — to its spawner — plus whatever store access the budget template grants (the E2-0 exception). The decision <i>to</i> spawn stays agent-side;
         KelyfOS only enforces what was pre-authorized by the user.</span></li>
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">E2-6</span><span class="tk">Team resource budget: each team gets a parent cgroup v2 slice — the collective cap —
         with per-agent E1-2 slices as children; <code>cpu.weight</code> divides contention fairly inside the team.
         This absorbs the old &ldquo;fair-share&rdquo; parking-lot item, scoped to a team; host-wide or cross-team scheduling
@@ -939,6 +939,43 @@
         <code>allow</code>, <code>secrets</code> and <code>workspace</code> were accepted per agent and silently dropped
         for a release, which is the failure mode a refusal exists to prevent. <code>max_runtime</code> needs none of this
         &mdash; an agent&rsquo;s wall clock starts when the host boots it, and the host is holding the clock.</td></tr>
+        <tr><td class="mono">F-D21</td><td class="mono">2026-08-23</td>
+        <td>Three rulings E2-6 needed and the plan did not specify, taken together because they are one design.
+        (1) <b>Schema</b>: the collective cap is <code>[team.resources] cpu_quota</code> &mdash; one new section, one key.
+        A per-agent cap written there (<code>mem</code>, <code>cpus</code>, <code>disk</code>, the rates, the time
+        budgets) is refused with a message saying where it belongs, separately from &ldquo;unknown key&rdquo;.
+        (2) <b>The sum is not checked</b>: agents may oversubscribe the team, and only a <i>single</i> agent asking for
+        more than the whole team is refused. (3) <b>No per-agent <code>weight</code> key</b> in E2-6: every child gets
+        <code>cpu.weight = 100</code> and there is no way to write anything else. Additionally, on a systemd user session
+        the parent&rsquo;s cap is set with <code>systemctl --user set-property --runtime</code> <i>before the first agent
+        starts</i>, not by writing the slice&rsquo;s <code>cpu.max</code> by hand.</td>
+        <td>(1) <code>cpu_quota</code> is the only cap a team can share, and that is a fact about the mechanism rather
+        than a scoping choice: cores, RAM and disk are handed to each agent at boot as that machine&rsquo;s hardware, and
+        a parent cgroup cannot pool hardware. So <code>mem</code> at team level is not a typo, it is a wrong mental
+        model, and F-D16&rsquo;s whole promise is that the file tells you which. It also had to be a table bound to
+        <code>[team]</code> rather than to an element above it, so that &mdash; unlike
+        <code>[team.agent.resources]</code> &mdash; it may be written anywhere in the file.
+        (2) Five agents at <code>100%</code> under a team cap of <code>200%</code> is not a mistake, it is the
+        configuration worth writing: each may burst to its own ceiling while the others idle, and the parent holds the
+        total. Refusing oversubscription would forbid the only reason a shared budget exists. The asymmetry is
+        deliberate and is the same one <code>docs/resources.md</code> already draws about per-device disk limits: a
+        <i>single</i> ceiling written above another ceiling and then ignored is a number a reader would go on to trust,
+        so that one is refused.
+        (3) A weight is not a cap, so <code>[team.agent.resources]</code> is the wrong home for it &mdash; that table is
+        pinned key-for-key against a single run&rsquo;s <code>[resources]</code> by a test, and a weight means nothing to
+        a sandbox with no siblings. Equal weights are literally what E2-6&rsquo;s &ldquo;divides contention fairly&rdquo;
+        asks for. F-D16 prices every schema growth as parser work; if a declarable weight is wanted later it belongs on
+        <code>[[team.agent]]</code> beside <code>count</code>, and that is a decision to take then.
+        The systemd half was <b>measured, not assumed</b>. Writing the slice&rsquo;s <code>cpu.max</code> directly is the
+        obvious move and is wrong: systemd applies the unit&rsquo;s own properties when it materialises a slice, so a
+        value written into a directory systemd has not started yet is discarded &mdash; proved by writing
+        <code>300000 100000</code> into a hand-made slice directory and watching the first scope reset it to
+        <code>max</code>. <code>set-property --runtime</code> on a slice that has never existed returns 0, creates the
+        slice <i>and every level above it</i>, and the cap is already in place when the first agent lands &mdash; so
+        there is no window in which the team runs uncapped, which is the property the direct path has and the one worth
+        matching. It needs <code>systemctl</code>, which is not a new dependency in any meaningful sense: it ships in the
+        same package as the <code>systemd-run</code> this path already requires, and it is only reached when a collective
+        cap was actually asked for.</td></tr>
     <!-- Claude Code: append rows above this line. -->
       <tr><td class="mono">F-D10</td><td class="mono">2026-08-22</td>
         <td>The resource knobs E1-0 goes looking for shipped <b>partly</b>: <code>--vcpus</code>/<code>--mem</code> and
@@ -2031,6 +2068,63 @@ a second team, one agent, DEMO_TOKEN@example.com:
   events: secret.use agent=solo host=example.com
           egress.attempt agent=solo mode=terminated
   session a73831c3: chain intact, 6 events verified
+
+$ go test ./... -race     all packages ok</pre></td></tr>
+        <tr><td class="mono">2026-08-23</td><td class="mono">E2-6</td>
+        <td><b>A team is one cgroup with the agents inside it.</b> <code>[team.resources] cpu_quota</code> becomes a
+        parent cgroup v2 slice created before any agent boots, with every agent&rsquo;s E1-2 slice as a child of it and
+        <code>cpu.weight = 100</code> on each. The kernel then composes the two ceilings and the host does no
+        arithmetic: an agent may never exceed its own <code>cpu.max</code>, the team may never exceed the parent&rsquo;s,
+        and the share only decides anything when siblings actually contend. Every agent gets a child slice, including
+        one that declared no quota &mdash; being inside the collective cap is the point, and a child with no
+        <code>cpu.max</code> of its own is exactly &ldquo;bounded only by the team&rdquo;. A team that declares no
+        <code>cpu_quota</code> anywhere gets no cgroup machinery at all, so it still runs on a host with neither systemd
+        nor a delegated cgroup.
+        <b>The systemd half was measured rather than assumed</b>, and the obvious approach is wrong. Writing the
+        slice&rsquo;s <code>cpu.max</code> by hand is discarded the moment systemd materialises the unit &mdash; proved by
+        writing <code>300000 100000</code> into a hand-made slice and watching the first scope reset it to
+        <code>max</code>. <code>systemctl --user set-property --runtime</code> on a slice that has never existed returns
+        0, creates the slice and every level above it, and has the cap in place before the first agent lands, so there is
+        no window in which the team runs uncapped. The team&rsquo;s name is sanitised to exactly one slice component
+        because <code>-</code> is systemd&rsquo;s hierarchy separator and a team called <code>foo-bar</code> would
+        otherwise cap a level nobody named. Both paths verified live: unprivileged under a user session, and as root on
+        the direct path CI uses. Rulings in F-D21.
+        <b>Two smaller things the work turned up.</b> A child with no quota has no <code>cpu.max</code> to compare, so
+        <code>Confirm</code> would have accepted a process that landed anywhere and teardown would then have removed a
+        directory nobody proved was ours &mdash; there is now a placement check. And <code>delegateCPU</code>'s comment
+        said &ldquo;only ever called on the root cgroup&rdquo;; it now has a second caller and the comment says why the
+        reason still holds, because the alternative is somebody later &ldquo;fixing&rdquo; a working call.</td>
+        <td class="mono"><pre>$ ARCH=aarch64 bash dev/prove-team.sh     (as root, nested &mdash; D15)
+  5 agents, team up in 12285 ms   &lt;- slower than uncapped, because 200%
+  parent  /sys/fs/cgroup/kelyfos-team-proof   is the cap and boot is work
+  cpu.max 200000 100000
+  45.54 cpu-seconds over 22s = 2.07 core(s) busy for the whole team
+PASS  the collective cap held: 2.07 cores' worth vs cpu_quota = 200%
+PASS  the cap bit: the kernel throttled the team for 107.6s
+PASS  the hierarchy is real: children 70914631 usec, parent 70914728
+PASS  no agent was privileged: every child's cpu.weight is 100
+PASS  teardown removed the team's slice
+  uncapped, same team: 5.02 core(s) over 21s, up in 4654 ms
+PASS  the comparison is meaningful: 5.02 cores' worth vs a 200% cap
+  6 passed, 0 failed, 0 skipped
+
+Worth stating: this passed <i>on the nested dev host</i>, where prove-caps
+has to skip its equivalent check. Five guests generate five times the
+demand, so a team cap is reachable here where a single sandbox's is not.
+The binding numbers are still the CI runner's (D15).
+
+$ kelyfos team up            (unprivileged, systemd user session)
+  master   0f667502 ready in 3953 ms   cpu 150%
+  worker-1 34742b74 ready in 3983 ms   cpu bounded by the team
+  worker-2 f49b085d ready in 3981 ms   cpu bounded by the team
+  team cap 200% of one core's CPU time for the whole team
+  cgroup   .../kelyfos.slice/kelyfos-team.slice/kelyfos-team-budget_demo.slice
+  parent cpu.max          200000 100000
+  kelyfos-0f667502.scope  cpu.max=150000 100000  cpu.weight=100
+  kelyfos-34742b74.scope  cpu.max=max    100000  cpu.weight=100
+
+$ kelyfos team ps
+team budget  cap 200% of one core &middot; 9.1s used, 5.7s throttled
 
 $ go test ./... -race     all packages ok</pre></td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->

@@ -9,8 +9,8 @@ import (
 // The team half of a policy file, parsed by the same hand-rolled reader as the
 // rest of it (F-D16).
 //
-// What this understands, and nothing more: `[team]`, `[[team.agent]]`,
-// `[team.agent.resources]`, `[team.agent.spawn]`,
+// What this understands, and nothing more: `[team]`, `[team.resources]`,
+// `[[team.agent]]`, `[team.agent.resources]`, `[team.agent.spawn]`,
 // `[team.agent.spawn.resources]`, `[team.store]` and `[[team.store.key]]`. A
 // nested table always belongs to the array element above it, which is what
 // makes one level of nesting enough for this schema and keeps the state a
@@ -24,6 +24,30 @@ type Team struct {
 	Agents         []TeamAgent
 	Edges          []TeamEdge
 	Store          *TeamStore
+
+	// Budget is [team.resources]: the collective cap the whole team shares,
+	// as distinct from the per-agent ceilings in [team.agent.resources]
+	// (E2-6, F-D21). ResLine remembers where each key was written, so a
+	// refusal can name the line the user has to go and change.
+	Budget  TeamBudget
+	ResLine map[string]int
+}
+
+// TeamBudget is [team.resources]. One key today, deliberately: cpu_quota is the
+// only cap a team can meaningfully share, because it is the only one the kernel
+// will divide for us through a cgroup hierarchy. Memory, cores and disk are
+// each agent's own machine and cannot be pooled by a parent slice.
+type TeamBudget struct {
+	CPUQuota int
+}
+
+// Ceiling reports the line a [team.resources] key was written on.
+func (t *Team) Ceiling(key string) (line int, ok bool) {
+	if t == nil || t.ResLine == nil {
+		return 0, false
+	}
+	line, ok = t.ResLine[key]
+	return line, ok
 }
 
 // TeamAgent is one [[team.agent]].
@@ -112,6 +136,12 @@ func (c *Config) header(line, where string) (string, error) {
 		c.ensureTeam()
 		return name, nil
 
+	// Bound to the team rather than to an element above it, so unlike
+	// [team.agent.resources] it may be written before or after the agents.
+	case !array && name == "team.resources":
+		c.ensureTeam()
+		return name, nil
+
 	case array && name == "team.agent":
 		c.ensureTeam()
 		c.Team.Agents = append(c.Team.Agents, TeamAgent{Count: 1, Line: lineOf(where)})
@@ -159,8 +189,8 @@ func (c *Config) header(line, where string) (string, error) {
 		kind = "[[" + name + "]]"
 	}
 	return "", fmt.Errorf("%s: unknown section %s; this file understands [sandbox], [resources], "+
-		"[team], [[team.agent]] with [team.agent.resources] and [team.agent.spawn], "+
-		"[[team.edge]], [team.store] and [[team.store.key]]", where, kind)
+		"[team] with [team.resources], [[team.agent]] with [team.agent.resources] and "+
+		"[team.agent.spawn], [[team.edge]], [team.store] and [[team.store.key]]", where, kind)
 }
 
 func (c *Config) ensureTeam() {
@@ -179,6 +209,26 @@ func (c *Config) teamKey(section, key, value, where string) error {
 			c.Team.Name, err = parseString(value, where)
 		case "record_payloads":
 			c.Team.RecordPayloads, err = parseBool(value, where)
+		default:
+			return unknown(where, key, section)
+		}
+
+	case "team.resources":
+		if c.Team.ResLine == nil {
+			c.Team.ResLine = map[string]int{}
+		}
+		c.Team.ResLine[key] = lineOf(where)
+		switch key {
+		case "cpu_quota":
+			c.Team.Budget.CPUQuota, err = parsePercent(value, where)
+		case "cpus", "mem", "disk", "scratch", "net_mbps_rx", "net_mbps_tx",
+			"disk_iops", "disk_mbps", "max_runtime", "idle_timeout":
+			// Not a typo, so not an "unknown key": a wrong mental model, which
+			// deserves the answer to the question actually being asked.
+			return fmt.Errorf("%s: %s is a per-agent cap, not a team-wide one; "+
+				"write it in [team.agent.resources]\n"+
+				"    [team.resources] is the collective budget, and cpu_quota is the only cap "+
+				"a team can share \u2014 cores, RAM and disk are each agent's own machine", where, key)
 		default:
 			return unknown(where, key, section)
 		}

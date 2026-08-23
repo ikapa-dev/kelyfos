@@ -64,6 +64,8 @@ forbids it, but because there is nothing to send it over.
 | key | type | meaning |
 | --- | --- | --- |
 | `name` | string | Identifies the team in the audit record and in `kelyfos team ps`. Required. |
+| `record_payloads` | bool | Whether message bodies are captured. Default `false`; see §7. |
+| `[team.resources]` | table | The collective cap the whole team shares. One key, `cpu_quota`; see §6. |
 
 ### 1.2 `[[team.agent]]`
 
@@ -376,7 +378,98 @@ team you can see is the team that exists.
 
 ---
 
-## 6. What the record contains
+## 6. The team budget
+
+`[team.resources]` is the collective cap: what the team as a whole may consume,
+whatever any one agent's own ceiling says.
+
+```toml
+[team]
+name = "reviewers"
+
+  [team.resources]
+  cpu_quota = "200%"        # two cores' worth, for all five agents together
+
+[[team.agent]]
+name = "master"
+  [team.agent.resources]
+  cpu_quota = "150%"        # and no more than one and a half on its own
+```
+
+One key, deliberately. `cpu_quota` is the only cap a team can meaningfully
+share, because it is the only one the kernel will divide for us: cores, RAM and
+disk are each agent's own machine, and a parent cannot pool hardware that was
+handed out at boot. A per-agent key written here is refused by name and line,
+with the answer to the question actually being asked — it is a wrong mental
+model rather than a typo, and F-D16's promise is that the file says which.
+
+**This is not the team-wide allowlist §1.2 argues against, and the difference is
+the direction.** A shared allowlist would *give* every agent the union of what
+each was trusted with — it hands the least trusted agent the most trusted one's
+network. A shared cap *takes away*: it is a ceiling above the ceilings, and no
+agent gains anything from another's presence in it.
+
+### 6.1 How it is enforced
+
+One cgroup v2 slice per team, with each agent's own E1-2 slice as a child of it
+(E2-6). The kernel then composes the two ceilings and the host does no
+arithmetic: an agent may never exceed its own `cpu.max`, and the team may never
+exceed the parent's. Every child carries `cpu.weight = 100` — an equal share,
+which is what "divides contention fairly" means: nothing is privileged, and the
+parent's bandwidth splits evenly among whichever agents are actually competing
+for it.
+
+The distinction between the two knobs is the same one `docs/resources.md` draws
+between `cpus` and `cpu_quota`, one level up:
+
+- **`cpu.max` is a ceiling.** It binds even on an idle machine.
+- **`cpu.weight` is a share.** It only decides anything when siblings contend.
+  With no contention it changes nothing.
+
+So a team at `cpu_quota = "200%"` with five equally weighted agents gives one
+busy agent up to 200% (or its own lower ceiling), and five busy agents 40% each.
+
+**The sum is deliberately not checked.** Five agents at `100%` under a team cap
+of `200%` is legal, and is the configuration worth writing: each may burst to
+its own ceiling while the others idle, and the parent holds the total. Refusing
+oversubscription would forbid the only reason a shared budget exists. What *is*
+refused is a single agent asking for more than the team — a ceiling written
+above another ceiling and then ignored is a number a reader would later trust.
+
+A team that declares no `cpu_quota` anywhere — not at team level, not on any
+agent — gets no cgroup machinery at all, and so needs neither a systemd user
+session nor a delegated cgroup to run.
+
+### 6.2 Where the cap is applied
+
+The host applies it the same two ways E1-2 applies a single sandbox's quota
+(F-D11), and the difference between them is worth knowing:
+
+- **Directly**, as root or with a delegated cgroup root: KelyfOS creates the
+  parent, writes its `cpu.max`, delegates the cpu controller to its children,
+  and each agent's Firecracker is placed inside at clone time. The cap is in
+  place before any agent exists.
+- **Through the user manager**, under a systemd user session: the parent is a
+  slice, `kelyfos-team-<name>.slice`, and its cap is set with
+  `systemctl --user set-property --runtime` **before the first agent starts** —
+  which creates the slice and every level above it, so there is likewise no
+  window in which the team runs uncapped. Each agent is then started into it
+  with `systemd-run --slice`. Writing the slice's `cpu.max` by hand instead was
+  measured and rejected: systemd applies the unit's own properties when it
+  materialises the slice, so a value written into a directory systemd has not
+  started yet is discarded.
+
+The team's name becomes exactly one component of that slice path, whatever it
+contains: `-` is systemd's hierarchy separator, so a team called `foo-bar` would
+otherwise silently add a level and cap something other than the team.
+
+`kelyfos team ps` prints the parent's own accounting — CPU used and CPU
+throttled — read from the cgroup the cap is written on, so the number and the
+limit cannot be about different things.
+
+---
+
+## 7. What the record contains
 
 Every team event goes into the same hash-chained flight recorder a single
 session uses (`docs/events.md`), so a team produces one verifiable transcript
@@ -400,7 +493,7 @@ Off by default. A team passing customer data between agents should be able to
 prove what moved without keeping a second copy of it, and a hash lets a claim
 about a message be checked later without the message being stored.
 
-### 6.1 The recorder is not a delivery buffer
+### 7.1 The recorder is not a delivery buffer
 
 These two facts are orthogonal and are stated together because they look
 contradictory at a glance:
@@ -416,7 +509,7 @@ that is what the outcome field is for.
 
 ---
 
-## 7. Conformance
+## 8. Conformance
 
 | Requirement | Task |
 | --- | --- |

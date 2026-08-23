@@ -17,6 +17,14 @@ import (
 // than a stuttering one.
 const cpuPeriodUS = 100000
 
+// DefaultCPUWeight is cgroup v2's own default, and the weight every agent in a
+// team gets. Equal weights are what E2-6's "divides contention fairly" means:
+// nothing is privileged, and the parent's bandwidth splits evenly among
+// whichever siblings are actually competing for it. Written explicitly rather
+// than left to the kernel, so "no agent was privileged" is something the proof
+// reads back instead of something the code assumes.
+const DefaultCPUWeight = 100
+
 // Slice is a cgroup v2 directory holding one sandbox's Firecracker process.
 //
 // It exists so `cpu_quota` can cap the CPU time a sandbox actually consumes,
@@ -30,9 +38,22 @@ const cpuPeriodUS = 100000
 type Slice struct {
 	Path    string
 	Percent int
-	name    string
-	mode    mode
-	dir     *os.File
+	// Weight divides contention between siblings under a shared parent — a
+	// share, not a ceiling, and meaningless to a sandbox with no siblings.
+	// Zero leaves it unset, which is what a single run wants (E2-6).
+	Weight int
+	name   string
+	mode   mode
+	dir    *os.File
+
+	// Where this slice is expected to live, when it lives under a team's.
+	// parent is the absolute directory on the direct path; sliceUnit is the
+	// systemd unit name on the other. Confirm checks the process landed there,
+	// which matters most for a child with no quota of its own: without a
+	// placement check there would be nothing left to verify, and Close would
+	// then be holding a path nobody proved was ours.
+	parent    string
+	sliceUnit string
 }
 
 // mode is how this host lets an unprivileged process get a CPU quota.
@@ -112,7 +133,18 @@ func (s *Slice) CPUStat() (map[string]int64, error) {
 	if s == nil {
 		return nil, fmt.Errorf("no cgroup slice")
 	}
-	b, err := os.ReadFile(filepath.Join(s.Path, "cpu.stat"))
+	return CPUStatAt(s.Path)
+}
+
+// CPUStatAt reads cpu.stat from a cgroup directory named by path. Exported
+// separately because a team's collective figures are read by a *different
+// process* — `kelyfos team ps` has the path out of the team state file and no
+// Slice to ask.
+func CPUStatAt(dir string) (map[string]int64, error) {
+	if dir == "" {
+		return nil, fmt.Errorf("no cgroup path")
+	}
+	b, err := os.ReadFile(filepath.Join(dir, "cpu.stat"))
 	if err != nil {
 		return nil, err
 	}
@@ -169,10 +201,14 @@ func delegatesCPU(dir string) error {
 
 // delegateCPU is delegatesCPU with one attempt to fix it.
 //
-// Only ever called on the root cgroup, and only as root, because a cgroup that
-// holds processes cannot start distributing controllers — the kernel refuses
-// with EBUSY, and every cgroup this process could otherwise use holds at least
-// this process. The root cgroup is the documented exception to that rule.
+// Called on exactly two kinds of cgroup, for the same reason: ones that hold no
+// processes. A cgroup that holds processes cannot start distributing
+// controllers — the kernel refuses with EBUSY — and every cgroup this process
+// could otherwise use holds at least this process. The root cgroup is the
+// documented exception to that rule and is the first caller, as root. The
+// second is a team slice KelyfOS has just created and put nothing in yet
+// (E2-6): a fresh cgroup's subtree_control is empty, so without this its
+// children would have no cpu.max at all.
 func delegateCPU(dir string) error {
 	if err := delegatesCPU(dir); err == nil {
 		return nil
@@ -248,6 +284,10 @@ func cpuMaxLine(percent int) string {
 	return strconv.Itoa(percent*cpuPeriodUS/100) + " " + strconv.Itoa(cpuPeriodUS)
 }
 
+// cpuWeightLine is the same idea for the share, in the same place for the same
+// reason: the two paths must not be able to disagree about what a weight is.
+func cpuWeightLine(weight int) string { return strconv.Itoa(weight) }
+
 // WrapArgv returns the command to actually execute. Under systemd the quota is
 // applied by asking the user manager to start the process in a scope it owns;
 // on the direct path the argv is unchanged and CgroupFD does the work.
@@ -255,12 +295,22 @@ func (s *Slice) WrapArgv(argv []string) []string {
 	if s == nil || s.mode != modeSystemd {
 		return argv
 	}
-	return append([]string{
-		"systemd-run", "--user", "--scope", "--quiet",
-		"--unit", s.name,
-		"-p", fmt.Sprintf("CPUQuota=%d%%", s.Percent),
-		"--",
-	}, argv...)
+	pre := []string{"systemd-run", "--user", "--scope", "--quiet", "--unit", s.name}
+	// --slice puts the scope under a parent systemd owns, creating that slice
+	// and every level above it if they do not exist. It is how a team's
+	// hierarchy is built on this path (E2-6, F-D21).
+	if s.sliceUnit != "" {
+		pre = append(pre, "--slice", s.sliceUnit)
+	}
+	// A team child may have no quota of its own — it is bounded by its parent —
+	// so the property is conditional now rather than always present.
+	if s.Percent > 0 {
+		pre = append(pre, "-p", fmt.Sprintf("CPUQuota=%d%%", s.Percent))
+	}
+	if s.Weight > 0 {
+		pre = append(pre, "-p", fmt.Sprintf("CPUWeight=%d", s.Weight))
+	}
+	return append(append(pre, "--"), argv...)
 }
 
 // Direct reports whether the caller should pass CgroupFD when launching.
@@ -302,14 +352,55 @@ func (s *Slice) confirmOnce(pid int) error {
 	if path == "" {
 		return fmt.Errorf("confirm cpu quota: pid %d has no cgroup v2 entry", pid)
 	}
-	s.Path = path
-	got, err := os.ReadFile(filepath.Join(path, "cpu.max"))
-	if err != nil {
-		return fmt.Errorf("confirm cpu quota: read %s/cpu.max: %w", path, err)
+	// Checked before Path is adopted, not after: Close removes whatever Path
+	// holds, and a process that landed somewhere unexpected would otherwise
+	// hand teardown a directory belonging to somebody else.
+	if err := underParent(path, s.parent, s.sliceUnit); err != nil {
+		return err
 	}
-	if want := cpuMaxLine(s.Percent); strings.TrimSpace(string(got)) != want {
-		return fmt.Errorf("cpu quota not applied: %s/cpu.max is %q, expected %q",
-			path, strings.TrimSpace(string(got)), want)
+	s.Path = path
+	if s.Percent > 0 {
+		got, err := os.ReadFile(filepath.Join(path, "cpu.max"))
+		if err != nil {
+			return fmt.Errorf("confirm cpu quota: read %s/cpu.max: %w", path, err)
+		}
+		if want := cpuMaxLine(s.Percent); strings.TrimSpace(string(got)) != want {
+			return fmt.Errorf("cpu quota not applied: %s/cpu.max is %q, expected %q",
+				path, strings.TrimSpace(string(got)), want)
+		}
+	}
+	if s.Weight > 0 {
+		got, err := os.ReadFile(filepath.Join(path, "cpu.weight"))
+		if err != nil {
+			return fmt.Errorf("confirm cpu weight: read %s/cpu.weight: %w", path, err)
+		}
+		if want := cpuWeightLine(s.Weight); strings.TrimSpace(string(got)) != want {
+			return fmt.Errorf("cpu weight not applied: %s/cpu.weight is %q, expected %q",
+				path, strings.TrimSpace(string(got)), want)
+		}
+	}
+	return nil
+}
+
+// underParent reports whether a process's cgroup is where this slice expected
+// it to be. A free function so it can be tested without a cgroupfs.
+//
+// The two paths need different questions asked. On the direct path the slice
+// directory *is* the target, so the landing place must be it or below it. Under
+// systemd the process lands in a scope directory systemd made inside the slice,
+// so the question is about the parent of where it landed.
+func underParent(landed, parentDir, sliceUnit string) error {
+	switch {
+	case parentDir != "":
+		if landed != parentDir && !strings.HasPrefix(landed, parentDir+"/") {
+			return fmt.Errorf("cpu quota not applied: the process landed in %s, "+
+				"which is not inside this team's slice %s", landed, parentDir)
+		}
+	case sliceUnit != "":
+		if got := filepath.Base(filepath.Dir(landed)); got != sliceUnit {
+			return fmt.Errorf("cpu quota not applied: the process landed in %s, "+
+				"whose parent is %s and not this team's slice %s", landed, got, sliceUnit)
+		}
 	}
 	return nil
 }

@@ -95,7 +95,7 @@ happens at the limit and how hard the limit is.
 | --- | --- | --- |
 | `cpus` | KVM machine config (`vcpu_count`) | absolute — the cores do not exist |
 | `mem` | KVM machine config (`mem_size_mib`) | absolute — the RAM does not exist; the guest OOM-kills, and says so |
-| `cpu_quota` | cgroup v2 `cpu.max` on the Firecracker process's own cgroup | throttled — work slows, nothing fails |
+| `cpu_quota` | cgroup v2 `cpu.max` on the Firecracker process's own slice — inside the team's, when it is in one | throttled — work slows, nothing fails |
 | `disk` | size of the packed workspace block device | `ENOSPC` on writes to `/work` |
 | `scratch` | `size=` on the tmpfs backing the overlay upper layer, applied by the guest kernel inside the `mem` cap | `ENOSPC` on writes outside `/work` |
 | `net_mbps_rx` / `net_mbps_tx` | Firecracker token-bucket rate limiter on the network device | throttled |
@@ -297,6 +297,47 @@ so.** No network interface is a stricter limit than a throttled one, so this is
 not an error; `kelyfos run` prints `net limit not applied — this sandbox has no
 network interface` rather than leaving you to infer it from silence.
 
+## A team's collective cap
+
+A `[team]` gets one more level. `[team.resources] cpu_quota` is a cap on the
+whole team, applied as a parent cgroup v2 slice with each agent's own slice as
+a child of it, so the kernel composes the two ceilings and the host does no
+arithmetic (E2-6, F-D21):
+
+```toml
+[team]
+name = "reviewers"
+
+  [team.resources]
+  cpu_quota = "200%"      # two cores' worth for all the agents together
+
+[[team.agent]]
+name = "master"
+  [team.agent.resources]
+  cpu_quota = "150%"      # and no more than 1.5 on its own
+```
+
+`cpu_quota` is the only key `[team.resources]` takes, because it is the only cap
+the kernel will divide: cores, RAM and disk are handed to each agent at boot as
+that machine's hardware, and no parent can pool them afterwards. A per-agent key
+written at team level is refused with a message saying where it belongs.
+
+Every agent's slice also carries `cpu.weight = 100` — an equal share of whatever
+the parent's ceiling leaves. The ceiling/share distinction is the same one this
+document draws between `cpus` and `cpu_quota`, one level up: `cpu.max` binds on
+an idle machine, `cpu.weight` only decides anything when siblings contend.
+
+The **sum of the agents' quotas may exceed the team's**, deliberately: each may
+burst to its own ceiling while the others idle, and the parent holds the total.
+That is the mirror of the disk limits being per device rather than a shared
+budget — stated because a reader will otherwise assume the arithmetic is
+checked. A *single* agent asking for more than the whole team is refused, since
+a ceiling written above another ceiling and then ignored is a number that would
+later be trusted.
+
+`docs/teams.md` §6 has the full account, including how the cap is applied under
+a systemd user session.
+
 ## Example
 
 ```toml
@@ -367,5 +408,17 @@ reaches about one core's worth against four stressors on four vCPUs, so there is
 nothing there to cap, and saying so is the only honest result available. The
 `caps` workflow runs the same script on a bare-KVM runner, which is the
 environment D15 makes binding.
+
+```
+bash dev/prove-team.sh
+```
+
+The same idea one level up: five agents under a `[team.resources] cpu_quota` of
+`200%`, all running `stress-ng` at once, measured from the parent slice's own
+`cpu.stat`. It asserts four things rather than one — that the cap held, that the
+kernel actually had to throttle somebody (a cap never approached reads exactly
+like a cap that held), that the children's CPU time adds up to the parent's
+(five unrelated cgroups would not), and that every child's `cpu.weight` is 100.
+Then it takes the team down and checks the slice went with it.
 
 `bash dev/accept-e1.sh` runs Epic E1's acceptance list the same way.
