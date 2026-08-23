@@ -16,9 +16,9 @@ state tools, which found the MCP frame limit at 1 MiB against a promised 8 MiB (
 restore held to no ceiling (F-D39); the team tools (F-D42); the audit
 lane (F-D43); two client recipes, which found a client-launched server could run with no
 ceiling (F-D44); the plugins device and runtime (F-D45, F-D46); both doors at once, in CI.
-Exit: 22/22 acceptance checks, 11/11 recipes, three exams — two blind readers and John's live
-client — whose 22 findings are in `docs/exam/`. **v0.7 tagged and published**, and the batch
-those exams routed after it is done (F-D49). Epic E5 so far: the v0.8 spec, named sessions,
+Exit: 22/22 acceptance checks, 11/11 recipes, three exams whose 22 findings are in
+`docs/exam/`. **v0.7 tagged and published**, and the batch those exams routed after it is
+done (F-D49). Epic E5 so far: the v0.8 spec, named sessions,
 diff and review, `kelyfos shell`, one refusal catalog whose acceptance found the plan's own
 headline fix line never reaching the client (F-D53), and inbound forwarding over vsock —
 proved by diffing the nftables ruleset with two forwards and with none.
