@@ -126,7 +126,7 @@
      improvements to the existing product land here as epics. Inert until its gate opens.</p>
   <div class="meta">
     owner: <b>John</b> &nbsp;&middot;&nbsp; developer: <b>Claude Code</b> &nbsp;&middot;&nbsp;
-    status: <b class="ok" id="meta-status">Epic E1 — active, 8/9 (next: E1-8)</b> &nbsp;&middot;&nbsp;
+    status: <b class="ok" id="meta-status">Epic E1 done — v0.4 released; 9/42, Epic E2 active</b> &nbsp;&middot;&nbsp;
     last updated: <b id="meta-updated">2026-08-23</b><br>
     repo file: <b>PLAN-FEATURES.html</b> (lives at the repository root next to <code>PLAN.html</code>)<br>
     <span class="quiet">Companion to PLAN.html — same protocol, same rules, later timeline.</span>
@@ -166,7 +166,7 @@
     <span class="bl-name">All epics</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">E1-8 — enforcement proof: <code>stress-ng</code> against tight caps on the bare-KVM reference</b></div>
+  <div class="focusline">Current focus: <b id="focus">E2-0 — <code>docs/teams.md</code>: the team schema and broker semantics, spec before code</b></div>
 </div>
 
 <!-- ====================================================== 1. ACTIVATION GATE -->
@@ -215,13 +215,13 @@
 </section>
 
 <!-- ====================================================== 3. EPIC E1 -->
-<section class="phase" id="e1" data-phase="E1" data-status="active">
+<section class="phase" id="e1" data-phase="E1" data-status="done">
   <div class="phase-head">
     <div>
       <div class="kconfig">config KELYFOS_EPIC_E1</div>
       <h2>Epic E1 — Resource governance (v0.4)</h2>
     </div>
-    <span class="badge">ACTIVE</span>
+    <span class="badge">DONE</span>
   </div>
   <p>Goal: <b>the user decides exactly how much machine the agent gets — and can prove the limits held.</b>
      The build plan targets the caps that are free at boot time (vCPU count, RAM, disk size — the VM&rsquo;s hardware,
@@ -281,7 +281,7 @@
         <code>cpu.stat</code> / <code>memory.current</code> deltas at a ~1&nbsp;s tick. At teardown the flight recorder gets a
         <code>resource.summary</code> event — peak RSS, CPU-seconds, bytes tx/rx, disk bytes written — so every session
         ends with a usage receipt that <code>kelyfos log --export</code> renders.</span></li>
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">E1-8</span><span class="tk">Enforcement proof: add <code>stress-ng</code> to the dev flavor; drive CPU, memory,
         disk, and network against deliberately tight caps and verify <b>from the host</b> that each one held.
         Numbers go in the progress log the same way P1-7&rsquo;s boot times did.</span></li>
@@ -306,13 +306,13 @@
 </section>
 
 <!-- ====================================================== 3b. EPIC E2 -->
-<section class="phase" id="e2" data-phase="E2" data-status="todo">
+<section class="phase" id="e2" data-phase="E2" data-status="active">
   <div class="phase-head">
     <div>
       <div class="kconfig">config KELYFOS_EPIC_E2</div>
       <h2>Epic E2 — Agent teams (v0.5)</h2>
     </div>
-    <span class="badge">QUEUED</span>
+    <span class="badge">ACTIVE</span>
   </div>
   <p>Goal: <b>user-declared multi-agent topologies on one host — isolated agents, enforced edges, shared state,
      full team audit.</b> A <code>[team]</code> section in <code>kelyfos.toml</code> declares agents and the edges
@@ -1411,6 +1411,102 @@ $ go test ./host/
 --- PASS: TestResourceLaneFallsBackToTheRecordedReceipt
 ok  host  internal/config  internal/egress  internal/proto  internal/recorder
 ok  internal/sandbox  supervisor</pre></td></tr>
+        <tr><td class="mono">2026-08-23</td><td class="mono">E1-8</td>
+        <td><b>Enforcement proof, and it earned its place twice over by failing first.</b> <code>stress-ng</code> joins the
+        dev flavor and <code>dev/prove-caps.sh</code> drives CPU, memory, disk, network, scratch and time past their limits,
+        checking from the host that each held &mdash; <code>/proc/&lt;pid&gt;/stat</code>, the sandbox's own
+        <code>cpu.stat</code>, <code>/proc/&lt;pid&gt;/io</code>, the TAP's byte counters, the flight recorder. The guest is
+        never asked how much it used.
+        The first run on a real multi-core host came back <b>4 passed, 5 failed</b>, and both causes were invisible on a
+        nested laptop. <b>One was a bug in KelyfOS:</b> <code>pickMode</code> checked <code>cgroup.controllers</code> &mdash;
+        what a cgroup <i>has</i> &mdash; when the question is <code>cgroup.subtree_control</code>, what it hands to its
+        children, and only the second decides whether a child may carry a <code>cpu.max</code>. On the runner the job's own
+        cgroup reports the cpu controller and delegates nothing, so KelyfOS created a directory it could not then write into
+        and every quota'd sandbox failed to start with a bare permission denied. It now checks delegation, which makes that
+        cgroup correctly unusable and lets the root-cgroup path take over; as root it enables the controller there itself,
+        the root cgroup being the one exempt from cgroup v2's rule that a cgroup may hold processes or distribute
+        controllers but not both. The workflow deliberately no longer pre-arranges any of it, because doing so would hide
+        whether the product can. <b>The other was a test measuring its instrument:</b> stress-ng's vm stressor is built to
+        <i>survive</i> memory pressure &mdash; it catches a failed mapping, adapts, and reports a successful run either way.
+        Measured, <code>--vm 4 --vm-bytes 100M</code> produced zero kills on aarch64 while claiming to pass, and
+        <code>--vm 1 --vm-bytes 400M</code> produced three on aarch64 and none at all on x86_64, where the overcommit
+        heuristic turned the single large mapping away at the door rather than letting it be killed. The memory case now
+        uses a plain allocator loop, which has no opinions.
+        <b>The E1-2 measurement debt is settled.</b> That box could not tell 150% from uncapped because it could not
+        generate more than one core of demand; this one reaches 3.97 cores' worth against four stressors on four vCPUs, and
+        under a 150% quota reaches 1.52. Bandwidth is reported gross <i>and</i> steady and asserted on steady, because a
+        bucket starts full and a short transfer measures the burst rather than the cap.</td>
+        <td class="mono"><pre>bare-KVM x86_64 reference, run 32611423116 (D15: these numbers bind)
+
+1. CPU quota
+   uncapped   39.70s of host CPU over 10s = 3.97 core(s) busy  (expected ~4.0)
+   50%         5.06s of host CPU over 10s = 0.51 core(s) busy  (expected ~0.5)
+   150%       15.15s of host CPU over 10s = 1.52 core(s) busy  (expected ~1.5)
+   PASS  the comparison is meaningful: uncapped reached 3.97 cores' worth
+
+2. Memory
+   OOM-killed  python3 (pid 369) holding 217 MiB of a 256 MiB machine
+
+3. Disk       421.7 MB in 20s   gross 21.08 / steady 19.08 MB/s   cap 20
+4. Network    100.1 MB in 39s   gross 20.56 / steady 19.52 Mbps   cap 20
+5. Scratch    dd: No space left on device, 64+0 records out      cap 64M
+6. Time       the max_runtime budget of 10s expired after 10s; exit 124
+
+   8 passed, 0 failed, 0 skipped
+
+the same script on the aarch64 dev machine (informational, D15):
+   7 passed, 0 failed, 1 skipped
+   SKIP  the 150% quota is untested here: uncapped only reached 0.93 cores'
+         worth on a nested host
+
+and the run before the two fixes, which is why they exist:
+   FAIL  cpu 50%: the sandbox never became ready
+         kelyfos: write cpu.max in .../hosted-compute-agent.service/
+         kelyfos-846a2192: permission denied
+   FAIL  no resource.oom event was recorded
+   4 passed, 5 failed, 1 skipped</pre></td></tr>
+        <tr><td class="mono">2026-08-23</td><td class="mono">E1</td>
+        <td><b>Epic E1 closed. The acceptance list was run as written, on the environment that decides its numbers.</b>
+        All seven steps green, thirteen assertions, on the bare-KVM x86_64 runner D15 makes binding &mdash; and separately
+        on the aarch64 dev machine, where the behaviour matches and the two measured steps are informational. One deviation,
+        and it is arithmetic rather than convenience: steps 2&ndash;4 do not fit inside the list's own 60-second budget,
+        because filling a 1 GiB device through one vCPU capped at half a core takes about fifty seconds on its own and a
+        10 Mbps download long enough to measure takes another sixteen. A first run proved that by having the budget expire
+        in the middle of step 3 and take steps 4 onward with it. So the list runs as two sandboxes under the same policy:
+        steps 2&ndash;4 with the budget raised, step 5 with the file exactly as written, to watch the sixty seconds fire.
+        Every key, every cap and every assertion is unchanged, and <code>dev/accept-e1.sh</code> carries the whole thing as
+        a script so the next person can re-run it rather than believe it.
+        Nine tasks: the amendment reconciled and its missing half implemented (F-D10), <code>[resources]</code> turned from
+        defaults into ceilings that refuse rather than clamp, a host CPU quota that needed F-D11 to apply at all,
+        Firecracker's own token buckets on the NIC and both block devices, OOM kills made legible over a channel the
+        protocol had specified and nobody had built (F-D12), a scratch cap with F-D13's honest note about which side
+        applies it, time budgets that end a run the way a careful Ctrl-C would, a usage receipt measured entirely host-side
+        (F-D14), and a proof that all of it holds. Two defects were found and fixed along the way that had nothing to do
+        with this epic and everything to do with running it: a v0.3 bug where <code>run -- &lt;command&gt;</code> with a
+        non-zero exit skipped teardown <i>and</i> workspace sync-back, and a one-in-ten flaky test in the secret-injection
+        suite.</td>
+        <td class="mono"><pre>$ bash dev/accept-e1.sh     (bare-KVM x86_64, run 32611423116)
+1. the sandbox booted under the committed policy
+     cpu_quota = "50%", net_mbps_rx = 10, max_runtime = "60s"
+     cpu.max: 50000 100000
+2. host cgroup accounting shows 0.51 core(s) against a 0.5 ceiling
+3. /work filled to its 1 GiB device size and stopped with ENOSPC
+   scratch stopped at 242 MiB — the unset default of 50% of the 512M guest RAM
+4. observed throughput 10.02 Mbps against a 10 Mbps cap
+5. the run exited 124; the workspace was synced back; no run dir left behind
+6. chain intact, 5 events verified; resource.timeout and resource.summary both
+   present; the export renders the receipt:
+       0.23 CPU-seconds &middot; quota 50% of one core
+       peak RSS 80 MiB (the VMM process&hellip;) &middot; the machine had 512 MiB of RAM
+       network 726 B in / 726 B out &middot; disk 16.0 MiB written
+7. kelyfos: --cpus 8 exceeds the ceiling cpus = 2 set at &hellip;/kelyfos.toml:2
+
+   13 passed, 0 failed, 0 skipped   (host: microsoft, arch: x86_64)
+   13 passed, 0 failed, 0 skipped   (host: apple,     arch: aarch64)
+
+$ python3 tools/check-plan.py
+PLAN.html is coherent: 43 tasks, 36 checked, 25 decisions
+PLAN-FEATURES.html: 42 tasks, 9 checked, 14 decisions</pre></td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
