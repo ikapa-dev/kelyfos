@@ -2437,6 +2437,38 @@ PASS  the hierarchy is real: the children's CPU time adds up to the parent's
   6 passed, 0 failed, 0 skipped
 
 $ go test ./... -race     all packages ok</pre></td></tr>
+        <tr><td class="mono">2026-08-23</td><td class="mono">deps</td>
+        <td><b>Dependency refresh at the E2&rarr;E3 seam: checked, and nothing to bump.</b> Every pin in
+        <code>versions.mk</code> is already the newest value its own rule allows, and every direct Go module is the
+        newest release of its line. Buildroot <b>2026.02.3</b> is the head of the 2026.02 LTS line &mdash; the tag list
+        and the download directory both stop there, and the newer 2026.05.x is a different line the project
+        deliberately does not follow (D11). The guest kernel <b>6.18.45</b> is the current head of the 6.18 longterm
+        series on kernel.org, released four days ago. Firecracker <b>v1.16.1</b> is the newest release. Go
+        <b>1.27.0</b> is the newest stable. On the module side, <code>go list -m -u all</code> offers no update for any
+        of the three direct requirements &mdash; <code>bubbletea v1.3.10</code>, <code>lipgloss v1.1.0</code>,
+        <code>golang.org/x/sys v0.47.0</code> &mdash; and <code>govulncheck ./...</code> finds nothing.
+        The graph does show newer versions of a handful of modules that are not in <code>go.mod</code> at all and are
+        not selected into the build; pinning those ahead of the parents that select them would be churn bought with a
+        larger diff and no benefit, so they are left where minimal version selection puts them. No new sha256 was
+        needed because no version moved, and the Firecracker bump&rsquo;s extra gate (the snapshot suite and the restore
+        benchmark) did not have to be opened. Recorded because &ldquo;we checked and everything was current&rdquo; is a
+        result, and a refresh with no commit behind it is otherwise indistinguishable from one that never happened.</td>
+        <td class="mono"><pre>Buildroot   pinned 2026.02.3
+            2026.02 line: 2026.02.3 2026.02.2 2026.02.1 2026.02  &lt;- head
+            (2026.05.1 exists and is a different line &mdash; D11)
+Linux       pinned 6.18.45
+            kernel.org longterm 6.18.45, released 2026-08-19    &lt;- head
+Firecracker pinned v1.16.1
+            newest release v1.16.1, 2026-07-02                  &lt;- head
+Go          pinned 1.27.0
+            go.dev/dl newest: go1.27.0                          &lt;- head
+
+$ go list -m -u all | grep -E 'bubbletea|lipgloss|x/sys'
+github.com/charmbracelet/bubbletea v1.3.10     no update offered
+github.com/charmbracelet/lipgloss  v1.1.0      no update offered
+golang.org/x/sys                   v0.47.0     no update offered
+$ govulncheck ./...
+No vulnerabilities found.</pre></td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>

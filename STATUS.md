@@ -27,8 +27,8 @@ Two parking-lot entries from Microsoft's Azure SRE Agent post; neither built.
   The `caps` workflow is the measurement; its result is owed to the log.
 - Per-agent `idle_timeout` still refused (F-D20) though E2-7 supplies the
   signal it waited on; lifting it is its own task (F-D22).
-- versions.mk pins vs upstream still to check at the E2→E3 seam. The Go half
-  is done: `go list -m -u all` and `govulncheck` are clean (F-D23).
+- Dependency refresh **done, nothing to bump**: every versions.mk pin and every
+  direct Go module is already the newest its rule allows. Logged.
 
 ## Next
 E2 acceptance → exit checkpoint → v0.5 → finish the dependency refresh → E3.
