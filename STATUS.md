@@ -11,17 +11,15 @@ E5-6 — run history: `kelyfos runs`, `rerun`, and `logs -f`.
 
 ## This session
 E1–E3 closed, **v0.6 released**; then the F-D33 batch and the E3→E4 seam check. Epic E4, all
-nine tasks: the spec; serve-mcp with its ceiling refusing in the E1-1 style; five file and
-state tools, which found the MCP frame limit at 1 MiB against a promised 8 MiB (F-D38) and a
-restore held to no ceiling (F-D39); the team tools (F-D42); the audit
-lane (F-D43); two client recipes, which found a client-launched server could run with no
-ceiling (F-D44); the plugins device and runtime (F-D45, F-D46); both doors at once, in CI.
-Exit: 22/22 acceptance checks, 11/11 recipes, three exams whose 22 findings are in
-`docs/exam/`. **v0.7 tagged and published**, and the batch those exams routed after it is
-done (F-D49). Epic E5 so far: the v0.8 spec, named sessions,
-diff and review, `kelyfos shell`, one refusal catalog whose acceptance found the plan's own
-headline fix line never reaching the client (F-D53), and inbound forwarding over vsock —
-proved by diffing the nftables ruleset with two forwards and with none.
+nine tasks: the spec; serve-mcp with its ceiling; five file and state tools, which found the
+MCP frame limit at 1 MiB against a promised 8 MiB (F-D38) and a restore held to no ceiling
+(F-D39); the team tools (F-D42); the audit lane (F-D43); two client recipes, which found a
+client-launched server could run with no ceiling (F-D44); the plugins device and runtime
+(F-D45, F-D46). Exit: 22/22 checks, 11/11 recipes, three exams whose 22 findings are in
+`docs/exam/`. **v0.7 tagged and published**, and the batch those exams routed after it is done
+(F-D49). Epic E5 so far: the v0.8 spec, named sessions, diff and review, `kelyfos shell`, one
+refusal catalog whose acceptance found the plan's own headline fix line never reaching the
+client (F-D53), and inbound forwarding — proved by diffing nftables with two forwards and none.
 
 ## Blocked / debts
 - P4-4, P4-5 [BLOCKED]. `idle_timeout` refused (F-D20; F-D22). IMAGE_DIR per-arch not per-flavor: parked.
