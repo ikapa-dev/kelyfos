@@ -337,3 +337,26 @@ OOM-killer runs, `resource.timeout` naming which budget expired.
 That is the point of enforcing host-side: the record of what the sandbox
 consumed is written by the same side that imposed the limits, so it is worth
 something.
+
+## Proving it
+
+```
+bash dev/prove-caps.sh
+```
+
+Drives CPU, memory, disk, network, scratch and time past their limits with
+`stress-ng` and `dd` inside the guest, and checks from the host that each one
+held — `/proc/<pid>/stat` and the sandbox's own `cpu.stat`, `/proc/<pid>/io`,
+the TAP's byte counters, the flight recorder. It prints what it measured, not
+just whether it liked it.
+
+Two things it does deliberately. Bandwidth is reported **gross and steady**, and
+asserted on steady: a bucket starts full and a short transfer measures the
+opening burst rather than the cap. And a cap that was never approached is
+reported as a skip rather than a pass — on a nested host the uncapped run
+reaches about one core's worth against four stressors on four vCPUs, so there is
+nothing there to cap, and saying so is the only honest result available. The
+`caps` workflow runs the same script on a bare-KVM runner, which is the
+environment D15 makes binding.
+
+`bash dev/accept-e1.sh` runs Epic E1's acceptance list the same way.
