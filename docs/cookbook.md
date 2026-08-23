@@ -1,6 +1,6 @@
 # KelyfOS cookbook
 
-Ten recipes, each one complete, each one runnable as it stands.
+Eleven recipes, each one complete, each one runnable as it stands.
 
 These are not illustrations. `bash dev/cookbook.sh` extracts every script below
 and runs it on a real machine, and CI runs the same thing — so a recipe that
@@ -814,6 +814,218 @@ session="$(kelyfos log --list | grep serve-mcp | head -1 | awk '{print $1}')"
 kelyfos log --session "$session" | grep -E 'client (call|result)' | head -10
 echo
 kelyfos log --verify --session "$session"
+```
+
+---
+
+## 11. Both directions at once, and how to write a plugin
+
+The two MCP doors point opposite ways, and this runs them together. An outside
+client drives `kelyfos serve-mcp` to make a sandbox and work in it; an agent
+attached to that same sandbox through `kelyfos mcp` calls a plugin running
+beside it inside the guest. Neither knows about the other, and the machine's own
+record holds both.
+
+The plugin is written out in full below, because there is nothing to it: an MCP
+server is a program that reads newline-delimited JSON-RPC on standard input and
+writes it on standard output. This one is twenty lines of Python and the
+standard library. KelyfOS launches it from a read-only device, in the guest,
+with the sandbox's own environment — so a plugin can do exactly what agent-code
+in that sandbox could do, and nothing else.
+
+Read the transcript at the end. The sandbox's chain says what was done to the
+machine: the commands and file writes the outside client asked for, marked
+`via: serve-mcp`, and every plugin call the inner agent made. The server's own
+chain says what the client *asked for*, including the call that was refused —
+which never reached a machine at all, so there is nothing about it in the
+machine's record to find.
+
+<!-- recipe: both-directions -->
+
+```bash
+set -euo pipefail
+work="$(mktemp -d)"
+cd "$work"
+trap 'rm -rf "$work"' EXIT
+
+# A plugin is a directory with a program in it. The host packs this directory
+# into a read-only device and mounts it at /plugins/demo inside the guest.
+mkdir -p plugins/demo
+cat > plugins/demo/server.py <<'PLUGIN'
+import json, os, sys
+
+TOOLS = [{"name": "echo", "description": "Return the text it was given, prefixed.",
+          "inputSchema": {"type": "object",
+                          "properties": {"text": {"type": "string"}},
+                          "required": ["text"]}},
+         {"name": "where", "description": "Report the plugin's directory and whether it is writable.",
+          "inputSchema": {"type": "object"}}]
+
+def answer(rid, value):
+    sys.stdout.write(json.dumps({"jsonrpc": "2.0", "id": rid, "result": value}) + "\n")
+    sys.stdout.flush()
+
+for line in sys.stdin:
+    msg = json.loads(line)
+    rid = msg.get("id")
+    if rid is None:
+        continue                      # a notification; JSON-RPC forbids answering one
+    if msg["method"] == "initialize":
+        answer(rid, {"protocolVersion": "2025-11-25", "capabilities": {"tools": {}},
+                     "serverInfo": {"name": "demo", "version": "1.0.0"}})
+    elif msg["method"] == "tools/list":
+        answer(rid, {"tools": TOOLS})
+    elif msg["method"] == "tools/call":
+        name = msg["params"]["name"]
+        args = msg["params"].get("arguments") or {}
+        if name == "echo":
+            answer(rid, {"content": [{"type": "text", "text": "demo says: " + args["text"]}]})
+        else:
+            answer(rid, {"content": [{"type": "text", "text": "cwd %s, writable %s" % (
+                os.getcwd(), os.access(os.getcwd(), os.W_OK))}]})
+PLUGIN
+
+cat > kelyfos.toml <<'TOML'
+[sandbox]
+image = "dev"
+
+[resources]
+cpus = 2
+mem  = "512M"
+
+[mcp]
+max_sandboxes = 2
+
+# The name is the prefix of every tool this plugin advertises: the agent sees
+# demo_echo and demo_where. Lowercase letters, digits and dashes only, so the
+# prefix can never contain the separator.
+[[plugin]]
+name    = "demo"
+path    = "./plugins/demo"
+command = "python3"
+args    = ["server.py"]
+TOML
+
+cat > both.py <<'BOTH'
+import json, subprocess, threading, queue, time
+
+
+class Client:
+    """One MCP client over a subprocess's standard streams."""
+
+    def __init__(self, argv, errlog):
+        self.p = subprocess.Popen(argv, stdin=subprocess.PIPE,
+                                  stdout=subprocess.PIPE, stderr=open(errlog, "wb"))
+        self.q, self.pend, self.nid = queue.Queue(), {}, 0
+        threading.Thread(target=self._pump, daemon=True).start()
+
+    def _pump(self):
+        for line in self.p.stdout:
+            self.q.put(line)
+        self.q.put(None)
+
+    def send(self, method, params=None, notify=False):
+        msg = {"jsonrpc": "2.0", "method": method}
+        if params is not None:
+            msg["params"] = params
+        if not notify:
+            self.nid += 1
+            msg["id"] = self.nid
+        self.p.stdin.write((json.dumps(msg) + "\n").encode())
+        self.p.stdin.flush()
+        return None if notify else self.nid
+
+    def wait(self, i, t=180):
+        end = time.time() + t
+        while True:
+            if i in self.pend:
+                return self.pend.pop(i)
+            item = self.q.get(timeout=max(1, end - time.time()))
+            if item is None:
+                raise SystemExit("the peer closed the stream")
+            d = json.loads(item)
+            if d.get("id") is not None:
+                self.pend[d["id"]] = d
+
+    def start(self, name):
+        info = self.wait(self.send("initialize", {
+            "protocolVersion": "2025-11-25", "capabilities": {},
+            "clientInfo": {"name": name, "version": "1"}}))["result"]
+        self.send("notifications/initialized", notify=True)
+        return info
+
+    def tools(self):
+        return [t["name"] for t in self.wait(self.send("tools/list"))["result"]["tools"]]
+
+    def call(self, tool, args=None):
+        d = self.wait(self.send("tools/call", {"name": tool, "arguments": args or {}}))
+        if "error" in d:
+            return True, "PROTOCOL " + d["error"]["message"], {}
+        r = d["result"]
+        text = r["content"][0]["text"] if r.get("content") else ""
+        return r.get("isError", False), text, r.get("structuredContent") or {}
+
+    def close(self):
+        self.p.stdin.close()
+        self.p.wait(timeout=120)
+
+
+def show(who, label, triple):
+    err, text, _ = triple
+    first = text.strip().splitlines()[0] if text.strip() else ""
+    print("  [%-5s] %-22s isError=%-5s %s" % (who, label, err, first))
+
+
+# --- outward: a client that wants a machine -------------------------------
+outer = Client(["kelyfos", "serve-mcp"], "outer.log")
+print("outer server:", outer.start("outer")["serverInfo"]["name"])
+_, text, sc = outer.call("sandbox_run", {"cpus": 1})
+print("  [outer]", text)
+box = sc["sandbox"]
+
+show("outer", "write a file", outer.call("sandbox_write_file",
+     {"sandbox": box, "path": "/work/brief.txt", "content": "look at the plugin\n"}))
+show("outer", "run a command", outer.call("sandbox_exec",
+     {"sandbox": box, "command": "wc -w < /work/brief.txt"}))
+show("outer", "ask for more", outer.call("sandbox_run", {"cpus": 64}))
+
+# --- inward: an agent inside that same machine ----------------------------
+inner = Client(["kelyfos", "mcp", "--sandbox", box], "inner.log")
+inner.start("inner")
+names = inner.tools()
+print("  [inner] tools:", " ".join(names))
+assert "demo_echo" in names, "the plugin's tools are not in the guest's list"
+
+show("inner", "demo_echo", inner.call("demo_echo", {"text": "from inside"}))
+show("inner", "demo_where", inner.call("demo_where"))
+show("inner", "read the brief", inner.call("read_file", {"path": "/work/brief.txt"}))
+inner.close()
+
+show("outer", "stop the sandbox", outer.call("sandbox_stop", {"sandbox": box}))
+outer.close()
+
+with open("ids.txt", "w") as fh:
+    fh.write(box + "\n")
+BOTH
+
+python3 both.py
+
+box="$(cat ids.txt)"
+server="$(kelyfos log --list | grep serve-mcp | head -1 | awk '{print $1}')"
+
+echo
+echo "== the machine's own record: what was done to it, from both directions =="
+kelyfos log --session "$box" | head -14
+echo
+echo "== the server's record: what the client asked for, refusals included =="
+kelyfos log --session "$server" | grep -E 'client (call|result)' | head -8
+echo
+kelyfos log --verify --session "$box"
+kelyfos log --verify --session "$server"
+
+kelyfos log --session "$box" --export machine.html
+kelyfos log --session "$server" --export client.html
+echo "exported $(wc -c < machine.html) and $(wc -c < client.html) bytes of self-contained HTML"
 ```
 
 ---

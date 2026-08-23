@@ -61,6 +61,7 @@ const reportHTML = `<!DOCTYPE html>
   .session .title{color:var(--muted);font-weight:400}
   .store .title{color:var(--amber)}
   .client .title{color:var(--client)}
+  .plugin .title{color:var(--client)}
 
   /* ---------- team lanes ---------- */
   /* One column per agent plus a time gutter. A message between two agents is

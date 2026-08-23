@@ -353,6 +353,15 @@ func printEvent(line []byte, asJSON bool) {
 			outcome = "refused: " + e.Error.Message
 		}
 		fmt.Printf("%s  %sclient result  %s %s (%d ms)\n", ts, who, e.Name, outcome, e.DurationMS)
+	case recorder.TypePluginCall:
+		outcome := e.Outcome
+		if outcome == "error" {
+			outcome = "error "
+		}
+		fmt.Printf("%s  %splugin call    %s_%s  %s (%d ms)\n", ts, who, e.Name, e.Tool,
+			strings.TrimSpace(outcome), e.DurationMS)
+	case recorder.TypePluginCrash:
+		fmt.Printf("%s  %splugin stopped %s  %s\n", ts, who, e.Name, e.Reason)
 	case recorder.TypeSessionReady:
 		// A team member's ready line says how it started, not what booted: the
 		// kernel and supervisor are the same for every member and the boot path

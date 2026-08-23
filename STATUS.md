@@ -4,10 +4,10 @@ Updated 2026-08-23 · tree clean, synced with origin/main
 
 ## Plans
 - PLAN.html — 36/43. P4 backlog non-blocking, parked (P4-4/P4-5 [BLOCKED]).
-- PLAN-FEATURES.html — 33/42. **E1–E3 closed, v0.6 released. Epic E4 at 8/9.**
+- PLAN-FEATURES.html — 34/42. **E1–E3 closed, v0.6 released. Epic E4 at 9/9.**
 
 ## Now
-E4-8 — both directions at once, then the E4 exit and v0.7.
+The E4 exit checklist, then tag v0.7 and publish.
 
 ## This session
 E1–E3 built and closed, **v0.6 released**: a generated reference with CI failing on
@@ -21,7 +21,8 @@ was 1 MiB against a promised 8 MiB (F-D38), and a restore met no ceiling at all
 write to stdout — the protocol, on that path. E4-4 the audit lane; E4-0's promise
 of one export holding both lanes was rewritten rather than met (F-D43). E4-5 two
 client recipes, which found a client-launched server could run with no ceiling
-(F-D44). E4-6 the plugins device (F-D45). E4-7 the plugin runtime, and the two fixes it forced (F-D46).
+(F-D44). E4-6 the plugins device (F-D45). E4-7 the plugin runtime and its two
+fixes (F-D46). E4-8 both doors at once, in CI. 11/11 recipes pass.
 
 ## Blocked / debts
 - P4-4, P4-5 [BLOCKED]. `idle_timeout` refused (F-D20; F-D22). IMAGE_DIR per-arch not per-flavor: parked.

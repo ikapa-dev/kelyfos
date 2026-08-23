@@ -532,7 +532,7 @@
         <code>&lt;plugin&gt;.&lt;tool&gt;</code> namespace. Per-call audit events carry the plugin name; a crashing plugin fails
         its own tools cleanly (<code>plugin.crash</code> event) without taking the supervisor down. Plugins get no egress of
         their own — the per-agent allowlist is the only network policy.</span></li>
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">E4-8</span><span class="tk">Proof, both directions at once: a scripted MCP client (CI) plus a live Claude Code
         session (demo) drive <code>serve-mcp</code>; inside the sandbox a small demo plugin shipped in-repo as a test fixture
         provides namespaced tools the inner agent calls. The exported transcript shows both lanes — the outer agent&rsquo;s
@@ -4003,6 +4003,27 @@ $ gofmt -l . ; go vet ./... ; go test ./...
         <b>serve-mcp also had no guest-event handler at all</b>, so an OOM kill inside a sandbox created through that
         door was the one thing that happened in it nobody could see &mdash; the gap E1-4 closed for <code>run</code> and
         E4-1 reopened by not having the line. Closed, and it carries the plugin events too.</td></tr>
+        <tr><td class="mono">2026-08-23</td><td class="mono">E4-8</td>
+        <td><b>Both doors, at the same time, on the same machine, in CI.</b> Cookbook recipe 11 drives
+        <code>serve-mcp</code> from outside — boot, write a file, run a command, and one request for 64 cores that is
+        refused — while a second client attached through <code>kelyfos mcp</code> calls a plugin running inside that
+        same sandbox. Neither knows about the other. It runs on every cookbook pass, so the proof is a thing that keeps
+        working rather than a thing that once worked.
+        <b>The plugin is written out in full in the recipe</b>, twenty lines of Python and the standard library, because
+        the most useful thing this page can teach is that an MCP server is a program reading newline-delimited JSON-RPC
+        on standard input. The in-repo fixture stays for the tests: it also has a tool that fails and a tool that exits,
+        which a copy-paste example has no business demonstrating.
+        <b>Two records, and each holds what its party did.</b> The machine's chain shows the file write and the command
+        marked <code>via: serve-mcp</code> and every plugin call the inner agent made — both directions of action, one
+        verifiable chain. The server's chain shows what the client <i>asked for</i>, including the refusal, which
+        reached no machine and so appears in no machine's record (F-D43). Both verify; both export.
+        <b>Two blemishes the proof surfaced, both fixed.</b> <code>plugin.call</code> and <code>plugin.crash</code> had
+        no renderer, so they printed as raw JSON in a log whose whole point is being readable. And every sandbox with a
+        plugin ended its transcript with a <code>plugin.crash</code>, because shutting the machine down kills the
+        plugin: a shutdown is now not called a crash, and a signal is named rather than described — <code>killed by
+        SIGTERM</code>, not <code>killed by terminated</code>.
+        <b>The half this cannot do is the live Claude Code session</b>, which needs John: the configuration for it is
+        recipe 9 and is proved by running exactly what the file names, but nobody here can sign into a client.</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>

@@ -535,6 +535,33 @@ ceiling are revision-independent, and only the handshake would change.
 
 ---
 
+## 4.1 Both directions at once
+
+The two doors are independent and can run at the same time on the same machine.
+Recipe 11 of the [cookbook](cookbook.md) does exactly that, and it is what E4-8
+proves: an outside client drives `serve-mcp` to make a sandbox, write a file and
+run a command in it, while an agent attached to that same sandbox through
+`kelyfos mcp` calls a plugin running beside it inside the guest.
+
+**Two records, and each one holds what its party did.**
+
+The machine's own chain says what was done *to the machine*: the file write and
+the command, marked `via: serve-mcp`, and every plugin call the inner agent
+made. That is both directions of action in one transcript, verifiable as one
+chain.
+
+The server's chain says what the client *asked for*: every tool call with its
+arguments, its duration and its outcome — including the request for 64 cores
+that was refused, which never reached a machine and therefore appears in no
+machine's record. F-D43 has the reasoning; the short form is that each chain
+records what that party did, and a refused call did nothing to any machine.
+
+The two are cross-linked rather than merged: the sandbox's `session.start` names
+the server session it was created through, and the server prints that id when it
+starts.
+
+---
+
 ## 5. Conformance
 
 | Requirement | Task |

@@ -13,8 +13,11 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
+
+	"golang.org/x/sys/unix"
 
 	"github.com/p4r4n0rm4l/KelyfOS/internal/mcp"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/proto"
@@ -74,6 +77,9 @@ type plugin struct {
 var (
 	pluginsMu sync.RWMutex
 	running   []*plugin
+	// stopping is set when the machine is going down, so a plugin killed by
+	// the shutdown is not reported as having crashed.
+	stopping atomic.Bool
 )
 
 // startPlugins launches every plugin the manifest names and collects the tools
@@ -212,6 +218,9 @@ func (p *plugin) watch(rp *reaper, report func(proto.GuestEvent)) {
 	}
 	p.mu.Unlock()
 	logf("plugin %s stopped: %s", p.entry.Name, why)
+	if stopping.Load() {
+		return
+	}
 	report(proto.GuestEvent{
 		V: proto.Version, Type: proto.GuestEventPluginCrash,
 		Name: p.entry.Name, Message: why,
@@ -382,7 +391,9 @@ func callPluginTool(p *plugin, tool string, args json.RawMessage, report func(pr
 func describeExit(ws syscall.WaitStatus) string {
 	switch {
 	case ws.Signaled():
-		return "killed by " + ws.Signal().String()
+		// SIGTERM's String() is "terminated", which reads as a sentence
+		// fragment rather than as a signal. The name is what a reader wants.
+		return "killed by " + unix.SignalName(ws.Signal())
 	case ws.ExitStatus() == 0:
 		return "exited 0"
 	default:

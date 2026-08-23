@@ -80,6 +80,11 @@ func handleControl(conn net.Conn, shutdown chan<- struct{}) {
 // after which it kills Firecracker outright.
 func halt(grace time.Duration) {
 	logf("shutting down")
+	// A plugin about to be killed by this is not a plugin that crashed. Said
+	// before the signal goes out, so the report is suppressed rather than
+	// raced against (E4-8): plugin.crash should mean something went wrong, not
+	// that the machine stopped.
+	stopping.Store(true)
 	syncWorkspace()
 
 	// Everything except PID 1. TERM first so a command can finish writing.

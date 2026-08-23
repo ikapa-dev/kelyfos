@@ -236,6 +236,12 @@ func Render(w io.Writer, sessionID string, events []recorder.Event, verifyErr er
 				detail += fmt.Sprintf(" · %d in / %d out", e.BytesIn, e.BytesOut)
 			}
 			v.Rows = append(v.Rows, Row{ts, kind, title, detail, "", !allowed})
+		case recorder.TypePluginCall:
+			v.Rows = append(v.Rows, Row{ts, "plugin", e.Name + "_" + e.Tool,
+				fmt.Sprintf("%s · %d ms", e.Outcome, e.DurationMS), "", e.Outcome != "ok"})
+		case recorder.TypePluginCrash:
+			v.Rows = append(v.Rows, Row{ts, "plugin", "plugin " + e.Name + " stopped",
+				e.Reason, "", true})
 		case recorder.TypeSecretUse:
 			if !seenSecret[e.Name+"@"+e.Host] {
 				seenSecret[e.Name+"@"+e.Host] = true
@@ -501,6 +507,17 @@ func buildLanes(events []recorder.Event) ([]string, []LaneRow) {
 			add(LaneRow{ts, "session", "usage receipt",
 				fmt.Sprintf("%.2f CPU-seconds \u00b7 peak RSS %s", e.CPUSeconds, HumanKiB(e.PeakRSSKiB)),
 				"", false, laneOf(e.Agent), false})
+		case recorder.TypePluginCall:
+			kind := "plugin"
+			if e.Outcome != "ok" {
+				kind = "team-refused"
+			}
+			add(LaneRow{ts, kind, e.Name + "_" + e.Tool,
+				fmt.Sprintf("%s · %d ms", e.Outcome, e.DurationMS), "",
+				e.Outcome != "ok", laneOf(e.Agent), false})
+		case recorder.TypePluginCrash:
+			add(LaneRow{ts, "team-refused", "plugin " + e.Name + " stopped", e.Reason, "",
+				true, laneOf(e.Agent), false})
 		case recorder.TypeMCPHostCall:
 			add(LaneRow{ts, "client", "client called " + e.Name, e.Args, "",
 				false, laneOf(e.Agent), false})
