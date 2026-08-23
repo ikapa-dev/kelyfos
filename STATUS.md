@@ -4,24 +4,26 @@ Updated 2026-08-23 · tree clean, synced with origin/main
 
 ## Plans
 - PLAN.html — 36/43. P4 backlog non-blocking, parked (P4-4/P4-5 [BLOCKED]).
-- PLAN-FEATURES.html — 25/42. **E1–E3 closed, v0.6 released. Epic E4 active, 0/9.**
+- PLAN-FEATURES.html — 26/42. **E1–E3 closed, v0.6 released. Epic E4 active, 1/9.**
 
 ## Now
-E4-0 — `docs/mcp-surface.md`, spec before code. Seam check done (F-D35).
+E4-1 — `kelyfos serve-mcp` core: the lifecycle tools, concurrent sandboxes with
+ids, `max_sandboxes`, and ceilings refused in the E1-1 style.
 
 ## This session
-Epic E3 built and closed, **v0.6 tagged and published**: `docs/reference/`
-generated from the product with CI failing on drift, `llms.txt` at spec v2 with
-conformance tested, eight cookbook recipes each run before being written down,
-`docs/integrating.md`, and a docs-only exam that **passed first try** and found
+Epic E3 built and closed, **v0.6 tagged and published**: a reference generated
+from the product with CI failing on drift, `llms.txt` at spec v2 with conformance
+tested, eight cookbook recipes each run before being written down,
+`docs/integrating.md`, and a docs-only exam that **passed first try**, finding
 ten defects (F-D28..32).
 
 Then John's F-D33 hardening batch, six commits: the shim reads `kelyfos.toml`,
-enforces caps and writes a recorder; plain HTTP records `mode: plain` rather
-than claiming it was tunnelled; a bridge closing mid-call answers with an error,
-not silence; the inert spawn-budget keys are refused; `fork` closes its
-sessions; three smalls fixed, one parked (F-D34). 8/8 recipes still pass. CI
-caught a racy test of mine this machine hid; fixed and verified under `-race`.
+enforces caps and writes a recorder; plain HTTP records `mode: plain` rather than
+claiming it was tunnelled; a bridge closing mid-call answers with an error, not
+silence; the inert spawn-budget keys are refused; `fork` closes its sessions;
+three smalls fixed, one parked (F-D34). 8/8 recipes still pass; CI caught a racy
+test of mine that this machine hid. Then the seam check (F-D35) and E4-0's spec
+(F-D36, F-D37).
 
 ## Blocked / debts
 - P4-4, P4-5 [BLOCKED] — Phase 4 backlog. Per-agent `idle_timeout` still refused

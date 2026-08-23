@@ -67,6 +67,8 @@ func docSet() []doc {
 			Summary: "the audit record: why the host writes it, and what the hash chain proves"},
 		{Path: "docs/protocol.md", Title: "Host/guest protocol", Full: true,
 			Summary: "the vsock transport, the port map, and every channel's messages"},
+		{Path: "docs/mcp-surface.md", Title: "The MCP surface", Full: true,
+			Summary: "MCP in both directions: kelyfos as a tool for any client, and plugins inside the guest"},
 		{Path: "docs/e2b-shim.md", Title: "E2B-compatible shim", Full: true,
 			Summary: "the REST subset for existing E2B SDK code, and what it deliberately omits"},
 		{Path: "docs/cookbook.md", Title: "Cookbook", Full: true,

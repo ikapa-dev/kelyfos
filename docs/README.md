@@ -28,6 +28,7 @@ hand-written half, and this page says where each is still thin.
 | after something that works, right now | [`cookbook.md`](cookbook.md) — eight recipes, each one runnable as it stands |
 | putting KelyfOS inside something else | [`integrating.md`](integrating.md) |
 | building KelyfOS into something else | [`protocol.md`](protocol.md), then [`e2b-shim.md`](e2b-shim.md) |
+| driving KelyfOS from an MCP client | [`mcp-surface.md`](mcp-surface.md) — specification for v0.7, not yet built |
 | judging whether to trust it | [`threat-model.md`](threat-model.md) |
 
 ## The map
@@ -40,6 +41,7 @@ hand-written half, and this page says where each is still thin.
 | [`networking.md`](networking.md) | mixed | Why a sandbox has no NIC by default, what `--allow` builds, the nftables template, and why the guest has no DNS. |
 | [`resources.md`](resources.md) | mixed | Every resource cap: units, precedence, what enforces it, and what happens when it is reached. |
 | [`teams.md`](teams.md) | mixed | The `[team]` schema, the host broker and its edge rules, the team store, the collective budget, and how a team boots. |
+| [`mcp-surface.md`](mcp-surface.md) | concept | MCP in both directions: `serve-mcp` as a tool for any client, and `[[plugin]]` servers inside the guest. Specification, written before the code. |
 | [`threat-model.md`](threat-model.md) | concept | What KelyfOS defends against and — the longer half — what it does not. |
 | [`cookbook.md`](cookbook.md) | recipes | Eight complete, copy-pasteable recipes. Every one is a script CI extracts and runs on a real machine. |
 | [`integrating.md`](integrating.md) | mixed | For building on KelyfOS: the three ways in, orchestrator patterns, and a long list of the mistakes people actually make. |
@@ -165,6 +167,16 @@ that searching for one lands here.
 executes one and a transcribed snippet is the failure F-D4 exists to prevent.
 What it gives instead is the client configuration, which is verified, and the
 wire shape, which the cookbook demonstrates.
+
+### `mcp-surface.md` — the v0.7 specification
+
+*Concept throughout, and written before the code exists*, the way `teams.md` was
+at E2-0: the policy-ceiling invariant and what it rules out, the outward tool
+list with schemas, the session and concurrency model, the plugins drive and its
+manifest, and the namespacing rule with the evidence behind it.
+*Thin:* it describes nothing that runs yet. Every claim in it is a commitment
+E4-1 through E4-8 have to meet, not a description of behaviour — and where the
+code and this document end up disagreeing during the epic, the code is wrong.
 
 ### `threat-model.md` — what to trust
 

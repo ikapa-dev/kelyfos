@@ -126,7 +126,7 @@
      improvements to the existing product land here as epics. Inert until its gate opens.</p>
   <div class="meta">
     owner: <b>John</b> &nbsp;&middot;&nbsp; developer: <b>Claude Code</b> &nbsp;&middot;&nbsp;
-    status: <b class="ok" id="meta-status">Epic E4 — active, 0/9 (v0.6 released; next: E4-0, the MCP surface spec)</b> &nbsp;&middot;&nbsp;
+    status: <b class="ok" id="meta-status">Epic E4 — active, 1/9 (v0.6 released; next: E4-1, <code>serve-mcp</code> core)</b> &nbsp;&middot;&nbsp;
     last updated: <b id="meta-updated">2026-08-23</b><br>
     repo file: <b>PLAN-FEATURES.html</b> (lives at the repository root next to <code>PLAN.html</code>)<br>
     <span class="quiet">Companion to PLAN.html — same protocol, same rules, later timeline.</span>
@@ -166,7 +166,7 @@
     <span class="bl-name">All epics</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">E4-0 — <code>docs/mcp-surface.md</code>: the spec for both directions, host tool list with schemas, the policy-ceiling invariant, plugin namespacing and the plugins drive</b></div>
+  <div class="focusline">Current focus: <b id="focus">E4-1 — <code>kelyfos serve-mcp</code> core: <code>sandbox_run</code>, <code>sandbox_exec</code>, <code>sandbox_stop</code>, <code>sandbox_list</code>, concurrent sandboxes with ids, <code>max_sandboxes</code> enforced, ceilings refused in the E1-1 style</b></div>
 </div>
 
 <!-- ====================================================== 1. ACTIVATION GATE -->
@@ -492,7 +492,7 @@
      Distinct from the per-VM <code>kelyfos mcp</code> bridge (P2-3), which fronts one guest&rsquo;s supervisor.
      Builds on E2 (team tools) and E3 (generated reference auto-covers the new surface). Estimate: 3&ndash;5 weekends.</p>
   <ul class="tasks">
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">E4-0</span><span class="tk"><code>docs/mcp-surface.md</code> — spec first, both directions. Host tool list with
         schemas; the policy-ceiling rule stated as an invariant; plugin tool namespacing (<code>&lt;plugin&gt;.&lt;tool&gt;</code>);
         the plugins-drive layout and per-plugin manifest; session/concurrency model with <code>max_sandboxes</code> (toml
@@ -1411,6 +1411,54 @@
         into a habit. So it is answered by being put to John with the evidence, which is the one option that neither
         rewrites a TUI for nothing nor lets the condition pass unremarked for a third time.</td>
         <td class="mono">go list -m -u all; govulncheck; buildroot.org/download.html; vuln.go.dev</td></tr>
+        <tr><td class="mono">F-D36</td><td class="mono">2026-08-23</td>
+        <td><b>Plugin tools are namespaced <code>&lt;plugin&gt;_&lt;tool&gt;</code>, not
+        <code>&lt;plugin&gt;.&lt;tool&gt;</code>.</b> E4-0&rsquo;s own text and F-D5&rsquo;s principle (2) both say a
+        dot. The dot is <b>legal</b> and is still not taken, and the reason is downstream of MCP rather than in it.
+        <i>What was checked.</i> The MCP specification&rsquo;s tool-name guidance, added in revision 2025-11-25, says
+        a name SHOULD use ASCII letters, digits, underscore, hyphen <i>and dot</i>, and offers
+        <code>admin.tools.list</code> as an example of a good one. Both official SDKs accept a dot and only warn. So
+        nothing in MCP forbids it.
+        <i>What forbids it is everything a tool name passes through afterwards.</i> The Anthropic Messages API
+        constrains a tool name to <code>^[a-zA-Z0-9_-]{1,64}$</code>, which excludes the dot outright, and Claude Code
+        &mdash; the first client this project names &mdash; rewrites every character outside
+        <code>A-Za-z0-9_-</code> to an underscore before the name reaches a model. That rewriting is worse than a
+        rejection would be, because it is silent and it <b>collides</b>: <code>a.b</code> and <code>a_b</code> become
+        the same name. A dotted scheme is therefore not merely mangled but ambiguous after mangling, in the one client
+        the epic exists to serve.
+        <i>The separator&rsquo;s own collision is closed rather than hoped away.</i> <code>_</code> would be ambiguous
+        too &mdash; plugin <code>foo_bar</code> with tool <code>baz</code> against plugin <code>foo</code> with tool
+        <code>bar_baz</code> &mdash; so a plugin&rsquo;s name is constrained to
+        <code>^[a-z][a-z0-9-]*$</code>: no underscore, no dot. The prefix cannot contain the separator, so the split is
+        unambiguous by construction. The whole name must also fit 64 characters, the strictest downstream limit, and a
+        plugin whose tool would exceed it is refused at boot rather than advertised and rejected later by somebody
+        else&rsquo;s API.
+        <i>One thing the specification says that KelyfOS was going to do anyway.</i> Its aggregation note &mdash; new
+        in the 2026-07-28 revision &mdash; says a server&rsquo;s self-reported name is not guaranteed unique and
+        SHOULD NOT be relied on for disambiguation. So the prefix is the name <b>declared in kelyfos.toml</b>, never
+        the one the plugin announces at initialize. That is F-D24&rsquo;s rule arriving from outside: the host decides
+        what a thing is called, and the thing being named does not get a vote.</td>
+        <td class="mono">modelcontextprotocol.io spec 2025-11-25 &amp; 2026-07-28; platform.claude.com tool-use docs</td></tr>
+        <tr><td class="mono">F-D37</td><td class="mono">2026-08-23</td>
+        <td><b><code>serve-mcp</code> implements MCP revision 2025-11-25 &mdash; the same one the guest already speaks
+        &mdash; and the newer 2026-07-28 revision is recorded rather than adopted.</b>
+        <i>Why it is a decision at all.</i> 2026-07-28 exists and is current. It is a redesign rather than an
+        increment: the <code>initialize</code> handshake is replaced by <code>server/discover</code>, sessions are
+        removed in favour of an explicitly stateless model, <code>serverInfo</code> moves into <code>_meta</code>, and
+        every result carries a <code>resultType</code>. A project whose documentation epic just finished insisting that
+        references be true cannot pin a protocol revision by not noticing a newer one.
+        <i>Why not now.</i> Adopting it means changing four things together &mdash; the guest&rsquo;s MCP server, the
+        host&rsquo;s bridge, this new server, and the cookbook recipes that speak the handshake by hand &mdash; and
+        dropping any client that has not moved, which E4 has no evidence about either way. That is its own piece of
+        work with its own proof, and doing it inside the epic that first ships <code>serve-mcp</code> would mix a
+        protocol migration with a feature, which is the mistake D25 named and F-D23 declined to repeat.
+        <i>What E4 owes instead.</i> That nothing it builds makes the move harder. The tool surface, the namespacing
+        rule and the policy ceiling are all revision-independent; only the handshake would change. The framing question
+        is untouched either way and is not reopened &mdash; E4-0 says so explicitly, and stdio newline-delimited
+        JSON-RPC was settled across every revision through 2025-11-25.
+        <i>Revisit when</i> a client this project cares about requires 2026-07-28, or when the guest server is being
+        rewritten for another reason and the two moves can be paid for once.</td>
+        <td class="mono">modelcontextprotocol.io/specification/versioning</td></tr>
     <!-- Claude Code: append rows above this line. -->
       <tr><td class="mono">F-D10</td><td class="mono">2026-08-22</td>
         <td>The resource knobs E1-0 goes looking for shipped <b>partly</b>: <code>--vcpus</code>/<code>--mem</code> and
@@ -3480,6 +3528,53 @@ seam check:
   go          1.27.0     newest stable
   go list -m -u all      no update, 3 direct deps
   govulncheck ./...      No vulnerabilities found.</pre></td></tr>
+        <tr><td class="mono">2026-08-23</td><td class="mono">E4-0</td>
+        <td><b><code>docs/mcp-surface.md</code> — the spec for both directions, written before any of it exists.</b>
+        The policy-ceiling invariant first, because everything else is arranged around it, and stated as three things
+        it rules out rather than one thing it asserts: there is no <code>set_policy</code> tool and there is not going
+        to be; a tool argument may ask for less and never more, with a request above a ceiling refused in the E1-1
+        style; and the policy is read from the filesystem once, so no call can point the server at a different file.
+        Then the outward tools with their schemas &mdash; lifecycle, work, state and teams &mdash; the session and
+        concurrency model with <code>[mcp] max_sandboxes</code> defaulting to <b>4</b>, the error split MCP requires
+        between a tool that failed and a request that could not be attempted, and the <code>mcp.host.*</code> audit
+        lane. Then the inward half: why a plugin is safe, the namespacing rule, the plugins drive and its manifest, and
+        what happens when a plugin dies.
+        <b>Two decisions the spec forced, both from reading the specification live rather than from memory.</b>
+        <b>F-D36:</b> the plugin separator is <code>_</code>, not the dot E4-0 and F-D5 both wrote. The dot is legal
+        &mdash; MCP&rsquo;s own guidance permits it and offers <code>admin.tools.list</code> as a good example &mdash;
+        but the Anthropic Messages API rejects it and Claude Code silently rewrites it, and that rewriting collides
+        <code>a.b</code> with <code>a_b</code>. A scheme that is ambiguous after mangling in the first client the epic
+        serves is the wrong scheme however legal it is. Plugin names are constrained so the separator cannot appear in
+        the prefix.
+        <b>F-D37:</b> <code>serve-mcp</code> targets revision 2025-11-25, the one the guest already speaks, and the
+        newer 2026-07-28 is recorded rather than adopted &mdash; it removes <code>initialize</code> entirely, and
+        taking it would mean moving the guest server, the bridge, this server and the recipes together.
+        <b>And one thing the specification says that this project already believed:</b> a server&rsquo;s self-reported
+        name is not to be trusted for disambiguation. So the tool prefix is the name declared in
+        <code>kelyfos.toml</code>, never the one the plugin announces &mdash; F-D24&rsquo;s rule, arriving from
+        outside.</td>
+        <td class="mono"><pre>docs/mcp-surface.md   381 lines, 5 sections
+
+verified against the live specification, not
+remembered:
+  tool names   SHOULD be 1-128 chars of
+               [A-Za-z0-9._-]  (rev 2025-11-25)
+               example given: admin.tools.list
+  downstream   ^[a-zA-Z0-9_-]{1,64}$
+               (Anthropic Messages API)
+  Claude Code  rewrites non [A-Za-z0-9_-] to _
+  aggregation  a server's own name SHOULD NOT be
+               relied on for disambiguation
+               (rev 2026-07-28)
+  current rev  2026-07-28, a redesign: no
+               initialize, no sessions
+
+$ make docs
+  llms-full.txt now 256 486 bytes
+$ gofmt -l . ; go vet ./... ; go test ./...
+  clean · clean · all packages ok
+$ python3 tools/check-plan.py
+  PLAN.html is coherent</pre></td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
