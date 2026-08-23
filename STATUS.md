@@ -4,10 +4,10 @@ Updated 2026-08-23 · tree clean, synced with origin/main
 
 ## Plans
 - PLAN.html — 36/43. P4 backlog non-blocking, parked (P4-4/P4-5 [BLOCKED]).
-- PLAN-FEATURES.html — 42/42. **All five epics closed. v0.8 released.**
+- PLAN-FEATURES.html — **COMPLETE and closed.** 42/42, five epics, v0.4–v0.8 released.
 
 ## Now
-v0.8 out. Next per John's ruling: close PLAN-FEATURES, promote P4-1/P4-2 for v0.9.
+Promote P4-1 (jailer) and P4-2 (seccomp/Landlock) into PLAN.html — hardening, exit v0.9.
 
 ## This session
 E1–E3 closed, **v0.6 released**; then the F-D33 batch and the E3→E4 seam check. Epic E4, all

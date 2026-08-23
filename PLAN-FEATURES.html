@@ -126,7 +126,7 @@
      improvements to the existing product land here as epics. Inert until its gate opens.</p>
   <div class="meta">
     owner: <b>John</b> &nbsp;&middot;&nbsp; developer: <b>Claude Code</b> &nbsp;&middot;&nbsp;
-    status: <b class="ok" id="meta-status">Epic E5 — CLOSED, 8/8. v0.8 released. 42/42 tasks; all five epics done.</b> &nbsp;&middot;&nbsp;
+    status: <b class="ok" id="meta-status">COMPLETE — 42/42 tasks, five epics, v0.4 through v0.8 released. This document is closed.</b> &nbsp;&middot;&nbsp;
     last updated: <b id="meta-updated">2026-08-23</b><br>
     repo file: <b>PLAN-FEATURES.html</b> (lives at the repository root next to <code>PLAN.html</code>)<br>
     <span class="quiet">Companion to PLAN.html — same protocol, same rules, later timeline.</span>
@@ -166,7 +166,7 @@
     <span class="bl-name">All epics</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">v0.8 released. Next, per the product owner&rsquo;s ruling: close this plan out, then promote P4-1 and P4-2 into PLAN.html as a hardening phase for v0.9</b></div>
+  <div class="focusline">Current focus: <b id="focus">Nothing. This plan is complete and closed; what governs next is <a href="PLAN.html">PLAN.html</a>, where P4-1 and P4-2 are promoted as a hardening phase exiting at v0.9</b></div>
 </div>
 
 <!-- ====================================================== 1. ACTIVATION GATE -->
@@ -205,6 +205,17 @@
     <li style="display:list-item">The <b>non-goals in PLAN.html &sect;2 still bind</b>. No epic in this file may cross them
         (no kernel, no VMM, no orchestrator or control plane, no hosted service, no web dashboard).
         An idea that needs to cross one needs the non-goal renegotiated with John first — by name, in a decision.</li>
+    <li style="display:list-item"><b>Closed, 2026-08-23.</b> Every epic in this document is done and every
+        one of them shipped: v0.4 resource governance, v0.5 agent teams, v0.6 LLM-native documentation,
+        v0.7 the MCP surface, v0.8 daily-driver QoL. 42 tasks, 56 decisions, five tags, and the acceptance
+        evidence for each is in the progress log below rather than in anybody&rsquo;s memory.
+        <b>What governs next is <a href="PLAN.html">PLAN.html</a>.</b> On the product owner&rsquo;s
+        ruling of 2026-08-23, P4-1 (jailer) and P4-2 (seccomp / Landlock) are promoted there, as a hardening
+        phase with its own acceptance and an exit tag of v0.9 &mdash; not here, because a document that is complete
+        is not a place to add work. That redirects the promotion path the first bullet above describes, and the
+        redirect is recorded as F-D56 rather than left as a rule this file silently stopped following.
+        Nothing else is promoted: P4-4 and P4-5 stay <code>[BLOCKED]</code> on their own written conditions,
+        and every other parked item stays parked.</li>
     <li style="display:list-item"><b>Docs ride with features (F-D9).</b> From E3&rsquo;s exit onward, no epic reaches its exit
         checkpoint until: <code>make docs</code> is clean (CI enforces the generated reference — F-D4); <code>llms.txt</code> /
         <code>llms-full.txt</code> are regenerated and committed <i>with</i> the epic; every new user-facing command, flag,
@@ -1895,6 +1906,31 @@
         tested only in the configuration it was developed in is tested in one configuration. The check now runs
         against a sandbox with no network, which is where it should have run first.</td>
         <td class="mono">supervisor/loopback.go, dev/accept-forward.sh, docs/networking.md &sect;3.0</td></tr>
+        <tr><td class="mono">F-D56</td><td class="mono">2026-08-23</td>
+        <td><b>This document is complete, and the next work is promoted into PLAN.html rather than into a sixth
+        epic here.</b>
+        <i>The rule this changes.</i> &sect;2 of this file says a P4 item that is ready to happen gets promoted
+        <b>here</b>, as an epic with tasks, an acceptance test and an exit checkpoint, and that items stay listed in
+        P4 for history while the work happens in this document. That was the right rule while this plan was the
+        active one.
+        <i>The ruling.</i> The product owner ruled on 2026-08-23 that with v0.8 tagged and published this plan is
+        complete and closes under its own protocol, and that exactly two P4 items &mdash; P4-1, the jailer, and
+        P4-2, seccomp/Landlock &mdash; are promoted <b>in PLAN.html</b>, under its own parking-lot and promotion
+        rules, as a hardening phase exiting at v0.9. Its definition of done includes replacing the README&rsquo;s
+        &ldquo;not hardened yet&rdquo; sentence with a true one stating what is now enforced and what remains out of
+        scope, with <code>docs/threat-model.md</code> updated to match; re-earning the boot and restore bars on the
+        bare-KVM reference, because jailer and seccomp sit on the boot path and a bar is never assumed across a
+        security-posture change; and the full acceptance suites re-run green.
+        <i>Why this is the right shape rather than a technicality.</i> A closed plan is a record. Adding an epic to
+        it after its last tag would make the word &ldquo;complete&rdquo; mean nothing, and the hardening items were
+        always PLAN.html&rsquo;s own backlog &mdash; promoting them where they live keeps one document responsible
+        for one thing. Recorded here rather than acted on silently, because deviating from a written rule without
+        saying so is how a protocol stops being one.
+        <i>Also ruled, and not started here:</i> a launch-assets task alongside the hardening &mdash; a terminal
+        recording embedded at the top of the README, a first-time-visitor pass over its opening screen, and
+        <code>docs/launch/hn-post.md</code> refreshed to v0.8/v0.9 reality. Committed, posted nowhere: John submits
+        things.</td>
+        <td class="mono">PLAN.html, the product owner&rsquo;s ruling of 2026-08-23</td></tr>
     <!-- Claude Code: append rows above this line. -->
       <tr><td class="mono">F-D10</td><td class="mono">2026-08-22</td>
         <td>The resource knobs E1-0 goes looking for shipped <b>partly</b>: <code>--vcpus</code>/<code>--mem</code> and
@@ -4472,6 +4508,27 @@ $ gofmt -l . ; go vet ./... ; go test ./...
         <b>Exit: v0.8.</b> Docs regenerated and CI-checked, llms-full.txt at about 93,000 tokens (re-measured, and the
         two places that quoted 48,000 and 54,000 corrected), fourteen recipes green, the exam transcript committed at
         <code>docs/exam/2026-08-23-daily-driver.md</code>.</td></tr>
+        <tr><td class="mono">2026-08-23</td><td class="mono">CLOSED</td>
+        <td><b>PLAN-FEATURES.html is complete: 42 tasks, five epics, five tags, and the last one is out.</b>
+        v0.4 gave the user control of how much machine an agent gets; v0.5 gave them a declared team with the paths
+        between the agents enforced by the fact that no other path exists; v0.6 made the documentation something a
+        model can build from and then proved it by handing the documentation to a model and watching; v0.7 opened
+        both MCP doors and held them to the same file; v0.8 made the thing a daily driver.
+        <b>What this plan learned, one line each.</b> A ceiling that clamps instead of refusing is a silent lie
+        (E1). A topology enforced by an edge list that can be bypassed is not enforced; enforced by there being no
+        wire is (E2). Generation gives consistency, not truth (E3-5) &mdash; extended by E4 to &ldquo;the part no
+        page describes is the part nothing checks&rdquo;, and by E5 to &ldquo;a feature can be completely documented
+        and still be unusable&rdquo;. And the one that outlived all of them: <b>an acceptance that only runs in the
+        configuration the feature was developed in is an acceptance that runs once</b> &mdash; which is how a
+        forward that was never a network feature came to require a network (F-D55), found hours before a tag by an
+        acceptance that used a plain sandbox.
+        <b>Fifty-six decisions are in the log above</b>, each with its alternatives and its reason, and the ones
+        that were wrong say so: F-D23 superseded by F-D41, F-D11 by F-D40, F-D50 reclassified by the owner.
+        <b>Nothing here is closed on a promise.</b> Every checked box in this file cites evidence produced by
+        running something, and the scripts that produced it are in <code>dev/</code>, still runnable, still run.
+        <b>What governs next is <a href="PLAN.html">PLAN.html</a></b>, where the jailer and a seccomp/Landlock
+        profile are promoted as a hardening phase exiting at v0.9 (F-D56). This document is history now and is not
+        edited again.</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
