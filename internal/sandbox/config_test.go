@@ -170,3 +170,30 @@ func TestSessionSurvivesTheStateFile(t *testing.T) {
 		t.Errorf("an older state file did not fall back: %+v", prev)
 	}
 }
+
+// A snapshot is a memory image of a booted guest — the most sensitive file this
+// program writes. Firecracker creates it with the process umask, so the mode is
+// taken back explicitly rather than left to the directory above it.
+func TestASnapshotIsNotReadableByAnyoneElse(t *testing.T) {
+	dir := t.TempDir()
+	state := filepath.Join(dir, "state")
+	mem := filepath.Join(dir, "memory")
+	for _, p := range []string{state, mem} {
+		if err := os.WriteFile(p, []byte("x"), 0o664); err != nil {
+			t.Fatal(err)
+		}
+	}
+	restrictSnapshot(state, mem)
+	for _, p := range []string{state, mem} {
+		info, err := os.Stat(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if mode := info.Mode().Perm(); mode != 0o600 {
+			t.Errorf("%s is mode %o, want 600", filepath.Base(p), mode)
+		}
+	}
+	// A file that is not there is not an error: a snapshot that failed halfway
+	// should report the failure, not a chmod complaint about its debris.
+	restrictSnapshot(filepath.Join(dir, "absent"))
+}

@@ -518,7 +518,24 @@ func (s *Sandbox) Snapshot(dir string) (statePath, memPath string, err error) {
 	if err := s.api.resume(); err != nil {
 		return "", "", err
 	}
+	restrictSnapshot(statePath, memPath)
 	return statePath, memPath, nil
+}
+
+// restrictSnapshot takes the group and world bits off a snapshot.
+//
+// Firecracker creates these files itself, so their mode is whatever the process
+// umask allowed — 0664 on an ordinary machine. The directory above them is
+// 0700 and that is what actually keeps them private today, but a *memory image
+// of a booted guest* should not be one chmod away from being readable: it is
+// the most sensitive file this program writes, and the only reason it is
+// currently harmless is that nothing has yet been in that guest's memory.
+// Failures are ignored on purpose — a snapshot that exists with a wider mode
+// than intended is better than no snapshot, and the directory still covers it.
+func restrictSnapshot(paths ...string) {
+	for _, p := range paths {
+		_ = os.Chmod(p, 0o600)
+	}
 }
 
 // SnapshotRunning snapshots a sandbox this process did not start, by talking to
@@ -639,6 +656,7 @@ func SnapshotRunning(st *State, dir string) (statePath, memPath string, err erro
 		_ = a.resume()
 		return "", "", err
 	}
+	restrictSnapshot(statePath, memPath)
 	return statePath, memPath, a.resume()
 }
 

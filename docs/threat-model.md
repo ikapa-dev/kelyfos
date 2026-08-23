@@ -115,6 +115,23 @@ is no package pinning, no signature checking, no content inspection.
 Creating a TAP and loading nftables rules requires `sudo`. On a machine where
 your user can escalate, so can anything running as your user.
 
+### Snapshots and fork templates are guest memory on disk
+
+A snapshot — and the fork-template cache a team fills (`docs/teams.md` §7) — is
+a **memory image of a booted guest**, written under `~/.cache/kelyfos`. Anything
+that was in that guest's RAM at the moment it was frozen is in that file.
+
+KelyfOS keeps the directories `0700` and takes the group and world bits off the
+image files themselves, so they are private to the user who made them. That is
+the whole of the protection: they are not encrypted, and a backup tool or a
+shared home directory will carry them wherever it carries anything else.
+
+A fork template specifically is booted with no egress, no bound secrets and no
+workspace, and nothing is run inside it before it is frozen — so what it holds
+is a freshly booted machine and nothing that came from you. A snapshot *you*
+take with `kelyfos snapshot save` is a different matter: whatever the agent had
+in memory is in it.
+
 ### Data at rest
 Snapshots and workspace images are ordinary files on the host with no
 encryption. A snapshot contains the guest's entire memory — including anything
