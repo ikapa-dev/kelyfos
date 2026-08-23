@@ -260,6 +260,7 @@ machine took.
 | | |
 | --- | --- |
 | [`docs/README.md`](docs/README.md) | the entry map: what each document is, and where it is thin |
+| [`docs/reference/`](docs/reference/) | every command, flag, toml key, MCP tool, event and exit code — generated from the source |
 | [`PLAN.html`](PLAN.html) · [`PLAN-FEATURES.html`](PLAN-FEATURES.html) | the living plan — every decision and the full progress log, phases then epics |
 | [`docs/threat-model.md`](docs/threat-model.md) | what is defended, and what is not |
 | [`docs/protocol.md`](docs/protocol.md) | the host/guest wire protocol |

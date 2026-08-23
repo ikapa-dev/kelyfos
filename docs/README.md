@@ -10,16 +10,17 @@ kind it is, and this page says where each one is still thin.
 
 The rule the directory is built on (F-D4): **the reference half is generated
 from the source and CI fails on drift; hand-written prose is reserved for
-concepts and recipes.** That machinery arrives with E3-1 and E3-3. Until it
-does, everything here is hand-written, and its gaps are listed on this page
-rather than left to be discovered.
+concepts and recipes.** [`reference/`](reference/) is the generated half — every
+command, flag, toml key, MCP tool, event type and exit code, extracted by
+`make docs` and checked on every commit. The pages beside it are the
+hand-written half, and this page says where each is still thin.
 
 ## Start here
 
 | If you are… | Read, in order |
 | --- | --- |
 | trying it for the first time | the repository [`README.md`](../README.md) quickstart, then [`threat-model.md`](threat-model.md) before trusting it with anything |
-| an LLM or an agent framework | this page and the map below. `llms.txt` / `llms-full.txt` at the repository root — the whole product in one file — arrive with E3-2. |
+| an LLM or an agent framework | [`reference/`](reference/) for exact names, this page for what they mean. `llms.txt` / `llms-full.txt` at the repository root — the whole product in one file — arrive with E3-2. |
 | deciding how much machine an agent gets | [`resources.md`](resources.md) |
 | running several agents together | [`teams.md`](teams.md) |
 | auditing what an agent did | [`events.md`](events.md) |
@@ -31,6 +32,7 @@ rather than left to be discovered.
 
 | Document | Kind | What it answers |
 | --- | --- | --- |
+| [`reference/`](reference/) | **generated** | Every command, flag, `kelyfos.toml` key, MCP tool, event type and exit code, with types and defaults. Extracted from the source; CI fails on drift. |
 | [`protocol.md`](protocol.md) | mixed | How the host and the guest talk: Firecracker's hybrid vsock, the port map, newline-delimited JSON framing, and every channel's message shape. |
 | [`events.md`](events.md) | mixed | What the flight recorder writes: the common fields, the hash chain, and every event type with its payload. |
 | [`networking.md`](networking.md) | mixed | Why a sandbox has no NIC by default, what `--allow` builds, the nftables template, and why the guest has no DNS. |
@@ -57,8 +59,9 @@ so a section number here is load-bearing rather than decorative.
 **Reference.** Statements of fact that also exist in the source — a port number,
 a toml key, a default, an event field, an error string. Every one of these can
 drift, and a drifted reference is worse than a missing one, because a model will
-write confidently against it. E3-1 moves this half into generated files behind a
-CI drift gate.
+write confidently against it. Most of this half now lives in
+[`reference/`](reference/), generated and CI-checked; what is left in the prose
+below is the part no generator reaches, and it is named per document.
 
 **Mixed.** Every document above except the threat model. The inventory names
 which half of each is reference, so it is clear what a generator will eventually
@@ -159,38 +162,35 @@ The parts of the product with no documentation at all. Code-derived rather than
 remembered, and the input to E3-1 — most of it disappears the moment the
 reference is generated rather than typed.
 
-**Commands.** `kelyfos version` and `kelyfos help` appear in no document.
+Commands, flags, toml keys, MCP tools, event types and exit codes were all on
+this list at E3-0 and are now in [`reference/`](reference/), extracted rather
+than typed. What is still missing is what no generator reaches:
 
-**Flags.** `--arch`, `--image-dir`, `--console`, `--verbose-boot`,
-`--ready-timeout`, `--no-sync-back`, `--sandbox`, `--cwd`, `--shell`, `--stdin`,
-`--timeout`, `--json`, `--runs`, `--restore` — and `--idle-timeout`, whose toml
-key is documented while its flag is not. No document lists any one command's
-flags in full.
+**The wire protocol's remaining corners.** The kernel command line as a set, the
+guest's default environment, and every timeout in the system except the
+heartbeat. `protocol.md` is hand-written and stays that way — it is a
+specification, not a description.
 
-**Toml keys.** `sandbox.arch`, `resources.net_mbps_tx` and `resources.disk_iops`
-are accepted and undocumented.
-
-**MCP tools.** There is no reference for the fourteen tools a guest exposes.
-`teams.md` describes the team half in prose; `exec`, `read_file`, `write_file`,
-`list_dir`, `upload` and `download` are named in `README.md` and specified
-nowhere — no parameters, no types, no output shapes.
-
-**Exit codes.** `124` and `137` are documented. `126`, `127`, `2`, and the two
-meanings of `1` — a failed `doctor` check, a broken chain from `log --verify` —
-are not.
+**Snapshot restore's networking.** How a frozen NIC is re-paired to a fresh TAP
+(D22) is in the code and in no document.
 
 **Environment variables.** `KELYFOS_SANDBOX`, `KELYFOS_CACHE` and
-`KELYFOS_CGROUP_ROOT` are read by the CLI and named in no document.
+`KELYFOS_CGROUP_ROOT` are read by the CLI and named nowhere. `KELYFOS_SANDBOX`
+is the one an integrator needs, and E3-4 is its home.
 
 **Recipes.** There is no cookbook, no integration guide and no `llms.txt`. Those
 are E3-3, E3-4 and E3-2.
 
 ## How these documents are kept true
 
-1. **Generated where possible.** `make docs` regenerates the reference from the
-   source and CI fails on any diff (F-D4, E3-1). A flag that exists cannot be
-   missing from the reference, and a flag in the reference cannot be one that no
-   longer exists.
+1. **Generated where possible.** `make docs` regenerates
+   [`reference/`](reference/) from the source and CI fails on any diff (F-D4,
+   E3-1). A flag that exists cannot be missing from the reference, and a flag in
+   the reference cannot be one that no longer exists. Three of the five pages are
+   read straight out of the running product — the CLI's own `-h`, the
+   supervisor's own `tools/list` — and the other two out of tables the product
+   depends on, so there is no copy of the truth that only the documentation
+   reads.
 2. **Executed where possible.** Every cookbook recipe is a script CI runs from a
    fresh clone, so a recipe that stops working fails the build (E3-3).
 3. **Examined by a reader with no other source.** A fresh agent is given the

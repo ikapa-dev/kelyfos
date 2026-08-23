@@ -225,10 +225,10 @@ func (c *Config) teamKey(section, key, value, where string) error {
 			"disk_iops", "disk_mbps", "max_runtime", "idle_timeout":
 			// Not a typo, so not an "unknown key": a wrong mental model, which
 			// deserves the answer to the question actually being asked.
-			return fmt.Errorf("%s: %s is a per-agent cap, not a team-wide one; "+
-				"write it in [team.agent.resources]\n"+
+			return fmt.Errorf("%s: %s is %s\n"+
 				"    [team.resources] is the collective budget, and cpu_quota is the only cap "+
-				"a team can share \u2014 cores, RAM and disk are each agent's own machine", where, key)
+				"a team can share \u2014 cores, RAM and disk are each agent's own machine",
+				where, key, teamResourcesRefusal)
 		default:
 			return unknown(where, key, section)
 		}
@@ -347,8 +347,10 @@ func assignResources(r *AgentResources, key, value, where string) error {
 	return err
 }
 
+// unknown names the section's real key list, which comes from the schema. That
+// is what stops the schema from becoming a copy of the truth that nothing reads.
 func unknown(where, key, section string) error {
-	return fmt.Errorf("%s: unknown key %q in [%s]", where, key, section)
+	return unknownKey(where, key, section)
 }
 
 func parseBool(value, where string) (bool, error) {

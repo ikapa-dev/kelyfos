@@ -126,7 +126,7 @@
      improvements to the existing product land here as epics. Inert until its gate opens.</p>
   <div class="meta">
     owner: <b>John</b> &nbsp;&middot;&nbsp; developer: <b>Claude Code</b> &nbsp;&middot;&nbsp;
-    status: <b class="ok" id="meta-status">Epic E3 — active, 1/6 (v0.5 released; next: E3-1, the generated reference)</b> &nbsp;&middot;&nbsp;
+    status: <b class="ok" id="meta-status">Epic E3 — active, 2/6 (v0.5 released; next: E3-2, llms.txt)</b> &nbsp;&middot;&nbsp;
     last updated: <b id="meta-updated">2026-08-23</b><br>
     repo file: <b>PLAN-FEATURES.html</b> (lives at the repository root next to <code>PLAN.html</code>)<br>
     <span class="quiet">Companion to PLAN.html — same protocol, same rules, later timeline.</span>
@@ -166,7 +166,7 @@
     <span class="bl-name">All epics</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">E3-1 — <code>make docs</code>: generate the CLI, toml, MCP-tool, event and exit-code reference from the source, and fail CI on any drift</b></div>
+  <div class="focusline">Current focus: <b id="focus">E3-2 — <code>llms.txt</code> per the llmstxt.org spec, and <code>llms-full.txt</code>: the whole product in one file, with its token count measured</b></div>
 </div>
 
 <!-- ====================================================== 1. ACTIVATION GATE -->
@@ -432,7 +432,7 @@
         <span class="tid">E3-0</span><span class="tk">Docs inventory: list every doc the build produced (protocol.md, networking.md,
         events.md, resources.md, teams.md, threat model), mark what is concept vs reference vs missing, and write
         <code>docs/README.md</code> as the human/LLM entry map.</span></li>
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">E3-1</span><span class="tk">Generated reference: <code>make docs</code> extracts, from the code itself,
         every CLI command and flag (from the Go flag definitions), every <code>kelyfos.toml</code> key with type and default
         (from struct tags), every MCP tool the supervisor exposes with its schema, every flight-recorder event type, and all
@@ -1161,6 +1161,41 @@
         epic is what happened to find it is how an epic stops being about anything. They are written down instead, which
         is the only thing that makes a defect survive being noticed.</td>
         <td class="mono">docs/README.md; the E3-0 progress row</td></tr>
+        <tr><td class="mono">F-D28</td><td class="mono">2026-08-23</td>
+        <td>E3-1&rsquo;s reference is generated from <b>the product answering for itself where it can, and from
+        tables the product depends on where it cannot</b>. Concretely: the command list and every flag come from running
+        the CLI&rsquo;s own <code>-h</code>; the MCP tools come from running the supervisor&rsquo;s new
+        <code>--dump-tools</code>; the toml keys, the event types and the exit codes come from
+        <code>config.Schema()</code>, <code>recorder.Types()</code> and <code>internal/exitcode</code>, each of which the
+        running code already reads. <b>The task&rsquo;s &ldquo;from struct tags&rdquo; is not taken</b>, because this
+        project has no struct tags to read.
+        <i>Why the task&rsquo;s wording could not be followed.</i> E3-1 says toml keys come &ldquo;from struct
+        tags&rdquo;, which assumes a reflection-based decoder. F-D16 deliberately hand-rolled the parser, so the keys are
+        string literals in a switch and there is nothing to reflect over. Two ways out were available. Rewriting the
+        parser to be table-driven would make the table the parser, which is the strongest possible answer &mdash; and it
+        would rewrite, on a documentation task, the one file whose auditability F-D16 chose over a library. Adding a
+        table beside the switch is weaker on its own, because a table nothing reads goes stale exactly like a document
+        nothing reads. So the table is made load-bearing instead: the parser&rsquo;s unknown-key errors are built from
+        it, and a typo in <code>[resources]</code> now answers with the section&rsquo;s real key list.
+        <i>Why generation alone is not enough, and what closes the gap.</i> A generator cannot notice an absence: a key
+        the switch accepts and the table omits produces a reference that is silently short. Three checks answer that,
+        and each reads the source rather than trusting it. <code>TestSchemaCoversTheParser</code> walks every
+        <code>case</code> literal in the config package&rsquo;s own AST and fails on one with no schema row.
+        <code>TestSchemaCoversEveryType</code> does the same for the recorder&rsquo;s <code>Type*</code> constants, and
+        <code>TestSchemaFieldsExist</code> checks every documented field against the struct&rsquo;s json tags.
+        <code>gendocs</code> itself reads <code>host/main.go</code>&rsquo;s dispatch switch and refuses to write when a
+        command is missing from the usage block &mdash; which it did on its first run, for <code>kelyfos help</code>,
+        a real command nobody could discover.
+        <i>Why running the binary rather than importing it.</i> <code>host</code> and <code>supervisor</code> are both
+        <code>package main</code> and cannot be imported at all, so the choice was between refactoring every command to
+        expose its flag set and asking the binary. Asking the binary is better than the refactor it avoids: what the
+        reference prints is then exactly what a user is shown by <code>-h</code>, so the two cannot disagree, and the
+        supervisor&rsquo;s tool list is its real <code>tools/list</code> answer rather than a transcription of it. One
+        cost, paid explicitly: <code>--arch</code> defaults to the machine that ran the generator, so that one value is
+        normalised to &ldquo;the build host&rsquo;s architecture&rdquo;. It is the only host-dependent default in the
+        CLI, and any other would make <code>make docs</code> produce a different file per machine &mdash; which the CI
+        gate would then fail on, loudly, which is the right way for that to be found.</td>
+        <td class="mono">the E3-1 progress row</td></tr>
     <!-- Claude Code: append rows above this line. -->
       <tr><td class="mono">F-D10</td><td class="mono">2026-08-22</td>
         <td>The resource knobs E1-0 goes looking for shipped <b>partly</b>: <code>--vcpus</code>/<code>--mem</code> and
@@ -2853,6 +2888,64 @@ $ grep -n 'Status: v0.3' README.md
 no behaviour changed: the only non-comment
 edits outside docs/ and README.md are four
 doc section numbers in Go comments</pre></td></tr>
+        <tr><td class="mono">2026-08-23</td><td class="mono">E3-1</td>
+        <td><b><code>make docs</code>, and a reference that cannot describe a KelyfOS that does not exist.</b>
+        Five generated pages under <code>docs/reference/</code>, 820 lines, 34 KB: every command and flag, every
+        <code>kelyfos.toml</code> key with its type and default, every MCP tool with its input schema, every
+        flight-recorder event with its payload, and every exit code. CI regenerates them and fails on any diff, in the
+        <code>checks</code> job rather than in <code>build</code> &mdash; it takes seconds, needs no image, and has to
+        run on a documentation-only commit, which is the commit most able to make it wrong.
+        <b>Nothing in it is a second opinion.</b> The commands and flags are the CLI answering its own
+        <code>-h</code>, so the reference and the help text cannot disagree. The tools are the supervisor answering
+        <code>--dump-tools</code>, which is its real <code>tools/list</code> result &mdash; and it returns three sets,
+        because which tools a sandbox is shown depends on whether it is in a team and whether it has a spawn budget
+        (F-D18), and a reference that flattened them would advertise a tool an agent will never see. The toml keys,
+        event types and exit codes come from tables the product itself reads: <code>config.Schema()</code> now builds
+        the parser&rsquo;s unknown-key errors, so a typo in <code>[resources]</code> answers with the section&rsquo;s
+        real key list; <code>internal/exitcode</code> is what <code>host</code> returns.
+        <b>Generation cannot notice an absence, so four checks read the source.</b> Two AST tests fail when a
+        <code>case</code> in the config parser or a <code>Type*</code> in the recorder has no schema row; one checks
+        every documented event field against the struct&rsquo;s json tags; and the generator itself reads
+        <code>host/main.go</code>&rsquo;s dispatch switch and refuses to write when a command is missing from the usage
+        block. That last one found something on its first run: <code>kelyfos help</code> was dispatched and undiscoverable.
+        It is in the usage block now. Reasoning in F-D28, including why the task&rsquo;s &ldquo;from struct tags&rdquo;
+        could not be followed.
+        One user-visible fix on the way past: <code>kelyfos run -h</code> printed <code>-verbose-boot quiet</code>,
+        because the usage string backquoted a kernel parameter and <code>flag</code> reads a backquoted word as the
+        value&rsquo;s type name.</td>
+        <td class="mono"><pre>$ make docs
+gendocs: wrote 6 files to docs/reference
+
+  cli.md         59 rows   config.md   69 rows
+  events.md      99 rows   tools.md    25 rows
+  exit-codes.md   7 rows
+
+$ make docs &amp;&amp; git status --porcelain docs/reference
+  (empty &mdash; idempotent)
+
+the gate, proved rather than asserted:
+$ # add a --pretend flag to `kelyfos log`
+$ make docs &amp;&amp; git diff --stat -- docs/reference
+  docs/reference/cli.md | 1 +
++| `--pretend` | boolean | &mdash; | a flag that should
+  show up in the reference |
+
+$ # add an undocumented key to the toml parser
+$ go test ./internal/config/ -run TestSchemaCoversTheParser
+--- FAIL: TestSchemaCoversTheParser
+    the parser understands these and the schema does not:
+      config.go: "totally_new_flag" in Load
+
+$ go test ./internal/config/ ./internal/recorder/ -run TestSchema
+  TestSchemaKeysAllParse         PASS
+  TestSchemaCoversTheParser      PASS
+  TestSchemaSectionsAllExist     PASS
+  TestSchemaCoversEveryType      PASS
+  TestSchemaDescribesNothingExtra PASS
+  TestSchemaFieldsExist          PASS
+
+$ gofmt -l . ; go vet ./... ; go test ./...
+  clean · clean · all packages ok</pre></td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>

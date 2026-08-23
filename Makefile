@@ -77,7 +77,7 @@ KERNEL_ARTIFACT := vmlinux
 endif
 
 .DEFAULT_GOAL := help
-.PHONY: help versions toolchain kernel supervisor cli image run bench prove-caps prove-team demo-team accept-e2 clean test test-integration linux-only fetch-kernel
+.PHONY: help versions toolchain kernel supervisor cli image run bench docs prove-caps prove-team demo-team accept-e2 clean test test-integration linux-only fetch-kernel
 
 help: ## Show this target list
 	@echo "KelyfOS — targets (ARCH=$(ARCH), FLAVOR=$(FLAVOR))"
@@ -229,6 +229,23 @@ demo-team: linux-only cli ## Run the agent-teams proof demo end to end
 accept-e2: linux-only cli ## Run Epic E2's acceptance test end to end
 	@echo "note: binding numbers come from the bare-KVM CI runner (D15); this run is informational"
 	ARCH=$(ARCH) bash $(CURDIR)/dev/accept-e2.sh
+
+# The generated half of the documentation (E3-1). Nothing here is written by
+# hand: the commands and flags come from the CLI's own -h, the MCP tools from
+# the supervisor's own tools/list, and the toml keys, event types and exit codes
+# from tables the product itself depends on. CI runs this and fails on a diff,
+# so the reference is physically unable to describe a KelyfOS that does not
+# exist (F-D4).
+#
+# The supervisor is built for the host here rather than for the guest: it is
+# being asked what tools it would advertise, which needs no guest at all.
+docs: linux-only cli ## Regenerate docs/reference from the source
+	CGO_ENABLED=0 go build -trimpath -o $(OUT_DIR)/kelyfos-supervisor-host ./supervisor
+	go run ./tools/gendocs \
+	  -bin $(OUT_DIR)/kelyfos \
+	  -supervisor $(OUT_DIR)/kelyfos-supervisor-host \
+	  -out $(CURDIR)/docs/reference \
+	  -repo $(CURDIR)
 
 run: cli ## Boot a microVM from the built image under Firecracker
 	$(OUT_DIR)/kelyfos run --image $(FLAVOR) --arch $(ARCH)

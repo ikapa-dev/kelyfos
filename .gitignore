@@ -28,3 +28,6 @@
 # person who ran it will find it, which in CI is what the workflow uploads.
 /team.html
 /*.log
+
+# Local tool settings, not project configuration.
+/.claude/

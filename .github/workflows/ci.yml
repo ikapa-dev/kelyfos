@@ -138,6 +138,28 @@ jobs:
       - name: the plan is still coherent
         run: python3 tools/check-plan.py
 
+      # The generated reference is regenerated from the source and compared. A
+      # flag that exists and is not in docs/reference, or one in docs/reference
+      # that no longer exists, fails here rather than reaching a reader (F-D4,
+      # E3-1). This runs in `checks` rather than in `build` on purpose: it is
+      # seconds, it needs no image, and it has to run on a documentation-only
+      # commit — which is exactly the commit most able to make it wrong.
+      - name: The generated reference still matches the source
+        run: |
+          set -euo pipefail
+          make docs
+          if ! git diff --quiet -- docs/reference || \
+             [ -n "$(git status --porcelain -- docs/reference)" ]; then
+            echo
+            echo "docs/reference disagrees with the source:"
+            git --no-pager diff -- docs/reference
+            git status --porcelain -- docs/reference
+            echo
+            echo "Run 'make docs' and commit the result."
+            exit 1
+          fi
+          echo "the reference matches"
+
   build:
     needs: changes
     if: needs.changes.outputs.code == 'true'

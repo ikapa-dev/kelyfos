@@ -17,6 +17,7 @@ import (
 
 	"github.com/p4r4n0rm4l/KelyfOS/internal/config"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/egress"
+	"github.com/p4r4n0rm4l/KelyfOS/internal/exitcode"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/proto"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/report"
@@ -37,7 +38,7 @@ func runCmd(argv []string) error {
 		maxRun  = fs.String("max-runtime", "", "stop the sandbox after this long, e.g. 30m (default: no limit)")
 		idleFor = fs.String("idle-timeout", "", "stop the sandbox after this long with no activity, e.g. 5m (default: no limit)")
 		console = fs.Bool("console", false, "stream the guest serial console")
-		verbose = fs.Bool("verbose-boot", false, "drop `quiet` from the kernel command line")
+		verbose = fs.Bool("verbose-boot", false, "drop the quiet parameter from the kernel command line")
 		timeout = fs.Duration("ready-timeout", 30*time.Second, "how long to wait for the guest to become ready")
 		allow   = fs.String("allow", "", "comma-separated egress allowlist, e.g. github.com,pypi.org. Without it the sandbox has no network interface at all.")
 		wsDir   = fs.String("workspace", "", "host directory to make available at /work inside the sandbox")
@@ -676,8 +677,10 @@ status. This is how you hand an agent a sandbox and nothing else:
 const childGrace = 5 * time.Second
 
 // exitTimedOut is timeout(1)'s exit status, for the same meaning. A CI job that
-// already treats 124 as "this took too long" needs no teaching.
-const exitTimedOut = 124
+// already treats 124 as "this took too long" needs no teaching. It lives in
+// internal/exitcode with the rest, so the generated reference documents the
+// number this code actually returns.
+const exitTimedOut = exitcode.TimedOut
 
 type timeoutFired struct {
 	budget      string
@@ -739,7 +742,7 @@ func watchBudgets(b budgets) {
 // exitOOMKilled is 128 + SIGKILL, the shell's convention for a process killed by
 // signal 9 — which is what the OOM killer sends. A user who greps for 137 in a
 // CI log to find "the box ran out of memory" finds it here too.
-const exitOOMKilled = 137
+const exitOOMKilled = exitcode.OOMKilled
 
 type prefixWriter struct {
 	w      io.Writer

@@ -9,6 +9,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/p4r4n0rm4l/KelyfOS/internal/exitcode"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/proto"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/sandbox"
@@ -172,13 +173,13 @@ to close.
 func exitCodeFor(kind string) int {
 	switch kind {
 	case proto.ErrTimeout:
-		return 124 // same as timeout(1)
+		return exitcode.TimedOut
 	case proto.ErrDenied:
-		return 126 // found but not executable
+		return exitcode.NotExecutable
 	case proto.ErrNotFound:
-		return 127 // not found
+		return exitcode.NotFound
 	default:
-		return 1
+		return exitcode.Fail
 	}
 }
 

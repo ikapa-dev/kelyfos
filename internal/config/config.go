@@ -166,7 +166,7 @@ func Load(path string) (*Config, error) {
 			case "idle_timeout":
 				cfg.ResIdleTimeout, err = parseDuration(value, where, key)
 			default:
-				return nil, fmt.Errorf("%s: unknown key %q in [resources]", where, key)
+				return nil, unknownKey(where, key, "resources")
 			}
 			if err != nil {
 				return nil, err
@@ -190,7 +190,7 @@ func Load(path string) (*Config, error) {
 		case "mem_mib":
 			cfg.MemMiB, err = parseInt(value, where)
 		default:
-			return nil, fmt.Errorf("%s: unknown key %q", where, key)
+			return nil, unknownKey(where, key, "")
 		}
 		if err != nil {
 			return nil, err

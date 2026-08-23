@@ -45,6 +45,19 @@ var isPID1 = os.Getpid() == 1
 var theTeam *teamClient
 
 func main() {
+	// Before anything else, and deliberately before any mount: the guest's tool
+	// surface, printed as the tools/list result it would advertise. `make docs`
+	// runs this to generate the reference (E3-1), which makes the generated file
+	// the guest's own answer rather than a transcription of it. It runs as an
+	// ordinary process on the host, so it must touch nothing.
+	if len(os.Args) > 1 && os.Args[1] == "--dump-tools" {
+		if err := dumpTools(os.Stdout); err != nil {
+			fmt.Fprintln(os.Stderr, "kelyfos-supervisor:", err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	start := monotonic()
 
 	if isPID1 {

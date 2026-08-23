@@ -28,7 +28,8 @@ usage:
   kelyfos log [flags]              replay, follow or verify a session's record
   kelyfos watch [flags]            live view of a sandbox (reads the record only)
   kelyfos bench [flags]            measure cold boot-to-ready over several runs
-  kelyfos version
+  kelyfos version                  print the version and exit
+  kelyfos help                     print this list
 
 Run a subcommand with -h for its flags.
 `
