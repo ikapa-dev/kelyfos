@@ -87,6 +87,18 @@ func PackWorkspace(hostDir, imagePath string, maxSize int64) (*Workspace, error)
 	return &Workspace{HostDir: abs, ImagePath: imagePath, fingerprint: fp}, nil
 }
 
+// AdoptWorkspace rebuilds a Workspace for an image whose packing happened in
+// another process — a resumed session, whose disk was packed before a pause.
+//
+// The fingerprint is taken now rather than remembered, so what SyncBack compares
+// against is the host directory as it was when this run adopted the image. That
+// is the honest comparison for a resume: a change made while the session was
+// paused is exactly the change a person needs to be told about, and it will be.
+func AdoptWorkspace(hostDir, imagePath string) *Workspace {
+	fp, _ := Fingerprint(hostDir)
+	return &Workspace{HostDir: hostDir, ImagePath: imagePath, fingerprint: fp}
+}
+
 // SyncBack writes the workspace image back over the host directory.
 //
 // If the host directory changed while the sandbox was running, it refuses and

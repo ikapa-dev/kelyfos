@@ -1,17 +1,21 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/p4r4n0rm4l/KelyfOS/internal/config"
+	"github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/report"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/sandbox"
 )
@@ -42,6 +46,10 @@ type NamedMeta struct {
 	// which file it is comparing against rather than assuming the working
 	// directory holds the same project.
 	PolicyPath string `json:"policy_path,omitempty"`
+	// WorkspaceHost is the directory this machine's workspace was packed from.
+	// The pause is the last process that knows it, and the resume is the one
+	// that owes the write-back.
+	WorkspaceHost string `json:"workspace_host,omitempty"`
 }
 
 func readNamedMeta(dir string) (*NamedMeta, error) {
@@ -136,7 +144,7 @@ the session finally ends.
 	// rather than from here, so pausing from another directory does not freeze
 	// a different project's file.
 	meta := NamedMeta{Name: *name, Sandbox: st.ID, Session: st.RecordSession(),
-		PausedAt: time.Now(), Kelyfos: Version}
+		PausedAt: time.Now(), Kelyfos: Version, WorkspaceHost: st.WorkspaceHost}
 	if cfg, err := loadPolicy(); err == nil && cfg != nil {
 		blob, err := os.ReadFile(cfg.Path)
 		if err != nil {
@@ -153,6 +161,15 @@ the session finally ends.
 	}
 	if err := os.WriteFile(namedMeta(dir), append(blob, '\n'), 0o600); err != nil {
 		return err
+	}
+
+	// Into the machine's own chain, and the chain is not closed: this session is
+	// coming back, and a session.end would make `--verify` describe a machine
+	// that still exists as finished (docs/qol.md §1.4).
+	if rec, err := recorder.Open(sandbox.Root(), st.RecordSession()); err == nil {
+		_ = rec.Append(recorder.Event{Type: recorder.TypeSessionPause, Name: *name,
+			DurationMS: time.Since(started).Milliseconds()})
+		_ = rec.Close()
 	}
 
 	stateInfo, _ := os.Stat(statePath)
@@ -335,4 +352,201 @@ func listDiff(was, now []string) (gained, lost []string) {
 	sort.Strings(gained)
 	sort.Strings(lost)
 	return gained, lost
+}
+
+// --- kelyfos resume ----------------------------------------------------------
+
+func resumeCmd(argv []string) error {
+	fs := flag.NewFlagSet("kelyfos resume", flag.ExitOnError)
+	var (
+		console = fs.Bool("console", false, "stream the guest serial console")
+		noSync  = fs.Bool("no-sync-back", false, "leave the workspace image alone at the end")
+	)
+	fs.Usage = func() {
+		fmt.Fprint(fs.Output(), `usage: kelyfos resume <name> [flags]
+
+Brings back a paused session: the same memory, the same disks, and the policy it
+was paused under. If this project's kelyfos.toml has changed since, the resume
+says what changed and runs under the frozen copy anyway — the machine's memory
+was built under that one, and a guest whose proxy address no longer exists is
+not a machine obeying the new policy, it is a broken machine.
+
+The workspace, if there was one, is written back when this run ends. That is the
+final shutdown the pause deferred.
+
+`)
+		fs.PrintDefaults()
+	}
+	if err := fs.Parse(argv); err != nil {
+		return err
+	}
+	if fs.NArg() != 1 {
+		return errors.New("usage: kelyfos resume <name>")
+	}
+	name := fs.Arg(0)
+	if err := validSessionName(name); err != nil {
+		return err
+	}
+	dir := namedDir(name)
+	meta, err := readNamedMeta(dir)
+	if err != nil {
+		return fmt.Errorf("no paused session called %q — `kelyfos sessions` lists them", name)
+	}
+	snapMeta, err := sandbox.ReadSnapshotMeta(dir)
+	if err != nil {
+		return fmt.Errorf("session %q is incomplete: %w", name, err)
+	}
+
+	// The frozen policy, and what it says about the one in force now.
+	frozen, err := frozenPolicy(dir)
+	if err != nil {
+		return err
+	}
+	current, _ := loadPolicy()
+	var differences []string
+	if frozen != nil {
+		differences = policyDifference(frozen, current)
+		if diffs := differences; len(diffs) > 0 {
+			fmt.Printf("kelyfos: this session was paused under a %s that has since changed.\n", config.FileName)
+			fmt.Printf("    Resuming under the frozen copy, which is what the machine's memory expects.\n")
+			fmt.Printf("    %d difference(s): %s\n", len(diffs), strings.Join(diffs, ", "))
+			fmt.Printf("    To run under the current policy, start a new sandbox rather than resuming.\n\n")
+		}
+		// The frozen policy is what the machine runs under; it is not a way
+		// past the ceiling in force now. Same rule sandbox_restore follows, and
+		// the hole E4-2 found there is not being dug again here (F-D39).
+		if err := frozenFitsCurrent(name, frozen, current); err != nil {
+			return err
+		}
+	}
+
+	// The resumed machine records into the session it was paused from, so one
+	// chain covers the whole life of the machine rather than one per resume.
+	// "It is the same session" is a claim this is what makes true.
+	opts := sandbox.Options{Arch: snapMeta.Arch, Flavor: snapMeta.Flavor, Quiet: true,
+		VcpuCount: snapMeta.VcpuCount, MemMiB: snapMeta.MemMiB, Session: meta.Session}
+	if opts.Arch == "" {
+		opts.Arch = sandbox.HostArch()
+	}
+	if *console {
+		opts.Console = prefixWriter{os.Stderr, "[guest] "}
+	}
+	if snapMeta.HasNetwork {
+		return fmt.Errorf("session %q was paused from a sandbox with egress, and resuming one is "+
+			"the same problem restoring one is: the guest's address is inside its memory image "+
+			"and something else may hold it now (D22).\n"+
+			"    bring it back with:  kelyfos snapshot restore -name %s",
+			name, name)
+	}
+
+	sb, elapsed, err := sandbox.Restore(dir, opts)
+	if err != nil {
+		return err
+	}
+	// The sync-back is registered FIRST so it runs LAST: defers unwind
+	// last-registered-first, and the workspace has to be written back after the
+	// guest has stopped, not before. A guest still running has pages of that
+	// disk in its own cache, and copying the image out from under it produces a
+	// directory missing exactly the files somebody just wrote — which is what
+	// the first live run of this did.
+	if snapMeta.HasWorkspace && meta.WorkspaceHost != "" && !*noSync {
+		defer syncResumedWorkspace(sb, meta.WorkspaceHost)
+	}
+	defer func() {
+		if err := sb.Shutdown(10 * time.Second); err != nil {
+			fmt.Fprintf(os.Stderr, "kelyfos: shutdown: %v\n", err)
+		}
+	}()
+
+	if rec, err := recorder.Open(sandbox.Root(), meta.Session); err == nil {
+		_ = rec.Append(recorder.Event{Type: recorder.TypeSessionResume, Name: name,
+			BootMS: elapsed.Milliseconds(), Reason: strings.Join(differences, ", ")})
+		_ = rec.Close()
+	}
+
+	fmt.Printf("resumed %q in %d ms (paused %s ago)\n", name, elapsed.Milliseconds(),
+		time.Since(meta.PausedAt).Truncate(time.Second))
+	fmt.Printf("  sandbox  %s\n", sb.State.ID)
+	fmt.Printf("  vsock    %s\n", sb.State.UDSPath)
+	if meta.PolicyPath != "" {
+		fmt.Printf("  policy   frozen copy from %s\n", meta.PolicyPath)
+	}
+
+	fmt.Println("\nCtrl-C to stop.")
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	vmExited := make(chan struct{})
+	go func() { _ = sb.Wait(); close(vmExited) }()
+	select {
+	case <-ctx.Done():
+		fmt.Println("\nstopping...")
+		return nil
+	case <-vmExited:
+		return errors.New("the resumed microVM exited unexpectedly")
+	}
+}
+
+// frozenPolicy parses the policy stored beside a paused session, or returns nil
+// when the pause found none to freeze.
+func frozenPolicy(dir string) (*config.Config, error) {
+	path := namedPolicy(dir)
+	if _, err := os.Stat(path); err != nil {
+		return nil, nil
+	}
+	cfg, err := config.Load(path)
+	if err != nil {
+		return nil, fmt.Errorf("the frozen policy does not parse: %w", err)
+	}
+	return cfg, nil
+}
+
+// frozenFitsCurrent refuses a resume whose frozen policy asks for more than the
+// project allows now. A paused machine is not a way to carry an old ceiling
+// forward past a new one.
+func frozenFitsCurrent(name string, frozen, current *config.Config) error {
+	if current == nil {
+		return nil
+	}
+	if current.ResCPUs > 0 && frozen.ResCPUs > current.ResCPUs {
+		line, _ := current.Ceiling("cpus")
+		return fmt.Errorf("session %q was paused under cpus = %d, and %s:%d now sets a ceiling of "+
+			"%d. A resume runs the frozen policy, so it cannot be a way past the current one.\n"+
+			"    raise the ceiling, or start a new sandbox",
+			name, frozen.ResCPUs, current.Path, line, current.ResCPUs)
+	}
+	if current.ResMemMiB > 0 && frozen.ResMemMiB > current.ResMemMiB {
+		line, _ := current.Ceiling("mem")
+		return fmt.Errorf("session %q was paused under mem = %d MiB, and %s:%d now sets a ceiling "+
+			"of %d MiB. A resume runs the frozen policy, so it cannot be a way past the current "+
+			"one.\n    raise the ceiling, or start a new sandbox",
+			name, frozen.ResMemMiB, current.Path, line, current.ResMemMiB)
+	}
+	for _, d := range frozen.Allow {
+		if !containsDomain(current.Allow, d) {
+			return fmt.Errorf("session %q was paused with %q in its allowlist and %s no longer "+
+				"permits it. A resume runs the frozen policy, so it cannot be a way past the "+
+				"current one.", name, d, current.Path)
+		}
+	}
+	return nil
+}
+
+func syncResumedWorkspace(sb *sandbox.Sandbox, hostDir string) {
+	image := sb.State.Workspace
+	if image == "" {
+		return
+	}
+	defer os.Remove(image)
+	ws := sandbox.AdoptWorkspace(hostDir, image)
+	dest, diverted, err := ws.SyncBack()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "kelyfos: workspace sync-back failed: %v\n", err)
+		return
+	}
+	if diverted {
+		fmt.Printf("\nthe host directory changed while this session was paused, so it was NOT "+
+			"overwritten.\nresults written to %s instead\n", dest)
+		return
+	}
+	fmt.Printf("workspace written back to %s\n", dest)
 }

@@ -328,6 +328,10 @@ status. This is how you hand an agent a sandbox and nothing else:
 	// and a copy out rather than a mount (docs/networking.md is about egress;
 	// this is the local-files path). Packing happens before boot because the
 	// image has to exist to be attached.
+	// pausedAs is the name `kelyfos pause` stored this machine under, sampled
+	// at teardown before the run directory goes. Empty for every ordinary stop.
+	var pausedAs string
+
 	// The plugins device, when the project declares any. Read-only, packed
 	// before boot for the same reason the workspace is: the image has to exist
 	// to be attached (E4-6).
@@ -351,6 +355,17 @@ status. This is how you hand an agent a sandbox and nothing else:
 		}
 		opts.Workspace = ws
 		defer func() {
+			// A pause is not an ending. The machine is going to come back, and
+			// writing the host directory now would change it under somebody who
+			// did not ask — then change it again when the session really ends
+			// (docs/qol.md §1.3). The workspace travelled into the stored
+			// session with the snapshot; it comes back with the machine.
+			if pausedAs != "" {
+				name := pausedAs
+				fmt.Printf("\npaused as %q; the workspace travels with the session and is written "+
+					"back when it finally ends\n", name)
+				return
+			}
 			if *noSync {
 				fmt.Printf("workspace not written back (--no-sync-back); image kept at %s\n", ws.ImagePath)
 				return
@@ -384,6 +399,14 @@ status. This is how you hand an agent a sandbox and nothing else:
 	}
 	reason := "error"
 	defer func() {
+		// A pause does not end the session — it is the same machine, coming
+		// back — so the chain stays open. Closing it would make `--verify`
+		// describe a machine that still exists as finished, and the resume
+		// would then append after an end (docs/qol.md §1.4).
+		if reason == "paused" {
+			_ = rec.Close()
+			return
+		}
 		_ = rec.Append(recorder.Event{
 			Type: recorder.TypeSessionEnd, Reason: reason,
 			DurationMS: rec.Since().Milliseconds(),
@@ -432,7 +455,15 @@ status. This is how you hand an agent a sandbox and nothing else:
 	// every counter it reads belongs to a process that is about to stop
 	// existing (E1-7).
 	defer func() {
-		if u, err := sb.State.Sample(); err == nil {
+		// Sampled before the shutdown, which deletes the run directory the
+		// marker lives in. The workspace defer runs after this one — defers
+		// unwind last-registered-first — so it has to be told rather than look.
+		pausedAs = sandbox.PausedAs(&sb.State)
+		// No usage receipt for a pause. The receipt is what a machine spent
+		// over its life, written once when that life ends; a pause is the
+		// middle of one, and by this point the VMM's counters are gone anyway —
+		// which is why the first live pause recorded a receipt of zeroes.
+		if u, err := sb.State.Sample(); err == nil && pausedAs == "" {
 			_ = rec.Append(recorder.Event{
 				Type:       recorder.TypeResourceSummary,
 				CPUSeconds: u.CPUSeconds, PeakRSSKiB: u.PeakRSSKiB,
@@ -682,6 +713,13 @@ status. This is how you hand an agent a sandbox and nothing else:
 		noteTimeout(t)
 		reason = "timeout"
 	case <-vmExited:
+		// A pause stops the machine on purpose, from another process. Calling
+		// that unexpected would make the ordinary path print an error.
+		if name := sandbox.PausedAs(&sb.State); name != "" {
+			reason = "paused"
+			fmt.Printf("\npaused as %q\n", name)
+			break
+		}
 		reason = "vm_exited"
 		return fmt.Errorf("the microVM exited unexpectedly")
 	}

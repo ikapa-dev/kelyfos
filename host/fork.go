@@ -105,7 +105,15 @@ unique guest network identity, which is backlog work.
 	defer func() {
 		for _, r := range results {
 			if r.sb != nil {
+				ws := r.sb.State.Workspace
 				_ = r.sb.Shutdown(5 * time.Second)
+				// A fork's copy of the workspace now outlives its run directory
+				// on purpose, so this is where it goes: a fork writes nothing
+				// back, and an image nobody reads is an image nobody should
+				// keep (E5-1).
+				if ws != "" {
+					_ = os.Remove(ws)
+				}
 			}
 		}
 		for _, rec := range recs {

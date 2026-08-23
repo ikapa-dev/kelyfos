@@ -226,6 +226,25 @@ A worker created or retired at runtime, or a request that the budget refused. Wr
 | `outcome` | string | delivered or refused |
 | `reason` | string | no_spawn_budget, budget_exhausted, image_not_permitted *(refused)* |
 
+## `session.pause`
+
+The machine was frozen under a name and stopped. The chain is not closed by it: this is the same session, and closing it would make a machine that is coming back look finished. Written by the **host**.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `name` | string | the name it was stored under |
+| `duration_ms` | integer | how long the freeze took |
+
+## `session.resume`
+
+A paused session was brought back. Written by the **host**.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `name` | string | the session's name |
+| `boot_ms` | integer | how long the restore took, through the resync round trip |
+| `reason` | string | what differed between the frozen policy and the one in force *(they differ)* |
+
 ## `mcp.host.call`
 
 An outside MCP client asked kelyfos serve-mcp for a tool. These live in the server's own session rather than in a sandbox's, because the calls that matter most — the one that chose a machine's limits, and the ones that were refused — belong to no sandbox at the moment they are made. Written by the **host**.

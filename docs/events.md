@@ -365,6 +365,24 @@ second is the part a reader most wants when something has gone wrong. A refused
 call is recorded exactly like a permitted one: a ceiling nobody can see being
 enforced is a ceiling nobody can audit.
 
+### `session.pause` and `session.resume`
+The machine was frozen under a name and stopped, and later brought back. Written
+from E5-1.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `name` | string | The name the session is stored under. |
+| `duration_ms` | integer | On `session.pause`: how long the freeze took. |
+| `boot_ms` | integer | On `session.resume`: how long the restore took, measured through the resync round trip — the same thing `session.ready` measures. |
+| `reason` | string | On `session.resume`: what differed between the frozen policy and the one in force, when they differ. |
+
+**A pause does not close the chain.** There is no `session.end` for it, and the
+resumed machine records into the session it was paused from, so one chain covers
+the whole life of the machine — work before the pause, the pause, the resume, and
+work after — and `--verify` covers all of it. Closing it would make a machine
+that is coming back look finished, and the resume would then be appending after
+an end.
+
 ### `plugin.call` and `plugin.crash`
 A tool belonging to a `[[plugin]]` running inside the guest was called, and —
 separately — a plugin's process ended. Written from E4-7, and both are
@@ -443,4 +461,5 @@ team session must be found by id or with `--list`.
 | `mcp.host.call` and `mcp.host.result` for every client tool call, refused or not | E4-4 |
 | `--export` of a server session with a lane per sandbox | E4-4 |
 | `plugin.call` per plugin tool call, `plugin.crash` when one ends | E4-7 |
+| `session.pause` and `session.resume`, one chain across a pause | E5-1 |
 | Signed exports verifiable offline | P4-3 |

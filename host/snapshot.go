@@ -135,8 +135,14 @@ func snapshotRestore(argv []string) error {
 		}
 	}
 	defer func() {
+		ws := sb.State.Workspace
 		if err := sb.Shutdown(5 * time.Second); err != nil {
 			fmt.Fprintf(os.Stderr, "kelyfos: shutdown: %v\n", err)
+		}
+		// A restore writes nothing back, so its copy of the workspace goes with
+		// the machine rather than accumulating in the cache (E5-1).
+		if ws != "" {
+			_ = os.Remove(ws)
 		}
 	}()
 

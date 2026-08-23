@@ -15,6 +15,9 @@ Go's `flag` accepts one dash or two, so `-image` and `--image` are the same flag
 | [`kelyfos serve-mcp`](#kelyfos-serve-mcp) | serve KelyfOS itself as an MCP server |
 | [`kelyfos snapshot save`](#kelyfos-snapshot-save) | save a sandbox's state, or bring it back |
 | [`kelyfos snapshot restore`](#kelyfos-snapshot-restore) | save a sandbox's state, or bring it back |
+| [`kelyfos pause`](#kelyfos-pause) | freeze a running sandbox under a name |
+| [`kelyfos resume`](#kelyfos-resume) | bring a paused session back |
+| [`kelyfos sessions`](#kelyfos-sessions) | list paused sessions, or discard one |
 | [`kelyfos fork`](#kelyfos-fork) | restore one snapshot into several sandboxes |
 | [`kelyfos team up`](#kelyfos-team-up) | run several agents with the paths between them written down and enforced |
 | [`kelyfos team ps`](#kelyfos-team-ps) | run several agents with the paths between them written down and enforced |
@@ -137,6 +140,42 @@ kelyfos snapshot restore
 | `--image` | string | "dev" | image flavor the snapshot was taken from |
 | `--name` | string | "default" | snapshot name |
 | `--secret` | value | — | attach a credential to a domain: NAME@domain[:bearer\|basic]. Repeatable. |
+
+## kelyfos pause
+
+Freeze a running sandbox under a name.
+
+```
+kelyfos pause --as <name>
+```
+
+| Flag | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `--as` | string | — | name to store the paused session under |
+| `--sandbox` | string | the only running one | sandbox id |
+
+## kelyfos resume
+
+Bring a paused session back.
+
+```
+kelyfos resume <name>
+```
+
+| Flag | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `--console` | boolean | — | stream the guest serial console |
+| `--no-sync-back` | boolean | — | leave the workspace image alone at the end |
+
+## kelyfos sessions
+
+List paused sessions, or discard one.
+
+```
+kelyfos sessions [rm <name>]
+```
+
+No flags.
 
 ## kelyfos fork
 

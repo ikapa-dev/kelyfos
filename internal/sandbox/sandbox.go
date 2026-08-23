@@ -111,35 +111,40 @@ type Options struct {
 // directory so a second process — `kelyfos exec` — can find the channels
 // without being told where they are.
 type State struct {
-	ID          string    `json:"id"`
-	PID         int       `json:"pid"`
-	Arch        string    `json:"arch"`
-	Flavor      string    `json:"flavor"`
-	UDSPath     string    `json:"uds_path"`
-	APIPath     string    `json:"api_path"`
-	TAP         string    `json:"tap,omitempty"`
-	HostIP      string    `json:"host_ip,omitempty"`
-	GuestIP     string    `json:"guest_ip,omitempty"`
-	Netmask     string    `json:"netmask,omitempty"`
-	HostMAC     string    `json:"host_mac,omitempty"`
-	ProxyPort   int       `json:"proxy_port,omitempty"`
-	Agent       string    `json:"agent,omitempty"`
-	Session     string    `json:"session,omitempty"`
-	VcpuCount   int       `json:"vcpu_count,omitempty"`
-	MemMiB      int       `json:"mem_mib,omitempty"`
-	CPUQuota    int       `json:"cpu_quota_percent,omitempty"`
-	CGroupPath  string    `json:"cgroup_path,omitempty"`
-	ScratchByte int64     `json:"scratch_bytes,omitempty"`
-	NetMbpsRx   int       `json:"net_mbps_rx,omitempty"`
-	NetMbpsTx   int       `json:"net_mbps_tx,omitempty"`
-	DiskIOPS    int       `json:"disk_iops,omitempty"`
-	DiskMbps    int       `json:"disk_mbps,omitempty"`
-	Workspace   string    `json:"workspace,omitempty"`
-	Plugins     string    `json:"plugins,omitempty"`
-	Allow       []string  `json:"allow,omitempty"`
-	RunDir      string    `json:"run_dir"`
-	StartedAt   time.Time `json:"started_at"`
-	BootReadyMS int64     `json:"boot_ready_ms"`
+	ID          string `json:"id"`
+	PID         int    `json:"pid"`
+	Arch        string `json:"arch"`
+	Flavor      string `json:"flavor"`
+	UDSPath     string `json:"uds_path"`
+	APIPath     string `json:"api_path"`
+	TAP         string `json:"tap,omitempty"`
+	HostIP      string `json:"host_ip,omitempty"`
+	GuestIP     string `json:"guest_ip,omitempty"`
+	Netmask     string `json:"netmask,omitempty"`
+	HostMAC     string `json:"host_mac,omitempty"`
+	ProxyPort   int    `json:"proxy_port,omitempty"`
+	Agent       string `json:"agent,omitempty"`
+	Session     string `json:"session,omitempty"`
+	VcpuCount   int    `json:"vcpu_count,omitempty"`
+	MemMiB      int    `json:"mem_mib,omitempty"`
+	CPUQuota    int    `json:"cpu_quota_percent,omitempty"`
+	CGroupPath  string `json:"cgroup_path,omitempty"`
+	ScratchByte int64  `json:"scratch_bytes,omitempty"`
+	NetMbpsRx   int    `json:"net_mbps_rx,omitempty"`
+	NetMbpsTx   int    `json:"net_mbps_tx,omitempty"`
+	DiskIOPS    int    `json:"disk_iops,omitempty"`
+	DiskMbps    int    `json:"disk_mbps,omitempty"`
+	Workspace   string `json:"workspace,omitempty"`
+	// WorkspaceHost is the directory the workspace was packed from. The image
+	// path above says where the disk is; this says where it came from, which is
+	// what a later process needs to write it back — a pause and the resume that
+	// follows it are two processes, and neither is the one that packed it.
+	WorkspaceHost string    `json:"workspace_host,omitempty"`
+	Plugins       string    `json:"plugins,omitempty"`
+	Allow         []string  `json:"allow,omitempty"`
+	RunDir        string    `json:"run_dir"`
+	StartedAt     time.Time `json:"started_at"`
+	BootReadyMS   int64     `json:"boot_ready_ms"`
 }
 
 // RecordSession is the flight recorder this sandbox's events belong in: the
@@ -244,6 +249,7 @@ func New(opts Options) (*Sandbox, error) {
 	cfg := firecrackerConfig(opts, kernel, rootfs, s.State.UDSPath, id)
 	if opts.Workspace != nil {
 		s.State.Workspace = opts.Workspace.ImagePath
+		s.State.WorkspaceHost = opts.Workspace.HostDir
 	}
 	if opts.Plugins != nil {
 		s.State.Plugins = opts.Plugins.ImagePath
@@ -912,7 +918,17 @@ func Restore(snapDir string, opts Options) (*Sandbox, time.Duration, error) {
 	// restore would write into the same file and the "independent fork" claim
 	// would be false in the most damaging possible way (P3-2).
 	if metaErr == nil && meta.HasWorkspace {
-		mine := filepath.Join(runDir, "workspace.ext4")
+		// Outside the run directory, which cleanup() deletes when the machine
+		// stops — the same place `kelyfos run` puts a packed workspace, and for
+		// the reason a resume just found: the image has to outlive the guest
+		// that was using it, because writing it back to the host is something
+		// that can only be done after the guest has stopped and flushed. The
+		// caller owns removing it (E5-1).
+		mine := filepath.Join(Root(), "workspaces", id+".ext4")
+		if err := os.MkdirAll(filepath.Dir(mine), 0o700); err != nil {
+			_ = s.Shutdown(2 * time.Second)
+			return nil, 0, err
+		}
 		if err := copyFile(snapshotWorkspace(snapDir), mine); err != nil {
 			_ = s.Shutdown(2 * time.Second)
 			return nil, 0, fmt.Errorf("copy workspace for this fork: %w", err)
@@ -1021,6 +1037,11 @@ func (s *Sandbox) requestShutdown(grace time.Duration) error {
 		return fmt.Errorf("guest acknowledged shutdown but the microVM is still running")
 	}
 }
+
+// RunDirOf is where a sandbox's run directory is, from its id alone. The
+// marker below lives there, and the process that has to read it may not be the
+// one holding the Sandbox.
+func RunDirOf(id string) string { return filepath.Join(RunRoot(), id) }
 
 // PauseMarker is where a pause records that this machine's stop is a pause.
 //

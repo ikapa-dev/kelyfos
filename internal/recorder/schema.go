@@ -209,6 +209,21 @@ func Types() []EventType {
 				{Name: "outcome", Type: "string", Doc: "delivered or refused"},
 				{Name: "reason", Type: "string", Doc: "no_spawn_budget, budget_exhausted, image_not_permitted", When: "refused"},
 			}},
+		{Type: TypeSessionPause, Source: SourceHost,
+			Doc: "the machine was frozen under a name and stopped. The chain is not closed by it: " +
+				"this is the same session, and closing it would make a machine that is coming " +
+				"back look finished",
+			Fields: []Field{
+				{Name: "name", Type: "string", Doc: "the name it was stored under"},
+				{Name: "duration_ms", Type: "integer", Doc: "how long the freeze took"},
+			}},
+		{Type: TypeSessionResume, Source: SourceHost,
+			Doc: "a paused session was brought back",
+			Fields: []Field{
+				{Name: "name", Type: "string", Doc: "the session's name"},
+				{Name: "boot_ms", Type: "integer", Doc: "how long the restore took, through the resync round trip"},
+				{Name: "reason", Type: "string", Doc: "what differed between the frozen policy and the one in force", When: "they differ"},
+			}},
 		{Type: TypeMCPHostCall, Source: SourceHost,
 			Doc: "an outside MCP client asked kelyfos serve-mcp for a tool. These live in the " +
 				"server's own session rather than in a sandbox's, because the calls that matter " +

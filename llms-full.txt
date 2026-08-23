@@ -2341,6 +2341,24 @@ second is the part a reader most wants when something has gone wrong. A refused
 call is recorded exactly like a permitted one: a ceiling nobody can see being
 enforced is a ceiling nobody can audit.
 
+### `session.pause` and `session.resume`
+The machine was frozen under a name and stopped, and later brought back. Written
+from E5-1.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `name` | string | The name the session is stored under. |
+| `duration_ms` | integer | On `session.pause`: how long the freeze took. |
+| `boot_ms` | integer | On `session.resume`: how long the restore took, measured through the resync round trip — the same thing `session.ready` measures. |
+| `reason` | string | On `session.resume`: what differed between the frozen policy and the one in force, when they differ. |
+
+**A pause does not close the chain.** There is no `session.end` for it, and the
+resumed machine records into the session it was paused from, so one chain covers
+the whole life of the machine — work before the pause, the pause, the resume, and
+work after — and `--verify` covers all of it. Closing it would make a machine
+that is coming back look finished, and the resume would then be appending after
+an end.
+
 ### `plugin.call` and `plugin.crash`
 A tool belonging to a `[[plugin]]` running inside the guest was called, and —
 separately — a plugin's process ended. Written from E4-7, and both are
@@ -2419,6 +2437,7 @@ team session must be found by id or with `--list`.
 | `mcp.host.call` and `mcp.host.result` for every client tool call, refused or not | E4-4 |
 | `--export` of a server session with a lane per sandbox | E4-4 |
 | `plugin.call` per plugin tool call, `plugin.crash` when one ends | E4-7 |
+| `session.pause` and `session.resume`, one chain across a pause | E5-1 |
 | Signed exports verifiable offline | P4-3 |
 
 
@@ -5667,6 +5686,9 @@ Go's `flag` accepts one dash or two, so `-image` and `--image` are the same flag
 | [`kelyfos serve-mcp`](#kelyfos-serve-mcp) | serve KelyfOS itself as an MCP server |
 | [`kelyfos snapshot save`](#kelyfos-snapshot-save) | save a sandbox's state, or bring it back |
 | [`kelyfos snapshot restore`](#kelyfos-snapshot-restore) | save a sandbox's state, or bring it back |
+| [`kelyfos pause`](#kelyfos-pause) | freeze a running sandbox under a name |
+| [`kelyfos resume`](#kelyfos-resume) | bring a paused session back |
+| [`kelyfos sessions`](#kelyfos-sessions) | list paused sessions, or discard one |
 | [`kelyfos fork`](#kelyfos-fork) | restore one snapshot into several sandboxes |
 | [`kelyfos team up`](#kelyfos-team-up) | run several agents with the paths between them written down and enforced |
 | [`kelyfos team ps`](#kelyfos-team-ps) | run several agents with the paths between them written down and enforced |
@@ -5789,6 +5811,42 @@ kelyfos snapshot restore
 | `--image` | string | "dev" | image flavor the snapshot was taken from |
 | `--name` | string | "default" | snapshot name |
 | `--secret` | value | — | attach a credential to a domain: NAME@domain[:bearer\|basic]. Repeatable. |
+
+## kelyfos pause
+
+Freeze a running sandbox under a name.
+
+```
+kelyfos pause --as <name>
+```
+
+| Flag | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `--as` | string | — | name to store the paused session under |
+| `--sandbox` | string | the only running one | sandbox id |
+
+## kelyfos resume
+
+Bring a paused session back.
+
+```
+kelyfos resume <name>
+```
+
+| Flag | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `--console` | boolean | — | stream the guest serial console |
+| `--no-sync-back` | boolean | — | leave the workspace image alone at the end |
+
+## kelyfos sessions
+
+List paused sessions, or discard one.
+
+```
+kelyfos sessions [rm <name>]
+```
+
+No flags.
 
 ## kelyfos fork
 
@@ -6602,6 +6660,25 @@ A worker created or retired at runtime, or a request that the budget refused. Wr
 | `kind` | string | spawn or despawn |
 | `outcome` | string | delivered or refused |
 | `reason` | string | no_spawn_budget, budget_exhausted, image_not_permitted *(refused)* |
+
+## `session.pause`
+
+The machine was frozen under a name and stopped. The chain is not closed by it: this is the same session, and closing it would make a machine that is coming back look finished. Written by the **host**.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `name` | string | the name it was stored under |
+| `duration_ms` | integer | how long the freeze took |
+
+## `session.resume`
+
+A paused session was brought back. Written by the **host**.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `name` | string | the session's name |
+| `boot_ms` | integer | how long the restore took, through the resync round trip |
+| `reason` | string | what differed between the frozen policy and the one in force *(they differ)* |
 
 ## `mcp.host.call`
 

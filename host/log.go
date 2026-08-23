@@ -363,6 +363,14 @@ func printEvent(line []byte, asJSON bool) {
 			strings.TrimSpace(outcome), e.DurationMS)
 	case recorder.TypePluginCrash:
 		fmt.Printf("%s  %splugin stopped %s  %s\n", ts, who, e.Name, e.Reason)
+	case recorder.TypeSessionPause:
+		fmt.Printf("%s  %spaused          as %q in %d ms\n", ts, who, e.Name, e.DurationMS)
+	case recorder.TypeSessionResume:
+		why := ""
+		if e.Reason != "" {
+			why = "  · policy differed: " + e.Reason
+		}
+		fmt.Printf("%s  %sresumed         %q in %d ms%s\n", ts, who, e.Name, e.BootMS, why)
 	case recorder.TypeSessionReady:
 		// A team member's ready line says how it started, not what booted: the
 		// kernel and supervisor are the same for every member and the boot path

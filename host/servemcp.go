@@ -194,6 +194,11 @@ func (b *servedBox) close(reason string) {
 	if b.plugins != "" {
 		_ = os.Remove(b.plugins)
 	}
+	// A restored or forked sandbox's workspace copy outlives its run directory
+	// so that a caller which syncs back can; this door does not sync back.
+	if b.sb != nil && b.sb.State.Workspace != "" {
+		_ = os.Remove(b.sb.State.Workspace)
+	}
 	b.recMu.Lock()
 	rec := b.rec
 	b.rec = nil

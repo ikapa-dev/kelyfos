@@ -126,7 +126,7 @@
      improvements to the existing product land here as epics. Inert until its gate opens.</p>
   <div class="meta">
     owner: <b>John</b> &nbsp;&middot;&nbsp; developer: <b>Claude Code</b> &nbsp;&middot;&nbsp;
-    status: <b class="ok" id="meta-status">Epic E5 — active, 1/8 (v0.7 released; next: E5-1, named sessions)</b> &nbsp;&middot;&nbsp;
+    status: <b class="ok" id="meta-status">Epic E5 — active, 2/8 (v0.7 released; next: E5-2, diff and review)</b> &nbsp;&middot;&nbsp;
     last updated: <b id="meta-updated">2026-08-23</b><br>
     repo file: <b>PLAN-FEATURES.html</b> (lives at the repository root next to <code>PLAN.html</code>)<br>
     <span class="quiet">Companion to PLAN.html — same protocol, same rules, later timeline.</span>
@@ -166,7 +166,7 @@
     <span class="bl-name">All epics</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">E5-1 &mdash; named sessions: <code>pause --as</code>, <code>resume</code>, <code>sessions</code>, with the policy frozen at pause and the workspace written back only at final shutdown</b></div>
+  <div class="focusline">Current focus: <b id="focus">E5-2 &mdash; <code>kelyfos diff</code> and <code>run --review</code>: the workspace manifest, an A/M/D summary, and a sync-back that waits for a person</b></div>
 </div>
 
 <!-- ====================================================== 1. ACTIVATION GATE -->
@@ -584,7 +584,7 @@
         the PTY channel added to <code>docs/protocol.md</code> as an additive revision (raw stream + resize events); and the
         new audit event types (<code>session.pause/resume</code>, <code>shell.start/end</code>, <code>forward.accept</code>,
         <code>run.review</code>).</span></li>
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">E5-1</span><span class="tk">Named sessions: <code>kelyfos pause [--as &lt;name&gt;]</code> = P3-1 snapshot +
         teardown + store; <code>resume &lt;name&gt;</code> restores memory, disks, and the <i>frozen</i> policy — if the project
         toml changed since pause, warn and use the frozen copy (resumed VMs run under the policy they were paused with).
@@ -4227,6 +4227,31 @@ $ gofmt -l . ; go vet ./... ; go test ./...
         code is measured against &mdash; which is the same standing <code>teams.md</code> had through E2 and
         <code>mcp-surface.md</code> had through E4, and the reason both epics could be argued with rather than only
         reviewed.</td></tr>
+        <tr><td class="mono">2026-08-23</td><td class="mono">E5-1</td>
+        <td><b>Named sessions: <code>pause --as</code>, <code>resume</code>, <code>sessions</code> — and four things
+        that only a live run could have found.</b> A machine paused with a file written inside it comes back with that
+        file, keeps working, and writes everything to the host when the session finally ends: proved end to end with
+        <code>made.txt</code> (before the pause), <code>note.txt</code> (from the host) and <code>second.txt</code>
+        (after the resume) all landing together, and none of them landing early.
+        <b>The pause and the run are two processes, which is the whole difficulty.</b> <code>pause</code> asks the guest
+        to power off; the <code>kelyfos run</code> holding it wakes and tears down — including writing the workspace
+        back, which is exactly what a pause must not do. A marker in the run directory is how the owner learns which
+        kind of stop this was. Then: the marker had to be <i>sampled</i> before the shutdown, because the shutdown
+        deletes the directory it lives in and defers unwind last-registered-first.
+        <b>The restored workspace image had to outlive its run directory.</b> The first working sync-back wrote an empty
+        directory over the host&rsquo;s: <code>Restore</code> put each machine&rsquo;s copy inside the run directory,
+        which <code>cleanup()</code> deletes with the machine — so the image was gone by the time anything could read
+        it. It now lives where <code>run</code> puts its own, and the callers that never sync back remove theirs.
+        <b>And the order matters twice.</b> The sync-back has to run <i>after</i> the guest stops, or the files a person
+        just wrote are still in the guest&rsquo;s page cache and the host gets a directory missing exactly them.
+        <b>A pause does not close the chain</b>, per the spec: no <code>session.end</code>, no usage receipt — the
+        first live pause recorded a receipt of zeroes, because the counters belong to a process that is already gone —
+        and the resumed machine records into the session it was paused from. One chain covers the whole life of the
+        machine, work before and after, and <code>--verify</code> covers all of it.
+        <b>The frozen policy behaves as specified.</b> A resume under a changed <code>kelyfos.toml</code> names the
+        differences rather than reporting that there were some — <i>cpus 2 → 4, allow gained api.github.com</i> — and a
+        frozen policy that would outrun the current ceiling is refused, which is F-D39&rsquo;s hole closed before it
+        could be dug again.</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>

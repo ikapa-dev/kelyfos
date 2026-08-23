@@ -48,6 +48,8 @@ const (
 	TypeMCPHostResult   = "mcp.host.result"
 	TypePluginCall      = "plugin.call"
 	TypePluginCrash     = "plugin.crash"
+	TypeSessionPause    = "session.pause"
+	TypeSessionResume   = "session.resume"
 )
 
 // ReasonServeMCP marks a session.start as a server's own session rather than a
