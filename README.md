@@ -193,6 +193,49 @@ counters the kernel keeps about the VMM process. `kelyfos watch` shows the same
 figures live. See [`docs/resources.md`](docs/resources.md), and
 `bash dev/prove-caps.sh` to watch each cap refuse to budge.
 
+## Agent teams
+
+Several sandboxes on one host, with the paths between them written down. A
+`[team]` section declares the agents and the edges; `kelyfos team up` boots the
+graph. Docker-compose for agent teams — master/workers, a pipeline, a mesh, or
+islands: the edge list *is* the topology.
+
+```toml
+[team]
+name = "suppliers"
+  [team.resources]
+  cpu_quota = "200%"        # two cores' worth, for all of them together
+
+[[team.agent]]
+name = "master"
+allow = ["example.com"]     # the only agent that may reach the network
+
+[[team.agent]]
+name  = "worker"
+count = 4                   # four workers, no egress at all
+
+[[team.edge]]
+from = "master"
+to   = "worker-*"           # a star: no worker may reach another worker
+```
+
+**No guest ever has a network path to another guest.** Every inter-agent message
+travels the host broker over the existing vsock channels, is checked against the
+edge list, and lands in the audit record — including the ones it refused. The
+guest sees seven MCP tools: `team_send`, `team_recv`, `team_ask`, `team_reply`,
+`team_peers`, `team_store_get`, `team_store_put`.
+
+A team is **one session**, so `kelyfos log --verify` over it verifies the whole
+team and says which agents it covered, and `kelyfos log --export team.html`
+draws one lane per agent with the message flow between them. `kelyfos watch`
+shows the same shape live.
+
+Agents granted no egress are forked from a shared template rather than
+cold-booted — a fork cannot carry a network identity, and they have none.
+`kelyfos team ps` says which path each machine took.
+
+[`docs/teams.md`](docs/teams.md) is the full account.
+
 ## What else it does
 
 | | |
@@ -201,7 +244,8 @@ figures live. See [`docs/resources.md`](docs/resources.md), and
 | `kelyfos fork -n 4` | four divergent copies of one snapshot, sharing its memory image |
 | `kelyfos run --workspace ./dir` | your files at `/work`, written back on clean shutdown |
 | `kelyfos log --export report.html` | a self-contained session report you can send to someone |
-| `kelyfos watch` | a live view, built only from the audit record |
+| `kelyfos watch` | a live view, one lane per agent when it is a team |
+| `kelyfos team up\|ps\|down` | boot a declared team, see it, stop it |
 | `kelyfos shim` | an [E2B-compatible subset](docs/e2b-shim.md) for existing SDK code |
 | `kelyfos bench` | reproducible boot and restore timings |
 | `kelyfos run --max-runtime 30m` | a wall-clock budget; expiry is SIGTERM, grace, sync-back, exit 124 |
@@ -216,6 +260,7 @@ figures live. See [`docs/resources.md`](docs/resources.md), and
 | [`docs/events.md`](docs/events.md) | the audit event schema |
 | [`docs/networking.md`](docs/networking.md) | egress design and the nftables rules |
 | [`docs/resources.md`](docs/resources.md) | resource limits: units, precedence, what enforces what |
+| [`docs/teams.md`](docs/teams.md) | agent teams: the schema, the broker, the store, the budget |
 | [`docs/e2b-shim.md`](docs/e2b-shim.md) | the E2B compatibility subset |
 
 ## Security
