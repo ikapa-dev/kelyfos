@@ -31,7 +31,7 @@ hand-written half, and this page says where each is still thin.
 | putting KelyfOS inside something else | [`integrating.md`](integrating.md) |
 | building KelyfOS into something else | [`protocol.md`](protocol.md), then [`e2b-shim.md`](e2b-shim.md) |
 | driving KelyfOS from an MCP client | [`mcp-surface.md`](mcp-surface.md) — `serve-mcp` and `[[plugin]]`, and [recipe 9](cookbook.md) for the configuration |
-| judging whether to trust it | [`threat-model.md`](threat-model.md) |
+| judging whether to trust it | [`threat-model.md`](threat-model.md), then [`hardening.md`](hardening.md) for what v0.9 is adding |
 
 ## The map
 
@@ -46,6 +46,7 @@ hand-written half, and this page says where each is still thin.
 | [`denials.md`](denials.md) | mixed | Why every refusal names its own fix, what the ID in brackets is for, what deliberately is not in the catalog, and how `--notify` reaches somebody who stopped watching. |
 | [`qol.md`](qol.md) | concept | The v0.8 specification, written before the code: named sessions and their store, the workspace manifest, the PTY channel, and why inbound forwarding does not touch the firewall. |
 | [`mcp-surface.md`](mcp-surface.md) | concept | MCP in both directions: `serve-mcp` as a tool for any client, and `[[plugin]]` servers inside the guest. Specification, written before the code. |
+| [`hardening.md`](hardening.md) | concept | The v0.9 specification, written before the code: what a compromised agent reaches today, what the jailer and the guest profiles take away, and what remains reachable afterwards. |
 | [`threat-model.md`](threat-model.md) | concept | What KelyfOS defends against and — the longer half — what it does not. |
 | [`cookbook.md`](cookbook.md) | recipes | Fourteen complete, copy-pasteable recipes. Every one is a script CI extracts and runs on a real machine. |
 | [`integrating.md`](integrating.md) | mixed | For building on KelyfOS: the four ways in, orchestrator patterns, and a long list of the mistakes people actually make. |
@@ -220,6 +221,20 @@ single nftables rule.
 *Thin:* it describes nothing that runs yet, and says so. The four features that
 are wrappers over existing machinery are not in it, because there is nothing to
 decide about them.
+
+### `hardening.md` — the v0.9 specification
+
+*Concept:* what a compromised agent can reach today, stated before anything is
+built so the README sentence at the end of the phase can be checked against it;
+why every entry point goes through the jailer or none does; why the host
+seccomp filter is to be proved rather than written; why a profile that cannot be
+applied refuses rather than degrades; and a longer §5 on what is still reachable
+afterwards.
+*Reference:* none — every mechanism it names is documented where it is
+implemented.
+*Thin:* nothing yet, and that is a statement about a page written before its
+code rather than a claim of completeness. It is measured at the P5 exit, not
+here.
 
 ### `threat-model.md` — what to trust
 

@@ -71,6 +71,8 @@ func docSet() []doc {
 			Summary: "the vsock transport, the port map, and every channel's messages"},
 		{Path: "docs/mcp-surface.md", Title: "The MCP surface", Full: true,
 			Summary: "MCP in both directions: kelyfos as a tool for any client, and plugins inside the guest"},
+		{Path: "docs/hardening.md", Title: "Hardening", Full: true,
+			Summary: "what a compromised agent can reach, what each layer takes away, and — the longer half — what remains"},
 		{Path: "docs/e2b-shim.md", Title: "E2B-compatible shim", Full: true,
 			Summary: "the REST subset for existing E2B SDK code, and what it deliberately omits"},
 		{Path: "docs/cookbook.md", Title: "Cookbook", Full: true,

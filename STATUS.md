@@ -3,11 +3,11 @@
 Updated 2026-08-23 · tree clean, synced with origin/main
 
 ## Plans
-- PLAN.html — 36/49. **Phase 5 (hardening, v0.9) open**: P4-1/P4-2 promoted as P5-0…P5-5 (D27).
+- PLAN.html — 37/49. **Phase 5 (hardening, v0.9)**: P5-0 done, spec at `docs/hardening.md`.
 - PLAN-FEATURES.html — **COMPLETE and closed.** 42/42, five epics, v0.4–v0.8 released.
 
 ## Now
-P5-0 — `docs/hardening.md`: what a compromised agent reaches, before and after.
+P5-1 — Firecracker under the jailer, on every entry point, records outside the jail.
 
 ## This session
 E1–E3 closed, **v0.6 released**; then the F-D33 batch and the E3→E4 seam check. Epic E4, all

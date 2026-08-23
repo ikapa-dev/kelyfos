@@ -1,0 +1,256 @@
+# Hardening — the shapes, before the code
+
+*Specification for v0.9, written before Phase 5 builds it. The parts that need a
+shape agreed in advance are here; the parts that are mechanism with nothing to
+decide are not.*
+
+*Where this document and the code disagree during the phase, the code is wrong
+and this page is the thing to argue with. After the phase, the reverse — and two
+exit exams in a row have found places where that reversal had not been made, so
+it is worth saying a third time.*
+
+---
+
+## The sentence this exists to replace
+
+Every KelyfOS release so far has carried this, in the README, directly under the
+benchmark numbers:
+
+> **Not hardened yet** — read [`docs/threat-model.md`](threat-model.md) before
+> trusting it with anything.
+
+It has been true. KelyfOS relies on the boundary Firecracker gives it — a real
+VM, a real hardware boundary — and adds nothing of its own around the VMM
+process on the host or around what a compromised agent may reach inside its own
+guest. That is a defensible place to have been while the product was being built.
+It is not a defensible place to stay, and the phrase is doing real work for
+somebody deciding whether to run this.
+
+**Phase 5 is finished when that sentence can be replaced by one that is also
+true**, and the replacement must say what *is* enforced and what is *not*. A
+sentence that says "hardened" and stops would be a worse lie than the one it
+replaced.
+
+---
+
+## 1. What a compromised agent can reach today
+
+The honest inventory, because everything below is measured against it.
+
+### 1.1 Inside its own guest: everything
+
+The agent runs as root in the guest. There is no user separation inside a
+KelyfOS sandbox and there never has been: the supervisor is PID 1, `kelyfos exec`
+runs commands as root, and a plugin is a process the supervisor spawns. An agent
+that runs `rm -rf /` has done nothing it was not permitted to do.
+
+What limits it inside:
+
+| | |
+| --- | --- |
+| the root filesystem | read-only, with a tmpfs overlay — writes outside `/work` die with the sandbox |
+| `/work` | the only durable thing, and only when a workspace was attached |
+| the network | the proxy or nothing; no NIC at all without `--allow` |
+| memory, cores, disk | the caps in `[resources]`, enforced host-side (E1) |
+
+What does **not** limit it: the syscall surface of the guest kernel, which is
+whatever the kernel offers to root. A kernel bug reachable from inside is
+reachable from inside.
+
+### 1.2 The host: the VM boundary, and nothing else
+
+No path from guest to host exists except the vsock channels the supervisor
+serves and the egress proxy, both of which are the host's own code deciding what
+to do. That is the design and it holds.
+
+What is *not* defended is the case where the boundary itself fails. Today the
+Firecracker process runs:
+
+- **as the invoking user** — so a VMM escape gets that user's filesystem,
+  their SSH keys, their `~/.cache/kelyfos` with every session record in it;
+- **in the invoking user's mount namespace** — the whole host filesystem is
+  addressable;
+- **with the KelyfOS cgroup applied** (E1), which is a resource limit and not a
+  security boundary.
+
+Firecracker's own seccomp filter is on by default in a release binary, which is
+a real protection this project has been getting for free and has never checked.
+
+---
+
+## 2. Layer one: the jailer
+
+Firecracker ships `jailer`, and KelyfOS already installs it —
+`dev/install-firecracker.sh` puts it beside the VMM and prints its version. It
+has never been used.
+
+### 2.1 What it does, precisely
+
+Verified against the jailer documentation for v1.16.1, the version pinned in
+`versions.mk`:
+
+| | |
+| --- | --- |
+| `--chroot-base-dir` | builds `<base>/<exec-file-name>/<id>/root` and `pivot_root()`s into it |
+| `--uid` / `--gid` | drops to them after the namespaces are set up |
+| `--parent-cgroup` | places the process inside an existing cgroup — which is how it composes with the caps KelyfOS already sets |
+| `--netns` | joins a network namespace, if one is given |
+| `--resource-limit` | `fsize` and `no-file` bounds |
+| `--new-pid-ns` | its own PID namespace |
+
+Inside the jail it `mknod`s `/dev/kvm` and `/dev/net/tun` and chowns them to the
+target uid. The API socket resolves to `<chroot>/run/firecracker.socket`.
+
+### 2.2 The part that is work rather than a flag
+
+> "The user must create hard links for (or copy) any resources which will be
+> provided to the VM via the API (disk images, kernel images, named pipes, etc)
+> inside the jailed root folder."
+
+That sentence is most of P5-1. Every file a KelyfOS microVM touches has to be
+inside the jail: the kernel image, the rootfs, the workspace device, the plugins
+device, the snapshot state and memory files, and the vsock Unix socket that
+every host-side channel dials. The host keeps its own path to that socket —
+`kelyfos exec` and every other command find the sandbox through
+`State.UDSPath` — so the state file records where it now lives.
+
+**And one thing must stay outside**: the flight recorder. A record the jailed
+process can reach is not a record. It already lives outside the run directory
+because the record must outlive the machine (P2-4); now it must also live
+outside the jail, for a second and stronger reason.
+
+### 2.3 The decision this forces
+
+**Every entry point goes through the jailer, or none does.** `run`, `team up`,
+`fork`, `snapshot restore`, `serve-mcp` and `shim` all start microVMs. A
+hardening that half of them skip is a hardening nobody can reason about, and the
+half that skips it will be the half somebody uses.
+
+---
+
+## 3. Layer two: the host syscall filter
+
+Firecracker's seccomp filters are **on by default** in a release binary.
+`--no-seccomp` turns them off and its own documentation says not to use it in
+production; `--seccomp-filter <file>` replaces them with a filter compiled by
+`seccompiler-bin`, and the documentation warns that a misconfigured one can
+"disable the seccomp security boundary altogether".
+
+So the work here is not to write a filter. It is to **prove the default one is
+in force** — read from `/proc/<pid>/status`, on the host, in the acceptance,
+rather than assumed from the fact that nobody passed `--no-seccomp`. A
+protection you have never observed is a protection you are hoping for.
+
+A hand-written syscall allowlist for somebody else's binary is a way to produce
+a crash that looks like a security feature. If a custom filter is ever
+warranted, it starts from Firecracker's published one.
+
+---
+
+## 4. Layer three: what the supervisor grants what it spawns
+
+The guest side, and the one with real design in it.
+
+### 4.1 Two mechanisms, and what the kernel actually has
+
+**seccomp is available today.** The guest kernel is built with
+`CONFIG_SECCOMP=y` and `CONFIG_SECCOMP_FILTER=y`; nothing needs rebuilding to
+filter syscalls for the processes the supervisor spawns.
+
+**Landlock is not.** The guest kernel is 6.12.105, whose Landlock ABI is **6**
+— the newest there is, and the same ABI `golang.org/x/sys/unix` exposes, so the
+kernel version this project moved to at D28 costs nothing here. But
+`CONFIG_SECURITY_LANDLOCK is not set` in the built config, and `CONFIG_LSM` does
+not list `landlock`. **Both** are needed: compiling the LSM in without naming it
+in `CONFIG_LSM` leaves it inactive, which is exactly the kind of half-measure
+that reads as protection in a config file and is none at runtime. P5-3 includes
+a kernel config change and a rebuild.
+
+### 4.2 What a profile may not break
+
+A profile that breaks the toolbox has hardened nothing. Three things must keep
+working, and the acceptance checks them rather than trusting them:
+
+- `/work` stays writable, because that is the whole point of a workspace;
+- the read-only root stays readable, because that is where the programs are;
+- the supervisor's own vsock channels stay reachable, because that is the
+  entire interface.
+
+### 4.3 Per flavor, and refusing rather than degrading
+
+The profile is declared per image flavor, because `base` and `dev` are different
+machines with different jobs. And when the kernel cannot apply it — an ABI that
+is too old, an LSM that is not compiled in — the supervisor **refuses to start**
+rather than continuing with the profile silently absent.
+
+That is the same rule the rest of this product follows and for the same reason:
+a limit that is quietly not applied is worse than no limit, because somebody is
+relying on it.
+
+---
+
+## 5. What remains reachable afterwards — the longer half
+
+Stated here, before the code, so the README sentence at the end of the phase can
+be checked against it rather than composed to sound good.
+
+**The guest kernel.** An agent is still root inside its own guest and can still
+reach the whole syscall surface the seccomp profile permits. Landlock restricts
+the filesystem; it does not make the kernel smaller.
+
+**The other agents' machines, still not reachable** — that was already true and
+this phase does not improve it. It is listed because a reader deciding whether
+to trust a team needs to know which protections are new and which were always
+there.
+
+**The host, if Firecracker itself is escaped.** The jailer makes that far less
+useful — a chroot, a dropped uid, no access to the invoking user's home — but
+"far less useful" is not "impossible", and anyone who tells you a chroot is a
+security boundary is selling something. The VM is the boundary; the jailer is
+depth behind it.
+
+**Anything the policy file permits.** A sandbox allowed to reach
+`api.github.com` with a token bound to it can do whatever that token can do.
+Hardening the sandbox does not harden the credential, and no layer in this phase
+touches that.
+
+**Side channels.** Nothing here addresses timing, cache or speculative-execution
+channels between a guest and its host or between two guests on one machine.
+Firecracker documents its own position on those; KelyfOS inherits it and adds
+nothing.
+
+**The supply chain.** Reproducible builds, signed images and an SBOM are P4-3
+and are not in this phase. A hardened runtime built from an unverified toolchain
+is a locked door in a wall nobody measured.
+
+---
+
+## 6. What this phase will not do
+
+**No user separation inside the guest.** An agent runs as root in its own
+machine and will continue to. Adding a second user inside a single-purpose VM
+buys a boundary weaker than the one already around it, and costs every recipe.
+
+**No custom Firecracker seccomp filter**, per §3.
+
+**No new policy surface.** Nothing here adds a way to widen anything: the
+profiles narrow, and `kelyfos.toml` gains no key that can turn a layer off. A
+hardening feature with an off switch in the project's own config file is a
+hardening feature with an off switch.
+
+**No claim that this makes KelyfOS suitable for hostile multi-tenancy.** It is a
+single-host developer tool (D1). This phase makes a compromised agent much less
+useful to an attacker; it does not turn the product into a public cloud.
+
+---
+
+## 7. Conformance
+
+| Requirement | Task |
+| --- | --- |
+| This spec | P5-0 |
+| Firecracker under the jailer, every entry point, records outside the jail | P5-1 |
+| The host filter proved in force rather than assumed | P5-2 |
+| Per-flavor guest confinement, refusing rather than degrading; Landlock compiled in and named in `CONFIG_LSM` | P5-3 |
+| Bars re-earned on the bare-KVM reference; the README sentence replaced; the threat model agreeing | P5-4 |
+| Launch assets | P5-5 |

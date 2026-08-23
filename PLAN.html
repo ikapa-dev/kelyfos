@@ -173,7 +173,7 @@
     <span class="bl-name">Overall</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">Phase 5 &mdash; hardening. P4-1 and P4-2 promoted here on the product owner&rsquo;s ruling; PLAN-FEATURES.html is complete and closed. Next: P5-0, the spec</b></div>
+  <div class="focusline">Current focus: <b id="focus">P5-1 &mdash; Firecracker under the jailer: chroot, its own cgroup, dropped uid, and every file the microVM touches moved inside the jail while the flight recorder stays out of it</b></div>
 </div>
 
 <!-- ====================================================== 1. END GOAL -->
@@ -544,7 +544,7 @@
      P4-2, no more. <a href="PLAN-FEATURES.html">PLAN-FEATURES.html</a> is complete and closed; this document
      governs from here.</p>
   <ul class="tasks">
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">P5-0</span><span class="tk"><b>The hardening spec, written before the code.</b>
         <code>docs/hardening.md</code>: what a compromised agent can reach today, what each layer takes away, and
         &mdash; the longer half &mdash; what remains reachable afterwards. Names the threat each mechanism answers
@@ -1405,6 +1405,30 @@ after:
         trusted. Full aarch64 rebuild from a fresh tree, config verified symbol by symbol, then 117 acceptance
         checks across six suites and fourteen cookbook recipes, all green.</td>
         <td class="mono">versions.mk, D28</td></tr>
+        <tr><td class="mono">2026-08-24</td><td class="mono">P5-0</td>
+        <td><b><code>docs/hardening.md</code>: what a compromised agent can reach, before anything is built to
+        change it.</b> The inventory first, because everything after is measured against it &mdash; an agent is root
+        in its own guest and always has been, the read-only root and the tmpfs overlay and the caps are what limit
+        it, and the syscall surface of the guest kernel is not among them. On the host the VM is the boundary and
+        nothing stands behind it: Firecracker runs as the invoking user, in that user&rsquo;s mount namespace, with
+        that user&rsquo;s SSH keys and every session record addressable if the boundary ever fails.
+        <b>Three facts were read rather than assumed, and two of them changed the plan.</b> The jailer&rsquo;s own
+        documentation for the pinned v1.16.1 says the caller must hard-link or copy <i>every</i> resource the VM
+        touches into the jail &mdash; kernel, rootfs, workspace, plugins, snapshot state, and the vsock socket every
+        host-side command dials. That sentence is most of P5-1, and it forces the rule that the flight recorder
+        stays outside: a record the jailed process can reach is not a record.
+        Firecracker&rsquo;s seccomp filters are <b>already on by default</b>, a protection this project has been
+        getting free and never checked, so P5-2 is to prove it from <code>/proc</code> rather than to write a filter
+        &mdash; its own docs warn that a custom one can disable the boundary altogether.
+        And the guest kernel has <code>CONFIG_SECCOMP_FILTER=y</code> but
+        <code>CONFIG_SECURITY_LANDLOCK is not set</code>, with <code>landlock</code> absent from
+        <code>CONFIG_LSM</code>: P5-3 needs a kernel config change and a rebuild, and needs both halves, because
+        compiling an LSM in without naming it reads as protection in a config file and is none at runtime.
+        <b>One piece of good news from D28:</b> 6.12.105&rsquo;s Landlock ABI is 6, the newest there is and the same
+        one <code>x/sys/unix</code> exposes &mdash; the kernel this project moved back to costs nothing here.
+        The longest section is §5, what remains reachable afterwards, written now so the sentence that replaces
+        &ldquo;not hardened yet&rdquo; can be checked against it rather than composed to sound good.</td>
+        <td class="mono">docs/hardening.md</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
