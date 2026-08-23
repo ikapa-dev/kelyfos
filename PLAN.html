@@ -33,6 +33,7 @@
   .meta b{color:var(--text);font-weight:600}
   .meta .amber{color:var(--amber)}
   .blocked{color:var(--amber);font-weight:600}
+  .promoted{color:var(--ok);font-weight:600}
 
   /* ---------- boot-log dashboard (signature) ---------- */
   .bootlog{background:var(--panel);border:1px solid var(--line);border-radius:6px;
@@ -127,7 +128,7 @@
      injected secrets, full audit replay, and millisecond forking.</p>
   <div class="meta">
     owner: <b>John</b> &nbsp;·&nbsp; developer: <b>Claude Code</b> &nbsp;·&nbsp;
-    status: <b class="amber" id="meta-status">v0.3 released — phases 0–3 done, 36/43; P4 backlog (2 blocked)</b> &nbsp;·&nbsp;
+    status: <b class="amber" id="meta-status">v0.8 released — phases 0–3 done; PLAN-FEATURES complete and closed; Phase 5 (hardening, v0.9) active</b> &nbsp;·&nbsp;
     last updated: <b id="meta-updated">2026-08-23</b><br>
     repo file: <b>PLAN.html</b> (commit this document at the repository root — it is the single source of truth)<br>
     <span class="quiet">KelyfOS — from κέλυφος (kélyfos), "shell": the guest OS wrapped around the agent. Formerly working-titled "agos" (D4 → D10).</span>
@@ -162,12 +163,17 @@
     <span class="bl-name"><a href="#p4">Phase 4 — Hardening &amp; direction (backlog)</a></span>
     <span class="bl-bar"><i></i></span><span class="bl-pct">0%</span>
   </div>
+  <div class="bl-row" data-phase="5" data-s="todo">
+    <span class="bl-tag todo">[ TODO ]</span>
+    <span class="bl-name"><a href="#p5">Phase 5 — Hardening (v0.9)</a></span>
+    <span class="bl-bar"><i></i></span><span class="bl-pct">0%</span>
+  </div>
   <div class="bl-row bl-total" data-s="todo">
     <span class="bl-tag active">[ INIT ]</span>
     <span class="bl-name">Overall</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">Paused. Build plan complete to §1; feature work continues in PLAN-FEATURES.html (Epic E1, next E1-3)< 200 MB</b></div>
+  <div class="focusline">Current focus: <b id="focus">Phase 5 &mdash; hardening. P4-1 and P4-2 promoted here on the product owner&rsquo;s ruling; PLAN-FEATURES.html is complete and closed. Next: P5-0, the spec</b></div>
 </div>
 
 <!-- ====================================================== 1. END GOAL -->
@@ -500,9 +506,11 @@
   <p class="goal"><b>Goal:</b> defense in depth and the strategic thread. Unordered backlog — prioritize by community pull.</p>
   <ul class="tasks">
     <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
-        <span class="tid">P4-1</span><span class="tk">Host hardening: run Firecracker under the jailer (cgroups, chroot, dropped privileges).</span></li>
+        <span class="tid">P4-1</span><span class="tk">Host hardening: run Firecracker under the jailer (cgroups, chroot, dropped privileges).
+        <b class="promoted">[PROMOTED 2026-08-23 &rarr; <a href="#p5">Phase 5</a>, P5-1. Listed here for history; the work happens there (D27).]</b></span></li>
     <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
-        <span class="tid">P4-2</span><span class="tk">Guest hardening: seccomp / Landlock profiles per flavor.</span></li>
+        <span class="tid">P4-2</span><span class="tk">Guest hardening: seccomp / Landlock profiles per flavor.
+        <b class="promoted">[PROMOTED 2026-08-23 &rarr; <a href="#p5">Phase 5</a>, P5-2 and P5-3. Listed here for history; the work happens there (D27).]</b></span></li>
     <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">P4-3</span><span class="tk">Compliance groundwork: reproducible builds, signed images, SBOM per release — the substrate of the EU angle. Extend signing to session exports: <code>kelyfos log --export --sign</code> produces a report whose event chain and signature verify offline (<code>kelyfos verify report.html</code>).</span></li>
     <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
@@ -515,6 +523,97 @@
         <span class="tid">P4-7</span><span class="tk">One-command host integration (the Docker Desktop pattern): ship the <code>kelyfos</code> CLI for macOS/Windows/Linux, where on macOS/Windows it transparently provisions, starts, and stops its own Linux layer (Lima / WSL2) — <code>kelyfos doctor</code> creates it if missing, and users never touch the VM by hand. Same commands, same <code>kelyfos.toml</code>, same images everywhere. Backlog experiment behind it: a native macOS backend via libkrun on Apple's hypervisor, replacing the VM layer entirely.</span></li>
   </ul>
   <p class="exit">Exit checkpoint: none — this phase is a direction, not a deadline.</p>
+</section>
+
+<!-- ====================================================== PHASE 5 -->
+<section class="phase" id="p5" data-phase="5" data-status="active">
+  <div class="phase-head">
+    <div>
+      <div class="kconfig">config KELYFOS_PHASE_5</div>
+      <h2>Phase 5 &mdash; Hardening (v0.9 &middot; "and now it is hardened")</h2>
+    </div>
+    <span class="badge">ACTIVE</span>
+  </div>
+  <p class="goal"><b>Goal:</b> make the README&rsquo;s one remaining apology unnecessary. Every release so far has
+     carried the sentence <i>&ldquo;not hardened yet&rdquo;</i>, and it has been true: KelyfOS relies on the
+     hardware boundary Firecracker gives it and adds nothing of its own around the VMM process or around what a
+     compromised agent may reach inside its guest. This phase adds both layers and then replaces that sentence with
+     one that is <b>also</b> true &mdash; stating what is now enforced and what is still out of scope, with
+     <code>docs/threat-model.md</code> saying the same thing in more words.
+     <br>Promoted from the P4 backlog on the product owner&rsquo;s ruling of 2026-08-23 (D27): exactly P4-1 and
+     P4-2, no more. <a href="PLAN-FEATURES.html">PLAN-FEATURES.html</a> is complete and closed; this document
+     governs from here.</p>
+  <ul class="tasks">
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P5-0</span><span class="tk"><b>The hardening spec, written before the code.</b>
+        <code>docs/hardening.md</code>: what a compromised agent can reach today, what each layer takes away, and
+        &mdash; the longer half &mdash; what remains reachable afterwards. Names the threat each mechanism answers
+        and the ones it does not, so the README sentence this phase replaces has something exact to be measured
+        against rather than a feeling. Reviewed before P5-1 starts, the way <code>docs/qol.md</code> was.</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P5-1</span><span class="tk"><b>Firecracker under the jailer</b> (P4-1): chroot, its own
+        cgroup, dropped uid/gid, and the device nodes it needs and nothing else. Every path that starts a VM goes
+        through it &mdash; <code>run</code>, <code>team up</code>, <code>fork</code>, <code>snapshot restore</code>,
+        <code>serve-mcp</code>, <code>shim</code> &mdash; or none does, because a hardening that half the entry
+        points skip is a hardening nobody can reason about. The vsock socket, the images and the workspace device
+        all move inside the chroot; the flight recorder and the named-session store stay outside it, because a
+        record that the jailed process can reach is not a record. Existing cgroup limits (E1) keep working, on the
+        jailer&rsquo;s hierarchy rather than beside it.</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P5-2</span><span class="tk"><b>The host-side syscall filter, stated rather than assumed.</b>
+        Firecracker ships its own seccomp filter; this task establishes <i>which</i> filter is in force in a KelyfOS
+        run, proves it is on rather than trusting a default, and records what it permits. If a custom filter is
+        warranted, it is built from Firecracker&rsquo;s published one rather than written from scratch &mdash; a
+        hand-rolled syscall allowlist for somebody else&rsquo;s binary is a way to produce a crash that looks like a
+        security feature.</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P5-3</span><span class="tk"><b>Guest hardening: what the supervisor grants what it
+        spawns</b> (P4-2). Per-flavor restrictions on every process the supervisor starts &mdash; exec, plugins, the
+        shell &mdash; so a compromised agent inside a guest is confined further than the VM boundary alone confines
+        it. Landlock for the filesystem where the guest kernel supports the ABI version required, seccomp for the
+        syscall surface, both declared per flavor and both refusing to start rather than silently degrading if the
+        kernel cannot apply them. <code>/work</code> stays writable, the read-only root stays read-only, and the
+        supervisor&rsquo;s own vsock channels stay reachable: a profile that breaks the toolbox has hardened
+        nothing.</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P5-4</span><span class="tk"><b>The bars, re-earned, and the sentence replaced.</b>
+        The jailer and a seccomp filter sit on the boot path, so cold boot-to-ready and snapshot restore are
+        re-measured on the bare-KVM reference (D15) and the numbers reported are the ones measured &mdash; a bar is
+        never assumed across a change of security posture. Then the README&rsquo;s &ldquo;not hardened yet&rdquo;
+        sentence is replaced by a true one naming what is enforced and what is not, and
+        <code>docs/threat-model.md</code> is updated to match it rather than to soften it. Every acceptance suite in
+        <code>dev/</code> re-run green.</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P5-5</span><span class="tk"><b>Launch assets, committed and posted nowhere.</b>
+        A ~20-second terminal recording &mdash; boot, a refused egress showing the printed fix line, a five-agent
+        <code>team up</code>, a chain <code>--verify</code> &mdash; embedded at the top of the README; a
+        first-time-visitor pass over the README&rsquo;s opening screen; and
+        <code>docs/launch/hn-post.md</code> refreshed to v0.8/v0.9 reality. John submits things; this task produces
+        artifacts.</span></li>
+  </ul>
+  <div class="accept">
+    <h4>Acceptance test &mdash; recreate &amp; verify</h4>
+    <ol>
+      <li>Boot a sandbox. On the host, the Firecracker process is <b>not</b> running as the invoking user and
+          <code>/proc/&lt;pid&gt;/root</code> is not <code>/</code> &mdash; read from the host, not claimed by the
+          CLI.</li>
+      <li>That process&rsquo;s <code>/proc/&lt;pid&gt;/status</code> reports a seccomp mode that is on, and the
+          cgroup it sits in is the one KelyfOS asked for.</li>
+      <li>From inside the guest, a command that tries to open a path the flavor&rsquo;s profile does not grant is
+          refused by the kernel &mdash; and the same command inside <code>/work</code> succeeds, because a profile
+          that breaks the toolbox has hardened nothing.</li>
+      <li>Every existing acceptance suite re-run green: <code>dev/accept-e1.sh</code> through
+          <code>accept-e5.sh</code>, the per-feature ones, and all fourteen cookbook recipes.</li>
+      <li>A snapshot taken before this phase still restores, or the incompatibility is stated in the release notes
+          as a break rather than discovered by somebody.</li>
+      <li>Cold boot-to-ready and snapshot restore re-measured on the bare-KVM reference, 10 runs each; the numbers
+          in the README and in <code>docs/</code> are the measured ones.</li>
+      <li>The README contains no sentence claiming a protection this phase did not build, and
+          <code>docs/threat-model.md</code> agrees with it line for line.</li>
+    </ol>
+  </div>
+  <p class="exit">Exit checkpoint: <b>tag v0.9</b> &mdash; &ldquo;the boundary is the hardware, and everything around it
+     is locked too.&rdquo;</p>
 </section>
 
 <!-- ====================================================== QUICKSTART -->
@@ -1287,6 +1386,15 @@ after:
 
 - if code != 0 { defer os.Exit(code) }
 + if code != 0 { return &amp;exitError{code} }</pre></td></tr>
+        <tr><td class="mono">2026-08-23</td><td class="mono">P5</td>
+        <td><b>Phase 5 opened: hardening, exiting at v0.9.</b> P4-1 (jailer) and P4-2 (seccomp / Landlock) promoted
+        out of the backlog into six tasks with an acceptance test that reads the host&rsquo;s own
+        <code>/proc</code> rather than believing the CLI &mdash; the Firecracker process must not be running as the
+        invoking user, its root must not be <code>/</code>, and a guest command must be refused by the kernel for a
+        path its flavor does not grant while the same command in <code>/work</code> still works. The phase exists to
+        make one sentence in the README unnecessary, and it is not finished until that sentence is replaced by
+        another that is also true. Promotion and its boundaries are D27.</td>
+        <td class="mono">PLAN.html &sect;6 Phase 5, D27</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
@@ -1404,6 +1512,32 @@ after:
         project has never resolved, which is a supply-chain fact neither D25 nor F-D23 could weigh because both had it
         wrong. F-D23&rsquo;s condition for revisiting stands and is better than a date: a v2 API this project actually
         needs, an advisory on a v1 pin, or the v1 line ceasing to receive releases.</td></tr>
+        <tr><td class="mono">D27</td><td class="mono">2026-08-23</td>
+        <td><b>P4-1 and P4-2 are promoted into a new Phase 5, hardening, exiting at v0.9 &mdash; and nothing else
+        is.</b> <a href="PLAN-FEATURES.html">PLAN-FEATURES.html</a> is complete and closed as of v0.8; this document
+        governs from here.
+        <i>Where the work goes.</i> PLAN-FEATURES &sect;2 says a promoted P4 item becomes an epic <i>there</i>. That
+        rule assumed that plan was the active one. It is not: with v0.8 tagged its five epics are done and its
+        masthead says COMPLETE, and adding an epic to a closed record would make the word mean nothing. The
+        hardening items were always this document&rsquo;s own backlog, so they are promoted here, under this
+        document&rsquo;s rules, with the redirect recorded there as F-D56 and here as this row rather than left as a
+        rule one file quietly stopped following.
+        <i>What &ldquo;done&rdquo; means, ruled by the product owner.</i> Three things beyond the tasks themselves:
+        the README&rsquo;s &ldquo;not hardened yet&rdquo; sentence replaced by a true sentence stating what IS now
+        enforced and what remains out of scope, with <code>docs/threat-model.md</code> updated to match; the boot and
+        restore bars re-earned on the bare-KVM reference, because the jailer and a seccomp filter sit on the boot
+        path and a bar is never assumed across a security-posture change; and the full acceptance suites re-run
+        green.
+        <i>What is not promoted.</i> P4-3, P4-6 and P4-7 stay in the backlog. P4-4 and P4-5 stay
+        <code>[BLOCKED]</code> on the conditions they were blocked on &mdash; no user has asked for a browser
+        flavor, and there is still no evidence to decide the compliance-pack question with. A hardening phase that
+        quietly absorbed the rest of the backlog would be a hardening phase in name.
+        <i>And one task alongside it</i>, P5-5: the launch assets &mdash; a terminal recording at the top of the
+        README, a first-time-visitor pass over its opening screen, and the HN post refreshed to v0.8/v0.9 reality.
+        Committed, posted nowhere. John submits things.</td>
+        <td>The product owner&rsquo;s ruling of 2026-08-23, given while Epic E5&rsquo;s exit was in flight and
+        explicitly not touching it. <i>Revisit when</i> v0.9 is tagged: what is left in P4 is then either promoted
+        with the same explicitness or written off.</td></tr>
     <!-- Claude Code: append rows above this line. -->
   </table>
 </section>
