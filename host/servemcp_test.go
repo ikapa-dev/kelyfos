@@ -159,3 +159,34 @@ func TestServeMCPExecNeedsASandbox(t *testing.T) {
 		t.Errorf("the error does not say what is missing: %s", res.Content[0].Text)
 	}
 }
+
+// A named policy that is not there is an error. The alternative — falling back
+// to the upward search, finding nothing, and running with no ceiling — is the
+// one behaviour a client-configured server must never have (E4-5).
+func TestANamedPolicyThatIsMissingIsAnError(t *testing.T) {
+	_, err := resolvePolicy(filepath.Join(t.TempDir(), "nope.toml"))
+	if err == nil {
+		t.Fatal("a --policy pointing at nothing was accepted")
+	}
+	if !strings.Contains(err.Error(), "no ceiling") {
+		t.Errorf("the error does not say what the danger is:\n%v", err)
+	}
+}
+
+// The instructions are the only place a client's agent can learn whether there
+// is a wall at all: stderr is where the banner goes, and clients bury it.
+func TestInstructionsSayWhereTheWallIs(t *testing.T) {
+	s := serverWith(t, policy)
+	got := s.instructions()
+	if !strings.Contains(got, s.policy.Path) {
+		t.Errorf("the instructions do not name the policy in force:\n%s", got)
+	}
+
+	none := &hostServer{arch: "x86_64", max: defaultMaxSandboxes, boxes: map[string]*servedBox{}}
+	got = none.instructions()
+	for _, want := range []string{"No kelyfos.toml", "--policy"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("with no policy the instructions do not mention %q:\n%s", want, got)
+		}
+	}
+}

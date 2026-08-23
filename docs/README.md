@@ -25,7 +25,7 @@ hand-written half, and this page says where each is still thin.
 | running several agents together | [`teams.md`](teams.md) |
 | auditing what an agent did | [`events.md`](events.md) |
 | keeping an agent off the network | [`networking.md`](networking.md) |
-| after something that works, right now | [`cookbook.md`](cookbook.md) — eight recipes, each one runnable as it stands |
+| after something that works, right now | [`cookbook.md`](cookbook.md) — ten recipes, each one runnable as it stands |
 | putting KelyfOS inside something else | [`integrating.md`](integrating.md) |
 | building KelyfOS into something else | [`protocol.md`](protocol.md), then [`e2b-shim.md`](e2b-shim.md) |
 | driving KelyfOS from an MCP client | [`mcp-surface.md`](mcp-surface.md) — specification for v0.7, not yet built |
@@ -43,8 +43,8 @@ hand-written half, and this page says where each is still thin.
 | [`teams.md`](teams.md) | mixed | The `[team]` schema, the host broker and its edge rules, the team store, the collective budget, and how a team boots. |
 | [`mcp-surface.md`](mcp-surface.md) | concept | MCP in both directions: `serve-mcp` as a tool for any client, and `[[plugin]]` servers inside the guest. Specification, written before the code. |
 | [`threat-model.md`](threat-model.md) | concept | What KelyfOS defends against and — the longer half — what it does not. |
-| [`cookbook.md`](cookbook.md) | recipes | Eight complete, copy-pasteable recipes. Every one is a script CI extracts and runs on a real machine. |
-| [`integrating.md`](integrating.md) | mixed | For building on KelyfOS: the three ways in, orchestrator patterns, and a long list of the mistakes people actually make. |
+| [`cookbook.md`](cookbook.md) | recipes | Ten complete, copy-pasteable recipes. Every one is a script CI extracts and runs on a real machine. |
+| [`integrating.md`](integrating.md) | mixed | For building on KelyfOS: the four ways in, orchestrator patterns, and a long list of the mistakes people actually make. |
 | [`e2b-shim.md`](e2b-shim.md) | mixed | The E2B-compatible REST subset: what it implements, what it does not, and why. |
 | [`../llms.txt`](../llms.txt) | **generated** | The index a machine reads first: every page above as a link with a one-line description, per the llmstxt.org spec. |
 | [`../llms-full.txt`](../llms-full.txt) | **generated** | Every page above concatenated, each with its source URL. About 54,000 tokens — a quarter of a 200k context window. |
@@ -146,20 +146,23 @@ the second; `[team.agent.spawn.resources]` accepts two keys nothing enforces
 (F-D27); `team ps` has no sample output; the store's `not_found` is described as
 "not a refusal" and is recorded as one.
 
-### `cookbook.md` — eight things that work
+### `cookbook.md` — ten things that work
 
 *Recipes:* one sandbox; an allowlist and an injected credential; a workspace
 round-trip; snapshot and fork; a three-agent team with an ask round-trip and a
 refused edge; reading and verifying the record, including watching one altered
-byte break the chain; driving a sandbox from the E2B SDK; and an orchestrator
-built on the official MCP Python SDK.
+byte break the chain; driving a sandbox from the E2B SDK; an orchestrator built
+on the official MCP Python SDK; the configuration that points Claude Code and
+VS Code at `serve-mcp`, checked by running exactly what each file names; and the
+same SDK driving the host rather than a guest, ending in the record the server
+kept of its own calls.
 *Thin:* nothing hidden — every script is extracted and executed by
 `dev/cookbook.sh` and by the `cookbook` workflow, so a recipe that stops working
 fails rather than misleading anyone.
 
 ### `integrating.md` — for building on it
 
-*Concept:* which of the three ways in to choose and what each one costs you;
+*Concept:* which of the four ways in to choose and what each one costs you;
 why `run -- <command>` is the shape to build on; what KelyfOS will not do for
 you. *Reference:* the error messages in the common-mistakes section, quoted so
 that searching for one lands here.

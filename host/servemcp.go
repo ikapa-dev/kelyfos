@@ -41,6 +41,8 @@ const defaultMaxSandboxes = 4
 func serveMCPCmd(argv []string) error {
 	fs := flag.NewFlagSet("kelyfos serve-mcp", flag.ExitOnError)
 	arch := fs.String("arch", sandbox.HostArch(), "guest architecture (aarch64|x86_64)")
+	policy := fs.String("policy", "", "path to the project's "+config.FileName+
+		" (default: search upward from the working directory)")
 	fs.Usage = func() {
 		fmt.Fprint(fs.Output(), `usage: kelyfos serve-mcp [flags]
 
@@ -54,6 +56,12 @@ Every sandbox it creates is held to this project's kelyfos.toml, and no tool can
 widen that. A request above a ceiling is refused, naming the ceiling and the
 line it came from. See docs/mcp-surface.md.
 
+The policy is found by searching upward from the working directory, which is the
+client's and not yours. A client that launches this from somewhere else would
+find no policy and get no ceiling, so name the file with --policy when you are
+configuring one. A --policy that does not exist is an error rather than a
+silent fall back to no ceiling.
+
 `)
 		fs.PrintDefaults()
 	}
@@ -61,7 +69,7 @@ line it came from. See docs/mcp-surface.md.
 		return err
 	}
 
-	srv, err := newHostServer(*arch, argv)
+	srv, err := newHostServer(*arch, *policy, argv)
 	if err != nil {
 		return err
 	}
@@ -153,8 +161,8 @@ func (b *servedBox) close(reason string) {
 	}
 }
 
-func newHostServer(arch string, argv []string) (*hostServer, error) {
-	cfg, err := loadPolicy()
+func newHostServer(arch, policyPath string, argv []string) (*hostServer, error) {
+	cfg, err := resolvePolicy(policyPath)
 	if err != nil {
 		return nil, err
 	}
@@ -174,6 +182,48 @@ func newHostServer(arch string, argv []string) (*hostServer, error) {
 		}
 	}
 	return s, nil
+}
+
+// resolvePolicy finds the policy this server is held to.
+//
+// Without --policy it is the usual upward search, which is right on a command
+// line and a trap under a client: the working directory is the client's, and a
+// client launched from somewhere outside the project would find no policy and
+// get no ceiling at all. Naming the file is the fix, and a named file that is
+// not there is an error — falling back to "no policy, no ceiling" because a
+// path was mistyped is the one behaviour this must never have (E4-5).
+func resolvePolicy(path string) (*config.Config, error) {
+	if path == "" {
+		return loadPolicy()
+	}
+	if _, err := os.Stat(path); err != nil {
+		return nil, fmt.Errorf("--policy %s: %w\n"+
+			"    a named policy that is not there is an error, because the alternative is a "+
+			"server running with no ceiling at all", path, err)
+	}
+	return config.Load(path)
+}
+
+// instructions is the paragraph a model reads before it does anything, so it
+// says where the wall is and — the part stderr cannot deliver — whether there
+// is one. A client buries stderr; a policy that exists only there is a policy
+// the agent has no way to know about (E4-5).
+func (s *hostServer) instructions() string {
+	wall := "No kelyfos.toml was found from where this server was started, so no project " +
+		"policy is in force and the built-in defaults apply. If that is surprising, the " +
+		"server was probably launched outside the project: point it at the file with --policy."
+	if s.policy != nil {
+		wall = fmt.Sprintf("That policy is the file %s. No tool here can change it: a request "+
+			"for more than it permits is refused and says so.", s.policy.Path)
+	}
+	return "KelyfOS runs commands inside hardware-isolated microVMs. Boot one with sandbox_run, " +
+		"work in it with sandbox_exec and the file tools, and stop it with sandbox_stop. A " +
+		"sandbox worth keeping can be frozen with sandbox_snapshot and brought back in " +
+		"milliseconds with sandbox_restore, or forked into several copies of one prepared " +
+		"state with sandbox_fork. A project that declares a team of agents can have the whole " +
+		"team raised with team_up and retired with team_down. Anything you run in a sandbox " +
+		"cannot reach this machine, and cannot reach the network unless the project's policy " +
+		"allows it. " + wall
 }
 
 func (s *hostServer) describe() string {
@@ -257,16 +307,7 @@ func (s *hostServer) dispatch(req *mcp.Request) *mcp.Response {
 			ProtocolVersion: mcp.ProtocolVersion,
 			Capabilities:    mcp.Capabilities{Tools: &mcp.ToolsCapability{}},
 			ServerInfo:      mcp.Info{Name: "kelyfos", Title: "KelyfOS", Version: Version},
-			Instructions: "KelyfOS runs commands inside hardware-isolated microVMs. Boot one with " +
-				"sandbox_run, work in it with sandbox_exec and the file tools, and stop it with " +
-				"sandbox_stop. A sandbox worth keeping can be frozen with sandbox_snapshot and " +
-				"brought back in milliseconds with sandbox_restore, or forked into several copies " +
-				"of one prepared state with sandbox_fork. A project that declares a team of agents " +
-				"can have the whole team raised with team_up and retired with team_down. Anything " +
-				"you run in a sandbox cannot reach this machine, and cannot reach the network " +
-				"unless the project's policy " +
-				"allows it. That policy is a file and no tool here can change it: a request for " +
-				"more than it permits is refused and says so.",
+			Instructions:    s.instructions(),
 		})
 
 	case "notifications/initialized", "notifications/cancelled":

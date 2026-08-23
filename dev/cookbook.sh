@@ -24,6 +24,7 @@ cleanup() {
   pkill -f "$BIN/kelyfos fork" 2>/dev/null
   pkill -f "$BIN/kelyfos team" 2>/dev/null
   pkill -f "$BIN/kelyfos shim" 2>/dev/null
+  pkill -f "$BIN/kelyfos serve-mcp" 2>/dev/null
   sleep 1
   for p in $(pgrep firecracker 2>/dev/null); do kill "$p" 2>/dev/null; done
   rm -rf "$WORK"
@@ -61,6 +62,7 @@ for script in "$WORK"/recipes/*.sh; do
   pkill -f "$BIN/kelyfos fork" 2>/dev/null
   pkill -f "$BIN/kelyfos team" 2>/dev/null
   pkill -f "$BIN/kelyfos shim" 2>/dev/null
+  pkill -f "$BIN/kelyfos serve-mcp" 2>/dev/null
   sleep 1
   for p in $(pgrep firecracker 2>/dev/null); do kill "$p" 2>/dev/null; done
   rm -rf "${HOME:?}/.cache/kelyfos/run"/*

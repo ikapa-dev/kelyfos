@@ -304,8 +304,8 @@ machine took.
 | [`llms.txt`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/llms.txt) · [`llms-full.txt`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/llms-full.txt) | for machine readers: an index per the llmstxt.org spec, and the whole set in one 54k-token file |
 | [`docs/reference/`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/reference/README.md) | every command, flag, toml key, MCP tool, event and exit code — generated from the source |
 | [`PLAN.html`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/PLAN.html) · [`PLAN-FEATURES.html`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/PLAN-FEATURES.html) | the living plan — every decision and the full progress log, phases then epics |
-| [`docs/cookbook.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/cookbook.md) | eight recipes that work: run one, allowlist a domain, fork, build a team, verify the log |
-| [`docs/integrating.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/integrating.md) | building on it: the three ways in, orchestrator patterns, common mistakes |
+| [`docs/cookbook.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/cookbook.md) | ten recipes that work: run one, allowlist a domain, fork, build a team, point a client at it, verify the log |
+| [`docs/integrating.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/integrating.md) | building on it: the four ways in, orchestrator patterns, common mistakes |
 | [`docs/mcp-surface.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/mcp-surface.md) | the v0.7 spec: MCP in both directions, written before the code |
 | [`docs/threat-model.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/threat-model.md) | what is defended, and what is not |
 | [`docs/protocol.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/protocol.md) | the host/guest wire protocol |
@@ -3167,6 +3167,16 @@ figures, informational only (D15).
 max_sandboxes = 4
 ```
 
+**Which policy file is a decision, not a default.** The server searches upward
+from its working directory for `kelyfos.toml`, which is right on a command line
+and a trap under a client: the working directory belongs to the client, and one
+launched from outside the project finds no policy and runs with no ceiling at
+all. `--policy <path>` names the file, and a `--policy` that does not exist is
+an error rather than a quiet fall back to the search. The `initialize`
+instructions name the policy in force, or say plainly that none was found —
+because the banner naming it goes to stderr, and clients bury stderr.
+
+
 `max_sandboxes` bounds how many sandboxes one `serve-mcp` process may have
 running at once. The default is **4**, and it is small on purpose: each one is a
 real microVM with real RAM, four of them at the default 512 MiB is 2 GiB, and an
@@ -3547,7 +3557,7 @@ description: eight complete recipes, each one a script CI runs on a real machine
 
 # KelyfOS cookbook
 
-Seven recipes, each one complete, each one runnable as it stands.
+Ten recipes, each one complete, each one runnable as it stands.
 
 These are not illustrations. `bash dev/cookbook.sh` extracts every script below
 and runs it on a real machine, and CI runs the same thing — so a recipe that
@@ -4147,6 +4157,224 @@ kelyfos log --verify
 
 ---
 
+## 9. Point an MCP client at KelyfOS
+
+`kelyfos serve-mcp` makes KelyfOS itself an MCP server, so a client's agent gains
+`sandbox_run`, `sandbox_exec`, the file and state tools and the team tools —
+without the client ever learning what a microVM is. The configuration is one
+entry in a file, and between clients the shape differs only in the key name.
+
+The one thing worth getting right is **which policy the server is held to**. It
+searches upward from its working directory for `kelyfos.toml`, and that working
+directory belongs to the client, not to you: a client launched from somewhere
+outside the project would find no policy and run with no ceiling at all. Name
+the file with `--policy`, and a path that turns out to be wrong is an error
+rather than a quiet fall back to no wall.
+
+<!-- recipe: mcp-client-config -->
+
+```bash
+set -euo pipefail
+work="$(mktemp -d)"
+cd "$work"
+trap 'rm -rf "$work"' EXIT
+
+# The policy. This file is the wall: the server is held to it, and no tool any
+# client calls can widen it.
+cat > kelyfos.toml <<'TOML'
+[sandbox]
+image = "dev"
+allow = ["api.github.com"]
+
+[resources]
+cpus = 2
+mem  = "512M"
+
+[mcp]
+max_sandboxes = 2
+TOML
+
+# Claude Code, project scope. Checked into the repository, where it doubles as
+# configuration your team gets for free. CLAUDE_PROJECT_DIR is set in the
+# server's environment, and in this file it needs the ":-." default to expand.
+cat > .mcp.json <<'JSON'
+{
+  "mcpServers": {
+    "kelyfos": {
+      "type": "stdio",
+      "command": "kelyfos",
+      "args": ["serve-mcp", "--policy", "${CLAUDE_PROJECT_DIR:-.}/kelyfos.toml"]
+    }
+  }
+}
+JSON
+
+# VS Code, workspace scope. The same server, a different key and a different
+# variable — which is the whole of the difference.
+mkdir -p .vscode
+cat > .vscode/mcp.json <<'JSON'
+{
+  "servers": {
+    "kelyfos": {
+      "type": "stdio",
+      "command": "kelyfos",
+      "args": ["serve-mcp", "--policy", "${workspaceFolder}/kelyfos.toml"]
+    }
+  }
+}
+JSON
+
+echo "== the same server from a command line, if you would rather not write the file =="
+echo '   claude mcp add --transport stdio kelyfos -- kelyfos serve-mcp --policy "$PWD/kelyfos.toml"'
+
+# Neither client is needed to check that the configuration is right. Read the
+# entry back out of each file, expand the variable that client would expand, run
+# exactly what it names, and speak MCP to it.
+cat > check.py <<'CHECK'
+import json, os, subprocess, sys
+
+path, key = sys.argv[1], sys.argv[2]
+entry = json.load(open(path))[key]["kelyfos"]
+argv = [entry["command"]] + [
+    a.replace("${CLAUDE_PROJECT_DIR:-.}", os.getcwd()).replace("${workspaceFolder}", os.getcwd())
+    for a in entry["args"]
+]
+print("  %s -> %s" % (path, " ".join(argv)))
+
+p = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+def send(m):
+    p.stdin.write(json.dumps(m) + "\n")
+    p.stdin.flush()
+
+send({"jsonrpc": "2.0", "id": 1, "method": "initialize",
+      "params": {"protocolVersion": "2025-11-25", "capabilities": {},
+                 "clientInfo": {"name": "cookbook", "version": "1"}}})
+init = json.loads(p.stdout.readline())["result"]
+send({"jsonrpc": "2.0", "method": "notifications/initialized"})
+send({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
+tools = json.loads(p.stdout.readline())["result"]["tools"]
+
+# Ask for four cores against a ceiling of two. Nothing boots: the refusal comes
+# before anything is built, and it names the file and the line it came from.
+send({"jsonrpc": "2.0", "id": 3, "method": "tools/call",
+      "params": {"name": "sandbox_run", "arguments": {"cpus": 4}}})
+refused = json.loads(p.stdout.readline())["result"]
+p.stdin.close()
+p.wait(timeout=30)
+
+print("   server %s %s, protocol %s, %d tools"
+      % (init["serverInfo"]["name"], init["serverInfo"]["version"],
+         init["protocolVersion"], len(tools)))
+assert "kelyfos.toml" in init["instructions"], "the agent is not told where the wall is"
+assert refused["isError"], "a request above the ceiling was granted"
+print("   refused:", refused["content"][0]["text"].splitlines()[0])
+CHECK
+
+echo
+echo "== each configuration file, proved by running exactly what it names =="
+python3 check.py .mcp.json mcpServers
+python3 check.py .vscode/mcp.json servers
+```
+
+---
+
+## 10. Drive the host from Python, with the official MCP SDK
+
+The outward twin of recipe 8. There the SDK talked to a guest through
+`kelyfos mcp`; here it talks to KelyfOS itself, and the tools it gets are the
+host's: boot a machine, work in it, freeze it, fork it.
+
+Everything it does is bounded by the policy file, and the last thing it does is
+read the record the server kept of its own calls — including the one that was
+refused, which is the half a transcript most needs and least often has.
+
+<!-- recipe: mcp-client-host -->
+
+```bash
+set -euo pipefail
+work="$(mktemp -d)"
+cd "$work"
+trap 'rm -rf "$work"' EXIT
+
+cat > kelyfos.toml <<'TOML'
+[sandbox]
+image = "dev"
+
+[resources]
+cpus = 2
+mem  = "512M"
+
+[mcp]
+max_sandboxes = 3
+TOML
+
+python3 -m venv .venv
+./.venv/bin/pip install --quiet mcp
+
+cat > agent.py <<'AGENT'
+import asyncio, os
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
+
+async def main():
+    params = StdioServerParameters(
+        command="kelyfos",
+        args=["serve-mcp", "--policy", os.path.join(os.getcwd(), "kelyfos.toml")],
+        env=dict(os.environ))
+    async with stdio_client(params) as (read, write):
+        async with ClientSession(read, write) as session:
+            info = await session.initialize()
+            print("connected to", info.server_info.name, info.server_info.version)
+            tools = await session.list_tools()
+            print("tools:", " ".join(t.name for t in tools.tools))
+
+            box = await session.call_tool("sandbox_run", {"cpus": 1})
+            sid = box.structured_content["sandbox"]
+            print("sandbox %s ready in %d ms" % (sid, box.structured_content["boot_ms"]))
+
+            await session.call_tool("sandbox_write_file",
+                {"sandbox": sid, "path": "/work/task.txt", "content": "the prepared state\n"})
+            out = await session.call_tool("sandbox_exec",
+                {"sandbox": sid, "command": "wc -c < /work/task.txt"})
+            print("exec said:", out.content[0].text.strip().splitlines()[0])
+
+            # Prepare once, fork many. Each fork resumes from the same state and
+            # then diverges; the machine that was snapshotted keeps running.
+            await session.call_tool("sandbox_snapshot", {"sandbox": sid, "name": "prepared"})
+            forks = await session.call_tool("sandbox_fork", {"name": "prepared", "count": 2})
+            ids = forks.structured_content["sandboxes"]
+            print("forked into %d machines in %d ms"
+                  % (len(ids), forks.structured_content["wall_ms"]))
+            for f in ids:
+                back = await session.call_tool("sandbox_read_file",
+                    {"sandbox": f, "path": "/work/task.txt"})
+                print("  %s sees: %s" % (f, back.content[0].text.strip()))
+
+            # Asking for more than the policy allows is a result, not an
+            # exception: the refusal names the ceiling and the line it came
+            # from, so an agent can act on it by asking for less.
+            bad = await session.call_tool("sandbox_run", {"cpus": 64})
+            assert bad.is_error
+            print("refused:", bad.content[0].text.splitlines()[0])
+
+            for f in ids + [sid]:
+                await session.call_tool("sandbox_stop", {"sandbox": f})
+
+asyncio.run(main())
+AGENT
+
+./.venv/bin/python agent.py
+
+echo
+echo "== and the server kept a record of every call it was asked for =="
+session="$(kelyfos log --list | grep serve-mcp | head -1 | awk '{print $1}')"
+kelyfos log --session "$session" | grep -E 'client (call|result)' | head -10
+echo
+kelyfos log --verify --session "$session"
+```
+
+---
+
 ## Running them yourself
 
 ```
@@ -4178,24 +4406,35 @@ this page says so rather than printing it anyway.
 
 ---
 
-## 1. Three ways in, and how to choose
+## 1. Four ways in, and how to choose
 
 | | What it is | Choose it when |
 | --- | --- | --- |
 | **The CLI** | `kelyfos` as a subprocess: `run`, `exec`, `team up`, `log` | You are scripting, or your orchestrator is happy shelling out. Simplest thing that works. |
-| **The MCP bridge** | `kelyfos mcp` copies bytes between your standard streams and the guest's MCP server | You are writing an agent, or you already have an MCP client. This is the interface the product is designed around. |
+| **The MCP bridge** | `kelyfos mcp` copies bytes between your standard streams and *one guest's* MCP server | You are writing an agent that works inside a sandbox you chose. This is the interface the product was designed around. |
+| **The MCP server** | `kelyfos serve-mcp` is KelyfOS itself as an MCP server: sandboxes, files, snapshots, forks and teams as tools | You have a client — Claude Code, VS Code, anything — and want *it* to create and manage the machines. One entry in a config file. |
 | **The E2B shim** | an E2B-compatible REST subset on a local port | You have code already written against the E2B SDK and want it to work against a self-hosted box without a rewrite. |
 
-All three go through the same wall. Each reads the project's `kelyfos.toml`,
-each is capped by its `[resources]`, and each writes a flight recorder — there
-is no entry path that skips the policy, which is the invariant F-D5 states for
-MCP and F-D33 applied to the shim.
+All four go through the same wall. Each reads the project's `kelyfos.toml`, each
+is capped by its `[resources]`, and each writes a flight recorder — there is no
+entry path that skips the policy, which is the invariant F-D5 states for MCP and
+F-D33 applied to the shim.
 
 They do differ in what they can express. The shim serves a fixed REST subset and
-cannot run commands at all; the bridge gives an agent the full tool surface; the
-CLI gives you everything including the things no tool exposes, like `fork` and
-`team up`. And the shim authenticates nobody, so its port is a local privilege
-surface the other two do not have.
+cannot run commands at all; the bridge gives an agent one guest's full tool
+surface; `serve-mcp` gives a client the host's, including snapshots, forks and
+the declared team; the CLI gives you everything. And the shim authenticates
+nobody, so its port is a local privilege surface the other three do not have.
+
+The two MCP doors point in opposite directions and are easy to confuse. `mcp`
+is *inward*: you have already chosen a sandbox and you are talking to what is
+inside it. `serve-mcp` is *outward*: the client has no sandbox yet, and the
+tools are for getting one. A client configured with `serve-mcp` needs the policy
+named explicitly — `--policy /path/to/kelyfos.toml` — because the working
+directory it launches from is the client's, not yours, and one launched outside
+the project would find no policy and run with no ceiling. `docs/mcp-surface.md`
+§2.3 has it, and recipe 9 of the cookbook is the configuration for two clients
+with a check that proves the file works.
 
 ### The one flag that shapes everything else
 
@@ -4455,11 +4694,13 @@ kelyfos: 2 sandboxes are running; pick one with --sandbox: [39a571db 5bf6f351]
 There is no "current" sandbox. `KELYFOS_SANDBOX` or `--sandbox` disambiguates;
 `run -- <command>` sets the first one for you.
 
-### `kelyfos log --list` is ordered by session id
+### Picking a session out of `kelyfos log --list`
 
-Not by time. `head -1` gives you an arbitrary session. Every `log` subcommand
-defaults to the most recent session when `--session` is absent, which is almost
-always what you meant.
+The listing is newest first, and every `log` subcommand defaults to the most
+recent session when `--session` is absent, which is almost always what you
+meant. Rows are marked with what kind of session they are — `team of N`, or
+`serve-mcp, N sandbox(es)` — so a listing can be filtered rather than guessed
+at: `kelyfos log --list | grep serve-mcp | head -1` is the server's own record.
 
 ### A secret bound to a domain that is not allowed
 
@@ -4612,7 +4853,7 @@ different protocol stack from the REST endpoints the shim serves. Use
 
 ## 7. Where to look next
 
-- [`cookbook.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/cookbook.md) — eight recipes that run, including the Python
+- [`cookbook.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/cookbook.md) — ten recipes that run, including the Python
   client above
 - [`reference/`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/reference/README.md) — every command, flag, key, tool, event and exit
   code, generated from the source
@@ -4654,7 +4895,7 @@ hand-written half, and this page says where each is still thin.
 | running several agents together | [`teams.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/teams.md) |
 | auditing what an agent did | [`events.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/events.md) |
 | keeping an agent off the network | [`networking.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/networking.md) |
-| after something that works, right now | [`cookbook.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/cookbook.md) — eight recipes, each one runnable as it stands |
+| after something that works, right now | [`cookbook.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/cookbook.md) — ten recipes, each one runnable as it stands |
 | putting KelyfOS inside something else | [`integrating.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/integrating.md) |
 | building KelyfOS into something else | [`protocol.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/protocol.md), then [`e2b-shim.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/e2b-shim.md) |
 | driving KelyfOS from an MCP client | [`mcp-surface.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/mcp-surface.md) — specification for v0.7, not yet built |
@@ -4672,8 +4913,8 @@ hand-written half, and this page says where each is still thin.
 | [`teams.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/teams.md) | mixed | The `[team]` schema, the host broker and its edge rules, the team store, the collective budget, and how a team boots. |
 | [`mcp-surface.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/mcp-surface.md) | concept | MCP in both directions: `serve-mcp` as a tool for any client, and `[[plugin]]` servers inside the guest. Specification, written before the code. |
 | [`threat-model.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/threat-model.md) | concept | What KelyfOS defends against and — the longer half — what it does not. |
-| [`cookbook.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/cookbook.md) | recipes | Eight complete, copy-pasteable recipes. Every one is a script CI extracts and runs on a real machine. |
-| [`integrating.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/integrating.md) | mixed | For building on KelyfOS: the three ways in, orchestrator patterns, and a long list of the mistakes people actually make. |
+| [`cookbook.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/cookbook.md) | recipes | Ten complete, copy-pasteable recipes. Every one is a script CI extracts and runs on a real machine. |
+| [`integrating.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/integrating.md) | mixed | For building on KelyfOS: the four ways in, orchestrator patterns, and a long list of the mistakes people actually make. |
 | [`e2b-shim.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/e2b-shim.md) | mixed | The E2B-compatible REST subset: what it implements, what it does not, and why. |
 | [`../llms.txt`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/llms.txt) | **generated** | The index a machine reads first: every page above as a link with a one-line description, per the llmstxt.org spec. |
 | [`../llms-full.txt`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/llms-full.txt) | **generated** | Every page above concatenated, each with its source URL. About 54,000 tokens — a quarter of a 200k context window. |
@@ -4775,20 +5016,23 @@ the second; `[team.agent.spawn.resources]` accepts two keys nothing enforces
 (F-D27); `team ps` has no sample output; the store's `not_found` is described as
 "not a refusal" and is recorded as one.
 
-### `cookbook.md` — eight things that work
+### `cookbook.md` — ten things that work
 
 *Recipes:* one sandbox; an allowlist and an injected credential; a workspace
 round-trip; snapshot and fork; a three-agent team with an ask round-trip and a
 refused edge; reading and verifying the record, including watching one altered
-byte break the chain; driving a sandbox from the E2B SDK; and an orchestrator
-built on the official MCP Python SDK.
+byte break the chain; driving a sandbox from the E2B SDK; an orchestrator built
+on the official MCP Python SDK; the configuration that points Claude Code and
+VS Code at `serve-mcp`, checked by running exactly what each file names; and the
+same SDK driving the host rather than a guest, ending in the record the server
+kept of its own calls.
 *Thin:* nothing hidden — every script is extracted and executed by
 `dev/cookbook.sh` and by the `cookbook` workflow, so a recipe that stops working
 fails rather than misleading anyone.
 
 ### `integrating.md` — for building on it
 
-*Concept:* which of the three ways in to choose and what each one costs you;
+*Concept:* which of the four ways in to choose and what each one costs you;
 why `run -- <command>` is the shape to build on; what KelyfOS will not do for
 you. *Reference:* the error messages in the common-mistakes section, quoted so
 that searching for one lands here.
@@ -4990,6 +5234,7 @@ kelyfos serve-mcp [flags]
 | Flag | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `--arch` | string | the build host's architecture | guest architecture (aarch64\|x86_64) |
+| `--policy` | string | search upward from the working directory | path to the project's kelyfos.toml |
 
 ## kelyfos snapshot save
 

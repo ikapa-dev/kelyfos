@@ -1,6 +1,6 @@
 # KelyfOS cookbook
 
-Seven recipes, each one complete, each one runnable as it stands.
+Ten recipes, each one complete, each one runnable as it stands.
 
 These are not illustrations. `bash dev/cookbook.sh` extracts every script below
 and runs it on a real machine, and CI runs the same thing — so a recipe that
@@ -596,6 +596,224 @@ echo
 echo "== and the host recorded every one of those calls =="
 kelyfos log | grep -E 'via mcp|\$ ' | head -6
 kelyfos log --verify
+```
+
+---
+
+## 9. Point an MCP client at KelyfOS
+
+`kelyfos serve-mcp` makes KelyfOS itself an MCP server, so a client's agent gains
+`sandbox_run`, `sandbox_exec`, the file and state tools and the team tools —
+without the client ever learning what a microVM is. The configuration is one
+entry in a file, and between clients the shape differs only in the key name.
+
+The one thing worth getting right is **which policy the server is held to**. It
+searches upward from its working directory for `kelyfos.toml`, and that working
+directory belongs to the client, not to you: a client launched from somewhere
+outside the project would find no policy and run with no ceiling at all. Name
+the file with `--policy`, and a path that turns out to be wrong is an error
+rather than a quiet fall back to no wall.
+
+<!-- recipe: mcp-client-config -->
+
+```bash
+set -euo pipefail
+work="$(mktemp -d)"
+cd "$work"
+trap 'rm -rf "$work"' EXIT
+
+# The policy. This file is the wall: the server is held to it, and no tool any
+# client calls can widen it.
+cat > kelyfos.toml <<'TOML'
+[sandbox]
+image = "dev"
+allow = ["api.github.com"]
+
+[resources]
+cpus = 2
+mem  = "512M"
+
+[mcp]
+max_sandboxes = 2
+TOML
+
+# Claude Code, project scope. Checked into the repository, where it doubles as
+# configuration your team gets for free. CLAUDE_PROJECT_DIR is set in the
+# server's environment, and in this file it needs the ":-." default to expand.
+cat > .mcp.json <<'JSON'
+{
+  "mcpServers": {
+    "kelyfos": {
+      "type": "stdio",
+      "command": "kelyfos",
+      "args": ["serve-mcp", "--policy", "${CLAUDE_PROJECT_DIR:-.}/kelyfos.toml"]
+    }
+  }
+}
+JSON
+
+# VS Code, workspace scope. The same server, a different key and a different
+# variable — which is the whole of the difference.
+mkdir -p .vscode
+cat > .vscode/mcp.json <<'JSON'
+{
+  "servers": {
+    "kelyfos": {
+      "type": "stdio",
+      "command": "kelyfos",
+      "args": ["serve-mcp", "--policy", "${workspaceFolder}/kelyfos.toml"]
+    }
+  }
+}
+JSON
+
+echo "== the same server from a command line, if you would rather not write the file =="
+echo '   claude mcp add --transport stdio kelyfos -- kelyfos serve-mcp --policy "$PWD/kelyfos.toml"'
+
+# Neither client is needed to check that the configuration is right. Read the
+# entry back out of each file, expand the variable that client would expand, run
+# exactly what it names, and speak MCP to it.
+cat > check.py <<'CHECK'
+import json, os, subprocess, sys
+
+path, key = sys.argv[1], sys.argv[2]
+entry = json.load(open(path))[key]["kelyfos"]
+argv = [entry["command"]] + [
+    a.replace("${CLAUDE_PROJECT_DIR:-.}", os.getcwd()).replace("${workspaceFolder}", os.getcwd())
+    for a in entry["args"]
+]
+print("  %s -> %s" % (path, " ".join(argv)))
+
+p = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+def send(m):
+    p.stdin.write(json.dumps(m) + "\n")
+    p.stdin.flush()
+
+send({"jsonrpc": "2.0", "id": 1, "method": "initialize",
+      "params": {"protocolVersion": "2025-11-25", "capabilities": {},
+                 "clientInfo": {"name": "cookbook", "version": "1"}}})
+init = json.loads(p.stdout.readline())["result"]
+send({"jsonrpc": "2.0", "method": "notifications/initialized"})
+send({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
+tools = json.loads(p.stdout.readline())["result"]["tools"]
+
+# Ask for four cores against a ceiling of two. Nothing boots: the refusal comes
+# before anything is built, and it names the file and the line it came from.
+send({"jsonrpc": "2.0", "id": 3, "method": "tools/call",
+      "params": {"name": "sandbox_run", "arguments": {"cpus": 4}}})
+refused = json.loads(p.stdout.readline())["result"]
+p.stdin.close()
+p.wait(timeout=30)
+
+print("   server %s %s, protocol %s, %d tools"
+      % (init["serverInfo"]["name"], init["serverInfo"]["version"],
+         init["protocolVersion"], len(tools)))
+assert "kelyfos.toml" in init["instructions"], "the agent is not told where the wall is"
+assert refused["isError"], "a request above the ceiling was granted"
+print("   refused:", refused["content"][0]["text"].splitlines()[0])
+CHECK
+
+echo
+echo "== each configuration file, proved by running exactly what it names =="
+python3 check.py .mcp.json mcpServers
+python3 check.py .vscode/mcp.json servers
+```
+
+---
+
+## 10. Drive the host from Python, with the official MCP SDK
+
+The outward twin of recipe 8. There the SDK talked to a guest through
+`kelyfos mcp`; here it talks to KelyfOS itself, and the tools it gets are the
+host's: boot a machine, work in it, freeze it, fork it.
+
+Everything it does is bounded by the policy file, and the last thing it does is
+read the record the server kept of its own calls — including the one that was
+refused, which is the half a transcript most needs and least often has.
+
+<!-- recipe: mcp-client-host -->
+
+```bash
+set -euo pipefail
+work="$(mktemp -d)"
+cd "$work"
+trap 'rm -rf "$work"' EXIT
+
+cat > kelyfos.toml <<'TOML'
+[sandbox]
+image = "dev"
+
+[resources]
+cpus = 2
+mem  = "512M"
+
+[mcp]
+max_sandboxes = 3
+TOML
+
+python3 -m venv .venv
+./.venv/bin/pip install --quiet mcp
+
+cat > agent.py <<'AGENT'
+import asyncio, os
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
+
+async def main():
+    params = StdioServerParameters(
+        command="kelyfos",
+        args=["serve-mcp", "--policy", os.path.join(os.getcwd(), "kelyfos.toml")],
+        env=dict(os.environ))
+    async with stdio_client(params) as (read, write):
+        async with ClientSession(read, write) as session:
+            info = await session.initialize()
+            print("connected to", info.server_info.name, info.server_info.version)
+            tools = await session.list_tools()
+            print("tools:", " ".join(t.name for t in tools.tools))
+
+            box = await session.call_tool("sandbox_run", {"cpus": 1})
+            sid = box.structured_content["sandbox"]
+            print("sandbox %s ready in %d ms" % (sid, box.structured_content["boot_ms"]))
+
+            await session.call_tool("sandbox_write_file",
+                {"sandbox": sid, "path": "/work/task.txt", "content": "the prepared state\n"})
+            out = await session.call_tool("sandbox_exec",
+                {"sandbox": sid, "command": "wc -c < /work/task.txt"})
+            print("exec said:", out.content[0].text.strip().splitlines()[0])
+
+            # Prepare once, fork many. Each fork resumes from the same state and
+            # then diverges; the machine that was snapshotted keeps running.
+            await session.call_tool("sandbox_snapshot", {"sandbox": sid, "name": "prepared"})
+            forks = await session.call_tool("sandbox_fork", {"name": "prepared", "count": 2})
+            ids = forks.structured_content["sandboxes"]
+            print("forked into %d machines in %d ms"
+                  % (len(ids), forks.structured_content["wall_ms"]))
+            for f in ids:
+                back = await session.call_tool("sandbox_read_file",
+                    {"sandbox": f, "path": "/work/task.txt"})
+                print("  %s sees: %s" % (f, back.content[0].text.strip()))
+
+            # Asking for more than the policy allows is a result, not an
+            # exception: the refusal names the ceiling and the line it came
+            # from, so an agent can act on it by asking for less.
+            bad = await session.call_tool("sandbox_run", {"cpus": 64})
+            assert bad.is_error
+            print("refused:", bad.content[0].text.splitlines()[0])
+
+            for f in ids + [sid]:
+                await session.call_tool("sandbox_stop", {"sandbox": f})
+
+asyncio.run(main())
+AGENT
+
+./.venv/bin/python agent.py
+
+echo
+echo "== and the server kept a record of every call it was asked for =="
+session="$(kelyfos log --list | grep serve-mcp | head -1 | awk '{print $1}')"
+kelyfos log --session "$session" | grep -E 'client (call|result)' | head -10
+echo
+kelyfos log --verify --session "$session"
 ```
 
 ---

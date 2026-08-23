@@ -126,7 +126,7 @@
      improvements to the existing product land here as epics. Inert until its gate opens.</p>
   <div class="meta">
     owner: <b>John</b> &nbsp;&middot;&nbsp; developer: <b>Claude Code</b> &nbsp;&middot;&nbsp;
-    status: <b class="ok" id="meta-status">Epic E4 — active, 5/9 (v0.6 released; next: E4-5, client recipes)</b> &nbsp;&middot;&nbsp;
+    status: <b class="ok" id="meta-status">Epic E4 — active, 6/9 (v0.6 released; next: E4-6, the plugins drive)</b> &nbsp;&middot;&nbsp;
     last updated: <b id="meta-updated">2026-08-23</b><br>
     repo file: <b>PLAN-FEATURES.html</b> (lives at the repository root next to <code>PLAN.html</code>)<br>
     <span class="quiet">Companion to PLAN.html — same protocol, same rules, later timeline.</span>
@@ -166,7 +166,7 @@
     <span class="bl-name">All epics</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">E4-5 — client recipes: working configuration for Claude Code and one more MCP client, added to the cookbook and CI-executed like every other recipe</b></div>
+  <div class="focusline">Current focus: <b id="focus">E4-6 — the plugins drive: <code>[[plugin]]</code> in the toml, a read-only plugins disk built at boot, and the per-plugin manifest the supervisor will read</b></div>
 </div>
 
 <!-- ====================================================== 1. ACTIVATION GATE -->
@@ -514,7 +514,7 @@
         <span class="tid">E4-4</span><span class="tk">Audit lane for the outward direction: every client tool call is a flight-recorder
         event (<code>mcp.host.*</code>) — the external agent&rsquo;s use of the sandbox is itself in the transcript, and
         <code>kelyfos log --export</code> renders the client lane alongside guest activity.</span></li>
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">E4-5</span><span class="tk">Client recipes: working config snippets for Claude Code and one more MCP client,
         added to the E3-3 cookbook and CI-executed like every recipe; <code>make docs</code> re-run so the generated reference and
         <code>llms-full.txt</code> pick up the new tools and toml keys automatically (F-D4 paying off).</span></li>
@@ -1609,6 +1609,29 @@
         <i>Revisit when</i> a reader needs one page holding both, which is a rendering problem &mdash; two chains, one
         view &mdash; and not a reason to write the events twice.</td>
         <td class="mono">host/servemcpaudit.go, docs/events.md</td></tr>
+        <tr><td class="mono">F-D44</td><td class="mono">2026-08-23</td>
+        <td><b>A client-configured <code>serve-mcp</code> names its policy file, and a named file that is missing is an
+        error &mdash; because the working directory belongs to the client.</b>
+        <i>The hazard.</i> The policy is found by searching upward from the working directory. On a command line that is
+        exactly right: you are standing in the project. Under a client it is a trap, because the working directory is
+        whatever the client launched from. A user-scope entry in <code>~/.claude.json</code>, or a client started from
+        <code>$HOME</code>, gets a KelyfOS server with <b>no policy and therefore no ceiling at all</b> &mdash; and the
+        only notice is a line of stderr, which clients bury.
+        <i>What was done.</i> <code>--policy &lt;path&gt;</code>, so a configuration file names the wall it means. A
+        <code>--policy</code> that does not exist is an <b>error</b>: falling back to the upward search, finding nothing,
+        and running unbounded because a path was mistyped is the one behaviour this must never have. And the
+        <code>initialize</code> instructions now name the policy in force, or say plainly that none was found and how to
+        point at one &mdash; the instructions being the only channel that reaches the agent rather than the terminal.
+        <i>What was not done, and why.</i> Refusing to start without a policy. E4-1 decided that no policy means the
+        built-in defaults, and that is right for someone trying the thing for the first time in their own project
+        directory. The fix is to make the situation <i>legible</i> where it is dangerous, not to make the easy case
+        harder.
+        <i>Evidence.</i> Recipe 9 writes both clients&rsquo; configuration files, expands the variable each client would
+        expand, runs exactly what the file names, and asks for four cores against a ceiling of two &mdash; so the check
+        proves not only that the server starts but that the policy the file named is the one in force. It passes in CI
+        with neither client installed.
+        <i>Revisit when</i> a client can be relied on to set a working directory, which none of them promises.</td>
+        <td class="mono">code.claude.com/docs/en/mcp, code.visualstudio.com/docs</td></tr>
     <!-- Claude Code: append rows above this line. -->
       <tr><td class="mono">F-D10</td><td class="mono">2026-08-22</td>
         <td>The resource knobs E1-0 goes looking for shipped <b>partly</b>: <code>--vcpus</code>/<code>--mem</code> and
@@ -3857,6 +3880,25 @@ $ gofmt -l . ; go vet ./... ; go test ./...
         session exports with one lane per sandbox using the machinery a team&rsquo;s transcript uses; only the words
         around it changed. <code>--verify</code> and <code>--list</code> learned the difference too, because calling a
         <code>serve-mcp</code> session &ldquo;a team of 1&rdquo; was a plain untruth the listing was printing.</td></tr>
+        <tr><td class="mono">2026-08-23</td><td class="mono">E4-5</td>
+        <td><b>Two recipes that configure a real client, and a hole they found first.</b> Recipe 9 writes the
+        <code>.mcp.json</code> Claude Code reads and the <code>.vscode/mcp.json</code> VS Code reads, then proves each
+        one by reading the entry back out, expanding the variable that client would expand, running exactly what the
+        file names, and asking for more than the policy allows. Both clients&rsquo; formats were checked against their
+        current published documentation rather than remembered. Recipe 10 is the outward twin of recipe 8: the official
+        MCP Python SDK driving the host &mdash; boot, write, exec, snapshot, fork two machines that see the same
+        prepared state &mdash; ending in the server&rsquo;s own record of every call it was asked for.
+        <b>Writing the configuration is what surfaced F-D44.</b> The policy is found by searching upward from the
+        working directory, and under a client that directory is the client&rsquo;s: a server launched from outside the
+        project would find no policy and run with <i>no ceiling at all</i>, announced only on the stderr clients bury.
+        <code>--policy</code> names the file, a named file that is missing is an error rather than a silent fall back,
+        and the <code>initialize</code> instructions now say which policy is in force or that none was found.
+        <b>Three documents were saying things that had stopped being true</b>, and the neighbourhood is where that shows.
+        The cookbook opened with &ldquo;Seven recipes&rdquo; and had eight; <code>integrating.md</code> offered
+        &ldquo;three ways in&rdquo; when <code>serve-mcp</code> made four, and listed <code>log --list</code>&rsquo;s
+        id ordering as a common mistake after the F-D33 batch had fixed it. All corrected &mdash; and the count is now
+        checked by the extractor, so the opening sentence cannot go stale again without failing the build.
+        <b>Ten of ten recipes pass</b> on the development machine, including the two new ones.</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>

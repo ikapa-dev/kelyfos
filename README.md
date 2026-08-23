@@ -263,8 +263,8 @@ machine took.
 | [`llms.txt`](llms.txt) · [`llms-full.txt`](llms-full.txt) | for machine readers: an index per the llmstxt.org spec, and the whole set in one 54k-token file |
 | [`docs/reference/`](docs/reference/) | every command, flag, toml key, MCP tool, event and exit code — generated from the source |
 | [`PLAN.html`](PLAN.html) · [`PLAN-FEATURES.html`](PLAN-FEATURES.html) | the living plan — every decision and the full progress log, phases then epics |
-| [`docs/cookbook.md`](docs/cookbook.md) | eight recipes that work: run one, allowlist a domain, fork, build a team, verify the log |
-| [`docs/integrating.md`](docs/integrating.md) | building on it: the three ways in, orchestrator patterns, common mistakes |
+| [`docs/cookbook.md`](docs/cookbook.md) | ten recipes that work: run one, allowlist a domain, fork, build a team, point a client at it, verify the log |
+| [`docs/integrating.md`](docs/integrating.md) | building on it: the four ways in, orchestrator patterns, common mistakes |
 | [`docs/mcp-surface.md`](docs/mcp-surface.md) | the v0.7 spec: MCP in both directions, written before the code |
 | [`docs/threat-model.md`](docs/threat-model.md) | what is defended, and what is not |
 | [`docs/protocol.md`](docs/protocol.md) | the host/guest wire protocol |

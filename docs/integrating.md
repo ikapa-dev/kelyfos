@@ -9,24 +9,35 @@ this page says so rather than printing it anyway.
 
 ---
 
-## 1. Three ways in, and how to choose
+## 1. Four ways in, and how to choose
 
 | | What it is | Choose it when |
 | --- | --- | --- |
 | **The CLI** | `kelyfos` as a subprocess: `run`, `exec`, `team up`, `log` | You are scripting, or your orchestrator is happy shelling out. Simplest thing that works. |
-| **The MCP bridge** | `kelyfos mcp` copies bytes between your standard streams and the guest's MCP server | You are writing an agent, or you already have an MCP client. This is the interface the product is designed around. |
+| **The MCP bridge** | `kelyfos mcp` copies bytes between your standard streams and *one guest's* MCP server | You are writing an agent that works inside a sandbox you chose. This is the interface the product was designed around. |
+| **The MCP server** | `kelyfos serve-mcp` is KelyfOS itself as an MCP server: sandboxes, files, snapshots, forks and teams as tools | You have a client — Claude Code, VS Code, anything — and want *it* to create and manage the machines. One entry in a config file. |
 | **The E2B shim** | an E2B-compatible REST subset on a local port | You have code already written against the E2B SDK and want it to work against a self-hosted box without a rewrite. |
 
-All three go through the same wall. Each reads the project's `kelyfos.toml`,
-each is capped by its `[resources]`, and each writes a flight recorder — there
-is no entry path that skips the policy, which is the invariant F-D5 states for
-MCP and F-D33 applied to the shim.
+All four go through the same wall. Each reads the project's `kelyfos.toml`, each
+is capped by its `[resources]`, and each writes a flight recorder — there is no
+entry path that skips the policy, which is the invariant F-D5 states for MCP and
+F-D33 applied to the shim.
 
 They do differ in what they can express. The shim serves a fixed REST subset and
-cannot run commands at all; the bridge gives an agent the full tool surface; the
-CLI gives you everything including the things no tool exposes, like `fork` and
-`team up`. And the shim authenticates nobody, so its port is a local privilege
-surface the other two do not have.
+cannot run commands at all; the bridge gives an agent one guest's full tool
+surface; `serve-mcp` gives a client the host's, including snapshots, forks and
+the declared team; the CLI gives you everything. And the shim authenticates
+nobody, so its port is a local privilege surface the other three do not have.
+
+The two MCP doors point in opposite directions and are easy to confuse. `mcp`
+is *inward*: you have already chosen a sandbox and you are talking to what is
+inside it. `serve-mcp` is *outward*: the client has no sandbox yet, and the
+tools are for getting one. A client configured with `serve-mcp` needs the policy
+named explicitly — `--policy /path/to/kelyfos.toml` — because the working
+directory it launches from is the client's, not yours, and one launched outside
+the project would find no policy and run with no ceiling. `docs/mcp-surface.md`
+§2.3 has it, and recipe 9 of the cookbook is the configuration for two clients
+with a check that proves the file works.
 
 ### The one flag that shapes everything else
 
@@ -286,11 +297,13 @@ kelyfos: 2 sandboxes are running; pick one with --sandbox: [39a571db 5bf6f351]
 There is no "current" sandbox. `KELYFOS_SANDBOX` or `--sandbox` disambiguates;
 `run -- <command>` sets the first one for you.
 
-### `kelyfos log --list` is ordered by session id
+### Picking a session out of `kelyfos log --list`
 
-Not by time. `head -1` gives you an arbitrary session. Every `log` subcommand
-defaults to the most recent session when `--session` is absent, which is almost
-always what you meant.
+The listing is newest first, and every `log` subcommand defaults to the most
+recent session when `--session` is absent, which is almost always what you
+meant. Rows are marked with what kind of session they are — `team of N`, or
+`serve-mcp, N sandbox(es)` — so a listing can be filtered rather than guessed
+at: `kelyfos log --list | grep serve-mcp | head -1` is the server's own record.
 
 ### A secret bound to a domain that is not allowed
 
@@ -443,7 +456,7 @@ different protocol stack from the REST endpoints the shim serves. Use
 
 ## 7. Where to look next
 
-- [`cookbook.md`](cookbook.md) — eight recipes that run, including the Python
+- [`cookbook.md`](cookbook.md) — ten recipes that run, including the Python
   client above
 - [`reference/`](reference/) — every command, flag, key, tool, event and exit
   code, generated from the source

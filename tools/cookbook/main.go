@@ -34,6 +34,9 @@ func main() {
 	if err != nil {
 		die(fmt.Errorf("%s: %w", *in, err))
 	}
+	if err := checkCount(string(body), len(recipes)); err != nil {
+		die(fmt.Errorf("%s: %w", *in, err))
+	}
 	if *list {
 		for _, r := range recipes {
 			fmt.Println(r.Name)
@@ -143,4 +146,32 @@ func markerAbove(lines []string, i int) bool {
 		return marker.MatchString(strings.TrimSpace(lines[j]))
 	}
 	return false
+}
+
+// countWords maps the number a document can spell out to the number it means.
+// The cookbook opens by saying how many recipes it has, in words, and that
+// sentence is exactly the kind of thing that goes stale the moment somebody
+// adds one — it already had, silently, before this check existed (E4-5).
+var countWords = map[string]int{
+	"One": 1, "Two": 2, "Three": 3, "Four": 4, "Five": 5, "Six": 6,
+	"Seven": 7, "Eight": 8, "Nine": 9, "Ten": 10, "Eleven": 11, "Twelve": 12,
+	"Thirteen": 13, "Fourteen": 14, "Fifteen": 15, "Sixteen": 16,
+}
+
+var countLine = regexp.MustCompile(`(?m)^([A-Z][a-z]+) recipes,`)
+
+func checkCount(doc string, n int) error {
+	m := countLine.FindStringSubmatch(doc)
+	if m == nil {
+		return fmt.Errorf("no line of the form \"<Number> recipes, …\" — the document should say " +
+			"how many it has, and this check keeps that true")
+	}
+	said, ok := countWords[m[1]]
+	if !ok {
+		return fmt.Errorf("the opening says %q recipes, which is not a number this knows", m[1])
+	}
+	if said != n {
+		return fmt.Errorf("the opening says %s recipes and there are %d", strings.ToLower(m[1]), n)
+	}
+	return nil
 }

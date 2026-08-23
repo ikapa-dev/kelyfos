@@ -230,6 +230,16 @@ figures, informational only (D15).
 max_sandboxes = 4
 ```
 
+**Which policy file is a decision, not a default.** The server searches upward
+from its working directory for `kelyfos.toml`, which is right on a command line
+and a trap under a client: the working directory belongs to the client, and one
+launched from outside the project finds no policy and runs with no ceiling at
+all. `--policy <path>` names the file, and a `--policy` that does not exist is
+an error rather than a quiet fall back to the search. The `initialize`
+instructions name the policy in force, or say plainly that none was found —
+because the banner naming it goes to stderr, and clients bury stderr.
+
+
 `max_sandboxes` bounds how many sandboxes one `serve-mcp` process may have
 running at once. The default is **4**, and it is small on purpose: each one is a
 real microVM with real RAM, four of them at the default 512 MiB is 2 GiB, and an

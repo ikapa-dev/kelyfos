@@ -106,6 +106,7 @@ kelyfos serve-mcp [flags]
 | Flag | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `--arch` | string | the build host's architecture | guest architecture (aarch64\|x86_64) |
+| `--policy` | string | search upward from the working directory | path to the project's kelyfos.toml |
 
 ## kelyfos snapshot save
 
