@@ -151,6 +151,7 @@ Two ranges, chosen so the direction of a channel is readable from its number:
 | `10003` | `control` | host → guest | P2-1 | Lifecycle and resync RPCs. §5.4 |
 | `10100` | `ready` | guest → host | P1-3 | Boot-to-ready signal and heartbeats. §5.3 |
 | `10101` | `events` | guest → host | P2-4 | Guest-side event stream into the flight recorder. §5.5 |
+| `10102` | `team` | guest → host | E2-1 | Team messaging: the guest asks, the host routes. §5.6 |
 
 Host socket paths follow from §1.2: the `ready` channel is
 `<run_dir>/v.sock_10100`, the `events` channel is `<run_dir>/v.sock_10101`. The
@@ -363,6 +364,48 @@ The guest queues these and reconnects after a drop, the way it does for `ready`.
 The queue is bounded: this is PID 1, so a host that stops reading must cost a
 dropped report rather than a blocked init, and a drop is announced on the
 console.
+
+### 5.6 `team` — port 10102, guest → host
+
+Team messaging (E2-1). Request/response, newline-delimited JSON, one connection
+held for the life of the sandbox.
+
+This channel runs guest → host, unlike `exec`, `mcp` and `control`, and the
+direction is the design. Every other host-initiated channel exists because the
+host wants something from the guest; this one exists because an agent inside the
+guest wants to reach another agent, and nothing already here can carry that —
+`ready` and `events` are one-way reports with no reply path.
+
+The host is the only participant that can answer. It is the only one that knows
+the edge list, holds the other guests' channels, and writes the audit record. A
+guest asks; a guest is never asked to route, and no guest ever receives a
+connection from another guest, because there is no path for one (`docs/teams.md`
+§2).
+
+```json
+{"v":1,"id":"7","op":"send","to":"worker-1","body":"c3BsaXQgdGhpcw=="}
+{"v":1,"id":"7","ok":true}
+```
+
+| `op` | meaning |
+| --- | --- |
+| `send` | Deliver `body` to `to`. Answered when the broker accepted or refused it. |
+| `recv` | Take the next message for this agent, waiting up to `timeout_ms`. |
+| `ask` | Deliver a question and wait for its answer, up to `timeout_ms`. |
+| `reply` | Answer a question, carrying back the `correlate` the broker supplied. |
+| `peers` | The agents this one may *initiate* to. |
+| `store_get`, `store_put` | The team store, E2-3. |
+
+`correlate` is minted by the broker and echoed by the guest. A guest cannot
+invent one: a reply whose correlation the broker does not recognise, or that
+belongs to a question put to a different agent, is refused. That matters because
+a reply is the one message that crosses without an edge being checked — it
+completes a call the broker is already holding open — so the tag is what stands
+in for the edge.
+
+A refusal is an `Error` with one of the kinds in §4 plus `no_edge`,
+`no_such_agent` and `unreachable`. There is no silent drop: an agent that may
+not send something is told so, and told why.
 
 ---
 

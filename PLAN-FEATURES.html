@@ -126,7 +126,7 @@
      improvements to the existing product land here as epics. Inert until its gate opens.</p>
   <div class="meta">
     owner: <b>John</b> &nbsp;&middot;&nbsp; developer: <b>Claude Code</b> &nbsp;&middot;&nbsp;
-    status: <b class="ok" id="meta-status">Epic E2 — active, 1/10 (next: E2-1, the host broker)</b> &nbsp;&middot;&nbsp;
+    status: <b class="ok" id="meta-status">Epic E2 — active, 2/10 (next: E2-2, the guest tools)</b> &nbsp;&middot;&nbsp;
     last updated: <b id="meta-updated">2026-08-23</b><br>
     repo file: <b>PLAN-FEATURES.html</b> (lives at the repository root next to <code>PLAN.html</code>)<br>
     <span class="quiet">Companion to PLAN.html — same protocol, same rules, later timeline.</span>
@@ -166,7 +166,7 @@
     <span class="bl-name">All epics</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">E2-1 — the host broker: route over the existing vsock channels, enforce the edge list, record every message</b></div>
+  <div class="focusline">Current focus: <b id="focus">E2-2 — the six team MCP tools in the supervisor, so a question arrives as a tool call</b></div>
 </div>
 
 <!-- ====================================================== 1. ACTIVATION GATE -->
@@ -339,7 +339,7 @@
         durable audit log are orthogonal; delivered messages are FIFO per edge. And edge direction: a unidirectional edge is
         visible in <code>team_peers</code> to the initiating side only; replies to an <code>ask</code> travel the return path of
         that ask and need no edge of their own.</span></li>
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">E2-1</span><span class="tk">Broker in the host CLI: routes messages between VM supervisors over the existing
         per-VM vsock channels, enforcing the edge list. Every message becomes a flight-recorder event — metadata always
         (from, to, size, hash); payload capture is a per-team toml switch so sensitive teams can log hashes only.
@@ -805,6 +805,17 @@
         keeping is between a <i>reading</i> and a <i>record</i>. A live gauge is a reading and does not belong in the chain;
         the receipt is a record and does. Both come from the same host-side counters, so the lane and the receipt can never
         disagree about what happened.</td></tr>
+        <tr><td class="mono">F-D15</td><td class="mono">2026-08-23</td>
+        <td>Team messaging gets a channel of its own, <code>team</code> on port 10102, running <b>guest &rarr; host</b>. It
+        is not carried on any existing channel.</td>
+        <td>E2-1 says &ldquo;over the existing per-VM vsock channels&rdquo; and this is that, in the only way the sentence
+        can be satisfied: the same hybrid-vsock mechanism, per VM, one more port. Nothing already defined can carry it.
+        <code>ready</code> and <code>events</code> run the right direction but are one-way reports with no reply path;
+        <code>exec</code>, <code>mcp</code> and <code>control</code> all run the other way, because every one of them exists
+        because the host wants something from the guest. This one exists because an agent inside a guest wants to reach
+        another agent, which is a request the guest has to originate. The host is the only participant that can answer it:
+        it is the only one holding the edge list, the other guests' channels, and the audit chain. A guest asks; a guest is
+        never asked to route, and no guest ever receives a connection from another guest because there is no path for one.</td></tr>
     <!-- Claude Code: append rows above this line. -->
       <tr><td class="mono">F-D10</td><td class="mono">2026-08-22</td>
         <td>The resource knobs E1-0 goes looking for shipped <b>partly</b>: <code>--vcpus</code>/<code>--mem</code> and
@@ -1575,6 +1586,52 @@ the rules the threat-model section now quotes, from internal/sandbox/network.go:
                            counter drop }
   chain forward         { iifname "&lt;tap&gt;" counter drop
                            oifname "&lt;tap&gt;" counter drop }</pre></td></tr>
+        <tr><td class="mono">2026-08-23</td><td class="mono">E2-1</td>
+        <td>The broker, in <code>internal/team</code>, with the topology it enforces and the events it produces. Every
+        message between agents passes through it, and that is not a convenience: no guest has a network path to any other
+        guest, so there is no second route for a message to take and therefore no way to bypass the edge list or to avoid
+        being recorded. Neither property is separately arranged; both fall out of the shape.
+        Globs are expanded once, at build time, rather than matched per message &mdash; a topology is fixed for the run, so
+        the permitted pairs are knowable up front, and knowing them up front is what lets an edge naming a misspelt agent be
+        refused at boot instead of discovered at the first message. A refusal is its own event type and reaches the sender
+        as an error naming the kind, never as a silence. Payload capture is a switch and the digest is present either way,
+        so a claim about a message can be checked later without the log holding a second copy of it.
+        <b>Three details worth their comments.</b> A reply is the one message that crosses without an edge being checked,
+        because it completes a call the broker is already holding open &mdash; so the correlation tag stands in for the
+        edge, is minted by the broker, and is refused if it is unknown <i>or</i> belongs to a question put to a different
+        agent. A full mailbox is an <code>unreachable</code> error rather than growth: at-most-once means nothing is held
+        for a machine that may never come back. And the channel this all rides on is new, F-D15, because it has to run
+        guest&rarr;host and nothing existing does.
+        The race detector earned its keep before there was a team to run: it found that the callback contract was
+        undocumented, since the broker records on whichever goroutine delivered the message. The contract is now written
+        down, the flight recorder already satisfies it, and the test that did not was fixed rather than the checker
+        silenced.</td>
+        <td class="mono"><pre>$ go test -race ./internal/team/ -v
+--- PASS: TestStarPermitsTheMasterAndNothingSideways
+--- PASS: TestPeersAreInitiatorSideOnly
+--- PASS: TestEdgesToNowhereAreRefusedAtBuildTime
+--- PASS: TestSendCrossesAnEdgeAndIsRecorded
+--- PASS: TestSidewaysSendIsRefusedAndAudited
+--- PASS: TestUnknownAgentIsItsOwnRefusal
+--- PASS: TestAskAndReplyOverAUnidirectionalEdge
+--- PASS: TestAReplyToNothingIsRefused
+--- PASS: TestOnlyTheAskedAgentMayReply
+--- PASS: TestAskTimesOutRatherThanWaitingForever
+--- PASS: TestPayloadCaptureIsASwitch
+--- PASS: TestDeliveryIsFIFOPerEdge
+--- PASS: TestAFullMailboxIsAnErrorNotAQueue
+ok  internal/team  1.670s
+
+the race the detector found, in the test rather than the broker, and the
+reason the contract is now written on New():
+  WARNING: DATA RACE
+  Read at 0x00c0000122b8 by goroutine 16:   team.(*Broker).Reply
+  Previous write by goroutine 15:           team.(*Broker).deliver
+
+new in the protocol (docs/protocol.md §5.6) and the schema (docs/events.md):
+  10102  team  guest -&gt; host  E2-1
+  team.message / team.refused  with agent, peer, kind, outcome, bytes,
+                               sha256, reason, and data only on capture</pre></td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>

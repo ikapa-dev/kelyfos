@@ -40,6 +40,8 @@ const (
 	TypeResourceOOM     = "resource.oom"
 	TypeResourceTimeout = "resource.timeout"
 	TypeResourceSummary = "resource.summary"
+	TypeTeamMessage     = "team.message"
+	TypeTeamRefused     = "team.refused"
 )
 
 // Sources.
@@ -118,6 +120,16 @@ type Event struct {
 	Budget    string `json:"budget,omitempty"`
 	BudgetMS  int64  `json:"budget_ms,omitempty"`
 	ElapsedMS int64  `json:"elapsed_ms,omitempty"`
+
+	// team.message and team.refused (E2-1). From and To are agent names inside
+	// one team; Kind is send, ask or reply; Outcome is what happened to it.
+	// Data carries the payload only when the team asked for capture, and
+	// SHA256 is present either way — a digest lets a later claim about a
+	// message be checked without the log holding a second copy of it.
+	Agent   string `json:"agent,omitempty"`
+	Peer    string `json:"peer,omitempty"`
+	Kind    string `json:"kind,omitempty"`
+	Outcome string `json:"outcome,omitempty"`
 
 	// resource.summary — the usage receipt, written once at teardown.
 	CPUSeconds     float64 `json:"cpu_seconds,omitempty"`

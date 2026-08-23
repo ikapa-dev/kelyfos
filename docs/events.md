@@ -177,6 +177,31 @@ hashed. A hash of a short credential is a credential. The whole point of
 injecting at the proxy is that the value exists in one place; writing it to an
 audit log would put it in two.
 
+### `team.message` and `team.refused`
+One inter-agent message, or one the edge list did not permit. Written from E2-1.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `agent` | string | The sender's name within the team. |
+| `peer` | string | The intended recipient's name. |
+| `kind` | string | `send`, `ask` or `reply`. |
+| `outcome` | string | `delivered`, `refused`, `unreachable` or `timeout`. |
+| `bytes` | integer | Payload length. |
+| `sha256` | string | Digest of the payload. |
+| `data` | string | The payload itself — **only** when the team enabled capture. |
+| `reason` | string | Why, on a refusal: `no_edge`, `no_such_agent`, `unknown_correlation`, `mailbox_full`. |
+
+A refusal gets its own type rather than a flag, for the same reason a blocked
+egress attempt does: it is the event someone reading the log is looking for.
+
+`data` is absent by default. A team passing customer data between agents should
+be able to prove what moved without keeping a second copy of it, and the digest
+lets a later claim about a message be checked either way.
+
+These events say what happened to a message, not what will happen to it. The
+recorder is not a delivery buffer: delivery is at-most-once and nothing is ever
+redelivered from the log (`docs/teams.md` §6.1).
+
 ### `resource.summary`
 The usage receipt, written once at teardown. Written from E1-7.
 
@@ -256,6 +281,7 @@ a reader should present the session as open rather than truncated.
 | `resource.oom` reported by the guest, written by the host | E1-4 |
 | `resource.timeout` naming the budget that fired | E1-6 |
 | `resource.summary` usage receipt at teardown | E1-7 |
+| `team.message` and `team.refused` for every inter-agent message | E2-1 |
 | HTML session export built only from this file | P3-8 |
 | Live TUI built only from this file | P3-9 |
 | Signed exports verifiable offline | P4-3 |

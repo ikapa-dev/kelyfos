@@ -23,6 +23,7 @@ const (
 	PortControl = 10003 // host -> guest
 	PortReady   = 10100 // guest -> host
 	PortEvents  = 10101 // guest -> host
+	PortTeam    = 10102 // guest -> host
 )
 
 // CIDs fixed by the virtio-vsock specification and by KelyfOS.
@@ -136,6 +137,63 @@ type GuestEvent struct {
 // the guest is reporting an event of that type, not a private encoding of one.
 const (
 	GuestEventOOM = "resource.oom"
+)
+
+// TeamRequest and TeamResponse are the team broker's RPCs (§5.6), and they run
+// guest → host for a reason worth stating: every other channel in this protocol
+// exists because the host wants something from the guest, and this one exists
+// because an agent inside the guest wants to reach another agent. Nothing
+// already here can carry that — `ready` and `events` are one-way reports, and
+// `exec`, `mcp` and `control` are all the host calling in.
+//
+// The host is the only participant that can answer, because the host is the
+// only participant that knows the edge list, holds the other guests' channels,
+// and writes the audit record. A guest asks; it is never asked to route.
+type TeamRequest struct {
+	V    int    `json:"v"`
+	ID   string `json:"id"`
+	Op   string `json:"op"`
+	To   string `json:"to,omitempty"`
+	Body string `json:"body,omitempty"` // base64
+	// Correlate names the ask a reply answers. The guest echoes what the broker
+	// gave it and cannot invent one: a reply whose correlation the broker does
+	// not recognise is refused, so a guest cannot answer a question nobody asked
+	// it and reach an agent it has no edge to that way.
+	Correlate string `json:"correlate,omitempty"`
+	Key       string `json:"key,omitempty"`
+	TimeoutMS int64  `json:"timeout_ms,omitempty"`
+}
+
+type TeamResponse struct {
+	V     int      `json:"v"`
+	ID    string   `json:"id"`
+	OK    bool     `json:"ok"`
+	From  string   `json:"from,omitempty"`
+	Body  string   `json:"body,omitempty"` // base64
+	Peers []string `json:"peers,omitempty"`
+	// Correlate on a delivered question is the tag a reply must carry back.
+	Correlate string `json:"correlate,omitempty"`
+	Error     *Error `json:"error,omitempty"`
+}
+
+// Team operations, matching the MCP tools E2-2 exposes one for one.
+const (
+	OpTeamSend     = "send"
+	OpTeamRecv     = "recv"
+	OpTeamAsk      = "ask"
+	OpTeamReply    = "reply"
+	OpTeamPeers    = "peers"
+	OpTeamStoreGet = "store_get"
+	OpTeamStorePut = "store_put"
+)
+
+// Team error kinds, in addition to the shared ones above. Every refusal reaches
+// the calling agent as one of these rather than as a silence (docs/teams.md
+// §3.6).
+const (
+	ErrNoEdge      = "no_edge"
+	ErrNoSuchAgent = "no_such_agent"
+	ErrUnreachable = "unreachable"
 )
 
 // ControlRequest and ControlResponse are the lifecycle RPCs (§5.4).
