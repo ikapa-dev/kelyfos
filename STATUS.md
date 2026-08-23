@@ -23,8 +23,8 @@ constant now, every reader and writer, proved at 8 MiB (F-D38); and a restore
 met no ceiling at all (F-D39).
 
 ## Blocked / debts
-- P4-4, P4-5 [BLOCKED] — Phase 4 backlog. Per-agent `idle_timeout` still refused
-  (F-D20; F-D22 is the task). IMAGE_DIR per-arch not per-flavor: parked.
+- P4-4, P4-5 [BLOCKED]. Per-agent `idle_timeout` refused (F-D20; F-D22 is the
+  task). IMAGE_DIR per-arch not per-flavor: parked.
 
 ## The E4→E5 seam carries a platform-refresh pair (John's ruling)
 Both F-D35 premises accepted as falsified. After E4's exit and v0.7, before E5-0:
