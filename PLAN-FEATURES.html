@@ -452,7 +452,7 @@
         <span class="tid">E3-4</span><span class="tk">Integration guide for agent builders: calling <code>kelyfos</code> from Python/JS,
         the MCP stdio bridge, the shim, and the patterns for building an orchestrator <i>on top</i> (spawn-under-budget,
         team toml generation). Includes a &ldquo;common mistakes&rdquo; section fed by real errors from the build&rsquo;s progress log.</span></li>
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">E3-5</span><span class="tk">The exam: a fresh Claude Code session on a machine with the <code>kelyfos</code> binary and both image flavors
         (base + dev) built from the commit under test, installed via the README quickstart, is given <b>only</b> <code>llms-full.txt</code> — the source tree
         withheld — and asked to build a small orchestrator: boot a 3-agent team, run a task with one <code>team_ask</code>,
@@ -1280,6 +1280,44 @@
         so that searching for it lands on the answer &mdash; including the three E3-3 turned up
         (F-D30) and the parser refusals whose text is in the source.</td>
         <td class="mono">the E3-4 progress row</td></tr>
+        <tr><td class="mono">F-D32</td><td class="mono">2026-08-23</td>
+        <td><b>The exam passed on its first run and found ten defects, and the most important one is an argument
+        against the epic&rsquo;s own machinery.</b> The <i>generated</i> reference said a team message&rsquo;s
+        <code>data</code> field was base64. It is plain text. The hand-written <code>events.md</code> in the same
+        concatenated file said so correctly, so the two contradicted each other &mdash; and the wrong one was the page
+        carrying the banner that promises CI fails when it disagrees with the source.
+        <i>Why CI could not have caught it.</i> The drift gate checks that <code>docs/reference/</code> matches
+        <code>recorder.Types()</code>, and it did: the table was faithfully generated from a table that was wrong.
+        <b>A generator guarantees consistency, not truth.</b> F-D28&rsquo;s three AST checks close the gap between the
+        code and the schema table &mdash; a field the writer sets and the table omits fails a test &mdash; but nothing
+        checks that a <i>description</i> is accurate, because nothing can. That is what the exam is for, and it is the
+        reason E3-5 is a task rather than a formality. The fix is in
+        <code>internal/recorder/schema.go</code>, which regenerates the page.
+        <i>Routing, the same three classes as F-D27.</i> Nine findings were documentation and are fixed in this
+        commit: the <code>data</code> encoding and the two other errors in the same table; the error vocabulary an
+        agent receives versus the reason the record carries, which are deliberately different and were documented as
+        one; that a <code>team_recv</code> timeout writes no event at all, where the outcome vocabulary invites the
+        opposite guess; <code>run/team.json</code>, the only agent-name-to-sandbox-id mapping there is and load-bearing
+        for every orchestrator, which appeared once in five thousand lines inside a code block; the reference
+        environment, cited repeatedly by name and never described; what a blocking tool does when its channel closes
+        early; MCP version negotiation reading as a mismatch; and a <code>--session</code> sentence that implied the
+        record becomes unreachable after <code>team down</code>.
+        <b>Four are product work and are recorded rather than fixed</b>, for the reason F-D27 gives: a documentation
+        epic that starts changing behaviour because it is what found the problem stops being about anything.
+        <b>(1)</b> A blocking MCP tool whose channel closes before the answer arrives returns nothing to the caller
+        &mdash; no result, no error, no non-zero exit. <b>(2)</b> The export draws a reply pointing back in the team
+        lanes and pointing forward in the timeline, from the same event. <b>(3)</b> A team&rsquo;s
+        <code>session.start</code> carries no <code>image</code>, so the export header has a hole where the flavor
+        should be &mdash; awkward against D21&rsquo;s claim that the flavor in the audit trail is a checked fact.
+        <b>(4)</b> A refused key inside a table reports the table header&rsquo;s line number rather than the
+        key&rsquo;s; unknown keys report correctly.
+        <i>What the exam also established, which is easy to lose behind the defect list.</i> A fresh agent with no
+        source access built a working three-agent orchestrator with an ask round-trip on its first attempt, in about
+        thirty-five minutes, having read roughly seven hundred of five thousand lines. Every CLI flag matched its
+        documented type and default; every MCP tool matched its documented parameter names; the cold-first/fork-warm
+        boot story was observable between its two runs. It spent seventeen of those minutes breaking things on purpose
+        because the task itself had cost so little, which is where nine of the ten defects came from.</td>
+        <td class="mono">docs/exam/; the E3-5 progress row</td></tr>
     <!-- Claude Code: append rows above this line. -->
       <tr><td class="mono">F-D10</td><td class="mono">2026-08-22</td>
         <td>The resource knobs E1-0 goes looking for shipped <b>partly</b>: <code>--vcpus</code>/<code>--mem</code> and
@@ -3186,6 +3224,56 @@ making it a recipe rather than a snippet:
 llms-full.txt regenerated:
   59 892 tokens (cl100k) · 59 873 (o200k)
   = 30% of a 200k window
+
+$ gofmt -l . ; go vet ./... ; go test ./...
+  clean · clean · all packages ok</pre></td></tr>
+        <tr><td class="mono">2026-08-23</td><td class="mono">E3-5</td>
+        <td><b>The exam passed on its first run.</b> A fresh agent on a machine carrying
+        <code>kelyfos v0.5-17-g65be6c6</code> and both image flavors built from that commit, given
+        <code>llms-full.txt</code> and nothing else &mdash; no source tree, no <code>docs/</code>, no
+        <code>README.md</code>, no plan files, no git history, no web &mdash; declared a three-agent team, booted it,
+        drove each guest&rsquo;s MCP server through <code>kelyfos mcp</code>, completed a
+        <code>team_ask</code> round-trip with the blocked caller receiving its answer, exercised the store, drew a
+        refusal from an undeclared edge, and exported the transcript. About thirty-five minutes, having read roughly
+        700 of 5,017 lines. It reports reading nothing it should not have.
+        <b>Then it spent seventeen of those minutes breaking things on purpose</b>, because the task itself had cost so
+        little &mdash; and that is where nine of its ten findings came from. The evidence is in
+        <code>docs/exam/</code>: the working transcript it kept as it went, the orchestrator it wrote, the probe script
+        it wrote afterwards, and the HTML export its own run produced.
+        <b>The finding that matters is an argument against this epic&rsquo;s own machinery</b> and is F-D32: the
+        <i>generated</i> reference said a team message&rsquo;s <code>data</code> was base64 and it is plain text,
+        contradicting the hand-written page in the same file. CI could not have caught it, because CI checks that the
+        generated page matches its source table and the source table was wrong. A generator guarantees consistency,
+        not truth. Fixed at the source, along with eight other documentation defects; four product defects are recorded
+        rather than fixed.
+        The exam is not re-run, because it passed &mdash; E3-5&rsquo;s rule is that it reruns <i>until</i> it does
+        &mdash; and E3 added no command or MCP tool that would trigger F-D9&rsquo;s re-run condition.</td>
+        <td class="mono"><pre>the exam's own words:
+
+== worker-1 asks the master a question and
+   BLOCKS on the answer ==
+  master received: only regular files, or
+                   directories too?
+  correlate tag:   b73770ba35fbcc2c
+answered
+  worker-1's blocked ask returned:
+                   regular files only
+
+  no_edge: this team has no edge from worker-1
+           to worker-2
+
+team-transcript.html  14 384 bytes
+  17 events verified · one lane per agent ·
+  zero external src/href
+
+$ kelyfos version        (on the exam machine)
+  kelyfos v0.5-17-g65be6c6
+$ kelyfos doctor
+  all checks passed
+
+what it could not have known without running it:
+  "data": "count the regular files in /etc"
+  &mdash; the reference said base64
 
 $ gofmt -l . ; go vet ./... ; go test ./...
   clean · clean · all packages ok</pre></td></tr>

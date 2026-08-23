@@ -298,7 +298,17 @@ silent drop:
 | `no_such_agent` | The name is not in this team. |
 | `unreachable` | The recipient exists but its channel is gone. |
 | `timeout` | An `ask` expired, or a `recv` window closed empty. |
-| `denied` | Store access this agent does not have, or a spawn it may not make. |
+| `denied` | Store access this agent does not have, a spawn it may not make, a `team_reply` with a `correlate` tag that is missing or not its own, or any call on a team with no store. |
+| `bad_request` | The call itself was malformed — a body that is not valid base64, an unknown operation. |
+| `internal` | The host failed at something it had already permitted. |
+
+**The kind an agent receives and the reason the record carries are two different
+vocabularies, deliberately.** An agent branches on a small set it can act on; the
+transcript records the specific thing that happened. A `team_reply` with a tag
+nobody is waiting for returns `denied` to the agent and is recorded with
+`reason: unknown_correlation`; one with no tag at all returns `denied` and is
+recorded `missing_correlation`. If you are writing an orchestrator, branch on the
+kind and read the record for the detail.
 
 ---
 
@@ -517,11 +527,19 @@ its exact machine already exists.
 concurrently, and that is all that happens. The template is built afterwards, in
 the background, while the team is already working; the next `team up` of the
 same shape forks its no-egress workers from it. The reason is measured rather
-than assumed: on the reference environment a cold boot is 109–134 ms and writing
-a 384 MiB memory image is 927 ms, so a "fast path" that builds its own template
-first is slower than not having one. Paying that write once is what makes
-forking worth having — after it, a fork is 57–61 ms there and beats the cold
-boot on every machine tested (F-D25, F-D26).
+than assumed: on the reference environment — a bare-KVM x86_64 CI runner, which
+is the only machine any timing claim in this project is made about — a cold boot
+is 109–134 ms and writing a 384 MiB memory image is 927 ms, so a "fast path"
+that builds its own template first is slower than not having one. Paying that
+write once is what makes forking worth having: after it a fork is 57–61 ms
+there, and it beats the cold boot on every machine tested (F-D25, F-D26).
+
+**Expect entirely different numbers on a laptop**, and do not read them as a
+regression. Under nested virtualisation — a Lima or WSL2 layer on a developer's
+machine — a cold boot is measured in seconds rather than milliseconds, because
+every device access is serviced by a hypervisor inside another hypervisor. The
+ratio between the two paths survives, which is the part that matters: forking is
+still much cheaper than booting there, and more so than on the reference.
 
 The template is a mould: it is never in the roster, never appears in the
 transcript as an agent, has no team channel of its own, and is stopped as soon
@@ -610,8 +628,10 @@ any member span every lane.
 
 While the team is up, `kelyfos log --session <agent's sandbox id>` redirects to
 the team's record and says so. After `team down` the run directories are gone,
-so the team session is found by its own id or with `kelyfos log --list`, which
-marks the sessions that hold a team.
+so that redirect no longer works and the team session is found by its own id or
+with `kelyfos log --list`, which marks the sessions that hold a team. The record
+itself is unaffected: with no `--session` at all, `kelyfos log` still takes the
+most recent session, which immediately after a `team down` is the team's.
 
 ### 8.2 Watching it live
 
@@ -644,6 +664,13 @@ contradictory at a glance:
 The recorder logs *outcomes*. It is not a queue, nothing is ever redelivered
 from it, and a message appearing in the log is not evidence it was received —
 that is what the outcome field is for.
+
+One consequence worth stating, because the outcome vocabulary invites the wrong
+guess. `outcome: timeout` is **an ask that nobody answered in time**. A
+`team_recv` whose window closes empty returns a `timeout` error to the agent and
+writes *no event at all*, because nothing happened: no message was sent, none was
+delivered, and a recorder of message outcomes has no outcome to record. An
+orchestrator waiting on a quiet agent should not expect the record to say so.
 
 ---
 

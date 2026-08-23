@@ -180,11 +180,11 @@ One inter-agent delivery, or one that could not be made. Written by the **host**
 | `agent` | string | the sender |
 | `peer` | string | the addressee |
 | `kind` | string | send, ask or reply |
-| `outcome` | string | delivered, unreachable or timeout |
+| `outcome` | string | delivered, unreachable, or timeout — timeout meaning an ask nobody answered in time, never a recv that found nothing |
 | `reason` | string | mailbox_full *(unreachable)* |
 | `bytes` | integer | body size |
 | `sha256` | string | digest of the body |
-| `data` | string | base64 body *(record_payloads = true)* |
+| `data` | string | the body itself, as text — not base64, though the wire that carried it was (docs/protocol.md §5.6) *(record_payloads = true)* |
 
 ## `team.refused`
 
@@ -193,12 +193,13 @@ A message the edge list did not permit — its own type, because it is the inter
 | Field | Type | Meaning |
 | --- | --- | --- |
 | `agent` | string | the sender |
-| `peer` | string | the addressee it was not allowed to reach |
+| `peer` | string | the addressee it was not allowed to reach; absent on a reply refused for its correlation, which never named one *(the refusal had an addressee)* |
 | `kind` | string | send, ask or reply |
 | `outcome` | string | refused |
 | `reason` | string | no_edge, no_such_agent, missing_correlation, unknown_correlation |
-| `bytes` | integer | body size |
+| `bytes` | integer | body size; zero for a refusal that carried no body, such as a reply to an unknown correlation |
 | `sha256` | string | digest of the body |
+| `data` | string | the body itself, as text — a refused message is captured like a delivered one *(record_payloads = true)* |
 
 ## `team.store`
 

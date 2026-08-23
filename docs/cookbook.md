@@ -279,7 +279,13 @@ the edge list and records it either way, refusals included.
 
 Your agent framework calls these tools for you. Driving them by hand takes one
 helper, because MCP over stdio is newline-delimited JSON-RPC and a blocking tool
-answers when the other side acts rather than when the request is written.
+answers when the other side acts rather than when the request is written. That
+is what the trailing `sleep` in the helper is for: close the channel first and
+the call returns nothing at all, not an error.
+
+The `protocolVersion` the helper sends is what the *client* proposes. The guest
+answers with the version it implements, which may be a later one — that is MCP
+version negotiation working, not a mismatch.
 
 <!-- recipe: three-agent-team -->
 

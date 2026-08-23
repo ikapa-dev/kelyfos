@@ -200,6 +200,24 @@ A spawned worker gets no egress, no secrets and no workspace, ever, and attaches
 with exactly one edge, to its spawner. If a worker needs the network, declare it
 as a `[[team.agent]]` instead.
 
+### Finding out which sandbox is which
+
+`kelyfos team ps` prints the roster for a human and has **no machine-readable
+form**. The mapping an orchestrator actually needs — agent name to sandbox id —
+is on disk while the team is up:
+
+```
+~/.cache/kelyfos/run/team.json
+```
+
+It holds an `agents` array whose entries carry at least `name`, `sandbox` and
+`via` (`cold` or `fork`). That is what `kelyfos mcp --sandbox <id>` wants. The
+file exists for the lifetime of the team and `team down` removes it, so read it
+after the team is up and do not cache it across runs.
+
+This is the one load-bearing interface in the team surface that has no command
+behind it. Treat its shape as observed rather than promised.
+
 ### Read the record rather than the output
 
 `kelyfos log --json` is the parseable form and
@@ -352,12 +370,40 @@ team-level fact and the key would be inert in exactly the case you wrote it for.
 circular: writing it under `[team.resources]` tells you to move it to
 `[team.agent.resources]`, which then refuses it.
 
+### A blocking tool whose channel closes before the answer arrives
+
+`team_ask` and `team_recv` answer when the *other side* acts, not when the
+request is written. If your client closes the MCP session before then — a
+`printf | kelyfos mcp` pipeline whose stdin ends immediately, for instance — the
+call produces **no result and no error**: the bridge simply goes away. Hold the
+channel open for at least as long as the tool's own `timeout_ms`. The cookbook's
+team recipe does this with a trailing `sleep`, and the Python SDK does it for you
+by keeping the session open.
+
+The record is not a workaround here either. An ask that goes unanswered is
+written when the host-side timeout fires, which is `timeout_ms` later, not when
+your client gave up.
+
+### The error an agent sees is not the reason the record gives
+
+Deliberately: an agent branches on a small set of kinds it can act on, and the
+transcript records the specific thing that happened. A `team_reply` with a
+`correlate` tag nobody is waiting for returns `denied` to the agent and is
+recorded as `unknown_correlation`; with no tag at all it returns `denied` and is
+recorded `missing_correlation`. Branch on the kind, and read the record for the
+detail.
+
 ### `team_recv` returning nothing
 
 It does not. An empty window is an **error** of kind `timeout`, not an empty
 result — because a model told "nothing" concludes there is nothing to do, while
 a model told "timeout" knows only that nothing has arrived *yet*. The wait
 argument is `timeout_ms`, an integer of milliseconds, default 60000.
+
+That timeout writes **no event**. `outcome: timeout` in the record means an ask
+nobody answered; a recv that found nothing is not an outcome, because no message
+was involved. Do not wait for the transcript to tell you an agent has gone
+quiet.
 
 ### Running commands through the E2B shim
 

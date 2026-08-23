@@ -4,12 +4,11 @@ Updated 2026-08-23 · tree clean, synced with origin/main
 
 ## Plans
 - PLAN.html — 36/43. P4 backlog non-blocking, parked (P4-4/P4-5 [BLOCKED]).
-- PLAN-FEATURES.html — 24/42. **Epic E3 active, 5/6.**
+- PLAN-FEATURES.html — 25/42. **Epic E3 6/6 — exit checklist next.**
 
 ## Now
-E3-5 — the exam: a fresh agent, source withheld, builds a three-agent
-orchestrator from the docs and the released artifacts alone. Then the E3 exit
-checklist and tag v0.6.
+The E3 exit checklist: acceptance evidence into the log, epic closed, tag v0.6
+and publish it the way v0.4 and v0.5 were published. Then Epic E4.
 
 ## This session
 Refreshed the HN post to v0.5 (John's to send). E3-0: seven audits read every
@@ -18,7 +17,8 @@ findings — corrections landed across seven documents. E3-1: `docs/reference/` 
 generated from the product, CI fails on drift (F-D28). E3-2: `llms.txt` (spec v2,
 conformance tested) + `llms-full.txt`. E3-3 and E3-4: eight cookbook recipes and
 `docs/integrating.md`, each recipe run before it was written down — **8 passed, 0
-failed**. `llms-full.txt` is **59,892 tokens**, 30% of a 200k window (F-D29..31).
+failed**. E3-5: the docs-only exam **passed first try** and found ten defects,
+nine of them fixed here (F-D29..32).
 
 ## Defects found, recorded not fixed (F-D27, F-D30)
 - `kelyfos shim` opens no recorder and reads no `kelyfos.toml` — no audit record
