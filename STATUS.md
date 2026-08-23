@@ -4,15 +4,15 @@ Heartbeat file. Current state only; history lives in the plan progress logs.
 Rewritten at every task boundary, in its own commit right after the work lands,
 so the sha below is always a commit that exists.
 
-- **as of** 2026-08-23T02:35Z · **HEAD** `f9bb285` · tree clean, `origin/main` == `HEAD`
-- **PLAN.html** 36/43 (phases 0–3 done; P4 backlog, 2 blocked) · **PLAN-FEATURES.html** 11/42
-- **active** Epic E2 — Agent teams (v0.5), 2/10 · right now: starting E2-2, the guest tools
+- **as of** 2026-08-23T03:00Z · **HEAD** `a39c2ed` · tree clean, `origin/main` == `HEAD`
+- **PLAN.html** 36/43 (phases 0–3 done; P4 backlog, 2 blocked) · **PLAN-FEATURES.html** 13/42
+- **active** Epic E2 — Agent teams (v0.5), 4/10 · right now: starting E2-4, `kelyfos team up`
 
 ## Last three completed
-- `f9bb285` E2-1 — `internal/team`: topology, broker, events; a reply's correlation tag stands
-  in for the edge it crosses; new guest→host channel on port 10102 (F-D15). Green under `-race`
-- `7293ba8` E2-0 — `docs/teams.md`, spec before code
-- **Epic E1 closed, `v0.4` released** — caps 8/8 and acceptance 13/13 on bare-KVM x86_64
+- `a39c2ed` E2-3 — the team store: per-key rules that can only narrow access, absence
+  distinguished from refusal, bounded, and every access recorded without the values
+- `ab9392c` E2-2 — the seven team MCP tools and the guest end of the port-10102 channel
+- `f9bb285` E2-1 — the broker: topology, routing, events; F-D15 for the new channel
 
 ## Blocked
 - **P4-4** browser flavor — task text says "if users ask for it"; no users yet
@@ -27,16 +27,15 @@ so the sha below is always a commit that exists.
 - **E1-5**: `scratch` is applied by the guest kernel (F-D13). Bounded by `mem`, which is hardware.
 - **E1-8**: an exact operations-per-second figure for `disk_iops` is unproven — an ext4 workload
   confounds the count with journal writes. The cap plainly binds; the number does not.
-- **E2-1**: the broker is proven by unit tests over in-memory channels. Nothing has yet routed a
-  message between two real VMs — that is E2-4's `team up`, and until then the wiring is untested.
+- **E2-1/2/3**: everything in `internal/team` and the guest tools is proven by unit tests over
+  in-memory channels. **Nothing has yet routed a message between two real VMs** — that is E2-4.
 
 ## Next three actions
-1. E2-2 — the six team MCP tools in the supervisor, and the guest end of the port-10102 channel,
-   so an incoming question reaches a model as an ordinary tool call.
-2. E2-3 — the permissioned team store.
-3. E2-4 — `kelyfos team up | ps | down`, which is where the broker first meets real VMs. The
-   `[team]` toml needs array-of-tables, which the hand-rolled parser cannot do yet: that choice
-   (extend it, or take a TOML dependency) is a Decision Log entry waiting to be written.
+1. E2-4 — `kelyfos team up | ps | down`. This is where the broker meets real VMs, and where the
+   `[team]` toml has to be parsed: array-of-tables is beyond the hand-rolled parser, so the
+   choice (extend it, or take a TOML dependency) needs a Decision Log entry written first.
+2. E2-5 — spawn under a declared budget.
+3. E2-6 — the team cgroup hierarchy, per-agent slices beneath a collective cap.
 
 ## Waiting on John
 - The HN launch post (`docs/launch/hn-post.md`) is written and deliberately unposted — his act,
