@@ -20,6 +20,7 @@ import (
 	"github.com/p4r4n0rm4l/KelyfOS/internal/denial"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/egress"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/exitcode"
+	"github.com/p4r4n0rm4l/KelyfOS/internal/notify"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/proto"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/report"
@@ -59,10 +60,12 @@ func runWithSandbox(argv []string, reviewDeclinedOut *bool) error {
 		wsDir       = fs.String("workspace", "", "host directory to make available at /work inside the sandbox")
 		noSync      = fs.Bool("no-sync-back", false, "do not write the workspace back to the host on shutdown")
 		reviewFirst = fs.Bool("review", false, "show what changed and ask before writing the workspace back")
-		secrets     multiFlag
-		forwards    multiFlag
-		policyPath  = fs.String("policy", "", "the kelyfos.toml to run under (default: the nearest one, found by walking up)")
-		pBind       = fs.String("p-bind", loopback, "address the forwarded ports bind to. "+
+		notifyMe    = fs.Bool("notify", false, "send a desktop notification when this run finishes, "+
+			"is blocked, times out, or waits for a review")
+		secrets    multiFlag
+		forwards   multiFlag
+		policyPath = fs.String("policy", "", "the kelyfos.toml to run under (default: the nearest one, found by walking up)")
+		pBind      = fs.String("p-bind", loopback, "address the forwarded ports bind to. "+
 			"0.0.0.0 exposes them to every machine that can reach this one, and says so, every time.")
 	)
 	fs.Var(&secrets, "secret", "attach a credential to a domain: NAME@domain[:bearer|basic]. "+
@@ -244,6 +247,14 @@ status. This is how you hand an agent a sandbox and nothing else:
 		}
 	}
 
+	// The file may ask for notifications, and a flag may too; either is enough.
+	// Neither can turn the other off, because there is no case for "notify me
+	// unless the file says otherwise" — somebody who typed --notify is present.
+	if cfg != nil && cfg.Notify {
+		*notifyMe = true
+	}
+	notifier := notify.New(*notifyMe)
+
 	// What this run forwards, resolved before anything boots so a bad -p or a
 	// half-written [[forward]] is refused at the command line rather than after
 	// a machine has already started.
@@ -412,7 +423,7 @@ status. This is how you hand an agent a sandbox and nothing else:
 			// the results beside the directory rather than over it, using the
 			// diversion mechanism that already exists (docs/qol.md §2.3).
 			if *reviewFirst {
-				out := review(staged, ws.HostDir)
+				out := review(staged, ws.HostDir, notifier)
 				_, dest := staged.Diverted()
 				if !out.Sync {
 					where, err := staged.Divert()
@@ -470,11 +481,13 @@ status. This is how you hand an agent a sandbox and nothing else:
 			_ = rec.Close()
 			return
 		}
+		took := rec.Since()
 		_ = rec.Append(recorder.Event{
 			Type: recorder.TypeSessionEnd, Reason: reason,
-			DurationMS: rec.Since().Milliseconds(), Code: exitCode,
+			DurationMS: took.Milliseconds(), Code: exitCode,
 		})
 		_ = rec.Close()
+		notifier.Send("kelyfos: run finished", finishedBody(reason, exitCode, took))
 	}()
 
 	// An OOM kill is the RAM cap being reached. The cap itself is the VM's
@@ -563,6 +576,7 @@ status. This is how you hand an agent a sandbox and nothing else:
 			_ = rec.Append(recorder.Event{Type: recorder.TypeSecretUse, Name: name, Host: host})
 		}
 		blocked := newBlockedOnce(os.Stderr)
+		blocked.notify = notifier
 		proxy.OnEvent = func(a egress.Attempt) {
 			// The person watching the run is the one with the policy file
 			// open, and for CONNECT they are often the only reader who gets
@@ -672,6 +686,18 @@ status. This is how you hand an agent a sandbox and nothing else:
 			return err
 		}
 	}
+	if notifier.Enabled() {
+		// Which mechanism, out loud. A notification that never arrives is
+		// indistinguishable from one that was never asked for, and the machine
+		// is the only side that knows which happened.
+		switch notifier.Kind() {
+		case notify.Bell:
+			fmt.Printf("  notify      terminal bell only — neither notify-send nor osascript " +
+				"is on this machine\n")
+		default:
+			fmt.Printf("  notify      via %s\n", notifier.Kind())
+		}
+	}
 	if maxRuntime > 0 {
 		fmt.Printf("  max runtime %s\n", maxRuntime)
 	}
@@ -713,6 +739,8 @@ status. This is how you hand an agent a sandbox and nothing else:
 		})
 		fmt.Fprintf(os.Stderr, "\nkelyfos: the %s budget of %s expired after %s; stopping the sandbox\n",
 			t.budget, t.budgetLimit, t.elapsed.Round(time.Second))
+		notifier.Send("kelyfos: timed out", fmt.Sprintf("the %s budget of %s expired after %s",
+			t.budget, t.budgetLimit, t.elapsed.Round(time.Second)))
 	}
 
 	// With a trailing command, the sandbox's lifetime is that command's: run

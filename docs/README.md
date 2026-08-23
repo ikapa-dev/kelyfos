@@ -25,6 +25,7 @@ hand-written half, and this page says where each is still thin.
 | running several agents together | [`teams.md`](teams.md) |
 | auditing what an agent did | [`events.md`](events.md) |
 | stuck on something KelyfOS refused | [`denials.md`](denials.md), then [`reference/denials.md`](reference/denials.md) for the exact one |
+| running something long and walking away | [`denials.md`](denials.md) on `--notify`, and [`events.md`](events.md) §6 for the history afterwards |
 | keeping an agent off the network | [`networking.md`](networking.md) |
 | after something that works, right now | [`cookbook.md`](cookbook.md) — eleven recipes, each one runnable as it stands |
 | putting KelyfOS inside something else | [`integrating.md`](integrating.md) |
@@ -42,7 +43,7 @@ hand-written half, and this page says where each is still thin.
 | [`networking.md`](networking.md) | mixed | Why a sandbox has no NIC by default, what `--allow` builds, the nftables template, and why the guest has no DNS. |
 | [`resources.md`](resources.md) | mixed | Every resource cap: units, precedence, what enforces it, and what happens when it is reached. |
 | [`teams.md`](teams.md) | mixed | The `[team]` schema, the host broker and its edge rules, the team store, the collective budget, and how a team boots. |
-| [`denials.md`](denials.md) | mixed | Why every refusal names its own fix, what the ID in brackets is for, and what deliberately is not in the catalog. |
+| [`denials.md`](denials.md) | mixed | Why every refusal names its own fix, what the ID in brackets is for, what deliberately is not in the catalog, and how `--notify` reaches somebody who stopped watching. |
 | [`qol.md`](qol.md) | concept | The v0.8 specification, written before the code: named sessions and their store, the workspace manifest, the PTY channel, and why inbound forwarding does not touch the firewall. |
 | [`mcp-surface.md`](mcp-surface.md) | concept | MCP in both directions: `serve-mcp` as a tool for any client, and `[[plugin]]` servers inside the guest. Specification, written before the code. |
 | [`threat-model.md`](threat-model.md) | concept | What KelyfOS defends against and — the longer half — what it does not. |
@@ -142,7 +143,8 @@ the latter is described.
 
 *Concept:* why a refusal is three parts and not one; why the ID is stable when
 the prose is not; why a failure is deliberately not a refusal; why a fix line may
-name the edit and never make it (F-D5).
+name the edit and never make it (F-D5); why a notification is best effort, is
+data rather than script, and is off until asked for.
 *Reference:* none of it — the catalog itself is generated to
 [`reference/denials.md`](reference/denials.md), and this page links to it rather
 than repeating it, which is the arrangement E3-1 exists to make possible.

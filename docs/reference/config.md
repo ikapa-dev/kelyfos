@@ -20,6 +20,7 @@ What to boot, and what it may reach.
 | `secrets` | string array | none | NAME@domain[:bearer\|basic] — names only; a value here is refused |
 | `vcpus` | integer | 2 | pre-v0.4 spelling of a cpus default; kept working, prefer [resources] cpus |
 | `mem_mib` | integer | 512 | pre-v0.4 spelling of a mem default, in MiB; prefer [resources] mem |
+| `notify` | boolean | false | send a desktop notification when a run finishes, is blocked, times out, or waits for a review |
 
 ## `[resources]`
 

@@ -3,6 +3,7 @@ package main
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/p4r4n0rm4l/KelyfOS/internal/egress"
 )
@@ -63,5 +64,28 @@ func TestBlockedPortIsItsOwnRefusal(t *testing.T) {
 	got := out.String()
 	if !strings.Contains(got, "[egress.port]") || !strings.Contains(got, "8080") {
 		t.Errorf("the port refusal is not what was printed:\n%s", got)
+	}
+}
+
+// What a "run finished" notification says. Somebody who walked away wants the
+// two facts the shell would have given them: whether it worked, and how long.
+func TestFinishedBodySaysWhatHappened(t *testing.T) {
+	zero, three := 0, 3
+	for _, tc := range []struct {
+		reason string
+		code   *int
+		took   time.Duration
+		want   string
+	}{
+		{"command_exited", &zero, 4 * time.Second, "finished cleanly after 4s"},
+		{"command_exited", &three, 90 * time.Second, "exited 3 after 1m30s"},
+		{"timeout", nil, 30 * time.Minute, "timed out after 30m0s"},
+		{"interrupted", nil, 12 * time.Second, "stopped after 12s"},
+		{"vm_exited", nil, 2 * time.Second, "the sandbox died unexpectedly after 2s"},
+		{"shutdown", nil, 700 * time.Millisecond, "shutdown after 700ms"},
+	} {
+		if got := finishedBody(tc.reason, tc.code, tc.took); got != tc.want {
+			t.Errorf("%s/%v -> %q, want %q", tc.reason, tc.code, got, tc.want)
+		}
 	}
 }

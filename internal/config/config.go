@@ -78,6 +78,10 @@ type Config struct {
 	// name the line the ceiling came from instead of just the number.
 	ResLine map[string]int
 
+	// Notify asks for a desktop notification when a run wants a person back
+	// (E5-7). Off unless written, here or as --notify.
+	Notify bool
+
 	// Team is the [team] section, when the file has one (E2-4). Nil means this
 	// is an ordinary single-sandbox policy, which is most files.
 	Team *Team
@@ -231,6 +235,8 @@ func Load(path string) (*Config, error) {
 			cfg.Vcpus, err = parseInt(value, where)
 		case "mem_mib":
 			cfg.MemMiB, err = parseInt(value, where)
+		case "notify":
+			cfg.Notify, err = parseBool(value, where)
 		default:
 			return nil, unknownKey(where, key, "")
 		}

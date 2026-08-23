@@ -2067,6 +2067,44 @@ a person edits it. This is the same invariant the MCP tool surface is held to
 (F-D5): the ceiling in `kelyfos.toml` is not something the software can talk
 itself past, and a refusal that offered to raise it would be exactly that.
 
+## When nobody is watching
+
+Everything above assumes somebody is looking at the terminal. The case this
+product creates is the opposite: a sandbox you started and stopped watching.
+`--notify` — or `notify = true` in `kelyfos.toml` — sends a desktop notification
+at the four moments where a person is wanted back:
+
+| | What it says |
+| --- | --- |
+| the run finished | `exited 3 after 1m30s`, or `finished cleanly after 4s` |
+| something was blocked | the refusal's first line, once per distinct refusal |
+| a budget expired | `the max_runtime budget of 30m expired after 30m` |
+| a review is waiting | `3 added, 1 modified, 0 deleted in project — write them back?` |
+
+`notify-send` on Linux, `osascript` on macOS, and the terminal bell when neither
+is there — which needs nothing installed. The run says which one it found, in
+its own header, because a notification that never arrives is indistinguishable
+from one that was never asked for.
+
+Three rules, and they are the whole design:
+
+**A notification never fails a run.** Every send is best effort with a five
+second timeout and a discarded error. The acceptance runs with a notifier that
+exits non-zero, one that never returns, and none at all, and checks the exit
+status is untouched each time.
+
+**The message is data, never script.** On macOS the text is passed as arguments
+to `osascript` and read back inside the script with `item 1 of argv`, rather
+than pasted into an AppleScript string. A domain or a command name can contain a
+quote, and a notification is not a place to have an injection bug.
+
+**Off unless asked.** A tool that starts sending desktop notifications because
+you upgraded it is a tool people learn to distrust.
+
+The fix line does not travel with the notification. A refusal's first line is
+what is sent; the fix stays on the terminal, which is where somebody has to go
+to apply it anyway.
+
 ## For programs
 
 A refusal is a `*denial.Refusal`, carrying its ID and the values it named:
@@ -5786,6 +5824,7 @@ hand-written half, and this page says where each is still thin.
 | running several agents together | [`teams.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/teams.md) |
 | auditing what an agent did | [`events.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/events.md) |
 | stuck on something KelyfOS refused | [`denials.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/denials.md), then [`reference/denials.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/reference/denials.md) for the exact one |
+| running something long and walking away | [`denials.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/denials.md) on `--notify`, and [`events.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/events.md) §6 for the history afterwards |
 | keeping an agent off the network | [`networking.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/networking.md) |
 | after something that works, right now | [`cookbook.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/cookbook.md) — eleven recipes, each one runnable as it stands |
 | putting KelyfOS inside something else | [`integrating.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/integrating.md) |
@@ -5803,7 +5842,7 @@ hand-written half, and this page says where each is still thin.
 | [`networking.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/networking.md) | mixed | Why a sandbox has no NIC by default, what `--allow` builds, the nftables template, and why the guest has no DNS. |
 | [`resources.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/resources.md) | mixed | Every resource cap: units, precedence, what enforces it, and what happens when it is reached. |
 | [`teams.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/teams.md) | mixed | The `[team]` schema, the host broker and its edge rules, the team store, the collective budget, and how a team boots. |
-| [`denials.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/denials.md) | mixed | Why every refusal names its own fix, what the ID in brackets is for, and what deliberately is not in the catalog. |
+| [`denials.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/denials.md) | mixed | Why every refusal names its own fix, what the ID in brackets is for, what deliberately is not in the catalog, and how `--notify` reaches somebody who stopped watching. |
 | [`qol.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/qol.md) | concept | The v0.8 specification, written before the code: named sessions and their store, the workspace manifest, the PTY channel, and why inbound forwarding does not touch the firewall. |
 | [`mcp-surface.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/mcp-surface.md) | concept | MCP in both directions: `serve-mcp` as a tool for any client, and `[[plugin]]` servers inside the guest. Specification, written before the code. |
 | [`threat-model.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/threat-model.md) | concept | What KelyfOS defends against and — the longer half — what it does not. |
@@ -5903,7 +5942,8 @@ the latter is described.
 
 *Concept:* why a refusal is three parts and not one; why the ID is stable when
 the prose is not; why a failure is deliberately not a refusal; why a fix line may
-name the edit and never make it (F-D5).
+name the edit and never make it (F-D5); why a notification is best effort, is
+data rather than script, and is off until asked for.
 *Reference:* none of it — the catalog itself is generated to
 [`reference/denials.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/reference/denials.md), and this page links to it rather
 than repeating it, which is the arrangement E3-1 exists to make possible.
@@ -6119,6 +6159,7 @@ kelyfos run [flags]
 | `--max-runtime` | string | no limit | stop the sandbox after this long, e.g. 30m |
 | `--mem` | string | 512 | guest memory, e.g. 2G or 512M; a bare number is MiB |
 | `--no-sync-back` | boolean | — | do not write the workspace back to the host on shutdown |
+| `--notify` | boolean | — | send a desktop notification when this run finishes, is blocked, times out, or waits for a review |
 | `-p` | value | — | carry a host port to a guest-local port: host:guest, as in 8080:80. The transport is vsock, not the network, so the firewall is untouched. Repeatable. |
 | `--p-bind` | string | "127.0.0.1" | address the forwarded ports bind to. 0.0.0.0 exposes them to every machine that can reach this one, and says so, every time. |
 | `--policy` | string | the nearest one, found by walking up | the kelyfos.toml to run under |
@@ -6451,6 +6492,7 @@ What to boot, and what it may reach.
 | `secrets` | string array | none | NAME@domain[:bearer\|basic] — names only; a value here is refused |
 | `vcpus` | integer | 2 | pre-v0.4 spelling of a cpus default; kept working, prefer [resources] cpus |
 | `mem_mib` | integer | 512 | pre-v0.4 spelling of a mem default, in MiB; prefer [resources] mem |
+| `notify` | boolean | false | send a desktop notification when a run finishes, is blocked, times out, or waits for a review |
 
 ## `[resources]`
 

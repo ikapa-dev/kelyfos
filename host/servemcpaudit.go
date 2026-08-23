@@ -198,6 +198,10 @@ func resultSandbox(res *mcp.CallToolResult) string {
 	return ""
 }
 
+// firstLine is a message's first line, capped. Used for the audit summary of a
+// tool result, and for a desktop notification of a refusal (E5-7) — which is
+// read at a glance, so the fix line beneath belongs on the terminal where
+// somebody has to go to apply it anyway.
 func firstLine(s string) string {
 	if i := strings.IndexByte(s, '\n'); i >= 0 {
 		s = s[:i]

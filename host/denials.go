@@ -20,9 +20,11 @@ import (
 	"io"
 	"strconv"
 	"sync"
+	"time"
 
 	"github.com/p4r4n0rm4l/KelyfOS/internal/denial"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/egress"
+	"github.com/p4r4n0rm4l/KelyfOS/internal/notify"
 )
 
 // blockedOnce prints a policy refusal the first time each one happens.
@@ -30,6 +32,10 @@ type blockedOnce struct {
 	mu   sync.Mutex
 	seen map[string]bool
 	w    io.Writer
+	// notify, when set, sends the same refusal to the desktop (E5-7). It shares
+	// this type's deduplication rather than having its own: a run that printed
+	// one line and raised forty notifications would be worse than either.
+	notify *notify.Notifier
 }
 
 func newBlockedOnce(w io.Writer) *blockedOnce {
@@ -69,6 +75,7 @@ func (b *blockedOnce) say(a egress.Attempt) {
 	b.seen[key] = true
 	b.mu.Unlock()
 	fmt.Fprintf(b.w, "kelyfos: %s\n", text)
+	b.notify.Send("kelyfos: blocked", firstLine(text))
 }
 
 // sayText prints an already-rendered refusal, once. It is the same rule for the
@@ -83,4 +90,32 @@ func (b *blockedOnce) sayText(text string) {
 	b.seen[text] = true
 	b.mu.Unlock()
 	fmt.Fprintf(b.w, "kelyfos: %s\n", text)
+	b.notify.Send("kelyfos: blocked", firstLine(text))
+}
+
+// finishedBody is what a "run finished" notification says (E5-7).
+//
+// The two facts somebody who walked away wants are the same two the shell would
+// have given them: whether it worked, and how long it took. The reason is only
+// worth saying when it is not the ordinary one — "stopped after 4m" reads
+// better than "shutdown after 4m", and "timed out after 30m" has to be said.
+func finishedBody(reason string, code *int, took time.Duration) string {
+	d := took.Round(time.Second)
+	if took < time.Second {
+		d = took.Round(time.Millisecond)
+	}
+	switch {
+	case code != nil && *code == 0:
+		return fmt.Sprintf("finished cleanly after %s", d)
+	case code != nil:
+		return fmt.Sprintf("exited %d after %s", *code, d)
+	case reason == "timeout":
+		return fmt.Sprintf("timed out after %s", d)
+	case reason == "vm_exited":
+		return fmt.Sprintf("the sandbox died unexpectedly after %s", d)
+	case reason == "interrupted":
+		return fmt.Sprintf("stopped after %s", d)
+	default:
+		return fmt.Sprintf("%s after %s", reason, d)
+	}
 }

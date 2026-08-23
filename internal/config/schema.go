@@ -149,6 +149,8 @@ func Schema() []Key {
 			Doc: "pre-v0.4 spelling of a cpus default; kept working, prefer [resources] cpus"},
 		{Name: "mem_mib", Type: TypeInt, Default: "512", Sample: "1024",
 			Doc: "pre-v0.4 spelling of a mem default, in MiB; prefer [resources] mem"},
+		{Name: "notify", Type: TypeBool, Default: "false", Sample: "true",
+			Doc: "send a desktop notification when a run finishes, is blocked, times out, or waits for a review"},
 	}
 	out := inSection("", keys)
 	out = append(out, inSection("resources", resourceKeys())...)

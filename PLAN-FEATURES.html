@@ -126,7 +126,7 @@
      improvements to the existing product land here as epics. Inert until its gate opens.</p>
   <div class="meta">
     owner: <b>John</b> &nbsp;&middot;&nbsp; developer: <b>Claude Code</b> &nbsp;&middot;&nbsp;
-    status: <b class="ok" id="meta-status">Epic E5 — active, 7/8 (v0.7 released; next: E5-7, --notify)</b> &nbsp;&middot;&nbsp;
+    status: <b class="ok" id="meta-status">Epic E5 — active, 8/8 (v0.7 released; next: the E5 exit checklist and v0.8)</b> &nbsp;&middot;&nbsp;
     last updated: <b id="meta-updated">2026-08-23</b><br>
     repo file: <b>PLAN-FEATURES.html</b> (lives at the repository root next to <code>PLAN.html</code>)<br>
     <span class="quiet">Companion to PLAN.html — same protocol, same rules, later timeline.</span>
@@ -166,7 +166,7 @@
     <span class="bl-name">All epics</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">E5-7 &mdash; <code>--notify</code>: a desktop notification on finish, block, timeout or a waiting review prompt, carrying exit status and duration</b></div>
+  <div class="focusline">Current focus: <b id="focus">Epic E5 exit &mdash; the recreate-and-verify acceptance end to end, the docs duties, then tag v0.8</b></div>
 </div>
 
 <!-- ====================================================== 1. ACTIVATION GATE -->
@@ -617,7 +617,7 @@
         <code>kelyfos runs</code> (id, time, image, command, exit, duration), <code>kelyfos rerun &lt;id&gt;</code> re-executing
         with the recorded image, frozen policy, and command, printing a provenance line. Plus <code>kelyfos logs -f</code>:
         the plain-text live tail of the flight recorder — the greppable sibling of <code>watch</code>.</span></li>
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">E5-7</span><span class="tk"><code>--notify</code> (flag + toml key): desktop notification on finish, block,
         timeout, or a waiting <code>--review</code> prompt — osascript on macOS, notify-send on Linux, terminal bell fallback —
         carrying exit status and duration.</span></li>
@@ -4399,6 +4399,26 @@ $ gofmt -l . ; go vet ./... ; go test ./...
         <b><code>logs -f</code> was mostly already there</b> &mdash; <code>--follow</code> has existed since P2 &mdash;
         so this added the short flag, the name people actually type, and a check that it is plain line-oriented text
         rather than JSON: the greppable sibling of <code>watch</code>, which draws a screen.</td></tr>
+        <tr><td class="mono">2026-08-23</td><td class="mono">E5-7</td>
+        <td><b><code>--notify</code>, and the three rules that make a notification safe to add to a tool.</b>
+        Twenty-two checks, and the ones that matter most are about failure: a run with a notifier that exits
+        non-zero, one that never returns, and none at all &mdash; the exit status is untouched every time, and the
+        run with the hung notifier finished in six seconds because a send is bounded at five. <b>A notification must
+        never fail a run</b>, so every send is best effort with its error discarded; a tool that fell over because a
+        notification daemon was not running would be worse than one that never notified.
+        <b>The message is data, never script.</b> On macOS the text travels as arguments to <code>osascript</code> and
+        is read back inside the script with <code>item 1 of argv</code>, rather than pasted into an AppleScript
+        string &mdash; verified against real <code>osascript</code> with a body containing quotes and backslashes,
+        because a domain or a command name can contain a quote and a notification is not a place to have an injection
+        bug. The unit test asserts the property directly: no <code>-e</code> fragment carries any caller text.
+        <b>Off unless asked</b>, by flag or by <code>notify = true</code>, and neither can switch the other off.
+        Four moments: finish, with the exit status and duration; a blocked domain, deduplicated through the same
+        catalog machinery E5-4 built, so three refusals of one domain are one notification; a budget that expired,
+        naming it; and the review prompt &mdash; the one question this product asks a person, and the one where a
+        notification is worth most, because nothing happens until it is answered.
+        <b>The fallback is the terminal bell</b>, which needs nothing installed and is written only into a terminal,
+        and the run says in its header which of the three it found &mdash; a notification that never arrives is
+        otherwise indistinguishable from one that was never asked for.</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>

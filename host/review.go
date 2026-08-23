@@ -6,8 +6,10 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
+	"github.com/p4r4n0rm4l/KelyfOS/internal/notify"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/sandbox"
 )
@@ -73,7 +75,7 @@ type reviewOutcome struct {
 // review shows what changed and asks. It is the one place this product asks a
 // person to make a judgement, so the shape of the question matters: the summary
 // first, the default explicit, and no answer taken on their behalf.
-func review(staged *sandbox.Staged, hostDir string) reviewOutcome {
+func review(staged *sandbox.Staged, hostDir string, n *notify.Notifier) reviewOutcome {
 	changes, err := staged.Changes()
 	if err != nil {
 		// A workspace packed by an older kelyfos has no manifest. Saying so and
@@ -100,6 +102,13 @@ func review(staged *sandbox.Staged, hostDir string) reviewOutcome {
 			"without --review to sync, or with a terminal to decide.\n")
 		return reviewOutcome{Sync: false, Reason: "no_terminal", Changes: changes}
 	}
+
+	// The one place this product asks a person a question. If they walked away
+	// — which is the whole reason --notify exists — this is the moment they
+	// most need telling, because nothing else will happen until they answer.
+	n.Send("kelyfos: waiting for you",
+		fmt.Sprintf("%d added, %d modified, %d deleted in %s — write them back?",
+			added, modified, deleted, filepath.Base(hostDir)))
 
 	fmt.Printf("\nwrite these back to %s? [y/N] ", hostDir)
 	answer, _ := bufio.NewReader(os.Stdin).ReadString('\n')

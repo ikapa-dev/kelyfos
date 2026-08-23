@@ -4,23 +4,23 @@ Updated 2026-08-23 · tree clean, synced with origin/main
 
 ## Plans
 - PLAN.html — 36/43. P4 backlog non-blocking, parked (P4-4/P4-5 [BLOCKED]).
-- PLAN-FEATURES.html — 41/42. **E1–E4 closed, v0.7 released. Epic E5 at 7/8.**
+- PLAN-FEATURES.html — 42/42 tasks. **E1–E4 closed, v0.7 released. Epic E5 at 8/8; exit next.**
 
 ## Now
-E5-7 — `--notify` on finish, block, timeout and a waiting review prompt.
+Epic E5 exit: the recreate-and-verify acceptance, the docs duties, then v0.8.
 
 ## This session
 E1–E3 closed, **v0.6 released**; then the F-D33 batch and the E3→E4 seam check. Epic E4, all
 nine tasks: the spec; serve-mcp with its ceiling; five file and state tools, which found the
 MCP frame limit at 1 MiB against a promised 8 MiB (F-D38) and a restore held to no ceiling
-(F-D39); the team tools (F-D42); the audit lane (F-D43); two client recipes, which found a
-client-launched server could run with no ceiling (F-D44); the plugins device and runtime
-(F-D45, F-D46). Exit: 22/22 checks, 11/11 recipes, three exams whose 22 findings are in
-`docs/exam/`. **v0.7 tagged and published**, and the batch those exams routed after it is done
-(F-D49). Epic E5 so far: the v0.8 spec, named sessions, diff and review, `kelyfos shell`, one
-refusal catalog whose acceptance found the plan's own headline fix line never reaching the
-client (F-D53); inbound forwarding — proved by diffing nftables with two forwards and none;
-and a run history that is the session records read back rather than a second index (F-D54).
+(F-D39); the team tools (F-D42); the audit lane (F-D43); two client recipes (F-D44); the
+plugins device and runtime (F-D45, F-D46). Exit: 22/22 checks, 11/11 recipes, three exams
+whose 22 findings are in `docs/exam/`. **v0.7 tagged and published**, and the batch those
+exams routed after it is done (F-D49). Epic E5, all eight: the v0.8 spec, named sessions,
+diff and review, `kelyfos shell`, one refusal catalog whose acceptance found the plan's own
+headline fix line never reaching the client (F-D53); inbound forwarding, proved by diffing
+nftables with two forwards and none; a run history that is the records read back (F-D54);
+`--notify`, best effort, data-never-script, off until asked.
 
 ## Blocked / debts
 - P4-4, P4-5 [BLOCKED]. `idle_timeout` refused (F-D20; F-D22). IMAGE_DIR per-arch not per-flavor: parked.

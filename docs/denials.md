@@ -59,6 +59,44 @@ a person edits it. This is the same invariant the MCP tool surface is held to
 (F-D5): the ceiling in `kelyfos.toml` is not something the software can talk
 itself past, and a refusal that offered to raise it would be exactly that.
 
+## When nobody is watching
+
+Everything above assumes somebody is looking at the terminal. The case this
+product creates is the opposite: a sandbox you started and stopped watching.
+`--notify` — or `notify = true` in `kelyfos.toml` — sends a desktop notification
+at the four moments where a person is wanted back:
+
+| | What it says |
+| --- | --- |
+| the run finished | `exited 3 after 1m30s`, or `finished cleanly after 4s` |
+| something was blocked | the refusal's first line, once per distinct refusal |
+| a budget expired | `the max_runtime budget of 30m expired after 30m` |
+| a review is waiting | `3 added, 1 modified, 0 deleted in project — write them back?` |
+
+`notify-send` on Linux, `osascript` on macOS, and the terminal bell when neither
+is there — which needs nothing installed. The run says which one it found, in
+its own header, because a notification that never arrives is indistinguishable
+from one that was never asked for.
+
+Three rules, and they are the whole design:
+
+**A notification never fails a run.** Every send is best effort with a five
+second timeout and a discarded error. The acceptance runs with a notifier that
+exits non-zero, one that never returns, and none at all, and checks the exit
+status is untouched each time.
+
+**The message is data, never script.** On macOS the text is passed as arguments
+to `osascript` and read back inside the script with `item 1 of argv`, rather
+than pasted into an AppleScript string. A domain or a command name can contain a
+quote, and a notification is not a place to have an injection bug.
+
+**Off unless asked.** A tool that starts sending desktop notifications because
+you upgraded it is a tool people learn to distrust.
+
+The fix line does not travel with the notification. A refusal's first line is
+what is sent; the fix stays on the terminal, which is where somebody has to go
+to apply it anyway.
+
 ## For programs
 
 A refusal is a `*denial.Refusal`, carrying its ID and the values it named:
