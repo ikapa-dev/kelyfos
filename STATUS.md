@@ -4,11 +4,11 @@ Updated 2026-08-23 · tree clean, synced with origin/main
 
 ## Plans
 - PLAN.html — 36/43. P4 backlog non-blocking, parked (P4-4/P4-5 [BLOCKED]).
-- PLAN-FEATURES.html — 25/42. **Epic E3 6/6 — exit checklist next.**
+- PLAN-FEATURES.html — 25/42. **E1, E2, E3 closed. Epic E4 active, 0/9.**
 
 ## Now
-The E3 exit checklist: acceptance evidence into the log, epic closed, tag v0.6
-and publish it the way v0.4 and v0.5 were published. Then Epic E4.
+Tag v0.6 and publish it the way v0.4 and v0.5 were published, then Epic E4:
+`docs/mcp-surface.md` first, spec before code.
 
 ## This session
 Refreshed the HN post to v0.5 (John's to send). E3-0: seven audits read every

@@ -126,7 +126,7 @@
      improvements to the existing product land here as epics. Inert until its gate opens.</p>
   <div class="meta">
     owner: <b>John</b> &nbsp;&middot;&nbsp; developer: <b>Claude Code</b> &nbsp;&middot;&nbsp;
-    status: <b class="ok" id="meta-status">Epic E3 — active, 5/6 (v0.5 released; next: E3-5, the docs-only exam)</b> &nbsp;&middot;&nbsp;
+    status: <b class="ok" id="meta-status">Epic E4 — active, 0/9 (v0.6 released; next: E4-0, the MCP surface spec)</b> &nbsp;&middot;&nbsp;
     last updated: <b id="meta-updated">2026-08-23</b><br>
     repo file: <b>PLAN-FEATURES.html</b> (lives at the repository root next to <code>PLAN.html</code>)<br>
     <span class="quiet">Companion to PLAN.html — same protocol, same rules, later timeline.</span>
@@ -166,7 +166,7 @@
     <span class="bl-name">All epics</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">E3-5 — the exam: a fresh agent, given only the released artifacts and the docs, builds a three-agent orchestrator with the source tree withheld</b></div>
+  <div class="focusline">Current focus: <b id="focus">E4-0 — <code>docs/mcp-surface.md</code>: the spec for both directions, host tool list with schemas, the policy-ceiling invariant, plugin namespacing and the plugins drive</b></div>
 </div>
 
 <!-- ====================================================== 1. ACTIVATION GATE -->
@@ -412,13 +412,13 @@
 </section>
 
 <!-- ====================================================== 3c. EPIC E3 -->
-<section class="phase" id="e3" data-phase="E3" data-status="active">
+<section class="phase" id="e3" data-phase="E3" data-status="done">
   <div class="phase-head">
     <div>
       <div class="kconfig">config KELYFOS_EPIC_E3</div>
       <h2>Epic E3 — LLM-native documentation (v0.6)</h2>
     </div>
-    <span class="badge">ACTIVE</span>
+    <span class="badge">DONE</span>
   </div>
   <p>Goal: <b>any LLM tool (Claude Code or otherwise) can build on KelyfOS from the docs alone — zero source reading.</b>
      A user should be able to say &ldquo;use KelyfOS to run three agents that each check one supplier site&rdquo; and have their
@@ -473,13 +473,13 @@
 </section>
 
 <!-- ====================================================== 3d. EPIC E4 -->
-<section class="phase" id="e4" data-phase="E4" data-status="todo">
+<section class="phase" id="e4" data-phase="E4" data-status="active">
   <div class="phase-head">
     <div>
       <div class="kconfig">config KELYFOS_EPIC_E4</div>
       <h2>Epic E4 — MCP surface (v0.7)</h2>
     </div>
-    <span class="badge">QUEUED</span>
+    <span class="badge">ACTIVE</span>
   </div>
   <p>Goal: <b>MCP in both directions.</b> Outward: <code>kelyfos serve-mcp</code> makes KelyfOS a tool for any MCP client —
      Claude Code, Cursor, anything — one config line and the client&rsquo;s agent gains <code>sandbox_run</code>,
@@ -3277,6 +3277,65 @@ what it could not have known without running it:
 
 $ gofmt -l . ; go vet ./... ; go test ./...
   clean · clean · all packages ok</pre></td></tr>
+        <tr><td class="mono">2026-08-23</td><td class="mono">E3</td>
+        <td><b>Epic E3 closed, 6/6. The acceptance test, run verbatim, all four steps met.</b>
+        <b>(1)</b> <code>make docs</code> regenerates the reference and leaves the tree clean; a fake flag on a scratch
+        branch made CI fail on docs drift, which was run rather than argued &mdash; the branch existed to be failed and
+        has been deleted.
+        <b>(2)</b> Every cookbook recipe executes green in CI from a fresh clone: the <code>cookbook</code> workflow
+        built the dev image on a bare-KVM runner and ran all eight, 8 passed 0 failed.
+        <b>(3)</b> <code>llms-full.txt</code> is at the repository root and its token count is measured, not estimated.
+        <b>(4)</b> The docs-only exam passed, first try, and its transcript is committed.
+        <b>F-D9&rsquo;s standing duties, which start binding from this exit onward, are met for E3 itself:</b>
+        <code>make docs</code> is clean and CI enforces it; <code>llms.txt</code> and <code>llms-full.txt</code> are
+        regenerated and committed with the epic; the token count is re-measured and logged here; and no cookbook recipe
+        was owed, because E3 added no user-facing command, flag, toml key or MCP tool &mdash; the one CLI change it made
+        was to list <code>kelyfos help</code>, which already existed and which the generator refused to write around.
+        <b>What the epic actually changed.</b> The reference is now extracted from the running product rather than
+        typed, and CI fails on drift. The recipes are executed rather than reviewed. The whole set is available to a
+        machine in one file. And the claim the epic is named for &mdash; that any LLM can build on KelyfOS from the
+        docs alone &mdash; is the one claim in this project that could not be settled by a benchmark, so it was settled
+        by an exam instead: a fresh agent with the source withheld built the thing, first try, in thirty-five minutes.
+        <b>What it also established is that generation is not enough</b>, and that is the finding worth carrying into
+        E4. A generated page can be perfectly consistent with a source table and still be false, and CI cannot tell.
+        F-D9 already requires the exam to be re-run whenever an epic adds commands or MCP tools; E4 adds a great many
+        of both.</td>
+        <td class="mono"><pre>1. docs drift fails CI
+   run 32637679814, branch scratch/docs-drift-proof
+   checks -> failure at "The generated reference
+   still matches the source"
+
+   the generated documentation disagrees with
+   the source:
+   +| `--pretend` | boolean | &mdash; | a flag that
+      exists in the code and not in the reference |
+   Run 'make docs' and commit the result.
+
+   $ make docs &amp;&amp; git status --porcelain
+     (empty)
+
+2. every recipe green in CI from a fresh clone
+   run 32637744163, cookbook workflow, x86_64
+   PASS allowlist-and-secret  5s
+   PASS audit-log             6s
+   PASS e2b-shim             12s
+   PASS one-sandbox           5s
+   PASS python-mcp-client    14s
+   PASS snapshot-and-fork    22s
+   PASS three-agent-team     67s
+   PASS workspace             5s
+   8 passed, 0 failed
+
+3. llms-full.txt at the repository root
+   61 087 tokens (cl100k) · 61 070 (o200k)
+   233 275 characters
+   = 31% of a 200k window, 6% of 1M
+   measured with tiktoken 0.14.0, not estimated
+
+4. the docs-only exam: pass, first try
+   kelyfos v0.5-17-g65be6c6, both flavors built
+   from the commit under test
+   transcript committed at docs/exam/</pre></td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
