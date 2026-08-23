@@ -365,6 +365,26 @@ second is the part a reader most wants when something has gone wrong. A refused
 call is recorded exactly like a permitted one: a ceiling nobody can see being
 enforced is a ceiling nobody can audit.
 
+### `plugin.call` and `plugin.crash`
+A tool belonging to a `[[plugin]]` running inside the guest was called, and —
+separately — a plugin's process ended. Written from E4-7, and both are
+`"source": "guest"` for the reason `resource.oom` is: the supervisor knows what
+happened and is not trusted to record it.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `name` | string | The plugin, as the policy file declared it. Never the name the plugin announces about itself. |
+| `tool` | string | On `plugin.call`: the plugin's own name for the tool, without the prefix. |
+| `outcome` | string | On `plugin.call`: `ok` or `error`. |
+| `duration_ms` | integer | On `plugin.call`: how long the plugin took to answer. |
+| `reason` | string | On `plugin.crash`: what it exited with. |
+| `agent` | string | Present inside a team: which member's plugin it was. |
+
+A plugin that dies silently and takes its tools with it would otherwise look
+identical to a plugin that never had those tools. After a crash its tools stay
+advertised and fail with the reason, so the transcript and the agent agree about
+what happened.
+
 ---
 
 ## 5. Reading the file
@@ -419,4 +439,5 @@ team session must be found by id or with `--list`.
 | Live TUI built only from this file | P3-9 |
 | `mcp.host.call` and `mcp.host.result` for every client tool call, refused or not | E4-4 |
 | `--export` of a server session with a lane per sandbox | E4-4 |
+| `plugin.call` per plugin tool call, `plugin.crash` when one ends | E4-7 |
 | Signed exports verifiable offline | P4-3 |

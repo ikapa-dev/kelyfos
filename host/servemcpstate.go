@@ -179,9 +179,11 @@ func (s *hostServer) toolRestore(raw json.RawMessage) *mcp.CallToolResult {
 		b.allow = allow
 	}
 
-	if b.rec, err = recorder.Open(sandbox.Root(), id); err != nil {
+	rec, err := recorder.Open(sandbox.Root(), id)
+	if err != nil {
 		return mcp.Errorf("sandbox_restore: %v", err)
 	}
+	b.setRec(rec)
 	_ = b.rec.Append(recorder.Event{
 		Type: recorder.TypeSessionStart, Image: opts.Flavor, Arch: opts.Arch,
 		Kelyfos: Version, Argv: s.argv, Reason: "restored from " + a.Name + " through serve-mcp session " + s.auditID,
@@ -361,12 +363,14 @@ func (s *hostServer) toolFork(raw json.RawMessage) *mcp.CallToolResult {
 			continue
 		}
 		b := &servedBox{sb: r.sb, image: meta.Flavor, created: time.Now()}
-		if b.rec, err = recorder.Open(sandbox.Root(), r.sb.State.ID); err == nil {
-			_ = b.rec.Append(recorder.Event{
+		if rec, err := recorder.Open(sandbox.Root(), r.sb.State.ID); err == nil {
+			b.setRec(rec)
+			_ = rec.Append(recorder.Event{
 				Type: recorder.TypeSessionStart, Image: meta.Flavor, Arch: arch,
-				Kelyfos: Version, Argv: s.argv, Reason: "forked from " + a.Name + " through serve-mcp session " + s.auditID,
+				Kelyfos: Version, Argv: s.argv,
+				Reason: "forked from " + a.Name + " through serve-mcp session " + s.auditID,
 			})
-			_ = b.rec.Append(recorder.Event{
+			_ = rec.Append(recorder.Event{
 				Type: recorder.TypeSessionReady, BootMS: r.elapsed.Milliseconds(),
 			})
 		}

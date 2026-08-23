@@ -148,12 +148,23 @@ type GuestEvent struct {
 	PID    int    `json:"pid,omitempty"`
 	Comm   string `json:"comm,omitempty"`
 	RSSKiB int64  `json:"rss_kib,omitempty"`
+
+	// plugin.call and plugin.crash (E4-7). Name is the declared plugin, which
+	// is the host's name for it and never the one the plugin announces about
+	// itself (F-D24).
+	Name       string `json:"name,omitempty"`
+	Tool       string `json:"tool,omitempty"`
+	Outcome    string `json:"outcome,omitempty"`
+	DurationMS int64  `json:"duration_ms,omitempty"`
+	Message    string `json:"message,omitempty"`
 }
 
 // Guest event types. Deliberately the same strings the flight recorder uses:
 // the guest is reporting an event of that type, not a private encoding of one.
 const (
-	GuestEventOOM = "resource.oom"
+	GuestEventOOM         = "resource.oom"
+	GuestEventPluginCall  = "plugin.call"
+	GuestEventPluginCrash = "plugin.crash"
 )
 
 // TeamRequest and TeamResponse are the team broker's RPCs (§5.6), and they run

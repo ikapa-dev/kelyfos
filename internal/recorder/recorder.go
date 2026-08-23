@@ -46,6 +46,8 @@ const (
 	TypeTeamSpawn       = "team.spawn"
 	TypeMCPHostCall     = "mcp.host.call"
 	TypeMCPHostResult   = "mcp.host.result"
+	TypePluginCall      = "plugin.call"
+	TypePluginCrash     = "plugin.crash"
 )
 
 // ReasonServeMCP marks a session.start as a server's own session rather than a
@@ -158,6 +160,12 @@ type Event struct {
 	// resource.oom block gives: this order is the order the hash is computed
 	// over.
 	Args string `json:"args,omitempty"`
+
+	// plugin.call and plugin.crash (E4-7). Name carries the plugin, as every
+	// other event that names a thing does; Tool is the plugin's own name for
+	// what was called, without the prefix, because the prefix is already in
+	// Name and repeating it would make the two disagree eventually.
+	Tool string `json:"tool,omitempty"`
 }
 
 type EvError struct {

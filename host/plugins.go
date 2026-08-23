@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 
 	"github.com/p4r4n0rm4l/KelyfOS/internal/config"
+	"github.com/p4r4n0rm4l/KelyfOS/internal/proto"
+	"github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/sandbox"
 )
 
@@ -42,4 +44,25 @@ func packPlugins(cfg *config.Config, id string) (*sandbox.Plugins, error) {
 		return nil, fmt.Errorf("pack the plugins device: %w", err)
 	}
 	return plugins, nil
+}
+
+// pluginEvent turns what the guest reported into what the host records.
+//
+// The guest reports facts and the host writes the chain, exactly as it does for
+// resource.oom: a guest that could write its own audit trail could forge it
+// (docs/events.md §1). Every field here is one the guest sent, and the source
+// says so.
+func pluginEvent(ev proto.GuestEvent) recorder.Event {
+	out := recorder.Event{Source: recorder.SourceGuest, Name: ev.Name}
+	switch ev.Type {
+	case proto.GuestEventPluginCall:
+		out.Type = recorder.TypePluginCall
+		out.Tool = ev.Tool
+		out.Outcome = ev.Outcome
+		out.DurationMS = ev.DurationMS
+	case proto.GuestEventPluginCrash:
+		out.Type = recorder.TypePluginCrash
+		out.Reason = ev.Message
+	}
+	return out
 }

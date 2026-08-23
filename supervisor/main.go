@@ -65,6 +65,7 @@ func main() {
 		// no writable filesystem to log to — only the console the kernel gave
 		// us. setupRoot changes that.
 		setupRoot()
+		applyDefaultPath()
 		mountWorkspace()
 		// Mounted before anything can run, so a plugin's files are on disk
 		// before the first tool call could ask for one. What launches them is
@@ -91,6 +92,27 @@ func main() {
 
 	shutdown := make(chan struct{}, 1)
 
+	// Guest-originated events. The queue is small and bounded on purpose: this
+	// is PID 1, and a full queue must cost a dropped report rather than a
+	// blocked init. A drop is logged to the console, which is the one place
+	// left that cannot itself be starved.
+	events := make(chan proto.GuestEvent, 64)
+	go pumpEvents(events)
+	guestEvents = events
+	go watchKmsg(reportGuestEvent)
+
+	// Plugins start before readiness is announced, and the handshake with each
+	// one is paid for here rather than later.
+	//
+	// It would be cheaper to start them in the background, and it would be
+	// wrong: ready means the machine is usable, and a machine whose tools/list
+	// is still filling in is one an agent cannot tell apart from a machine that
+	// never had those tools. A sandbox with plugins therefore takes longer to
+	// become ready than one without, because being ready means more (E4-7).
+	if len(thePlugins) > 0 {
+		startPlugins(thePlugins, rp, reportGuestEvent)
+	}
+
 	// Listeners are bound before readiness is announced. The host is entitled
 	// to connect the instant it sees the ready frame, and a race there looks
 	// like a mysterious connection refusal.
@@ -112,20 +134,6 @@ func main() {
 
 	go announceReady(start)
 
-	// Guest-originated events. The queue is small and bounded on purpose: this
-	// is PID 1, and a full queue must cost a dropped report rather than a
-	// blocked init. A drop is logged to the console, which is the one place
-	// left that cannot itself be starved.
-	events := make(chan proto.GuestEvent, 64)
-	go pumpEvents(events)
-	go watchKmsg(func(ev proto.GuestEvent) {
-		select {
-		case events <- ev:
-		default:
-			logf("dropped a %s event: the host events channel is not keeping up", ev.Type)
-		}
-	})
-
 	<-shutdown
 	halt(shutdownGrace)
 }
@@ -137,6 +145,27 @@ func main() {
 // connection with only the guest able to re-dial (docs/protocol.md §1.6). An
 // event taken off the queue while the connection is down is held rather than
 // dropped, so a reconnect does not cost the report that provoked it.
+// guestEvents is the queue everything guest-side reports into. Package-level
+// because the MCP session reports plugin calls from wherever a call lands, and
+// threading a channel through every tool would be threading it through tools
+// that will never use it.
+var guestEvents chan<- proto.GuestEvent
+
+// reportGuestEvent queues one report, dropping it if the host is not keeping
+// up. Bounded on purpose: this is PID 1, and a full queue must cost a dropped
+// report rather than a blocked init. The drop goes to the console, which is the
+// one place left that cannot itself be starved.
+func reportGuestEvent(ev proto.GuestEvent) {
+	if guestEvents == nil {
+		return
+	}
+	select {
+	case guestEvents <- ev:
+	default:
+		logf("dropped a %s event: the host events channel is not keeping up", ev.Type)
+	}
+}
+
 func pumpEvents(queue <-chan proto.GuestEvent) {
 	var pending *proto.GuestEvent
 	backoff := dialBackoffMin

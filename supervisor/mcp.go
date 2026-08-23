@@ -97,6 +97,11 @@ func (s *mcpSession) dispatch(req *mcp.Request) *mcp.Response {
 		if theTeam != nil {
 			tools = append(tools, teamToolDefinitions(theTeam.maySpawn)...)
 		}
+		// The plugins' tools come last and namespaced, so a plugin can never
+		// shadow a built-in one: <plugin>_<tool> cannot collide with exec or
+		// read_file, because a plugin name may not contain an underscore
+		// (docs/mcp-surface.md §3.2).
+		tools = append(tools, pluginTools()...)
 		return mcp.NewResponse(req.ID, mcp.ToolsListResult{Tools: tools})
 
 	case "tools/call":
@@ -138,6 +143,9 @@ func (s *mcpSession) callTool(p *mcp.CallToolParams) *mcp.CallToolResult {
 	default:
 		if isTeamTool(p.Name) {
 			return callTeamTool(theTeam, p.Name, args)
+		}
+		if plug, tool, ok := findPluginTool(p.Name); ok {
+			return callPluginTool(plug, tool, args, reportGuestEvent)
 		}
 		return mcp.Errorf("unknown tool %q", p.Name)
 	}

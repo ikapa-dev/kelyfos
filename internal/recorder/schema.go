@@ -232,5 +232,25 @@ func Types() []EventType {
 				{Name: "duration_ms", Type: "integer", Doc: "how long the call took"},
 				{Name: "error", Type: "object", Doc: "kind and message", When: "the outcome is error"},
 			}},
+		{Type: TypePluginCall, Source: SourceGuest,
+			Doc: "an agent called a tool belonging to a plugin running inside the guest. The " +
+				"supervisor reports it and the host writes it, for the reason resource.oom is " +
+				"reported the same way: the guest knows what happened and is not trusted to " +
+				"record it",
+			Fields: []Field{
+				{Name: "name", Type: "string", Doc: "the plugin, as the policy file declared it"},
+				{Name: "tool", Type: "string", Doc: "the plugin's own name for the tool, without the prefix"},
+				{Name: "outcome", Type: "string", Doc: "ok or error"},
+				{Name: "duration_ms", Type: "integer", Doc: "how long the plugin took"},
+			}},
+		{Type: TypePluginCrash, Source: SourceGuest,
+			Doc: "a plugin's process ended. Its tools fail from then on and say so; the sandbox, " +
+				"the other plugins and the supervisor are untouched. A plugin that died silently " +
+				"and took its tools with it would otherwise look identical to one that never had " +
+				"those tools",
+			Fields: []Field{
+				{Name: "name", Type: "string", Doc: "the plugin"},
+				{Name: "reason", Type: "string", Doc: "what it exited with"},
+			}},
 	}
 }

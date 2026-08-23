@@ -100,6 +100,31 @@ func setupOverlay() error {
 
 // applyHostname exists because the image has no init system to do it, so
 // without this the guest calls itself "(none)" in every uname and log line.
+// defaultPath is the PATH every command this supervisor starts is given, and —
+// separately and for a different reason — the PATH this process itself uses.
+//
+// A guest's init inherits the kernel's environment, which is HOME and TERM and
+// no PATH at all. Handing the *child* a PATH is not enough: os/exec resolves a
+// bare command name against the **parent's** PATH before the child exists, so
+// `exec.Command("python3")` in a process with no PATH fails to find a python3
+// the machine plainly has. Everything routed through /bin/sh worked anyway,
+// because a shell supplies its own default, which is why this stayed invisible
+// until something was launched directly — a plugin, or an `exec` with no shell
+// (E4-7).
+const defaultPath = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+// applyDefaultPath gives this process the PATH the kernel did not. Set rather
+// than appended, and only when there is none: a PATH the host put on the kernel
+// command line is the host's decision and is left alone.
+func applyDefaultPath() {
+	if os.Getenv("PATH") != "" {
+		return
+	}
+	if err := os.Setenv("PATH", defaultPath); err != nil {
+		logf("warning: could not set a default PATH: %v", err)
+	}
+}
+
 func applyHostname() {
 	blob, err := os.ReadFile("/etc/hostname")
 	if err != nil {

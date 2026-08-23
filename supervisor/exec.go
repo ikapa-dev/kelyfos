@@ -20,7 +20,7 @@ import (
 // silently hands its process environment to guest commands is one leak away
 // from handing over whatever the host put there.
 var defaultEnv = []string{
-	"PATH=/usr/sbin:/usr/bin:/sbin:/bin",
+	"PATH=" + defaultPath,
 	"HOME=/root",
 	"TERM=dumb",
 }

@@ -654,16 +654,22 @@ func bootAgent(ctx context.Context, a plannedAgent, broker *team.Broker, rec *re
 		// machine, and without this it would be the one thing that happened in
 		// the team nobody could see afterwards (E1-4).
 		OnGuestEvent: func(ev proto.GuestEvent) {
-			if ev.Type != proto.GuestEventOOM {
-				return
+			switch ev.Type {
+			case proto.GuestEventOOM:
+				_ = rec.Append(recorder.Event{
+					Type: recorder.TypeResourceOOM, Source: recorder.SourceGuest, Agent: a.name,
+					PID: ev.PID, Comm: ev.Comm, RSSKiB: ev.RSSKiB, MemMiB: a.res.MemMiB,
+				})
+				fmt.Fprintf(os.Stderr,
+					"\nkelyfos: %s ran out of memory and killed %s (pid %d, %s resident of a %d MiB machine)\n",
+					a.name, ev.Comm, ev.PID, report.HumanKiB(ev.RSSKiB), a.res.MemMiB)
+			case proto.GuestEventPluginCall, proto.GuestEventPluginCrash:
+				// Carries the agent, so a team's one transcript says which
+				// member's plugin did what (E2-7).
+				e := pluginEvent(ev)
+				e.Agent = a.name
+				_ = rec.Append(e)
 			}
-			_ = rec.Append(recorder.Event{
-				Type: recorder.TypeResourceOOM, Source: recorder.SourceGuest, Agent: a.name,
-				PID: ev.PID, Comm: ev.Comm, RSSKiB: ev.RSSKiB, MemMiB: a.res.MemMiB,
-			})
-			fmt.Fprintf(os.Stderr,
-				"\nkelyfos: %s ran out of memory and killed %s (pid %d, %s resident of a %d MiB machine)\n",
-				a.name, ev.Comm, ev.PID, report.HumanKiB(ev.RSSKiB), a.res.MemMiB)
 		},
 	}
 

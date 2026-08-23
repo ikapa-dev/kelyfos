@@ -395,12 +395,20 @@ func (s *hostServer) boot(opts sandbox.Options) (*servedBox, error) {
 		go b.proxy.Serve()
 	}
 
+	// What the guest reports goes into this sandbox's own chain. The recorder
+	// does not exist yet when the machine is built, so the handler reads it
+	// through the box — which is also what keeps a report arriving after
+	// teardown from writing into a closed file.
+	opts.OnGuestEvent = b.guestEvent
+
 	if b.sb, err = sandbox.New(opts); err != nil {
 		return nil, err
 	}
-	if b.rec, err = recorder.Open(sandbox.Root(), id); err != nil {
+	rec, err := recorder.Open(sandbox.Root(), id)
+	if err != nil {
 		return nil, err
 	}
+	b.setRec(rec)
 	_ = b.rec.Append(recorder.Event{
 		Type: recorder.TypeSessionStart, Image: opts.Flavor, Arch: opts.Arch,
 		Kelyfos: Version, Argv: s.argv, Reason: "created through serve-mcp session " + s.auditID,

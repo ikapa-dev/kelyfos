@@ -408,6 +408,13 @@ status. This is how you hand an agent a sandbox and nothing else:
 				"\nkelyfos: the guest ran out of memory and killed %s (pid %d, %s resident "+
 					"of a %d MiB machine)\n         raise --mem, or lower what the agent is asked to hold\n",
 				ev.Comm, ev.PID, report.HumanKiB(ev.RSSKiB), *memMiB)
+		case proto.GuestEventPluginCall, proto.GuestEventPluginCrash:
+			_ = rec.Append(pluginEvent(ev))
+			if ev.Type == proto.GuestEventPluginCrash {
+				fmt.Fprintf(os.Stderr, "\nkelyfos: plugin %s stopped: %s\n"+
+					"         its tools now fail and say so; nothing else in the sandbox is affected\n",
+					ev.Name, ev.Message)
+			}
 		default:
 			// Unknown guest event types are ignored rather than recorded: the
 			// guest is untrusted, and an unrecognised type is either a version

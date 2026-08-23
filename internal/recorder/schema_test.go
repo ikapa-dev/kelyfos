@@ -74,6 +74,7 @@ func TestSchemaDescribesNothingExtra(t *testing.T) {
 		TypeResourceOOM: true, TypeResourceTimeout: true, TypeResourceSummary: true,
 		TypeTeamMessage: true, TypeTeamRefused: true, TypeTeamStore: true,
 		TypeTeamSpawn: true, TypeMCPHostCall: true, TypeMCPHostResult: true,
+		TypePluginCall: true, TypePluginCrash: true,
 	}
 	for _, e := range Types() {
 		if !real[e.Type] {

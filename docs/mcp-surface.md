@@ -337,6 +337,22 @@ Each entry is an MCP server that runs **inside the guest**, launched by the
 supervisor, speaking MCP stdio to it. Its tools are aggregated into the agent's
 session alongside the built-in ones.
 
+The supervisor launches it from its own directory on the read-only device, with
+**exactly the environment every other command in the sandbox gets** — the same
+`PATH`, and the same egress proxy variables when the sandbox has egress. Not a
+second environment, and not this process's own: one environment, decided in one
+place.
+
+The handshake happens **before the sandbox reports ready**, and the tool list is
+read once there rather than on every call. That costs something and the cost is
+the plugin's: on the development machine a sandbox with no plugins is ready in
+about **800 ms**, and one with the Python demo plugin in about **1.4 s** —
+almost all of it a CPython interpreter starting. A compiled plugin costs far
+less. Doing it in the background would be cheaper and wrong: *ready* means the
+machine is usable, and a machine whose `tools/list` is still filling in is one
+an agent cannot tell apart from a machine that never had those tools. (Nested
+virtualisation figures, informational only — D15.)
+
 ### 3.1 Why this is safe
 
 A plugin has exactly the powers of a malicious agent, and the sandbox already
@@ -387,7 +403,9 @@ limit, and a plugin whose tool would exceed it is refused at boot rather than
 advertised and rejected later by somebody else's API.
 
 **The prefix is the declared name, never the plugin's own.** A plugin announces
-a `serverInfo.name` at initialize, and that name is not used for anything. The
+a `serverInfo.name` at initialize, and that name is not used for anything — the
+in-repo demo plugin announces `not-the-name-that-counts` precisely so a test can
+see that it is ignored. The
 MCP specification says as much — a server's self-reported name is not guaranteed
 unique and should not be relied on for disambiguation — and KelyfOS would refuse
 it anyway, for the reason it refuses every other guest-asserted identity: the
@@ -469,7 +487,18 @@ with. A plugin that dies silently and takes its tools with it would otherwise
 look identical to a plugin that never had those tools.
 
 **Per-call audit events carry the plugin name**, so a transcript says which
-plugin was asked to do what, not merely that a tool was called.
+plugin was asked to do what, not merely that a tool was called. `plugin.call`
+records the plugin, the tool without its prefix, the outcome and how long it
+took; `plugin.crash` records the plugin and what it exited with. Both are
+reported by the supervisor and written by the host, exactly as `resource.oom`
+is and for the same reason: a guest that could write its own audit trail could
+forge it.
+
+**A crashed plugin's tools stay in the list.** Removing them would leave an
+agent that had already read the list calling something that no longer exists and
+being told "unknown tool" — which is what a typo looks like, not what a crash
+looks like. They fail instead, naming the plugin, what it exited with, and the
+fact that nothing else in the sandbox is affected.
 
 ---
 

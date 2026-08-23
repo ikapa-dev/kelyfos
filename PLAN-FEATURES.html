@@ -126,7 +126,7 @@
      improvements to the existing product land here as epics. Inert until its gate opens.</p>
   <div class="meta">
     owner: <b>John</b> &nbsp;&middot;&nbsp; developer: <b>Claude Code</b> &nbsp;&middot;&nbsp;
-    status: <b class="ok" id="meta-status">Epic E4 — active, 7/9 (v0.6 released; next: E4-7, the supervisor plugin runtime)</b> &nbsp;&middot;&nbsp;
+    status: <b class="ok" id="meta-status">Epic E4 — active, 8/9 (v0.6 released; next: E4-8, the both-directions proof)</b> &nbsp;&middot;&nbsp;
     last updated: <b id="meta-updated">2026-08-23</b><br>
     repo file: <b>PLAN-FEATURES.html</b> (lives at the repository root next to <code>PLAN.html</code>)<br>
     <span class="quiet">Companion to PLAN.html — same protocol, same rules, later timeline.</span>
@@ -166,7 +166,7 @@
     <span class="bl-name">All epics</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">E4-7 — the supervisor plugin runtime: launch each <code>[[plugin]]</code> as a child, speak MCP stdio to it, and aggregate its tools under <code>&lt;plugin&gt;_&lt;tool&gt;</code></b></div>
+  <div class="focusline">Current focus: <b id="focus">E4-8 — proof in both directions at once: a scripted client drives <code>serve-mcp</code> while the agent inside the sandbox calls a plugin&rsquo;s namespaced tools, and one exported transcript shows both lanes</b></div>
 </div>
 
 <!-- ====================================================== 1. ACTIVATION GATE -->
@@ -526,7 +526,7 @@
         mechanism (host-side <code>mkfs.ext4</code> + populate — on macOS that runs inside the Lima VM, like all Linux work),
         pointed at the plugin files. Flavors may additionally ship built-in servers;
         both routes launch identically.</span></li>
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">E4-7</span><span class="tk">Supervisor plugin runtime: launch each <code>[[plugin]]</code> entry as a child
         process, speak MCP stdio to it, aggregate its tools into the agent&rsquo;s session under the
         <code>&lt;plugin&gt;.&lt;tool&gt;</code> namespace. Per-call audit events carry the plugin name; a crashing plugin fails
@@ -1660,6 +1660,34 @@
         <i>Revisit when</i> a plugin needs to be updated without rebuilding the device, which is a different feature and
         not a different device.</td>
         <td class="mono">internal/sandbox/plugins.go</td></tr>
+        <tr><td class="mono">F-D46</td><td class="mono">2026-08-23</td>
+        <td><b>Plugins are started before the sandbox reports ready, and they are started through the reaper.</b>
+        <i>Before ready, and what that costs.</i> Starting them in the background would be cheaper and would be wrong:
+        <i>ready</i> means the machine is usable, and a machine whose <code>tools/list</code> is still filling in is one
+        an agent cannot tell apart from a machine that never had those tools. The first live run showed exactly that
+        &mdash; a client that connected immediately got the built-in six and four &ldquo;unknown tool&rdquo; refusals,
+        then the same tools worked a second later. Measured on the development machine: ready in <b>~800 ms</b> with no
+        plugins and <b>~1.4 s</b> with the Python demo plugin, almost all of the difference a CPython interpreter
+        starting. The cost belongs to the plugin, a compiled one would pay far less, and a sandbox that declares none
+        pays nothing. Nested-virt figures, informational (D15); no bar moves, because the images the bars are measured
+        on declare no plugins.
+        <i>Through the reaper, not Cmd.Wait.</i> PID 1 has exactly one waiter by design (P2-1), and the first live crash
+        reported <code>waitid: no child processes</code> &mdash; a sentence about this process&rsquo;s plumbing where
+        the exit status should have been. Registering the child with the reaper gives the real answer,
+        <code>exit status 9</code>, which is what a reader needs and what the refusal now quotes back.
+        <i>The environment is the sandbox&rsquo;s, decided once.</i> A plugin gets <code>defaultEnv</code> &mdash;
+        exactly what every command in that sandbox gets, egress proxy included. Not this process&rsquo;s environment
+        and not a second one: a plugin is not given another network policy surface, it is given the agent&rsquo;s.
+        <i>Which surfaced a bug older than this task.</i> A guest&rsquo;s init inherits the kernel&rsquo;s environment,
+        which has <b>no PATH at all</b>. Handing the child a PATH is not enough, because <code>os/exec</code> resolves a
+        bare command name against the <i>parent&rsquo;s</i> PATH before the child exists &mdash; so
+        <code>python3</code> could not be found on a machine that plainly has it. Everything routed through
+        <code>/bin/sh</code> worked anyway, because a shell supplies its own default, which is why this stayed invisible
+        until something was launched directly: a plugin, or an <code>exec</code> with no shell. One constant now, used
+        by the supervisor&rsquo;s own environment and by every command it starts.
+        <i>Revisit when</i> a plugin needs to stream progress to the agent, which the runtime currently drops rather
+        than forwards.</td>
+        <td class="mono">supervisor/pluginhost.go, supervisor/mount.go</td></tr>
     <!-- Claude Code: append rows above this line. -->
       <tr><td class="mono">F-D10</td><td class="mono">2026-08-22</td>
         <td>The resource knobs E1-0 goes looking for shipped <b>partly</b>: <code>--vcpus</code>/<code>--mem</code> and
@@ -3949,6 +3977,32 @@ $ gofmt -l . ; go vet ./... ; go test ./...
         gate that keeps every toml key documented scans a named list of parser functions — a list that had just silently
         stopped covering the parser. It now checks itself against every function that ends a switch with
         <code>unknownKey</code>, which is exactly the set.</td></tr>
+        <tr><td class="mono">2026-08-23</td><td class="mono">E4-7</td>
+        <td><b>An agent inside a sandbox can now call a tool that runs beside it.</b> Each <code>[[plugin]]</code> is a
+        child process speaking MCP over its own standard streams, launched from the read-only device with the same
+        environment every command in that sandbox gets. Its tools are advertised as <code>&lt;plugin&gt;_&lt;tool&gt;</code>
+        alongside the built-in six, and a call is forwarded and its answer returned unchanged &mdash; including
+        <code>isError</code>, which belongs to the agent to read.
+        <b>Proved live with a demo plugin shipped as a fixture.</b> <code>demo_echo</code> answered,
+        <code>demo_where</code> reported <code>cwd /plugins/demo, writable False</code> &mdash; E4-6&rsquo;s read-only
+        device seen from inside the plugin &mdash; and <code>demo_fail</code> came back as a failed result rather than a
+        broken session. Then <code>demo_die</code> exited the process: the call failed with the reason, the next call
+        said the plugin is no longer running and that <i>everything else in this sandbox is unaffected</i>, and
+        <code>exec</code> and <code>read_file</code> went on working. The transcript carries a <code>plugin.call</code>
+        per call with the plugin, the tool, the outcome and the duration, and one <code>plugin.crash</code> naming
+        <code>exit status 9</code>.
+        <b>Two things had to change to make that true</b>, and F-D46 has both. Plugins start <i>before</i> readiness is
+        announced, because the first run showed a client connecting into a half-filled tool list; that costs ~600 ms for
+        a Python plugin and nothing for a sandbox that declares none. And the child is registered with the reaper rather
+        than waited on directly, because PID 1 has exactly one waiter and the first crash reported
+        <code>waitid: no child processes</code> instead of an exit status.
+        <b>And one bug older than the task.</b> A guest&rsquo;s init has no PATH, and <code>os/exec</code> resolves a
+        command name against the parent&rsquo;s PATH — so nothing launched directly could find <code>python3</code>,
+        including <code>exec</code> with no shell. Everything through <code>/bin/sh</code> worked, which is why nobody
+        had noticed.
+        <b>serve-mcp also had no guest-event handler at all</b>, so an OOM kill inside a sandbox created through that
+        door was the one thing that happened in it nobody could see &mdash; the gap E1-4 closed for <code>run</code> and
+        E4-1 reopened by not having the line. Closed, and it carries the plugin events too.</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>

@@ -129,6 +129,9 @@ type hostServer struct {
 type servedBox struct {
 	sb      *sandbox.Sandbox
 	plugins string // the plugins image, removed with the machine that used it
+	// recMu guards rec, which arrives after the machine and leaves before it:
+	// a guest event can be reported at either edge.
+	recMu   sync.Mutex
 	rec     *recorder.Recorder
 	net     *sandbox.Network
 	proxy   *egress.Proxy
@@ -136,6 +139,38 @@ type servedBox struct {
 	image   string
 	allow   []string
 	created time.Time
+}
+
+// setRec publishes this box's recorder. Guarded because a guest event can
+// arrive from the machine's own goroutine the moment it starts.
+func (b *servedBox) setRec(rec *recorder.Recorder) {
+	b.recMu.Lock()
+	b.rec = rec
+	b.recMu.Unlock()
+}
+
+// guestEvent records what the guest reported into this sandbox's own chain.
+//
+// serve-mcp had no handler at all until E4-7, which meant an OOM kill inside a
+// sandbox created through this door was the one thing that happened in it that
+// nobody could see afterwards — the gap E1-4 closed for `kelyfos run` and this
+// door reopened by not having the line.
+func (b *servedBox) guestEvent(ev proto.GuestEvent) {
+	b.recMu.Lock()
+	rec := b.rec
+	b.recMu.Unlock()
+	if rec == nil {
+		return
+	}
+	switch ev.Type {
+	case proto.GuestEventOOM:
+		_ = rec.Append(recorder.Event{
+			Type: recorder.TypeResourceOOM, Source: recorder.SourceGuest,
+			PID: ev.PID, Comm: ev.Comm, RSSKiB: ev.RSSKiB,
+		})
+	case proto.GuestEventPluginCall, proto.GuestEventPluginCrash:
+		_ = rec.Append(pluginEvent(ev))
+	}
 }
 
 func (b *servedBox) close(reason string) {
@@ -156,12 +191,16 @@ func (b *servedBox) close(reason string) {
 	if b.plugins != "" {
 		_ = os.Remove(b.plugins)
 	}
-	if b.rec != nil {
-		_ = b.rec.Append(recorder.Event{
+	b.recMu.Lock()
+	rec := b.rec
+	b.rec = nil
+	b.recMu.Unlock()
+	if rec != nil {
+		_ = rec.Append(recorder.Event{
 			Type: recorder.TypeSessionEnd, Reason: reason,
-			DurationMS: b.rec.Since().Milliseconds(),
+			DurationMS: rec.Since().Milliseconds(),
 		})
-		_ = b.rec.Close()
+		_ = rec.Close()
 	}
 }
 

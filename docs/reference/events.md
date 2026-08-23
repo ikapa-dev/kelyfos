@@ -249,3 +249,23 @@ What that call came back with. A refused call is recorded exactly like a permitt
 | `outcome` | string | ok or error |
 | `duration_ms` | integer | how long the call took |
 | `error` | object | kind and message *(the outcome is error)* |
+
+## `plugin.call`
+
+An agent called a tool belonging to a plugin running inside the guest. The supervisor reports it and the host writes it, for the reason resource.oom is reported the same way: the guest knows what happened and is not trusted to record it. Written by the **guest**.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `name` | string | the plugin, as the policy file declared it |
+| `tool` | string | the plugin's own name for the tool, without the prefix |
+| `outcome` | string | ok or error |
+| `duration_ms` | integer | how long the plugin took |
+
+## `plugin.crash`
+
+A plugin's process ended. Its tools fail from then on and say so; the sandbox, the other plugins and the supervisor are untouched. A plugin that died silently and took its tools with it would otherwise look identical to one that never had those tools. Written by the **guest**.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `name` | string | the plugin |
+| `reason` | string | what it exited with |
