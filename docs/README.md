@@ -20,7 +20,7 @@ hand-written half, and this page says where each is still thin.
 | If you are… | Read, in order |
 | --- | --- |
 | trying it for the first time | the repository [`README.md`](../README.md) quickstart, then [`threat-model.md`](threat-model.md) before trusting it with anything |
-| an LLM or an agent framework | [`reference/`](reference/) for exact names, this page for what they mean. `llms.txt` / `llms-full.txt` at the repository root — the whole product in one file — arrive with E3-2. |
+| an LLM or an agent framework | [`../llms.txt`](../llms.txt) — an index per the llmstxt.org spec — or [`../llms-full.txt`](../llms-full.txt), which is every page below in one file, about 48,000 tokens |
 | deciding how much machine an agent gets | [`resources.md`](resources.md) |
 | running several agents together | [`teams.md`](teams.md) |
 | auditing what an agent did | [`events.md`](events.md) |
@@ -40,6 +40,8 @@ hand-written half, and this page says where each is still thin.
 | [`teams.md`](teams.md) | mixed | The `[team]` schema, the host broker and its edge rules, the team store, the collective budget, and how a team boots. |
 | [`threat-model.md`](threat-model.md) | concept | What KelyfOS defends against and — the longer half — what it does not. |
 | [`e2b-shim.md`](e2b-shim.md) | mixed | The E2B-compatible REST subset: what it implements, what it does not, and why. |
+| [`../llms.txt`](../llms.txt) | **generated** | The index a machine reads first: every page above as a link with a one-line description, per the llmstxt.org spec. |
+| [`../llms-full.txt`](../llms-full.txt) | **generated** | Every page above concatenated, each with its source URL. About 48,000 tokens — a quarter of a 200k context window. |
 | [`launch/hn-post.md`](launch/hn-post.md) | not documentation | The launch post draft. Unposted, and the maintainer's to send. |
 
 The plan files at the repository root — [`PLAN.html`](../PLAN.html) for phases 0–4
@@ -178,8 +180,9 @@ specification, not a description.
 `KELYFOS_CGROUP_ROOT` are read by the CLI and named nowhere. `KELYFOS_SANDBOX`
 is the one an integrator needs, and E3-4 is its home.
 
-**Recipes.** There is no cookbook, no integration guide and no `llms.txt`. Those
-are E3-3, E3-4 and E3-2.
+**Recipes.** There is no cookbook and no integration guide. Those are E3-3 and
+E3-4, and until they exist neither `llms.txt` nor `llms-full.txt` can offer a
+worked example — which is the gap a machine reader will feel first.
 
 ## How these documents are kept true
 

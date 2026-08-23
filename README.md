@@ -260,6 +260,7 @@ machine took.
 | | |
 | --- | --- |
 | [`docs/README.md`](docs/README.md) | the entry map: what each document is, and where it is thin |
+| [`llms.txt`](llms.txt) · [`llms-full.txt`](llms-full.txt) | for machine readers: an index per the llmstxt.org spec, and the whole set in one 48k-token file |
 | [`docs/reference/`](docs/reference/) | every command, flag, toml key, MCP tool, event and exit code — generated from the source |
 | [`PLAN.html`](PLAN.html) · [`PLAN-FEATURES.html`](PLAN-FEATURES.html) | the living plan — every decision and the full progress log, phases then epics |
 | [`docs/threat-model.md`](docs/threat-model.md) | what is defended, and what is not |

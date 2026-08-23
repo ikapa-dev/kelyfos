@@ -4,18 +4,19 @@ Updated 2026-08-23 · tree clean, synced with origin/main
 
 ## Plans
 - PLAN.html — 36/43. P4 backlog non-blocking, parked (P4-4/P4-5 [BLOCKED]).
-- PLAN-FEATURES.html — 21/42. **Epic E3 active, 2/6.**
+- PLAN-FEATURES.html — 22/42. **Epic E3 active, 3/6.**
 
 ## Now
-E3-2 — `llms.txt` per the llmstxt.org spec plus `llms-full.txt`: the whole
-product in one file, token count measured and logged.
+E3-3 — the cookbook: self-contained recipes, each a literal script CI extracts
+and executes, so a recipe that stops working fails the build.
 
 ## This session
-Refreshed `docs/launch/hn-post.md` to v0.5 (John's to send). E3-0: seven parallel
-audits read every doc against the code implementing it; `docs/README.md` is the
-entry map, and F-D27 routed what they found — prose corrections landed across
-seven documents. E3-1: `docs/reference/` is generated from the product itself and
-CI fails on drift (F-D28).
+Refreshed `docs/launch/hn-post.md` to v0.5 (John's to send). E3-0: seven audits
+read every doc against the code implementing it; `docs/README.md` is the entry
+map and F-D27 routed the findings — prose corrections landed across seven
+documents. E3-1: `docs/reference/` is generated from the product itself, CI fails
+on drift (F-D28). E3-2: `llms.txt` (spec v2, conformance tested) plus
+`llms-full.txt`, measured at **48,285 tokens** — 24% of a 200k window (F-D29).
 
 ## Code defects found, recorded not fixed (F-D27)
 - `kelyfos shim` opens no recorder and reads no `kelyfos.toml` — a shim sandbox

@@ -97,10 +97,14 @@ jobs:
           printf '%s\n' "$changed" | sed 's/^/  /'
 
           # Documentation is: anything under docs/, any Markdown file anywhere,
-          # the two plan documents and the licence. Everything else — Go, the
-          # Makefile, versions.mk, the Buildroot tree, this workflow — is code.
+          # the two machine-reader files, the two plan documents and the licence.
+          # Everything else — Go, the Makefile, versions.mk, the Buildroot tree,
+          # this workflow — is code. llms.txt and llms-full.txt are named
+          # explicitly because they are generated documentation with a .txt
+          # extension, and without them a regenerated index would start an hour
+          # of Buildroot for nothing.
           rest="$(printf '%s\n' "$changed" \
-                  | grep -vE '^docs/|\.md$|^PLAN\.html$|^PLAN-FEATURES\.html$|^LICENSE$' \
+                  | grep -vE '^docs/|\.md$|^llms\.txt$|^llms-full\.txt$|^PLAN\.html$|^PLAN-FEATURES\.html$|^LICENSE$' \
                   | grep -v '^$' || true)"
 
           if [ -z "$rest" ]; then
@@ -148,17 +152,18 @@ jobs:
         run: |
           set -euo pipefail
           make docs
-          if ! git diff --quiet -- docs/reference || \
-             [ -n "$(git status --porcelain -- docs/reference)" ]; then
+          generated="docs/reference llms.txt llms-full.txt"
+          if ! git diff --quiet -- $generated || \
+             [ -n "$(git status --porcelain -- $generated)" ]; then
             echo
-            echo "docs/reference disagrees with the source:"
-            git --no-pager diff -- docs/reference
-            git status --porcelain -- docs/reference
+            echo "the generated documentation disagrees with the source:"
+            git --no-pager diff -- $generated
+            git status --porcelain -- $generated
             echo
             echo "Run 'make docs' and commit the result."
             exit 1
           fi
-          echo "the reference matches"
+          echo "the reference, llms.txt and llms-full.txt all match"
 
   build:
     needs: changes

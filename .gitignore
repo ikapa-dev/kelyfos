@@ -17,6 +17,8 @@
 # Go
 *.test
 *.out
+# `go build ./tools/...` drops its binary in the working directory.
+/gendocs
 
 # macOS
 .DS_Store

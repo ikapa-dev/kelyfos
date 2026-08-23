@@ -87,6 +87,22 @@ func run(bin, sup, out, repo string) error {
 		}
 	}
 	fmt.Printf("gendocs: wrote %d files to %s\n", len(files), out)
+
+	// The two machine-reader files at the repository root (E3-2). They are
+	// written last because llms-full.txt concatenates what was just generated.
+	full, err := llmsFull(repo)
+	if err != nil {
+		return err
+	}
+	index := llmsIndex(tokenEstimate(full))
+	for name, body := range map[string]string{"llms.txt": index, "llms-full.txt": full} {
+		if err := os.WriteFile(filepath.Join(repo, name), []byte(body), 0o644); err != nil {
+			return err
+		}
+	}
+	fmt.Printf("gendocs: llms.txt %d bytes · llms-full.txt %d bytes, about %d tokens "+
+		"at %.2f characters each (an estimate, not a measurement)\n",
+		len(index), len(full), tokenEstimate(full), charsPerToken)
 	return nil
 }
 

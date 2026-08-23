@@ -126,7 +126,7 @@
      improvements to the existing product land here as epics. Inert until its gate opens.</p>
   <div class="meta">
     owner: <b>John</b> &nbsp;&middot;&nbsp; developer: <b>Claude Code</b> &nbsp;&middot;&nbsp;
-    status: <b class="ok" id="meta-status">Epic E3 — active, 2/6 (v0.5 released; next: E3-2, llms.txt)</b> &nbsp;&middot;&nbsp;
+    status: <b class="ok" id="meta-status">Epic E3 — active, 3/6 (v0.5 released; next: E3-3, the CI-executed cookbook)</b> &nbsp;&middot;&nbsp;
     last updated: <b id="meta-updated">2026-08-23</b><br>
     repo file: <b>PLAN-FEATURES.html</b> (lives at the repository root next to <code>PLAN.html</code>)<br>
     <span class="quiet">Companion to PLAN.html — same protocol, same rules, later timeline.</span>
@@ -166,7 +166,7 @@
     <span class="bl-name">All epics</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">E3-2 — <code>llms.txt</code> per the llmstxt.org spec, and <code>llms-full.txt</code>: the whole product in one file, with its token count measured</b></div>
+  <div class="focusline">Current focus: <b id="focus">E3-3 — the cookbook: self-contained copy-paste recipes, each a literal script CI extracts and executes, so a recipe that stops working fails the build</b></div>
 </div>
 
 <!-- ====================================================== 1. ACTIVATION GATE -->
@@ -437,7 +437,7 @@
         every CLI command and flag (from the Go flag definitions), every <code>kelyfos.toml</code> key with type and default
         (from struct tags), every MCP tool the supervisor exposes with its schema, every flight-recorder event type, and all
         exit codes. CI runs <code>make docs</code> and fails on any diff — the reference is physically unable to go stale.</span></li>
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">E3-2</span><span class="tk"><code>llms.txt</code> — a Markdown link index exactly per the llmstxt.org spec — and <code>llms-full.txt</code>, the
         de-facto companion the ecosystem converged on (not part of the core spec; say so in the file header): the entire
         product in one file, generated reference + concepts + recipes, at the repo root.
@@ -1196,6 +1196,36 @@
         CLI, and any other would make <code>make docs</code> produce a different file per machine &mdash; which the CI
         gate would then fail on, loudly, which is the right way for that to be found.</td>
         <td class="mono">the E3-1 progress row</td></tr>
+        <tr><td class="mono">F-D29</td><td class="mono">2026-08-23</td>
+        <td>Four things settled while building E3-2, all of them from reading the specification live rather than from
+        memory. <b>(1) The llms.txt spec is at v2</b>, dated August 2026 by its own changes page, and v1 knowledge is
+        wrong in a specific way: the <code>Optional</code> section used to be a machine-readable instruction to the
+        <code>llms_txt2ctx</code> expander and is now a naming convention with no mechanical meaning at all. KelyfOS uses
+        it as the convention and depends on nothing.
+        <b>(2) No build version appears in either generated file.</b> <code>git describe</code> changes on every commit
+        and again on a dirty tree, so a version stamped into <code>llms.txt</code> would differ from the committed copy
+        on the very next commit — and the E3-1 drift gate would then fail every build until somebody regenerated. A gate
+        that fails for a reason unrelated to what it guards is a gate people learn to ignore. The release the project is
+        on is in the README&rsquo;s status block, which is itself inside <code>llms-full.txt</code>.
+        <b>(3) Relative links are rewritten to absolute raw URLs when a page is inlined.</b> A reader of
+        <code>llms-full.txt</code> has no filesystem, so <code>[the threat model](threat-model.md)</code> resolves
+        against nothing — and an agent that follows a dangling link is liable to invent what it would have said. A link
+        to a directory becomes that directory&rsquo;s README, because raw.githubusercontent serves files and GitHub
+        renders directories, and the reader here is a program.
+        <b>(4) The token estimate the generator prints uses a measured ratio, not a rule of thumb.</b> 3.83 characters
+        per token, from encoding this corpus with cl100k_base and o200k_base, which agree to within 0.1%. The usual 4
+        understates it by 4%, and characters rather than bytes because a corpus this full of em dashes is 1 KB wider in
+        bytes than in characters. The estimate then lands within 0.04% of the measurement, which is the only reason it
+        is allowed to appear in a published file at all &mdash; and it still says it is an estimate.
+        <i>What was checked and is not a decision, recorded so it is not re-checked.</i> The spec requires exactly one
+        H1 and nothing else; the blockquote must be a single line directly after it; the prose block may contain no
+        headings; and every bullet under an H2 must be a link, because the spec&rsquo;s own reference parser calls
+        <code>.groupdict()</code> on the match and raises rather than skipping. That last one is a real trap — Svelte&rsquo;s
+        published file would break it — so it is a test here rather than a habit.
+        <code>llms-full.txt</code> is <b>not in the spec at all</b>: grepping the v2 text, its changes page and the
+        rendered site finds no mention of it. It is an ecosystem convention, apparently Mintlify&rsquo;s, and this
+        file&rsquo;s own header says so rather than implying a standard it is not part of.</td>
+        <td class="mono">the E3-2 progress row; tools/gendocs/llms_test.go</td></tr>
     <!-- Claude Code: append rows above this line. -->
       <tr><td class="mono">F-D10</td><td class="mono">2026-08-22</td>
         <td>The resource knobs E1-0 goes looking for shipped <b>partly</b>: <code>--vcpus</code>/<code>--mem</code> and
@@ -2943,6 +2973,52 @@ $ go test ./internal/config/ ./internal/recorder/ -run TestSchema
   TestSchemaCoversEveryType      PASS
   TestSchemaDescribesNothingExtra PASS
   TestSchemaFieldsExist          PASS
+
+$ gofmt -l . ; go vet ./... ; go test ./...
+  clean · clean · all packages ok</pre></td></tr>
+        <tr><td class="mono">2026-08-23</td><td class="mono">E3-2</td>
+        <td><b><code>llms.txt</code> and <code>llms-full.txt</code>, generated by the same
+        <code>make docs</code> and gated by the same CI check.</b> The index is 4.0 KB and 1,041 tokens; the full file
+        is 182 KB and <b>48,285 tokens</b>, which is a quarter of a 200k context window and 4.8% of a million &mdash;
+        &ldquo;comfortably&rdquo;, measured rather than asserted.
+        <b>The spec was read live, at v2.</b> Its byline still says 2024 and its changes page dates v2 to August 2026,
+        and the difference matters: the <code>Optional</code> section lost its mechanical meaning when the expander tool
+        left the proposal. Conformance is tested rather than claimed &mdash;
+        <code>TestLLMsIndexFollowsTheSpec</code> transcribes the spec&rsquo;s own reference regexes and checks the
+        single H1, the single-line blockquote directly after it, the heading-free prose block, that every bullet under
+        every H2 is an absolute link with a description, and that the index stays under 16 KiB. It was proved by
+        breaking it: a prose bullet added to a file list fails the test, which is exactly the input that makes the
+        spec&rsquo;s published parser raise.
+        <b>Every page inlined into <code>llms-full.txt</code> carries its title, its source URL and a description</b>,
+        which is the shape the ecosystem converged on and the one that keeps provenance. Relative links inside those
+        pages are rewritten to absolute raw URLs, because a reader of one concatenated file has no filesystem to resolve
+        them against. Reasoning, including why neither file carries a build version, is F-D29.
+        The two files are covered by the E3-1 drift gate and are named in the pipeline&rsquo;s
+        documentation-only filter, so regenerating them no longer starts an hour of Buildroot.</td>
+        <td class="mono"><pre>$ make docs
+gendocs: llms.txt 3989 bytes · llms-full.txt 186142 bytes,
+about 48302 tokens at 3.83 characters each
+(an estimate, not a measurement)
+
+measured, python3 -m venv + tiktoken 0.14.0:
+  llms.txt       cl100k_base    1041 tokens
+  llms.txt       o200k_base     1042 tokens
+  llms-full.txt  cl100k_base   48285 tokens
+  llms-full.txt  o200k_base    48244 tokens
+  184 998 characters · 3.831 chars/token
+  = 24% of a 200k window, 4.8% of 1M
+  the generator's estimate is 0.04% high
+
+$ go test ./tools/...
+  TestLLMsIndexFollowsTheSpec  PASS
+  TestLLMsIndexLinksResolve    PASS
+
+proved by breaking it:
+$ # add a prose bullet under ## Optional
+--- FAIL: TestLLMsIndexFollowsTheSpec
+    a bullet in a file list is not a link, which
+    breaks the reference parser:
+      - a bullet that is not a link
 
 $ gofmt -l . ; go vet ./... ; go test ./...
   clean · clean · all packages ok</pre></td></tr>
