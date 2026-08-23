@@ -1022,6 +1022,66 @@ func (s *Sandbox) requestShutdown(grace time.Duration) error {
 	}
 }
 
+// PauseMarker is where a pause records that this machine's stop is a pause.
+//
+// It exists because the process that stops a sandbox and the process that owns
+// it are not the same one: `kelyfos pause` asks the guest to power off, and the
+// `kelyfos run` holding it wakes up and tears down — including writing the
+// workspace back to the host, which is exactly what a pause must not do
+// (docs/qol.md §1.3). The marker is how the owner learns which kind of stop
+// this was, and it names the session so the message can say where the files
+// went instead.
+func PauseMarker(st *State) string { return filepath.Join(st.RunDir, "paused") }
+
+// PausedAs reports the name a pause stored this machine under, or "" if the
+// stop was not a pause. Read rather than signalled, because the run directory is
+// the one thing both processes already agree on.
+func PausedAs(st *State) string {
+	blob, err := os.ReadFile(PauseMarker(st))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(blob))
+}
+
+// RequestShutdown asks a running guest to power itself off, from a process that
+// does not own it.
+//
+// The owner's Shutdown does this and more — it also closes listeners and takes
+// down the network, which only the owner can do. This is the part a second
+// process can do: ask, and wait for the machine to go.
+func RequestShutdown(st *State, grace time.Duration) error {
+	conn, err := Connect(st.UDSPath, proto.PortControl, 2*time.Second)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	if err := proto.NewWriter(conn).Write(proto.ControlRequest{
+		V: proto.Version, ID: "shutdown", Op: proto.OpShutdown,
+	}); err != nil {
+		return err
+	}
+	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	var resp proto.ControlResponse
+	if err := proto.NewReader(conn).Read(&resp); err != nil {
+		return err
+	}
+	if !resp.OK {
+		return fmt.Errorf("guest refused shutdown: %v", resp.Error)
+	}
+	// Waited for by watching the VM process rather than a channel this process
+	// does not have. The owner is the one holding the wait; this one only needs
+	// to know the machine is gone.
+	deadline := time.Now().Add(grace)
+	for time.Now().Before(deadline) {
+		if err := syscall.Kill(st.PID, 0); err != nil {
+			return nil
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	return fmt.Errorf("guest acknowledged shutdown but the microVM (pid %d) is still running", st.PID)
+}
+
 func (s *Sandbox) cleanup() {
 	if s.State.RunDir != "" {
 		_ = os.RemoveAll(s.State.RunDir)

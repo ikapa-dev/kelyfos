@@ -1,9 +1,10 @@
 # Daily-driver QoL — the shapes, before the code
 
-*Status: specification for v0.8, written before Epic E5 builds it. The parts
-that need a shape agreed in advance are here; the parts that are wrappers over
-machinery that already exists are not, because there is nothing to decide about
-them.*
+*Status: specification for v0.8, written before Epic E5 builds it, and **signed
+off by the product owner** — all four shapes approved as written, so this page
+carries the authority the code is measured against. The parts that need a shape
+agreed in advance are here; the parts that are wrappers over machinery that
+already exists are not, because there is nothing to decide about them.*
 
 *Where this document and the code disagree during the epic, the code is wrong
 and this page is the thing to argue with. After the epic, the reverse — and the

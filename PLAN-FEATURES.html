@@ -4219,6 +4219,14 @@ $ gofmt -l . ; go vet ./... ; go test ./...
         reason the feature can exist.
         <b>The manifest digest is of contents</b>, not of modification times, and the spec says why: that distinction
         has already cost this project one defect (F-D45), and writing it down is cheaper than finding it again.</td></tr>
+        <tr><td class="mono">2026-08-23</td><td class="mono">E5-0</td>
+        <td><b>John has read <code>docs/qol.md</code> and approved all four shapes as written.</b> The document now
+        carries product-owner authority for Epic E5: the named-session store and its frozen policy, the workspace
+        manifest, the PTY channel as an additive protocol revision, and the vsock transport that keeps inbound
+        forwarding out of the firewall. Where E5&rsquo;s code and that page disagree from here, the page is what the
+        code is measured against &mdash; which is the same standing <code>teams.md</code> had through E2 and
+        <code>mcp-surface.md</code> had through E4, and the reason both epics could be argued with rather than only
+        reviewed.</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
