@@ -2677,6 +2677,54 @@ after:
 
 $ go test ./internal/sandbox/ -run Snapshot
   TestASnapshotIsNotReadableByAnyoneElse   PASS</pre></td></tr>
+        <tr><td class="mono">2026-08-23</td><td class="mono">E2</td>
+        <td><b>Acceptance step 1 re-measured on the reference after F-D26. The bar is met on both paths: cold
+        <b>366 ms</b>, warm <b>215 ms</b>, against 1000 ms.</b> The earlier 1098 ms stands in the log exactly as it was
+        recorded &mdash; it was a true measurement of a strategy that has since been replaced, and rewriting it would
+        destroy the only evidence that the replacement was worth making.
+        The whole acceptance list now passes on the reference with nothing skipped: <b>23 passed, 0 failed, 0
+        skipped</b>, where the previous run had one skip and that skip was step 1. Every other proof is unchanged and
+        green &mdash; the caps 8/0/0, the team budget 6/0/0 with the collective cap holding at 2.01 of 2.00 cores, and
+        E1&rsquo;s own acceptance 13/0/0.
+        <b>John&rsquo;s ruling was right, and the numbers say why.</b> Five concurrent cold boots come in at 366 ms,
+        which is 99&ndash;180 ms per machine with almost no contention penalty &mdash; the runner is fast at the thing a
+        cold boot is made of. Forking from an <i>already-built</i> template is faster still at 215 ms, 47&ndash;77 ms
+        per worker, so the fork machinery earns its place as the warm path. What made the bar unreachable before was
+        never the fork itself: it was building the template inside the measurement. Off the critical path, the same
+        machinery is a 41% saving instead of a 3&times; cost.</td>
+        <td class="mono"><pre>$ gh workflow run caps.yml -f arch=x86_64      run 32632420532
+  completed success
+
+1. kelyfos team up — the cold path, then the warm one
+   template cache cleared — this run is the cold path
+   master     a7073227 ready in  99 ms
+   worker-1   632c6095 ready in 180 ms
+   worker-2   47f2a8bd ready in 126 ms
+   worker-3   59892571 ready in 117 ms
+   worker-4   43fe6e58 ready in 180 ms
+   team up in 366 ms  (5 cold)                    &lt;- the bar binds here: MET
+PASS  the cold run cached a fork template in the background
+
+   template   dev, forking 4 from a cached template
+   master     81458eb6 ready in 100 ms   (cold — it has egress)
+   worker-1   3883d525 ready in  71 ms   (forked)
+   worker-2   087bca48 ready in  56 ms   (forked)
+   worker-3   8bfa94fa ready in  77 ms   (forked)
+   worker-4   5fdea872 ready in  47 ms   (forked)
+   team up in 215 ms  (4 forked from 1 cached template(s), 1 cold)
+
+   cold path: 366 ms   warm path: 215 ms   bar: 1000 ms
+PASS  cold-path spawn time 366 ms is under the 1 s bar
+PASS  the warm path is faster than the cold one: 215 ms against 366 ms
+
+  demo-team.sh   23 passed, 0 failed, 0 skipped
+  prove-team.sh   6 passed, 0 failed, 0 skipped
+  prove-caps.sh   8 passed, 0 failed, 0 skipped
+  accept-e1.sh   13 passed, 0 failed, 0 skipped
+
+for comparison, the same bar before F-D26 (run 32630824099): 1098 ms
+  109 ms boot + 927 ms template snapshot + 57&ndash;61 ms per fork
+nested dev host after F-D26: cold 3855 ms, warm 1338 ms (D15: informational)</pre></td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
