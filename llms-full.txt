@@ -1644,6 +1644,14 @@ and unlike either alternative every access to it is permissioned and recorded.
 ## 5. The topology is fixed for the run
 
 The graph you declared is the graph you get, from `team up` to `team down`.
+
+A team can also be raised by an MCP client rather than by you, through
+`kelyfos serve-mcp`'s `team_up` tool — same file, same graph, no argument that
+could change either (`docs/mcp-surface.md` §2.2). One thing differs and is worth
+knowing before you meet it: a team raised that way is held by the server
+process, so `kelyfos team down` in a shell will refuse to stop it and tell you
+to use the server's `team_down` instead. Stopping the server also takes the team
+down, along with everything else that server made.
 There is no live rewiring: no tool adds an edge, no tool removes one, and no
 tool changes another agent's caps or allowlist. A topology that can be edited by
 the agents inside it is not an enforced topology, it is a suggestion with extra
@@ -3077,7 +3085,33 @@ machine-readable form `kelyfos team ps` does not have.
 
 An external agent can raise and retire a whole declared team and cannot change
 its shape. That is the same bargain the guest's `team_spawn` makes: capacity is
-grantable, topology is not.
+grantable, topology is not. `team_up` and `team_down` take **no parameters at
+all**, and that is the feature rather than an omission.
+
+Three consequences worth saying out loud:
+
+- **One team at a time**, because a machine runs one: the state file that says
+  what is up has one name in it. A second `team_up` is refused, naming the team
+  already running.
+- **A team belongs to whoever raised it.** `team.json` records which door it came
+  through. A team raised here is retired here; `kelyfos team down` in a shell
+  refuses to signal the server, because that process is also holding every
+  sandbox it created and stopping it would take all of that down too. The
+  refusal says so and names the alternative. The reverse holds as well: this
+  server will not retire a team somebody else's `kelyfos team up` is holding.
+- **The sandbox tools do not reach into a team.** An id from `team_ps` handed to
+  `sandbox_exec` is refused, and the refusal says which agent of which team it
+  is rather than insisting the machine does not exist. What runs inside a team is
+  the team's own business, bounded by the same file — raising it is the
+  capability on offer here.
+
+`team_down` reports what teardown did rather than asserting it: each agent's
+workspace write-back names the directory it landed in.
+
+Measured on the development machine: a five-agent team raised through `team_up`
+in **~1.3 s**, four of the five forked from a cached template, and retired in
+**~280 ms** with the master's workspace written back. Nested-virtualisation
+figures, informational only (D15).
 
 ### 2.3 Sessions, concurrency and `max_sandboxes`
 
@@ -5455,6 +5489,24 @@ Restore one snapshot into several sandboxes at once. Each fork resumes from the 
 | --- | --- | --- | --- |
 | `count` | integer | **yes** | How many forks to make. At least 1. |
 | `name` | string | **yes** | The snapshot name. |
+
+### `team_up`
+
+Boot the team this project's kelyfos.toml declares — every agent, the edges between them, and the collective CPU budget — and return the roster. There are no parameters: the topology is the file's, and no tool here can add an agent or an edge. One team at a time.
+
+No parameters.
+
+### `team_ps`
+
+Who is in the running team, what each agent has consumed against its cap, what each may reach on the network, and who it can message. Returns structured data as well as a table.
+
+No parameters.
+
+### `team_down`
+
+Stop every agent in the running team, write back their workspaces and close the team's transcript. Only a team this server raised can be retired here.
+
+No parameters.
 
 
 ---

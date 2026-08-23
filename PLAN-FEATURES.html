@@ -126,7 +126,7 @@
      improvements to the existing product land here as epics. Inert until its gate opens.</p>
   <div class="meta">
     owner: <b>John</b> &nbsp;&middot;&nbsp; developer: <b>Claude Code</b> &nbsp;&middot;&nbsp;
-    status: <b class="ok" id="meta-status">Epic E4 — active, 3/9 (v0.6 released; next: E4-3, team tools)</b> &nbsp;&middot;&nbsp;
+    status: <b class="ok" id="meta-status">Epic E4 — active, 4/9 (v0.6 released; next: E4-4, the mcp.host.* audit lane)</b> &nbsp;&middot;&nbsp;
     last updated: <b id="meta-updated">2026-08-23</b><br>
     repo file: <b>PLAN-FEATURES.html</b> (lives at the repository root next to <code>PLAN.html</code>)<br>
     <span class="quiet">Companion to PLAN.html — same protocol, same rules, later timeline.</span>
@@ -166,7 +166,7 @@
     <span class="bl-name">All epics</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">E4-3 — team tools: <code>team_up</code>, <code>team_ps</code>, <code>team_down</code> as thin wrappers over E2, still bounded by the team toml</b></div>
+  <div class="focusline">Current focus: <b id="focus">E4-4 — the outward audit lane: every client tool call becomes an <code>mcp.host.*</code> flight-recorder event, rendered beside guest activity by <code>kelyfos log --export</code></b></div>
 </div>
 
 <!-- ====================================================== 1. ACTIVATION GATE -->
@@ -507,7 +507,7 @@
         <span class="tid">E4-2</span><span class="tk">File and state tools over existing machinery: <code>sandbox_read_file</code> /
         <code>sandbox_write_file</code> (supervisor RPCs), <code>sandbox_snapshot</code> / <code>sandbox_fork</code> /
         <code>sandbox_restore</code> (P3 snapshot layer).</span></li>
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">E4-3</span><span class="tk">Team tools: <code>team_up</code> / <code>team_ps</code> / <code>team_down</code> as thin
         wrappers over E2 — an external agent can raise and retire a whole declared team, still bounded by the team toml.</span></li>
     <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
@@ -1551,6 +1551,33 @@
         this, which is host-only and has no image impact; independent commits; then the ordinary seam dependency check;
         then E5-0.</td>
         <td class="mono">F-D23, F-D35</td></tr>
+        <tr><td class="mono">F-D42</td><td class="mono">2026-08-23</td>
+        <td><b><code>team up</code> is split into raising a team and waiting for one, so both doors raise it the same
+        way &mdash; and a team records which door raised it.</b>
+        <i>The problem.</i> <code>kelyfos team up</code> was one function that planned the team, opened the record,
+        built the broker, booted every agent, cached a fork template, wrote <code>team.json</code>, and then blocked on
+        Ctrl-C. Only the last three lines were about blocking, but they were what made it unusable from anywhere else.
+        The alternative was a second implementation of team-up for <code>serve-mcp</code>, which is the mistake F-D38
+        had just finished arguing against on a smaller scale.
+        <i>What was done.</i> <code>raiseTeam</code> returns a <code>teamRig</code> &mdash; the plan, the machines, the
+        broker, the collective cgroup, the record &mdash; and <code>down()</code> unwinds it in the order the command
+        line&rsquo;s defers used to. The command line raises one and waits for a signal; <code>serve-mcp</code> raises
+        one and holds it until <code>team_down</code> or until the server stops. One path, two callers.
+        <i>Ownership, which the split forces a decision about.</i> <code>team down</code> works by signalling the
+        process that holds the team, because that process holds the workspaces, the proxies and the recorder. Under
+        <code>serve-mcp</code> that process is also holding every sandbox the server made, so signalling it would stop
+        far more than the team. <code>team.json</code> now records the owner, the command line refuses to signal a
+        server-held team and names the alternative, and the server refuses to retire a team it did not raise. Each
+        refusal says which case it is.
+        <i>What the split immediately caught.</i> A workspace write-back printed to <code>os.Stdout</code> from inside
+        teardown, which on the <code>serve-mcp</code> path is the protocol stream: the first live <code>team_down</code>
+        corrupted its own transcript. The line now takes a writer, and a test reads the source of every function on the
+        team path and fails on any <code>fmt.Print</code> among them &mdash; the failure needs five real machines to
+        reproduce and none to introduce, so reading is the only honest check. Collecting the progress into a buffer also
+        introduced a data race between teardown and a spawn goroutine, which is why the buffer is guarded; the live team
+        was then re-run under <code>-race</code> clean.
+        <i>Revisit when</i> a machine can hold more than one team, which would make <code>team.json</code> a list.</td>
+        <td class="mono">host/team.go, host/servemcpteam.go</td></tr>
     <!-- Claude Code: append rows above this line. -->
       <tr><td class="mono">F-D10</td><td class="mono">2026-08-22</td>
         <td>The resource knobs E1-0 goes looking for shipped <b>partly</b>: <code>--vcpus</code>/<code>--mem</code> and
@@ -3751,6 +3778,30 @@ $ gofmt -l . ; go vet ./... ; go test ./...
         only. The refusals were exercised in the same run: 9 MiB, a directory, <code>../evil</code>, a networked
         snapshot forked, an allowlist widened, and a restore of a snapshot whose original still holds its address, which
         now names the sandbox to stop instead of failing with a bind error from inside the proxy.</td></tr>
+        <tr><td class="mono">2026-08-23</td><td class="mono">E4-3</td>
+        <td><b>An outside agent can now raise the team a project declares, and cannot change its shape.</b>
+        <code>team_up</code>, <code>team_ps</code> and <code>team_down</code> take <b>no parameters at all</b>, which is
+        the feature rather than an omission: the topology is the file&rsquo;s. A five-agent team came up through the
+        tool in 1.3 s &mdash; four of the five forked from a cached template &mdash; and went down in 280 ms with the
+        master&rsquo;s workspace written back to the directory the answer names.
+        <b>The work was the split, not the tools.</b> <code>team up</code> was one function that did everything and then
+        blocked; the tools needed everything except the blocking. F-D42 has it: one <code>raiseTeam</code>, two callers,
+        and a team that records which door raised it &mdash; because <code>team down</code> stops a team by signalling
+        the process holding it, and under <code>serve-mcp</code> that process is holding every sandbox the server made
+        as well. Each side now refuses the other&rsquo;s team and says which case it is.
+        <b>The split caught two defects in its first live run.</b> A workspace write-back printed straight to stdout,
+        which on this path is the protocol &mdash; <code>team_down</code> corrupted its own transcript. And collecting
+        the progress into a buffer put teardown and a spawn goroutine on the same unguarded writer. Both fixed, the
+        buffer guarded, the live five-agent team re-run under <code>-race</code> clean, and a test added that reads the
+        source of every function on the team path and fails on any <code>fmt.Print</code> among them.
+        <b>The boundary is stated rather than left to be discovered.</b> A sandbox id from <code>team_ps</code> handed
+        to <code>sandbox_exec</code> is refused with the fact rather than a denial: it names the agent and the team, and
+        says that what runs inside a team is the team&rsquo;s own business. <code>team_ps</code> also gives the
+        machine-readable roster <code>kelyfos team ps</code> never had &mdash; consumption beside each cap, the
+        allowlist, who each agent may message, and whether the sample could be taken at all, which is a different fact
+        from a zero.
+        <b>The command line is unchanged and was proved so:</b> the same five agents, the same table, the same clean
+        teardown, before and after the refactor.</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>

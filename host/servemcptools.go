@@ -24,7 +24,7 @@ import (
 // tool description is the only documentation a model reliably reads.
 func hostToolDefinitions() []mcp.Tool {
 	str := func(desc string) mcp.Property { return mcp.Property{Type: "string", Description: desc} }
-	return []mcp.Tool{
+	tools := []mcp.Tool{
 		{
 			Name:  "sandbox_run",
 			Title: "Start a sandbox",
@@ -159,6 +159,7 @@ func hostToolDefinitions() []mcp.Tool {
 			},
 		},
 	}
+	return append(tools, teamToolDefinitions()...)
 }
 
 // --- sandbox_run -------------------------------------------------------------
@@ -546,7 +547,8 @@ func (s *hostServer) box(id string) (*servedBox, error) {
 	defer s.mu.Unlock()
 	b, ok := s.boxes[id]
 	if !ok {
-		return nil, fmt.Errorf("no sandbox %q was started by this server; sandbox_list shows the ones that were", id)
+		return nil, fmt.Errorf("no sandbox %q was started by this server; sandbox_list shows the "+
+			"ones that were.%s", id, teamMemberHint(id))
 	}
 	return b, nil
 }

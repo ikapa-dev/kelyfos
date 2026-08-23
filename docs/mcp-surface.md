@@ -195,7 +195,33 @@ machine-readable form `kelyfos team ps` does not have.
 
 An external agent can raise and retire a whole declared team and cannot change
 its shape. That is the same bargain the guest's `team_spawn` makes: capacity is
-grantable, topology is not.
+grantable, topology is not. `team_up` and `team_down` take **no parameters at
+all**, and that is the feature rather than an omission.
+
+Three consequences worth saying out loud:
+
+- **One team at a time**, because a machine runs one: the state file that says
+  what is up has one name in it. A second `team_up` is refused, naming the team
+  already running.
+- **A team belongs to whoever raised it.** `team.json` records which door it came
+  through. A team raised here is retired here; `kelyfos team down` in a shell
+  refuses to signal the server, because that process is also holding every
+  sandbox it created and stopping it would take all of that down too. The
+  refusal says so and names the alternative. The reverse holds as well: this
+  server will not retire a team somebody else's `kelyfos team up` is holding.
+- **The sandbox tools do not reach into a team.** An id from `team_ps` handed to
+  `sandbox_exec` is refused, and the refusal says which agent of which team it
+  is rather than insisting the machine does not exist. What runs inside a team is
+  the team's own business, bounded by the same file — raising it is the
+  capability on offer here.
+
+`team_down` reports what teardown did rather than asserting it: each agent's
+workspace write-back names the directory it landed in.
+
+Measured on the development machine: a five-agent team raised through `team_up`
+in **~1.3 s**, four of the five forked from a cached template, and retired in
+**~280 ms** with the master's workspace written back. Nested-virtualisation
+figures, informational only (D15).
 
 ### 2.3 Sessions, concurrency and `max_sandboxes`
 

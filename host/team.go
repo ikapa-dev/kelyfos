@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -76,6 +77,10 @@ type teamState struct {
 	// tolerantly, so a team.json written by an older binary still parses.
 	CGroup   string `json:"cgroup,omitempty"`
 	CPUQuota int    `json:"cpu_quota_percent,omitempty"`
+	// Owner is which door raised the team: the command line, or serve-mcp. A
+	// team.json written before this field existed has none, which reads as the
+	// command line and is what it was.
+	Owner string `json:"owner,omitempty"`
 }
 
 func teamStatePath() string { return filepath.Join(sandbox.Root(), "run", "team.json") }
@@ -87,42 +92,130 @@ func teamUp(argv []string) error {
 	if err := fs.Parse(argv); err != nil {
 		return err
 	}
-
 	cfg, err := loadPolicy()
 	if err != nil {
 		return err
 	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	rig, err := raiseTeam(ctx, teamOptions{
+		cfg: cfg, arch: *arch, timeout: *timeout, argv: os.Args, owner: ownerCLI, out: os.Stdout,
+	})
+	if err != nil {
+		return err
+	}
+	defer rig.down()
+
+	fmt.Println("\nCtrl-C to stop the team.")
+	<-ctx.Done()
+	fmt.Println("\nstopping...")
+	return nil
+}
+
+// teamOptions is everything raiseTeam needs that differs between the two doors
+// a team can be raised through.
+type teamOptions struct {
+	cfg     *config.Config
+	arch    string
+	timeout time.Duration
+	// argv goes into the record's session.start, so the transcript says what
+	// asked for this team rather than always naming the command line.
+	argv  []string
+	owner string
+	// out is where progress goes. The command line passes os.Stdout; serve-mcp
+	// must not, because there stdout is the protocol.
+	out io.Writer
+}
+
+// teamRig is a running team: the plan it came from, the machines, the broker
+// that carries messages between them, the collective cgroup, and the one
+// recorder they all write to.
+//
+// It exists because a team outlives the call that raised it. `kelyfos team up`
+// holds one until Ctrl-C; serve-mcp holds one until team_down or until the
+// server stops. Both need the same thing raised the same way, and neither can
+// have it built inside a function that only knows how to block (E4-3).
+type teamRig struct {
+	plan      *teamPlan
+	crew      *roster
+	rec       *recorder.Recorder
+	broker    *team.Broker
+	slice     *sandbox.TeamSlice
+	session   string
+	summary   string
+	cancel    context.CancelFunc
+	teardown  func()
+	endRecord func()
+	once      sync.Once
+}
+
+// down stops everything the team owns, in the order the command line's defers
+// used to unwind it: the machines first, then the record that watched them. It
+// is safe to call twice, because the two doors both defend against the case
+// where the other already did it.
+func (t *teamRig) down() {
+	t.once.Do(func() {
+		t.cancel()
+		t.teardown()
+		t.endRecord()
+	})
+}
+
+// Who is holding a team up, recorded in team.json so `kelyfos team down` knows
+// whether signalling the owning process is the right thing to do.
+const (
+	ownerCLI      = "cli"
+	ownerServeMCP = "serve-mcp"
+)
+
+func raiseTeam(parent context.Context, opt teamOptions) (*teamRig, error) {
+	cfg, arch, timeout, out := opt.cfg, opt.arch, opt.timeout, opt.out
 	if cfg == nil || cfg.Team == nil {
-		return fmt.Errorf("no [team] section in this project's %s — see docs/teams.md", config.FileName)
+		return nil, fmt.Errorf("no [team] section in this project's %s — see docs/teams.md", config.FileName)
 	}
 	if _, err := os.Stat(teamStatePath()); err == nil {
-		return fmt.Errorf("a team is already running; stop it with `kelyfos team down`")
+		return nil, fmt.Errorf("a team is already running; stop it with `kelyfos team down`")
 	}
 
 	plan, err := planTeam(cfg)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	fmt.Printf("team %s: %d agents, %d edges\n", plan.name, len(plan.agents), len(plan.edgeText))
+	fmt.Fprintf(out, "team %s: %d agents, %d edges\n", plan.name, len(plan.agents), len(plan.edgeText))
 
 	// One flight recorder for the whole team, so a team produces one verifiable
 	// transcript rather than five that have to be correlated afterwards. The
 	// session is named for the team, not for any one machine in it.
 	sessionID, err := sandbox.NewID()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	rec, err := recorder.Open(sandbox.Root(), sessionID)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	defer func() {
+	// The rig's own context, so down() can stop the goroutines a team keeps —
+	// spawn lifetimes, max_runtime timers, a template still being cached — and
+	// so a caller that cancels its own context stops them too.
+	ctx, cancel := context.WithCancel(parent)
+
+	endRecord := func() {
 		_ = rec.Append(recorder.Event{Type: recorder.TypeSessionEnd, Reason: "shutdown",
 			DurationMS: rec.Since().Milliseconds()})
 		_ = rec.Close()
+	}
+	// Until this call succeeds the record is closed on the way out of any
+	// failure; afterwards it belongs to the rig, and rig.down() closes it.
+	raised := false
+	defer func() {
+		if !raised {
+			endRecord()
+			cancel()
+		}
 	}()
-	_ = rec.Append(recorder.Event{Type: recorder.TypeSessionStart, Arch: *arch,
-		Kelyfos: Version, Argv: os.Args})
+	_ = rec.Append(recorder.Event{Type: recorder.TypeSessionStart, Arch: arch,
+		Kelyfos: Version, Argv: opt.argv})
 
 	// The broker records on whichever goroutine delivered the message, and the
 	// recorder takes an exclusive lock per append, which is exactly the
@@ -136,13 +229,10 @@ func teamUp(argv []string) error {
 		// itself — which is exactly what the first live run of a team showed.
 		store, err := team.NewStore(plan.topo, plan.storeRules, record)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		broker.Store = store
 	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 
 	// The collective cap, built before any agent so that every agent is inside
 	// it from the instant it exists — a budget that arrives after the machines
@@ -153,11 +243,12 @@ func teamUp(argv []string) error {
 	if plan.needsSlice() {
 		teamSlice, err = sandbox.NewTeamSlice(plan.name, plan.budget.CPUQuota)
 		if err != nil {
-			return err
+			return nil, err
 		}
 	}
 
-	crew := &roster{plan: plan, session: sessionID, edges: plan.edgeText, slice: teamSlice}
+	crew := &roster{plan: plan, session: sessionID, edges: plan.edgeText,
+		slice: teamSlice, owner: opt.owner}
 	// Declared before teardown because teardown waits on it: a fork template
 	// may still be building in the background when the team is stopped.
 	var templates sync.WaitGroup
@@ -172,7 +263,7 @@ func teamUp(argv []string) error {
 		// promises: all VMs gone, all workspaces written back.
 		running := crew.snapshot()
 		for i := len(running) - 1; i >= 0; i-- {
-			if err := running[i].stop(10 * time.Second); err != nil {
+			if err := running[i].stop(10*time.Second, out); err != nil {
 				fmt.Fprintf(os.Stderr, "kelyfos: %s: %v\n", running[i].name, err)
 			}
 		}
@@ -188,7 +279,11 @@ func teamUp(argv []string) error {
 		}
 		_ = os.Remove(teamStatePath())
 	}
-	defer teardown()
+	defer func() {
+		if !raised {
+			teardown()
+		}
+	}()
 
 	// Spawn: the broker decides whether a worker may exist and what it is
 	// called; this decides how to start one. The split is the point — the
@@ -208,14 +303,14 @@ func teamUp(argv []string) error {
 		// own network to a machine the user never wrote down (E2-5).
 		res := plan.spawnResources(req.Spawner)
 		rig, err := bootAgent(ctx, plannedAgent{name: req.Name, image: req.Image, res: res},
-			broker, rec, teamSlice, *arch, *timeout)
+			broker, rec, teamSlice, arch, timeout)
 		if err != nil {
 			return err
 		}
 		rig.via = "cold"
 		sb := rig.sb
 		crew.add(rig, req.Spawner+" -> "+req.Name, req.Name+" -> "+req.Spawner)
-		fmt.Printf("  %-12s %s spawned by %s, ready in %d ms\n",
+		fmt.Fprintf(out, "  %-12s %s spawned by %s, ready in %d ms\n",
 			req.Name, sb.State.ID, req.Spawner, sb.State.BootReadyMS)
 
 		// A lifetime is part of the budget, so it is enforced here rather than
@@ -227,10 +322,10 @@ func teamUp(argv []string) error {
 				case <-ctx.Done():
 					return
 				}
-				fmt.Printf("  %-12s reached its %s lifetime; stopping it\n", req.Name, req.Lifetime)
+				fmt.Fprintf(out, "  %-12s reached its %s lifetime; stopping it\n", req.Name, req.Lifetime)
 				broker.Despawn(req.Name)
 				crew.remove(req.Name)
-				_ = rig.stop(10 * time.Second)
+				_ = rig.stop(10*time.Second, out)
 			}()
 		}
 		return nil
@@ -253,7 +348,7 @@ func teamUp(argv []string) error {
 	candidates, cold := plan.forkPlan()
 	groups := map[string][]int{}
 	for _, idx := range candidates {
-		key, err := templateKey(plan.agents[idx[0]], *arch)
+		key, err := templateKey(plan.agents[idx[0]], arch)
 		if err != nil {
 			// No manifest, no key — and a template that cannot be identified
 			// must never be served. Cold-boot rather than guess.
@@ -279,7 +374,7 @@ func teamUp(argv []string) error {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			rig, err := bootAgent(ctx, plan.agents[i], broker, rec, teamSlice, *arch, *timeout)
+			rig, err := bootAgent(ctx, plan.agents[i], broker, rec, teamSlice, arch, timeout)
 			if rig != nil {
 				rig.via = "cold"
 			}
@@ -293,7 +388,7 @@ func teamUp(argv []string) error {
 			// No template is built here. This group is only a group because one
 			// already existed (F-D26); a group whose template was missing was
 			// sent to the cold list above and will have one built afterwards.
-			fmt.Printf("  %-12s %s, forking %d from a cached template\n",
+			fmt.Fprintf(out, "  %-12s %s, forking %d from a cached template\n",
 				"template", plan.agents[idx[0]].image, len(idx))
 			var fwg sync.WaitGroup
 			for _, i := range idx {
@@ -301,7 +396,7 @@ func teamUp(argv []string) error {
 				go func(i int) {
 					defer fwg.Done()
 					rig, err := forkAgent(ctx, plan.agents[i], dir, broker, rec,
-						teamSlice, *arch, *timeout)
+						teamSlice, arch, timeout)
 					results <- booted{i, rig, err}
 				}(i)
 			}
@@ -335,17 +430,17 @@ func teamUp(argv []string) error {
 		}
 	}
 	if bootErr != nil {
-		return bootErr
+		return nil, bootErr
 	}
 	for i, rig := range order {
 		how := ""
 		if rig.via == "fork" {
 			how = "  (forked)"
 		}
-		fmt.Printf("  %-12s %s ready in %d ms%s\n",
+		fmt.Fprintf(out, "  %-12s %s ready in %d ms%s\n",
 			plan.agents[i].name, rig.sb.State.ID, rig.sb.State.BootReadyMS, how)
 		if d := describeAgent(plan.agents[i], rig, plan.budget.CPUQuota > 0); d != "" {
-			fmt.Printf("  %-12s %s\n", "", d)
+			fmt.Fprintf(out, "  %-12s %s\n", "", d)
 		}
 		// Which path a machine took is a fact about that machine, so it belongs
 		// in the record beside everything else about it rather than only in the
@@ -353,12 +448,12 @@ func teamUp(argv []string) error {
 		_ = rec.Append(recorder.Event{Type: recorder.TypeSessionReady, Agent: rig.name,
 			Image: plan.agents[i].image, Via: rig.via, BootMS: rig.sb.State.BootReadyMS})
 	}
+	summary := fmt.Sprintf("team up in %d ms  (%d cold)", total.Milliseconds(), len(cold))
 	if forked := len(plan.agents) - len(cold); forked > 0 {
-		fmt.Printf("team up in %d ms  (%d forked from %d cached template(s), %d cold)\n",
+		summary = fmt.Sprintf("team up in %d ms  (%d forked from %d cached template(s), %d cold)",
 			total.Milliseconds(), forked, len(groups), len(cold))
-	} else {
-		fmt.Printf("team up in %d ms  (%d cold)\n", total.Milliseconds(), len(cold))
 	}
+	fmt.Fprintln(out, summary)
 
 	// On the systemd path the parent's directory is systemd's to choose, so it
 	// is learned from where a child actually landed rather than predicted; then
@@ -368,13 +463,13 @@ func teamUp(argv []string) error {
 			teamSlice.Resolve(rig.sb.State.CGroupPath)
 		}
 		if err := teamSlice.Confirm(); err != nil {
-			return err
+			return nil, err
 		}
 		if plan.budget.CPUQuota > 0 {
-			fmt.Printf("  %-12s %d%% of one core's CPU time for the whole team, divided by equal weight\n",
+			fmt.Fprintf(out, "  %-12s %d%% of one core's CPU time for the whole team, divided by equal weight\n",
 				"team cap", plan.budget.CPUQuota)
 		}
-		fmt.Printf("  %-12s %s\n", "cgroup", teamSlice.Path)
+		fmt.Fprintf(out, "  %-12s %s\n", "cgroup", teamSlice.Path)
 	}
 
 	// A max_runtime is a host-side cap on one agent's wall clock, enforced here
@@ -397,7 +492,7 @@ func teamUp(argv []string) error {
 			fmt.Fprintf(os.Stderr, "\nkelyfos: %s reached its max_runtime of %s; stopping it\n",
 				rig.name, limit)
 			crew.remove(rig.name)
-			_ = rig.stop(10 * time.Second)
+			_ = rig.stop(10*time.Second, out)
 		}(rig, limit)
 	}
 
@@ -407,14 +502,14 @@ func teamUp(argv []string) error {
 	// instead of cold-booting, and this one paid nothing for it (F-D26).
 	for _, i := range toBuild {
 		a := plan.agents[i]
-		key, err := templateKey(a, *arch)
+		key, err := templateKey(a, arch)
 		if err != nil {
 			continue
 		}
 		templates.Add(1)
 		go func(a plannedAgent, key string) {
 			defer templates.Done()
-			if err := storeTemplate(ctx, a, sessionID, *arch, key, *timeout); err != nil {
+			if err := storeTemplate(ctx, a, sessionID, arch, key, timeout); err != nil {
 				if ctx.Err() == nil {
 					fmt.Fprintf(os.Stderr,
 						"kelyfos: could not cache a fork template for %s (the team is unaffected): %v\n",
@@ -422,17 +517,19 @@ func teamUp(argv []string) error {
 				}
 				return
 			}
-			fmt.Printf("cached a fork template for %s; the next team of this shape will fork\n", a.image)
+			fmt.Fprintf(out, "cached a fork template for %s; the next team of this shape will fork\n", a.image)
 		}(a, key)
 	}
 
 	if err := crew.write(); err != nil {
-		return err
+		return nil, err
 	}
-	fmt.Println("\nCtrl-C to stop the team.")
-	<-ctx.Done()
-	fmt.Println("\nstopping...")
-	return nil
+	raised = true
+	return &teamRig{
+		plan: plan, crew: crew, rec: rec, broker: broker, slice: teamSlice,
+		session: sessionID, summary: summary, cancel: cancel,
+		teardown: teardown, endRecord: endRecord,
+	}, nil
 }
 
 // agentRig is one team member and everything the host built around it: the
@@ -460,7 +557,11 @@ type agentRig struct {
 // goes first, because everything after it is plumbing the machine is still
 // using; the workspace is written back last, once nothing can still be writing
 // into the disk it came from.
-func (r *agentRig) stop(timeout time.Duration) error {
+// out is where the write-back line goes. It is a parameter rather than
+// os.Stdout because a team can be raised through serve-mcp, where this
+// process's stdout is the protocol and a stray line of prose corrupts it. That
+// is not a hypothetical: it is what the first live run of team_down did (E4-3).
+func (r *agentRig) stop(timeout time.Duration, out io.Writer) error {
 	// The receipt is taken immediately before the shutdown, because every
 	// counter it reads belongs to a process that is about to stop existing
 	// (E1-7). In a team there is one per agent, in the team's chain, named by
@@ -489,10 +590,10 @@ func (r *agentRig) stop(timeout time.Duration) error {
 		case syncErr != nil:
 			fmt.Fprintf(os.Stderr, "kelyfos: %s: workspace sync-back failed: %v\n", r.name, syncErr)
 		case diverted:
-			fmt.Printf("  %-12s host directory changed while the team ran; results written to %s\n",
+			fmt.Fprintf(out, "  %-12s host directory changed while the team ran; results written to %s\n",
 				r.name, dest)
 		default:
-			fmt.Printf("  %-12s workspace written back to %s\n", r.name, dest)
+			fmt.Fprintf(out, "  %-12s workspace written back to %s\n", r.name, dest)
 		}
 		_ = os.Remove(r.ws.ImagePath)
 	}
@@ -860,6 +961,9 @@ type roster struct {
 	running []*agentRig
 	edges   []string
 	slice   *sandbox.TeamSlice
+	// owner records which door raised this team, so `kelyfos team down` knows
+	// whether signalling the owning process is the right way to stop it.
+	owner string
 }
 
 func (r *roster) add(rig *agentRig, edges ...string) {
@@ -907,7 +1011,7 @@ func (r *roster) write() error {
 		r.started = time.Now()
 	}
 	st := teamState{Name: r.plan.name, PID: os.Getpid(), Session: r.session,
-		StartedAt: r.started, Edges: append([]string(nil), r.edges...)}
+		StartedAt: r.started, Edges: append([]string(nil), r.edges...), Owner: r.owner}
 	if r.slice != nil {
 		st.CGroup, st.CPUQuota = r.slice.Path, r.slice.Percent
 	}
@@ -930,6 +1034,77 @@ func (r *roster) write() error {
 	return os.WriteFile(teamStatePath(), blob, 0o600)
 }
 
+// teamMember is one row of `team ps`, as data.
+//
+// The command line renders these as a table and serve-mcp hands them back as
+// structuredContent, which is the machine-readable form the table never was
+// (E4-3, docs/mcp-surface.md §2.2). One function produces both, so the two can
+// never disagree about what a team is doing.
+type teamMember struct {
+	Name    string `json:"agent"`
+	Sandbox string `json:"sandbox"`
+	// Via is how this machine started: "cold" or "fork" (F-D19).
+	Via string `json:"via,omitempty"`
+	// Alive is false when the sandbox behind the name is gone. Everything after
+	// it is then unfilled rather than zero, and a reader can tell the
+	// difference.
+	Alive bool `json:"alive"`
+	// Sampled is whether the live usage figures below could be read at all.
+	// Without it a genuinely idle agent and one whose sample failed would both
+	// render as zeroes, which are two different facts.
+	Sampled    bool     `json:"sampled"`
+	CPUSeconds float64  `json:"cpu_seconds,omitempty"`
+	CPUQuota   int      `json:"cpu_quota_percent,omitempty"`
+	Vcpus      int      `json:"vcpus,omitempty"`
+	RSSKiB     int64    `json:"rss_kib,omitempty"`
+	MemMiB     int      `json:"mem_mib,omitempty"`
+	DiskBytes  int64    `json:"disk_write_bytes,omitempty"`
+	Allow      []string `json:"allow,omitempty"`
+	Reaches    []string `json:"reaches,omitempty"`
+}
+
+// teamBudget is the collective figure, read from the parent slice's own
+// accounting rather than summed from the agents: the parent is what the cap is
+// on, so it is the only number that cannot disagree with the limit it is
+// measured against (E2-6).
+type teamBudget struct {
+	CGroup       string  `json:"cgroup"`
+	CPUQuota     int     `json:"cpu_quota_percent,omitempty"`
+	UsedSeconds  float64 `json:"used_seconds"`
+	ThrottledSec float64 `json:"throttled_seconds,omitempty"`
+}
+
+func teamMembers(st *teamState) []teamMember {
+	out := make([]teamMember, 0, len(st.Agents))
+	for _, a := range st.Agents {
+		m := teamMember{Name: a.Name, Sandbox: a.Sandbox, Via: a.Via, Reaches: reaches(st, a.Name)}
+		state, err := sandbox.Load(a.Sandbox)
+		if err == nil {
+			m.Alive = true
+			m.CPUQuota, m.Vcpus, m.MemMiB = state.CPUQuota, state.VcpuCount, state.MemMiB
+			m.Allow = state.Allow
+			if u, err := state.Sample(); err == nil {
+				m.Sampled = true
+				m.CPUSeconds, m.RSSKiB, m.DiskBytes = u.CPUSeconds, u.RSSKiB, u.DiskWriteBytes
+			}
+		}
+		out = append(out, m)
+	}
+	return out
+}
+
+func readTeamBudget(st *teamState) *teamBudget {
+	if st.CGroup == "" {
+		return nil
+	}
+	b := &teamBudget{CGroup: st.CGroup, CPUQuota: st.CPUQuota}
+	if stat, err := sandbox.CPUStatAt(st.CGroup); err == nil {
+		b.UsedSeconds = float64(stat["usage_usec"]) / 1e6
+		b.ThrottledSec = float64(stat["throttled_usec"]) / 1e6
+	}
+	return b
+}
+
 func teamPS(argv []string) error {
 	fs := flag.NewFlagSet("kelyfos team ps", flag.ExitOnError)
 	if err := fs.Parse(argv); err != nil {
@@ -944,63 +1119,54 @@ func teamPS(argv []string) error {
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "AGENT\tSANDBOX\tBOOT\tCPU/CAP\tMEM/CAP\tDISK WRITTEN\tEGRESS\tREACHES")
-	for _, a := range st.Agents {
+	for _, m := range teamMembers(st) {
 		cpu, mem, disk := "—", "—", "—"
 		// "none" rather than a blank: an agent with no network interface is a
 		// deliberate state and reads differently from a column that failed to
 		// fill in, which is what "—" means everywhere else in this table.
 		out := "?"
-		state, err := sandbox.Load(a.Sandbox)
-		if err == nil {
-			if u, err := state.Sample(); err == nil {
+		if m.Alive {
+			if m.Sampled {
 				// Consumption beside the cap it was consumed under. A figure
 				// without its ceiling is half a figure, and joining the two
 				// later means trusting that nothing changed in between (E1-7).
-				cpu = fmt.Sprintf("%.1fs", u.CPUSeconds)
+				cpu = fmt.Sprintf("%.1fs", m.CPUSeconds)
 				switch {
-				case state.CPUQuota > 0:
-					cpu += fmt.Sprintf("/%d%%", state.CPUQuota)
-				case state.VcpuCount > 0:
-					cpu += fmt.Sprintf("/%dc", state.VcpuCount)
+				case m.CPUQuota > 0:
+					cpu += fmt.Sprintf("/%d%%", m.CPUQuota)
+				case m.Vcpus > 0:
+					cpu += fmt.Sprintf("/%dc", m.Vcpus)
 				}
-				mem = report.HumanKiB(u.RSSKiB)
-				if state.MemMiB > 0 {
-					mem += fmt.Sprintf("/%dM", state.MemMiB)
+				mem = report.HumanKiB(m.RSSKiB)
+				if m.MemMiB > 0 {
+					mem += fmt.Sprintf("/%dM", m.MemMiB)
 				}
-				disk = humanBytes(u.DiskWriteBytes)
+				disk = humanBytes(m.DiskBytes)
 			}
 			out = "none"
-			if len(state.Allow) > 0 {
-				out = strings.Join(state.Allow, ",")
+			if len(m.Allow) > 0 {
+				out = strings.Join(m.Allow, ",")
 			}
 		}
-		via := a.Via
+		via := m.Via
 		if via == "" {
 			via = "—"
 		}
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-			a.Name, a.Sandbox, via, cpu, mem, disk, out,
-			strings.Join(reaches(st, a.Name), " "))
+			m.Name, m.Sandbox, via, cpu, mem, disk, out, strings.Join(m.Reaches, " "))
 	}
 	_ = w.Flush()
 
-	// The collective figure, read from the parent slice's own accounting rather
-	// than summed from the agents: the parent is what the cap is on, so it is
-	// the only number that cannot disagree with the limit it is measured
-	// against (E2-6). A team with no CPU numbers has no slice and no line.
-	if st.CGroup != "" {
+	if b := readTeamBudget(st); b != nil {
 		cap := "no collective cap"
-		if st.CPUQuota > 0 {
-			cap = fmt.Sprintf("cap %d%% of one core", st.CPUQuota)
+		if b.CPUQuota > 0 {
+			cap = fmt.Sprintf("cap %d%% of one core", b.CPUQuota)
 		}
-		used := "\u2014"
-		if stat, err := sandbox.CPUStatAt(st.CGroup); err == nil {
-			used = fmt.Sprintf("%.1fs used", float64(stat["usage_usec"])/1e6)
-			if t := stat["throttled_usec"]; t > 0 {
-				used += fmt.Sprintf(", %.1fs throttled", float64(t)/1e6)
-			}
+		used := fmt.Sprintf("%.1fs used", b.UsedSeconds)
+		if b.ThrottledSec > 0 {
+			used += fmt.Sprintf(", %.1fs throttled", b.ThrottledSec)
 		}
-		fmt.Printf("\nteam budget  %s \u00b7 %s\n  %s\n", cap, used, st.CGroup)
+		fmt.Printf("\nteam budget  %s \u00b7 %s\n  %s\n", cap, used, b.CGroup)
 	}
 
 	fmt.Println("\nedges")
@@ -1043,6 +1209,15 @@ func teamDown(argv []string) error {
 	// the only party that can do it.
 	if st.PID == 0 {
 		return fmt.Errorf("the team state names no process to stop")
+	}
+	// A team raised through serve-mcp is held by the server, whose process is
+	// also holding every sandbox it created. Signalling that would stop all of
+	// it, which is not what somebody typing `team down` is asking for.
+	if st.Owner == ownerServeMCP {
+		return fmt.Errorf("team %s was raised through `kelyfos serve-mcp` (pid %d), which is holding "+
+			"it along with whatever else that server made.\n"+
+			"    retire it with the server's team_down tool, or stop the server itself, which takes "+
+			"the team down with it.", st.Name, st.PID)
 	}
 	if err := syscall.Kill(st.PID, syscall.SIGTERM); err != nil {
 		_ = os.Remove(teamStatePath())

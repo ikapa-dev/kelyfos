@@ -93,6 +93,13 @@ type hostServer struct {
 	mu    sync.Mutex
 	boxes map[string]*servedBox
 
+	// tmu guards team, which is at most one: a machine runs one team at a time
+	// and the state file says so. It is separate from mu because raising a team
+	// takes seconds and must not hold up a sandbox_list.
+	tmu     sync.Mutex
+	team    *teamRig
+	teamLog *syncBuffer
+
 	wmu sync.Mutex // one writer, because tool calls may be concurrent
 	out *json.Encoder
 }
@@ -167,6 +174,15 @@ func (s *hostServer) describe() string {
 }
 
 func (s *hostServer) closeAll() {
+	// The team first: its agents are machines too, and they come down through
+	// the rig that holds their workspaces and their transcript.
+	s.tmu.Lock()
+	if s.team != nil {
+		s.team.down()
+		s.team = nil
+	}
+	s.tmu.Unlock()
+
 	s.mu.Lock()
 	boxes := make([]*servedBox, 0, len(s.boxes))
 	for _, b := range s.boxes {
@@ -233,8 +249,10 @@ func (s *hostServer) dispatch(req *mcp.Request) *mcp.Response {
 				"sandbox_run, work in it with sandbox_exec and the file tools, and stop it with " +
 				"sandbox_stop. A sandbox worth keeping can be frozen with sandbox_snapshot and " +
 				"brought back in milliseconds with sandbox_restore, or forked into several copies " +
-				"of one prepared state with sandbox_fork. Anything you run in a sandbox cannot " +
-				"reach this machine, and cannot reach the network unless the project's policy " +
+				"of one prepared state with sandbox_fork. A project that declares a team of agents " +
+				"can have the whole team raised with team_up and retired with team_down. Anything " +
+				"you run in a sandbox cannot reach this machine, and cannot reach the network " +
+				"unless the project's policy " +
 				"allows it. That policy is a file and no tool here can change it: a request for " +
 				"more than it permits is refused and says so.",
 		})
@@ -294,6 +312,12 @@ func (s *hostServer) callTool(p *mcp.CallToolParams) *mcp.CallToolResult {
 		return s.toolRestore(args)
 	case "sandbox_fork":
 		return s.toolFork(args)
+	case "team_up":
+		return s.toolTeamUp()
+	case "team_ps":
+		return s.toolTeamPS()
+	case "team_down":
+		return s.toolTeamDown()
 	}
 	return mcp.Errorf("unknown tool %q", p.Name)
 }

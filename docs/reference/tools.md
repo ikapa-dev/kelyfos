@@ -237,3 +237,21 @@ Restore one snapshot into several sandboxes at once. Each fork resumes from the 
 | --- | --- | --- | --- |
 | `count` | integer | **yes** | How many forks to make. At least 1. |
 | `name` | string | **yes** | The snapshot name. |
+
+### `team_up`
+
+Boot the team this project's kelyfos.toml declares — every agent, the edges between them, and the collective CPU budget — and return the roster. There are no parameters: the topology is the file's, and no tool here can add an agent or an edge. One team at a time.
+
+No parameters.
+
+### `team_ps`
+
+Who is in the running team, what each agent has consumed against its cap, what each may reach on the network, and who it can message. Returns structured data as well as a table.
+
+No parameters.
+
+### `team_down`
+
+Stop every agent in the running team, write back their workspaces and close the team's transcript. Only a team this server raised can be retired here.
+
+No parameters.

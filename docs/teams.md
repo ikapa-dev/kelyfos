@@ -384,6 +384,14 @@ and unlike either alternative every access to it is permissioned and recorded.
 ## 5. The topology is fixed for the run
 
 The graph you declared is the graph you get, from `team up` to `team down`.
+
+A team can also be raised by an MCP client rather than by you, through
+`kelyfos serve-mcp`'s `team_up` tool — same file, same graph, no argument that
+could change either (`docs/mcp-surface.md` §2.2). One thing differs and is worth
+knowing before you meet it: a team raised that way is held by the server
+process, so `kelyfos team down` in a shell will refuse to stop it and tell you
+to use the server's `team_down` instead. Stopping the server also takes the team
+down, along with everything else that server made.
 There is no live rewiring: no tool adds an edge, no tool removes one, and no
 tool changes another agent's caps or allowlist. A topology that can be edited by
 the agents inside it is not an enforced topology, it is a suggestion with extra
