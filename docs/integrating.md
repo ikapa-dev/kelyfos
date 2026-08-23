@@ -218,21 +218,27 @@ as a `[[team.agent]]` instead.
 
 ### Finding out which sandbox is which
 
-`kelyfos team ps` prints the roster for a human and has **no machine-readable
-form**. The mapping an orchestrator actually needs — agent name to sandbox id —
-is on disk while the team is up:
+`kelyfos team ps` prints the roster for a human. There are two machine-readable
+forms of the same thing, and which you want depends on which door you came
+through.
+
+**From an MCP client**, `team_ps` returns it as `structuredContent`: an `agents`
+array carrying `agent`, `sandbox`, `via` (`cold` or `fork`), what each has
+consumed against its cap, its allowlist, and who it may message. That is the
+mapping an orchestrator needs, and it is a tool rather than a file.
+
+**From a shell**, it is on disk while the team is up:
 
 ```
 ~/.cache/kelyfos/run/team.json
 ```
 
 It holds an `agents` array whose entries carry at least `name`, `sandbox` and
-`via` (`cold` or `fork`). That is what `kelyfos mcp --sandbox <id>` wants. The
-file exists for the lifetime of the team and `team down` removes it, so read it
-after the team is up and do not cache it across runs.
-
-This is the one load-bearing interface in the team surface that has no command
-behind it. Treat its shape as observed rather than promised.
+`via`. That is what `kelyfos mcp --sandbox <id>` wants. The file exists for the
+lifetime of the team and `team down` removes it, so read it after the team is up
+and do not cache it across runs. It also records which door raised the team,
+which is why `kelyfos team down` refuses to signal a team a `serve-mcp` server is
+holding.
 
 ### Read the record rather than the output
 

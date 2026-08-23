@@ -392,7 +392,9 @@ what happened.
 - `kelyfos log` replays a session in order.
 - `kelyfos log --follow` streams events as they are recorded.
 - `kelyfos log --verify` checks the chain and reports the first break.
-- `kelyfos log --list` lists recorded sessions, marking the ones that hold a team.
+- `kelyfos log --list` lists recorded sessions, newest first, marking the ones
+  that hold a team (`team of N`) and the ones belonging to a `kelyfos serve-mcp`
+  process (`serve-mcp, N sandbox(es)`).
 - `kelyfos log --json` prints the raw events instead of a readable replay — the
   form to parse.
 - `kelyfos log --export <file>.html` renders the session as one self-contained

@@ -242,6 +242,7 @@ func Types() []EventType {
 				{Name: "tool", Type: "string", Doc: "the plugin's own name for the tool, without the prefix"},
 				{Name: "outcome", Type: "string", Doc: "ok or error"},
 				{Name: "duration_ms", Type: "integer", Doc: "how long the plugin took"},
+				{Name: "agent", Type: "string", Doc: "which member's plugin it was", When: "in a team"},
 			}},
 		{Type: TypePluginCrash, Source: SourceGuest,
 			Doc: "a plugin's process ended. Its tools fail from then on and say so; the sandbox, " +
@@ -250,7 +251,8 @@ func Types() []EventType {
 				"those tools",
 			Fields: []Field{
 				{Name: "name", Type: "string", Doc: "the plugin"},
-				{Name: "reason", Type: "string", Doc: "what it exited with"},
+				{Name: "reason", Type: "string", Doc: "what it exited with, or why it never started"},
+				{Name: "agent", Type: "string", Doc: "which member's plugin it was", When: "in a team"},
 			}},
 	}
 }

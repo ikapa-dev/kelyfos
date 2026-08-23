@@ -428,7 +428,7 @@ kelyfos run --image dev --allow example.com -- bash -c '
 # --list` shows the rest.
 echo
 echo "== the session, replayed =="
-kelyfos log | head -24
+kelyfos log | sed -n '1,24p'
 
 echo
 echo "== the chain holds =="
@@ -594,7 +594,7 @@ kelyfos run --image dev -- ./.venv/bin/python orchestrator.py
 
 echo
 echo "== and the host recorded every one of those calls =="
-kelyfos log | grep -E 'via mcp|\$ ' | head -6
+kelyfos log | grep -E 'via mcp|\$ ' | sed -n '1,6p'
 kelyfos log --verify
 ```
 
@@ -607,12 +607,22 @@ kelyfos log --verify
 without the client ever learning what a microVM is. The configuration is one
 entry in a file, and between clients the shape differs only in the key name.
 
-The one thing worth getting right is **which policy the server is held to**. It
-searches upward from its working directory for `kelyfos.toml`, and that working
-directory belongs to the client, not to you: a client launched from somewhere
-outside the project would find no policy and run with no ceiling at all. Name
-the file with `--policy`, and a path that turns out to be wrong is an error
-rather than a quiet fall back to no wall.
+Two things are worth being explicit about, and both are things a client will
+otherwise decide for you.
+
+**Which policy the server is held to.** It searches upward from its working
+directory for `kelyfos.toml`, and that working directory belongs to the client,
+not to you: a client launched from somewhere outside the project would find no
+policy and run with no ceiling at all. Name the file with `--policy`, and a path
+that turns out to be wrong is an error rather than a quiet fall back to no wall.
+
+**Which binary.** `"command": "kelyfos"` is a `PATH` lookup in an environment
+the client chose, and clients do not promise you a login shell's `PATH`. Name
+the binary absolutely for the same reason you name the policy absolutely. This
+matters most on macOS, where there is no `kelyfos` on the host at all — KelyfOS
+needs Linux with `/dev/kvm`, so the binary lives inside the VM and the entry has
+to reach into it. Both shapes are below, and the repository's own `.mcp.json`
+uses [`dev/mcp-server.sh`](../dev/mcp-server.sh), which picks between them.
 
 <!-- recipe: mcp-client-config -->
 
@@ -637,16 +647,21 @@ mem  = "512M"
 max_sandboxes = 2
 TOML
 
+# The binary, named rather than looked up. On Linux this is wherever you put it;
+# on macOS there is nothing here to name, and the block after this one shows what
+# to write instead.
+bin="$(command -v kelyfos)"
+
 # Claude Code, project scope. Checked into the repository, where it doubles as
 # configuration your team gets for free. CLAUDE_PROJECT_DIR is set in the
 # server's environment, and in this file it needs the ":-." default to expand.
-cat > .mcp.json <<'JSON'
+cat > .mcp.json <<JSON
 {
   "mcpServers": {
     "kelyfos": {
       "type": "stdio",
-      "command": "kelyfos",
-      "args": ["serve-mcp", "--policy", "${CLAUDE_PROJECT_DIR:-.}/kelyfos.toml"]
+      "command": "$bin",
+      "args": ["serve-mcp", "--policy", "\${CLAUDE_PROJECT_DIR:-.}/kelyfos.toml"]
     }
   }
 }
@@ -655,20 +670,38 @@ JSON
 # VS Code, workspace scope. The same server, a different key and a different
 # variable — which is the whole of the difference.
 mkdir -p .vscode
-cat > .vscode/mcp.json <<'JSON'
+cat > .vscode/mcp.json <<JSON
 {
   "servers": {
     "kelyfos": {
       "type": "stdio",
-      "command": "kelyfos",
-      "args": ["serve-mcp", "--policy", "${workspaceFolder}/kelyfos.toml"]
+      "command": "$bin",
+      "args": ["serve-mcp", "--policy", "\${workspaceFolder}/kelyfos.toml"]
     }
   }
 }
 JSON
 
+echo "== on macOS the binary is inside the Lima VM, so the entry reaches into it =="
+cat <<'MACOS'
+   {
+     "mcpServers": {
+       "kelyfos": {
+         "type": "stdio",
+         "command": "limactl",
+         "args": ["shell", "kelyfos-dev", "--",
+                  "/abs/path/to/repo/bin/kelyfos", "serve-mcp",
+                  "--policy", "/abs/path/to/repo/kelyfos.toml"]
+       }
+     }
+   }
+MACOS
+echo "   the binary path is absolute because a non-interactive 'limactl shell' gets a"
+echo "   minimal PATH; the home path is the same on both sides of the Lima mount."
+
+echo
 echo "== the same server from a command line, if you would rather not write the file =="
-echo '   claude mcp add --transport stdio kelyfos -- kelyfos serve-mcp --policy "$PWD/kelyfos.toml"'
+echo "   claude mcp add --transport stdio kelyfos -- \"$bin\" serve-mcp --policy \"\$PWD/kelyfos.toml\""
 
 # Neither client is needed to check that the configuration is right. Read the
 # entry back out of each file, expand the variable that client would expand, run
@@ -726,6 +759,10 @@ python3 check.py .vscode/mcp.json servers
 The outward twin of recipe 8. There the SDK talked to a guest through
 `kelyfos mcp`; here it talks to KelyfOS itself, and the tools it gets are the
 host's: boot a machine, work in it, freeze it, fork it.
+
+`command="kelyfos"` here is a `PATH` lookup, which is fine for a program you run
+yourself on Linux and wrong under a client or on macOS — recipe 9 has both
+shapes.
 
 Everything it does is bounded by the policy file, and the last thing it does is
 read the record the server kept of its own calls — including the one that was
@@ -791,7 +828,11 @@ async def main():
             for f in ids:
                 back = await session.call_tool("sandbox_read_file",
                     {"sandbox": f, "path": "/work/task.txt"})
-                print("  %s sees: %s" % (f, back.content[0].text.strip()))
+                # structured_content, not the text block: a client that reads
+                # only the structured form must still get the file.
+                print("  %s sees: %s (%s)" % (
+                    f, back.structured_content["content"].strip(),
+                    back.structured_content["encoding"]))
 
             # Asking for more than the policy allows is a result, not an
             # exception: the refusal names the ceiling and the line it came
@@ -810,8 +851,8 @@ AGENT
 
 echo
 echo "== and the server kept a record of every call it was asked for =="
-session="$(kelyfos log --list | grep serve-mcp | head -1 | awk '{print $1}')"
-kelyfos log --session "$session" | grep -E 'client (call|result)' | head -10
+session="$(kelyfos log --list | grep serve-mcp | sed -n 1p | awk '{print $1}')"
+kelyfos log --session "$session" | grep -E 'client (call|result)' | sed -n '1,10p'
 echo
 kelyfos log --verify --session "$session"
 ```
@@ -907,7 +948,7 @@ args    = ["server.py"]
 TOML
 
 cat > both.py <<'BOTH'
-import json, subprocess, threading, queue, time
+import json, os, subprocess, threading, queue, time
 
 
 class Client:
@@ -977,7 +1018,10 @@ def show(who, label, triple):
 
 
 # --- outward: a client that wants a machine -------------------------------
-outer = Client(["kelyfos", "serve-mcp"], "outer.log")
+# The policy is named, not discovered: a serve-mcp that searches upward from a
+# working directory somebody else chose can find none and run with no ceiling.
+outer = Client(["kelyfos", "serve-mcp", "--policy",
+                os.path.join(os.getcwd(), "kelyfos.toml")], "outer.log")
 print("outer server:", outer.start("outer")["serverInfo"]["name"])
 _, text, sc = outer.call("sandbox_run", {"cpus": 1})
 print("  [outer]", text)
@@ -1011,14 +1055,14 @@ BOTH
 python3 both.py
 
 box="$(cat ids.txt)"
-server="$(kelyfos log --list | grep serve-mcp | head -1 | awk '{print $1}')"
+server="$(kelyfos log --list | grep serve-mcp | sed -n 1p | awk '{print $1}')"
 
 echo
 echo "== the machine's own record: what was done to it, from both directions =="
-kelyfos log --session "$box" | head -14
+kelyfos log --session "$box" | sed -n '1,14p'
 echo
 echo "== the server's record: what the client asked for, refusals included =="
-kelyfos log --session "$server" | grep -E 'client (call|result)' | head -8
+kelyfos log --session "$server" | grep -E 'client (call|result)' | sed -n '1,8p'
 echo
 kelyfos log --verify --session "$box"
 kelyfos log --verify --session "$server"
@@ -1041,4 +1085,12 @@ Each recipe starts from a clean machine, because a sandbox left behind by the
 previous one makes the next one fail for a reason that has nothing to do with
 it. The extractor refuses a shell block that has no `<!-- recipe: name -->`
 above it: a runnable-looking block CI never runs is precisely the one that
-quietly rots.
+quietly rots. It also checks that the count in the first sentence of this page
+is the number of recipes on it, because that sentence is exactly the kind of
+thing that goes stale the moment somebody adds one — and did.
+
+One shell detail worth copying rather than rediscovering: these truncate output
+with `sed -n '1,Np'` rather than `head -N`. Under `set -o pipefail`, `head`
+exiting early sends SIGPIPE to whatever is feeding it and fails the whole
+pipeline — so a recipe written with `head` passes while its output is short and
+starts failing, for a reason unrelated to what it teaches, the day it is not.

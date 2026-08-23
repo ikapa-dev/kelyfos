@@ -158,6 +158,18 @@ echoed = inner.call("demo_echo", {"text": "acceptance"})
 facts["plugin_ok"] = not echoed["isError"]
 facts["plugin_said"] = echoed["text"]
 
+# 4b. structuredContent completeness. A client is entitled to prefer
+# structuredContent, and one that does — Claude Code does — sees nothing at all
+# from a tool whose whole payload lives only in the text block. Checked live,
+# through the host tools, because that is where it was found.
+outer.call("sandbox_write_file", {"sandbox": facts["sandbox"],
+                                  "path": "/tmp/structured.txt", "content": "payload\n"})
+read_back = outer.call("sandbox_read_file", {"sandbox": facts["sandbox"],
+                                             "path": "/tmp/structured.txt"})
+facts["read_structured"] = read_back["sc"]
+listed = outer.call("sandbox_list")
+facts["list_structured"] = listed["sc"]
+
 # 5. kill the plugin from outside it, the way a plugin really dies.
 #
 # By its executable rather than by its command line: the guest has no pkill, and
@@ -190,7 +202,7 @@ fi
 
 box="$(python3 -c 'import json;print(json.load(open("facts.json"))["sandbox"])')"
 server="$(kelyfos log --list | grep serve-mcp | head -1 | awk '{print $1}')"
-fact() { python3 -c "import json;v=json.load(open('facts.json'))['$1'];print(v if isinstance(v,str) else json.dumps(v))"; }
+fact() { python3 -c "import json;v=json.load(open('facts.json'))['$1'];print(v if isinstance(v,str) else json.dumps(v,indent=1))"; }
 
 say "1. a scripted client lists tools, boots a sandbox, and runs a command"
 echo "     tools:  $(fact outer_tools)"
@@ -218,6 +230,15 @@ check "$(fact inner_tools | grep -q demo_echo && echo yes || echo no)" "demo_ech
 check "$([ "$(fact plugin_ok)" = "true" ] && echo yes || echo no)" "calling it succeeded"
 check "$(kelyfos log --session "$box" | grep -q 'plugin call    demo_echo' && echo yes || echo no)" \
       "the audit event names the plugin"
+
+say "4b. every tool that returns data returns it in structuredContent"
+echo "     read_file: $(fact read_structured)"
+check "$(fact read_structured | grep -q '"content": "payload' && echo yes || echo no)" \
+      "sandbox_read_file's payload is in structuredContent, not only in the text"
+check "$(fact read_structured | grep -q '"encoding": "utf-8"' && echo yes || echo no)" \
+      "and it says how it encoded it"
+check "$(fact list_structured | grep -q '"sandbox"' && echo yes || echo no)" \
+      "sandbox_list's rows are in structuredContent"
 
 say "5. killing the plugin costs its tools and nothing else"
 echo "     $(fact plugin_dead_message | head -1)"

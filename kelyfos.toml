@@ -1,0 +1,24 @@
+# KelyfOS's own policy — the ceiling for an agent working in this repository.
+#
+# This file exists so that `.mcp.json` can name it. A `serve-mcp` launched by a
+# client searches upward from a working directory the client chose, and a server
+# that finds no policy runs with no ceiling at all (F-D44); naming the file is
+# what makes the wall absolute rather than conditional.
+#
+# Small on purpose. An agent working on KelyfOS needs a machine to try things in,
+# not a fleet, and every number here is a number it may ask for less of and never
+# more of.
+
+[sandbox]
+image = "dev"
+
+# No `allow`, so a sandbox raised through this policy gets no network interface
+# at all — not a firewalled one, none. Egress is opt-in even here.
+
+[resources]
+cpus = 2
+mem  = "1G"
+max_runtime = "30m"
+
+[mcp]
+max_sandboxes = 2

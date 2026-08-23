@@ -1688,6 +1688,48 @@
         <i>Revisit when</i> a plugin needs to stream progress to the agent, which the runtime currently drops rather
         than forwards.</td>
         <td class="mono">supervisor/pluginhost.go, supervisor/mount.go</td></tr>
+        <tr><td class="mono">F-D47</td><td class="mono">2026-08-23</td>
+        <td><b>Whatever a caller asked a tool for must be reachable from <code>structuredContent</code> alone.</b>
+        <i>Source: the live client half of E4-8</i>, run by John in a signed-in Claude Code session on macOS.
+        <i>The defect.</i> <code>read_file</code> put the file&rsquo;s bytes in the text block and only
+        <code>{path, bytes}</code> in <code>structuredContent</code>. A client is entitled to prefer one form or the
+        other, and Claude Code prefers the structured one — so the tool returned, to that client, <b>nothing at all</b>,
+        and the session had to fall back to <code>exec cat</code>. Every test here passed, every recipe passed, and the
+        acceptance run passed, because all of them read the text block.
+        <i>Why no gate caught it.</i> The generated reference documents a tool&rsquo;s <i>inputs</i>; nothing described
+        its result, so there was nothing for generation to be consistent with. This is E3-5&rsquo;s lesson in a third
+        form: after &ldquo;a generated page can be consistent and false&rdquo; and &ldquo;the pages a generator cannot
+        reach go stale&rdquo; comes <i>the part no page describes is the part nothing checks</i>.
+        <i>The rule.</i> Both forms carry the payload. <code>read_file</code> returns
+        <code>{path, bytes, content, encoding}</code>; a write returns its <code>sha256</code>, the same digest the
+        recorder stores, so a caller can check what landed without reading it back.
+        <i>Encoding, said rather than assumed.</i> Bytes that are not valid UTF-8 come back base64 with
+        <code>encoding</code> saying so, because putting them in a JSON string means Go replacing every invalid
+        sequence with U+FFFD and the caller receiving a quietly corrupted file. The text block then says what happened
+        instead of carrying the damaged copy.
+        <i>Caught by automation from now on.</i> A unit test asserts the payload is reachable from
+        <code>structuredContent</code> for every tool that returns data, and the E4 acceptance run checks the same thing
+        live, through the host tools, because that is where it was found.
+        <i>Revisit when</i> a tool returns something too large to carry twice, which is a streaming question and not a
+        reason to carry it once in the wrong place.</td>
+        <td class="mono">live Claude Code session, macOS, 2026-08-23</td></tr>
+        <tr><td class="mono">F-D48</td><td class="mono">2026-08-23</td>
+        <td><b>The repository&rsquo;s own client entry is a launcher script, because the answer differs by platform.</b>
+        <i>Source: the same live session.</i> The committed <code>.mcp.json</code> was still the P2-era entry — bare
+        <code>kelyfos</code> on <code>PATH</code>, subcommand <code>mcp</code> — which is the <i>inward</i> bridge,
+        needs a sandbox that already exists, and fails with ENOENT on macOS, where KelyfOS runs inside a Lima VM and
+        there is nothing on the host to run. A fresh session in this repository launched it and got nothing.
+        <i>Why a script and not an entry.</i> The working macOS invocation names a VM and an absolute binary path,
+        neither of which belongs in a file a Linux contributor also checks out. <code>dev/mcp-server.sh</code> holds the
+        branch: on Linux it execs the built binary, on macOS it reaches through <code>limactl shell</code>, and on
+        anything else it says KelyfOS needs Linux with <code>/dev/kvm</code> rather than failing obscurely.
+        <i>Two rules it applies, both from things that went wrong.</i> The policy is named and never discovered
+        (F-D44) — and the repository now has its own <code>kelyfos.toml</code> for it to name. And the binary is named
+        absolutely, because a non-interactive <code>limactl shell</code> gets a minimal <code>PATH</code> and a bare
+        name is not found there even when it exists. Recipe 9 was carrying the same bare-name assumption and now names
+        the binary too, with the macOS shape written out beside the Linux one.
+        <i>Revisit when</i> KelyfOS runs natively on macOS, which is not a thing Firecracker does.</td>
+        <td class="mono">.mcp.json, dev/mcp-server.sh</td></tr>
     <!-- Claude Code: append rows above this line. -->
       <tr><td class="mono">F-D10</td><td class="mono">2026-08-22</td>
         <td>The resource knobs E1-0 goes looking for shipped <b>partly</b>: <code>--vcpus</code>/<code>--mem</code> and

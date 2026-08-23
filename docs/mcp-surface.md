@@ -27,8 +27,15 @@ and both write the same flight recorder.
 
 ## 1. The invariant
 
-> **`serve-mcp` can never widen policy. The project's `kelyfos.toml` is the
-> ceiling, and no tool exists to change it.**
+> **`serve-mcp` can never widen the policy it was given. The project's
+> `kelyfos.toml` is the ceiling, and no tool exists to change it.**
+
+Read that with its condition, because the condition is load-bearing: a server
+that was never given a policy has no ceiling to enforce. Naming the file with
+`--policy` is what makes the invariant absolute, and §2.3 says why a client
+cannot be trusted to supply the working directory that would find it. Every
+statement of the invariant in this document means *the policy this server is
+holding* — which the `initialize` instructions name, so an agent can see it too.
 
 This is F-D5, and everything in section 2 is arranged around it. It has three
 consequences worth stating separately, because each rules out a design somebody
@@ -98,7 +105,16 @@ characters, for the reason in §3.2.
 | `allow` | string array | no | Egress allowlist. **Must be a subset of the policy's.** An entry the policy does not contain is refused. |
 
 Returns the new sandbox's id, and `structuredContent` carrying
-`{id, image, arch, boot_ms}`.
+`{sandbox, image, arch, boot_ms, allow}`. The key is `sandbox`, not `id`, and it
+is what every other tool takes as its `sandbox` argument.
+
+There is no `workspace` parameter, and **a sandbox created here does not get the
+project's `[sandbox] workspace` device**. `/work` inside it is an ordinary
+directory in the guest's own overlay, which vanishes with the machine. That is a
+deliberate absence — one server may hold several sandboxes, and several
+write-backs into one host directory is the most destructive thing this product
+could do quietly — but the key is currently ignored in silence rather than
+refused, which is a defect the E4 exit exam found and a hardening batch closes.
 
 `allow` is the one parameter where "ask for less" needs saying out loud: the
 policy's allowlist is the set of domains this project may reach, and a call may
@@ -111,7 +127,7 @@ create is an error: `serve-mcp` owns what it made and does not adopt a machine
 somebody's `kelyfos run` is using.
 
 **`sandbox_list`** — the sandboxes this server created.
-No parameters → `structuredContent: {sandboxes: [{id, image, allow, created}]}`.
+No parameters → `structuredContent: {sandboxes: [{sandbox, image, allow, created}], max}`.
 
 #### Work
 
@@ -132,7 +148,23 @@ status is non-zero, and `structuredContent: {exit_code, stdout, stderr, signal}`
 — because an agent that has used one should not have to learn the other.
 
 **`sandbox_read_file`** — `{sandbox, path}` → the contents.
+`structuredContent: {path, bytes, content, encoding}`.
 **`sandbox_write_file`** — `{sandbox, path, content}` → bytes written.
+`structuredContent: {path, bytes, sha256}`.
+
+**The payload is in `structuredContent`, not only in the text block.** A client
+is entitled to prefer one or the other, and a tool whose whole result lived in
+the text returns *nothing* to a client that reads only the structured form —
+which is how `sandbox_read_file` was found to be unusable from a real signed-in
+client at the E4 exit, after passing every test and every recipe. The rule now
+holds for every tool here and is checked by a test and by the acceptance run:
+whatever a caller asked for must be reachable from `structuredContent` alone.
+
+`encoding` is `utf-8` or `base64`. A file that is not valid UTF-8 comes back
+base64 rather than being put in a JSON string, where Go replaces every invalid
+sequence with U+FFFD and the caller receives a quietly corrupted file; the text
+block then says what happened instead of carrying the damaged copy. `download`
+is still the tool built for binary.
 
 Both are the supervisor's own RPCs with a sandbox id in front, and that is
 meant literally: the host opens the guest's own MCP channel and calls the tool,
@@ -150,9 +182,17 @@ reason a read is not recorded anywhere else: the record is of what changed.
 #### State
 
 **`sandbox_snapshot`** — `{sandbox, name}` → freeze it. The sandbox keeps
-running.
+running. `structuredContent: {name, sandbox, took_ms, state_bytes, memory_bytes}`.
 **`sandbox_restore`** — `{name, allow?}` → bring one back as a new sandbox.
+`structuredContent: {sandbox, snapshot, image, restore_ms, allow}`.
 **`sandbox_fork`** — `{name, count}` → N independent copies of one snapshot.
+`structuredContent: {sandboxes, snapshot, wall_ms, failed}`, where `sandboxes` is
+a list of ids — not the objects `sandbox_list` returns under the same key.
+
+**Every one of these counts against `max_sandboxes`**, because every one of them
+makes a machine. A fork asking for more room than is left is refused before any
+of it starts, naming what is running and what was asked for: finding out at fork
+three of five is finding out too late.
 
 `sandbox_fork` inherits P3-2's rule unchanged: a snapshot taken from a networked
 sandbox cannot be forked, because the guest's address lives inside the memory
@@ -190,7 +230,14 @@ are measured on the bare-KVM reference (D15).
 No parameters: the topology is the file's, not the caller's. There is no
 argument that adds an agent or an edge, for the reason in §1.
 **`team_ps`** — the roster, as structured data. This is deliberately the
-machine-readable form `kelyfos team ps` does not have.
+machine-readable form `kelyfos team ps` does not have, and it is where an
+orchestrator gets the mapping it needs:
+`{team, session, owner, started_at, edges, budget, agents: [{agent, sandbox, via,
+alive, sampled, cpu_seconds, cpu_quota_percent, vcpus, rss_kib, mem_mib,
+disk_write_bytes, allow, reaches}]}`.
+`alive` is whether the machine is still there, and `sampled` is whether its usage
+could be read at all — a genuinely idle agent and one whose sample failed are two
+different facts and would otherwise both be zeroes.
 **`team_down`** — retire it.
 
 An external agent can raise and retire a whole declared team and cannot change
@@ -275,9 +322,9 @@ this project allows two" is something an agent can act on by asking for two.
 ### 2.5 The audit lane
 
 Every client tool call is a flight-recorder event, `mcp.host.*`. The outer
-agent's use of the sandbox is itself in the transcript, alongside what happened
-inside the guest, and `kelyfos log --export` renders the client's lane beside
-the guest's.
+agent's use of the sandbox is itself recorded, beside — not merged into — the
+record of what happened inside the guest. There are two chains and no export
+that holds both; §4.1 has the reasoning and the cross-link between them.
 
 This is the point of the outward direction rather than a feature of it. Without
 it, "an agent did some work in a sandbox" would be recorded and "an agent
@@ -299,9 +346,11 @@ the code uses.
 matter most belong to no sandbox at the moment they are made: the one that
 chose a machine's limits, before the machine exists, and every call that was
 refused, which never gets one. `serve-mcp` prints its session id to stderr at
-startup, each sandbox's `session.start` names the server session it was created
-through, and a team raised here does the same — so a reader can go from either
-end to the other.
+startup, and each sandbox's `session.start` carries it **in its `reason`
+field** — `created through serve-mcp session 9504d5a2` — as does a team raised
+here. Since clients bury stderr, the reliable route from the other end is
+`kelyfos log --list`, which marks a server's session `serve-mcp, N sandbox(es)`
+the way it marks a team's.
 
 `kelyfos log --session <server-id> --export` renders that session with **one
 lane per sandbox**, exactly as a team's transcript renders one lane per agent —
@@ -310,9 +359,16 @@ belong to. A call naming no sandbox spans every lane. A refused call is drawn
 like a refused message, because it is the same thing: the wall saying no, where
 a reader can see it.
 
-**The record never holds content.** A call's arguments are summarised with
-anything carrying content — `content`, `stdin` — replaced by its size, which is
-the rule `file.write` already follows. The summariser walks whatever it is
+**The record never holds content.** A call's arguments are summarised into one
+line, keys sorted, with anything carrying content — `content`, `stdin` —
+replaced by its size:
+
+```
+client call    sandbox_write_file content=<19 bytes> path=/work/brief.txt sandbox=85e04ad9
+client result  sandbox_run refused: cpus 64 exceeds the ceiling cpus = 2 set at kelyfos.toml:5 (0 ms)
+```
+
+That is the rule `file.write` already follows. The summariser walks whatever it is
 given rather than knowing the tools, so an argument added later shows up in the
 log without anyone remembering to add it, and one carrying content is withheld
 even on a tool that does not exist yet.
@@ -337,11 +393,21 @@ Each entry is an MCP server that runs **inside the guest**, launched by the
 supervisor, speaking MCP stdio to it. Its tools are aggregated into the agent's
 session alongside the built-in ones.
 
-The supervisor launches it from its own directory on the read-only device, with
-**exactly the environment every other command in the sandbox gets** — the same
-`PATH`, and the same egress proxy variables when the sandbox has egress. Not a
-second environment, and not this process's own: one environment, decided in one
-place.
+**Where it runs, and how `command` is resolved.** The plugin's working
+directory is `/plugins/<name>`, and that directory is read-only: the device is
+mounted `ro`, so a plugin cannot write beside its own files. It may write
+anywhere the sandbox can — `/tmp` and the rest of the overlay, bounded by
+`[resources] scratch`.
+
+`command` is resolved the way a shell resolves one. A bare name — `python3`,
+`node` — is looked up on `PATH`; a name containing a slash — `./server`,
+`bin/serve` — is resolved against the plugin's own directory. Both examples in
+this document are the first kind. `args` are passed through untouched.
+
+It gets **exactly the environment every other command in the sandbox gets** —
+the same `PATH`, and the same egress proxy variables when the sandbox has
+egress. Not a second environment, and not the supervisor's own: one environment,
+decided in one place.
 
 The handshake happens **before the sandbox reports ready**, and the tool list is
 read once there rather than on every call. That costs something and the cost is
@@ -365,6 +431,14 @@ Two things follow, and both are enforced rather than assumed:
 **A plugin gets no egress of its own.** The per-agent allowlist is the single
 network policy surface. There is no `[[plugin]] allow`, and asking for one is
 asking for a second door in a wall whose whole value is having one.
+
+That is not the same as "a plugin cannot reach the network". In a project whose
+policy grants egress, a plugin inherits the proxy variables like everything else
+in the sandbox and can reach exactly the allowlist — no more, and through the
+same audited proxy. [`networking.md`](networking.md) describes what that means
+in practice: the four proxy variables, `NO_PROXY`, and the trust anchor. Where
+the sandbox has no egress, a plugin has none either, and a connection attempt
+fails the way it would for any other process in there.
 
 **A plugin cannot grant itself anything.** It is launched by the supervisor with
 the environment the supervisor decides, from files on a read-only device.
@@ -394,13 +468,26 @@ So the separator is `_`, which is what every KelyfOS tool already uses, and the
 collision the separator itself could cause is closed by constraining the name
 rather than hoping:
 
-> A plugin's `name` matches `^[a-z][a-z0-9-]*$` — lowercase, no underscore, no
-> dot. `<plugin>_<tool>` is then unambiguous, because the plugin half cannot
-> contain the separator.
+> A plugin's `name` matches `^[a-z][a-z0-9-]*$` — lowercase, starting with a
+> letter, no underscore, no dot, and **at most 24 characters**. `<plugin>_<tool>`
+> is then unambiguous, because the plugin half cannot contain the separator.
 
-The full name must also fit in **64 characters**, the strictest downstream
-limit, and a plugin whose tool would exceed it is refused at boot rather than
-advertised and rejected later by somebody else's API.
+The 24 is not arbitrary: the *whole* of `<plugin>_<tool>` must fit in **64
+characters**, the strictest downstream limit, and a prefix that used most of it
+would make perfectly reasonable tool names unadvertisable.
+
+**The tool half is checked too**, against `^[a-zA-Z0-9_-]{1,64}$` — the
+Messages API's own constraint, applied to the finished name. A plugin's tool
+whose namespaced name would not survive it is dropped at boot with a line on the
+console saying so, rather than advertised and rejected later by somebody else's
+API. Uppercase is allowed there and not in the plugin name, because the plugin
+name has one more job to do: being unambiguous as a prefix.
+
+A `[[plugin]]` whose name is already taken by another is refused when the file
+is read, naming both lines. A plugin *tool* that collides with a built-in — a
+plugin called `read` exporting `file` — is not yet refused, and is shadowed by
+the built-in instead; that is a defect the E4 exit exam found and a hardening
+batch closes.
 
 **The prefix is the declared name, never the plugin's own.** A plugin announces
 a `serverInfo.name` at initialize, and that name is not used for anything — the
@@ -474,7 +561,31 @@ A flavor may also ship a server built into the image. Both routes launch
 identically — the manifest is what differs, and a built-in server appears in it
 the same way.
 
-### 3.4 When a plugin breaks
+### 3.4 What it costs, and what it is allowed
+
+Every number here exists in the product and none of it was written down until
+the E4 exit exam asked for it.
+
+| | |
+| --- | --- |
+| Time to answer `initialize` | **20 s**, and it is paid before the sandbox reports ready |
+| Time to answer one tool call | **120 s**, after which the caller gets an error naming the plugin |
+| One message, either direction | **16 MiB**, the MCP channel's frame limit (`docs/protocol.md` §3) |
+| A tool result's size | whatever the plugin returns, inside that frame — the guest tools' 8 MiB per-call cap is theirs, not yours |
+| The plugins device | sized from the directory it packs, so a plugin's size is bounded by disk rather than by policy |
+
+**Where a plugin's output goes.** Its standard error is the console, prefixed
+with the plugin's name — `kelyfos run --console` is how you read it, and it is
+where a traceback lands. Its standard input and output are the protocol and must
+carry nothing else: a `print()` to stdout is a malformed frame.
+
+**When it will not start at all** — a `command` that does not resolve, a file
+that is not executable, a handshake that never answers — the failure is a
+`plugin.crash` event whose reason begins `did not start:`, and a console line
+saying the same. The sandbox boots anyway, without that plugin's tools. One
+broken plugin does not cost the agent the other three.
+
+### 3.5 When a plugin breaks
 
 A plugin is a child process and processes die.
 
@@ -487,9 +598,13 @@ with. A plugin that dies silently and takes its tools with it would otherwise
 look identical to a plugin that never had those tools.
 
 **Per-call audit events carry the plugin name**, so a transcript says which
-plugin was asked to do what, not merely that a tool was called. `plugin.call`
-records the plugin, the tool without its prefix, the outcome and how long it
-took; `plugin.crash` records the plugin and what it exited with. Both are
+plugin was asked for which tool, rather than only that a tool was called.
+`plugin.call` records the plugin, the tool without its prefix, the outcome and
+how long it took; `plugin.crash` records the plugin and what it exited with.
+
+It does **not** record the arguments, where the outward `mcp.host.call` records
+a redacted summary of them. That asymmetry is not a decision, it is a gap the E4
+exit exam found, and a hardening batch closes it. Both are
 reported by the supervisor and written by the host, exactly as `resource.oom`
 is and for the same reason: a guest that could write its own audit trail could
 forge it.

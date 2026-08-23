@@ -260,6 +260,7 @@ An agent called a tool belonging to a plugin running inside the guest. The super
 | `tool` | string | the plugin's own name for the tool, without the prefix |
 | `outcome` | string | ok or error |
 | `duration_ms` | integer | how long the plugin took |
+| `agent` | string | which member's plugin it was *(in a team)* |
 
 ## `plugin.crash`
 
@@ -268,4 +269,5 @@ A plugin's process ended. Its tools fail from then on and say so; the sandbox, t
 | Field | Type | Meaning |
 | --- | --- | --- |
 | `name` | string | the plugin |
-| `reason` | string | what it exited with |
+| `reason` | string | what it exited with, or why it never started |
+| `agent` | string | which member's plugin it was *(in a team)* |

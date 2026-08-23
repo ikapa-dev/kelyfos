@@ -1,7 +1,9 @@
 package main
 
 import (
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -9,6 +11,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"unicode/utf8"
 
 	"github.com/p4r4n0rm4l/KelyfOS/internal/mcp"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/proto"
@@ -43,9 +46,12 @@ func toolDefinitions() []mcp.Tool {
 			},
 		},
 		{
-			Name:        "read_file",
-			Title:       "Read a text file",
-			Description: "Read a file from the sandbox filesystem as UTF-8 text. Use `download` for binary files.",
+			Name:  "read_file",
+			Title: "Read a text file",
+			Description: "Read a file from the sandbox filesystem. The contents come back both as " +
+				"text and in structuredContent as `content`, with `encoding` saying whether that " +
+				"is utf-8 or base64 — a file that is not valid UTF-8 is base64 rather than " +
+				"silently mangled. `download` is the tool built for binary files.",
 			InputSchema: mcp.Schema{
 				Type:       "object",
 				Properties: map[string]mcp.Property{"path": str("Absolute path inside the sandbox.")},
@@ -219,9 +225,31 @@ func toolReadFile(raw json.RawMessage) *mcp.CallToolResult {
 	if res != nil {
 		return res
 	}
+	// The contents go in structuredContent as well as in the text block.
+	//
+	// Not redundancy: a client is entitled to prefer one or the other, and
+	// Claude Code prefers structuredContent — so a tool whose entire payload
+	// lived only in the text block returned, to that client, nothing at all.
+	// The rule this establishes for every tool here: whatever a caller asked
+	// for must be reachable from structuredContent alone (E4-8).
+	out := map[string]any{"path": a.Path, "bytes": len(b)}
+	if utf8.Valid(b) {
+		out["content"], out["encoding"] = string(b), "utf-8"
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{mcp.Text(string(b))}, StructuredContent: out,
+		}
+	}
+	// Bytes that are not text would be mangled by being put in a JSON string —
+	// Go replaces every invalid sequence with U+FFFD — so they are base64 here
+	// and the encoding says so. The text block says what happened rather than
+	// carrying a corrupted copy of it.
+	out["content"], out["encoding"] = base64.StdEncoding.EncodeToString(b), "base64"
 	return &mcp.CallToolResult{
-		Content:           []mcp.Content{mcp.Text(string(b))},
-		StructuredContent: map[string]any{"path": a.Path, "bytes": len(b)},
+		Content: []mcp.Content{mcp.Text(fmt.Sprintf(
+			"%s is %d bytes and is not valid UTF-8, so `content` is base64 "+
+				"(`encoding` says which). `download` is the tool for binary files.",
+			a.Path, len(b)))},
+		StructuredContent: out,
 	}
 }
 
@@ -236,9 +264,14 @@ func toolWriteFile(raw json.RawMessage) *mcp.CallToolResult {
 	if res := writeFile(a.Path, []byte(a.Content), 0o644); res != nil {
 		return res
 	}
+	// The digest is here so a caller can check what landed without reading it
+	// back, and it is the same digest the flight recorder stores for the write.
+	sum := sha256.Sum256([]byte(a.Content))
 	return &mcp.CallToolResult{
-		Content:           []mcp.Content{mcp.Text(fmt.Sprintf("wrote %d bytes to %s", len(a.Content), a.Path))},
-		StructuredContent: map[string]any{"path": a.Path, "bytes": len(a.Content)},
+		Content: []mcp.Content{mcp.Text(fmt.Sprintf("wrote %d bytes to %s", len(a.Content), a.Path))},
+		StructuredContent: map[string]any{
+			"path": a.Path, "bytes": len(a.Content), "sha256": hex.EncodeToString(sum[:]),
+		},
 	}
 }
 
@@ -312,9 +345,13 @@ func toolUpload(raw json.RawMessage) *mcp.CallToolResult {
 	if res := writeFile(a.Path, b, mode); res != nil {
 		return res
 	}
+	sum := sha256.Sum256(b)
 	return &mcp.CallToolResult{
-		Content:           []mcp.Content{mcp.Text(fmt.Sprintf("uploaded %d bytes to %s", len(b), a.Path))},
-		StructuredContent: map[string]any{"path": a.Path, "bytes": len(b)},
+		Content: []mcp.Content{mcp.Text(fmt.Sprintf("uploaded %d bytes to %s", len(b), a.Path))},
+		StructuredContent: map[string]any{
+			"path": a.Path, "bytes": len(b), "mode": uint32(mode.Perm()),
+			"sha256": hex.EncodeToString(sum[:]),
+		},
 	}
 }
 

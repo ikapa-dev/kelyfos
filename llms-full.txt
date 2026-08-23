@@ -51,7 +51,7 @@ edit.
 
 ![KelyfOS in a terminal](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/media/demo.gif)
 
-> **Status: v0.5, early development, building in the open.** Cold boot-to-ready
+> **Status: v0.7, early development, building in the open.** Cold boot-to-ready
 > is **90 ms** median and snapshot restore **29 ms** (10 runs each, x86_64 on a
 > bare-KVM CI runner); a five-agent team comes up in **366 ms**. **Not hardened
 > yet** — read [`docs/threat-model.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/threat-model.md) before trusting it
@@ -292,6 +292,8 @@ machine took.
 | `kelyfos log --export report.html` | a self-contained session report you can send to someone |
 | `kelyfos watch` | a live view, one lane per agent when it is a team |
 | `kelyfos team up\|ps\|down` | boot a declared team, see it, stop it |
+| `kelyfos serve-mcp` | [KelyfOS as an MCP server](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/mcp-surface.md): any client gets sandboxes, files, snapshots, forks and teams as tools |
+| `[[plugin]]` in `kelyfos.toml` | an MCP server of your own, running inside the guest, its tools namespaced into the agent's session |
 | `kelyfos shim` | an [E2B-compatible subset](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/e2b-shim.md) for existing SDK code |
 | `kelyfos bench` | reproducible boot and restore timings |
 | `kelyfos run --max-runtime 30m` | a wall-clock budget; expiry is SIGTERM, grace, sync-back, exit 124 |
@@ -306,7 +308,7 @@ machine took.
 | [`PLAN.html`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/PLAN.html) · [`PLAN-FEATURES.html`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/PLAN-FEATURES.html) | the living plan — every decision and the full progress log, phases then epics |
 | [`docs/cookbook.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/cookbook.md) | eleven recipes that work: run one, allowlist a domain, fork, build a team, point a client at it, write a plugin, verify the log |
 | [`docs/integrating.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/integrating.md) | building on it: the four ways in, orchestrator patterns, common mistakes |
-| [`docs/mcp-surface.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/mcp-surface.md) | the v0.7 spec: MCP in both directions, written before the code |
+| [`docs/mcp-surface.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/mcp-surface.md) | MCP in both directions: `serve-mcp` as a tool for any client, `[[plugin]]` servers inside the guest |
 | [`docs/threat-model.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/threat-model.md) | what is defended, and what is not |
 | [`docs/protocol.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/protocol.md) | the host/guest wire protocol |
 | [`docs/events.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/events.md) | the audit event schema |
@@ -2366,7 +2368,9 @@ what happened.
 - `kelyfos log` replays a session in order.
 - `kelyfos log --follow` streams events as they are recorded.
 - `kelyfos log --verify` checks the chain and reports the first break.
-- `kelyfos log --list` lists recorded sessions, marking the ones that hold a team.
+- `kelyfos log --list` lists recorded sessions, newest first, marking the ones
+  that hold a team (`team of N`) and the ones belonging to a `kelyfos serve-mcp`
+  process (`serve-mcp, N sandbox(es)`).
 - `kelyfos log --json` prints the raw events instead of a readable replay — the
   form to parse.
 - `kelyfos log --export <file>.html` renders the session as one self-contained
@@ -2985,8 +2989,15 @@ and both write the same flight recorder.
 
 ## 1. The invariant
 
-> **`serve-mcp` can never widen policy. The project's `kelyfos.toml` is the
-> ceiling, and no tool exists to change it.**
+> **`serve-mcp` can never widen the policy it was given. The project's
+> `kelyfos.toml` is the ceiling, and no tool exists to change it.**
+
+Read that with its condition, because the condition is load-bearing: a server
+that was never given a policy has no ceiling to enforce. Naming the file with
+`--policy` is what makes the invariant absolute, and §2.3 says why a client
+cannot be trusted to supply the working directory that would find it. Every
+statement of the invariant in this document means *the policy this server is
+holding* — which the `initialize` instructions name, so an agent can see it too.
 
 This is F-D5, and everything in section 2 is arranged around it. It has three
 consequences worth stating separately, because each rules out a design somebody
@@ -3056,7 +3067,16 @@ characters, for the reason in §3.2.
 | `allow` | string array | no | Egress allowlist. **Must be a subset of the policy's.** An entry the policy does not contain is refused. |
 
 Returns the new sandbox's id, and `structuredContent` carrying
-`{id, image, arch, boot_ms}`.
+`{sandbox, image, arch, boot_ms, allow}`. The key is `sandbox`, not `id`, and it
+is what every other tool takes as its `sandbox` argument.
+
+There is no `workspace` parameter, and **a sandbox created here does not get the
+project's `[sandbox] workspace` device**. `/work` inside it is an ordinary
+directory in the guest's own overlay, which vanishes with the machine. That is a
+deliberate absence — one server may hold several sandboxes, and several
+write-backs into one host directory is the most destructive thing this product
+could do quietly — but the key is currently ignored in silence rather than
+refused, which is a defect the E4 exit exam found and a hardening batch closes.
 
 `allow` is the one parameter where "ask for less" needs saying out loud: the
 policy's allowlist is the set of domains this project may reach, and a call may
@@ -3069,7 +3089,7 @@ create is an error: `serve-mcp` owns what it made and does not adopt a machine
 somebody's `kelyfos run` is using.
 
 **`sandbox_list`** — the sandboxes this server created.
-No parameters → `structuredContent: {sandboxes: [{id, image, allow, created}]}`.
+No parameters → `structuredContent: {sandboxes: [{sandbox, image, allow, created}], max}`.
 
 #### Work
 
@@ -3090,7 +3110,23 @@ status is non-zero, and `structuredContent: {exit_code, stdout, stderr, signal}`
 — because an agent that has used one should not have to learn the other.
 
 **`sandbox_read_file`** — `{sandbox, path}` → the contents.
+`structuredContent: {path, bytes, content, encoding}`.
 **`sandbox_write_file`** — `{sandbox, path, content}` → bytes written.
+`structuredContent: {path, bytes, sha256}`.
+
+**The payload is in `structuredContent`, not only in the text block.** A client
+is entitled to prefer one or the other, and a tool whose whole result lived in
+the text returns *nothing* to a client that reads only the structured form —
+which is how `sandbox_read_file` was found to be unusable from a real signed-in
+client at the E4 exit, after passing every test and every recipe. The rule now
+holds for every tool here and is checked by a test and by the acceptance run:
+whatever a caller asked for must be reachable from `structuredContent` alone.
+
+`encoding` is `utf-8` or `base64`. A file that is not valid UTF-8 comes back
+base64 rather than being put in a JSON string, where Go replaces every invalid
+sequence with U+FFFD and the caller receives a quietly corrupted file; the text
+block then says what happened instead of carrying the damaged copy. `download`
+is still the tool built for binary.
 
 Both are the supervisor's own RPCs with a sandbox id in front, and that is
 meant literally: the host opens the guest's own MCP channel and calls the tool,
@@ -3108,9 +3144,17 @@ reason a read is not recorded anywhere else: the record is of what changed.
 #### State
 
 **`sandbox_snapshot`** — `{sandbox, name}` → freeze it. The sandbox keeps
-running.
+running. `structuredContent: {name, sandbox, took_ms, state_bytes, memory_bytes}`.
 **`sandbox_restore`** — `{name, allow?}` → bring one back as a new sandbox.
+`structuredContent: {sandbox, snapshot, image, restore_ms, allow}`.
 **`sandbox_fork`** — `{name, count}` → N independent copies of one snapshot.
+`structuredContent: {sandboxes, snapshot, wall_ms, failed}`, where `sandboxes` is
+a list of ids — not the objects `sandbox_list` returns under the same key.
+
+**Every one of these counts against `max_sandboxes`**, because every one of them
+makes a machine. A fork asking for more room than is left is refused before any
+of it starts, naming what is running and what was asked for: finding out at fork
+three of five is finding out too late.
 
 `sandbox_fork` inherits P3-2's rule unchanged: a snapshot taken from a networked
 sandbox cannot be forked, because the guest's address lives inside the memory
@@ -3148,7 +3192,14 @@ are measured on the bare-KVM reference (D15).
 No parameters: the topology is the file's, not the caller's. There is no
 argument that adds an agent or an edge, for the reason in §1.
 **`team_ps`** — the roster, as structured data. This is deliberately the
-machine-readable form `kelyfos team ps` does not have.
+machine-readable form `kelyfos team ps` does not have, and it is where an
+orchestrator gets the mapping it needs:
+`{team, session, owner, started_at, edges, budget, agents: [{agent, sandbox, via,
+alive, sampled, cpu_seconds, cpu_quota_percent, vcpus, rss_kib, mem_mib,
+disk_write_bytes, allow, reaches}]}`.
+`alive` is whether the machine is still there, and `sampled` is whether its usage
+could be read at all — a genuinely idle agent and one whose sample failed are two
+different facts and would otherwise both be zeroes.
 **`team_down`** — retire it.
 
 An external agent can raise and retire a whole declared team and cannot change
@@ -3233,9 +3284,9 @@ this project allows two" is something an agent can act on by asking for two.
 ### 2.5 The audit lane
 
 Every client tool call is a flight-recorder event, `mcp.host.*`. The outer
-agent's use of the sandbox is itself in the transcript, alongside what happened
-inside the guest, and `kelyfos log --export` renders the client's lane beside
-the guest's.
+agent's use of the sandbox is itself recorded, beside — not merged into — the
+record of what happened inside the guest. There are two chains and no export
+that holds both; §4.1 has the reasoning and the cross-link between them.
 
 This is the point of the outward direction rather than a feature of it. Without
 it, "an agent did some work in a sandbox" would be recorded and "an agent
@@ -3257,9 +3308,11 @@ the code uses.
 matter most belong to no sandbox at the moment they are made: the one that
 chose a machine's limits, before the machine exists, and every call that was
 refused, which never gets one. `serve-mcp` prints its session id to stderr at
-startup, each sandbox's `session.start` names the server session it was created
-through, and a team raised here does the same — so a reader can go from either
-end to the other.
+startup, and each sandbox's `session.start` carries it **in its `reason`
+field** — `created through serve-mcp session 9504d5a2` — as does a team raised
+here. Since clients bury stderr, the reliable route from the other end is
+`kelyfos log --list`, which marks a server's session `serve-mcp, N sandbox(es)`
+the way it marks a team's.
 
 `kelyfos log --session <server-id> --export` renders that session with **one
 lane per sandbox**, exactly as a team's transcript renders one lane per agent —
@@ -3268,9 +3321,16 @@ belong to. A call naming no sandbox spans every lane. A refused call is drawn
 like a refused message, because it is the same thing: the wall saying no, where
 a reader can see it.
 
-**The record never holds content.** A call's arguments are summarised with
-anything carrying content — `content`, `stdin` — replaced by its size, which is
-the rule `file.write` already follows. The summariser walks whatever it is
+**The record never holds content.** A call's arguments are summarised into one
+line, keys sorted, with anything carrying content — `content`, `stdin` —
+replaced by its size:
+
+```
+client call    sandbox_write_file content=<19 bytes> path=/work/brief.txt sandbox=85e04ad9
+client result  sandbox_run refused: cpus 64 exceeds the ceiling cpus = 2 set at kelyfos.toml:5 (0 ms)
+```
+
+That is the rule `file.write` already follows. The summariser walks whatever it is
 given rather than knowing the tools, so an argument added later shows up in the
 log without anyone remembering to add it, and one carrying content is withheld
 even on a tool that does not exist yet.
@@ -3295,11 +3355,21 @@ Each entry is an MCP server that runs **inside the guest**, launched by the
 supervisor, speaking MCP stdio to it. Its tools are aggregated into the agent's
 session alongside the built-in ones.
 
-The supervisor launches it from its own directory on the read-only device, with
-**exactly the environment every other command in the sandbox gets** — the same
-`PATH`, and the same egress proxy variables when the sandbox has egress. Not a
-second environment, and not this process's own: one environment, decided in one
-place.
+**Where it runs, and how `command` is resolved.** The plugin's working
+directory is `/plugins/<name>`, and that directory is read-only: the device is
+mounted `ro`, so a plugin cannot write beside its own files. It may write
+anywhere the sandbox can — `/tmp` and the rest of the overlay, bounded by
+`[resources] scratch`.
+
+`command` is resolved the way a shell resolves one. A bare name — `python3`,
+`node` — is looked up on `PATH`; a name containing a slash — `./server`,
+`bin/serve` — is resolved against the plugin's own directory. Both examples in
+this document are the first kind. `args` are passed through untouched.
+
+It gets **exactly the environment every other command in the sandbox gets** —
+the same `PATH`, and the same egress proxy variables when the sandbox has
+egress. Not a second environment, and not the supervisor's own: one environment,
+decided in one place.
 
 The handshake happens **before the sandbox reports ready**, and the tool list is
 read once there rather than on every call. That costs something and the cost is
@@ -3323,6 +3393,14 @@ Two things follow, and both are enforced rather than assumed:
 **A plugin gets no egress of its own.** The per-agent allowlist is the single
 network policy surface. There is no `[[plugin]] allow`, and asking for one is
 asking for a second door in a wall whose whole value is having one.
+
+That is not the same as "a plugin cannot reach the network". In a project whose
+policy grants egress, a plugin inherits the proxy variables like everything else
+in the sandbox and can reach exactly the allowlist — no more, and through the
+same audited proxy. [`networking.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/networking.md) describes what that means
+in practice: the four proxy variables, `NO_PROXY`, and the trust anchor. Where
+the sandbox has no egress, a plugin has none either, and a connection attempt
+fails the way it would for any other process in there.
 
 **A plugin cannot grant itself anything.** It is launched by the supervisor with
 the environment the supervisor decides, from files on a read-only device.
@@ -3352,13 +3430,26 @@ So the separator is `_`, which is what every KelyfOS tool already uses, and the
 collision the separator itself could cause is closed by constraining the name
 rather than hoping:
 
-> A plugin's `name` matches `^[a-z][a-z0-9-]*$` — lowercase, no underscore, no
-> dot. `<plugin>_<tool>` is then unambiguous, because the plugin half cannot
-> contain the separator.
+> A plugin's `name` matches `^[a-z][a-z0-9-]*$` — lowercase, starting with a
+> letter, no underscore, no dot, and **at most 24 characters**. `<plugin>_<tool>`
+> is then unambiguous, because the plugin half cannot contain the separator.
 
-The full name must also fit in **64 characters**, the strictest downstream
-limit, and a plugin whose tool would exceed it is refused at boot rather than
-advertised and rejected later by somebody else's API.
+The 24 is not arbitrary: the *whole* of `<plugin>_<tool>` must fit in **64
+characters**, the strictest downstream limit, and a prefix that used most of it
+would make perfectly reasonable tool names unadvertisable.
+
+**The tool half is checked too**, against `^[a-zA-Z0-9_-]{1,64}$` — the
+Messages API's own constraint, applied to the finished name. A plugin's tool
+whose namespaced name would not survive it is dropped at boot with a line on the
+console saying so, rather than advertised and rejected later by somebody else's
+API. Uppercase is allowed there and not in the plugin name, because the plugin
+name has one more job to do: being unambiguous as a prefix.
+
+A `[[plugin]]` whose name is already taken by another is refused when the file
+is read, naming both lines. A plugin *tool* that collides with a built-in — a
+plugin called `read` exporting `file` — is not yet refused, and is shadowed by
+the built-in instead; that is a defect the E4 exit exam found and a hardening
+batch closes.
 
 **The prefix is the declared name, never the plugin's own.** A plugin announces
 a `serverInfo.name` at initialize, and that name is not used for anything — the
@@ -3432,7 +3523,31 @@ A flavor may also ship a server built into the image. Both routes launch
 identically — the manifest is what differs, and a built-in server appears in it
 the same way.
 
-### 3.4 When a plugin breaks
+### 3.4 What it costs, and what it is allowed
+
+Every number here exists in the product and none of it was written down until
+the E4 exit exam asked for it.
+
+| | |
+| --- | --- |
+| Time to answer `initialize` | **20 s**, and it is paid before the sandbox reports ready |
+| Time to answer one tool call | **120 s**, after which the caller gets an error naming the plugin |
+| One message, either direction | **16 MiB**, the MCP channel's frame limit (`docs/protocol.md` §3) |
+| A tool result's size | whatever the plugin returns, inside that frame — the guest tools' 8 MiB per-call cap is theirs, not yours |
+| The plugins device | sized from the directory it packs, so a plugin's size is bounded by disk rather than by policy |
+
+**Where a plugin's output goes.** Its standard error is the console, prefixed
+with the plugin's name — `kelyfos run --console` is how you read it, and it is
+where a traceback lands. Its standard input and output are the protocol and must
+carry nothing else: a `print()` to stdout is a malformed frame.
+
+**When it will not start at all** — a `command` that does not resolve, a file
+that is not executable, a handshake that never answers — the failure is a
+`plugin.crash` event whose reason begins `did not start:`, and a console line
+saying the same. The sandbox boots anyway, without that plugin's tools. One
+broken plugin does not cost the agent the other three.
+
+### 3.5 When a plugin breaks
 
 A plugin is a child process and processes die.
 
@@ -3445,9 +3560,13 @@ with. A plugin that dies silently and takes its tools with it would otherwise
 look identical to a plugin that never had those tools.
 
 **Per-call audit events carry the plugin name**, so a transcript says which
-plugin was asked to do what, not merely that a tool was called. `plugin.call`
-records the plugin, the tool without its prefix, the outcome and how long it
-took; `plugin.crash` records the plugin and what it exited with. Both are
+plugin was asked for which tool, rather than only that a tool was called.
+`plugin.call` records the plugin, the tool without its prefix, the outcome and
+how long it took; `plugin.crash` records the plugin and what it exited with.
+
+It does **not** record the arguments, where the outward `mcp.host.call` records
+a redacted summary of them. That asymmetry is not a decision, it is a gap the E4
+exit exam found, and a hardening batch closes it. Both are
 reported by the supervisor and written by the host, exactly as `resource.oom`
 is and for the same reason: a guest that could write its own audit trail could
 forge it.
@@ -4088,7 +4207,7 @@ kelyfos run --image dev --allow example.com -- bash -c '
 # --list` shows the rest.
 echo
 echo "== the session, replayed =="
-kelyfos log | head -24
+kelyfos log | sed -n '1,24p'
 
 echo
 echo "== the chain holds =="
@@ -4254,7 +4373,7 @@ kelyfos run --image dev -- ./.venv/bin/python orchestrator.py
 
 echo
 echo "== and the host recorded every one of those calls =="
-kelyfos log | grep -E 'via mcp|\$ ' | head -6
+kelyfos log | grep -E 'via mcp|\$ ' | sed -n '1,6p'
 kelyfos log --verify
 ```
 
@@ -4267,12 +4386,22 @@ kelyfos log --verify
 without the client ever learning what a microVM is. The configuration is one
 entry in a file, and between clients the shape differs only in the key name.
 
-The one thing worth getting right is **which policy the server is held to**. It
-searches upward from its working directory for `kelyfos.toml`, and that working
-directory belongs to the client, not to you: a client launched from somewhere
-outside the project would find no policy and run with no ceiling at all. Name
-the file with `--policy`, and a path that turns out to be wrong is an error
-rather than a quiet fall back to no wall.
+Two things are worth being explicit about, and both are things a client will
+otherwise decide for you.
+
+**Which policy the server is held to.** It searches upward from its working
+directory for `kelyfos.toml`, and that working directory belongs to the client,
+not to you: a client launched from somewhere outside the project would find no
+policy and run with no ceiling at all. Name the file with `--policy`, and a path
+that turns out to be wrong is an error rather than a quiet fall back to no wall.
+
+**Which binary.** `"command": "kelyfos"` is a `PATH` lookup in an environment
+the client chose, and clients do not promise you a login shell's `PATH`. Name
+the binary absolutely for the same reason you name the policy absolutely. This
+matters most on macOS, where there is no `kelyfos` on the host at all — KelyfOS
+needs Linux with `/dev/kvm`, so the binary lives inside the VM and the entry has
+to reach into it. Both shapes are below, and the repository's own `.mcp.json`
+uses [`dev/mcp-server.sh`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/dev/mcp-server.sh), which picks between them.
 
 <!-- recipe: mcp-client-config -->
 
@@ -4297,16 +4426,21 @@ mem  = "512M"
 max_sandboxes = 2
 TOML
 
+# The binary, named rather than looked up. On Linux this is wherever you put it;
+# on macOS there is nothing here to name, and the block after this one shows what
+# to write instead.
+bin="$(command -v kelyfos)"
+
 # Claude Code, project scope. Checked into the repository, where it doubles as
 # configuration your team gets for free. CLAUDE_PROJECT_DIR is set in the
 # server's environment, and in this file it needs the ":-." default to expand.
-cat > .mcp.json <<'JSON'
+cat > .mcp.json <<JSON
 {
   "mcpServers": {
     "kelyfos": {
       "type": "stdio",
-      "command": "kelyfos",
-      "args": ["serve-mcp", "--policy", "${CLAUDE_PROJECT_DIR:-.}/kelyfos.toml"]
+      "command": "$bin",
+      "args": ["serve-mcp", "--policy", "\${CLAUDE_PROJECT_DIR:-.}/kelyfos.toml"]
     }
   }
 }
@@ -4315,20 +4449,38 @@ JSON
 # VS Code, workspace scope. The same server, a different key and a different
 # variable — which is the whole of the difference.
 mkdir -p .vscode
-cat > .vscode/mcp.json <<'JSON'
+cat > .vscode/mcp.json <<JSON
 {
   "servers": {
     "kelyfos": {
       "type": "stdio",
-      "command": "kelyfos",
-      "args": ["serve-mcp", "--policy", "${workspaceFolder}/kelyfos.toml"]
+      "command": "$bin",
+      "args": ["serve-mcp", "--policy", "\${workspaceFolder}/kelyfos.toml"]
     }
   }
 }
 JSON
 
+echo "== on macOS the binary is inside the Lima VM, so the entry reaches into it =="
+cat <<'MACOS'
+   {
+     "mcpServers": {
+       "kelyfos": {
+         "type": "stdio",
+         "command": "limactl",
+         "args": ["shell", "kelyfos-dev", "--",
+                  "/abs/path/to/repo/bin/kelyfos", "serve-mcp",
+                  "--policy", "/abs/path/to/repo/kelyfos.toml"]
+       }
+     }
+   }
+MACOS
+echo "   the binary path is absolute because a non-interactive 'limactl shell' gets a"
+echo "   minimal PATH; the home path is the same on both sides of the Lima mount."
+
+echo
 echo "== the same server from a command line, if you would rather not write the file =="
-echo '   claude mcp add --transport stdio kelyfos -- kelyfos serve-mcp --policy "$PWD/kelyfos.toml"'
+echo "   claude mcp add --transport stdio kelyfos -- \"$bin\" serve-mcp --policy \"\$PWD/kelyfos.toml\""
 
 # Neither client is needed to check that the configuration is right. Read the
 # entry back out of each file, expand the variable that client would expand, run
@@ -4386,6 +4538,10 @@ python3 check.py .vscode/mcp.json servers
 The outward twin of recipe 8. There the SDK talked to a guest through
 `kelyfos mcp`; here it talks to KelyfOS itself, and the tools it gets are the
 host's: boot a machine, work in it, freeze it, fork it.
+
+`command="kelyfos"` here is a `PATH` lookup, which is fine for a program you run
+yourself on Linux and wrong under a client or on macOS — recipe 9 has both
+shapes.
 
 Everything it does is bounded by the policy file, and the last thing it does is
 read the record the server kept of its own calls — including the one that was
@@ -4451,7 +4607,11 @@ async def main():
             for f in ids:
                 back = await session.call_tool("sandbox_read_file",
                     {"sandbox": f, "path": "/work/task.txt"})
-                print("  %s sees: %s" % (f, back.content[0].text.strip()))
+                # structured_content, not the text block: a client that reads
+                # only the structured form must still get the file.
+                print("  %s sees: %s (%s)" % (
+                    f, back.structured_content["content"].strip(),
+                    back.structured_content["encoding"]))
 
             # Asking for more than the policy allows is a result, not an
             # exception: the refusal names the ceiling and the line it came
@@ -4470,8 +4630,8 @@ AGENT
 
 echo
 echo "== and the server kept a record of every call it was asked for =="
-session="$(kelyfos log --list | grep serve-mcp | head -1 | awk '{print $1}')"
-kelyfos log --session "$session" | grep -E 'client (call|result)' | head -10
+session="$(kelyfos log --list | grep serve-mcp | sed -n 1p | awk '{print $1}')"
+kelyfos log --session "$session" | grep -E 'client (call|result)' | sed -n '1,10p'
 echo
 kelyfos log --verify --session "$session"
 ```
@@ -4567,7 +4727,7 @@ args    = ["server.py"]
 TOML
 
 cat > both.py <<'BOTH'
-import json, subprocess, threading, queue, time
+import json, os, subprocess, threading, queue, time
 
 
 class Client:
@@ -4637,7 +4797,10 @@ def show(who, label, triple):
 
 
 # --- outward: a client that wants a machine -------------------------------
-outer = Client(["kelyfos", "serve-mcp"], "outer.log")
+# The policy is named, not discovered: a serve-mcp that searches upward from a
+# working directory somebody else chose can find none and run with no ceiling.
+outer = Client(["kelyfos", "serve-mcp", "--policy",
+                os.path.join(os.getcwd(), "kelyfos.toml")], "outer.log")
 print("outer server:", outer.start("outer")["serverInfo"]["name"])
 _, text, sc = outer.call("sandbox_run", {"cpus": 1})
 print("  [outer]", text)
@@ -4671,14 +4834,14 @@ BOTH
 python3 both.py
 
 box="$(cat ids.txt)"
-server="$(kelyfos log --list | grep serve-mcp | head -1 | awk '{print $1}')"
+server="$(kelyfos log --list | grep serve-mcp | sed -n 1p | awk '{print $1}')"
 
 echo
 echo "== the machine's own record: what was done to it, from both directions =="
-kelyfos log --session "$box" | head -14
+kelyfos log --session "$box" | sed -n '1,14p'
 echo
 echo "== the server's record: what the client asked for, refusals included =="
-kelyfos log --session "$server" | grep -E 'client (call|result)' | head -8
+kelyfos log --session "$server" | grep -E 'client (call|result)' | sed -n '1,8p'
 echo
 kelyfos log --verify --session "$box"
 kelyfos log --verify --session "$server"
@@ -4701,7 +4864,15 @@ Each recipe starts from a clean machine, because a sandbox left behind by the
 previous one makes the next one fail for a reason that has nothing to do with
 it. The extractor refuses a shell block that has no `<!-- recipe: name -->`
 above it: a runnable-looking block CI never runs is precisely the one that
-quietly rots.
+quietly rots. It also checks that the count in the first sentence of this page
+is the number of recipes on it, because that sentence is exactly the kind of
+thing that goes stale the moment somebody adds one — and did.
+
+One shell detail worth copying rather than rediscovering: these truncate output
+with `sed -n '1,Np'` rather than `head -N`. Under `set -o pipefail`, `head`
+exiting early sends SIGPIPE to whatever is feeding it and fails the whole
+pipeline — so a recipe written with `head` passes while its output is short and
+starts failing, for a reason unrelated to what it teaches, the day it is not.
 
 
 ---
@@ -4930,21 +5101,27 @@ as a `[[team.agent]]` instead.
 
 ### Finding out which sandbox is which
 
-`kelyfos team ps` prints the roster for a human and has **no machine-readable
-form**. The mapping an orchestrator actually needs — agent name to sandbox id —
-is on disk while the team is up:
+`kelyfos team ps` prints the roster for a human. There are two machine-readable
+forms of the same thing, and which you want depends on which door you came
+through.
+
+**From an MCP client**, `team_ps` returns it as `structuredContent`: an `agents`
+array carrying `agent`, `sandbox`, `via` (`cold` or `fork`), what each has
+consumed against its cap, its allowlist, and who it may message. That is the
+mapping an orchestrator needs, and it is a tool rather than a file.
+
+**From a shell**, it is on disk while the team is up:
 
 ```
 ~/.cache/kelyfos/run/team.json
 ```
 
 It holds an `agents` array whose entries carry at least `name`, `sandbox` and
-`via` (`cold` or `fork`). That is what `kelyfos mcp --sandbox <id>` wants. The
-file exists for the lifetime of the team and `team down` removes it, so read it
-after the team is up and do not cache it across runs.
-
-This is the one load-bearing interface in the team surface that has no command
-behind it. Treat its shape as observed rather than promised.
+`via`. That is what `kelyfos mcp --sandbox <id>` wants. The file exists for the
+lifetime of the team and `team down` removes it, so read it after the team is up
+and do not cache it across runs. It also records which door raised the team,
+which is why `kelyfos team down` refuses to signal a team a `serve-mcp` server is
+holding.
 
 ### Read the record rather than the output
 
@@ -5213,7 +5390,7 @@ hand-written half, and this page says where each is still thin.
 | after something that works, right now | [`cookbook.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/cookbook.md) — eleven recipes, each one runnable as it stands |
 | putting KelyfOS inside something else | [`integrating.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/integrating.md) |
 | building KelyfOS into something else | [`protocol.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/protocol.md), then [`e2b-shim.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/e2b-shim.md) |
-| driving KelyfOS from an MCP client | [`mcp-surface.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/mcp-surface.md) — specification for v0.7, not yet built |
+| driving KelyfOS from an MCP client | [`mcp-surface.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/mcp-surface.md) — `serve-mcp` and `[[plugin]]`, and [recipe 9](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/cookbook.md) for the configuration |
 | judging whether to trust it | [`threat-model.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/threat-model.md) |
 
 ## The map
@@ -5357,15 +5534,18 @@ executes one and a transcribed snippet is the failure F-D4 exists to prevent.
 What it gives instead is the client configuration, which is verified, and the
 wire shape, which the cookbook demonstrates.
 
-### `mcp-surface.md` — the v0.7 specification
+### `mcp-surface.md` — MCP in both directions
 
-*Concept throughout, and written before the code exists*, the way `teams.md` was
-at E2-0: the policy-ceiling invariant and what it rules out, the outward tool
-list with schemas, the session and concurrency model, the plugins drive and its
-manifest, and the namespacing rule with the evidence behind it.
-*Thin:* it describes nothing that runs yet. Every claim in it is a commitment
-E4-1 through E4-8 have to meet, not a description of behaviour — and where the
-code and this document end up disagreeing during the epic, the code is wrong.
+*Concept throughout.* It was written before the code, the way `teams.md` was at
+E2-0, and has been reconciled with what got built: the policy-ceiling invariant
+and what it rules out, the outward tool list, the session and concurrency model,
+the plugins drive and its manifest, the namespacing rule with the evidence behind
+it, and the audit lane in each direction.
+*Thin:* the tool schemas and the event fields are in
+[`reference/`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/reference/README.md), generated from the product; this page explains why
+they are that shape. Where it and the code disagree, the code is right and the
+page is a bug — the E4 exit exam found four such places and they are listed in
+[`exam/2026-08-23-mcp-surface.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/exam/2026-08-23-mcp-surface.md).
 
 ### `threat-model.md` — what to trust
 
@@ -5933,7 +6113,7 @@ Run a command inside the sandbox and return its output and exit code. Give `comm
 
 ### `read_file`
 
-Read a file from the sandbox filesystem as UTF-8 text. Use `download` for binary files.
+Read a file from the sandbox filesystem. The contents come back both as text and in structuredContent as `content`, with `encoding` saying whether that is utf-8 or base64 — a file that is not valid UTF-8 is base64 rather than silently mangled. `download` is the tool built for binary files.
 
 | Parameter | Type | Required | Meaning |
 | --- | --- | --- | --- |
@@ -6071,7 +6251,7 @@ Boot a hardware-isolated microVM and return its id. Anything run inside it canno
 
 ### `sandbox_exec`
 
-Run a command inside a sandbox and return its output and exit code. Give `command` for a shell command line, or `argv` to run a program directly with no shell. A non-zero exit is a result, not an error: read exit_code.
+Run a command inside a sandbox and return its output and exit code. Give `command` for a shell command line, or `argv` to run a program directly with no shell. A command that exits non-zero comes back with isError set and its real output intact — that is the command failing, not the call failing, so read exit_code and stderr rather than retrying.
 
 | Parameter | Type | Required | Meaning |
 | --- | --- | --- | --- |
@@ -6429,6 +6609,7 @@ An agent called a tool belonging to a plugin running inside the guest. The super
 | `tool` | string | the plugin's own name for the tool, without the prefix |
 | `outcome` | string | ok or error |
 | `duration_ms` | integer | how long the plugin took |
+| `agent` | string | which member's plugin it was *(in a team)* |
 
 ## `plugin.crash`
 
@@ -6437,7 +6618,8 @@ A plugin's process ended. Its tools fail from then on and say so; the sandbox, t
 | Field | Type | Meaning |
 | --- | --- | --- |
 | `name` | string | the plugin |
-| `reason` | string | what it exited with |
+| `reason` | string | what it exited with, or why it never started |
+| `agent` | string | which member's plugin it was *(in a team)* |
 
 
 ---

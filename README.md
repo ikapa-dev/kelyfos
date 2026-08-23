@@ -10,7 +10,7 @@ edit.
 
 ![KelyfOS in a terminal](docs/media/demo.gif)
 
-> **Status: v0.5, early development, building in the open.** Cold boot-to-ready
+> **Status: v0.7, early development, building in the open.** Cold boot-to-ready
 > is **90 ms** median and snapshot restore **29 ms** (10 runs each, x86_64 on a
 > bare-KVM CI runner); a five-agent team comes up in **366 ms**. **Not hardened
 > yet** — read [`docs/threat-model.md`](docs/threat-model.md) before trusting it
@@ -251,6 +251,8 @@ machine took.
 | `kelyfos log --export report.html` | a self-contained session report you can send to someone |
 | `kelyfos watch` | a live view, one lane per agent when it is a team |
 | `kelyfos team up\|ps\|down` | boot a declared team, see it, stop it |
+| `kelyfos serve-mcp` | [KelyfOS as an MCP server](docs/mcp-surface.md): any client gets sandboxes, files, snapshots, forks and teams as tools |
+| `[[plugin]]` in `kelyfos.toml` | an MCP server of your own, running inside the guest, its tools namespaced into the agent's session |
 | `kelyfos shim` | an [E2B-compatible subset](docs/e2b-shim.md) for existing SDK code |
 | `kelyfos bench` | reproducible boot and restore timings |
 | `kelyfos run --max-runtime 30m` | a wall-clock budget; expiry is SIGTERM, grace, sync-back, exit 124 |
@@ -265,7 +267,7 @@ machine took.
 | [`PLAN.html`](PLAN.html) · [`PLAN-FEATURES.html`](PLAN-FEATURES.html) | the living plan — every decision and the full progress log, phases then epics |
 | [`docs/cookbook.md`](docs/cookbook.md) | eleven recipes that work: run one, allowlist a domain, fork, build a team, point a client at it, write a plugin, verify the log |
 | [`docs/integrating.md`](docs/integrating.md) | building on it: the four ways in, orchestrator patterns, common mistakes |
-| [`docs/mcp-surface.md`](docs/mcp-surface.md) | the v0.7 spec: MCP in both directions, written before the code |
+| [`docs/mcp-surface.md`](docs/mcp-surface.md) | MCP in both directions: `serve-mcp` as a tool for any client, `[[plugin]]` servers inside the guest |
 | [`docs/threat-model.md`](docs/threat-model.md) | what is defended, and what is not |
 | [`docs/protocol.md`](docs/protocol.md) | the host/guest wire protocol |
 | [`docs/events.md`](docs/events.md) | the audit event schema |

@@ -29,7 +29,7 @@ Run a command inside the sandbox and return its output and exit code. Give `comm
 
 ### `read_file`
 
-Read a file from the sandbox filesystem as UTF-8 text. Use `download` for binary files.
+Read a file from the sandbox filesystem. The contents come back both as text and in structuredContent as `content`, with `encoding` saying whether that is utf-8 or base64 — a file that is not valid UTF-8 is base64 rather than silently mangled. `download` is the tool built for binary files.
 
 | Parameter | Type | Required | Meaning |
 | --- | --- | --- | --- |
@@ -167,7 +167,7 @@ Boot a hardware-isolated microVM and return its id. Anything run inside it canno
 
 ### `sandbox_exec`
 
-Run a command inside a sandbox and return its output and exit code. Give `command` for a shell command line, or `argv` to run a program directly with no shell. A non-zero exit is a result, not an error: read exit_code.
+Run a command inside a sandbox and return its output and exit code. Give `command` for a shell command line, or `argv` to run a program directly with no shell. A command that exits non-zero comes back with isError set and its real output intact — that is the command failing, not the call failing, so read exit_code and stderr rather than retrying.
 
 | Parameter | Type | Required | Meaning |
 | --- | --- | --- | --- |

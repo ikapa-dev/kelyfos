@@ -48,7 +48,9 @@ func hostToolDefinitions() []mcp.Tool {
 			Title: "Run a command in a sandbox",
 			Description: "Run a command inside a sandbox and return its output and exit code. " +
 				"Give `command` for a shell command line, or `argv` to run a program directly " +
-				"with no shell. A non-zero exit is a result, not an error: read exit_code.",
+				"with no shell. A command that exits non-zero comes back with isError set and " +
+				"its real output intact — that is the command failing, not the call failing, so " +
+				"read exit_code and stderr rather than retrying.",
 			InputSchema: mcp.Schema{
 				Type: "object",
 				Properties: map[string]mcp.Property{

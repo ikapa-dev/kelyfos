@@ -28,7 +28,7 @@ hand-written half, and this page says where each is still thin.
 | after something that works, right now | [`cookbook.md`](cookbook.md) — eleven recipes, each one runnable as it stands |
 | putting KelyfOS inside something else | [`integrating.md`](integrating.md) |
 | building KelyfOS into something else | [`protocol.md`](protocol.md), then [`e2b-shim.md`](e2b-shim.md) |
-| driving KelyfOS from an MCP client | [`mcp-surface.md`](mcp-surface.md) — specification for v0.7, not yet built |
+| driving KelyfOS from an MCP client | [`mcp-surface.md`](mcp-surface.md) — `serve-mcp` and `[[plugin]]`, and [recipe 9](cookbook.md) for the configuration |
 | judging whether to trust it | [`threat-model.md`](threat-model.md) |
 
 ## The map
@@ -172,15 +172,18 @@ executes one and a transcribed snippet is the failure F-D4 exists to prevent.
 What it gives instead is the client configuration, which is verified, and the
 wire shape, which the cookbook demonstrates.
 
-### `mcp-surface.md` — the v0.7 specification
+### `mcp-surface.md` — MCP in both directions
 
-*Concept throughout, and written before the code exists*, the way `teams.md` was
-at E2-0: the policy-ceiling invariant and what it rules out, the outward tool
-list with schemas, the session and concurrency model, the plugins drive and its
-manifest, and the namespacing rule with the evidence behind it.
-*Thin:* it describes nothing that runs yet. Every claim in it is a commitment
-E4-1 through E4-8 have to meet, not a description of behaviour — and where the
-code and this document end up disagreeing during the epic, the code is wrong.
+*Concept throughout.* It was written before the code, the way `teams.md` was at
+E2-0, and has been reconciled with what got built: the policy-ceiling invariant
+and what it rules out, the outward tool list, the session and concurrency model,
+the plugins drive and its manifest, the namespacing rule with the evidence behind
+it, and the audit lane in each direction.
+*Thin:* the tool schemas and the event fields are in
+[`reference/`](reference/), generated from the product; this page explains why
+they are that shape. Where it and the code disagree, the code is right and the
+page is a bug — the E4 exit exam found four such places and they are listed in
+[`exam/2026-08-23-mcp-surface.md`](exam/2026-08-23-mcp-surface.md).
 
 ### `threat-model.md` — what to trust
 
