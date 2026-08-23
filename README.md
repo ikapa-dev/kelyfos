@@ -170,14 +170,28 @@ secrets   = ["GITHUB_TOKEN@api.github.com"]   # names only — never values
 workspace = "."
 
 [resources]                 # hard ceilings: a flag may ask for less, never more
-cpus = 2
-mem  = "2G"
-disk = "4G"
+cpus        = 2             # cores the guest sees
+cpu_quota   = "150%"        # ...but at most 1.5 cores' worth of host CPU time
+mem         = "2G"
+disk        = "4G"          # the /work device
+scratch     = "512M"        # everything written outside /work
+net_mbps_rx = 50
+disk_mbps   = 100
+max_runtime = "30m"
+idle_timeout = "5m"         # no tool call and no traffic for that long ends it
 ```
 
 `[resources]` are limits, not defaults — `--cpus 8` against `cpus = 2` refuses
-at boot and names the line it came from, rather than quietly clamping. See
-[`docs/resources.md`](docs/resources.md).
+at boot and names the line it came from, rather than quietly clamping.
+
+Every one of them is enforced on the **host**: KVM machine config, a cgroup v2
+`cpu.max`, Firecracker's own token-bucket rate limiters, device sizes and a host
+timer. The guest runs untrusted code and is never asked to police itself, and
+the same is true of the receipt: every session ends with a `resource.summary`
+event recording what it consumed beside what it was allowed, measured from
+counters the kernel keeps about the VMM process. `kelyfos watch` shows the same
+figures live. See [`docs/resources.md`](docs/resources.md), and
+`bash dev/prove-caps.sh` to watch each cap refuse to budge.
 
 ## What else it does
 
@@ -190,6 +204,7 @@ at boot and names the line it came from, rather than quietly clamping. See
 | `kelyfos watch` | a live view, built only from the audit record |
 | `kelyfos shim` | an [E2B-compatible subset](docs/e2b-shim.md) for existing SDK code |
 | `kelyfos bench` | reproducible boot and restore timings |
+| `kelyfos run --max-runtime 30m` | a wall-clock budget; expiry is SIGTERM, grace, sync-back, exit 124 |
 
 ## Documentation
 
