@@ -190,3 +190,33 @@ func TestInstructionsSayWhereTheWallIs(t *testing.T) {
 		}
 	}
 }
+
+// A key a person wrote in a file and that is then dropped without a word is the
+// failure F-D27 named once already. serve-mcp does not attach a workspace, for
+// a good reason, and it now says so — to the operator on stderr and to the agent
+// in the instructions, which is the only channel that reaches it (F-D49).
+func TestAnIgnoredWorkspaceKeyIsSaidOutLoud(t *testing.T) {
+	s := serverWith(t, "workspace = \"./ws\"\n"+policy)
+	lines := s.ignoring()
+	if len(lines) != 1 {
+		t.Fatalf("got %d notices for an ignored workspace, want 1: %v", len(lines), lines)
+	}
+	for _, want := range []string{"workspace", "does not attach it", "sandbox_read_file"} {
+		if !strings.Contains(lines[0], want) {
+			t.Errorf("the notice does not mention %q:\n%s", want, lines[0])
+		}
+	}
+	if !strings.Contains(s.instructions(), "/work is the guest's own scratch") {
+		t.Errorf("the agent is not told:\n%s", s.instructions())
+	}
+
+	// And a project that declares none is told nothing, because there is
+	// nothing to tell it.
+	quiet := serverWith(t, policy)
+	if len(quiet.ignoring()) != 0 {
+		t.Errorf("a project with no workspace got a notice: %v", quiet.ignoring())
+	}
+	if strings.Contains(quiet.instructions(), "workspace") {
+		t.Error("the instructions mention a workspace this project does not declare")
+	}
+}

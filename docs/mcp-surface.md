@@ -111,10 +111,17 @@ is what every other tool takes as its `sandbox` argument.
 There is no `workspace` parameter, and **a sandbox created here does not get the
 project's `[sandbox] workspace` device**. `/work` inside it is an ordinary
 directory in the guest's own overlay, which vanishes with the machine. That is a
-deliberate absence — one server may hold several sandboxes, and several
+deliberate absence: one server may hold several sandboxes, and several
 write-backs into one host directory is the most destructive thing this product
-could do quietly — but the key is currently ignored in silence rather than
-refused, which is a defect the E4 exit exam found and a hardening batch closes.
+could do quietly.
+
+**It is said rather than done in silence.** A project that declares a
+`workspace` gets a line on stderr at startup explaining that this server does
+not attach it and what to use instead, and the `initialize` instructions tell
+the *agent* the same thing — because the agent is the one that would otherwise
+write into `/work` expecting the file to reach the host. Use
+`sandbox_write_file` and `sandbox_read_file` to move files, or
+`kelyfos run --workspace` for a single machine that syncs back.
 
 `allow` is the one parameter where "ask for less" needs saying out loud: the
 policy's allowlist is the set of domains this project may reach, and a call may

@@ -80,6 +80,9 @@ silent fall back to no ceiling.
 
 	// The policy banner goes to stderr: stdout is the protocol.
 	fmt.Fprintf(os.Stderr, "kelyfos serve-mcp — %s\n", srv.describe())
+	for _, line := range srv.ignoring() {
+		fmt.Fprintf(os.Stderr, "kelyfos: %s\n", line)
+	}
 	fmt.Fprintf(os.Stderr, "kelyfos: this session's record is %s — `kelyfos log --session %s`\n",
 		srv.auditID, srv.auditID)
 
@@ -259,6 +262,14 @@ func (s *hostServer) instructions() string {
 		wall = fmt.Sprintf("That policy is the file %s. No tool here can change it: a request "+
 			"for more than it permits is refused and says so.", s.policy.Path)
 	}
+	// The agent is told what the server ignores, because it is the one that
+	// would otherwise write into /work expecting the file to reach the host.
+	work := ""
+	if s.policy != nil && s.policy.Workspace != "" {
+		work = " This project declares a workspace directory and sandboxes made here do not get " +
+			"it: /work is the guest's own scratch and vanishes with the machine. Bring anything " +
+			"that matters out with sandbox_read_file."
+	}
 	return "KelyfOS runs commands inside hardware-isolated microVMs. Boot one with sandbox_run, " +
 		"work in it with sandbox_exec and the file tools, and stop it with sandbox_stop. A " +
 		"sandbox worth keeping can be frozen with sandbox_snapshot and brought back in " +
@@ -266,7 +277,27 @@ func (s *hostServer) instructions() string {
 		"state with sandbox_fork. A project that declares a team of agents can have the whole " +
 		"team raised with team_up and retired with team_down. Anything you run in a sandbox " +
 		"cannot reach this machine, and cannot reach the network unless the project's policy " +
-		"allows it. " + wall
+		"allows it. " + wall + work
+}
+
+// ignoring names the parts of the policy this server does not act on.
+//
+// A key a person wrote in a file and that is then dropped without a word is the
+// failure F-D27 named once already, and `workspace` is one: a sandbox raised
+// here never gets the workspace device, because one server may hold several
+// sandboxes and several write-backs into one host directory is the most
+// destructive thing this product could do quietly. That is a defensible choice
+// and it was being made in silence (F-D49).
+func (s *hostServer) ignoring() []string {
+	if s.policy == nil || s.policy.Workspace == "" {
+		return nil
+	}
+	return []string{fmt.Sprintf(
+		"%s declares workspace = %q, and serve-mcp does not attach it: a server may hold "+
+			"several sandboxes, and several write-backs into one directory would be a way to "+
+			"lose work quietly. /work in these sandboxes is the guest's own overlay. Move files "+
+			"with sandbox_write_file and sandbox_read_file, or use `kelyfos run --workspace` for "+
+			"a single machine that syncs back.", s.policy.Path, s.policy.Workspace)}
 }
 
 func (s *hostServer) describe() string {
