@@ -7,8 +7,7 @@ Updated 2026-08-23 · tree clean, synced with origin/main
 - PLAN-FEATURES.html — 22/42. **Epic E3 active, 3/6.**
 
 ## Now
-E3-3 — the cookbook: self-contained recipes, each a literal script CI extracts
-and executes, so a recipe that stops working fails the build.
+E3-3 — the cookbook: recipes that are literal scripts CI extracts and executes.
 
 ## This session
 Refreshed `docs/launch/hn-post.md` to v0.5 (John's to send). E3-0: seven audits
