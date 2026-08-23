@@ -10,10 +10,11 @@ Updated 2026-08-23 · tree clean, synced with origin/main
 E3-0 — the docs inventory: mark every doc concept vs reference vs missing, and
 write `docs/README.md` as the entry map for human and machine readers.
 
-## This session (the progress log has the full account)
-Epic E2 finished and released as **v0.5**: E2-4's correction, E2-6 cgroup
-hierarchy, E2-7 one chain per team, E2-8 multi-lane watch, E2-9 demo + the fork
-path, the acceptance list, then F-D26's cold-first rework and re-measurement.
+## This session
+Start-up reconcile done: origin/main at d1caf0a, box counts confirmed against
+the files. First commit refreshes `docs/launch/hn-post.md` to v0.5 reality —
+teams as a fourth differentiator, the cold/warm team-up numbers, and the
+F-D25 → F-D26 arc as the engineering story with both run ids. John's to send.
 
 ## Epic E2 acceptance — met, on both paths (reference run 32632420532)
 **Cold 366 ms, warm 215 ms** against a 1000 ms bar. `demo-team` 23/0/0 ·
@@ -25,8 +26,8 @@ log as recorded — a true measurement of a strategy F-D26 replaced.
 - P4-4, P4-5 [BLOCKED] — Phase 4 backlog, parked unless John promotes it.
 - Per-agent `idle_timeout` still refused (F-D20) though E2-7 supplies the
   signal; lifting it is its own task (F-D22).
-- `docs/threat-model.md` is stamped "current as of v0.2" and says nothing about
-  teams. E3-0 inventories it; closing the gap is E3's.
+- `docs/threat-model.md` is stamped "current as of v0.2"; the README status
+  block still says v0.3. E3-0 inventories both; closing them is E3's.
 
 ## Next
 E3-0 inventory → E3-1 generated reference → E3-2 llms.txt → E3-3 cookbook →
