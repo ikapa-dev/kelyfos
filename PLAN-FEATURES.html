@@ -126,7 +126,7 @@
      improvements to the existing product land here as epics. Inert until its gate opens.</p>
   <div class="meta">
     owner: <b>John</b> &nbsp;&middot;&nbsp; developer: <b>Claude Code</b> &nbsp;&middot;&nbsp;
-    status: <b class="ok" id="meta-status">Epic E4 — active, 8/9 (v0.6 released; next: E4-8, the both-directions proof)</b> &nbsp;&middot;&nbsp;
+    status: <b class="ok" id="meta-status">Epic E4 — exit passed 22/22, 9/9 (tagging v0.7)</b> &nbsp;&middot;&nbsp;
     last updated: <b id="meta-updated">2026-08-23</b><br>
     repo file: <b>PLAN-FEATURES.html</b> (lives at the repository root next to <code>PLAN.html</code>)<br>
     <span class="quiet">Companion to PLAN.html — same protocol, same rules, later timeline.</span>
@@ -166,7 +166,7 @@
     <span class="bl-name">All epics</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">E4-8 — proof in both directions at once: a scripted client drives <code>serve-mcp</code> while the agent inside the sandbox calls a plugin&rsquo;s namespaced tools, and one exported transcript shows both lanes</b></div>
+  <div class="focusline">Current focus: <b id="focus">Tag v0.7 and publish; then the hardening batch the exit exams found, then the E4&rarr;E5 seam pair (F-D40, F-D41)</b></div>
 </div>
 
 <!-- ====================================================== 1. ACTIVATION GATE -->
@@ -4066,6 +4066,35 @@ $ gofmt -l . ; go vet ./... ; go test ./...
         SIGTERM</code>, not <code>killed by terminated</code>.
         <b>The half this cannot do is the live Claude Code session</b>, which needs John: the configuration for it is
         recipe 9 and is proved by running exactly what the file names, but nobody here can sign into a client.</td></tr>
+        <tr><td class="mono">2026-08-23</td><td class="mono">E4 exit</td>
+        <td><b>The acceptance list run as written, and three exams that between them found twenty-two things wrong
+        with a surface that had just passed everything.</b>
+        <code>dev/accept-e4.sh</code> is the plan&rsquo;s own acceptance list in its own order, with nothing asserted
+        that is not read back out of the product: <b>22 of 22</b>. Eleven of eleven cookbook recipes pass, and the
+        <code>cookbook</code> workflow ran them on the bare-KVM reference from a fresh clone. The token count was
+        re-measured rather than carried forward &mdash; 298,395 characters, 77,480 tokens under cl100k_base and 77,447
+        under o200k_base, so the pinned 3.83 characters per token is 0.6% conservative and stays.
+        <b>Two blind readers</b> were given the documentation and nothing else and asked to do something real: drive a
+        client, and ship a plugin. Both said they could not. Twenty findings, every one checked against the running
+        product, in <code>docs/exam/2026-08-23-mcp-surface.md</code>. The pattern: &sect;2.2 named a result key the code
+        does not use; the policy invariant was written absolutely and holds only when a policy was given; the plugin
+        <code>command</code> rule contradicted both of its own examples; and every timeout the plugin runtime enforces
+        was unwritten. The one that stings is that <code>docs/README.md</code> &mdash; the page whose whole job is
+        telling a reader where to start &mdash; still said the MCP surface was &ldquo;not yet built&rdquo;, in a
+        repository whose CI had just executed eleven recipes driving it.
+        <b>The third exam was John&rsquo;s</b>, in a signed-in Claude Code session on macOS, and it found the thing no
+        machine here could have: <code>sandbox_read_file</code> put the file&rsquo;s bytes only in the result&rsquo;s
+        text block, so a client that prefers <code>structuredContent</code> &mdash; that one does &mdash; received
+        nothing at all. Every test and every recipe here read the text block, because the same author wrote both. F-D47
+        makes it a rule and checks it two ways; F-D48 replaced the repository&rsquo;s own <code>.mcp.json</code>, which
+        was two epics out of date and unusable on macOS.
+        <b>And a sweep the exams provoked:</b> every recipe truncating with <code>head -N</code> was killing its own
+        producer under <code>pipefail</code> and passing only while its output stayed short. They use <code>sed -n</code>
+        now, and the page says why.
+        <b>Three product findings are routed to a batch after the tag</b>, following the ruling E3-5&rsquo;s findings
+        got: a declared <code>[sandbox] workspace</code> ignored in silence, a plugin tool colliding with a built-in
+        shadowed rather than refused, and <code>plugin.call</code> carrying no arguments where
+        <code>mcp.host.call</code> carries a redacted summary.</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
