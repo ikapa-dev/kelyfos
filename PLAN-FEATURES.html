@@ -1093,6 +1093,41 @@
         designed. (3) Choosing per host by measurement rather than by rule would be the other answer, and a heuristic
         that guesses which of two costs is larger without measuring either is how a fast path becomes a slow one
         silently. Neither is E2&rsquo;s to decide.</td></tr>
+        <tr><td class="mono">F-D26</td><td class="mono">2026-08-23</td>
+        <td><b>Ruling from John on F-D25, superseding F-D19&rsquo;s fork mandate. Both stay in the log untouched;
+        this replaces the strategy, not the record.</b> Team-up becomes <b>cold-first, fork-warm</b>:
+        <b>(1)</b> with no cached template, <i>every</i> agent boots as a concurrent cold boot &mdash; the measured
+        109&ndash;134 ms path, and the path the &lt; 1 s bar binds on.
+        <b>(2)</b> Once a template for a given (image digest, memory size, guest configuration) has been created, its
+        snapshot is cached; a later team-up that hits the cache forks its NIC-less no-egress workers from it exactly as
+        E2-9 built. The fork machinery stays; it is now the warm path rather than the default.
+        <b>(3)</b> The template&rsquo;s memory-image write comes off the team-up critical path entirely: on a cache miss
+        the template is built <i>after</i> the team is up, in the background, under the team&rsquo;s own context.
+        <b>(4)</b> The cache is bounded at <b>2 GiB</b>, evicted least-recently-used before a new template is stored,
+        and the bound is stated in <code>docs/teams.md</code> and printed when it evicts.
+        <b>(5)</b> Acceptance step 1 is re-measured on the reference and <b>both</b> numbers reported &mdash; cold-path
+        team-up, which is the binding one, and warm-path. The recorded 1098 ms is never rewritten; the new measurement
+        is appended with its CI run id. F-D19&rsquo;s parking-lot item, E2-5&rsquo;s budgeted spawns using the fork
+        path, stays parked.</td>
+        <td>John&rsquo;s words: F-D19 was ruled against nested-virt numbers, the bare-KVM measurement says concurrent
+        cold boots win the cold-start case, and data wins. That is the whole of it, and it is the outcome the ruling
+        asked for when it said to measure and report rather than restate.
+        What the data actually shows is that the two costs scale in opposite directions, so neither path is right
+        everywhere: a cold boot is CPU and device setup and the reference runner does it in 109 ms, while a fork is one
+        memory-image write plus N cheap restores and that runner writes 384 MiB in 927 ms. The dev machine reverses both
+        numbers. A strategy that picks one and keeps it is wrong on one of the two machines; a strategy that pays the
+        write once and then forks is right on both, because after the first payment the warm path is 57&ndash;61 ms per
+        worker on the reference and ~430 ms on the dev host, and in each case cheaper than that machine&rsquo;s cold
+        boot. Cold-first is what makes the first run fast; the cache is what makes the second run faster still.
+        Three design choices this leaves to be made and therefore records. The key is a digest over the things actually
+        baked into a memory image &mdash; architecture, flavor, the kernel and rootfs sha256 from
+        <code>image.json</code>, vCPUs, memory, scratch, the I/O rates, and whether the agent has a spawn budget &mdash;
+        so an image rebuild changes the key and a stale template can never be served for a new image, which is the
+        invalidation question F-D25 said had to be answered before any of this was built. The build happens after the
+        team is up rather than on first fork demand, because with cold-first there <i>is</i> no fork demand on a miss:
+        waiting for one would mean the cache never fills. And a template is written to a temporary directory and
+        renamed into place, so a half-written image is never a cache hit and two concurrent team-ups cannot serve each
+        other a partial one.</td></tr>
     <!-- Claude Code: append rows above this line. -->
       <tr><td class="mono">F-D10</td><td class="mono">2026-08-22</td>
         <td>The resource knobs E1-0 goes looking for shipped <b>partly</b>: <code>--vcpus</code>/<code>--mem</code> and

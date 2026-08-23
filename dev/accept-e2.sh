@@ -83,10 +83,14 @@ sed -e 's/\x1b\[[0-9;]*m//g' "$PROVE" | grep -E '^  (PASS|FAIL|SKIP)|^  [0-9]+ p
 
 say "The acceptance list, item by item"
 
-step 1 "kelyfos team up boots five VMs; workers spawn via fork, total spawn time recorded" \
-  "$DEMO" "total spawn time"
-step 1 "  (and the two boot paths are the ones F-D19 asks for)" \
+step 1 "kelyfos team up boots five VMs; total spawn time recorded (cold path — the bar binds here)" \
+  "$DEMO" "cold-path spawn time"
+step 1 "  (the warm path, forking from a cached template, is faster)" \
+  "$DEMO" "warm path is faster"
+step 1 "  (and the two boot paths are the ones F-D26 asks for)" \
   "$DEMO" "no-egress workers were forked"
+step 1 "  (the cold run fills the cache for the next one)" \
+  "$DEMO" "cached a fork template in the background"
 step 2 "kelyfos team ps shows all five, their edges, and live resource use against E1 caps" \
   "$DEMO" "ps shows every agent"
 step 3 "the demo task completes through team_send/team_recv, one team_ask round trip, and the store" \

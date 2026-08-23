@@ -485,21 +485,44 @@ route live *inside* that image — so N networked forks would be N machines each
 believing it is the same host. `kelyfos fork` refuses a networked snapshot for
 exactly this reason.
 
-An agent granted **no egress** has no network identity to collide with, so a
-group of them is booted **once** as a template, snapshotted, and restored as
-many times as there are agents in the group. The template is a mould: it is
-never in the roster, never appears in the transcript as an agent, has no team
-channel of its own, and is stopped and deleted as soon as its image is on disk.
+An agent granted **no egress** has no network identity to collide with, so it
+*can* be forked. Whether it is depends on one more thing: whether a template for
+its exact machine already exists.
 
-Agents share a template only when everything baked into a memory image matches —
-image flavor, cores, RAM, scratch size, the I/O rates, and whether the agent has
-a spawn budget. `cpu_quota` deliberately does not count: it is a host-side cgroup
-on the VMM process rather than anything inside the machine, so forks of one
-snapshot can still have different quotas, and each gets its own slice. A
-`workspace` disqualifies an agent from forking for a different reason: a fork
-copies the template's disk, and handing agent B a copy of agent A's files is
-worse than a slower boot. A group of one is cold-booted too — a template costs a
-boot and a snapshot, so forking a single agent is strictly slower.
+**Cold-first, fork-warm.** With no cached template, every agent boots cold —
+concurrently, and that is all that happens. The template is built afterwards, in
+the background, while the team is already working; the next `team up` of the
+same shape forks its no-egress workers from it. The reason is measured rather
+than assumed: on the reference environment a cold boot is 109–134 ms and writing
+a 384 MiB memory image is 927 ms, so a "fast path" that builds its own template
+first is slower than not having one. Paying that write once is what makes
+forking worth having — after it, a fork is 57–61 ms there and beats the cold
+boot on every machine tested (F-D25, F-D26).
+
+The template is a mould: it is never in the roster, never appears in the
+transcript as an agent, has no team channel of its own, and is stopped as soon
+as its image is on disk.
+
+**The cache.** Templates live in `~/.cache/kelyfos/templates/<key>`, where the
+key is a digest of everything baked into a memory image *and the identity of the
+image itself* — architecture, flavor, the kernel and rootfs `sha256` from
+`image.json`, vCPUs, memory, scratch, the I/O rates, and whether the agent has a
+spawn budget. Rebuilding an image changes its rootfs digest and therefore the
+key, so a stale template can never be served for a new image: it is simply never
+looked up again, and ages out. A template is written to a temporary directory
+and renamed into place, so a half-written one is never a cache hit.
+
+The cache is bounded at **2 GiB**, evicted least-recently-used, and it says so
+on stderr when it evicts. Delete the directory to clear it; the next team-up
+will be a cold one and will fill it again.
+
+`cpu_quota` deliberately does not enter the key: it is a host-side cgroup on the
+VMM process rather than anything inside the machine, so forks of one template can
+hold different quotas and each gets its own slice. A `workspace` disqualifies an
+agent from forking for a different reason: a fork copies the template's disk, and
+handing agent B a copy of agent A's files is worse than a slower boot. A group of
+one is cold-booted too — a template exists to be copied, and copying it once is
+not a saving.
 
 **A fork is not told who it is by its own image.** Every fork of one template
 carries that template's kernel command line, including its `kelyfos.agent=`

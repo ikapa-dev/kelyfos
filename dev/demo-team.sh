@@ -100,22 +100,65 @@ cp "$TOML" "$PROJ/kelyfos.toml"
 echo "        $TOML"
 grep -v '^ *#' "$PROJ/kelyfos.toml" | grep -v '^ *$' | sed 's/^/        /' 
 
-say "1. kelyfos team up — five machines, four of them forked"
-rm -f "$RUN_ROOT/team.json"
-( cd "$PROJ" && "$KELYFOS" team up --arch "$ARCH" > team.log 2>&1 ) &
-UPPID=$!
-for _ in $(seq 1 600); do
-  grep -q "team up in" "$PROJ/team.log" 2>/dev/null && break
-  sleep 0.25
-done
-if ! grep -q "team up in" "$PROJ/team.log" 2>/dev/null; then
-  sed 's/^/        /' "$PROJ/team.log"
+# up <logfile> — boots the team declared in $PROJ and waits for it, leaving the
+# `kelyfos team up` process running in the background as UPPID.
+up() {
+  local log="$1"
+  rm -f "$RUN_ROOT/team.json"
+  ( cd "$PROJ" && "$KELYFOS" team up --arch "$ARCH" > "$log" 2>&1 ) &
+  UPPID=$!
+  for _ in $(seq 1 600); do
+    grep -q "team up in" "$PROJ/$log" 2>/dev/null && break
+    sleep 0.25
+  done
+  grep -q "team up in" "$PROJ/$log" 2>/dev/null
+}
+down() {
+  "$KELYFOS" team down >/dev/null 2>&1
+  for _ in $(seq 1 120); do [ -f "$RUN_ROOT/team.json" ] || break; sleep 0.5; done
+  wait "$UPPID" 2>/dev/null
+}
+ms() { sed -n 's/^team up in \([0-9]*\) ms.*/\1/p' "$PROJ/$1" | head -1; }
+
+say "1. kelyfos team up — the cold path, then the warm one"
+# Cold-first, fork-warm (F-D26): with no cached template every agent boots cold,
+# and that is the path the acceptance bar binds on. The template is built in the
+# background afterwards, so the *second* team-up of the same shape forks. Both
+# numbers are measured here, and neither stands in for the other.
+rm -rf "${HOME}/.cache/kelyfos/templates"
+echo "        template cache cleared — this run is the cold path"
+if ! up team-cold.log; then
+  sed 's/^/        /' "$PROJ/team-cold.log"
   fail "the team never came up"
   say "Verdict"; printf '%s\n' "${SUMMARY[@]}" | sed 's/^/  /'
   printf '\n  %d passed, %d failed, %d skipped\n' "$PASSES" "$FAILURES" "$SKIPS"
   exit 1
 fi
+sed 's/^/        /' "$PROJ/team-cold.log"
+COLD_MS="$(ms team-cold.log)"
+
+# The cache fills behind the team. Wait for it, so the warm run measures the
+# warm path rather than a race with it.
+for _ in $(seq 1 240); do
+  grep -q "cached a fork template" "$PROJ/team-cold.log" 2>/dev/null && break
+  sleep 0.5
+done
+if grep -q "cached a fork template" "$PROJ/team-cold.log" 2>/dev/null; then
+  pass "the cold run cached a fork template in the background, for the next one"
+else
+  fail "no fork template was cached after the cold run"
+fi
+down
+
+if ! up team.log; then
+  sed 's/^/        /' "$PROJ/team.log"
+  fail "the warm team never came up"
+  say "Verdict"; printf '%s\n' "${SUMMARY[@]}" | sed 's/^/  /'
+  printf '\n  %d passed, %d failed, %d skipped\n' "$PASSES" "$FAILURES" "$SKIPS"
+  exit 1
+fi
 sed 's/^/        /' "$PROJ/team.log"
+WARM_MS="$(ms team.log)"
 
 SESS="$(python3 -c "import json;print(json.load(open('$RUN_ROOT/team.json'))['session'])")"
 M="$(sb master)"
@@ -140,19 +183,23 @@ else
 fi
 
 # The bar, measured rather than declared.
-# The bar, measured rather than declared — and reported the same way wherever
-# this runs. This script cannot tell the reference environment from a laptop,
-# so it does not pretend to: it prints the number and the breakdown and leaves
-# the verdict to the person reading it against D15. Saying "nested, so it does
-# not count" on a runner where it *does* count would be the flattering answer.
-TOTAL_MS="$(sed -n 's/^team up in \([0-9]*\) ms.*/\1/p' "$PROJ/team.log" | head -1)"
-grep -E '^  template ' "$PROJ/team.log" | sed 's/^/        /'
-echo "        total spawn time: ${TOTAL_MS} ms, measured to the last agent answering"
+# The bar, measured rather than declared, and reported the same way wherever
+# this runs. This script cannot tell the reference environment from a laptop, so
+# it does not pretend to: it prints both numbers and leaves the verdict to a
+# reader with D15 in hand. Saying "nested, so it does not count" on a runner
+# where it *does* count would be the flattering answer.
+echo "        cold path: ${COLD_MS} ms   (five concurrent cold boots — the bar binds on this)"
+echo "        warm path: ${WARM_MS} ms   (four forked from the cached template)"
 echo "        (E2 acceptance asks for < 1000 ms on the reference environment — D15)"
-if [ -n "$TOTAL_MS" ] && [ "$TOTAL_MS" -lt 1000 ]; then
-  pass "total spawn time ${TOTAL_MS} ms is under the 1 s bar"
+if [ -n "$COLD_MS" ] && [ "$COLD_MS" -lt 1000 ]; then
+  pass "cold-path spawn time ${COLD_MS} ms is under the 1 s bar"
 else
-  skip "total spawn time ${TOTAL_MS} ms is over the 1 s bar; whether that is the binding number depends on where this ran (D15)"
+  skip "cold-path spawn time ${COLD_MS} ms is over the 1 s bar; whether that is the binding number depends on where this ran (D15)"
+fi
+if [ -n "$WARM_MS" ] && [ -n "$COLD_MS" ] && [ "$WARM_MS" -lt "$COLD_MS" ]; then
+  pass "the warm path is faster than the cold one: ${WARM_MS} ms against ${COLD_MS} ms"
+else
+  fail "the cache bought nothing: warm ${WARM_MS} ms against cold ${COLD_MS} ms"
 fi
 
 # The template's image is unlinked while four machines still have it mapped.

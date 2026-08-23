@@ -158,6 +158,12 @@ func teamUp(argv []string) error {
 	}
 
 	crew := &roster{plan: plan, session: sessionID, edges: plan.edgeText, slice: teamSlice}
+	// Declared before teardown because teardown waits on it: a fork template
+	// may still be building in the background when the team is stopped.
+	var templates sync.WaitGroup
+	// The shapes this team-up found no template for, one representative agent
+	// each. Filled when the boot plan is made, used after the team is up.
+	var toBuild []int
 	teardown := func() {
 		// Reverse order, so the agent booted last is stopped first — the same
 		// order a single run's defers would have taken. Spawned workers are in
@@ -170,6 +176,10 @@ func teamUp(argv []string) error {
 				fmt.Fprintf(os.Stderr, "kelyfos: %s: %v\n", running[i].name, err)
 			}
 		}
+		// A template being built in the background is stopped with the team:
+		// its context is the team's, and waiting here is what keeps a
+		// half-built one from outliving the process that started it.
+		templates.Wait()
 		// The parent goes last and its failure is reported: rmdir refuses a
 		// populated cgroup, so a teardown in the wrong order would otherwise
 		// leak one directory per run and say nothing at all.
@@ -226,24 +236,45 @@ func teamUp(argv []string) error {
 		return nil
 	}
 
-	// Two paths, chosen per agent and decided before anything starts.
+	// Cold-first, fork-warm (F-D26).
 	//
-	// An agent its policy granted egress cold-boots, because a fork cannot carry
-	// a network identity — the guest's address lives inside the memory image
-	// every fork shares (F-D17). An agent granted none has no identity to
-	// collide, so a group of them is booted once as a template, snapshotted, and
-	// restored N times (F-D19). Both paths run concurrently with each other;
-	// within a group the template has to finish first, because it is what the
-	// forks are made of.
+	// Every agent boots cold unless a template for its exact machine already
+	// exists. Building one costs a memory-image write, and the reference
+	// environment measured that write at 927 ms against a 109 ms cold boot: a
+	// fast path that builds its own template on the spot is a slow path. What
+	// pays is paying the write once — so a group whose template is cached forks
+	// from it, a group whose is not boots cold and has one built in the
+	// background afterwards, and the next team-up of that shape is the fast one.
+	//
+	// An agent its policy granted egress is in neither group: a fork cannot
+	// carry a network identity, because the guest's address lives inside the
+	// memory image every fork would share (F-D17).
 	started := time.Now()
-	groups, cold := plan.forkPlan()
+	candidates, cold := plan.forkPlan()
+	groups := map[string][]int{}
+	for _, idx := range candidates {
+		key, err := templateKey(plan.agents[idx[0]], *arch)
+		if err != nil {
+			// No manifest, no key — and a template that cannot be identified
+			// must never be served. Cold-boot rather than guess.
+			cold = append(cold, idx...)
+			continue
+		}
+		if dir, ok := lookupTemplate(key); ok {
+			groups[dir] = idx
+			continue
+		}
+		cold = append(cold, idx...)
+		toBuild = append(toBuild, idx[0])
+	}
+	sort.Ints(cold)
 	type booted struct {
 		i   int
 		rig *agentRig
 		err error
 	}
 	results := make(chan booted, len(plan.agents))
-	var wg, templates sync.WaitGroup
+	var wg sync.WaitGroup
 	for _, i := range cold {
 		wg.Add(1)
 		go func(i int) {
@@ -255,46 +286,27 @@ func teamUp(argv []string) error {
 			results <- booted{i, rig, err}
 		}(i)
 	}
-	for _, idx := range groups {
+	for dir, idx := range groups {
 		wg.Add(1)
-		go func(idx []int) {
+		go func(dir string, idx []int) {
 			defer wg.Done()
-			a := plan.agents[idx[0]]
-			tmpl, snapDir, boot, snap, err := bootTemplate(ctx, a, sessionID, *arch, *timeout)
-			if err != nil {
-				for _, i := range idx {
-					results <- booted{i, nil, err}
-				}
-				return
-			}
-			// Stopped alongside the fan-out rather than before it. Tracked so
-			// teardown cannot outrun it and leave a Firecracker behind.
-			templates.Add(1)
-			go func() {
-				defer templates.Done()
-				_ = tmpl.Shutdown(10 * time.Second)
-			}()
-			// Printed because it is the whole engineering content of the fast
-			// path: a reader who sees only the total cannot tell whether it is
-			// one cold boot plus four cheap restores, or something else.
-			fmt.Printf("  %-12s %s template booted in %d ms, snapshotted in %d ms, forked %d\n",
-				"template", a.image, boot.Milliseconds(), snap.Milliseconds(), len(idx))
-			// The template's image is a temporary: it exists to be copied and
-			// is gone before the team is up. Leaving one behind per run would
-			// accumulate half-gigabyte files nobody asked for.
-			defer os.RemoveAll(snapDir)
+			// No template is built here. This group is only a group because one
+			// already existed (F-D26); a group whose template was missing was
+			// sent to the cold list above and will have one built afterwards.
+			fmt.Printf("  %-12s %s, forking %d from a cached template\n",
+				"template", plan.agents[idx[0]].image, len(idx))
 			var fwg sync.WaitGroup
 			for _, i := range idx {
 				fwg.Add(1)
 				go func(i int) {
 					defer fwg.Done()
-					rig, err := forkAgent(ctx, plan.agents[i], snapDir, broker, rec,
+					rig, err := forkAgent(ctx, plan.agents[i], dir, broker, rec,
 						teamSlice, *arch, *timeout)
 					results <- booted{i, rig, err}
 				}(i)
 			}
 			fwg.Wait()
-		}(idx)
+		}(dir, idx)
 	}
 	wg.Wait()
 	// Stopped here, at the moment the last agent answered. That is when the
@@ -303,9 +315,6 @@ func teamUp(argv []string) error {
 	// counting it would be measuring our own tidying up.
 	total := time.Since(started)
 	close(results)
-	// Waited for before the state file is written, so a reader counting
-	// Firecracker processes counts the team and nothing else.
-	templates.Wait()
 
 	// Collected in declaration order, so the output reads like the file and a
 	// failure names the agent the user wrote rather than whichever lost a race.
@@ -345,10 +354,10 @@ func teamUp(argv []string) error {
 			Image: plan.agents[i].image, Via: rig.via, BootMS: rig.sb.State.BootReadyMS})
 	}
 	if forked := len(plan.agents) - len(cold); forked > 0 {
-		fmt.Printf("team up in %d ms  (%d forked from %d template(s), %d cold)\n",
+		fmt.Printf("team up in %d ms  (%d forked from %d cached template(s), %d cold)\n",
 			total.Milliseconds(), forked, len(groups), len(cold))
 	} else {
-		fmt.Printf("team up in %d ms\n", total.Milliseconds())
+		fmt.Printf("team up in %d ms  (%d cold)\n", total.Milliseconds(), len(cold))
 	}
 
 	// On the systemd path the parent's directory is systemd's to choose, so it
@@ -390,6 +399,31 @@ func teamUp(argv []string) error {
 			crew.remove(rig.name)
 			_ = rig.stop(10 * time.Second)
 		}(rig, limit)
+	}
+
+	// The cache fills behind the team, not in front of it. A shape that had no
+	// template when this team booted gets one built now, in the background,
+	// under the team's own context — so the next team-up of that shape forks
+	// instead of cold-booting, and this one paid nothing for it (F-D26).
+	for _, i := range toBuild {
+		a := plan.agents[i]
+		key, err := templateKey(a, *arch)
+		if err != nil {
+			continue
+		}
+		templates.Add(1)
+		go func(a plannedAgent, key string) {
+			defer templates.Done()
+			if err := storeTemplate(ctx, a, sessionID, *arch, key, *timeout); err != nil {
+				if ctx.Err() == nil {
+					fmt.Fprintf(os.Stderr,
+						"kelyfos: could not cache a fork template for %s (the team is unaffected): %v\n",
+						a.image, err)
+				}
+				return
+			}
+			fmt.Printf("cached a fork template for %s; the next team of this shape will fork\n", a.image)
+		}(a, key)
 	}
 
 	if err := crew.write(); err != nil {

@@ -276,12 +276,16 @@ func (a plannedAgent) forkKey() string {
 		a.spawn != nil)
 }
 
-// forkPlan splits the team into the agents that will be forked, grouped by the
-// template they share, and the ones that will cold-boot.
+// forkPlan splits the team into the agents that *could* share a template,
+// grouped by the shape they share, and the ones that certainly cannot.
 //
-// A group of one is sent back to the cold path on purpose: a template costs a
-// boot and a snapshot, so forking a single agent is strictly slower than
-// booting it. The saving starts at two.
+// It answers only the question it can answer from the policy file. Whether a
+// group is actually forked depends on whether a template for its shape is
+// already cached, which is a fact about the disk rather than the file, and is
+// decided by the caller (F-D26).
+//
+// A group of one is sent to the cold list on purpose: a template exists to be
+// copied, and copying it once is not a saving.
 func (p *teamPlan) forkPlan() (groups map[string][]int, cold []int) {
 	groups = map[string][]int{}
 	for i, a := range p.agents {
