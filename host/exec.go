@@ -86,7 +86,7 @@ to close.
 
 	// Every command goes into the flight recorder, including the shell wrapper
 	// if one was added, because that changes what the command can do.
-	rec, err := recorder.Open(sandbox.Root(), st.ID)
+	rec, err := recorder.Open(sandbox.Root(), st.RecordSession())
 	if err != nil {
 		return err
 	}
@@ -94,8 +94,9 @@ to close.
 	started := time.Now()
 	_ = rec.Append(recorder.Event{
 		Type: recorder.TypeCommandStart, Call: reqID, Cmd: cmd, Cwd: *cwd, Via: "exec",
+		Agent: st.Agent,
 	})
-	out := &outputRecorder{rec: rec, call: reqID}
+	out := &outputRecorder{rec: rec, call: reqID, agent: st.Agent}
 	defer out.flush()
 	if err := proto.NewWriter(conn).Write(proto.ExecRequest{
 		V:         proto.Version,
@@ -139,6 +140,7 @@ to close.
 			ev := recorder.Event{
 				Type: recorder.TypeCommandExit, Call: reqID, Code: resp.Code,
 				Signal: resp.Signal, DurationMS: time.Since(started).Milliseconds(),
+				Agent: st.Agent,
 			}
 			if resp.Error != nil {
 				ev.Error = &recorder.EvError{Kind: resp.Error.Kind, Message: resp.Error.Message}
@@ -193,6 +195,7 @@ func exitCodeFor(kind string) int {
 type outputRecorder struct {
 	rec    *recorder.Recorder
 	call   string
+	agent  string
 	stream string
 	buf    []byte
 }
@@ -217,6 +220,7 @@ func (o *outputRecorder) flush() {
 	_ = o.rec.Append(recorder.Event{
 		Type: recorder.TypeCommandOutput, Call: o.call, Stream: o.stream,
 		Data: base64.StdEncoding.EncodeToString(o.buf), Bytes: len(o.buf),
+		Agent: o.agent,
 	})
 	o.buf = o.buf[:0]
 }

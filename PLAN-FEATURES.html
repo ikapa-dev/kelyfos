@@ -126,7 +126,7 @@
      improvements to the existing product land here as epics. Inert until its gate opens.</p>
   <div class="meta">
     owner: <b>John</b> &nbsp;&middot;&nbsp; developer: <b>Claude Code</b> &nbsp;&middot;&nbsp;
-    status: <b class="ok" id="meta-status">Epic E2 — active, 7/10 (next: E2-7, team transcript)</b> &nbsp;&middot;&nbsp;
+    status: <b class="ok" id="meta-status">Epic E2 — active, 8/10 (next: E2-8, multi-lane watch)</b> &nbsp;&middot;&nbsp;
     last updated: <b id="meta-updated">2026-08-23</b><br>
     repo file: <b>PLAN-FEATURES.html</b> (lives at the repository root next to <code>PLAN.html</code>)<br>
     <span class="quiet">Companion to PLAN.html — same protocol, same rules, later timeline.</span>
@@ -166,7 +166,7 @@
     <span class="bl-name">All epics</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">E2-7 — the team transcript: <code>log --verify</code> over the whole chain, <code>--export team.html</code> with per-agent lanes</b></div>
+  <div class="focusline">Current focus: <b id="focus">E2-8 — multi-lane <code>kelyfos watch</code>: one lane per agent, plus a message-flow ticker</b></div>
 </div>
 
 <!-- ====================================================== 1. ACTIVATION GATE -->
@@ -375,7 +375,7 @@
         with per-agent E1-2 slices as children; <code>cpu.weight</code> divides contention fairly inside the team.
         This absorbs the old &ldquo;fair-share&rdquo; parking-lot item, scoped to a team; host-wide or cross-team scheduling
         remains out of scope (fleet territory).</span></li>
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">E2-7</span><span class="tk">Team transcript: <code>kelyfos log --verify</code> covers the whole team chain;
         <code>kelyfos log --export team.html</code> renders per-agent lanes with message flow between them — a replayable
         record of who told what to whom, with the store accesses inline.</span></li>
@@ -976,6 +976,42 @@
         matching. It needs <code>systemctl</code>, which is not a new dependency in any meaningful sense: it ships in the
         same package as the <code>systemd-run</code> this path already requires, and it is only reached when a collective
         cap was actually asked for.</td></tr>
+        <tr><td class="mono">F-D22</td><td class="mono">2026-08-23</td>
+        <td>A sandbox carries the flight recorder it belongs to. <code>sandbox.json</code> gains a
+        <code>session</code> field &mdash; empty for an ordinary run, the team&rsquo;s session id for a team member
+        &mdash; and <code>kelyfos exec</code> and <code>kelyfos mcp</code> open <code>State.RecordSession()</code>
+        instead of the sandbox&rsquo;s own id, stamping <code>agent</code> on everything they write. Two user-visible
+        consequences, both deliberate: a team member has <b>no record of its own</b>, and
+        <code>kelyfos log --session &lt;agent id&gt;</code> redirects to the team&rsquo;s record and says so on stderr
+        while that sandbox still exists.</td>
+        <td>E2-7 asks for <code>--verify</code> to cover &ldquo;the whole team chain&rdquo;, and at the start of the task
+        there was no such chain: <code>host/exec.go</code> and <code>host/mcp.go</code> opened
+        <code>recorder.Open(root, st.ID)</code>, so every command run against a team member landed in that
+        member&rsquo;s own file while the messages that asked for the work landed in the team&rsquo;s. Since the only
+        agent-to-team mapping on disk was <code>run/team.json</code>, which teardown deletes, the two halves could not
+        be joined again afterwards at all. <code>dev/prove-team.sh</code> makes this concrete: it drives all five agents
+        with <code>kelyfos exec</code>, and none of that work appeared in the transcript.
+        Four alternatives were considered. <b>Merging the files afterwards</b> is the obvious one and is the worst:
+        events are chained against their own file&rsquo;s <code>prev</code>, so re-emitting them means recomputing every
+        digest, and <code>--verify</code> would then be verifying a file nobody wrote &mdash; the tamper-evidence claim
+        inverted. <b>Having exec look itself up in <code>run/team.json</code></b> needs no schema change and is silently
+        wrong the moment that file is gone, which is the failure mode this project refuses everywhere. <b>Symlinking the
+        agent&rsquo;s session directory at the team&rsquo;s</b> is three lines and leaves the events with no
+        <code>agent</code> field, so the transcript still could not say which machine ran what and the lane view would
+        have nothing to key on. <b>A per-agent recorder plus a cross-chain anchor event</b> is a real design and is
+        strictly more machinery than the problem needs, because E2-1 already chose one recorder per team.
+        Carrying the id on the sandbox is the smallest change that makes the promise true, and it is backwards
+        compatible by construction: an older <code>sandbox.json</code> has no <code>session</code>, and
+        <code>RecordSession()</code> falls back to the id. The concurrency it leans on was already there and already
+        tested &mdash; every <code>Append</code> takes an exclusive lock and re-reads the true tail, and
+        <code>TestConcurrentWritersKeepOneChain</code> covers six writers against one chain.
+        <b>One consequence for F-D20, recorded rather than acted on.</b> F-D20 refused per-agent
+        <code>idle_timeout</code> and said the refusal lifts &ldquo;when E2-7 gives the team transcript a per-agent
+        activity signal&rdquo;. That signal now exists. Lifting the refusal is <i>not</i> part of E2-7 and is not
+        trivial: the idle watchdog reads a file <i>size</i> delta, which has no agent in it, so a per-agent watchdog is a
+        new reader that tails and parses the chain per agent, plus a new call site (the team path enforces
+        <code>max_runtime</code> itself and never calls <code>watchBudgets</code>). It is the next thing that could be
+        done, and until it is, the refusal stands and this row is why.</td></tr>
     <!-- Claude Code: append rows above this line. -->
       <tr><td class="mono">F-D10</td><td class="mono">2026-08-22</td>
         <td>The resource knobs E1-0 goes looking for shipped <b>partly</b>: <code>--vcpus</code>/<code>--mem</code> and
@@ -2127,6 +2163,78 @@ $ kelyfos team ps
 team budget  cap 200% of one core &middot; 9.1s used, 5.7s throttled
 
 $ go test ./... -race     all packages ok</pre></td></tr>
+        <tr><td class="mono">2026-08-23</td><td class="mono">E2-7</td>
+        <td><b>One chain for the team, and a lane for each agent in it.</b> The task asks for
+        <code>--verify</code> to cover &ldquo;the whole team chain&rdquo;, and there was no such chain to cover:
+        <code>kelyfos exec</code> and <code>kelyfos mcp</code> opened a recorder named for the <i>sandbox</i>, so every
+        command run against a member landed in that member&rsquo;s own file while the messages that asked for the work
+        landed in the team&rsquo;s &mdash; and since the only mapping between them was the run-state file teardown
+        deletes, the halves could not be joined afterwards at all. A sandbox now carries the session it belongs to
+        (F-D22), so a team member has no record of its own and everything it does &mdash; commands, output, file writes,
+        egress, secrets, its OOM kills and its usage receipt &mdash; is a line in the team&rsquo;s chain carrying
+        <code>agent</code>. <code>--verify</code> then says how many agents it covered <i>and names them</i>, which is
+        what makes the claim checkable against the team that was declared. <code>--list</code> marks a team session, and
+        <code>--session &lt;agent id&gt;</code> redirects to the team&rsquo;s record while that sandbox exists.
+        <b>The export grew a lane view</b>, above the timeline rather than replacing it: one column per agent in boot
+        order, a message drawn as a bar spanning exactly the columns it connects (an ask points forward, a reply back, a
+        refusal is flagged and still drawn, because what was attempted is the part worth seeing), store accesses inline
+        in the lane of the agent that made them, and events belonging to the team spanning every lane. Still one file,
+        no scripts, no external requests &mdash; a test asserts that, because a lane view is exactly where a chart
+        library creeps in.
+        <b>Three defects found by building it.</b> The lane grid&rsquo;s time gutter had no explicit column, and CSS
+        grid&rsquo;s sparse auto-placement therefore scattered the timestamps across four columns with two pairs of rows
+        collapsed onto one &mdash; measured in a browser, fixed with one declaration, pinned by a test. An event naming
+        no agent would have been placed in the <i>first</i> agent&rsquo;s lane, attributing it to a machine that had
+        nothing to do with it; it now spans the team. And a team&rsquo;s per-agent receipts were overwriting the
+        header&rsquo;s single one, so the report would have shown whichever machine stopped last and called it the
+        session&rsquo;s.
+        <b>Two documentation defects found by driving the real tools.</b> <code>docs/teams.md</code> &sect;3.3 called the
+        reply argument <code>id</code>; the tool has always required <code>correlate</code>, so an agent following the
+        doc got &ldquo;no question is outstanding with that correlation&rdquo; &mdash; an error that sends you looking
+        for an expired question rather than at the call you got wrong. The doc is fixed to match the code, and a missing
+        tag is now its own refusal (<code>missing_correlation</code>) that says what to pass. &sect;7 also claimed
+        <code>team.spawn</code> carries &ldquo;the budget it was checked against&rdquo;, which the schema has never had;
+        the doc now says what the event actually contains rather than the schema growing a field to match a sentence.
+        F-D22 also records that F-D20&rsquo;s missing per-agent activity signal now exists &mdash; and that lifting that
+        refusal is its own task, not this one.</td>
+        <td class="mono"><pre>$ kelyfos log --session 23b4f9ca      (3 agents, aarch64, nested &mdash; D15)
+08:19:31.902  $ [master] /bin/sh -c echo assembling
+              | assembling
+08:19:32.062  $ [worker-2] /bin/sh -c exit 3
+08:19:32.131  exit 3          68 ms
+08:19:32.660  egress allowed [master] example.com:443  mode=tunnelled
+08:19:32.691  egress BLOCKED [master] api.github.com:443  not_in_allowlist
+08:19:32.715  team            master -&gt; worker-1  send  &middot; 10 bytes
+08:19:40.723  team REFUSED    worker-1 -&gt; worker-2  send &middot; 4 bytes (no_edge)
+08:19:44.643  team store      worker-1 put findings/a  delivered
+08:19:48.627  team store      worker-1 get findings/a  refused &middot; denied
+08:19:52.647  team store      master   get findings/a  delivered
+08:19:56.642  team            master ?&gt; worker-1  ask   &middot; 9 bytes
+08:20:02.680  team            worker-1 &lt;- master  reply &middot; 11 bytes
+08:20:36.452  usage [worker-2] 2.54 CPU-seconds &middot; peak RSS 35 MiB &middot; 384 MiB
+08:20:36.484  usage [worker-1] 2.67 CPU-seconds &middot; peak RSS 35 MiB &middot; 384 MiB
+08:20:36.509  usage [master]   3.15 CPU-seconds &middot; peak RSS 49 MiB &middot; 512 MiB
+08:20:36.570  session end     shutdown after 67554 ms
+  master's answer to its own question: "42 findings"
+
+$ kelyfos log --session 23b4f9ca --verify
+session 23b4f9ca: chain intact, 26 events verified across 3 agents
+                  (master, worker-1, worker-2)
+$ kelyfos log --list | grep 23b4f9ca
+23b4f9ca  2026-08-23 11:20:36    26 events  shutdown  team of 3
+$ ls ~/.cache/kelyfos/sessions/14c417e8      &lt;- the master's own id
+  No such file or directory                     it has no record of its own
+
+$ kelyfos log --session 23b4f9ca --export team.html
+wrote team.html (26 events, 16140 bytes)
+  lanes            time | master | worker-1 | worker-2
+  3 flows          grid-column:2/4   master &lt;-&gt; worker-1
+  1 refused flow   grid-column:3/5   worker-1 -&gt; worker-2
+  cells            commands 2/3/4, egress 2, store 2 and 3, receipts 2/3/4
+  session rows     grid-column:2/5   spanning every lane
+  no &lt;script, no http://, no src=
+
+$ go test ./... -race     all packages ok (12 new tests in internal/report)</pre></td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>

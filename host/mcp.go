@@ -64,12 +64,12 @@ which clients are required not to treat as failure.
 	// Observation is a tee, not a filter: each direction is copied through
 	// byte-for-byte while a duplicate is parsed for the flight recorder. The
 	// bridge stays a pass-through and the session still gets an audit trail.
-	rec, err := recorder.Open(sandbox.Root(), st.ID)
+	rec, err := recorder.Open(sandbox.Root(), st.RecordSession())
 	if err != nil {
 		return err
 	}
 	defer rec.Close()
-	obs := newObserver(rec)
+	obs := newObserver(rec, st.Agent)
 
 	// Two copies, and the first one to end takes the bridge down with it.
 	errc := make(chan error, 2)

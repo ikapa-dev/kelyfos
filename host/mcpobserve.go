@@ -23,6 +23,9 @@ import (
 // (docs/protocol.md §6.1).
 type observer struct {
 	rec *recorder.Recorder
+	// agent names the team member these calls were made against, so a team's
+	// one chain says which machine did the work (E2-7). Empty outside a team.
+	agent string
 
 	mu    sync.Mutex
 	calls map[string]*pendingCall // by JSON-RPC id
@@ -34,8 +37,8 @@ type pendingCall struct {
 	args map[string]any
 }
 
-func newObserver(rec *recorder.Recorder) *observer {
-	return &observer{rec: rec, calls: map[string]*pendingCall{}}
+func newObserver(rec *recorder.Recorder, agent string) *observer {
+	return &observer{rec: rec, agent: agent, calls: map[string]*pendingCall{}}
 }
 
 // tee returns a reader that yields exactly what it was given, while feeding a
@@ -78,21 +81,21 @@ func (o *observer) fromClient(line []byte) {
 	case "exec":
 		_ = o.rec.Append(recorder.Event{
 			Type: recorder.TypeCommandStart, Call: call,
-			Cmd: execArgv(args), Cwd: str(args["cwd"]), Via: "mcp",
+			Cmd: execArgv(args), Cwd: str(args["cwd"]), Via: "mcp", Agent: o.agent,
 		})
 	case "write_file":
 		content := str(args["content"])
 		sum := sha256.Sum256([]byte(content))
 		_ = o.rec.Append(recorder.Event{
 			Type: recorder.TypeFileWrite, Path: str(args["path"]),
-			Bytes: len(content), SHA256: hex.EncodeToString(sum[:]), Via: "write_file",
+			Bytes: len(content), SHA256: hex.EncodeToString(sum[:]), Via: "write_file", Agent: o.agent,
 		})
 	case "upload":
 		raw, _ := base64.StdEncoding.DecodeString(str(args["data"]))
 		sum := sha256.Sum256(raw)
 		_ = o.rec.Append(recorder.Event{
 			Type: recorder.TypeFileWrite, Path: str(args["path"]),
-			Bytes: len(raw), SHA256: hex.EncodeToString(sum[:]), Via: "upload",
+			Bytes: len(raw), SHA256: hex.EncodeToString(sum[:]), Via: "upload", Agent: o.agent,
 		})
 	}
 }
@@ -130,13 +133,15 @@ func (o *observer) fromGuest(line []byte) {
 				_ = o.rec.Append(recorder.Event{
 					Type: recorder.TypeCommandOutput, Call: pc.call, Stream: k,
 					Data: base64.StdEncoding.EncodeToString([]byte(text)), Bytes: len(text),
+					Agent: o.agent,
 				})
 			}
 		}
 	} else if out.IsError {
 		code = -1
 	}
-	_ = o.rec.Append(recorder.Event{Type: recorder.TypeCommandExit, Call: pc.call, Code: &code})
+	_ = o.rec.Append(recorder.Event{Type: recorder.TypeCommandExit, Call: pc.call, Code: &code,
+		Agent: o.agent})
 }
 
 // execArgv reconstructs the argv the guest will actually run, so the record

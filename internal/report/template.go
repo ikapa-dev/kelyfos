@@ -17,6 +17,7 @@ const reportHTML = `<!DOCTYPE html>
   *{box-sizing:border-box}
   body{margin:0;background:var(--bg);color:var(--text);font:15px/1.6 var(--sans)}
   .wrap{max-width:940px;margin:0 auto;padding:40px 20px 80px}
+  body.team .wrap{max-width:1300px}
   h1{font:700 28px/1.2 var(--mono);margin:0;color:#e8eef4}
   h1 span{color:var(--amber)}
   .sub{color:var(--muted);font:13px/1.7 var(--mono);margin-top:8px}
@@ -55,10 +56,50 @@ const reportHTML = `<!DOCTYPE html>
   .team-refused .title{color:var(--warn)}
   .secret .title{color:var(--amber)}
   .session .title{color:var(--muted);font-weight:400}
+  .store .title{color:var(--amber)}
+
+  /* ---------- team lanes ---------- */
+  /* One column per agent plus a time gutter. A message between two agents is
+     one grid item spanning exactly the columns it connects, which is what makes
+     "who told what to whom" readable at a glance instead of reconstructed. */
+  .lanes{display:grid;gap:0 10px;align-items:start;margin-bottom:8px}
+  .lane-head{position:sticky;top:0;background:var(--bg);padding:8px 0 10px;z-index:1;
+             font:600 12px var(--mono);letter-spacing:.08em;text-transform:uppercase;
+             color:var(--amber);border-bottom:1px solid var(--line)}
+  .lane-head.gutter{color:var(--muted)}
+  /* The gutter's column is explicit and load-bearing. Grid's sparse
+     auto-placement advances its cursor past every definitely-positioned item,
+     so an auto-placed timestamp lands wherever the cursor happens to sit — in
+     a lane, on a row it does not belong to. Measured before it was fixed:
+     five timestamps at four different x positions and two pairs of rows
+     collapsed onto one. Naming column 1 forces a new row instead. */
+  .lanes .t{grid-column:1;width:auto;padding:6px 0 0}
+  .cell{background:var(--panel);border:1px solid var(--line);border-left:2px solid var(--line);
+        border-radius:4px;padding:6px 9px;margin:3px 0;min-width:0}
+  .cell .title{font:600 12.5px var(--mono);word-break:break-word}
+  .cell .detail{font-size:11.5px;margin-top:1px}
+  .cell pre{max-height:150px;font-size:11.5px;margin-top:6px}
+  .cell.command{border-left-color:#5b7aa6}
+  .cell.command.err{border-left-color:var(--warn)}
+  .cell.file{border-left-color:var(--amber)}
+  .cell.store{border-left-color:var(--amber)}
+  .cell.egress{border-left-color:var(--ok)}
+  .cell.egress-blocked,.cell.oom{border-left-color:var(--warn)}
+  .cell.secret{border-left-color:var(--amber)}
+  .cell.session{border-left-color:var(--muted);background:transparent}
+  /* A flow is drawn as a rule between the two lanes rather than a box inside
+     one, because the message is the relationship, not either endpoint. */
+  .flow{margin:5px 0;padding:4px 10px;border-radius:3px;border:1px dashed var(--line);
+        background:rgba(240,166,60,.06);text-align:center;min-width:0}
+  .flow .title{font:600 12.5px var(--mono);color:var(--amber);word-break:break-word}
+  .flow .detail{font-size:11px;margin-top:1px}
+  .flow.team-refused{border-color:rgba(217,106,95,.5);background:rgba(217,106,95,.08)}
+  .flow.team-refused .title{color:var(--warn)}
+  .lanes-note{color:var(--muted);font-size:12.5px;margin:0 0 14px}
   footer{margin-top:44px;color:var(--muted);font-size:12.5px;border-top:1px solid var(--line);padding-top:16px}
   @media print{body{background:#fff;color:#111}.card,table.meta,pre{background:#fff}}
 </style>
-</head><body><div class="wrap">
+</head><body class="{{if .Lanes}}team{{end}}"><div class="wrap">
 
 <h1>Kelyf<span>OS</span> session report</h1>
 <div class="sub">session {{.SessionID}} · {{.Events}} events · generated {{.Generated}}</div>
@@ -96,6 +137,26 @@ const reportHTML = `<!DOCTYPE html>
   <tr><td>ended by</td><td>{{if .Summary.TimedOut}}<span style="color:var(--warn)">the {{.Summary.TimedOut}} budget</span>{{else}}{{.Summary.EndReason}}{{end}}</td></tr>
   <tr><td>secrets used</td><td>{{if .Summary.Secrets}}{{range .Summary.Secrets}}{{.}} {{end}}<br><span style="color:var(--muted)">values are never recorded</span>{{else}}none{{end}}</td></tr>
 </table>
+
+{{if .Lanes}}
+<h2>Team lanes</h2>
+<p class="lanes-note">One column per agent, in boot order. A message between two
+agents spans the columns it connects; store accesses sit inline in the lane of
+the agent that made them. Everything below came from the same chain the badge
+above verifies — one record for the whole team, not five to correlate.</p>
+<div class="lanes" style="{{.LaneWidth}}">
+  <div class="lane-head gutter">time</div>
+  {{range .Lanes}}<div class="lane-head">{{.}}</div>{{end}}
+  {{range .LaneRows}}
+  <div class="t">{{.Time}}</div>
+  <div class="{{if .Flow}}flow{{else}}cell{{end}} {{.Kind}}{{if .IsError}} err{{end}}" style="{{.Place}}">
+    <div class="title">{{.Title}}</div>
+    {{if .Detail}}<div class="detail">{{.Detail}}</div>{{end}}
+    {{if .Output}}<pre>{{.Output}}</pre>{{end}}
+  </div>
+  {{end}}
+</div>
+{{end}}
 
 <h2>Timeline</h2>
 {{range .Rows}}

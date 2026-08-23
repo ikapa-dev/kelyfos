@@ -2,6 +2,8 @@ package sandbox
 
 import (
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -122,5 +124,49 @@ func TestSpawnPermissionRidesTheCommandLine(t *testing.T) {
 	}
 	if got := bootArgs("aarch64", true, nil, false, 0, "master", true); !strings.Contains(got, "kelyfos.spawn=1") {
 		t.Errorf("an agent with a budget is not told: %s", got)
+	}
+}
+
+// A team member's events belong in the team's chain; everything else keeps its
+// own. The fallback is what makes an older sandbox.json, written before the
+// field existed, still load and still work (E2-7).
+func TestRecordSessionFallsBackToTheSandboxID(t *testing.T) {
+	if got := (State{ID: "abc"}).RecordSession(); got != "abc" {
+		t.Errorf("a sandbox with no team recorded into %q, want its own id", got)
+	}
+	if got := (State{ID: "abc", Session: "team-1"}).RecordSession(); got != "team-1" {
+		t.Errorf("a team member recorded into %q, want the team's session", got)
+	}
+}
+
+// The field has to survive the round trip through sandbox.json, because the
+// process that reads it back — `kelyfos exec` — is a different one from the
+// process that wrote it.
+func TestSessionSurvivesTheStateFile(t *testing.T) {
+	dir := t.TempDir()
+	s := &Sandbox{State: State{ID: "abc", Agent: "worker-1", Session: "team-1", RunDir: dir}}
+	if err := s.writeState(); err != nil {
+		t.Fatal(err)
+	}
+	back, err := readState(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if back.Session != "team-1" || back.Agent != "worker-1" {
+		t.Errorf("state came back as %+v", back)
+	}
+	// A file written before the field existed has no session and must load
+	// with an empty one rather than failing.
+	older := t.TempDir()
+	if err := os.WriteFile(filepath.Join(older, stateFile),
+		[]byte(`{"id":"xyz","run_dir":"/tmp"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	prev, err := readState(older)
+	if err != nil {
+		t.Fatalf("a sandbox.json without a session field failed to load: %v", err)
+	}
+	if prev.Session != "" || prev.RecordSession() != "xyz" {
+		t.Errorf("an older state file did not fall back: %+v", prev)
 	}
 }

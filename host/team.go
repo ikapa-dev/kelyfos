@@ -340,6 +340,7 @@ type agentRig struct {
 	proxy *egress.Proxy
 	ws    *sandbox.Workspace
 	slice *sandbox.Slice
+	rec   *recorder.Recorder
 }
 
 // stop unwinds one member in the reverse of the order it was built. The machine
@@ -347,6 +348,20 @@ type agentRig struct {
 // using; the workspace is written back last, once nothing can still be writing
 // into the disk it came from.
 func (r *agentRig) stop(timeout time.Duration) error {
+	// The receipt is taken immediately before the shutdown, because every
+	// counter it reads belongs to a process that is about to stop existing
+	// (E1-7). In a team there is one per agent, in the team's chain, named by
+	// the agent it is about.
+	if u, err := r.sb.State.Sample(); err == nil {
+		_ = r.rec.Append(recorder.Event{
+			Type: recorder.TypeResourceSummary, Agent: r.name,
+			CPUSeconds: u.CPUSeconds, PeakRSSKiB: u.PeakRSSKiB,
+			NetInBytes: u.NetInBytes, NetOutBytes: u.NetOutBytes,
+			DiskReadBytes: u.DiskReadBytes, DiskWriteBytes: u.DiskWriteBytes,
+			MemMiB: r.sb.State.MemMiB, VcpuCount: r.sb.State.VcpuCount,
+			CPUQuota: r.sb.State.CPUQuota,
+		})
+	}
 	err := r.sb.Shutdown(timeout)
 	if r.proxy != nil {
 		r.proxy.Close()
@@ -384,7 +399,7 @@ func bootAgent(ctx context.Context, a plannedAgent, broker *team.Broker, rec *re
 	if err != nil {
 		return nil, err
 	}
-	rig := &agentRig{name: a.name}
+	rig := &agentRig{name: a.name, rec: rec}
 	ok := false
 	defer func() {
 		if ok {
@@ -404,6 +419,10 @@ func bootAgent(ctx context.Context, a plannedAgent, broker *team.Broker, rec *re
 
 	opts := sandbox.Options{
 		ID: id, Arch: arch, Flavor: a.image, Agent: a.name, MaySpawn: a.spawn != nil,
+		// Everything this machine does is recorded in the team's chain, not its
+		// own — including the commands `kelyfos exec` runs against it, which is
+		// a different process and would otherwise open a different file (E2-7).
+		Session:   rec.Session(),
 		VcpuCount: a.res.CPUs, MemMiB: a.res.MemMiB, ScratchBytes: a.res.ScratchByte,
 		IO: sandbox.IOLimits{NetMbpsRx: a.res.NetMbpsRx, NetMbpsTx: a.res.NetMbpsTx,
 			DiskIOPS: a.res.DiskIOPS, DiskMbps: a.res.DiskMbps},
@@ -412,6 +431,21 @@ func bootAgent(ctx context.Context, a plannedAgent, broker *team.Broker, rec *re
 		// sends: a guest that could name itself could name someone else.
 		OnTeamRequest: func(req proto.TeamRequest) proto.TeamResponse {
 			return broker.Serve(a.name, req)
+		},
+		// An OOM kill inside a team member is the RAM cap being reached by one
+		// machine, and without this it would be the one thing that happened in
+		// the team nobody could see afterwards (E1-4).
+		OnGuestEvent: func(ev proto.GuestEvent) {
+			if ev.Type != proto.GuestEventOOM {
+				return
+			}
+			_ = rec.Append(recorder.Event{
+				Type: recorder.TypeResourceOOM, Source: recorder.SourceGuest, Agent: a.name,
+				PID: ev.PID, Comm: ev.Comm, RSSKiB: ev.RSSKiB, MemMiB: a.res.MemMiB,
+			})
+			fmt.Fprintf(os.Stderr,
+				"\nkelyfos: %s ran out of memory and killed %s (pid %d, %s resident of a %d MiB machine)\n",
+				a.name, ev.Comm, ev.PID, report.HumanKiB(ev.RSSKiB), a.res.MemMiB)
 		},
 	}
 

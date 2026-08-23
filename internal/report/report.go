@@ -27,6 +27,31 @@ type View struct {
 	Events     int
 	Summary    Summary
 	Rows       []Row
+	// Lanes is the team view: one column per agent, in boot order. Empty for a
+	// session with one machine in it, and the whole lane section then does not
+	// render at all (E2-7).
+	Lanes     []string
+	LaneRows  []LaneRow
+	LaneWidth template.CSS
+}
+
+// LaneRow is one entry in the team view. It is the same information the
+// timeline carries, placed in a column instead of a list — because "who told
+// what to whom" is a question about position, and a single ordered list makes
+// the reader reconstruct the positions in their head.
+type LaneRow struct {
+	Time    string
+	Kind    string
+	Title   string
+	Detail  string
+	Output  string
+	IsError bool
+	// Place is the CSS grid placement, computed in Go because a template
+	// cannot do arithmetic and a lane view is entirely arithmetic.
+	Place template.CSS
+	// Flow marks a message between two lanes, drawn as a bar spanning them
+	// rather than as a cell inside one.
+	Flow bool
 }
 
 // Summary is the at-a-glance answer, so a reader does not have to scroll a
@@ -223,6 +248,19 @@ func Render(w io.Writer, sessionID string, events []recorder.Event, verifyErr er
 			v.Rows = append(v.Rows, Row{ts,
 				kind, fmt.Sprintf("%s %s %s", e.Agent, e.Kind, e.Peer), detail, "", refused})
 		case recorder.TypeResourceSummary:
+			// A team writes one receipt per agent into the same chain, so the
+			// header's single receipt would show whichever machine stopped
+			// last and call it the session's. Those become timeline rows
+			// instead, and the header keeps the receipt only when there is
+			// exactly one machine to have one (E1-7, E2-7).
+			if e.Agent != "" {
+				v.Rows = append(v.Rows, Row{ts, "session", "usage receipt · " + e.Agent,
+					fmt.Sprintf("%.2f CPU-seconds%s · peak RSS %s · net %s in / %s out · disk %s written",
+						e.CPUSeconds, quotaNote(e), HumanKiB(e.PeakRSSKiB),
+						HumanBytes(e.NetInBytes), HumanBytes(e.NetOutBytes),
+						HumanBytes(e.DiskWriteBytes)), "", false})
+				break
+			}
 			v.Summary.Usage = &Usage{
 				CPUSeconds: e.CPUSeconds, CPUQuota: e.CPUQuota, Vcpus: e.VcpuCount,
 				PeakRSS: HumanKiB(e.PeakRSSKiB), MemMiB: e.MemMiB,
@@ -247,7 +285,189 @@ func Render(w io.Writer, sessionID string, events []recorder.Event, verifyErr er
 			v.Rows = append(v.Rows, Row{ts, "oom", "OOM-killed " + e.Comm, detail, "", true})
 		}
 	}
+	v.Lanes, v.LaneRows = buildLanes(events)
+	if n := len(v.Lanes); n > 0 {
+		v.LaneWidth = template.CSS(fmt.Sprintf("grid-template-columns:88px repeat(%d,minmax(0,1fr))", n))
+	}
 	return tmpl.Execute(w, v)
+}
+
+// buildLanes turns the same events into a per-agent view.
+//
+// Lane order is first-appearance order, which for a team is boot order, so the
+// columns read like the file the user wrote. An event with no agent belongs to
+// the team rather than to any member and spans every lane; a message between
+// two agents spans exactly the columns it connects, which is the whole point of
+// drawing it this way instead of listing it (E2-7).
+func buildLanes(events []recorder.Event) ([]string, []LaneRow) {
+	col := map[string]int{}
+	var lanes []string
+	for _, e := range events {
+		if e.Agent != "" {
+			if _, ok := col[e.Agent]; !ok {
+				col[e.Agent] = len(lanes)
+				lanes = append(lanes, e.Agent)
+			}
+		}
+	}
+	if len(lanes) == 0 {
+		return nil, nil
+	}
+	// A peer that never acted still needs a column, or a message to it would
+	// have nowhere to point.
+	for _, e := range events {
+		if e.Peer == "" {
+			continue
+		}
+		switch e.Type {
+		case recorder.TypeTeamMessage, recorder.TypeTeamRefused, recorder.TypeTeamSpawn:
+			if _, ok := col[e.Peer]; !ok {
+				col[e.Peer] = len(lanes)
+				lanes = append(lanes, e.Peer)
+			}
+		}
+	}
+
+	// grid-column is 1-based and column 1 is the time gutter, so a lane at
+	// index i starts at i+2.
+	wide := template.CSS(fmt.Sprintf("grid-column:2/%d", len(lanes)+2))
+	// laneOf places an event in its agent's column — or across all of them when
+	// it names no agent. Looking the name up in the map and using the zero
+	// value would put an agentless event in the *first* agent's lane and
+	// attribute it to a machine that had nothing to do with it, which in a
+	// record whose whole purpose is saying who did what is the worst available
+	// failure.
+	laneOf := func(agent string) template.CSS {
+		i, ok := col[agent]
+		if !ok {
+			return wide
+		}
+		return template.CSS(fmt.Sprintf("grid-column:%d", i+2))
+	}
+	span := func(a, b int) template.CSS {
+		if a > b {
+			a, b = b, a
+		}
+		return template.CSS(fmt.Sprintf("grid-column:%d/%d", a+2, b+3))
+	}
+	var rows []LaneRow
+	byCall := map[string]int{}
+	for _, e := range events {
+		ts := e.TS
+		if len(ts) > 23 {
+			ts = ts[11:23]
+		}
+		add := func(r LaneRow) int { rows = append(rows, r); return len(rows) - 1 }
+
+		switch e.Type {
+		case recorder.TypeTeamMessage, recorder.TypeTeamRefused:
+			from, to := col[e.Agent], col[e.Peer]
+			arrow := "\u2192"
+			if e.Kind == "reply" {
+				arrow = "\u2190"
+			}
+			kind, title := "team", fmt.Sprintf("%s %s %s", e.Agent, arrow, e.Peer)
+			if e.Type == recorder.TypeTeamRefused {
+				kind = "team-refused"
+				title = "REFUSED " + title
+			}
+			detail := fmt.Sprintf("%s \u00b7 %d bytes \u00b7 sha256 %s", e.Kind, e.Bytes, short(e.SHA256))
+			if e.Reason != "" {
+				detail += " \u00b7 " + e.Reason
+			}
+			add(LaneRow{ts, kind, title, detail, e.Data,
+				e.Type == recorder.TypeTeamRefused, span(from, to), true})
+
+		case recorder.TypeTeamStore:
+			// Inline in the acting agent's lane, because a store access is
+			// something one agent did, not a message between two.
+			refused := e.Outcome != "delivered"
+			kind := "store"
+			if refused {
+				kind = "team-refused"
+			}
+			detail := e.Outcome
+			if e.Reason != "" {
+				detail += " \u00b7 " + e.Reason
+			}
+			if e.Bytes > 0 {
+				detail += fmt.Sprintf(" \u00b7 %d bytes", e.Bytes)
+			}
+			add(LaneRow{ts, kind, fmt.Sprintf("store %s %s", e.Kind, e.Peer), detail, "",
+				refused, laneOf(e.Agent), false})
+
+		case recorder.TypeTeamSpawn:
+			if e.Outcome != "delivered" {
+				add(LaneRow{ts, "team-refused", "REFUSED spawn", e.Reason, "",
+					true, laneOf(e.Agent), false})
+				break
+			}
+			add(LaneRow{ts, "team", e.Kind + " " + e.Peer, "requested by " + e.Agent, "",
+				false, span(col[e.Agent], col[e.Peer]), true})
+
+		case recorder.TypeCommandStart:
+			byCall[e.Call] = add(LaneRow{ts, "command", strings.Join(e.Cmd, " "),
+				"via " + e.Via, "", false, laneOf(e.Agent), false})
+		case recorder.TypeCommandOutput:
+			if i, ok := byCall[e.Call]; ok {
+				data, _ := base64.StdEncoding.DecodeString(e.Data)
+				prefix := ""
+				if e.Stream == "stderr" {
+					prefix = "stderr: "
+				}
+				rows[i].Output += prefix + string(data)
+			}
+		case recorder.TypeCommandExit:
+			code := -1
+			if e.Code != nil {
+				code = *e.Code
+			}
+			if i, ok := byCall[e.Call]; ok {
+				rows[i].IsError = code != 0
+				rows[i].Detail += fmt.Sprintf(" \u00b7 exit %d", code)
+			}
+		case recorder.TypeFileWrite:
+			add(LaneRow{ts, "file", "write " + e.Path,
+				fmt.Sprintf("%d bytes \u00b7 %s", e.Bytes, short(e.SHA256)), "",
+				false, laneOf(e.Agent), false})
+		case recorder.TypeEgressAttempt:
+			allowed := e.Allowed != nil && *e.Allowed
+			kind, title := "egress-blocked", "BLOCKED "+e.Host
+			if allowed {
+				kind, title = "egress", "egress "+e.Host
+			}
+			detail := e.Mode
+			if e.Reason != "" {
+				detail += " " + e.Reason
+			}
+			add(LaneRow{ts, kind, title, detail, "", !allowed, laneOf(e.Agent), false})
+		case recorder.TypeSecretUse:
+			add(LaneRow{ts, "secret", "secret " + e.Name, "sent to " + e.Host, "",
+				false, laneOf(e.Agent), false})
+		case recorder.TypeResourceOOM:
+			add(LaneRow{ts, "oom", "OOM-killed " + e.Comm,
+				fmt.Sprintf("pid %d \u00b7 %s resident", e.PID, HumanKiB(e.RSSKiB)), "",
+				true, laneOf(e.Agent), false})
+		case recorder.TypeResourceTimeout:
+			add(LaneRow{ts, "oom", "timed out on " + e.Budget,
+				fmt.Sprintf("budget %s", time.Duration(e.BudgetMS)*time.Millisecond), "",
+				true, laneOf(e.Agent), false})
+		case recorder.TypeResourceSummary:
+			if e.Agent == "" {
+				break
+			}
+			add(LaneRow{ts, "session", "usage receipt",
+				fmt.Sprintf("%.2f CPU-seconds \u00b7 peak RSS %s", e.CPUSeconds, HumanKiB(e.PeakRSSKiB)),
+				"", false, laneOf(e.Agent), false})
+		case recorder.TypeSessionStart:
+			add(LaneRow{ts, "session", "team session start",
+				fmt.Sprintf("arch %s \u00b7 kelyfos %s", e.Arch, e.Kelyfos), "", false, wide, false})
+		case recorder.TypeSessionEnd:
+			add(LaneRow{ts, "session", "team session end",
+				fmt.Sprintf("%s after %d ms", e.Reason, e.DurationMS), "", false, wide, false})
+		}
+	}
+	return lanes, rows
 }
 
 // HumanBytes renders a byte count the way a person reads it.
@@ -276,6 +496,18 @@ func HumanKiB(kib int64) string {
 	default:
 		return fmt.Sprintf("%d KiB", kib)
 	}
+}
+
+// quotaNote says what a receipt's CPU number was measured against, when there
+// was something to measure it against.
+func quotaNote(e recorder.Event) string {
+	switch {
+	case e.CPUQuota > 0:
+		return fmt.Sprintf(" (quota %d%% of one core)", e.CPUQuota)
+	case e.VcpuCount > 0:
+		return fmt.Sprintf(" across %d core(s), no quota", e.VcpuCount)
+	}
+	return ""
 }
 
 func short(h string) string {

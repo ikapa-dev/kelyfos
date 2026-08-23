@@ -261,6 +261,18 @@ func (b *Broker) Reply(from, tag string, body []byte) error {
 	// which a guest could otherwise reach an agent it has no edge to — answer a
 	// question nobody asked it — so it is checked, and checked against the
 	// agent the question actually went to.
+	//
+	// A *missing* tag is a different mistake and gets a different answer. It is
+	// what an agent produces when it calls the tool with the wrong argument
+	// name, and telling it "no question is outstanding with that correlation"
+	// sends it looking for a question that expired rather than at the call it
+	// got wrong. The transcript says which, too.
+	if tag == "" {
+		b.record(Event{Type: TypeRefused, From: from, Kind: KindReply,
+			Reason: "missing_correlation", Outcome: OutcomeRefused})
+		return &Error{Kind: "denied", Message: "team_reply needs the `correlate` tag " +
+			"that came back from team_recv; none was given"}
+	}
 	if !ok || a.to != from {
 		b.record(Event{Type: TypeRefused, From: from, Kind: KindReply,
 			Reason: "unknown_correlation", Outcome: OutcomeRefused})

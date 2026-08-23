@@ -121,6 +121,7 @@ A command was submitted, before it runs.
 | `cmd` | array of string | The argv actually sent. A shell wrapper is visible here because it changes what the command can do. |
 | `cwd` | string | Working directory, if set. |
 | `via` | string | `exec` (the CLI) or `mcp` (a tool call). |
+| `agent` | string | Present inside a team: which member ran it. |
 
 ### `command.output`
 A chunk of output, in the order it was observed.
@@ -131,6 +132,7 @@ A chunk of output, in the order it was observed.
 | `stream` | string | `stdout` or `stderr`. |
 | `data` | string | base64 of the raw bytes. |
 | `bytes` | integer | Decoded length, so a reader can size a session without decoding. |
+| `agent` | string | Present inside a team: which member produced it. |
 
 ### `command.exit`
 Exactly one per `command.start`.
@@ -142,6 +144,7 @@ Exactly one per `command.start`.
 | `signal` | string | Signal name, if one killed it. |
 | `error` | object | `{kind, message}` when the command could not be run or was cut short. |
 | `duration_ms` | integer | Wall-clock time. |
+| `agent` | string | Present inside a team: which member ran it. |
 
 ### `file.write`
 A file was written through a tool. The **content is not recorded** — a flight
@@ -154,6 +157,7 @@ workspace, and a much worse place to leave it.
 | `bytes` | integer | Size written. |
 | `sha256` | string | Digest of the content, so a later claim about what was written can be checked. |
 | `via` | string | Tool name: `write_file` or `upload`. |
+| `agent` | string | Present inside a team: which member wrote it. |
 
 ### `egress.attempt`
 One outbound connection attempt. Written from P2-5.
@@ -199,7 +203,7 @@ One inter-agent message, or one the edge list did not permit. Written from E2-1.
 | `bytes` | integer | Payload length. |
 | `sha256` | string | Digest of the payload. |
 | `data` | string | The payload itself — **only** when the team enabled capture. |
-| `reason` | string | Why, on a refusal: `no_edge`, `no_such_agent`, `unknown_correlation`, `mailbox_full`. |
+| `reason` | string | Why, on a refusal: `no_edge`, `no_such_agent`, `unknown_correlation`, `missing_correlation`, `mailbox_full`. |
 
 A refusal gets its own type rather than a flag, for the same reason a blocked
 egress attempt does: it is the event someone reading the log is looking for.
@@ -253,6 +257,7 @@ The usage receipt, written once at teardown. Written from E1-7.
 | `net_in_bytes`, `net_out_bytes` | integer | Bytes across the TAP, from the guest's point of view. |
 | `disk_read_bytes`, `disk_write_bytes` | integer | Bytes the VMM moved to and from host storage. |
 | `vcpu_count`, `mem_mib`, `cpu_quota_percent` | integer | The caps those figures were consumed under. |
+| `agent` | string | Present inside a team: whose receipt this is. A team writes **one per member** — do not sum them and call it the session's. |
 
 Every number is read on the host, from counters the kernel keeps about the
 Firecracker process and the TAP attached to it. The guest is not asked, which is
@@ -293,6 +298,7 @@ kernel said, and the host writes it (§1).
 | `comm` | string | Its name, from the kernel's own line. |
 | `rss_kib` | integer | Its anonymous resident set at the moment it was killed. |
 | `mem_mib` | integer | The machine's RAM cap, added by the host so the pair reads without cross-referencing. |
+| `agent` | string | Present inside a team: which member ran out of memory. |
 
 `rss_kib` is `anon-rss` and deliberately not `total-vm`: address space a process
 reserved and never touched says nothing about the memory that ran out.
@@ -309,9 +315,25 @@ session saw one and would otherwise have exited 0.
 - `kelyfos log` replays a session in order.
 - `kelyfos log --follow` streams events as they are recorded.
 - `kelyfos log --verify` checks the chain and reports the first break.
+- `kelyfos log --list` lists recorded sessions, marking the ones that hold a team.
+- `kelyfos log --export <file>.html` renders the session as one self-contained
+  HTML file — no scripts, no external requests.
 
 A session that is still running has no `session.end`. That is not corruption:
 a reader should present the session as open rather than truncated.
+
+**A team is one session**, so `--verify` over a team session verifies the whole
+team: every member's commands, messages, store accesses and egress attempts are
+lines in the same chain. The verification says how many agents it covered, so a
+reader can compare it against the team they declared. `--export` additionally
+renders a lane per agent with the message flow drawn between them (E2-7).
+
+Two things the chain does **not** claim, stated because the difference matters
+when this is used as evidence. It proves no line was altered or removed after it
+was written; it does not prove that every agent a policy declared actually wrote
+one. And `--session <agent-id>` redirects to the team's record while that
+sandbox still exists — once the team is down the run directory is gone, and the
+team session must be found by id or with `--list`.
 
 ## 6. Conformance
 
@@ -326,6 +348,8 @@ a reader should present the session as open rather than truncated.
 | `team.message` and `team.refused` for every inter-agent message | E2-1 |
 | `team.store` for every store access, permitted or not | E2-3 |
 | `team.spawn` for every worker requested, granted or refused | E2-5 |
+| One chain per team, every member's events in it carrying `agent` | E2-7 |
+| `--verify` over a team, `--export` with a lane per agent | E2-7 |
 | HTML session export built only from this file | P3-8 |
 | Live TUI built only from this file | P3-9 |
 | Signed exports verifiable offline | P4-3 |

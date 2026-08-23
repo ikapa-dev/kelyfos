@@ -80,6 +80,12 @@ type Options struct {
 	// is not in one. It reaches the guest on the kernel command line, so a
 	// guest cannot rename itself into another agent's edges (E2-2).
 	Agent string
+	// Session is the flight recorder events about this sandbox belong in.
+	// Empty means its own id, which is what a single run wants. A team member
+	// carries the team's session here, so `kelyfos exec` against one agent
+	// writes into the same chain as the messages that asked for the work —
+	// one transcript rather than five to correlate afterwards (E2-7).
+	Session string
 
 	// MaySpawn says this agent's policy granted it a spawn budget. The guest
 	// is told, so the spawn tool is listed only where it can work (E2-5).
@@ -111,6 +117,7 @@ type State struct {
 	HostMAC     string    `json:"host_mac,omitempty"`
 	ProxyPort   int       `json:"proxy_port,omitempty"`
 	Agent       string    `json:"agent,omitempty"`
+	Session     string    `json:"session,omitempty"`
 	VcpuCount   int       `json:"vcpu_count,omitempty"`
 	MemMiB      int       `json:"mem_mib,omitempty"`
 	CPUQuota    int       `json:"cpu_quota_percent,omitempty"`
@@ -125,6 +132,20 @@ type State struct {
 	RunDir      string    `json:"run_dir"`
 	StartedAt   time.Time `json:"started_at"`
 	BootReadyMS int64     `json:"boot_ready_ms"`
+}
+
+// RecordSession is the flight recorder this sandbox's events belong in: the
+// team's when it is in one, its own otherwise.
+//
+// It exists so no call site has to remember the rule. A team member whose
+// commands landed in its own file would leave the team transcript with the
+// messages but not the work they asked for, which is a transcript of half the
+// story (E2-7).
+func (s State) RecordSession() string {
+	if s.Session != "" {
+		return s.Session
+	}
+	return s.ID
 }
 
 // Sandbox is a running microVM.
@@ -217,6 +238,7 @@ func New(opts Options) (*Sandbox, error) {
 		s.State.Workspace = opts.Workspace.ImagePath
 	}
 	s.State.Agent = opts.Agent
+	s.State.Session = opts.Session
 	s.State.VcpuCount = opts.VcpuCount
 	s.State.MemMiB = opts.MemMiB
 	s.State.ScratchByte = opts.ScratchBytes

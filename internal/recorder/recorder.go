@@ -276,6 +276,15 @@ func (r *Recorder) Append(e Event) error {
 
 func (r *Recorder) Since() time.Duration { return time.Since(r.started) }
 
+// Session is the id this recorder writes under. Handed to a team's sandboxes so
+// their own tooling records into the same chain (E2-7).
+func (r *Recorder) Session() string {
+	if r == nil {
+		return ""
+	}
+	return r.sandbox
+}
+
 func (r *Recorder) Close() error {
 	if r == nil {
 		return nil

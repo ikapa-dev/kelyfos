@@ -208,7 +208,7 @@ first.
 Take the next message addressed to this agent, waiting up to `timeout`. Returns
 the sender and the body, or nothing if the window closed empty.
 
-### 3.3 `team_ask(to, body, timeout)` and `team_reply(id, body)`
+### 3.3 `team_ask(to, body, timeout)` and `team_reply(correlate, body)`
 
 `team_ask` is a question with a correlated answer: the broker tags it, delivers
 it, and blocks the asker until the recipient calls `team_reply` with the same
@@ -219,7 +219,9 @@ building it out of `send` plus `recv` plus a correlation scheme is a thing every
 user would otherwise write once, badly.
 
 On the receiving side a question arrives as an ordinary MCP tool event, so
-answering it is natural for a model: it sees a question and a reply tool.
+answering it is natural for a model: it sees a question and a reply tool. The
+argument is called `correlate`, and it is the value `team_recv` returned in its
+`correlate` field — one name for one thing, on both sides.
 
 **A reply needs no edge of its own.** It travels the return path of the ask that
 provoked it, which the broker is already holding open. This matters for
@@ -480,7 +482,7 @@ rather than five that have to be correlated afterwards.
 | `team.message` | One delivery: from, to, size, body hash, and whether it was an ask, a reply or a send. |
 | `team.refused` | A message the edge list did not permit. Its own type, because it is the interesting one. |
 | `team.store` | A store access: key, agent, read or write, permitted or not. |
-| `team.spawn` | A worker spawned or refused, with the budget it was checked against. |
+| `team.spawn` | A worker spawned or refused, with the spawner, the worker's name and the reason on a refusal. |
 
 Payload capture is a per-team switch:
 
@@ -493,7 +495,32 @@ Off by default. A team passing customer data between agents should be able to
 prove what moved without keeping a second copy of it, and a hash lets a claim
 about a message be checked later without the message being stored.
 
-### 7.1 The recorder is not a delivery buffer
+### 7.1 Reading it back
+
+`kelyfos log --verify` over a team session verifies the whole team, because
+there is only one chain to verify. It says how many agents it covered and names
+them, so the claim can be checked against the team that was declared:
+
+```
+$ kelyfos log --session 269043fa --verify
+session 269043fa: chain intact, 44 events verified across 3 agents (master, worker-1, worker-2)
+```
+
+`kelyfos log --export team.html` renders that same chain as **one lane per
+agent**, in boot order, with a message between two agents drawn as a bar
+spanning exactly the columns it connects — an ask points forward, a reply points
+back, a refusal is flagged and still drawn, because what was attempted is the
+part worth seeing. Store accesses sit inline in the lane of the agent that made
+them; commands, files, egress attempts, OOM kills and each member's usage
+receipt sit in that member's lane. Events that belong to the team rather than to
+any member span every lane.
+
+While the team is up, `kelyfos log --session <agent's sandbox id>` redirects to
+the team's record and says so. After `team down` the run directories are gone,
+so the team session is found by its own id or with `kelyfos log --list`, which
+marks the sessions that hold a team.
+
+### 7.2 The recorder is not a delivery buffer
 
 These two facts are orthogonal and are stated together because they look
 contradictory at a glance:

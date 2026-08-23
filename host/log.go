@@ -73,6 +73,15 @@ docs/events.md.
 
 func resolveSession(id string) (string, error) {
 	if id != "" {
+		// A team member's sandbox id has no record of its own: everything it
+		// did was written into the team's chain (E2-7). Following the redirect
+		// is friendlier than a "no flight recorder" for a machine that plainly
+		// existed — and it says so, rather than quietly showing something else.
+		if st, err := sandbox.Load(id); err == nil && st.Session != "" && st.Session != id {
+			fmt.Fprintf(os.Stderr, "kelyfos: %s is agent %q in team session %s; showing the team's record\n",
+				id, st.Agent, st.Session)
+			return st.Session, nil
+		}
 		return id, nil
 	}
 	dir := recorder.SessionsDir(sandbox.Root())
@@ -124,13 +133,24 @@ func listSessions() error {
 		events, _ := recorder.Read(f)
 		f.Close()
 		state := "open"
+		agents := map[string]bool{}
 		for _, ev := range events {
 			if ev.Type == recorder.TypeSessionEnd {
 				state = ev.Reason
 			}
+			if ev.Agent != "" {
+				agents[ev.Agent] = true
+			}
 		}
-		fmt.Printf("%s  %s  %4d events  %s\n",
-			e.Name(), info.ModTime().Format("2006-01-02 15:04:05"), len(events), state)
+		// A team session is worth marking in the listing: it is one chain
+		// covering several machines, and a reader looking for "the worker's
+		// log" needs to know there is not one.
+		what := ""
+		if len(agents) > 0 {
+			what = fmt.Sprintf("  team of %d", len(agents))
+		}
+		fmt.Printf("%s  %s  %4d events  %s%s\n",
+			e.Name(), info.ModTime().Format("2006-01-02 15:04:05"), len(events), state, what)
 	}
 	return nil
 }
@@ -176,8 +196,41 @@ func verifySession(id, path string) error {
 		fmt.Printf("session %s: FAILED after %d events\n  %v\n", id, n, err)
 		return &exitError{code: 1}
 	}
+	// For a team, "the chain" is the whole team's — one file covering every
+	// agent's commands, messages, store accesses and egress. Saying which
+	// agents it covers is what makes the claim checkable: a reader can compare
+	// it against the team they declared and see nothing is missing (E2-7).
+	agents, err := sessionAgents(path)
+	if err == nil && len(agents) > 0 {
+		fmt.Printf("session %s: chain intact, %d events verified across %d agents (%s)\n",
+			id, n, len(agents), strings.Join(agents, ", "))
+		return nil
+	}
 	fmt.Printf("session %s: chain intact, %d events verified\n", id, n)
 	return nil
+}
+
+// sessionAgents is every agent name that appears in a session, in the order
+// they were first seen — which is boot order, and so reads like the team.
+func sessionAgents(path string) ([]string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	events, err := recorder.Read(f)
+	if err != nil {
+		return nil, err
+	}
+	seen := map[string]bool{}
+	var out []string
+	for _, e := range events {
+		if e.Agent != "" && !seen[e.Agent] {
+			seen[e.Agent] = true
+			out = append(out, e.Agent)
+		}
+	}
+	return out, nil
 }
 
 func followSession(path string, asJSON bool) error {
@@ -241,6 +294,13 @@ func printEvent(line []byte, asJSON bool) {
 	if len(ts) > 23 {
 		ts = ts[11:23]
 	}
+	// In a team the same chain carries several machines, so the lines that are
+	// about one of them say which. Outside a team `who` is empty and every line
+	// below reads exactly as it did before (E2-7).
+	who := ""
+	if e.Agent != "" {
+		who = "[" + e.Agent + "] "
+	}
 	switch e.Type {
 	case recorder.TypeSessionStart:
 		fmt.Printf("%s  session start   image=%s arch=%s kelyfos=%s\n", ts, e.Image, e.Arch, e.Kelyfos)
@@ -254,7 +314,7 @@ func printEvent(line []byte, asJSON bool) {
 	case recorder.TypeSessionEnd:
 		fmt.Printf("%s  session end     %s after %d ms\n", ts, e.Reason, e.DurationMS)
 	case recorder.TypeCommandStart:
-		fmt.Printf("%s  $ %s\n", ts, strings.Join(e.Cmd, " "))
+		fmt.Printf("%s  $ %s%s\n", ts, who, strings.Join(e.Cmd, " "))
 	case recorder.TypeCommandOutput:
 		data, _ := base64.StdEncoding.DecodeString(e.Data)
 		prefix := "  | "
@@ -275,16 +335,16 @@ func printEvent(line []byte, asJSON bool) {
 		}
 		fmt.Printf("%s  exit %-3d        %d ms%s\n", ts, code, e.DurationMS, extra)
 	case recorder.TypeFileWrite:
-		fmt.Printf("%s  write           %s  %d bytes  sha256=%s via=%s\n",
-			ts, e.Path, e.Bytes, shortHash(e.SHA256), e.Via)
+		fmt.Printf("%s  write           %s%s  %d bytes  sha256=%s via=%s\n",
+			ts, who, e.Path, e.Bytes, shortHash(e.SHA256), e.Via)
 	case recorder.TypeEgressAttempt:
 		verdict := "BLOCKED"
 		if e.Allowed != nil && *e.Allowed {
 			verdict = "allowed"
 		}
-		fmt.Printf("%s  egress %-7s %s:%d  mode=%s %s\n", ts, verdict, e.Host, e.Port, e.Mode, e.Reason)
+		fmt.Printf("%s  egress %-7s %s%s:%d  mode=%s %s\n", ts, verdict, who, e.Host, e.Port, e.Mode, e.Reason)
 	case recorder.TypeSecretUse:
-		fmt.Printf("%s  secret          %s -> %s\n", ts, e.Name, e.Host)
+		fmt.Printf("%s  secret          %s%s -> %s\n", ts, who, e.Name, e.Host)
 	case recorder.TypeTeamMessage, recorder.TypeTeamRefused:
 		verb := map[string]string{"send": "->", "ask": "?>", "reply": "<-"}[e.Kind]
 		if verb == "" {
@@ -310,17 +370,17 @@ func printEvent(line []byte, asJSON bool) {
 			fmt.Printf("%s  team %-10s %s by %s\n", ts, e.Kind, e.Peer, e.Agent)
 		}
 	case recorder.TypeResourceSummary:
-		fmt.Printf("%s  usage           %.2f CPU-seconds%s · peak RSS %s (VMM)%s · net %s in / %s out · disk %s written\n",
-			ts, e.CPUSeconds, quotaSuffix(e), report.HumanKiB(e.PeakRSSKiB),
+		fmt.Printf("%s  usage           %s%.2f CPU-seconds%s · peak RSS %s (VMM)%s · net %s in / %s out · disk %s written\n",
+			ts, who, e.CPUSeconds, quotaSuffix(e), report.HumanKiB(e.PeakRSSKiB),
 			capSuffix(e.MemMiB), humanBytes(e.NetInBytes), humanBytes(e.NetOutBytes),
 			humanBytes(e.DiskWriteBytes))
 	case recorder.TypeResourceTimeout:
-		fmt.Printf("%s  timed out       the %s budget of %s expired after %s\n",
-			ts, e.Budget, time.Duration(e.BudgetMS)*time.Millisecond,
+		fmt.Printf("%s  timed out       %sthe %s budget of %s expired after %s\n",
+			ts, who, e.Budget, time.Duration(e.BudgetMS)*time.Millisecond,
 			(time.Duration(e.ElapsedMS) * time.Millisecond).Round(time.Second))
 	case recorder.TypeResourceOOM:
-		fmt.Printf("%s  OOM-killed      %s (pid %d) holding %s of a %d MiB machine\n",
-			ts, e.Comm, e.PID, report.HumanKiB(e.RSSKiB), e.MemMiB)
+		fmt.Printf("%s  OOM-killed      %s%s (pid %d) holding %s of a %d MiB machine\n",
+			ts, who, e.Comm, e.PID, report.HumanKiB(e.RSSKiB), e.MemMiB)
 	default:
 		fmt.Printf("%s  %-15s %s\n", ts, e.Type, strings.TrimSpace(string(line)))
 	}
