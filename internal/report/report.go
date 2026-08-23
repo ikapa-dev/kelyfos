@@ -132,8 +132,16 @@ func Render(w io.Writer, sessionID string, events []recorder.Event, verifyErr er
 		case recorder.TypeSessionStart:
 			v.Summary.Image, v.Summary.Arch, v.Summary.Kelyfos = e.Image, e.Arch, e.Kelyfos
 			v.Summary.Started = e.TS
+			// A team has no single flavor — each agent has its own, and each
+			// says so in its own session.ready. Saying that beats rendering a
+			// hole where a value should be (F-D33).
+			shown := e.Image
+			if shown == "" {
+				shown = "per agent"
+				v.Summary.Image = shown
+			}
 			v.Rows = append(v.Rows, Row{ts, "session", "session start",
-				fmt.Sprintf("image %s · arch %s · kelyfos %s", e.Image, e.Arch, e.Kelyfos), "", false})
+				fmt.Sprintf("image %s · arch %s · kelyfos %s", shown, e.Arch, e.Kelyfos), "", false})
 		case recorder.TypeSessionReady:
 			// A team writes one of these per member, so the header's single set
 			// of boot figures would end up being whichever agent was last —
@@ -220,9 +228,17 @@ func Render(w io.Writer, sessionID string, events []recorder.Event, verifyErr er
 				"sent to " + e.Host + " · the value is not recorded anywhere", "", false})
 		case recorder.TypeTeamMessage, recorder.TypeTeamRefused:
 			refused := e.Type == recorder.TypeTeamRefused
-			kind, title := "team", fmt.Sprintf("%s → %s", e.Agent, e.Peer)
+			// The same arrow the lane view draws. A reply points back, because
+			// it travels the return path of the ask that provoked it — and the
+			// two views rendering one event in opposite directions is worse
+			// than either being wrong on its own (F-D33).
+			arrow := "→"
+			if e.Kind == "reply" {
+				arrow = "←"
+			}
+			kind, title := "team", fmt.Sprintf("%s %s %s", e.Agent, arrow, e.Peer)
 			if refused {
-				kind, title = "team-refused", fmt.Sprintf("REFUSED %s → %s", e.Agent, e.Peer)
+				kind, title = "team-refused", fmt.Sprintf("REFUSED %s %s %s", e.Agent, arrow, e.Peer)
 				v.Summary.TeamRefused++
 			} else {
 				v.Summary.TeamMessages++

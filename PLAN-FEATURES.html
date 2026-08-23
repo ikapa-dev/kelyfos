@@ -1357,6 +1357,30 @@
         recorded&rdquo; being aspirational and being true. A launch post is the one document where that distinction is
         load-bearing.</td>
         <td class="mono">docs/exam/2026-08-23-transcript.md</td></tr>
+        <tr><td class="mono">F-D34</td><td class="mono">2026-08-23</td>
+        <td><b>The (d) choice and the (f) split, recorded because F-D33 asked for both to be logged.</b>
+        <i>(d), chosen by cost and settled by correctness.</i> <code>[team.agent.spawn.resources]</code>&rsquo;s
+        <code>idle_timeout</code> and <code>max_runtime</code> are <b>refused</b> rather than enforced.
+        <code>idle_timeout</code> cannot be enforced there for exactly F-D20&rsquo;s reason and would need the
+        per-agent watchdog F-D22 already scopes as its own task. <code>max_runtime</code> could have been enforced
+        cheaply &mdash; the spawn path already runs a timer per worker &mdash; and should not be, because that timer is
+        <code>[team.agent.spawn] lifetime</code> and a second key meaning the same thing is a way to disagree with
+        yourself later. So the refusal names <code>lifetime</code> and says it is the enforced one. Cheapest and most
+        correct agreed, which is not always how that goes.
+        <i>(f), three fixed and one parked.</i> Fixed while in the neighbourhood:
+        <code>kelyfos log --list</code> ordered sessions by directory name, which is a random hex id, so the listing
+        had no meaningful order and <code>head -1</code> gave an arbitrary session &mdash; it is newest first now,
+        matching what every subcommand means by &ldquo;the most recent&rdquo;. The exported report drew a reply
+        pointing back in the team lanes and forward in the timeline from the same event; the timeline had the arrow
+        hard-coded. And a team&rsquo;s <code>session.start</code> carries no <code>image</code>, because a team has no
+        single flavor &mdash; the report rendered a hole and now says &ldquo;per agent&rdquo;, which is the true
+        answer and is where each agent&rsquo;s own <code>session.ready</code> already puts it.
+        <b>Parked, with the reason:</b> a refused key inside a nested table reports the enclosing header&rsquo;s line
+        rather than the key&rsquo;s. Unknown keys report correctly, so this is only the deliberate refusals, and
+        fixing it needs a per-key line map for the agent-resources tables that only <code>[team.resources]</code>
+        keeps today. That is parser work rather than a one-line fix, and a hardening batch is not the place to grow the
+        parser. It is worth doing when something else opens that file.</td>
+        <td class="mono">the F-D33 batch commits</td></tr>
     <!-- Claude Code: append rows above this line. -->
       <tr><td class="mono">F-D10</td><td class="mono">2026-08-22</td>
         <td>The resource knobs E1-0 goes looking for shipped <b>partly</b>: <code>--vcpus</code>/<code>--mem</code> and

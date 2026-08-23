@@ -117,6 +117,16 @@ func listSessions() error {
 	if err != nil {
 		return fmt.Errorf("no sessions recorded yet (looked in %s)", dir)
 	}
+	// ReadDir returns them by filename, which for sessions is a random hex id —
+	// so the listing came out in an order with no meaning, and `head -1` gave an
+	// arbitrary session rather than the obvious one. Newest first, matching what
+	// every subcommand means by "the most recent" (F-D33).
+	type row struct {
+		name string
+		mod  time.Time
+		line string
+	}
+	var rows []row
 	for _, e := range entries {
 		if !e.IsDir() {
 			continue
@@ -149,8 +159,13 @@ func listSessions() error {
 		if len(agents) > 0 {
 			what = fmt.Sprintf("  team of %d", len(agents))
 		}
-		fmt.Printf("%s  %s  %4d events  %s%s\n",
-			e.Name(), info.ModTime().Format("2006-01-02 15:04:05"), len(events), state, what)
+		rows = append(rows, row{name: e.Name(), mod: info.ModTime(),
+			line: fmt.Sprintf("%s  %s  %4d events  %s%s",
+				e.Name(), info.ModTime().Format("2006-01-02 15:04:05"), len(events), state, what)})
+	}
+	sort.Slice(rows, func(i, j int) bool { return rows[i].mod.After(rows[j].mod) })
+	for _, r := range rows {
+		fmt.Println(r.line)
 	}
 	return nil
 }

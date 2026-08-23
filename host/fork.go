@@ -97,11 +97,23 @@ unique guest network identity, which is backlog work.
 
 	// Tear down everything on any exit path, including the ones taken because
 	// some forks failed. A half-forked fleet left running is worse than none.
+	//
+	// Each fork's record is closed here too. A session that opens and never
+	// ends is a chain a reader cannot tell apart from one still running, and
+	// `kelyfos log --list` would call it open forever (F-D33).
+	var recs []*recorder.Recorder
 	defer func() {
 		for _, r := range results {
 			if r.sb != nil {
 				_ = r.sb.Shutdown(5 * time.Second)
 			}
+		}
+		for _, rec := range recs {
+			_ = rec.Append(recorder.Event{
+				Type: recorder.TypeSessionEnd, Reason: "shutdown",
+				DurationMS: rec.Since().Milliseconds(),
+			})
+			_ = rec.Close()
 		}
 	}()
 
@@ -112,7 +124,9 @@ unique guest network identity, which is backlog work.
 			continue
 		}
 		live++
-		_ = recordFork(r.sb, *flavor, *arch, *name, r.elapsed)
+		if rec, err := recordFork(r.sb, *flavor, *arch, *name, r.elapsed); err == nil {
+			recs = append(recs, rec)
+		}
 		fmt.Printf("fork %d/%d  sandbox %s  restored in %d ms\n",
 			i+1, *n, r.sb.State.ID, r.elapsed.Milliseconds())
 	}
@@ -130,19 +144,26 @@ unique guest network identity, which is backlog work.
 	return nil
 }
 
-func recordFork(sb *sandbox.Sandbox, flavor, arch, snapshot string, elapsed time.Duration) error {
+// recordFork opens one fork's chain and writes its opening events. The recorder
+// is returned rather than closed, because a session ends when the machine does
+// and the caller is what knows when that is.
+func recordFork(sb *sandbox.Sandbox, flavor, arch, snapshot string, elapsed time.Duration) (*recorder.Recorder, error) {
 	rec, err := recorder.Open(sandbox.Root(), sb.State.ID)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	defer rec.Close()
 	if err := rec.Append(recorder.Event{
 		Type: recorder.TypeSessionStart, Image: flavor, Arch: arch,
 		Kelyfos: Version, Argv: os.Args, Reason: "forked from " + snapshot,
 	}); err != nil {
-		return err
+		_ = rec.Close()
+		return nil, err
 	}
-	return rec.Append(recorder.Event{
+	if err := rec.Append(recorder.Event{
 		Type: recorder.TypeSessionReady, BootMS: elapsed.Milliseconds(),
-	})
+	}); err != nil {
+		_ = rec.Close()
+		return nil, err
+	}
+	return rec, nil
 }
