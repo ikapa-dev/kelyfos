@@ -126,7 +126,7 @@
      improvements to the existing product land here as epics. Inert until its gate opens.</p>
   <div class="meta">
     owner: <b>John</b> &nbsp;&middot;&nbsp; developer: <b>Claude Code</b> &nbsp;&middot;&nbsp;
-    status: <b class="ok" id="meta-status">Epic E4 — exit passed 22/22, 9/9 (tagging v0.7)</b> &nbsp;&middot;&nbsp;
+    status: <b class="ok" id="meta-status">Epic E4 — closed, v0.7 released (hardening batch, then the seam pair)</b> &nbsp;&middot;&nbsp;
     last updated: <b id="meta-updated">2026-08-23</b><br>
     repo file: <b>PLAN-FEATURES.html</b> (lives at the repository root next to <code>PLAN.html</code>)<br>
     <span class="quiet">Companion to PLAN.html — same protocol, same rules, later timeline.</span>
@@ -166,7 +166,7 @@
     <span class="bl-name">All epics</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">Tag v0.7 and publish; then the hardening batch the exit exams found, then the E4&rarr;E5 seam pair (F-D40, F-D41)</b></div>
+  <div class="focusline">Current focus: <b id="focus">The post-tag hardening batch (F-D49): the ignored <code>workspace</code> key, the shadowed plugin tool, and <code>plugin.call</code>&rsquo;s missing arguments &mdash; then the seam pair</b></div>
 </div>
 
 <!-- ====================================================== 1. ACTIVATION GATE -->
@@ -1730,6 +1730,26 @@
         the binary too, with the macOS shape written out beside the Linux one.
         <i>Revisit when</i> KelyfOS runs natively on macOS, which is not a thing Firecracker does.</td>
         <td class="mono">.mcp.json, dev/mcp-server.sh</td></tr>
+        <tr><td class="mono">F-D49</td><td class="mono">2026-08-23</td>
+        <td><b>The three product findings the E4 exit exams surfaced become one batch after the tag, not a reopened
+        epic.</b> <i>Source: <code>docs/exam/2026-08-23-mcp-surface.md</code>, and John&rsquo;s live client session.</i>
+        <i>The precedent.</i> E3-5&rsquo;s docs exam found ten defects, and the ruling then was that the epic closes as
+        planned and the product findings become a hardening batch immediately after the tag &mdash; they are defects
+        the docs work <i>surfaced</i>, not defects in the docs work. The same shape applies here, so the same route is
+        taken without asking again.
+        <i>What is in it.</i> Three things, one commit each, docs regenerated wherever behaviour changes:
+        <b>(a)</b> <code>serve-mcp</code> ignores a declared <code>[sandbox] workspace</code> in silence. Not attaching
+        one is defensible &mdash; several sandboxes writing back into one host directory is the most destructive thing
+        this product could do quietly &mdash; but a key a person wrote in a file being dropped without a word is the
+        failure F-D27 already named once.
+        <b>(b)</b> A plugin tool that collides with a built-in is shadowed rather than refused. The name rule closes
+        half the collision F-D36 argued about; a plugin called <code>read</code> exporting <code>file</code> puts a
+        second <code>read_file</code> in <code>tools/list</code> that can never be called.
+        <b>(c)</b> <code>plugin.call</code> records no arguments where <code>mcp.host.call</code> records a redacted
+        summary. The inward door should record what the outward door records, by the same rule and with the same
+        redaction.
+        <i>Not in it.</i> Nothing that touches a performance path, so no bar is re-measured and none is owed.</td>
+        <td class="mono">docs/exam/2026-08-23-mcp-surface.md</td></tr>
     <!-- Claude Code: append rows above this line. -->
       <tr><td class="mono">F-D10</td><td class="mono">2026-08-22</td>
         <td>The resource knobs E1-0 goes looking for shipped <b>partly</b>: <code>--vcpus</code>/<code>--mem</code> and
