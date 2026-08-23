@@ -285,6 +285,24 @@ func printEvent(line []byte, asJSON bool) {
 		fmt.Printf("%s  egress %-7s %s:%d  mode=%s %s\n", ts, verdict, e.Host, e.Port, e.Mode, e.Reason)
 	case recorder.TypeSecretUse:
 		fmt.Printf("%s  secret          %s -> %s\n", ts, e.Name, e.Host)
+	case recorder.TypeTeamMessage, recorder.TypeTeamRefused:
+		verb := map[string]string{"send": "->", "ask": "?>", "reply": "<-"}[e.Kind]
+		if verb == "" {
+			verb = "->"
+		}
+		what := fmt.Sprintf("%s %s %s", e.Agent, verb, e.Peer)
+		detail := fmt.Sprintf("%s · %d bytes · %s", e.Kind, e.Bytes, shortHash(e.SHA256))
+		if e.Type == recorder.TypeTeamRefused {
+			fmt.Printf("%s  team REFUSED    %s  %s (%s)\n", ts, what, detail, e.Reason)
+		} else {
+			fmt.Printf("%s  team            %s  %s\n", ts, what, detail)
+		}
+	case recorder.TypeTeamStore:
+		verdict := e.Outcome
+		if e.Reason != "" {
+			verdict += " · " + e.Reason
+		}
+		fmt.Printf("%s  team store      %s %s %s  %s\n", ts, e.Agent, e.Kind, e.Peer, verdict)
 	case recorder.TypeResourceSummary:
 		fmt.Printf("%s  usage           %.2f CPU-seconds%s · peak RSS %s (VMM)%s · net %s in / %s out · disk %s written\n",
 			ts, e.CPUSeconds, quotaSuffix(e), report.HumanKiB(e.PeakRSSKiB),

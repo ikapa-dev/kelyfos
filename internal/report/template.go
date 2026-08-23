@@ -51,6 +51,8 @@ const reportHTML = `<!DOCTYPE html>
   .egress .title{color:var(--ok)}
   .egress-blocked .title{color:var(--warn)}
   .oom .title{color:var(--warn)}
+  .team .title{color:var(--text)}
+  .team-refused .title{color:var(--warn)}
   .secret .title{color:var(--amber)}
   .session .title{color:var(--muted);font-weight:400}
   footer{margin-top:44px;color:var(--muted);font-size:12.5px;border-top:1px solid var(--line);padding-top:16px}
@@ -73,6 +75,8 @@ const reportHTML = `<!DOCTYPE html>
   <div class="card"><div class="n ok">{{.Summary.EgressOK}}</div><div class="l">egress allowed</div></div>
   <div class="card"><div class="n{{if .Summary.EgressBlock}} warn{{end}}">{{.Summary.EgressBlock}}</div><div class="l">egress blocked</div></div>
   <div class="card"><div class="n{{if .Summary.OOMKills}} warn{{end}}">{{.Summary.OOMKills}}</div><div class="l">OOM kills</div></div>
+  {{if or .Summary.TeamMessages .Summary.TeamRefused}}<div class="card"><div class="n">{{.Summary.TeamMessages}}</div><div class="l">team messages</div></div>
+  <div class="card"><div class="n{{if .Summary.TeamRefused}} warn{{end}}">{{.Summary.TeamRefused}}</div><div class="l">team refused</div></div>{{end}}
   <div class="card"><div class="n">{{.Summary.BootMS}}</div><div class="l">boot ms</div></div>
 </div>
 

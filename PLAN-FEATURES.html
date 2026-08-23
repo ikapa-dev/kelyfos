@@ -126,7 +126,7 @@
      improvements to the existing product land here as epics. Inert until its gate opens.</p>
   <div class="meta">
     owner: <b>John</b> &nbsp;&middot;&nbsp; developer: <b>Claude Code</b> &nbsp;&middot;&nbsp;
-    status: <b class="ok" id="meta-status">Epic E2 — active, 4/10 (next: E2-4, kelyfos team up)</b> &nbsp;&middot;&nbsp;
+    status: <b class="ok" id="meta-status">Epic E2 — active, 5/10 (next: E2-5, spawn under a budget)</b> &nbsp;&middot;&nbsp;
     last updated: <b id="meta-updated">2026-08-23</b><br>
     repo file: <b>PLAN-FEATURES.html</b> (lives at the repository root next to <code>PLAN.html</code>)<br>
     <span class="quiet">Companion to PLAN.html — same protocol, same rules, later timeline.</span>
@@ -166,7 +166,7 @@
     <span class="bl-name">All epics</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">E2-4 — <code>kelyfos team up | ps | down</code>: where the broker first meets real VMs</b></div>
+  <div class="focusline">Current focus: <b id="focus">E2-5 — spawn under a declared budget: the one sanctioned exception to a fixed topology</b></div>
 </div>
 
 <!-- ====================================================== 1. ACTIVATION GATE -->
@@ -359,7 +359,7 @@
         sibling fact); concurrent read-write mounting of one ext4 disk is impossible because ext4 is not a cluster filesystem —
         true on any VMM, nothing to do with Firecracker; read-only multi-mounting is fine, and is exactly what the build
         plan&rsquo;s fork design does with the shared rootfs. The store is the safe equivalent, and unlike shared memory every access is permissioned and audited.</span></li>
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">E2-4</span><span class="tk"><code>kelyfos team up | ps | down</code>: boot the declared graph (fork from a shared
         snapshot when agents use the same image — five warm workers in milliseconds-class time per the build plan&rsquo;s
         restore target; a target until P3 measures it), per-agent workspaces, <code>ps</code> shows
@@ -834,6 +834,25 @@
         refusal is the failure mode this project picks everywhere else. The cost is honest: every schema growth is parser
         work, and a user who writes valid TOML outside the subset is told no. That is the trade, and the condition for
         reversing it is written above rather than left to taste.</td></tr>
+        <tr><td class="mono">F-D17</td><td class="mono">2026-08-23</td>
+        <td><code>kelyfos team up</code> boots its agents as <b>concurrent cold boots</b>, not as forks from a shared
+        snapshot. E2-4's parenthetical asks for the fork, and the fork is not available to a team as teams are specified.
+        <b>The E2 acceptance test's &ldquo;total spawn time &lt; 1 s&rdquo; bar therefore cannot be met by this
+        implementation and will be reported as not met</b>, with the measured number, rather than quietly restated.</td>
+        <td>The obstacle is P3-2 and D22 rather than effort. A fork is vsock-only by the build plan's own design: N forks
+        would need N distinct guest network identities, and the guest's address and default route are baked into the memory
+        image, so separating them genuinely needs a network namespace per fork &mdash; which D22 puts in P4-1 jailer
+        territory. <code>kelyfos fork</code> already refuses a networked snapshot for exactly this reason. A team agent
+        with an <code>allow</code> list needs a NIC, so fork-based spawn would work only for agents with no egress: a
+        minority case, and a second boot path whose availability depends on a policy field. Two paths where one will do,
+        for a case that is not the common one, is worse than one honest path and a recorded gap.
+        What was done instead is real: the agents boot together rather than one after another, since nothing about the
+        second depends on the first. On this dev machine that buys nothing measurable &mdash; three concurrent boots take
+        2.34 s against roughly 2.31 s sequential, because a nested guest with six vCPUs is CPU-bound long before it is
+        latency-bound &mdash; and per D15 that is a fact about the measuring environment. The reference runner decides
+        whether it buys anything, and the number goes in the log either way.
+        Revisit when forks gain per-fork network identity. Until then the honest options are this, or a team whose agents
+        may not reach the network, and the second is not a team anybody asked for.</td></tr>
     <!-- Claude Code: append rows above this line. -->
       <tr><td class="mono">F-D10</td><td class="mono">2026-08-22</td>
         <td>The resource knobs E1-0 goes looking for shipped <b>partly</b>: <code>--vcpus</code>/<code>--mem</code> and
@@ -1723,6 +1742,66 @@ ok  internal/team  1.804s   (20 tests)
 
 new in the schema: team.store with agent, peer (the key), kind, outcome,
 reason and bytes — and never the value.</pre></td></tr>
+        <tr><td class="mono">2026-08-23</td><td class="mono">E2-4</td>
+        <td><b><code>kelyfos team up | ps | down</code>, and the first messages ever routed between two real KelyfOS
+        machines.</b> A <code>[team]</code> section is parsed by the extended parser (F-D16), resolved into named agents
+        before anything boots &mdash; <code>count = 3</code> becomes three names, so an edge to <code>worker-*</code> is
+        checked against names that exist and a typo is a refusal at the file rather than a message that mysteriously never
+        arrives an hour in. Each agent gets its own image, its own egress, its own caps and its own team channel; the
+        broker gets one flight recorder for the whole team, so a team produces one verifiable transcript rather than five
+        that have to be correlated afterwards. <code>ps</code> shows the resolved pairs rather than the file's wording,
+        because a star written as one line is four pairs and a reader wants the pairs; <code>down</code> signals the
+        process that holds the workspaces, the proxies and the recorder, because that is the only party that can do the
+        work rather than a shortcut around it.
+        <b>The live run found one real bug.</b> The store was being built at plan time, before the recorder existed, so it
+        was constructed with a nil record callback and kept every access to itself &mdash; E2-3 promises the opposite, the
+        unit tests passed because they pass their own collector, and only three real VMs showed it. The store is now built
+        where the recorder is.
+        F-D17 records what was <i>not</i> done: agents boot concurrently rather than forking from a shared snapshot,
+        because a fork is vsock-only by P3-2's design and a team agent with an allowlist needs a NIC. The E2 acceptance
+        test's sub-second spawn bar cannot be met this way and will be reported as not met, with the number.</td>
+        <td class="mono"><pre>$ kelyfos team up          (three real microVMs, aarch64, nested — D15)
+team reviewers: 3 agents, 4 edges
+  master       6e489e30 ready in 2339 ms
+  worker-1     005bf790 ready in 2323 ms     &lt;- concurrent: all three
+  worker-2     4eebf224 ready in 2335 ms        finish together
+team up in 2339 ms
+
+$ kelyfos team ps
+AGENT     SANDBOX   CPU   MEM     DISK WRITTEN  REACHES
+master    523fb73f  0.8s  36 MiB  0 B           worker-1 worker-2
+worker-1  e2e824a0  0.7s  36 MiB  0 B           master
+worker-2  ab267400  0.8s  36 MiB  0 B           master
+edges
+  master -&gt; worker-1     worker-1 -&gt; master
+  master -&gt; worker-2     worker-2 -&gt; master
+
+driving the real MCP tools over `kelyfos mcp`, three separate machines:
+  1. tools listed for a member: team_send team_recv team_ask team_reply
+                                team_peers team_store_get team_store_put
+  2. master reaches   [worker-1, worker-2]
+     worker-1 reaches [master]           &lt;- cannot enumerate its siblings
+  3. master -&gt; worker-1  "split this"    -&gt; {"body":"split this","from":"master"}
+  4. worker-1 -&gt; worker-2                -&gt; no_edge: this team has no edge
+  5. master asks "how many?"             -&gt; worker-1 answers "42 findings"
+  6. worker-1 writes findings/a          ok
+     worker-1 reads it back              denied: worker-1 may not read findings/a
+     master reads it                     "a finding"
+
+$ kelyfos log --session f72b69da
+  team            master -&gt; worker-1    send  · 10 bytes · 810daffa7f6e
+  team REFUSED    worker-1 -&gt; worker-2  send  ·  4 bytes · 32c655bb8433 (no_edge)
+  team            master ?&gt; worker-1    ask   ·  9 bytes · a84049d63720
+  team            worker-1 &lt;- master    reply · 11 bytes · d528f4b4021e
+  team store      worker-1 put findings/a  delivered
+  team store      worker-1 get findings/a  refused · denied
+  team store      master   get findings/a  delivered
+$ kelyfos log --session f72b69da --verify
+session f72b69da: chain intact, 8 events verified
+$ kelyfos log --session f72b69da --export team.html
+  team messages / team refused / REFUSED worker-1 → worker-2   all rendered
+
+$ go test ./... -race     all packages ok</pre></td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>

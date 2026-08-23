@@ -22,6 +22,8 @@ usage:
   kelyfos mcp [flags]              bridge an MCP client's stdio to a sandbox
   kelyfos snapshot save|restore    save a sandbox's state, or bring it back
   kelyfos fork [flags]             restore one snapshot into several sandboxes
+  kelyfos team up|ps|down          run several agents with the paths between
+                                   them written down and enforced
   kelyfos shim [flags]             serve an E2B-compatible REST subset
   kelyfos log [flags]              replay, follow or verify a session's record
   kelyfos watch [flags]            live view of a sandbox (reads the record only)
@@ -54,6 +56,8 @@ func main() {
 		err = shimCmd(os.Args[2:])
 	case "log":
 		err = logCmd(os.Args[2:])
+	case "team":
+		err = teamCmd(os.Args[2:])
 	case "watch":
 		err = watchCmd(os.Args[2:])
 	case "bench":

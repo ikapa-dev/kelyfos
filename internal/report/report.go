@@ -48,6 +48,8 @@ type Summary struct {
 	EgressBlock  int
 	Terminated   int
 	OOMKills     int
+	TeamMessages int
+	TeamRefused  int
 	TimedOut     string
 	Secrets      []string
 	// Usage is the receipt: what the sandbox actually consumed, and what it was
@@ -182,6 +184,35 @@ func Render(w io.Writer, sessionID string, events []recorder.Event, verifyErr er
 			}
 			v.Rows = append(v.Rows, Row{ts, "secret", "secret " + e.Name,
 				"sent to " + e.Host + " · the value is not recorded anywhere", "", false})
+		case recorder.TypeTeamMessage, recorder.TypeTeamRefused:
+			refused := e.Type == recorder.TypeTeamRefused
+			kind, title := "team", fmt.Sprintf("%s → %s", e.Agent, e.Peer)
+			if refused {
+				kind, title = "team-refused", fmt.Sprintf("REFUSED %s → %s", e.Agent, e.Peer)
+				v.Summary.TeamRefused++
+			} else {
+				v.Summary.TeamMessages++
+			}
+			detail := fmt.Sprintf("%s · %d bytes · sha256 %s", e.Kind, e.Bytes, short(e.SHA256))
+			if e.Reason != "" {
+				detail += " · " + e.Reason
+			}
+			v.Rows = append(v.Rows, Row{ts, kind, title, detail, e.Data, refused})
+		case recorder.TypeTeamStore:
+			refused := e.Outcome != "delivered"
+			detail := e.Outcome
+			if e.Reason != "" {
+				detail += " · " + e.Reason
+			}
+			if e.Bytes > 0 {
+				detail += fmt.Sprintf(" · %d bytes", e.Bytes)
+			}
+			kind := "team"
+			if refused {
+				kind = "team-refused"
+			}
+			v.Rows = append(v.Rows, Row{ts,
+				kind, fmt.Sprintf("%s %s %s", e.Agent, e.Kind, e.Peer), detail, "", refused})
 		case recorder.TypeResourceSummary:
 			v.Summary.Usage = &Usage{
 				CPUSeconds: e.CPUSeconds, CPUQuota: e.CPUQuota, Vcpus: e.VcpuCount,

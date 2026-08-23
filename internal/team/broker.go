@@ -3,10 +3,14 @@ package team
 import (
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
+
+	"github.com/p4r4n0rm4l/KelyfOS/internal/proto"
 )
 
 // Message is one delivery, as the receiving agent sees it.
@@ -105,6 +109,77 @@ func New(topo *Topology, capture bool, record func(Event)) *Broker {
 		b.boxes[a] = make(chan Message, mailbox)
 	}
 	return b
+}
+
+// Serve answers one guest's team request. It is the single entry point the
+// host's channel server calls, so every op an agent can reach goes through the
+// same edge checks and the same record — there is no second door.
+//
+// The agent name is the host's, taken from the sandbox it came from, never from
+// the frame. A guest that could name itself could name someone else.
+func (b *Broker) Serve(agent string, req proto.TeamRequest) proto.TeamResponse {
+	body, err := base64.StdEncoding.DecodeString(req.Body)
+	if err != nil {
+		return failed(&Error{Kind: proto.ErrBadRequest, Message: "body is not base64"})
+	}
+	timeout := time.Duration(req.TimeoutMS) * time.Millisecond
+	if timeout <= 0 {
+		timeout = time.Minute
+	}
+
+	switch req.Op {
+	case proto.OpTeamSend:
+		if err := b.Send(agent, req.To, body); err != nil {
+			return failed(err)
+		}
+		return proto.TeamResponse{OK: true}
+
+	case proto.OpTeamRecv:
+		m, err := b.Recv(agent, timeout)
+		if err != nil {
+			return failed(err)
+		}
+		return proto.TeamResponse{OK: true, From: m.From, Correlate: m.Correlate,
+			Body: base64.StdEncoding.EncodeToString(m.Body)}
+
+	case proto.OpTeamAsk:
+		answer, err := b.Ask(agent, req.To, body, timeout)
+		if err != nil {
+			return failed(err)
+		}
+		return proto.TeamResponse{OK: true, Body: base64.StdEncoding.EncodeToString(answer)}
+
+	case proto.OpTeamReply:
+		if err := b.Reply(agent, req.Correlate, body); err != nil {
+			return failed(err)
+		}
+		return proto.TeamResponse{OK: true}
+
+	case proto.OpTeamPeers:
+		return proto.TeamResponse{OK: true, Peers: b.Peers(agent)}
+
+	case proto.OpTeamStoreGet:
+		v, err := b.StoreGet(agent, req.Key)
+		if err != nil {
+			return failed(err)
+		}
+		return proto.TeamResponse{OK: true, Body: base64.StdEncoding.EncodeToString(v)}
+
+	case proto.OpTeamStorePut:
+		if err := b.StorePut(agent, req.Key, body); err != nil {
+			return failed(err)
+		}
+		return proto.TeamResponse{OK: true}
+	}
+	return failed(&Error{Kind: proto.ErrBadRequest, Message: "unknown team op " + req.Op})
+}
+
+func failed(err error) proto.TeamResponse {
+	var te *Error
+	if errors.As(err, &te) {
+		return proto.TeamResponse{Error: &proto.Error{Kind: te.Kind, Message: te.Message}}
+	}
+	return proto.TeamResponse{Error: &proto.Error{Kind: proto.ErrInternal, Message: err.Error()}}
 }
 
 // Peers is team_peers: what this agent may initiate to, and nothing else.

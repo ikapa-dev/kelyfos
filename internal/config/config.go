@@ -63,6 +63,10 @@ type Config struct {
 	// name the line the ceiling came from instead of just the number.
 	ResLine map[string]int
 
+	// Team is the [team] section, when the file has one (E2-4). Nil means this
+	// is an ordinary single-sandbox policy, which is most files.
+	Team *Team
+
 	// Path is where this was read from, for error messages that say which file
 	// is wrong.
 	Path string
@@ -90,11 +94,13 @@ func Find(start string) (string, bool) {
 
 // Load parses a policy file.
 //
-// The parser is deliberately small: this is a flat table of scalars and string
-// arrays, and a whole TOML library would be a dependency carried for a file
-// format that a project is expected to read at a glance. Anything it does not
-// understand is an error naming the line, not a silent skip — a policy file
-// with a typo that quietly does nothing is worse than one that refuses.
+// The parser is deliberately small, and F-D16 records why it stayed that way
+// when the team schema arrived: this file is *policy*, and for policy a parser
+// a reader can audit in ten minutes is worth more than a general one nobody
+// here will read. It understands a documented subset of TOML — sections, array
+// of tables one level deep, scalars and string arrays — and anything else is an
+// error naming the line, never a silent skip. A policy file with a typo that
+// quietly does nothing is worse than one that refuses.
 func Load(path string) (*Config, error) {
 	blob, err := os.ReadFile(path)
 	if err != nil {
@@ -111,22 +117,26 @@ func Load(path string) (*Config, error) {
 		where := fmt.Sprintf("%s:%d", path, n+1)
 
 		if strings.HasPrefix(line, "[") {
-			if !strings.HasSuffix(line, "]") {
-				return nil, fmt.Errorf("%s: unterminated section header", where)
-			}
-			section = strings.Trim(line, "[]")
-			if section != "sandbox" && section != "resources" {
-				return nil, fmt.Errorf("%s: unknown section [%s]; only [sandbox] and [resources] are understood", where, section)
+			var err error
+			section, err = cfg.header(line, where)
+			if err != nil {
+				return nil, err
 			}
 			continue
 		}
-
 		key, value, ok := strings.Cut(line, "=")
 		if !ok {
 			return nil, fmt.Errorf("%s: expected key = value", where)
 		}
 		key = strings.TrimSpace(key)
 		value = strings.TrimSpace(value)
+
+		if strings.HasPrefix(section, "team") {
+			if err := cfg.teamKey(section, key, value, where); err != nil {
+				return nil, err
+			}
+			continue
+		}
 
 		// [resources] keys are kept separate from [sandbox] so a typo in one
 		// section cannot silently satisfy the other.

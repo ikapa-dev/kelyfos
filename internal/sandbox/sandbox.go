@@ -76,6 +76,14 @@ type Options struct {
 	// writes outside /work (E1-5). Zero leaves the guest kernel's own default,
 	// which is half the guest's RAM.
 	ScratchBytes int64
+	// Agent is this sandbox's name within a team, or empty for a sandbox that
+	// is not in one. It reaches the guest on the kernel command line, so a
+	// guest cannot rename itself into another agent's edges (E2-2).
+	Agent string
+	// OnTeamRequest answers the guest's team channel. Nil means the sandbox is
+	// not in a team and the channel is not bound at all — a guest that dials it
+	// finds nothing, which is the truthful answer.
+	OnTeamRequest func(proto.TeamRequest) proto.TeamResponse
 	// OnGuestEvent receives what the guest reports on the events channel
 	// (docs/protocol.md §5.5). The caller decides what to record; the guest
 	// never writes the flight recorder itself (docs/events.md §1).
@@ -98,6 +106,7 @@ type State struct {
 	Netmask     string    `json:"netmask,omitempty"`
 	HostMAC     string    `json:"host_mac,omitempty"`
 	ProxyPort   int       `json:"proxy_port,omitempty"`
+	Agent       string    `json:"agent,omitempty"`
 	VcpuCount   int       `json:"vcpu_count,omitempty"`
 	MemMiB      int       `json:"mem_mib,omitempty"`
 	CPUQuota    int       `json:"cpu_quota_percent,omitempty"`
@@ -122,6 +131,7 @@ type Sandbox struct {
 	cmd      *exec.Cmd
 	readyLn  net.Listener
 	eventsLn net.Listener
+	teamLn   net.Listener
 	ready    chan proto.Ready
 	done     chan struct{}
 	waitErr  error
@@ -202,6 +212,7 @@ func New(opts Options) (*Sandbox, error) {
 	if opts.Workspace != nil {
 		s.State.Workspace = opts.Workspace.ImagePath
 	}
+	s.State.Agent = opts.Agent
 	s.State.VcpuCount = opts.VcpuCount
 	s.State.MemMiB = opts.MemMiB
 	s.State.ScratchByte = opts.ScratchBytes
@@ -239,9 +250,66 @@ func New(opts Options) (*Sandbox, error) {
 		s.cleanup()
 		return nil, err
 	}
+	if err := s.listenTeam(); err != nil {
+		s.cleanup()
+		return nil, err
+	}
 	s.api = newAPI(s.State.APIPath)
 
 	return s, nil
+}
+
+// listenTeam binds the guest's team channel, and only for a sandbox that is in
+// a team. A guest with no team dials nothing, and a guest whose host declined
+// to answer would be worse than one that finds no listener: the second is a
+// clear failure, the first is a hang.
+func (s *Sandbox) listenTeam() error {
+	if s.opts.OnTeamRequest == nil {
+		return nil
+	}
+	ln, err := net.Listen("unix", fmt.Sprintf("%s_%d", s.State.UDSPath, proto.PortTeam))
+	if err != nil {
+		return fmt.Errorf("bind team channel: %w", err)
+	}
+	s.teamLn = ln
+	go s.serveTeam()
+	return nil
+}
+
+// serveTeam answers the guest's team requests, one connection at a time per
+// connection and strictly in order on each — the ordering the broker promises
+// is per-edge FIFO, and answering out of order would break it on the way in
+// rather than on the way out.
+func (s *Sandbox) serveTeam() {
+	for {
+		conn, err := s.teamLn.Accept()
+		if err != nil {
+			return
+		}
+		go func() {
+			defer conn.Close()
+			r, w := proto.NewReader(conn), proto.NewWriter(conn)
+			for {
+				var req proto.TeamRequest
+				if err := r.Read(&req); err != nil {
+					var syntax *json.SyntaxError
+					var typ *json.UnmarshalTypeError
+					if errors.As(err, &syntax) || errors.As(err, &typ) {
+						// Same rule as the events channel: a frame that will
+						// not parse is skipped, not fatal. Newline framing
+						// means a bad line cannot desynchronise the stream.
+						continue
+					}
+					return
+				}
+				resp := s.opts.OnTeamRequest(req)
+				resp.V, resp.ID = proto.Version, req.ID
+				if err := w.Write(resp); err != nil {
+					return
+				}
+			}
+		}()
+	}
 }
 
 // listenEvents binds the guest's events channel. It has to exist before the VM
@@ -763,6 +831,9 @@ func (s *Sandbox) Shutdown(grace time.Duration) error {
 	}
 	if s.eventsLn != nil {
 		_ = s.eventsLn.Close()
+	}
+	if s.teamLn != nil {
+		_ = s.teamLn.Close()
 	}
 	s.opts.Net.Down()
 	s.cleanup()
