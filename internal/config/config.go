@@ -61,6 +61,11 @@ type Config struct {
 	// limit that permits nothing.
 	MCPMaxSandboxes int
 
+	// [[plugin]] — MCP servers that run inside the guest, one entry each
+	// (E4-6, F-D6). Order is the order they were written, which is the order
+	// they are packed and launched in.
+	Plugins []Plugin
+
 	// Time budgets (E1-6). Zero means no budget.
 	ResMaxRuntime  time.Duration
 	ResIdleTimeout time.Duration
@@ -135,6 +140,13 @@ func Load(path string) (*Config, error) {
 		}
 		key = strings.TrimSpace(key)
 		value = strings.TrimSpace(value)
+
+		if section == "plugin" {
+			if err := cfg.pluginKey(key, value, where); err != nil {
+				return nil, err
+			}
+			continue
+		}
 
 		if section == "mcp" {
 			switch key {

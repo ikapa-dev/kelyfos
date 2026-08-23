@@ -26,6 +26,8 @@ func sectionHeader(section string) string {
 		return ""
 	case "resources", "mcp", "team", "team.resources", "team.store":
 		return "[" + section + "]\n"
+	case "plugin":
+		return "[[plugin]]\n"
 	case "team.agent", "team.edge", "team.store.key":
 		return "[[" + section + "]]\n"
 	case "team.agent.resources", "team.agent.spawn", "team.agent.spawn.resources":
@@ -100,7 +102,14 @@ func TestSchemaCoversTheParser(t *testing.T) {
 	// Only the functions that decide what a key means. A `case` anywhere else —
 	// parseBool's "true"/"false", stripComment's quoting — says nothing about
 	// the file's schema.
-	keyFuncs := map[string]bool{"Load": true, "teamKey": true, "assignResources": true}
+	//
+	// The list is checked rather than trusted: TestEveryKeyFunctionIsScanned
+	// below finds the ones this misses, because a new section's function added
+	// to the parser and forgotten here would make this whole test pass by not
+	// looking (E4-6).
+	keyFuncs := map[string]bool{
+		"Load": true, "teamKey": true, "assignResources": true, "pluginKey": true,
+	}
 
 	var missing []string
 	for _, f := range pkg {
@@ -184,6 +193,74 @@ func TestUnknownKeyNamesTheRealKeys(t *testing.T) {
 			if !strings.Contains(err.Error(), k.Name) {
 				t.Errorf("%s: the unknown-key error does not mention %q:\n%v", s.Header, k.Name, err)
 			}
+		}
+	}
+}
+
+// keyFunctions returns every function in this package that ends a switch with
+// unknownKey — which is exactly the set of functions that decide what a key
+// means, because that call is what a key-dispatching switch does with a key it
+// does not recognise.
+func keyFunctions(t *testing.T) map[string]bool {
+	t.Helper()
+	fset := token.NewFileSet()
+	pkg, err := parser.ParseDir(fset, ".", func(fi os.FileInfo) bool {
+		return !strings.HasSuffix(fi.Name(), "_test.go") && fi.Name() != "schema.go"
+	}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := map[string]bool{}
+	for _, f := range pkg {
+		for _, file := range f.Files {
+			ast.Inspect(file, func(n ast.Node) bool {
+				fn, ok := n.(*ast.FuncDecl)
+				if !ok || fn.Body == nil {
+					return true
+				}
+				ast.Inspect(fn.Body, func(n ast.Node) bool {
+					call, ok := n.(*ast.CallExpr)
+					if !ok {
+						return true
+					}
+					id, ok := call.Fun.(*ast.Ident)
+					if !ok {
+						return true
+					}
+					// Either the helper or the thin wrapper over it. The two
+					// wrappers themselves are not key functions: calling it is
+					// all they do.
+					if (id.Name == "unknownKey" || id.Name == "unknown") &&
+						fn.Name.Name != "unknown" && fn.Name.Name != "unknownKey" {
+						found[fn.Name.Name] = true
+					}
+					return true
+				})
+				return true
+			})
+		}
+	}
+	return found
+}
+
+// The direction-two test above scans a named list of functions. A list is a
+// thing that goes out of date silently: a new section brings a new function,
+// the function is not in the list, and the test that exists to catch
+// undocumented keys passes because it never looked at them. This checks the
+// list against the parser itself.
+func TestEveryKeyFunctionIsScanned(t *testing.T) {
+	scanned := map[string]bool{
+		"Load": true, "teamKey": true, "assignResources": true, "pluginKey": true,
+	}
+	for name := range keyFunctions(t) {
+		if !scanned[name] {
+			t.Errorf("%s decides what a key means and TestSchemaCoversTheParser does not read it; "+
+				"add it to keyFuncs there and to the list in this test", name)
+		}
+	}
+	for name := range scanned {
+		if !keyFunctions(t)[name] {
+			t.Errorf("%s is listed as a key function and no longer dispatches keys; remove it", name)
 		}
 	}
 }

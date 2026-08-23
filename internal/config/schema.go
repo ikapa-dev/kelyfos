@@ -122,6 +122,7 @@ func Sections() []Section {
 		{Name: "team.edge", Header: "[[team.edge]]", Repeated: true, Doc: "one permitted path; the edge list is the topology"},
 		{Name: "team.store", Header: "[team.store]", Doc: "the permissioned key/blob store shared by the team"},
 		{Name: "team.store.key", Header: "[[team.store.key]]", Repeated: true, Doc: "who may read and write one key or glob"},
+		{Name: "plugin", Header: "[[plugin]]", Repeated: true, Doc: "one MCP server to run inside the guest; its tools are advertised as <name>_<tool>"},
 	}
 }
 
@@ -154,6 +155,18 @@ func Schema() []Key {
 	out = append(out,
 		Key{Section: "mcp", Name: "max_sandboxes", Type: TypeInt, Default: "4", Sample: "2",
 			Doc: "how many sandboxes one `kelyfos serve-mcp` may have running at once"},
+	)
+
+	out = append(out,
+		Key{Section: "plugin", Name: "name", Type: TypeString, Default: "", Sample: `"browser"`,
+			Doc: "the plugin's name and the prefix of every tool it advertises; " +
+				"lowercase letters, digits and dashes, at most 24 characters"},
+		Key{Section: "plugin", Name: "path", Type: TypeString, Default: "", Sample: `"./plugins/browser"`,
+			Doc: "host directory packed into the read-only plugins device, resolved against this file"},
+		Key{Section: "plugin", Name: "command", Type: TypeString, Default: "", Sample: `"node"`,
+			Doc: "what the supervisor launches, resolved inside that plugin's directory"},
+		Key{Section: "plugin", Name: "args", Type: TypeStrings, Default: "no arguments", Sample: `["server.js"]`,
+			Doc: "arguments to the command"},
 	)
 
 	out = append(out,

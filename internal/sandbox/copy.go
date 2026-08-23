@@ -56,3 +56,39 @@ func CheckForkSpace(dir string, n int, perFork int64) error {
 	}
 	return nil
 }
+
+// stageFile puts a file at dst without ever leaving a half-written one there.
+//
+// It exists because several forks of one snapshot stage the same read-only
+// device at the same time: a plain copy would let one of them read what another
+// was still writing, and a destination left read-only by whichever finished
+// first would refuse the next outright. Copy to a temporary name in the same
+// directory, then rename — which is atomic, and which succeeds over an existing
+// read-only file because the permission that matters is the directory's.
+func stageFile(src, dst string) error {
+	if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(dst), filepath.Base(dst)+".stage-")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name())
+	in, err := os.Open(src)
+	if err != nil {
+		tmp.Close()
+		return err
+	}
+	_, err = io.Copy(tmp, in)
+	in.Close()
+	if cerr := tmp.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return err
+	}
+	if err := os.Chmod(tmp.Name(), 0o400); err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), dst)
+}

@@ -3335,8 +3335,34 @@ vote (F-D24).
 
 The host packs each declared plugin's `path` directory into a **read-only ext4
 image**, attached as the next virtio-blk device and mounted at `/plugins`
-(F-D6). Sizing follows P3-10's rule and the image is built by the same
-host-side `mkfs.ext4`-and-populate the workspace uses.
+(F-D6). The image is built by the same host-side `mkfs.ext4`-and-populate the
+workspace uses; sizing follows P3-10's doubling with a much smaller floor,
+because nothing in the guest writes here and a gigabyte of headroom on a device
+nobody can write to would be a gigabyte of nothing.
+
+`path` is resolved against the policy file, not against a working directory —
+the same rule `workspace` follows, and it matters more here, because a client
+launches `serve-mcp` from a directory nobody chose.
+
+**Which device it is, is decided rather than assumed.** It is `/dev/vdc` behind
+a workspace and `/dev/vdb` without one, so the host computes it from where the
+drive actually landed and puts it on the kernel command line as
+`kelyfos.plugins=`. That is the same channel the workspace device and the proxy
+address travel on, for the same reason: the kernel command line is the one thing
+inside the guest that the guest did not write.
+
+**Read-only three times over**, because each layer answers a different question:
+the drive is attached `is_read_only`, so Firecracker refuses a write; the mount
+adds `ro,nosuid,nodev`, so the guest kernel refuses one too; and the image file
+is `0400` on the host, so a mistake on this side of the wall cannot edit a
+device a machine is running on. A `touch /plugins/anything` in the guest gets
+`Read-only file system`.
+
+**A snapshot carries the device.** Firecracker will not load a snapshot until
+every block device's backing file is at the path recorded in it, so the plugins
+image travels with the snapshot and is staged back if it is missing. Unlike the
+workspace there is no per-fork copy: the device is read-only, so every fork of
+one snapshot reads the same file and none of them can change it.
 
 ```
 /plugins/
@@ -3356,7 +3382,7 @@ reads it rather than scanning the directory:
 | --- | --- |
 | `name` | The declared name, and the tool prefix. |
 | `command`, `args` | What to launch, relative to that plugin's directory. |
-| `sha256` | Digest of the packed directory. |
+| `sha256` | Digest of the packed directory: every path, its mode, and the bytes of every file. Deliberately not the workspace's fingerprint, which mixes in modification times — the same plugin packed twice would then have two digests, and telling two builds apart is the only question this field is here to answer. |
 
 A plugin present on the device and absent from the manifest is not launched. The
 manifest is the list; the device is storage. That is the same relationship
@@ -5567,6 +5593,17 @@ Who may read and write one key or glob.
 | `name` | string | — | the key or trailing-* glob this rule covers; required |
 | `read` | string array | nobody, once a rule matches | agent names or globs that may read it; * is everyone |
 | `write` | string array | nobody, once a rule matches | agent names or globs that may write it |
+
+## `[[plugin]]`
+
+One MCP server to run inside the guest; its tools are advertised as <name>_<tool>.
+
+| Key | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `name` | string | — | the plugin's name and the prefix of every tool it advertises; lowercase letters, digits and dashes, at most 24 characters |
+| `path` | string | — | host directory packed into the read-only plugins device, resolved against this file |
+| `command` | string | — | what the supervisor launches, resolved inside that plugin's directory |
+| `args` | string array | no arguments | arguments to the command |
 
 
 ---

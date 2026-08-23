@@ -126,7 +126,7 @@
      improvements to the existing product land here as epics. Inert until its gate opens.</p>
   <div class="meta">
     owner: <b>John</b> &nbsp;&middot;&nbsp; developer: <b>Claude Code</b> &nbsp;&middot;&nbsp;
-    status: <b class="ok" id="meta-status">Epic E4 — active, 6/9 (v0.6 released; next: E4-6, the plugins drive)</b> &nbsp;&middot;&nbsp;
+    status: <b class="ok" id="meta-status">Epic E4 — active, 7/9 (v0.6 released; next: E4-7, the supervisor plugin runtime)</b> &nbsp;&middot;&nbsp;
     last updated: <b id="meta-updated">2026-08-23</b><br>
     repo file: <b>PLAN-FEATURES.html</b> (lives at the repository root next to <code>PLAN.html</code>)<br>
     <span class="quiet">Companion to PLAN.html — same protocol, same rules, later timeline.</span>
@@ -166,7 +166,7 @@
     <span class="bl-name">All epics</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">E4-6 — the plugins drive: <code>[[plugin]]</code> in the toml, a read-only plugins disk built at boot, and the per-plugin manifest the supervisor will read</b></div>
+  <div class="focusline">Current focus: <b id="focus">E4-7 — the supervisor plugin runtime: launch each <code>[[plugin]]</code> as a child, speak MCP stdio to it, and aggregate its tools under <code>&lt;plugin&gt;_&lt;tool&gt;</code></b></div>
 </div>
 
 <!-- ====================================================== 1. ACTIVATION GATE -->
@@ -518,7 +518,7 @@
         <span class="tid">E4-5</span><span class="tk">Client recipes: working config snippets for Claude Code and one more MCP client,
         added to the E3-3 cookbook and CI-executed like every recipe; <code>make docs</code> re-run so the generated reference and
         <code>llms-full.txt</code> pick up the new tools and toml keys automatically (F-D4 paying off).</span></li>
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">E4-6</span><span class="tk">Plugins drive (F-D6): the host packs each declared plugin&rsquo;s files into a
         read-only ext4 image attached as the next virtio-blk drive, mounted at <code>/plugins</code> — ext4 rather than squashfs: both ride virtio-blk
         equally well (no loop device involved — <code>/dev/vdc</code> is already a block device), but squashfs would require
@@ -1632,6 +1632,34 @@
         with neither client installed.
         <i>Revisit when</i> a client can be relied on to set a working directory, which none of them promises.</td>
         <td class="mono">code.claude.com/docs/en/mcp, code.visualstudio.com/docs</td></tr>
+        <tr><td class="mono">F-D45</td><td class="mono">2026-08-23</td>
+        <td><b>The plugins device is shared, not copied, across forks &mdash; and its digest is of contents rather than
+        of modification times.</b>
+        <i>Where the device is.</i> Not <code>/dev/vdc</code>. It is the third drive behind a workspace and the second
+        without one, so the host computes it from where the drive actually landed and names it on the kernel command
+        line. Hard-coding the letter would have been right in the case anyone tests first and would have mounted the
+        root filesystem over <code>/plugins</code> in the case nobody does.
+        <i>Forks share one file.</i> The workspace is copied per fork, because two machines writing the same disk would
+        make &ldquo;independent&rdquo; false in the most damaging way (P3-2). The plugins device is read-only, so the
+        same reasoning inverts: every fork reads the one staged file, there is nothing to race over, and nothing to
+        repoint after the load. What that does need is <b>atomic staging</b> &mdash; three concurrent forks staging the
+        same file found the second one refused by the read-only file the first had just written. Copy to a temporary
+        name in the same directory and rename, which is what a shared read-only artifact needs anywhere.
+        <i>The digest is not Fingerprint.</i> The workspace&rsquo;s fingerprint hashes names, sizes and modification
+        times, which is exactly right for noticing that a directory changed under a running sandbox and exactly wrong
+        for a manifest: the same plugin packed twice would carry two digests, so the field could not answer the only
+        question it exists for. <code>plugins.json</code> records a digest of contents &mdash; every path, its mode, and
+        the bytes of every file &mdash; and a test packs the same tree twice to prove it.
+        <i>Read-only in three places.</i> The drive is attached <code>is_read_only</code>, the mount adds
+        <code>ro,nosuid,nodev</code>, and the image file is <code>0400</code> on the host. Firecracker, the guest
+        kernel, and this side of the wall each refuse a write for their own reason, and the guest sees
+        <code>Read-only file system</code>.
+        <i>Also fixed in passing.</i> Both packers measured free space in a directory before creating it, so the first
+        workspace or plugins pack on a fresh machine failed with a stat error about a path rather than anything about
+        space.
+        <i>Revisit when</i> a plugin needs to be updated without rebuilding the device, which is a different feature and
+        not a different device.</td>
+        <td class="mono">internal/sandbox/plugins.go</td></tr>
     <!-- Claude Code: append rows above this line. -->
       <tr><td class="mono">F-D10</td><td class="mono">2026-08-22</td>
         <td>The resource knobs E1-0 goes looking for shipped <b>partly</b>: <code>--vcpus</code>/<code>--mem</code> and
@@ -3899,6 +3927,28 @@ $ gofmt -l . ; go vet ./... ; go test ./...
         id ordering as a common mistake after the F-D33 batch had fixed it. All corrected &mdash; and the count is now
         checked by the extractor, so the opening sentence cannot go stale again without failing the build.
         <b>Ten of ten recipes pass</b> on the development machine, including the two new ones.</td></tr>
+        <tr><td class="mono">2026-08-23</td><td class="mono">E4-6</td>
+        <td><b>The plugins device exists, and a guest can read what is on it.</b> <code>[[plugin]]</code> is a section of
+        the policy file with a name, a path, a command and its arguments; the host packs each declared directory into a
+        read-only ext4 image, attaches it as the next virtio-blk drive, and the supervisor mounts it at
+        <code>/plugins</code> with the manifest the host wrote. Proved live: <code>/dev/vdc on /plugins type ext4
+        (ro,nosuid,nodev)</code> behind a workspace, <code>/dev/vdb</code> without one, both files present with their
+        modes, and <code>touch /plugins/evil</code> answered with <i>Read-only file system</i>.
+        <b>The name is constrained where it is decided, not where it is used.</b> A plugin&rsquo;s name is the prefix of
+        every tool it advertises, so it is lowercase letters, digits and dashes only &mdash; it cannot contain the
+        separator, and it cannot be a shape a client silently rewrites (F-D36). Two plugins with one name are refused
+        naming both lines; a name too long to leave room for a tool is refused naming the 64 characters it is
+        protecting; and there is no <code>allow</code> key, so asking a plugin for its own egress is refused by the
+        parser rather than by a paragraph.
+        <b>Three forks of a snapshot share the device rather than copying it</b>, which is the read-only inversion of
+        P3-2&rsquo;s per-fork workspace copy — and which needed atomic staging, because the first fork&rsquo;s
+        read-only file refused the second (F-D45). Also in F-D45: the manifest&rsquo;s digest is of contents, not of
+        modification times, so it can answer the question it is there for.
+        <b>Two latent bugs fell out of the neighbourhood.</b> Both packers measured free space in a directory before
+        creating it, so the first workspace on a fresh machine failed with a stat error about a path. And the schema
+        gate that keeps every toml key documented scans a named list of parser functions — a list that had just silently
+        stopped covering the parser. It now checks itself against every function that ends a switch with
+        <code>unknownKey</code>, which is exactly the set.</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>

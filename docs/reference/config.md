@@ -160,3 +160,14 @@ Who may read and write one key or glob.
 | `name` | string | — | the key or trailing-* glob this rule covers; required |
 | `read` | string array | nobody, once a rule matches | agent names or globs that may read it; * is everyone |
 | `write` | string array | nobody, once a rule matches | agent names or globs that may write it |
+
+## `[[plugin]]`
+
+One MCP server to run inside the guest; its tools are advertised as <name>_<tool>.
+
+| Key | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `name` | string | — | the plugin's name and the prefix of every tool it advertises; lowercase letters, digits and dashes, at most 24 characters |
+| `path` | string | — | host directory packed into the read-only plugins device, resolved against this file |
+| `command` | string | — | what the supervisor launches, resolved inside that plugin's directory |
+| `args` | string array | no arguments | arguments to the command |

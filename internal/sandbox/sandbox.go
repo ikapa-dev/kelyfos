@@ -53,6 +53,9 @@ type Options struct {
 	VcpuCount int
 	MemMiB    int
 	Quiet     bool
+	// Plugins is the read-only device carrying the MCP servers that run inside
+	// the guest, or nil when the project declares none (E4-6).
+	Plugins *Plugins
 	// Allow is the egress allowlist. Empty means the sandbox gets no network
 	// interface at all — not a firewalled one, not an empty allowlist, none.
 	Allow []string
@@ -132,6 +135,7 @@ type State struct {
 	DiskIOPS    int       `json:"disk_iops,omitempty"`
 	DiskMbps    int       `json:"disk_mbps,omitempty"`
 	Workspace   string    `json:"workspace,omitempty"`
+	Plugins     string    `json:"plugins,omitempty"`
 	Allow       []string  `json:"allow,omitempty"`
 	RunDir      string    `json:"run_dir"`
 	StartedAt   time.Time `json:"started_at"`
@@ -240,6 +244,9 @@ func New(opts Options) (*Sandbox, error) {
 	cfg := firecrackerConfig(opts, kernel, rootfs, s.State.UDSPath, id)
 	if opts.Workspace != nil {
 		s.State.Workspace = opts.Workspace.ImagePath
+	}
+	if opts.Plugins != nil {
+		s.State.Plugins = opts.Plugins.ImagePath
 	}
 	s.State.Agent = opts.Agent
 	s.State.Session = opts.Session
@@ -561,6 +568,14 @@ type SnapshotMeta struct {
 	// load at all — the drive can only be repointed afterwards.
 	WorkspacePath string `json:"workspace_path,omitempty"`
 	WorkspaceSize int64  `json:"workspace_size,omitempty"`
+	// HasPlugins and PluginsPath are the read-only plugins device, recorded for
+	// the same reason the workspace is: Firecracker will not load a snapshot
+	// until every block device's backing file is present at the path recorded
+	// in it. Unlike the workspace there is no per-fork copy, because the device
+	// is read-only — every fork can read the one file, and none of them can
+	// change it (E4-6).
+	HasPlugins  bool   `json:"has_plugins,omitempty"`
+	PluginsPath string `json:"plugins_path,omitempty"`
 	// HasNetwork records that the machine had a NIC when it was frozen. The
 	// TAP itself is deliberately not recorded: it will not exist at restore
 	// time and re-using its name would collide with a live sandbox. What the
@@ -581,6 +596,7 @@ type SnapshotMeta struct {
 }
 
 func snapshotMetaPath(dir string) string  { return filepath.Join(dir, "meta.json") }
+func snapshotPlugins(dir string) string   { return filepath.Join(dir, "plugins.ext4") }
 func snapshotWorkspace(dir string) string { return filepath.Join(dir, "workspace.ext4") }
 
 // ReadSnapshotMeta loads what was recorded alongside a snapshot.
@@ -644,6 +660,16 @@ func SnapshotRunning(st *State, dir string) (statePath, memPath string, err erro
 		meta.Netmask = st.Netmask
 		meta.HostMAC = st.HostMAC
 		meta.ProxyPort = st.ProxyPort
+	}
+	if st.Plugins != "" {
+		// stageFile rather than copyFile: the captured device is left read-only,
+		// so a second snapshot under the same name would otherwise be refused
+		// by the file the first one wrote.
+		if err := stageFile(st.Plugins, snapshotPlugins(dir)); err != nil {
+			_ = a.resume()
+			return "", "", fmt.Errorf("capture plugins: %w", err)
+		}
+		meta.HasPlugins, meta.PluginsPath = true, st.Plugins
 	}
 	if st.Workspace != "" {
 		// The workspace disk is part of the machine's state, so it travels with
@@ -826,6 +852,18 @@ func Restore(snapDir string, opts Options) (*Sandbox, time.Duration, error) {
 	// then swaps in its own copy before the machine is resumed, and no guest
 	// I/O happens in between.
 	meta, metaErr := ReadSnapshotMeta(snapDir)
+	if metaErr == nil && meta.HasPlugins && meta.PluginsPath != "" {
+		// Staged back and then left alone. The plugins device is read-only, so
+		// every fork of one snapshot can share the single file: there is
+		// nothing for them to race over and nothing to repoint afterwards.
+		if _, err := os.Stat(meta.PluginsPath); os.IsNotExist(err) {
+			if err := stageFile(snapshotPlugins(snapDir), meta.PluginsPath); err != nil {
+				_ = s.Shutdown(2 * time.Second)
+				return nil, 0, fmt.Errorf("stage plugins for snapshot load: %w", err)
+			}
+		}
+		s.State.Plugins = meta.PluginsPath
+	}
 	if metaErr == nil && meta.HasWorkspace && meta.WorkspacePath != "" {
 		if _, err := os.Stat(meta.WorkspacePath); os.IsNotExist(err) {
 			if err := copyFile(snapshotWorkspace(snapDir), meta.WorkspacePath); err != nil {

@@ -62,11 +62,14 @@ func PackWorkspace(hostDir, imagePath string, maxSize int64) (*Workspace, error)
 		return nil, fmt.Errorf("workspace %s needs an image of %d bytes, over the %d byte ceiling; "+
 			"raise it or exclude what does not need to be in the sandbox", hostDir, size, maxSize)
 	}
-	if err := checkFreeSpace(filepath.Dir(imagePath), size); err != nil {
+	// Created before the free-space check rather than after: on a machine that
+	// has never packed a workspace the directory does not exist yet, and
+	// statfs on a path that is not there fails for a reason that has nothing to
+	// do with free space.
+	if err := os.MkdirAll(filepath.Dir(imagePath), 0o700); err != nil {
 		return nil, err
 	}
-
-	if err := os.MkdirAll(filepath.Dir(imagePath), 0o700); err != nil {
+	if err := checkFreeSpace(filepath.Dir(imagePath), size); err != nil {
 		return nil, err
 	}
 	_ = os.Remove(imagePath)

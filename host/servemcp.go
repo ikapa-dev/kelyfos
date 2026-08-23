@@ -128,6 +128,7 @@ type hostServer struct {
 // a session like any other — no entry path skips the record (F-D33).
 type servedBox struct {
 	sb      *sandbox.Sandbox
+	plugins string // the plugins image, removed with the machine that used it
 	rec     *recorder.Recorder
 	net     *sandbox.Network
 	proxy   *egress.Proxy
@@ -151,6 +152,9 @@ func (b *servedBox) close(reason string) {
 	}
 	if b.slice != nil {
 		b.slice.Close()
+	}
+	if b.plugins != "" {
+		_ = os.Remove(b.plugins)
 	}
 	if b.rec != nil {
 		_ = b.rec.Append(recorder.Event{

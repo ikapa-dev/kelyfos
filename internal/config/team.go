@@ -175,6 +175,10 @@ func (c *Config) header(line, where string) (string, error) {
 		c.Team.Store.Keys = append(c.Team.Store.Keys, TeamStoreKey{Line: lineOf(where)})
 		return name, nil
 
+	case array && name == "plugin":
+		c.Plugins = append(c.Plugins, Plugin{Line: lineOf(where)})
+		return "plugin", nil
+
 	case array && name == "team.edge":
 		c.ensureTeam()
 		// Bidirectional defaults to true, so it is set here rather than when

@@ -4,10 +4,10 @@ Updated 2026-08-23 · tree clean, synced with origin/main
 
 ## Plans
 - PLAN.html — 36/43. P4 backlog non-blocking, parked (P4-4/P4-5 [BLOCKED]).
-- PLAN-FEATURES.html — 31/42. **E1–E3 closed, v0.6 released. Epic E4 at 6/9.**
+- PLAN-FEATURES.html — 32/42. **E1–E3 closed, v0.6 released. Epic E4 at 7/9.**
 
 ## Now
-E4-6 — the plugins drive: `[[plugin]]`, a read-only disk, a per-plugin manifest.
+E4-7 — the supervisor plugin runtime: launch each plugin, namespace its tools.
 
 ## This session
 E1–E3 built and closed, **v0.6 released**: a generated reference with CI failing
@@ -19,9 +19,10 @@ refusing in the E1-1 style. E4-2 five file and state tools: the MCP frame limit
 was 1 MiB against a promised 8 MiB (F-D38), and a restore met no ceiling at all
 (F-D39). E4-3 the team tools, needing `team up` split into raising and waiting
 (F-D42), which caught a write to stdout — the protocol, on that path. E4-4 the
-outward audit lane; E4-0's promise of one export holding both lanes was
-rewritten rather than met (F-D43). E4-5 two client recipes, which found a
-client-launched server could run with no ceiling (F-D44); 10/10 recipes pass.
+audit lane; E4-0's promise of one export holding both lanes was rewritten rather
+than met (F-D43). E4-5 two client recipes, which found a client-launched server
+could run with no ceiling (F-D44); 10/10 recipes pass. E4-6 the plugins device,
+read-only and shared rather than copied across forks (F-D45).
 
 ## Blocked / debts
 - P4-4, P4-5 [BLOCKED]. `idle_timeout` refused (F-D20; F-D22). IMAGE_DIR is per-arch not per-flavor: parked.

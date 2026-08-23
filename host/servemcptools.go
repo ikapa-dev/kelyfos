@@ -352,6 +352,15 @@ func (s *hostServer) boot(opts sandbox.Options) (*servedBox, error) {
 		opts.CPUSlice = b.slice
 	}
 
+	// A sandbox raised through this door carries the project's plugins, exactly
+	// as one raised by `kelyfos run` does (E4-6).
+	if opts.Plugins, err = packPlugins(s.policy, id); err != nil {
+		return nil, err
+	}
+	if opts.Plugins != nil {
+		b.plugins = opts.Plugins.ImagePath
+	}
+
 	var ca *egress.CA
 	if len(opts.Allow) > 0 {
 		if b.net, err = sandbox.NewNetwork(id); err != nil {

@@ -328,6 +328,21 @@ status. This is how you hand an agent a sandbox and nothing else:
 	// and a copy out rather than a mount (docs/networking.md is about egress;
 	// this is the local-files path). Packing happens before boot because the
 	// image has to exist to be attached.
+	// The plugins device, when the project declares any. Read-only, packed
+	// before boot for the same reason the workspace is: the image has to exist
+	// to be attached (E4-6).
+	plugins, err := packPlugins(cfg, sandboxID)
+	if err != nil {
+		return err
+	}
+	opts.Plugins = plugins
+	if plugins != nil {
+		// The device is rebuilt from the policy every run, so it is removed
+		// with the machine. A snapshot that needs it kept its own copy.
+		defer os.Remove(plugins.ImagePath)
+		fmt.Printf("plugins    %s (read-only)\n", strings.Join(plugins.Names(), ", "))
+	}
+
 	if *wsDir != "" {
 		ws, err := sandbox.PackWorkspace(*wsDir,
 			filepath.Join(sandbox.Root(), "workspaces", sandboxID+".ext4"), diskCeiling)

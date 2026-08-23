@@ -66,6 +66,10 @@ func main() {
 		// us. setupRoot changes that.
 		setupRoot()
 		mountWorkspace()
+		// Mounted before anything can run, so a plugin's files are on disk
+		// before the first tool call could ask for one. What launches them is
+		// E4-7; this is the device and the manifest.
+		thePlugins = mountPlugins()
 	}
 
 	// Egress, if this sandbox has any. Reading it here means every command

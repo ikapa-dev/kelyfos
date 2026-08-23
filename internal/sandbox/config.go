@@ -167,10 +167,7 @@ func (l IOLimits) DriveLimiter() *RateLimiter {
 func firecrackerConfig(opts Options, kernel, rootfs, udsPath, id string) FirecrackerConfig {
 	driveLimit := opts.IO.DriveLimiter()
 	cfg := FirecrackerConfig{
-		BootSource: BootSource{
-			KernelImagePath: kernel,
-			BootArgs:        bootArgs(opts.Arch, opts.Quiet, opts.Net, opts.Workspace != nil, opts.ScratchBytes, opts.Agent, opts.MaySpawn),
-		},
+		BootSource: BootSource{KernelImagePath: kernel},
 		Drives: []Drive{{
 			DriveID:      "rootfs",
 			PathOnHost:   rootfs,
@@ -199,6 +196,25 @@ func firecrackerConfig(opts Options, kernel, rootfs, udsPath, id string) Firecra
 			RateLimiter:  driveLimit,
 		})
 	}
+	if opts.Plugins != nil {
+		// Read-only at the device, not merely by convention: a plugin is code
+		// the agent may run and must not be code the agent can edit
+		// (docs/mcp-surface.md §3.1).
+		cfg.Drives = append(cfg.Drives, Drive{
+			DriveID:      "plugins",
+			PathOnHost:   opts.Plugins.ImagePath,
+			IsRootDevice: false,
+			IsReadOnly:   true,
+			RateLimiter:  driveLimit,
+		})
+		// Which /dev/vd? is computed from where the drive actually landed
+		// rather than assumed to be the third, because it is the second when
+		// there is no workspace. The workspace's own device is pinned at
+		// /dev/vdb for the same reason it always is: it is always second when
+		// it exists at all.
+		opts.Plugins.Device = driveDevice(len(cfg.Drives) - 1)
+	}
+	cfg.BootSource.BootArgs = bootArgs(opts, opts.Plugins.device())
 	if opts.Net != nil {
 		rx, tx := opts.IO.NetLimiters()
 		cfg.NetworkIfaces = []NetworkIface{{
@@ -247,7 +263,15 @@ type Vsock struct {
 // Also absent: 8250.nr_uarts=0, which is in Firecracker's own default cmdline.
 // It disables the serial port, and KelyfOS wants a console — it is the only way
 // to see why a guest failed before the supervisor is up.
-func bootArgs(arch string, quiet bool, net *Network, workspace bool, scratchBytes int64, agent string, maySpawn bool) string {
+// driveDevice names the guest block device a drive at index i becomes. Firecracker
+// attaches virtio-blk devices in configuration order, so the root device is
+// /dev/vda, the next is /dev/vdb, and so on.
+func driveDevice(i int) string { return "/dev/vd" + string(rune('a'+i)) }
+
+func bootArgs(opts Options, pluginsDev string) string {
+	arch, quiet, net := opts.Arch, opts.Quiet, opts.Net
+	scratchBytes, agent, maySpawn := opts.ScratchBytes, opts.Agent, opts.MaySpawn
+	workspace := opts.Workspace != nil
 	args := []string{
 		"reboot=k",                      // no BIOS to reboot through; ask KVM to reset
 		"panic=1",                       // a panicked sandbox should die, not sit there
@@ -275,6 +299,12 @@ func bootArgs(arch string, quiet bool, net *Network, workspace bool, scratchByte
 	}
 	if workspace {
 		args = append(args, "kelyfos.workspace=/dev/vdb")
+	}
+	if pluginsDev != "" {
+		// Same channel as the workspace device and the proxy address, for the
+		// same reason: the kernel command line is the one thing inside the
+		// guest that the guest did not write (E4-6).
+		args = append(args, "kelyfos.plugins="+pluginsDev)
 	}
 	if agent != "" {
 		// The guest is told which agent it is, rather than asked. Same channel
