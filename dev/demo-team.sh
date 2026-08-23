@@ -3,9 +3,10 @@
 #
 #   bash dev/demo-team.sh
 #
-# One master and four workers, the workers forked from a single template because
-# their policy grants them no egress and a fork cannot carry a network identity
-# (F-D19). The master splits a task over `team_send`, one worker asks it a
+# One master and four workers. The first team-up boots all five cold and caches a
+# template behind them; the second forks the four no-egress workers from it,
+# because a fork cannot carry a network identity and they have none (F-D26).
+# Both spawn times are measured. The master splits a task over `team_send`, one worker asks it a
 # clarifying question mid-task and waits for the answer, the workers coordinate
 # their results through the permissioned team store, and the master assembles
 # them. A worker then tries to message a worker it has no edge to, and is
@@ -177,9 +178,9 @@ for w in worker-1 worker-2 worker-3 worker-4; do
 done
 echo "        master booted: $(via master) · workers forked: $FORKED/4"
 if [ "$FORKED" -eq 4 ] && [ "$(via master)" = "cold" ]; then
-  pass "the no-egress workers were forked and the egress-granted master was not (F-D19)"
+  pass "the no-egress workers were forked and the egress-granted master was not (F-D26)"
 else
-  fail "boot paths are not what F-D19 asks for: master=$(via master), $FORKED/4 workers forked"
+  fail "boot paths are not what F-D26 asks for: master=$(via master), $FORKED/4 workers forked"
 fi
 
 # The bar, measured rather than declared.
