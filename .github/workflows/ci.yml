@@ -150,9 +150,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Restore and save are separate steps on purpose. A post step is skipped
+      # once any step in the job has failed, so a build that dies half way
+      # through throws away the toolchain it had just spent an hour on — and a
+      # failing build is exactly the one you are about to re-run.
       - name: Cache Buildroot downloads
+        id: dl
         if: github.event_name != 'schedule'
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: ~/.cache/kelyfos/dl
           key: kelyfos-dl-${{ hashFiles('versions.mk') }}
@@ -161,8 +166,9 @@ jobs:
       # The toolchain is the expensive half and depends only on the pinned
       # versions and the fragments that configure it.
       - name: Cache the Buildroot tree
+        id: tree
         if: github.event_name != 'schedule'
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: ~/.cache/kelyfos/build/${{ matrix.arch }}-base
           key: kelyfos-tree-${{ matrix.arch }}-${{ hashFiles('versions.mk', 'image/buildroot/configs/*', 'image/buildroot/kernel/*') }}
@@ -173,8 +179,9 @@ jobs:
       # versions.mk is what changes it. A bump therefore starts a clean cache
       # instead of inheriting objects built by a toolchain that no longer exists.
       - name: Cache the compiler cache
+        id: ccache
         if: github.event_name != 'schedule'
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: ~/.cache/kelyfos/ccache
           key: kelyfos-ccache-${{ matrix.arch }}-${{ hashFiles('versions.mk') }}
@@ -196,6 +203,30 @@ jobs:
           else
             echo "no ccache binary at $ccache — the build did not get that far"
           fi
+
+      # The weekly run restores nothing and therefore saves nothing: its whole
+      # job is to prove the build works without a cache, and refreshing one from
+      # it would make the next week's run a little less honest.
+      - name: Save the Buildroot tree
+        if: always() && github.event_name != 'schedule' && steps.tree.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/kelyfos/build/${{ matrix.arch }}-base
+          key: ${{ steps.tree.outputs.cache-primary-key }}
+
+      - name: Save the downloads
+        if: always() && github.event_name != 'schedule' && steps.dl.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/kelyfos/dl
+          key: ${{ steps.dl.outputs.cache-primary-key }}
+
+      - name: Save the compiler cache
+        if: always() && github.event_name != 'schedule' && steps.ccache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/kelyfos/ccache
+          key: ${{ steps.ccache.outputs.cache-primary-key }}
 
       - uses: actions/upload-artifact@v4
         with:

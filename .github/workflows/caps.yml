@@ -54,21 +54,24 @@ jobs:
           cat /proc/self/cgroup
 
       - name: Cache Buildroot downloads
-        uses: actions/cache@v4
+        id: dl
+        uses: actions/cache/restore@v4
         with:
           path: ~/.cache/kelyfos/dl
           key: kelyfos-dl-${{ hashFiles('versions.mk') }}
           restore-keys: kelyfos-dl-
 
       - name: Cache the Buildroot tree
-        uses: actions/cache@v4
+        id: tree
+        uses: actions/cache/restore@v4
         with:
           path: ~/.cache/kelyfos/build/${{ env.ARCH }}-dev
           key: kelyfos-tree-${{ env.ARCH }}-dev-${{ hashFiles('versions.mk', 'image/buildroot/configs/*', 'image/buildroot/kernel/*', 'image/flavors/dev/*') }}
           restore-keys: kelyfos-tree-${{ env.ARCH }}-dev-
 
       - name: Cache the compiler cache
-        uses: actions/cache@v4
+        id: ccache
+        uses: actions/cache/restore@v4
         with:
           path: ~/.cache/kelyfos/ccache
           key: kelyfos-ccache-${{ env.ARCH }}-${{ hashFiles('versions.mk') }}
@@ -113,3 +116,29 @@ jobs:
           name: caps-${{ env.ARCH }}
           path: caps.log
           if-no-files-found: warn
+
+      # Saved explicitly, and with if: always(), because a post step is skipped
+      # once any step has failed — which cost forty-five minutes the first time
+      # this workflow found a real bug, since the failing run threw away the
+      # toolchain it had just spent that long building. The runs worth iterating
+      # on are exactly the ones that fail.
+      - name: Save the Buildroot tree
+        if: always() && steps.tree.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/kelyfos/build/${{ env.ARCH }}-dev
+          key: ${{ steps.tree.outputs.cache-primary-key }}
+
+      - name: Save the downloads
+        if: always() && steps.dl.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/kelyfos/dl
+          key: ${{ steps.dl.outputs.cache-primary-key }}
+
+      - name: Save the compiler cache
+        if: always() && steps.ccache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/kelyfos/ccache
+          key: ${{ steps.ccache.outputs.cache-primary-key }}
