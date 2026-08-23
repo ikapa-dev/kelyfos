@@ -161,6 +161,7 @@ type TeamRequest struct {
 	// it and reach an agent it has no edge to that way.
 	Correlate string `json:"correlate,omitempty"`
 	Key       string `json:"key,omitempty"`
+	Image     string `json:"image,omitempty"`
 	TimeoutMS int64  `json:"timeout_ms,omitempty"`
 }
 
@@ -171,6 +172,8 @@ type TeamResponse struct {
 	From  string   `json:"from,omitempty"`
 	Body  string   `json:"body,omitempty"` // base64
 	Peers []string `json:"peers,omitempty"`
+	// Agent names the worker a spawn produced.
+	Agent string `json:"agent,omitempty"`
 	// Correlate on a delivered question is the tag a reply must carry back.
 	Correlate string `json:"correlate,omitempty"`
 	Error     *Error `json:"error,omitempty"`
@@ -185,6 +188,7 @@ const (
 	OpTeamPeers    = "peers"
 	OpTeamStoreGet = "store_get"
 	OpTeamStorePut = "store_put"
+	OpTeamSpawn    = "spawn"
 )
 
 // Team error kinds, in addition to the shared ones above. Every refusal reaches

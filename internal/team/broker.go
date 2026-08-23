@@ -67,13 +67,21 @@ type Broker struct {
 	// should refuse store calls rather than pretend to have lost the data.
 	Store *Store
 
+	// OnSpawn boots a worker the broker has already decided may exist. Nil
+	// means this team cannot spawn at all — the broker knows what is permitted,
+	// and only the host knows how to start a machine.
+	OnSpawn func(SpawnRequest) error
+
 	topo    *Topology
 	record  func(Event)
 	capture bool
 
-	mu      sync.Mutex
-	boxes   map[string]chan Message
-	pending map[string]*ask // correlation tag -> the asker waiting
+	mu        sync.Mutex
+	boxes     map[string]chan Message
+	pending   map[string]*ask // correlation tag -> the asker waiting
+	budgets   map[string]Budget
+	spawnedBy map[string][]string
+	spawnSeq  int
 }
 
 // ask is one outstanding question.
@@ -104,7 +112,8 @@ func New(topo *Topology, capture bool, record func(Event)) *Broker {
 		record = func(Event) {}
 	}
 	b := &Broker{topo: topo, record: record, capture: capture,
-		boxes: map[string]chan Message{}, pending: map[string]*ask{}}
+		boxes: map[string]chan Message{}, pending: map[string]*ask{},
+		budgets: map[string]Budget{}, spawnedBy: map[string][]string{}}
 	for _, a := range topo.Agents() {
 		b.boxes[a] = make(chan Message, mailbox)
 	}
@@ -170,6 +179,23 @@ func (b *Broker) Serve(agent string, req proto.TeamRequest) proto.TeamResponse {
 			return failed(err)
 		}
 		return proto.TeamResponse{OK: true}
+
+	case proto.OpTeamSpawn:
+		if b.OnSpawn == nil {
+			return failed(&Error{Kind: "denied", Message: "this team cannot spawn workers"})
+		}
+		sreq, err := b.Spawn(agent, req.Image)
+		if err != nil {
+			return failed(err)
+		}
+		// The broker decided the worker may exist; the host has to make it. If
+		// it cannot, the place in the budget is given back rather than held by
+		// a machine that never booted.
+		if err := b.OnSpawn(sreq); err != nil {
+			b.Despawn(sreq.Name)
+			return failed(&Error{Kind: proto.ErrInternal, Message: err.Error()})
+		}
+		return proto.TeamResponse{OK: true, Agent: sreq.Name}
 	}
 	return failed(&Error{Kind: proto.ErrBadRequest, Message: "unknown team op " + req.Op})
 }

@@ -126,7 +126,7 @@
      improvements to the existing product land here as epics. Inert until its gate opens.</p>
   <div class="meta">
     owner: <b>John</b> &nbsp;&middot;&nbsp; developer: <b>Claude Code</b> &nbsp;&middot;&nbsp;
-    status: <b class="ok" id="meta-status">Epic E2 — active, 5/10 (next: E2-5, spawn under a budget)</b> &nbsp;&middot;&nbsp;
+    status: <b class="ok" id="meta-status">Epic E2 — active, 6/10 (next: E2-6, team cgroup hierarchy)</b> &nbsp;&middot;&nbsp;
     last updated: <b id="meta-updated">2026-08-23</b><br>
     repo file: <b>PLAN-FEATURES.html</b> (lives at the repository root next to <code>PLAN.html</code>)<br>
     <span class="quiet">Companion to PLAN.html — same protocol, same rules, later timeline.</span>
@@ -166,7 +166,7 @@
     <span class="bl-name">All epics</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">E2-5 — spawn under a declared budget: the one sanctioned exception to a fixed topology</b></div>
+  <div class="focusline">Current focus: <b id="focus">E2-6 — the team resource budget: one parent cgroup slice per team, per-agent slices as its children</b></div>
 </div>
 
 <!-- ====================================================== 1. ACTIVATION GATE -->
@@ -364,7 +364,7 @@
         snapshot when agents use the same image — five warm workers in milliseconds-class time per the build plan&rsquo;s
         restore target; a target until P3 measures it), per-agent workspaces, <code>ps</code> shows
         agents + edge counts + resource use, <code>down</code> tears down all VMs and syncs all workspaces.</span></li>
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">E2-5</span><span class="tk">Master spawn capability: an agent whose toml grants <code>team.spawn</code> may request
         workers at runtime <b>within a declared budget</b> — max count, per-worker resource ceilings, image whitelist, lifetime.
         The host enforces the budget; every spawn/despawn is an audit event. A spawned worker attaches with exactly
@@ -853,6 +853,18 @@
         whether it buys anything, and the number goes in the log either way.
         Revisit when forks gain per-fork network identity. Until then the honest options are this, or a team whose agents
         may not reach the network, and the second is not a team anybody asked for.</td></tr>
+        <tr><td class="mono">F-D18</td><td class="mono">2026-08-23</td>
+        <td><code>team_spawn</code> is <b>listed</b> only for an agent whose policy granted a budget &mdash; the host says
+        so on the kernel command line, as <code>kelyfos.spawn=1</code>, next to the agent's own name &mdash; but it is
+        <b>refused</b> host-side, never guest-side. Advertising and enforcing are deliberately separated.</td>
+        <td>Two rules pull in opposite directions and both are right. docs/teams.md &sect;3.6: a tool that is always
+        advertised and always fails teaches a model to ignore failures, so an agent with no budget should not see one.
+        docs/teams.md &sect;5: a spawn by an agent with no <code>team.spawn</code> at all is refused <i>and audited</i>, and
+        a refusal the host never sees is a refusal that never reaches the log. Doing the check in the guest would satisfy
+        the first and break the second. Splitting them satisfies both: the list is a hint, the host is the authority, and
+        an agent that calls a tool it was never shown still produces a <code>team.spawn</code> refusal record.
+        The flag rides the kernel command line for the same reason the agent's name does &mdash; it is the one thing
+        inside the guest that the guest did not write, so a guest cannot grant itself a budget by asserting one.</td></tr>
     <!-- Claude Code: append rows above this line. -->
       <tr><td class="mono">F-D10</td><td class="mono">2026-08-22</td>
         <td>The resource knobs E1-0 goes looking for shipped <b>partly</b>: <code>--vcpus</code>/<code>--mem</code> and
@@ -1742,6 +1754,65 @@ ok  internal/team  1.804s   (20 tests)
 
 new in the schema: team.store with agent, peer (the key), kind, outcome,
 reason and bytes — and never the value.</pre></td></tr>
+        <tr><td class="mono">2026-08-23</td><td class="mono">E2-5</td>
+        <td><b>An agent can ask for a worker, and gets exactly what the user wrote down beforehand.</b>
+        <code>[team.agent.spawn]</code> is a budget &mdash; <code>max</code>, an <code>image</code> whitelist, a
+        <code>lifetime</code>, and a <code>[team.agent.spawn.resources]</code> template &mdash; and it is granted once at
+        team-up from the policy file. There is no tool that grants one, because a topology that can widen its own
+        permissions is not an enforced topology. The split that makes this work: the broker decides <i>whether</i> a
+        worker may exist and what it is called; the host decides <i>how</i> to boot one. A spawned worker attaches with
+        exactly one edge, to its spawner, in both directions, and nothing about any existing agent changes; its caps come
+        from the budget's template rather than its spawner's, because an agent that could spawn copies of itself would
+        otherwise multiply its own ceiling. <code>lifetime</code> is enforced by the host with a timer, not asked of the
+        worker: when it expires the machine is shut down, a <code>despawn</code> is recorded and the place in the budget
+        comes back. <code>team ps</code> gained a roster that is rewritten as workers come and go, so the team you can see
+        is the team that exists rather than the one the file declared.
+        F-D18 records the one design split: <code>team_spawn</code> is <i>listed</i> only for an agent with a budget
+        (<code>kelyfos.spawn=1</code> on the kernel command line, beside its name), but <i>refused</i> host-side, so an
+        agent that calls a tool it was never shown still lands a refusal in the log &mdash; docs/teams.md &sect;5 promises
+        that a budget-less spawn is audited, and a guest-side refusal never reaches the recorder.</td>
+        <td class="mono"><pre>$ kelyfos team up   (spawners: master with max=2 image=[dev], plain with no budget)
+
+0. the tool is listed only where it can work
+    master  team_send team_recv team_ask team_reply team_peers
+            team_store_get team_store_put team_spawn
+    plain   team_send team_recv team_ask team_reply team_peers
+            team_store_get team_store_put          &lt;- no team_spawn
+1. plain asks anyway   REFUSED: plain has no spawn budget
+2. image outside it    REFUSED: master may not spawn the "base" image;
+                                its budget permits [dev]
+3. two spawns          master-spawn-1, master-spawn-2   (691 ms, 680 ms)
+4. a third             REFUSED: master already has 2 of its 2 spawned
+                                workers running
+6. one edge only       master-spawn-1 reaches [master]
+7. a real machine      master ask -&gt; "count to three"
+                       master-spawn-1 reply -&gt; "one two three"
+8. and it is a leaf    spawn:    REFUSED (no budget)
+                       sibling:  REFUSED no_edge -&gt; master-spawn-2
+                       stranger: REFUSED no_edge -&gt; plain
+
+$ kelyfos team ps
+AGENT           SANDBOX   CPU   MEM     REACHES
+master          7b94cb00  1.3s  36 MiB  master-spawn-1 master-spawn-2 plain
+plain           4e8de9c8  1.3s  36 MiB  master
+master-spawn-1  4a224792  0.8s  31 MiB  master     &lt;- 256 MiB from the
+master-spawn-2  ...       0.8s  31 MiB  master        budget template
+
+$ kelyfos log --session e8bbe61c | grep team
+team REFUSED  plain may not spawn        (no_spawn_budget)
+team REFUSED  master may not spawn       (image_not_permitted)
+team spawn    master-spawn-1 by master
+team spawn    master-spawn-2 by master
+team REFUSED  master may not spawn       (budget_exhausted)
+team          master ?&gt; master-spawn-1   ask   · 14 bytes · 84b44ef0b8e5
+team          master-spawn-1 &lt;- master   reply · 13 bytes · 6899ee404683
+session e8bbe61c: chain intact, 12 events verified
+
+lifetime, a second team (max=1, lifetime=20s):
+  spawned master-spawn-1; a second while it lives -&gt; REFUSED budget_exhausted
+  master-spawn-1 reached its 20s lifetime; stopping it     (~20s, host-side)
+  the place came back -&gt; master-spawn-2
+  team despawn master-spawn-1 by master    session 86e01730: chain intact</pre></td></tr>
         <tr><td class="mono">2026-08-23</td><td class="mono">E2-4</td>
         <td><b><code>kelyfos team up | ps | down</code>, and the first messages ever routed between two real KelyfOS
         machines.</b> A <code>[team]</code> section is parsed by the extended parser (F-D16), resolved into named agents

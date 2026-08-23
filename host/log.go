@@ -303,6 +303,12 @@ func printEvent(line []byte, asJSON bool) {
 			verdict += " · " + e.Reason
 		}
 		fmt.Printf("%s  team store      %s %s %s  %s\n", ts, e.Agent, e.Kind, e.Peer, verdict)
+	case recorder.TypeTeamSpawn:
+		if e.Outcome == "refused" {
+			fmt.Printf("%s  team REFUSED    %s may not spawn  (%s)\n", ts, e.Agent, e.Reason)
+		} else {
+			fmt.Printf("%s  team %-10s %s by %s\n", ts, e.Kind, e.Peer, e.Agent)
+		}
 	case recorder.TypeResourceSummary:
 		fmt.Printf("%s  usage           %.2f CPU-seconds%s · peak RSS %s (VMM)%s · net %s in / %s out · disk %s written\n",
 			ts, e.CPUSeconds, quotaSuffix(e), report.HumanKiB(e.PeakRSSKiB),

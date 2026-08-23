@@ -80,6 +80,10 @@ type Options struct {
 	// is not in one. It reaches the guest on the kernel command line, so a
 	// guest cannot rename itself into another agent's edges (E2-2).
 	Agent string
+
+	// MaySpawn says this agent's policy granted it a spawn budget. The guest
+	// is told, so the spawn tool is listed only where it can work (E2-5).
+	MaySpawn bool
 	// OnTeamRequest answers the guest's team channel. Nil means the sandbox is
 	// not in a team and the channel is not bound at all — a guest that dials it
 	// finds nothing, which is the truthful answer.

@@ -95,7 +95,7 @@ func (s *mcpSession) dispatch(req *mcp.Request) *mcp.Response {
 		// ignore failures, which is the last habit this project wants to teach.
 		tools := toolDefinitions()
 		if theTeam != nil {
-			tools = append(tools, teamToolDefinitions()...)
+			tools = append(tools, teamToolDefinitions(theTeam.maySpawn)...)
 		}
 		return mcp.NewResponse(req.ID, mcp.ToolsListResult{Tools: tools})
 

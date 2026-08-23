@@ -198,6 +198,15 @@ func Render(w io.Writer, sessionID string, events []recorder.Event, verifyErr er
 				detail += " · " + e.Reason
 			}
 			v.Rows = append(v.Rows, Row{ts, kind, title, detail, e.Data, refused})
+		case recorder.TypeTeamSpawn:
+			if e.Outcome != "delivered" {
+				v.Summary.TeamRefused++
+				v.Rows = append(v.Rows, Row{ts, "team-refused",
+					"REFUSED spawn by " + e.Agent, e.Reason, "", true})
+				break
+			}
+			v.Rows = append(v.Rows, Row{ts, "team",
+				fmt.Sprintf("%s %s", e.Kind, e.Peer), "requested by " + e.Agent, "", false})
 		case recorder.TypeTeamStore:
 			refused := e.Outcome != "delivered"
 			detail := e.Outcome

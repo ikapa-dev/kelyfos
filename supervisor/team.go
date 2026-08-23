@@ -26,6 +26,11 @@ import (
 type teamClient struct {
 	agent string
 
+	// maySpawn is what the host said on the kernel command line, not something
+	// this process decided: the guest is told whether it has a budget so the
+	// tool is listed only where it can work (E2-5).
+	maySpawn bool
+
 	mu      sync.Mutex
 	conn    net.Conn
 	w       *proto.Writer
@@ -41,8 +46,9 @@ func newTeamClient() *teamClient {
 	if agent == "" {
 		return nil
 	}
-	logf("team member %q", agent)
-	return &teamClient{agent: agent}
+	spawn := kernelParam("kelyfos.spawn") == "1"
+	logf("team member %q (spawn budget: %v)", agent, spawn)
+	return &teamClient{agent: agent, maySpawn: spawn}
 }
 
 // call sends one request and waits for its answer.
@@ -141,6 +147,14 @@ func (c *teamClient) peers() ([]string, error) {
 		return nil, err
 	}
 	return resp.Peers, nil
+}
+
+func (c *teamClient) spawn(image string) (string, error) {
+	resp, err := c.call(proto.TeamRequest{Op: proto.OpTeamSpawn, Image: image})
+	if err != nil {
+		return "", err
+	}
+	return resp.Agent, nil
 }
 
 func (c *teamClient) storeGet(key string) ([]byte, error) {

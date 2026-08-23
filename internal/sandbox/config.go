@@ -169,7 +169,7 @@ func firecrackerConfig(opts Options, kernel, rootfs, udsPath, id string) Firecra
 	cfg := FirecrackerConfig{
 		BootSource: BootSource{
 			KernelImagePath: kernel,
-			BootArgs:        bootArgs(opts.Arch, opts.Quiet, opts.Net, opts.Workspace != nil, opts.ScratchBytes, opts.Agent),
+			BootArgs:        bootArgs(opts.Arch, opts.Quiet, opts.Net, opts.Workspace != nil, opts.ScratchBytes, opts.Agent, opts.MaySpawn),
 		},
 		Drives: []Drive{{
 			DriveID:      "rootfs",
@@ -247,7 +247,7 @@ type Vsock struct {
 // Also absent: 8250.nr_uarts=0, which is in Firecracker's own default cmdline.
 // It disables the serial port, and KelyfOS wants a console — it is the only way
 // to see why a guest failed before the supervisor is up.
-func bootArgs(arch string, quiet bool, net *Network, workspace bool, scratchBytes int64, agent string) string {
+func bootArgs(arch string, quiet bool, net *Network, workspace bool, scratchBytes int64, agent string, maySpawn bool) string {
 	args := []string{
 		"reboot=k",                      // no BIOS to reboot through; ask KVM to reset
 		"panic=1",                       // a panicked sandbox should die, not sit there
@@ -282,6 +282,13 @@ func bootArgs(arch string, quiet bool, net *Network, workspace bool, scratchByte
 		// the kernel command line is the one thing inside the guest that the
 		// guest did not write (E2-2).
 		args = append(args, "kelyfos.agent="+agent)
+	}
+	if maySpawn {
+		// Whether this agent may ask for workers is the host's answer, so the
+		// guest is told it rather than left to try and be refused. A tool that
+		// is always advertised and always fails teaches a model to ignore
+		// failures (docs/teams.md §3.6).
+		args = append(args, "kelyfos.spawn=1")
 	}
 	if scratchBytes > 0 {
 		// The cap travels on the kernel command line rather than over a vsock

@@ -413,3 +413,95 @@ func TestABrokerWithNoStoreSaysSo(t *testing.T) {
 		t.Error("a put succeeded on a team with no store")
 	}
 }
+
+// The one sanctioned exception to a fixed topology, and everything that keeps
+// it narrow.
+func TestSpawnNeedsABudgetAndAttachesOneEdge(t *testing.T) {
+	var c collector
+	b := New(teamOfThree(t), false, c.record)
+
+	// No budget: refused, and audited.
+	if _, err := b.Spawn("master", "dev"); err == nil {
+		t.Fatal("an agent with no budget spawned a worker")
+	}
+	if ev := c.all(); len(ev) != 1 || ev[0].Type != TypeSpawn || ev[0].Reason != "no_spawn_budget" {
+		t.Errorf("events = %+v", c.all())
+	}
+
+	b.GrantSpawn("master", Budget{Max: 2, Images: []string{"dev"}})
+	req, err := b.Spawn("master", "dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.Spawner != "master" || req.Image != "dev" {
+		t.Errorf("request = %+v", req)
+	}
+
+	// Exactly one edge, to its spawner, in both directions — and nothing else.
+	if !b.topo.Allows("master", req.Name) || !b.topo.Allows(req.Name, "master") {
+		t.Error("the spawned worker is not connected to its spawner")
+	}
+	for _, other := range []string{"worker-1", "worker-2"} {
+		if b.topo.Allows(req.Name, other) || b.topo.Allows(other, req.Name) {
+			t.Errorf("the spawned worker has an edge to %s that nobody declared", other)
+		}
+	}
+	// And it can be messaged, which means it got a mailbox.
+	if err := b.Send("master", req.Name, []byte("go")); err != nil {
+		t.Errorf("the spawned worker cannot be reached: %v", err)
+	}
+	if m, err := b.Recv(req.Name, time.Second); err != nil || string(m.Body) != "go" {
+		t.Errorf("recv = %+v %v", m, err)
+	}
+}
+
+func TestSpawnBudgetsAreEnforced(t *testing.T) {
+	b := New(teamOfThree(t), false, nil)
+	b.GrantSpawn("master", Budget{Max: 2, Images: []string{"dev"}})
+
+	first, err := b.Spawn("master", "dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.Spawn("master", "dev"); err != nil {
+		t.Fatal(err)
+	}
+	// Third exceeds max.
+	if _, err := b.Spawn("master", "dev"); err == nil {
+		t.Error("a spawn beyond the budget's max was allowed")
+	}
+	// An image outside the whitelist is refused whatever the count.
+	b.GrantSpawn("worker-1", Budget{Max: 5, Images: []string{"base"}})
+	if _, err := b.Spawn("worker-1", "dev"); err == nil {
+		t.Error("an image outside the whitelist was spawned")
+	}
+	// A budget naming no image permits none: an empty whitelist is empty, not
+	// universal, or a half-written policy becomes an open door.
+	b.GrantSpawn("worker-2", Budget{Max: 5})
+	if _, err := b.Spawn("worker-2", "dev"); err == nil {
+		t.Error("a budget with no image list permitted one")
+	}
+
+	// Despawning frees a place, and takes the edge with it.
+	b.Despawn(first.Name)
+	if b.topo.Allows("master", first.Name) {
+		t.Error("a despawned worker kept its edge")
+	}
+	if _, err := b.Spawn("master", "dev"); err != nil {
+		t.Errorf("despawning did not free a place in the budget: %v", err)
+	}
+}
+
+// A spawn budget is granted by the policy file and by nothing else. There is no
+// tool for it, and this test exists to keep it that way.
+func TestSpawnedWorkersCannotSpawn(t *testing.T) {
+	b := New(teamOfThree(t), false, nil)
+	b.GrantSpawn("master", Budget{Max: 3, Images: []string{"dev"}})
+	req, err := b.Spawn("master", "dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.Spawn(req.Name, "dev"); err == nil {
+		t.Error("a spawned worker inherited the right to spawn")
+	}
+}

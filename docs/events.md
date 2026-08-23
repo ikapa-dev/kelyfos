@@ -217,6 +217,22 @@ One access to the team store, permitted or not. Written from E2-3.
 Values are never recorded. The store is shared state, not a second copy of it,
 and a log that mirrored every write would be exactly that.
 
+### `team.spawn`
+A worker requested at runtime by an agent with a spawn budget, granted or
+refused. Written from E2-5.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `agent` | string | The spawner — the agent that asked. |
+| `peer` | string | The worker's name, `<spawner>-spawn-N`. Absent on a refusal, because there is no worker. |
+| `kind` | string | `spawn` or `despawn`. |
+| `outcome` | string | `delivered` or `refused`. |
+| `reason` | string | `no_spawn_budget`, `budget_exhausted`, `image_not_permitted`. |
+
+A `despawn` is written when the worker's lifetime expires or the team comes
+down, so the log says how long every machine in the team existed rather than
+only that one was asked for.
+
 ### `resource.summary`
 The usage receipt, written once at teardown. Written from E1-7.
 
@@ -298,6 +314,7 @@ a reader should present the session as open rather than truncated.
 | `resource.summary` usage receipt at teardown | E1-7 |
 | `team.message` and `team.refused` for every inter-agent message | E2-1 |
 | `team.store` for every store access, permitted or not | E2-3 |
+| `team.spawn` for every worker requested, granted or refused | E2-5 |
 | HTML session export built only from this file | P3-8 |
 | Live TUI built only from this file | P3-9 |
 | Signed exports verifiable offline | P4-3 |

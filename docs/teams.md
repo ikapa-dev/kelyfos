@@ -206,18 +206,31 @@ its siblings.
 
 The shared-knowledge mechanism, §4.
 
-### 3.6 How an agent is told which agent it is
+### 3.6 `team_spawn(image)`
+
+Listed only for an agent whose policy granted a spawn budget (§5). It returns
+the new worker's name, `<spawner>-spawn-N`, and the worker is ready — a booted
+machine, not a promise of one. A spawn outside the budget is an error the
+asking agent receives, with the budget in the message so a model can adjust
+rather than retry blindly:
+
+    denied: master already has 2 of its 2 spawned workers running
+    denied: master may not spawn the "base" image; its budget permits [dev]
+
+An agent with no budget does not see the tool.
+
+### 3.7 How an agent is told which agent it is
 
 On the kernel command line, as `kelyfos.agent=<name>`, for the same reason the
 proxy address arrives that way: it is the one thing inside the guest that the
 guest did not write. An agent cannot rename itself into another agent's edges,
 and the host does not have to trust a name a guest asserts.
 
-A sandbox with no `kelyfos.agent` is not in a team, and the six tools above are
+A sandbox with no `kelyfos.agent` is not in a team, and the tools above are
 not listed for it at all. A tool that is always advertised and always fails
 teaches a model to ignore failures.
 
-### 3.7 Errors are explicit
+### 3.8 Errors are explicit
 
 Every refusal is an error the calling agent receives and can act on, never a
 silent drop:
@@ -303,9 +316,13 @@ steps.
 
 **One sanctioned exception**, and only one: an agent whose policy grants
 `team.spawn` may ask for a worker at runtime (E2-5). The new worker attaches
-with **exactly one edge, to its spawner**, plus whatever store access the spawn
-budget's template grants. It cannot be given any other edge, and nothing about
-any existing agent changes. Spawns are bounded by a budget the user wrote down
+with **exactly one edge, to its spawner** — and nothing else. It cannot be given
+another edge, nothing about any existing agent changes, and its store access is
+only whatever the policy's key rules already grant a name like its own
+(`master-spawn-1` matches `master*`, and matches nothing it was not already
+going to match). Its caps come from the budget's `[team.agent.spawn.resources]`,
+never from its spawner's: an agent that could spawn copies of itself would
+otherwise multiply its own ceiling. Spawns are bounded by a budget the user wrote down
 before the run:
 
 ```toml
@@ -320,7 +337,13 @@ lifetime   = "10m"
 
 The decision *to* spawn stays agent-side; KelyfOS enforces only what the user
 pre-authorised. A spawn beyond the budget is refused and audited, as is a spawn
-by an agent with no `team.spawn` at all.
+by an agent with no `team.spawn` at all — the host decides, so a refusal always
+reaches the log even when the asking agent was never shown the tool.
+
+`lifetime` is enforced by the host, not asked of the worker: when it expires the
+worker is shut down, a `despawn` is recorded, and its place in the budget comes
+back. `kelyfos team ps` lists spawned workers alongside declared ones, so the
+team you can see is the team that exists.
 
 ---
 

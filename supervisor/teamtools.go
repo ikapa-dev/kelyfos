@@ -13,12 +13,12 @@ import (
 // sit on a dead conversation for the rest of the run.
 const defaultAskTimeout = 60 * time.Second
 
-// teamToolDefinitions are the six tools a team member gets on top of the
+// teamToolDefinitions are the tools a team member gets on top of the
 // ordinary six. They appear only when this sandbox is in a team, because a tool
 // that is always listed and always fails teaches a model to ignore failures.
-func teamToolDefinitions() []mcp.Tool {
+func teamToolDefinitions(maySpawn bool) []mcp.Tool {
 	str := func(desc string) mcp.Property { return mcp.Property{Type: "string", Description: desc} }
-	return []mcp.Tool{
+	tools := []mcp.Tool{
 		{
 			Name:  "team_send",
 			Title: "Send a message to another agent",
@@ -111,6 +111,27 @@ func teamToolDefinitions() []mcp.Tool {
 			},
 		},
 	}
+
+	// The spawn tool is listed only for an agent the host gave a budget to.
+	// Everything about the budget itself stays host-side; this is only the
+	// difference between a tool that can work and one that cannot (E2-5).
+	if maySpawn {
+		tools = append(tools, mcp.Tool{
+			Name:  "team_spawn",
+			Title: "Ask for another worker",
+			Description: "Request a new worker agent, within the budget this agent's policy granted: " +
+				"a count, a list of images and a lifetime the user wrote down before the run. The new " +
+				"worker can message you and you can message it; it has no other connection to the " +
+				"team. Returns the new agent's name.",
+			InputSchema: mcp.Schema{
+				Type: "object",
+				Properties: map[string]mcp.Property{
+					"image": str("Image flavor for the worker. Defaults to the first your budget permits."),
+				},
+			},
+		})
+	}
+	return tools
 }
 
 // callTeamTool dispatches the team tools. Every one of them is a thin pass to
@@ -126,6 +147,7 @@ func callTeamTool(c *teamClient, name string, raw json.RawMessage) *mcp.CallTool
 		Correlate string `json:"correlate"`
 		Key       string `json:"key"`
 		Value     string `json:"value"`
+		Image     string `json:"image"`
 		TimeoutMS int64  `json:"timeout_ms"`
 	}
 	if err := json.Unmarshal(raw, &a); err != nil {
@@ -176,6 +198,18 @@ func callTeamTool(c *teamClient, name string, raw json.RawMessage) *mcp.CallTool
 			return mcp.Errorf("%v", err)
 		}
 		return structured(strings.Join(peers, " "), map[string]any{"agent": c.agent, "peers": peers})
+
+	case "team_spawn":
+		// Not refused here even when this agent has no budget: the host is the
+		// side that decides, and a refusal it never sees is a refusal that
+		// never reaches the log. docs/teams.md §5 promises that a spawn by an
+		// agent with no budget at all is audited too.
+		name, err := c.spawn(a.Image)
+		if err != nil {
+			return mcp.Errorf("%v", err)
+		}
+		return structured(name, map[string]any{"agent": name,
+			"note": "this worker can message you and you can message it; it has no other edges"})
 
 	case "team_store_get":
 		v, err := c.storeGet(a.Key)

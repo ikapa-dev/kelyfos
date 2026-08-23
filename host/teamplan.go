@@ -35,6 +35,7 @@ type plannedAgent struct {
 	name  string
 	image string
 	res   config.AgentResources
+	spawn *config.SpawnBudget
 }
 
 func planTeam(cfg *config.Config) (*teamPlan, error) {
@@ -63,7 +64,8 @@ func planTeam(cfg *config.Config) (*teamPlan, error) {
 				return nil, fmt.Errorf("%s:%d: two agents are both called %q", cfg.Path, a.Line, name)
 			}
 			seen[name] = true
-			plan.agents = append(plan.agents, plannedAgent{name: name, image: a.Image, res: a.Resources})
+			plan.agents = append(plan.agents, plannedAgent{
+				name: name, image: a.Image, res: a.Resources, spawn: a.Spawn})
 		}
 	}
 
@@ -116,6 +118,18 @@ func planTeam(cfg *config.Config) (*teamPlan, error) {
 		plan.storeEnabled, plan.storeRules = true, rules
 	}
 	return plan, nil
+}
+
+// spawnResources is the caps a worker spawned by this agent gets: the budget's
+// template, never the spawner's own. An agent that could spawn copies of itself
+// would multiply its own caps, which is the one thing a budget exists to stop.
+func (p *teamPlan) spawnResources(spawner string) config.AgentResources {
+	for _, a := range p.agents {
+		if a.name == spawner && a.spawn != nil {
+			return a.spawn.Resources
+		}
+	}
+	return config.AgentResources{}
 }
 
 // expandCount turns one [[team.agent]] with count = N into N names. A count of

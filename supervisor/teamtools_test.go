@@ -6,17 +6,18 @@ import (
 	"testing"
 )
 
-// The six tools E2-2 names, with the shapes a model is handed. Checked by name
-// because a renamed tool is a silently broken agent: the model calls what the
-// list said and gets "unknown tool".
-func TestTeamToolsAreTheSixTheSpecNames(t *testing.T) {
+// The tools E2-2 and E2-5 name, with the shapes a model is handed. Checked by
+// name because a renamed tool is a silently broken agent: the model calls what
+// the list said and gets "unknown tool".
+func TestTeamToolsAreTheOnesTheSpecNames(t *testing.T) {
 	want := map[string]bool{
 		"team_send": true, "team_recv": true, "team_ask": true,
 		"team_reply": true, "team_peers": true,
 		"team_store_get": true, "team_store_put": true,
+		"team_spawn": true, // E2-5, and only usable with a granted budget
 	}
 	got := map[string]bool{}
-	for _, tool := range teamToolDefinitions() {
+	for _, tool := range teamToolDefinitions(true) {
 		got[tool.Name] = true
 		if tool.Description == "" || tool.Title == "" {
 			t.Errorf("%s has no description a model could act on", tool.Name)
@@ -48,7 +49,7 @@ func TestRequiredArgumentsAreDeclared(t *testing.T) {
 		"team_store_get": {"key"},
 		"team_store_put": {"key", "value"},
 	}
-	for _, tool := range teamToolDefinitions() {
+	for _, tool := range teamToolDefinitions(true) {
 		want, ok := required[tool.Name]
 		if !ok {
 			continue
@@ -100,5 +101,21 @@ func TestIsTeamToolDoesNotOverreach(t *testing.T) {
 	}
 	if isTeamTool("team_") {
 		t.Error("isTeamTool claimed the bare prefix")
+	}
+}
+
+// An agent with no spawn budget is not shown a tool that could only refuse it.
+func TestSpawnToolIsListedOnlyWithABudget(t *testing.T) {
+	for _, tool := range teamToolDefinitions(false) {
+		if tool.Name == "team_spawn" {
+			t.Fatal("team_spawn is listed for an agent that has no budget for it")
+		}
+	}
+	found := false
+	for _, tool := range teamToolDefinitions(true) {
+		found = found || tool.Name == "team_spawn"
+	}
+	if !found {
+		t.Error("team_spawn is missing for an agent that was granted a budget")
 	}
 }

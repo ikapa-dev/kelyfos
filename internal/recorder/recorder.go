@@ -43,6 +43,7 @@ const (
 	TypeTeamMessage     = "team.message"
 	TypeTeamRefused     = "team.refused"
 	TypeTeamStore       = "team.store"
+	TypeTeamSpawn       = "team.spawn"
 )
 
 // Sources.

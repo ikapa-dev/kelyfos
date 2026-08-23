@@ -137,10 +137,12 @@ func teamUp(argv []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	var running []*sandbox.Sandbox
+	crew := &roster{plan: plan, session: sessionID, edges: plan.edgeText}
 	teardown := func() {
 		// Reverse order, so the agent booted last is stopped first — the same
-		// order a single run's defers would have taken.
+		// order a single run's defers would have taken. Spawned workers are in
+		// this list too, and are the last in, so they are the first out.
+		running := crew.snapshot()
 		for i := len(running) - 1; i >= 0; i-- {
 			if err := running[i].Shutdown(10 * time.Second); err != nil {
 				fmt.Fprintf(os.Stderr, "kelyfos: %s: %v\n", running[i].State.Agent, err)
@@ -149,6 +151,46 @@ func teamUp(argv []string) error {
 		_ = os.Remove(teamStatePath())
 	}
 	defer teardown()
+
+	// Spawn: the broker decides whether a worker may exist and what it is
+	// called; this decides how to start one. The split is the point — the
+	// budget is policy and belongs where the edge list is, and booting a
+	// machine is a thing only the host can do (E2-5).
+	for _, a := range plan.agents {
+		if a.spawn != nil {
+			broker.GrantSpawn(a.name, team.Budget{
+				Max: a.spawn.Max, Images: a.spawn.Images, Lifetime: a.spawn.Lifetime,
+			})
+		}
+	}
+	broker.OnSpawn = func(req team.SpawnRequest) error {
+		res := plan.spawnResources(req.Spawner)
+		sb, err := bootAgent(ctx, plannedAgent{name: req.Name, image: req.Image, res: res},
+			broker, *arch, *timeout)
+		if err != nil {
+			return err
+		}
+		crew.add(sb, req.Spawner+" -> "+req.Name, req.Name+" -> "+req.Spawner)
+		fmt.Printf("  %-12s %s spawned by %s, ready in %d ms\n",
+			req.Name, sb.State.ID, req.Spawner, sb.State.BootReadyMS)
+
+		// A lifetime is part of the budget, so it is enforced here rather than
+		// trusted to the agent that asked for the worker.
+		if req.Lifetime > 0 {
+			go func() {
+				select {
+				case <-time.After(req.Lifetime):
+				case <-ctx.Done():
+					return
+				}
+				fmt.Printf("  %-12s reached its %s lifetime; stopping it\n", req.Name, req.Lifetime)
+				broker.Despawn(req.Name)
+				crew.remove(req.Name)
+				_ = sb.Shutdown(10 * time.Second)
+			}()
+		}
+		return nil
+	}
 
 	// Booted together, not one after another. Each agent is an independent
 	// machine with its own TAP, its own image and its own caps, and nothing
@@ -188,7 +230,7 @@ func teamUp(argv []string) error {
 	}
 	for _, sb := range order {
 		if sb != nil {
-			running = append(running, sb)
+			crew.add(sb)
 		}
 	}
 	if bootErr != nil {
@@ -199,7 +241,7 @@ func teamUp(argv []string) error {
 	}
 	fmt.Printf("team up in %d ms\n", time.Since(started).Milliseconds())
 
-	if err := writeTeamState(plan, running, sessionID); err != nil {
+	if err := crew.write(); err != nil {
 		return err
 	}
 	fmt.Println("\nCtrl-C to stop the team.")
@@ -216,7 +258,7 @@ func bootAgent(ctx context.Context, a plannedAgent, broker *team.Broker, arch st
 		return nil, err
 	}
 	opts := sandbox.Options{
-		ID: id, Arch: arch, Flavor: a.image, Agent: a.name,
+		ID: id, Arch: arch, Flavor: a.image, Agent: a.name, MaySpawn: a.spawn != nil,
 		VcpuCount: a.res.CPUs, MemMiB: a.res.MemMiB, ScratchBytes: a.res.ScratchByte,
 		IO: sandbox.IOLimits{NetMbpsRx: a.res.NetMbpsRx, NetMbpsTx: a.res.NetMbpsTx,
 			DiskIOPS: a.res.DiskIOPS, DiskMbps: a.res.DiskMbps},
@@ -243,15 +285,73 @@ func bootAgent(ctx context.Context, a plannedAgent, broker *team.Broker, arch st
 	return sb, nil
 }
 
-func writeTeamState(plan *teamPlan, running []*sandbox.Sandbox, session string) error {
-	st := teamState{Name: plan.name, PID: os.Getpid(), Session: session,
-		StartedAt: time.Now(), Edges: plan.edgeText}
-	for _, sb := range running {
+// roster is the set of machines this team has right now: the declared agents
+// and whatever workers they have been allowed to spawn. It is the only writer
+// of team.json, so `ps` shows the team that exists rather than the one the
+// policy file declared before anybody spawned anything.
+type roster struct {
+	mu      sync.Mutex
+	plan    *teamPlan
+	session string
+	started time.Time
+	running []*sandbox.Sandbox
+	edges   []string
+}
+
+func (r *roster) add(sb *sandbox.Sandbox, edges ...string) {
+	r.mu.Lock()
+	r.running = append(r.running, sb)
+	r.edges = append(r.edges, edges...)
+	written := !r.started.IsZero()
+	r.mu.Unlock()
+	// Before the team is up there is no state file to keep current; the first
+	// write happens once, when every declared agent is ready.
+	if written {
+		_ = r.write()
+	}
+}
+
+func (r *roster) remove(name string) {
+	r.mu.Lock()
+	kept := r.running[:0]
+	for _, sb := range r.running {
+		if sb.State.Agent != name {
+			kept = append(kept, sb)
+		}
+	}
+	r.running = kept
+	edges := r.edges[:0]
+	for _, e := range r.edges {
+		if from, to, ok := strings.Cut(e, " -> "); !ok || (from != name && to != name) {
+			edges = append(edges, e)
+		}
+	}
+	r.edges = edges
+	r.mu.Unlock()
+	_ = r.write()
+}
+
+func (r *roster) snapshot() []*sandbox.Sandbox {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]*sandbox.Sandbox(nil), r.running...)
+}
+
+func (r *roster) write() error {
+	r.mu.Lock()
+	if r.started.IsZero() {
+		r.started = time.Now()
+	}
+	st := teamState{Name: r.plan.name, PID: os.Getpid(), Session: r.session,
+		StartedAt: r.started, Edges: append([]string(nil), r.edges...)}
+	for _, sb := range r.running {
 		st.Agents = append(st.Agents, struct {
 			Name    string `json:"name"`
 			Sandbox string `json:"sandbox"`
 		}{sb.State.Agent, sb.State.ID})
 	}
+	r.mu.Unlock()
+
 	blob, err := json.MarshalIndent(st, "", "  ")
 	if err != nil {
 		return err
