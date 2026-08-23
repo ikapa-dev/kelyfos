@@ -126,7 +126,7 @@
      improvements to the existing product land here as epics. Inert until its gate opens.</p>
   <div class="meta">
     owner: <b>John</b> &nbsp;&middot;&nbsp; developer: <b>Claude Code</b> &nbsp;&middot;&nbsp;
-    status: <b class="ok" id="meta-status">Epic E1 done — v0.4 released; 9/42, Epic E2 active</b> &nbsp;&middot;&nbsp;
+    status: <b class="ok" id="meta-status">Epic E2 — active, 1/10 (next: E2-1, the host broker)</b> &nbsp;&middot;&nbsp;
     last updated: <b id="meta-updated">2026-08-23</b><br>
     repo file: <b>PLAN-FEATURES.html</b> (lives at the repository root next to <code>PLAN.html</code>)<br>
     <span class="quiet">Companion to PLAN.html — same protocol, same rules, later timeline.</span>
@@ -166,7 +166,7 @@
     <span class="bl-name">All epics</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">E2-0 — <code>docs/teams.md</code>: the team schema and broker semantics, spec before code</b></div>
+  <div class="focusline">Current focus: <b id="focus">E2-1 — the host broker: route over the existing vsock channels, enforce the edge list, record every message</b></div>
 </div>
 
 <!-- ====================================================== 1. ACTIVATION GATE -->
@@ -326,7 +326,7 @@
      P3 measurements).
      Estimate: 5&ndash;7 weekends — the largest epic in the project.</p>
   <ul class="tasks">
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">E2-0</span><span class="tk"><code>docs/teams.md</code> — spec first. Toml schema: <code>[team]</code> name;
         <code>[[team.agent]]</code> name / image / <code>[resources]</code> per agent / per-agent egress allowlist &amp; secrets;
         <code>[[team.edge]]</code> from / to / bidirectional (default true). Broker semantics: <code>send</code>, <code>recv</code>,
@@ -1540,6 +1540,41 @@ sandbox 25ed0183 ready in 2035 ms
   max runtime 20s
 Linux kelyfos 6.18.45 #1 SMP aarch64 GNU/Linux
 stress-ng, version 0.20.00 (musl-gcc 14.3.0, aarch64 Linux 6.18.45)</pre></td></tr>
+        <tr><td class="mono">2026-08-23</td><td class="mono">E2-0</td>
+        <td><code>docs/teams.md</code>, spec before code, with every clause the task asked for: the toml schema down to
+        <code>[[team.edge]]</code>'s <code>bidirectional</code> default, the six broker primitives, at-most-once delivery
+        with explicit errors rather than queues-as-a-service, FIFO per edge, the recorder logging outcomes rather than
+        buffering deliveries, <code>team_peers</code> showing only what this agent may <i>initiate</i> to, and replies
+        riding the return path of the ask that provoked them.
+        <b>Two things the writing changed.</b> The threat-model section began as an assertion &mdash; &ldquo;nothing routes
+        between two TAPs&rdquo; &mdash; and reading <code>applyFirewall</code> to check it produced a better and stronger
+        sentence: guest-to-guest traffic is not merely unrouted, it is dropped by a <code>forward</code> chain that drops
+        both <code>iifname</code> and <code>oifname</code> for that TAP, which is exactly the hook such a packet would have
+        to cross. The spec now quotes the rules. And the edge list is deliberately left as the only way to express a
+        topology: no <code>topology = "star"</code> keyword, now or later, because a keyword is a summary of the edge list
+        and a summary is a second place for the truth to live.
+        The file was drafted early, in <code>c76b2f6</code>, during a forty-five minute wait for E1-8's bare-KVM build;
+        this row is where it is reviewed against the task, corrected and ticked.</td>
+        <td class="mono"><pre>$ wc -l docs/teams.md
+     351 docs/teams.md
+
+every clause of E2-0, checked one at a time:
+  [team] / [[team.agent]] / [[team.edge]] with bidirectional default   present
+  send, recv, ask/reply with a timeout, store access                   present
+  at-most-once, explicit errors, no queues-as-a-service                present
+  no guest-to-guest network path                                       present
+  no edge -&gt; refused and audited                                       present
+  topology fixed for the run, one sanctioned exception                 present
+  spawned worker joins with exactly one edge, to its spawner           present
+  the recorder logs outcomes and is not a delivery buffer              present
+  delivered messages are FIFO per edge                                 present
+  team_peers is initiator-side only; replies need no edge              present
+
+the rules the threat-model section now quotes, from internal/sandbox/network.go:
+  chain kelyfos_guest_in { ip daddr &lt;host&gt; tcp dport &lt;proxy&gt; accept
+                           counter drop }
+  chain forward         { iifname "&lt;tap&gt;" counter drop
+                           oifname "&lt;tap&gt;" counter drop }</pre></td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>

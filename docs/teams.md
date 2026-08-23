@@ -111,11 +111,27 @@ place for the truth to live.
 This is the property everything else rests on, so it is worth stating flatly
 before the mechanics.
 
-**No sandbox in a team has a network path to any other sandbox.** Not a
-filtered one, not a firewalled one — none. Each guest has at most one NIC, on a
-TAP whose only reachable destination is the host's egress proxy
-(`docs/networking.md`), and the proxy resolves and dials the public internet.
-Nothing routes between two TAPs.
+**No sandbox in a team has a network path to any other sandbox.** Each guest has
+at most one NIC, on its own TAP, and two nftables rules decide what that TAP can
+do (`docs/networking.md` §3, installed per sandbox by `applyFirewall`):
+
+```
+chain kelyfos_guest_in {
+        ip daddr <host TAP address> tcp dport <proxy port> accept
+        counter drop
+}
+chain forward {
+        iifname "<tap>" counter drop
+        oifname "<tap>" counter drop
+}
+```
+
+The first says the only destination the guest may reach is this sandbox's own
+egress proxy. The second says nothing is forwarded into or out of that interface
+at all — which is precisely the hook a packet from one guest to another would
+have to traverse. So guest-to-guest is not merely unrouted, it is dropped on a
+rule that exists for that reason, and a team of five sandboxes has five separate
+such rulesets.
 
 Every inter-agent message therefore travels the path it already had: the guest's
 existing vsock channel to the host, into the broker in the `kelyfos` process, and
