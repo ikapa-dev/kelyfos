@@ -2650,6 +2650,33 @@ $ go test ./... -race     all packages ok
 $ govulncheck ./...       No vulnerabilities found.
 $ python3 tools/check-plan.py
 PLAN.html is coherent: 43 tasks, 36 checked, 26 decisions</pre></td></tr>
+        <tr><td class="mono">2026-08-23</td><td class="mono">&mdash;</td>
+        <td><b>A guest&rsquo;s memory image was one chmod away from being readable.</b> Firecracker creates a
+        snapshot&rsquo;s <code>state</code> and <code>memory</code> files itself, so their mode is whatever the process
+        umask allowed &mdash; <code>0664</code> on an ordinary machine. What actually kept them private was the
+        <code>0700</code> directory above them, which is protection by accident rather than by decision. The group and
+        world bits are now taken off the files themselves.
+        Noticed while looking at the template cache F-D26 introduced, which makes these files longer-lived and more
+        numerous than a snapshot anyone took by hand; the same fix covers <code>kelyfos snapshot save</code>, which had
+        the property first. <code>docs/threat-model.md</code> gains the section it was missing &mdash; what a snapshot
+        and a cached template actually contain, that the protection is file modes and not encryption, and the one
+        difference between them: a fork template is booted with no egress, no bound secrets and no workspace and has
+        nothing run in it before it is frozen, while a snapshot <i>you</i> take holds whatever the agent had in memory.
+        That document was stamped &ldquo;current as of v0.2&rdquo; and had no mention of teams at all; the rest of that
+        gap is E3&rsquo;s to close.</td>
+        <td class="mono"><pre>before:
+  -rw-rw-r--  402653184  memory      &lt;- a booted guest's RAM
+  -rw-------         68  meta.json
+  -rw-rw-r--       6510  state
+  drwx------             the directory was the only thing covering them
+
+after:
+  -rw-------  402653184  memory
+  -rw-------         68  meta.json
+  -rw-------       6510  state
+
+$ go test ./internal/sandbox/ -run Snapshot
+  TestASnapshotIsNotReadableByAnyoneElse   PASS</pre></td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
