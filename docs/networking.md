@@ -1,7 +1,8 @@
 # KelyfOS egress
 
-**Status:** normative for v0.x. Written at task P2-5; P2-6 adds secret injection
-on top of it. The threat-model discussion lives in `docs/threat-model.md` (P3-5).
+**Status:** normative for v0.x. Written at P2-5, with secret injection added by
+P2-6 and the restore path by D22. The threat-model discussion lives in
+[`docs/threat-model.md`](threat-model.md).
 
 ## 1. The default is no network
 
@@ -15,21 +16,30 @@ only reachable destination is a proxy on the host.
 ## 2. Topology
 
 ```
-   guest                         host
-   ┌──────────────┐              ┌───────────────────────────────────┐
-   │ eth0         │              │ kelyfos<id>  (TAP)                │
-   │ 10.x.y.2/30  │═════════════▶│ 10.x.y.1/30                       │
-   │              │   virtio-net │    │                              │
-   │ HTTPS_PROXY  │              │    ├─ nftables: only :PROXY_PORT  │
-   │ = 10.x.y.1   │              │    │                              │
-   └──────────────┘              │    └─▶ egress proxy ──▶ internet  │
-                                 │         allowlist + audit         │
-                                 └───────────────────────────────────┘
+   guest                            host
+   ┌─────────────────┐              ┌────────────────────────────────┐
+   │ eth0            │              │ kelyfos<id>  (TAP)             │
+   │ 169.254.a.b+1   │═════════════▶│ 169.254.a.b                    │
+   │                 │  virtio-net  │    │                           │
+   │ HTTPS_PROXY =   │              │    ├─ nftables: only the proxy │
+   │ http://host:port│              │    │                           │
+   └─────────────────┘              │    └─▶ egress proxy ─▶ internet│
+                                    │         allowlist + audit      │
+                                    └────────────────────────────────┘
 ```
 
-Point-to-point /30 per sandbox. **No NAT and no IP forwarding**, and neither is
-missing by accident — nothing needs them. The proxy binds directly on the host's
-TAP address, so guest traffic terminates on the host. The only process that
+Point-to-point /30 per sandbox, carved out of **169.254.0.0/16** — link-local
+space (RFC 3927), which nothing routes and no site allocates, so a sandbox
+cannot collide with the host's real networks. The /30 index is derived from the
+sandbox id rather than handed out by a counter, so two `kelyfos run` invocations
+cannot race for a range; a collision retries with the next index. The host takes
+the first usable address and the guest the second, and the proxy's port is
+kernel-assigned rather than fixed, which is why every example here writes it as
+a placeholder.
+
+**No NAT and no IP forwarding**, and neither is missing by accident — nothing
+needs them. The proxy binds directly on the host's TAP address, so guest traffic
+terminates on the host. The only process that
 reaches the internet on the guest's behalf is the proxy, which means the
 allowlist is not a filter the guest routes through; it is the only door.
 
@@ -77,9 +87,13 @@ There is no DNS responder on the TAP address, nothing in the guest's
 `/etc/resolv.conf`, and UDP/53 is dropped along with everything else.
 
 A guest configured with `HTTPS_PROXY` never resolves anything: it sends
-`CONNECT github.com:443` to the proxy, and the proxy resolves as part of
-deciding whether the connection is allowed. DNS in the guest is therefore not
-load-bearing for any traffic KelyfOS intends to permit.
+`CONNECT github.com:443` to the proxy, and the proxy is what resolves. Worth
+being exact about the order, because it is the reason the allowlist means
+anything: **the decision is made on the name, before any resolution happens.**
+The proxy matches `github.com` against the allowlist as a string and only then
+dials, so there is no window in which a name resolves to an address that is then
+checked. DNS in the guest is not load-bearing for any traffic KelyfOS intends to
+permit, and DNS anywhere is not load-bearing for the policy.
 
 Removing it closes the oldest hole in every allowlist. DNS tunnelling defeats a
 domain allowlist completely — the data leaves inside query names, to a resolver
@@ -114,6 +128,22 @@ Both cases are set because the convention is split down the middle: curl and
 most C programs read the lowercase form, Go and much of the JVM world read the
 uppercase one.
 
+When a secret is bound to a domain, the guest is also handed the trust anchor
+for the run's CA — over the `control` channel after boot, never on the kernel
+command line — written to `/etc/ssl/certs/kelyfos-egress-ca.pem`, appended to
+`/etc/ssl/certs/ca-certificates.crt` and `/etc/ssl/cert.pem`, and named by five
+more variables:
+
+```
+SSL_CERT_FILE, CURL_CA_BUNDLE, REQUESTS_CA_BUNDLE,
+NODE_EXTRA_CA_CERTS, GIT_SSL_CAINFO   = /etc/ssl/certs/kelyfos-egress-ca.pem
+```
+
+Five rather than one because the usual defeater of a system trust store is that
+nothing uses it: Python's `certifi` and Node's bundled roots ship their own. The
+guest is KelyfOS's own image, so these can be set authoritatively instead of
+hoped for.
+
 ## 6. What the proxy enforces
 
 - `CONNECT host:port` and absolute-URI HTTP requests are accepted only when
@@ -123,15 +153,50 @@ uppercase one.
 - Every attempt is written to the flight recorder as an `egress.attempt` event,
   allowed or blocked, with the reason and the byte counts
   (`docs/events.md` §4).
-- Allowed connections record `mode`: `tunnelled` normally, `terminated` when a
-  secret is bound to the domain and the proxy is decrypting to inject it
-  (decision D6). That field is how a user can prove exactly which traffic the
-  proxy was able to read.
+- Allowed connections record `mode`: `tunnelled` for a `CONNECT` the proxy
+  relayed without opening, `terminated` when a secret is bound to the domain and
+  the proxy decrypted the session to attach it (decision D6). That field is how
+  a user proves which traffic the proxy could read.
+
+  **One case is currently mislabelled, and it is written down rather than left
+  to be found.** A plain absolute-URI HTTP request — no `CONNECT`, no TLS — is
+  necessarily read in full by any HTTP proxy: it is parsed, its URL is rewritten
+  and it is re-issued upstream. KelyfOS records that as `tunnelled`, which
+  understates what was read. Nothing is decrypted, because nothing was
+  encrypted; the honest statement is that the proxy saw it all. Recorded as a
+  defect in F-D27. Until it is fixed, read `mode: tunnelled` on port 80 as "the
+  proxy read this", and `mode: tunnelled` on port 443 as "the proxy relayed
+  bytes it could not read".
+
+- **Certificate pinning breaks for a secret-bound domain, by construction.**
+  This is the cost D6 accepted, and it belongs here as well as in the threat
+  model. A terminated domain is presented a certificate minted by the run's own
+  CA, so a client that pins a public key or a certificate — rather than trusting
+  a root — will refuse the connection, and it is right to: there genuinely is
+  something in the middle. The refusal is recorded as an `egress.attempt` with
+  `reason: tls_pinning_rejected_our_ca`, so it appears as a policy event and not
+  as a network fault. There is no way to have both a bound credential the guest
+  cannot read and an unbroken pin; the choice is per domain and is made by
+  whoever writes `--secret`.
+
+- Inside a `[team]`, all of this is **per agent**: each agent builds its own
+  TAP, its own proxy and its own nftables table from its own `allow` and
+  `secrets`,
+  and there is deliberately no team-wide allowlist. See
+  [`docs/teams.md`](teams.md).
 
 ## 7. Privilege
 
 Creating a TAP and loading nftables rules needs `CAP_NET_ADMIN`. The CLI runs
-those two steps through `sudo` and fails with an explicit message if it cannot,
-rather than silently starting a sandbox with no network. Running the whole VMM
-under the jailer, with the network set up before privileges are dropped, is
-P4-1.
+those two steps through `sudo -n` — **non-interactive**, so on a machine where
+sudo would prompt it fails immediately rather than blocking a boot on a password
+nobody is there to type:
+
+```
+egress needs CAP_NET_ADMIN via passwordless sudo (creating a TAP and loading
+nftables rules)
+```
+
+It fails with that message rather than silently starting a sandbox with no
+network. Running the whole VMM under the jailer, with the network set up before
+privileges are dropped, is P4-1.

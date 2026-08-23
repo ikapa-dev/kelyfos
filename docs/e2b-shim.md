@@ -1,6 +1,7 @@
 # The E2B-compatible shim
 
-**Status:** best-effort subset, v0.x. Implemented at P3-4.
+**Status:** best-effort subset, v0.x. Implemented at P3-4 and unchanged since;
+it predates resource caps (v0.4) and teams (v0.5) and supports neither.
 
 KelyfOS is not an E2B clone and this is not a reimplementation of their product.
 It exists for one reason: someone with code already written against the E2B SDK
@@ -34,9 +35,19 @@ print(sbx.files.read("/work/hello.txt"))
 sbx.kill()
 ```
 
-Every `Sandbox.create()` boots a real Firecracker microVM with the same
-guarantees as any other KelyfOS sandbox: read-only root, no login, and no egress
-unless the shim was started with `--allow`.
+Every `Sandbox.create()` boots a real Firecracker microVM: read-only root, no
+login, and no egress unless the shim was started with `--allow`.
+
+**Two guarantees a shim sandbox does not get, and they are the two this project
+is loudest about.** It has **no flight recorder** — nothing done through the
+shim appears in any audit record — and it reads **no `kelyfos.toml`**, so none
+of the resource caps in [`docs/resources.md`](resources.md) apply to it. The
+shim also authenticates nobody: while it is running, any process that can reach
+its port can boot, kill and rummage through sandboxes. Both are recorded as
+defects in F-D27 rather than defended; until they are fixed, treat `kelyfos
+shim` as a compatibility bridge for code you already trust, on a machine you
+already trust, and not as a way to run an agent under KelyfOS's guarantees.
+`kelyfos run` is that.
 
 ## What is implemented
 

@@ -67,7 +67,11 @@ own and what will always be someone's prose.
 ## The inventory
 
 What each document is made of, and where it is thin. Compiled at E3-0 by reading
-every document against the code it describes.
+every document against the code it describes. The prose errors it turned up have
+since been corrected, so what remains under *thin* is what is genuinely missing
+rather than wrong — with one exception, called out where it appears:
+`mode: tunnelled` on a plain-HTTP request understates what the proxy read, and
+the documents now say so rather than repeating the claim.
 
 ### `protocol.md` — the wire
 
@@ -76,13 +80,10 @@ closed handshake must be retried; why the team channel runs guest→host; why th
 MCP bridge must be a byte copier; what a snapshot's vsock reset does.
 *Reference:* the port map, the `CONNECT`/`OK` strings, the framing limits, the
 error-kind vocabulary, and every channel's field tables.
-*Thin:* the team channel's `spawn` op and almost all of its response fields are
-absent, including the `agent` name the host returns and the guest is required to
-prefer; §1.6 and §5.1 both omit `team` from their channel lists; the kernel
-command line (`kelyfos.proxy`, `.workspace`, `.agent`, `.spawn`, `.scratch`) is
-nowhere described as a set; the guest's default environment is referred to and
-never listed; §6 defines MCP framing and not one MCP tool; §8's conformance table
-has no row for the team channel.
+*Thin:* the kernel command line (`kelyfos.proxy`, `.workspace`, `.agent`,
+`.spawn`, `.scratch`) is nowhere described as a set; the guest's default
+environment is referred to and never listed; §6 defines MCP framing and not one
+MCP tool; no timeout in the system is written down except the heartbeat.
 
 ### `events.md` — the audit record
 
@@ -90,11 +91,9 @@ has no row for the team channel.
 tamper-evidence buys and what it does not; why a refused message is its own type.
 *Reference:* the common-field table, every per-type payload table, and the
 canonical form the hash is computed over.
-*Thin:* the `egress.attempt` reason vocabulary lists two values the code never
-emits and omits four it does; §2 describes the canonical field order as this
-document's order when it is the Go struct's, which is what an independent
-verifier would have to reproduce; the list of types carrying an `agent` field is
-shorter than reality; `kelyfos log --json` is missing from §5.
+*Thin:* nothing material. The per-type field tables are the reference half and
+E3-1 will take them over; until then they are hand-maintained and were last
+checked against the emitters at E3-0.
 
 ### `networking.md` — egress
 
@@ -102,13 +101,12 @@ shorter than reality; `kelyfos log --json` is missing from §5.
 guest gets no DNS at all (D16), and what that costs.
 *Reference:* the nftables template, the addressing, the boot arguments, the proxy
 environment variables, the allowlist matching rule.
-*Thin:* the oldest document here, and the only one untouched since the task that
-wrote it. Its diagram gives the wrong address range. The TLS termination the rest
-of the document leans on is one clause; the five CA-bundle variables the guest is
-given are absent; snapshot restore's re-pairing of a frozen NIC to a fresh TAP
-(D22) is absent; per-agent allowlists inside a team are absent. D6 made
-documenting the certificate-pinning limitation *here* a binding condition, and it
-is documented in `threat-model.md` instead.
+*Thin:* snapshot restore's re-pairing of a frozen NIC to a fresh TAP (D22) is
+absent — the addressing is reproduced from the snapshot rather than re-derived,
+the proxy re-binds the exact recorded port, and the host TAP's MAC is pinned so a
+restored guest's stale ARP entry still resolves. None of that is written down.
+The TLS-termination mechanism itself — the per-run CA, its 24-hour leaves, the
+leaf cache — is still only named.
 
 ### `resources.md` — the caps
 
@@ -118,12 +116,11 @@ an exception to host-side enforcement (F-D13); why a team's quotas may
 oversubscribe.
 *Reference:* the units table, the cap-to-mechanism table, the worked example, and
 the two proof scripts.
-*Thin:* `disk` is described as the size of the `/work` device and is really a
-ceiling on the packed image, which matters because the device is 2× the directory
-or 1 GiB whatever `disk` says; `--mem 512` and `mem = 512` do not mean the same
-thing and the asymmetry is unstated; a `[resources]` ceiling silently doubles as
-the default; §"What is live today" still says parts are being built above a table
-in which everything is enforced; the F-D20 lift condition it names has been met.
+*Thin:* a `[resources]` ceiling silently doubles as the default — writing
+`cpus = 2` also chooses two — and the document frames the section purely as
+ceilings; `[resources] cpus` is not checked for positivity; the per-agent
+`max_runtime` path in a team behaves differently from the single-run one and only
+the latter is described.
 
 ### `teams.md` — several agents at once
 
@@ -132,32 +129,29 @@ than shared memory or a shared disk; why the topology is fixed for a run;
 cold-first, fork-warm and the measurements behind it (F-D25, F-D26).
 *Reference:* the toml schema, the `team_*` tool list, the event types, the
 template-cache key and its 2 GiB bound, the boot paths.
-*Thin:* it counts the guest's team tools as six and there are eight; the wait
-argument is `timeout_ms` in milliseconds, not `timeout`; `team_recv` is said to
-return nothing on an empty window and actually returns a `timeout` error; a
-spawned worker's total absence of egress, secrets and workspace is never stated;
-F-D20 and F-D21 refuse `idle_timeout` by pointing at each other, and neither
-refusal mentions the other.
+*Thin:* F-D20 and F-D21 refuse `idle_timeout` by pointing at each other, and
+neither refusal mentions the other, so a user who follows the first message hits
+the second; `[team.agent.spawn.resources]` accepts two keys nothing enforces
+(F-D27); `team ps` has no sample output; the store's `not_found` is described as
+"not a refusal" and is recorded as one.
 
 ### `threat-model.md` — what to trust
 
 Concept throughout, deliberately, and the document the README sends a first-time
 reader to.
-*Thin:* stamped "current as of v0.2", two releases ago. Its denial-of-service
-section says there is no rate limiting and no cgroup enforcement, both of which
-v0.4 added. The team broker, the team store, spawn budgets and per-agent policy
-have no paragraph. The shim's unauthenticated local port has none either. Its
-section on snapshots and fork templates *is* current.
+*Thin:* nothing known. Brought to v0.5 at E3-0 — resource caps and what each
+kind of cap is actually worth, teams as a deliberate data path between sandboxes,
+the shim's unauthenticated port, and the two guarantees a shim sandbox does not
+get.
 
 ### `e2b-shim.md` — the compatibility subset
 
 *Concept:* why a subset rather than a clone, and why command execution is
 deliberately out. *Reference:* the endpoint table.
-*Thin:* it predates resource caps and teams, and its claim that a shim sandbox
-gets "the same guarantees as any other KelyfOS sandbox" is the one outright false
-sentence the inventory found — a shim sandbox has no flight recorder and no
-`kelyfos.toml` caps. Request and response shapes, status codes and the 64 MiB
-upload limit are undocumented.
+*Thin:* request and response shapes, status codes and the 64 MiB upload limit
+are undocumented — the endpoint table says what exists and not what it looks
+like. The `E2B_API_KEY` value it tells you to export disagrees with the one
+`kelyfos shim --help` prints.
 
 ## Not written down yet
 

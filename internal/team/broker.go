@@ -39,7 +39,7 @@ type Event struct {
 	Outcome string // delivered | refused | unreachable | timeout
 }
 
-// Event types and outcomes, matching docs/teams.md §6.
+// Event types and outcomes, matching docs/teams.md §8.
 const (
 	TypeMessage = "team.message"
 	TypeRefused = "team.refused"
@@ -106,7 +106,7 @@ const mailbox = 64
 // one session. Said here because the race detector found the naive version of
 // this contract in a test before it could find it in a team.
 //
-// capture decides whether payloads reach the record at all (docs/teams.md §6).
+// capture decides whether payloads reach the record at all (docs/teams.md §8).
 func New(topo *Topology, capture bool, record func(Event)) *Broker {
 	if record == nil {
 		record = func(Event) {}
@@ -373,7 +373,7 @@ func (b *Broker) describe(from, to string, body []byte, kind, outcome, reason st
 }
 
 // Error is a refusal an agent receives and can act on. Every one of them is a
-// kind from docs/teams.md §3.6; there is no silent drop anywhere in this file.
+// kind from docs/teams.md §3.8; there is no silent drop anywhere in this file.
 type Error struct {
 	Kind    string
 	Message string

@@ -196,7 +196,7 @@ const (
 
 // Team error kinds, in addition to the shared ones above. Every refusal reaches
 // the calling agent as one of these rather than as a silence (docs/teams.md
-// §3.6).
+// §3.8).
 const (
 	ErrNoEdge      = "no_edge"
 	ErrNoSuchAgent = "no_such_agent"

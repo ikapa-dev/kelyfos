@@ -14,8 +14,8 @@ reference from the source, and fail CI on any drift.
 Refreshed `docs/launch/hn-post.md` to v0.5 (still John's to send). Then E3-0:
 seven parallel audits read every doc against the code implementing it, and
 `docs/README.md` is now the entry map — concept vs reference per document, plus
-what has no documentation at all. Routed in F-D27: reference drift to E3-1's
-generator, wrong prose to the next commit.
+what has no documentation at all. F-D27 routed the findings; the prose
+corrections have landed across seven documents, no behaviour changed.
 
 ## Code defects found, recorded not fixed (F-D27)
 - `kelyfos shim` opens no recorder and reads no `kelyfos.toml` — a shim sandbox

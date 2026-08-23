@@ -2800,6 +2800,59 @@ $ go vet ./... &amp;&amp; go test ./...
   all packages ok
 $ python3 tools/check-plan.py
   PLAN.html is coherent</pre></td></tr>
+        <tr><td class="mono">2026-08-23</td><td class="mono">E3-0</td>
+        <td><b>The corrections E3-0 found, applied.</b> Class 2 of F-D27 &mdash; sentences a reader would act on and be
+        wrong. Six documents changed and no behaviour did.
+        <code>networking.md</code>: the address range is <b>169.254.0.0/16</b> link-local, not <code>10.x</code>, and why
+        that range; the allowlist decision is a string match on the requested name <i>before</i> anything resolves, not
+        &ldquo;the proxy resolves as part of deciding&rdquo;; <code>sudo -n</code>, with the error it prints; the five
+        CA-bundle variables the guest is handed and how the anchor gets there; per-agent policy inside a team; and
+        <b>the certificate-pinning limitation, which D6 made a binding condition on this file and which had only ever
+        been written in the threat model</b>.
+        <code>events.md</code>: the <code>egress.attempt</code> reason vocabulary is the five the code emits, not two it
+        never has; the canonical hash order is the struct's declaration order, which is what an independent verifier has
+        to reproduce; <code>agent</code> appears on every type but the two that are about a whole session;
+        <code>--json</code> added.
+        <code>resources.md</code>: <code>disk</code> is a ceiling on the packed image, refused before boot &mdash; not
+        the device size, which is 2&times; the directory or 1 GiB whichever is larger; <code>--mem 512</code> is MiB
+        while <code>mem = 512</code> is bytes and is refused, stated because it is a trap; <code>scratch</code> is
+        flagless too; F-D20&rsquo;s lift condition has been met and the refusal still stands, which now says so and
+        names F-D22.
+        <code>teams.md</code>: eight tools, not six; <code>timeout_ms</code> in milliseconds, default 60000; an empty
+        <code>team_recv</code> window is a <code>timeout</code> error and not an empty result, and why that is the right
+        shape for a model; a spawned worker has no egress, secrets or workspace, ever; and the spec-wins rule expires
+        with the epic that consumed it.
+        <code>threat-model.md</code>: stamped v0.5. The denial-of-service section said there was no rate limiting and no
+        cgroup enforcement &mdash; both arrived in v0.4 &mdash; and now separates the absolute caps from the throttles
+        from the <code>ENOSPC</code> ones, and says that every cap is off unless someone wrote it down. Teams get a
+        section under <i>what it defends against</i>, because a team is a deliberate data path between sandboxes and
+        &sect;2 otherwise reads as forbidding one: the edge list is the boundary rather than the network, the store
+        defaults to shared, a spawn budget is a standing authorisation. The shim gets one under <i>what it does
+        not</i>.
+        <code>e2b-shim.md</code>: the one outright false sentence the inventory found &mdash; that a shim sandbox has
+        &ldquo;the same guarantees as any other KelyfOS sandbox&rdquo; &mdash; replaced by what is actually true.
+        <code>README.md</code>: v0.5, not v0.3; the team tool count; the fork claim is conditional after F-D26; the
+        fetch transcript matches the command above it.
+        <code>protocol.md</code>: the team channel was missing from both places that enumerate channels, and its
+        <code>spawn</code> op and response fields were missing entirely &mdash; including <code>agent</code>, which a
+        fork <b>must</b> prefer over its own command line (F-D24).
+        Four stale section citations in Go comments repointed, since the map claims those numbers are load-bearing.</td>
+        <td class="mono"><pre>$ gofmt -l .
+  (nothing)
+$ go vet ./... &amp;&amp; go test ./...
+  all packages ok
+$ python3 tools/check-plan.py
+  PLAN.html is coherent
+
+$ grep -n '10\.x\.y' docs/*.md
+$ grep -n 'dns_blocked\|no_nic' docs/*.md
+$ grep -n 'six MCP tools\|Six of them' docs/*.md
+$ grep -n 'Status: v0.3' README.md
+  (all four empty)
+
+no behaviour changed: the only non-comment
+edits outside docs/ and README.md are four
+doc section numbers in Go comments</pre></td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>

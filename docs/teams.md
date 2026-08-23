@@ -1,8 +1,10 @@
 # Agent teams
 
-**Status:** normative for `v0.5`. Written at task E2-0, before any broker code
-exists; E2-1 through E2-9 implement it. If code and this document disagree, the
-code is wrong.
+**Status:** normative for `v0.5`. Written at E2-0 before any broker code
+existed; E2-1 through E2-9 implemented it and F-D26 revised how a team boots.
+The spec-wins rule it carried through the epic has expired with the epic: the
+shipped behaviour is now the reference, and a disagreement between this file and
+the code is a bug in this file.
 
 A team is several KelyfOS sandboxes on one host, declared in a file, with the
 paths between them enumerated and enforced. Think *docker-compose for agent
@@ -184,7 +186,12 @@ That gives three things at once, and none of them are separately implemented:
 ## 3. Broker semantics
 
 The guest sees the team as MCP tools (E2-2), which is how the guest sees
-everything else. Six of them.
+everything else. Seven, plus `team_spawn` for an agent whose policy granted a
+budget — eight in total, and the eighth is listed only where it would work
+(§3.6, F-D18).
+
+Every argument named `timeout_ms` is an **integer number of milliseconds** and
+defaults to **60000** when it is absent or not positive.
 
 ### 3.1 `team_send(to, body)`
 
@@ -203,16 +210,23 @@ order A sent them. Nothing is promised about the interleaving of A→B with C→
 those are different edges and the recipient sees whichever the broker took
 first.
 
-### 3.2 `team_recv(timeout)`
+### 3.2 `team_recv(timeout_ms)`
 
-Take the next message addressed to this agent, waiting up to `timeout`. Returns
-the sender and the body, or nothing if the window closed empty.
+Take the next message addressed to this agent, waiting up to `timeout_ms`.
+Returns the sender and the body — and, when the message is a question, the
+`correlate` tag to answer it with.
 
-### 3.3 `team_ask(to, body, timeout)` and `team_reply(correlate, body)`
+An empty window is an **error**, kind `timeout`, not an empty result. That is
+deliberate: a model that receives "nothing" reasonably concludes there is
+nothing to do, while a model that receives a timeout knows only that nothing has
+arrived *yet*, which is the true statement and the one that leads it to wait
+again.
+
+### 3.3 `team_ask(to, body, timeout_ms)` and `team_reply(correlate, body)`
 
 `team_ask` is a question with a correlated answer: the broker tags it, delivers
 it, and blocks the asker until the recipient calls `team_reply` with the same
-tag or the timeout expires. It exists because it is the primitive agents
+tag or `timeout_ms` expires. It exists because it is the primitive agents
 actually need — "worker asks the master which of two readings of the ticket is
 right, and waits" is the shape of nearly every real multi-agent exchange, and
 building it out of `send` plus `recv` plus a correlation scheme is a thing every
@@ -250,7 +264,17 @@ rather than retry blindly:
     denied: master already has 2 of its 2 spawned workers running
     denied: master may not spawn the "base" image; its budget permits [dev]
 
-An agent with no budget does not see the tool.
+An agent with no budget does not see the tool. The check that matters is
+host-side either way: an agent that calls a tool it was never shown still gets a
+refusal, and that refusal is in the record (F-D18).
+
+**A spawned worker has no egress, no secrets and no workspace — ever.** A spawn
+budget can declare a count, an image whitelist, a lifetime and resource caps,
+and there is nowhere in it to declare a network. So a worker created at runtime
+is always a machine with no NIC, which is the conservative reading of
+"pre-authorized by the user": the user authorized capacity, not reach. A worker
+that needs the network has to be declared as a `[[team.agent]]` with its own
+`allow`.
 
 ### 3.7 How an agent is told which agent it is
 
@@ -629,7 +653,7 @@ that is what the outcome field is for.
 | --- | --- |
 | This schema and these semantics | E2-0 |
 | Host broker enforcing the edge list, every message an event | E2-1 |
-| The six MCP tools in the guest | E2-2 |
+| The team MCP tools in the guest | E2-2 |
 | The permissioned team store | E2-3 |
 | `kelyfos team up \| ps \| down` | E2-4 |
 | Spawn under a declared budget | E2-5 |

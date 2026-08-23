@@ -10,11 +10,11 @@ edit.
 
 ![KelyfOS in a terminal](docs/media/demo.gif)
 
-> **Status: v0.3, early development, building in the open.** Cold boot-to-ready
+> **Status: v0.5, early development, building in the open.** Cold boot-to-ready
 > is **90 ms** median and snapshot restore **29 ms** (10 runs each, x86_64 on a
-> bare-KVM CI runner). **Not hardened yet** — read
-> [`docs/threat-model.md`](docs/threat-model.md) before trusting it with
-> anything.
+> bare-KVM CI runner); a five-agent team comes up in **366 ms**. **Not hardened
+> yet** — read [`docs/threat-model.md`](docs/threat-model.md) before trusting it
+> with anything.
 
 KelyfOS — from κέλυφος (*kélyfos*), "shell": the guest wrapped around the agent.
 
@@ -76,7 +76,7 @@ Each of those verifies what it downloaded against a published checksum before
 installing it, and shows you doing so — a mismatch aborts with nothing written:
 
 ```
-Fetching KelyfOS v0.3 image for x86_64 from p4r4n0rm4l/KelyfOS
+Fetching KelyfOS latest image for x86_64 from p4r4n0rm4l/KelyfOS
   SHA256SUMS
   vmlinux-x86_64.gz
   rootfs-x86_64.ext4.gz
@@ -108,8 +108,9 @@ are on Lima, WSL2, bare Linux or macOS.
 ### Building it yourself
 
 The downloads above are the same bytes the build produces — CI builds both
-arches from source on every commit — but building takes about thirty-five
-minutes, because it compiles a cross toolchain, a kernel and a userland:
+arches from source on every commit that touches code — but building takes about
+thirty-five minutes, because it compiles a cross toolchain, a kernel and a
+userland:
 
 ```sh
 bash dev/install-build-deps.sh     # compiler, Buildroot prerequisites, pinned Go
@@ -155,7 +156,8 @@ speaks stdio, so `limactl` passes it through unchanged:
 ```
 
 The agent then sees six tools — `exec`, `read_file`, `write_file`, `list_dir`,
-`upload`, `download` — and nothing else.
+`upload`, `download` — and nothing else. In a team it sees the team tools too,
+and nothing else still.
 
 ## Policy travels with the project
 
@@ -222,17 +224,20 @@ to   = "worker-*"           # a star: no worker may reach another worker
 **No guest ever has a network path to another guest.** Every inter-agent message
 travels the host broker over the existing vsock channels, is checked against the
 edge list, and lands in the audit record — including the ones it refused. The
-guest sees seven MCP tools: `team_send`, `team_recv`, `team_ask`, `team_reply`,
-`team_peers`, `team_store_get`, `team_store_put`.
+guest sees seven more MCP tools: `team_send`, `team_recv`, `team_ask`,
+`team_reply`, `team_peers`, `team_store_get`, `team_store_put` — plus a
+`team_spawn` shown only to an agent whose policy granted a spawn budget.
 
 A team is **one session**, so `kelyfos log --verify` over it verifies the whole
 team and says which agents it covered, and `kelyfos log --export team.html`
 draws one lane per agent with the message flow between them. `kelyfos watch`
 shows the same shape live.
 
-Agents granted no egress are forked from a shared template rather than
-cold-booted — a fork cannot carry a network identity, and they have none.
-`kelyfos team ps` says which path each machine took.
+The first `team up` of a given shape boots every agent cold and builds a fork
+template in the background; a later one forks its no-egress agents from that
+template in tens of milliseconds. An agent with egress is always cold-booted — a
+fork cannot carry a network identity. `kelyfos team ps` says which path each
+machine took.
 
 [`docs/teams.md`](docs/teams.md) is the full account.
 

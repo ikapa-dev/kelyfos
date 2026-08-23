@@ -1,8 +1,10 @@
 # KelyfOS host ⇄ guest protocol
 
-**Status:** normative for v0.x. Written at task P1-0, before any transport code
-exists; P1-3, P1-5, P1-6, P2-1, P2-2, P2-3, P2-4 and P3-1 implement it. If code
-and this document disagree, the code is wrong.
+**Status:** normative for v0.x. Written at P1-0 before any transport code
+existed and implemented by P1-3, P1-5, P1-6, P2-1 through P2-4 and P3-1;
+extended in place since, most recently by the `team` channel at E2-1 (§5.6). It
+is still a specification rather than a description: if code and this document
+disagree about the wire, the code is wrong.
 
 This document defines how the `kelyfos` CLI on the host talks to the supervisor
 inside the guest: the transport, the constants, and the wire format of every
@@ -121,8 +123,9 @@ are not rediscovered later:
     MUST NOT tear them down and re-bind, and the host reconnects with a fresh
     `CONNECT` per §1.1. This is why the resync RPC (§5.4) can be the first thing
     the host sends on a restored VM;
-  - the guest's **outbound** channels (`10100`, `10101`) are severed and only the
-    guest can re-dial them, so the supervisor MUST reconnect them itself;
+  - the guest's **outbound** channels (`10100`, `10101`, `10102`) are severed and
+    only the guest can re-dial them, so the supervisor MUST reconnect them
+    itself;
   - every connection drops **mid-stream**, so both ends must tolerate that
     without dying — including a half-written frame, which is why a reader
     discards a trailing partial line rather than guessing at it.
@@ -220,8 +223,9 @@ request, reads frames until the terminating frame, and closes. The `id` field
 exists anyway, so that logs correlate and so a later revision can multiplex
 without a wire change.
 
-`control`, `ready`, `events` and `mcp` are **long-lived**: many messages, either
-direction, until one side closes.
+`control`, `ready`, `events`, `mcp` and `team` are **long-lived**: many messages,
+either direction, until one side closes. `team` in particular is one connection
+for the life of the sandbox, carrying every request that agent makes (§5.6).
 
 ### 5.2 `exec` — port 10001, host → guest
 
@@ -394,7 +398,21 @@ connection from another guest, because there is no path for one (`docs/teams.md`
 | `ask` | Deliver a question and wait for its answer, up to `timeout_ms`. |
 | `reply` | Answer a question, carrying back the `correlate` the broker supplied. |
 | `peers` | The agents this one may *initiate* to. |
-| `store_get`, `store_put` | The team store, E2-3. |
+| `store_get`, `store_put` | The team store, E2-3. Both carry `key`; `store_put` also carries `body`. |
+| `spawn` | Ask for a worker within this agent's declared budget, E2-5. Optional `image`. |
+
+Request fields beyond `op`: `to`, `body` (base64), `correlate`, `key`, `image`,
+`timeout_ms`. Response fields beyond `ok`: `from`, `body`, `peers`, `correlate`,
+`agent`, `error`.
+
+`agent` on a response is load-bearing rather than informational. A guest is told
+its own name on the kernel command line, but a fork inherits its template's
+command line and would therefore report the template's name — so the host
+returns the authoritative name alongside `peers` and alongside a `spawn` result,
+and **the guest MUST prefer it** over anything it read from `/proc/cmdline`
+(F-D24). The host never reads a guest's opinion of its own identity off the
+wire: it knows which agent a connection belongs to because it is the side that
+bound the socket.
 
 `correlate` is minted by the broker and echoed by the guest. A guest cannot
 invent one: a reply whose correlation the broker does not recognise, or that
@@ -479,6 +497,8 @@ logs it with every session and refuses a `v` it does not implement.
 | `kelyfos mcp` is a byte-level pass-through | P2-3 |
 | `events` feeds the hash-chained recorder | P2-4 |
 | `resync` applied on every snapshot restore; per-fork `vsock_override` | P3-1, P3-2 |
+| Supervisor re-dials `10100`, `10101` and `10102` after a snapshot reset | P3-1, E2-1 |
+| `team` channel serves §5.6, and the guest prefers the host's `agent` | E2-1, E2-9 |
 
 ---
 

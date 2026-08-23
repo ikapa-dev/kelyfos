@@ -1,6 +1,6 @@
 # KelyfOS threat model
 
-**Status:** current as of v0.2. This document is a launch gate (P3-5) and is
+**Status:** current as of v0.5. This document is a launch gate (P3-5) and is
 meant to be read before anyone trusts KelyfOS with anything.
 
 Its job is to be honest about the shape of the protection, including where it
@@ -61,7 +61,40 @@ anywhere else.
 ### Tampering with the record
 Every event is written by the **host**, never the guest, and each carries the
 previous event's hash. A guest that could write its own audit trail could write
-a flattering one, so it cannot write one at all.
+a flattering one, so it cannot write one at all. A small class of events
+*transcribes* something the guest reported — the OOM killer running is the only
+one today — and those are marked `"source": "guest"` in the schema so a reader
+can weigh them differently. The host still writes them; it just did not witness
+them.
+
+### One agent reaching another, in a team
+A team is several sandboxes on one host, and **no guest ever has a network path
+to another guest**: there is no route, no shared bridge and no address to try.
+Every message goes through a host broker that checks it against the edge list
+you declared and records it either way, refusals included. Three things follow
+that are worth saying out loud, because a team is a *deliberate* data path
+between sandboxes and §2 otherwise reads as forbidding one.
+
+- **The edge list is the boundary, not the network.** A team is usually a set
+  of differently-privileged machines: one agent holds the credentials and the
+  others do not. Those credentials are one edge away from every agent that
+  cannot reach the network, so a mis-drawn edge is a credential mistake and not
+  a routing one.
+- **The team store defaults to shared.** A key that no `[[team.store.key]]` rule
+  matches is readable and writable by the whole team. Unwritten policy means
+  shared state; the byte limits (1 MiB a value, 64 MiB a team) are footgun
+  bounds, not security ones. Every access is recorded, permitted or not.
+- **A spawn budget is a standing authorisation.** An agent granted one can make
+  new microVMs while the run lasts, bounded by the count, image whitelist and
+  lifetime written down beforehand. No tool can grant or widen a budget, an
+  empty image list permits nothing rather than everything, and a spawned worker
+  gets no egress, no secrets and no workspace at all.
+
+The broker itself is host-side code parsing frames from untrusted guests, so a
+bug in it is a host-side bug any team member can reach. What limits that is that
+the sender's identity is supplied by the host from the socket it accepted on and
+never read from the guest's frame, mailboxes are small, and delivery is
+at-most-once — so a chatty agent cannot make the host buffer without bound.
 
 ## 4. What KelyfOS does NOT defend against
 
@@ -93,7 +126,9 @@ It is scoped as tightly as the feature allows: the CA is minted per run, lives
 only in memory, is never written to disk, and only domains you deliberately
 bound a credential to are terminated. Everything else is tunnelled untouched,
 and `kelyfos log` records `terminated` versus `tunnelled` per connection so you
-can always prove which traffic the proxy could read.
+can prove which traffic the proxy could read — with one exception recorded as a
+defect in F-D27: a plain, non-TLS HTTP request is read in full by the proxy and
+is nonetheless recorded as `tunnelled` (`docs/networking.md` §6).
 
 ### Side channels
 No defence is claimed against Spectre-class attacks, cache timing, or any other
@@ -101,10 +136,38 @@ microarchitectural channel. Firecracker's own guidance on host configuration
 (microcode, mitigations, SMT) applies and KelyfOS does not check it for you.
 
 ### Denial of service
-A sandbox can spin the CPU, fill its own memory, and exhaust its own disk.
-`--vcpus` and `--mem` bound what it gets, but there is no rate limiting, no
-cgroup enforcement (that arrives with the jailer) and no protection against a
-guest wedging its own kernel.
+A sandbox can spin the CPU, fill its own memory, and exhaust its own disk. v0.4
+bounded all of that, and the bounds are real but soft in different ways, so it
+is worth being precise about which is which.
+
+`--cpus` and `--mem` are **absolute**: they are the machine's hardware and a
+guest cannot allocate a core or a byte the VM was not built with. `disk` and
+`scratch` surface as `ENOSPC` — an error the guest sees and may handle, not a
+boundary. `cpu_quota`, the two network rates and the two disk rates are
+**throttles**: they make an attacker slower and never stop one, because that is
+what a rate limit is. `max_runtime` and `idle_timeout` end the run.
+
+Three honest limits on all of it. Every cap is **off unless someone wrote it
+down** — the defaults are 2 cores and 512 MiB and nothing else, so an
+unconfigured sandbox has only the machine's own size protecting the host. None of them is a
+confidentiality or integrity boundary; they bound consumption and nothing more.
+And nothing protects against a guest wedging its own kernel, which remains its
+own problem and not the host's.
+
+### The shim is an unauthenticated local port
+`kelyfos shim` serves an E2B-compatible REST subset, by default on
+`127.0.0.1:3000`, and it checks nothing: there is no key, no account and no
+authorisation, because it has none to have. While it is running, **any process
+on that machine that can reach the port can boot microVMs, list them, kill them,
+and read and write arbitrary paths inside a running guest.** That is a local
+privilege surface the rest of the CLI does not have, and `--addr` is the only
+thing between it and the network.
+
+Two further facts about shim sandboxes, both recorded as defects in F-D27 rather
+than defended here: they get **no flight recorder**, so nothing done through the
+shim is in any audit record; and they read no `kelyfos.toml`, so none of the
+resource caps above apply to them. Run it when you need it and stop it when you
+do not.
 
 ### The supply chain of what you run *inside*
 `--allow github.com` means the agent can fetch and execute whatever is at
@@ -149,7 +212,9 @@ can read every session record and attach to every running sandbox.
 | guest → host | Firecracker + KVM | active; VMM unconfined until P4-1 |
 | guest → network | no NIC, or TAP + nftables + proxy | active |
 | guest → credentials | injection at the proxy | active |
-| guest → audit record | host-side, hash-chained | active |
+| guest → audit record | host-side, hash-chained | active; absent under `kelyfos shim` |
+| guest → guest (team) | host broker + declared edge list | active |
+| guest → host CPU/RAM/IO | KVM config, cgroup v2, rate limiters | active, and only when configured |
 | host process → host | the jailer | **not yet** (P4-1) |
 | in-guest process → guest | seccomp / Landlock | **not yet** (P4-2) |
 

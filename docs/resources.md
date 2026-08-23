@@ -53,7 +53,14 @@ they did in v0.3.
 
 Sizes accept `K`, `M`, `G`, `T` and are powers of two: `1G` is 1073741824 bytes.
 A bare number is bytes. The same grammar parses `--disk 2G` and `disk = "2G"`,
-from the same function, so the flag and the file can never drift apart.
+from the same function, so the flag and the file cannot drift apart.
+
+**`mem` is the one exception, and it is worth knowing before it bites.** A bare
+number means MiB on the command line and bytes in the file, because `--mem 512`
+has meant 512 MiB since v0.1 and changing it would break every existing command
+line. So `--mem 512` is a 512 MiB machine, while `mem = 512` is refused as under
+1 MiB, and `mem = "512M"` is what the file wants. Suffixed values mean the same
+thing in both places, which is the reason to write them.
 
 **Sizes are binary, rates are decimal.** A `1G` disk is 2³⁰ bytes, because that
 is what a size means; a `net_mbps_rx` of 10 is 10 000 000 bits per second and a
@@ -61,9 +68,10 @@ is what a size means; a `net_mbps_rx` of 10 is 10 000 000 bits per second and a
 quoted. The two conventions disagree by 7% and both are correct in their own
 context, so the rule is written down rather than left to be inferred.
 
-The four I/O rates have **no CLI flags** — they are `kelyfos.toml` keys only.
-Nothing about them is a per-run choice the way `--cpus` is, and a limit with no
-flag has no request to check against a ceiling: the declared value is the value.
+The four I/O rates and `scratch` have **no CLI flags** — they are
+`kelyfos.toml` keys only. Nothing about them is a per-run choice the way
+`--cpus` is, and a limit with no flag has no request to check against a ceiling:
+the declared value is the value.
 
 `cpu_quota` is **absolute, not relative to `cpus`**. `100%` is one core's worth
 of CPU time per wall-clock second; `150%` is one and a half. It is not a
@@ -96,7 +104,7 @@ happens at the limit and how hard the limit is.
 | `cpus` | KVM machine config (`vcpu_count`) | absolute — the cores do not exist |
 | `mem` | KVM machine config (`mem_size_mib`) | absolute — the RAM does not exist; the guest OOM-kills, and says so |
 | `cpu_quota` | cgroup v2 `cpu.max` on the Firecracker process's own slice — inside the team's, when it is in one | throttled — work slows, nothing fails |
-| `disk` | size of the packed workspace block device | `ENOSPC` on writes to `/work` |
+| `disk` | a **ceiling** on the packed workspace image, refused before boot | `ENOSPC` on writes to `/work`, at the device's actual size |
 | `scratch` | `size=` on the tmpfs backing the overlay upper layer, applied by the guest kernel inside the `mem` cap | `ENOSPC` on writes outside `/work` |
 | `net_mbps_rx` / `net_mbps_tx` | Firecracker token-bucket rate limiter on the network device | throttled |
 | `disk_iops` / `disk_mbps` | Firecracker token-bucket rate limiter on the block devices | throttled |
@@ -109,8 +117,22 @@ device sizes, which is why a full scratch is an error the guest sees rather than
 a limit the host has to police.
 
 `scratch` and `disk` are separate devices and separate budgets. `/work` is the
-workspace block device sized by `disk`; everything else the guest writes lands on
-the tmpfs overlay sized by `scratch`. Filling one does not affect the other.
+workspace block device; everything else the guest writes lands on the tmpfs
+overlay sized by `scratch`. Filling one does not affect the other.
+
+**`disk` does not choose the device's size — it refuses one that is too big.**
+The workspace image is sized from the directory being packed: twice its size, or
+1 GiB, whichever is larger. `disk` is the ceiling that sizing must come in
+under, checked on the host before anything boots:
+
+```
+workspace ./project needs an image of 4294967296 bytes, over the 2147483648
+byte ceiling; raise it or exclude what does not need to be in the sandbox
+```
+
+So a small repository gets a 1 GiB `/work` whatever `disk` says, and `ENOSPC`
+arrives at that 1 GiB rather than at the ceiling. It follows that `disk` does
+nothing at all without a `workspace` — there is no image to size.
 
 `scratch` defaults to 50% of the **guest's** RAM — the Linux tmpfs default,
 relative to `mem`, not to host memory. Stated here because it was previously
@@ -118,11 +140,11 @@ implied by inheriting the kernel default.
 
 ## What is live today
 
-This document is the specification for the whole of resource governance, and
-parts of it are still being built. The parser refuses a key it cannot yet
-enforce rather than accepting it and doing nothing — a policy file whose limits
-are silently inert is the worst possible outcome for a file whose entire job is
-limits.
+Every key this document specifies is enforced, and the table below is the record
+of which task did it. The rule that got the file here is worth keeping in view:
+the parser refuses a key it cannot enforce rather than accepting it and doing
+nothing, because a policy file whose limits are silently inert is the worst
+possible outcome for a file whose entire job is limits.
 
 | key | status |
 | --- | --- |
@@ -131,9 +153,9 @@ limits.
 | `scratch` | **enforced** (E1-5) |
 | `max_runtime`, `idle_timeout` | **enforced** (E1-6) |
 
-Every key this document specifies is now enforced, so the machinery that refused
-an unenforced key — and named the task it was waiting on — has been retired. A
-key this file does not list is still an error, as it always was.
+The machinery that refused an unenforced key — and named the task it was waiting
+on — has therefore been retired. A key this file does not list is still an
+error, as it always was.
 
 ### How the quota is applied
 
@@ -252,8 +274,14 @@ Inside a `[team]`, `max_runtime` works per agent and `idle_timeout` is
 recorder grew" is a fact about the whole team: a busy master would keep an idle
 worker's clock alive forever and the key would be inert in exactly the case it
 was written for. `max_runtime` needs none of that — an agent's wall clock starts
-when the host boots it, and the host is holding the clock. The refusal lifts
-when the team transcript carries a per-agent activity signal (E2-7).
+when the host boots it, and the host is holding the clock.
+
+E2-7 has since given the transcript a per-agent activity signal, which was
+F-D20's stated condition for lifting the refusal — but the refusal still stands,
+because the idle watchdog reads a file-size delta with no agent in it, and a
+per-agent watchdog is a new reader of the chain plus a new call site. Lifting it
+is its own task, recorded as F-D22. Until then the key is refused, which is
+still better than accepting one that would never fire.
 
 ### How the I/O throttles are applied
 

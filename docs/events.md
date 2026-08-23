@@ -38,9 +38,12 @@ Each event carries the hash of the one before it, so the file is a chain:
 - `hash` — `sha256(canonical(event without its own hash field))`, hex-encoded.
 
 Canonical form is the event serialized as JSON with `hash` set to the empty
-string and every field in the order this document lists, with empty optional
-fields omitted. Verification re-serializes each parsed event the same way and
-recomputes the digest.
+string and empty optional fields omitted. Field order is the declaration order
+of the `recorder.Event` struct in `internal/recorder/recorder.go`, which is
+where an independent implementation must take it from: §3 pins the eight common
+fields, and the type-specific fields that follow are in struct order rather than
+in the order the tables below happen to list them. Verification re-serializes
+each parsed event the same way and recomputes the digest.
 
 This makes the log **tamper-evident, not tamper-proof**. Anyone who can write
 the file can rewrite it end to end and recompute every hash. What the chain
@@ -73,11 +76,10 @@ and `v` is bumped only when the meaning of an existing field changes.
 
 `sandbox` names the **session**, and a team is one session by design (E2-1), so
 inside a team every event carries the team's id there rather than the id of the
-machine it came from. The `agent` field is what says which machine: it started
-on the team message types and now appears on every host-side event a single
-agent produced — `egress.attempt`, `secret.use`, `resource.timeout`. A reader
-that sees no `agent` is looking at a single sandbox's session, or at an event
-about the team as a whole.
+machine it came from. The `agent` field is what says which machine, and inside a
+team it appears on every type except `session.start` and `session.end`, which
+are about the team as a whole. A reader that sees no `agent` is looking at a
+single sandbox's session, or at one of those two.
 
 ## 4. Event types
 
@@ -169,15 +171,27 @@ One outbound connection attempt. Written from P2-5.
 | `host` | string | Requested host. |
 | `port` | integer | Requested port. |
 | `allowed` | boolean | Whether policy permitted it. |
-| `reason` | string | Why, when blocked: `not_in_allowlist`, `dns_blocked`, `no_nic`. |
+| `reason` | string | Why it did not go through. See below. |
 | `mode` | string | `tunnelled` or `terminated`. **Required whenever `allowed` is true.** |
 | `bytes_in`, `bytes_out` | integer | Transferred, when the connection closed. |
 | `agent` | string | Present inside a team: which agent's proxy this was. |
 
+`reason` is one of five, and only the first is a policy refusal:
+
+| `reason` | Meaning |
+| --- | --- |
+| `not_in_allowlist` | The host is not permitted by this sandbox's `--allow`. |
+| `port_not_allowed` | Permitted host, but not port 80 or 443. |
+| `bad_request` | The proxy could not parse the request or its target. `host` and `port` may be absent. |
+| `upstream_unreachable` | Policy allowed it and the dial failed. |
+| `tls_pinning_rejected_our_ca` | A secret-bound domain was terminated and the client refused the run's CA — a pinned client, behaving correctly (`docs/networking.md` §6). |
+
 `mode` exists because of decision D6. KelyfOS terminates TLS only for domains
 with a secret bound to them, and tunnels everything else; recording which
-happened per connection is how a user can prove exactly which traffic the proxy
-was able to read.
+happened per connection is how a user proves which traffic the proxy could read.
+One case understates itself today: a plain absolute-URI HTTP request is read in
+full by any HTTP proxy and is nonetheless recorded as `tunnelled`. It is a
+recorded defect (F-D27), not a subtlety — see `docs/networking.md` §6.
 
 ### `secret.use`
 A credential was attached to a request. Written from P2-6.
@@ -318,6 +332,8 @@ session saw one and would otherwise have exited 0.
 - `kelyfos log --follow` streams events as they are recorded.
 - `kelyfos log --verify` checks the chain and reports the first break.
 - `kelyfos log --list` lists recorded sessions, marking the ones that hold a team.
+- `kelyfos log --json` prints the raw events instead of a readable replay — the
+  form to parse.
 - `kelyfos log --export <file>.html` renders the session as one self-contained
   HTML file — no scripts, no external requests.
 
