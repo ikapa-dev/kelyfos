@@ -286,7 +286,7 @@ func printEvent(line []byte, asJSON bool) {
 	case recorder.TypeSecretUse:
 		fmt.Printf("%s  secret          %s -> %s\n", ts, e.Name, e.Host)
 	case recorder.TypeResourceSummary:
-		fmt.Printf("%s  usage           %.2f CPU-seconds%s · peak RSS %s%s · net %s in / %s out · disk %s written\n",
+		fmt.Printf("%s  usage           %.2f CPU-seconds%s · peak RSS %s (VMM)%s · net %s in / %s out · disk %s written\n",
 			ts, e.CPUSeconds, quotaSuffix(e), report.HumanKiB(e.PeakRSSKiB),
 			capSuffix(e.MemMiB), humanBytes(e.NetInBytes), humanBytes(e.NetOutBytes),
 			humanBytes(e.DiskWriteBytes))
@@ -315,11 +315,17 @@ func quotaSuffix(e recorder.Event) string {
 	return ""
 }
 
+// capSuffix names the machine's RAM beside the VMM's peak resident set without
+// claiming the second is a share of the first. It is not: the figure is the
+// Firecracker process's own high-water mark, which covers the guest's memory
+// *and* whatever the host cached for the block devices it was writing, so it
+// routinely exceeds the guest's RAM cap without the guest having exceeded
+// anything (docs/events.md).
 func capSuffix(memMiB int) string {
 	if memMiB <= 0 {
 		return ""
 	}
-	return fmt.Sprintf(" of %d MiB", memMiB)
+	return fmt.Sprintf(" · machine %d MiB", memMiB)
 }
 
 func humanBytes(n int64) string {

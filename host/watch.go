@@ -321,9 +321,12 @@ func (m *watchModel) resourceLane() string {
 		case st.VcpuCount > 0:
 			cpu += fmt.Sprintf(" of %d core(s), no quota", st.VcpuCount*100)
 		}
-		mem := fmt.Sprintf("mem %s", report.HumanKiB(u.RSSKiB))
+		// The VMM's resident set, not the guest's: it holds the guest's memory
+		// and whatever the host has cached for the guest's disks, so it can sit
+		// above the machine's RAM without the machine having exceeded it.
+		mem := fmt.Sprintf("mem %s (VMM)", report.HumanKiB(u.RSSKiB))
 		if st.MemMiB > 0 {
-			mem += fmt.Sprintf(" of %d MiB", st.MemMiB)
+			mem += fmt.Sprintf(", machine %d MiB", st.MemMiB)
 		}
 		net := fmt.Sprintf("net %s in / %s out", humanBytes(u.NetInBytes), humanBytes(u.NetOutBytes))
 		if st.NetMbpsRx > 0 || st.NetMbpsTx > 0 {
@@ -338,7 +341,7 @@ func (m *watchModel) resourceLane() string {
 	if m.receipt != nil {
 		e := m.receipt
 		return barStyle.Render(fmt.Sprintf(
-			"final · %.2f CPU-seconds%s · peak RSS %s%s · net %s in / %s out · disk %s written",
+			"final · %.2f CPU-seconds%s · peak RSS %s (VMM)%s · net %s in / %s out · disk %s written",
 			e.CPUSeconds, quotaSuffix(*e), report.HumanKiB(e.PeakRSSKiB), capSuffix(e.MemMiB),
 			humanBytes(e.NetInBytes), humanBytes(e.NetOutBytes), humanBytes(e.DiskWriteBytes)))
 	}

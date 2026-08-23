@@ -183,7 +183,7 @@ The usage receipt, written once at teardown. Written from E1-7.
 | Field | Type | Meaning |
 | --- | --- | --- |
 | `cpu_seconds` | number | Host CPU time the VMM consumed. |
-| `peak_rss_kib` | integer | High-water resident set of the VMM process. |
+| `peak_rss_kib` | integer | High-water resident set **of the VMM process**. |
 | `net_in_bytes`, `net_out_bytes` | integer | Bytes across the TAP, from the guest's point of view. |
 | `disk_read_bytes`, `disk_write_bytes` | integer | Bytes the VMM moved to and from host storage. |
 | `vcpu_count`, `mem_mib`, `cpu_quota_percent` | integer | The caps those figures were consumed under. |
@@ -191,6 +191,13 @@ The usage receipt, written once at teardown. Written from E1-7.
 Every number is read on the host, from counters the kernel keeps about the
 Firecracker process and the TAP attached to it. The guest is not asked, which is
 the point: a guest that could write its own receipt could write a flattering one.
+
+`peak_rss_kib` is the Firecracker process's own high-water mark, and it is not
+a share of `mem_mib`. It covers the guest's memory *and* whatever the host
+cached for the block devices the guest was writing, so a session that filled a
+1 GiB workspace can report a peak well above the guest's RAM cap without the
+guest having exceeded anything. The two are printed side by side rather than as
+a fraction for exactly that reason.
 
 The caps are carried alongside the consumption deliberately. A receipt that says
 what was used without saying what was allowed is half a receipt, and joining the

@@ -85,7 +85,7 @@ const reportHTML = `<!DOCTYPE html>
   <tr><td>TLS terminated</td><td>{{.Summary.Terminated}} connection(s) the proxy could read{{if not .Summary.Terminated}} — none{{end}}</td></tr>
   {{if .Summary.Usage}}<tr><td>usage receipt</td><td>
     {{printf "%.2f" .Summary.Usage.CPUSeconds}} CPU-seconds{{if .Summary.Usage.CPUQuota}} · quota {{.Summary.Usage.CPUQuota}}% of one core{{else if .Summary.Usage.Vcpus}} · {{.Summary.Usage.Vcpus}} core(s), no quota{{end}}<br>
-    peak RSS {{.Summary.Usage.PeakRSS}}{{if .Summary.Usage.MemMiB}} of {{.Summary.Usage.MemMiB}} MiB{{end}}<br>
+    peak RSS {{.Summary.Usage.PeakRSS}} <span style="color:var(--muted)">(the VMM process, which also holds what the host cached for its disks)</span>{{if .Summary.Usage.MemMiB}} · the machine had {{.Summary.Usage.MemMiB}} MiB of RAM{{end}}<br>
     network {{.Summary.Usage.NetIn}} in / {{.Summary.Usage.NetOut}} out · disk {{.Summary.Usage.DiskWrite}} written, {{.Summary.Usage.DiskRead}} read<br>
     <span style="color:var(--muted)">measured on the host, from the VMM's own counters — the guest was not asked</span>
   </td></tr>{{end}}

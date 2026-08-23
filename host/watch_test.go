@@ -42,7 +42,7 @@ func TestResourceLaneShowsUsageAgainstItsCaps(t *testing.T) {
 	got := m.resourceLane()
 	for _, want := range []string{
 		"cpu  50.0% of 60% quota", // the rate, and the cap it is measured against
-		"mem 122 MiB of 512 MiB",
+		"mem 122 MiB (VMM), machine 512 MiB",
 		"net 3.0 MiB in / 1 KiB out (cap 10/0 Mbps)",
 		"disk 40.0 MiB written",
 	} {
@@ -63,7 +63,7 @@ func TestResourceLaneFallsBackToTheRecordedReceipt(t *testing.T) {
 	got := m.resourceLane()
 	for _, want := range []string{
 		"final ·", "1.68 CPU-seconds", "quota 80% of one core",
-		"peak RSS 122 MiB of 512 MiB", "disk 40.0 MiB written",
+		"peak RSS 122 MiB", "machine 512 MiB", "disk 40.0 MiB written",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("receipt lane %q\n  is missing %q", got, want)

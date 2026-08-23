@@ -41,17 +41,26 @@ mkdir -p "$PROJ/ws"
 echo "seed" > "$PROJ/ws/seed.txt"
 
 # ------------------------------------------------------------------ step 1 --
-# The acceptance list's own toml, verbatim. max_runtime is 60s, so everything
-# from here to step 5 happens inside one minute of sandbox life.
+# The acceptance list's own toml. One deviation, and it is arithmetic rather
+# than convenience: steps 2-4 cannot fit inside the list's own 60-second budget.
+# Filling a 1 GiB device through one vCPU capped at half a core takes about 51
+# seconds on its own, and a 10 Mbps download long enough to measure takes
+# another 16 — the budget expires in the middle of step 3 and takes steps 4
+# onward with it, which is what a first run of this script did.
+#
+# So it is run as two sandboxes under the same policy: steps 2-4 with the budget
+# raised, and step 5 with the file exactly as the list writes it, to watch the
+# 60 seconds fire. Every key, every cap and every assertion is unchanged.
 cat > "$PROJ/kelyfos.toml" <<TOML
 [resources]
 cpu_quota   = "50%"
 net_mbps_rx = 10
-max_runtime = "60s"
+max_runtime = "600s"
 TOML
 
 step "1. kelyfos run --image dev --cpus 1 --mem 512M --disk 1G, with the acceptance toml"
 echo "        $(tr '\n' ' ' < "$PROJ/kelyfos.toml")"
+echo "        (max_runtime is 600s here and 60s in step 5; see the note in this script)"
 
 # The download in step 4 needs somewhere to download from, and it has to be
 # ready before the sandbox that will fetch from it.
@@ -59,12 +68,15 @@ NETSERVER=no
 if sudo -n true 2>/dev/null; then
   grep -q "$NETHOST" /etc/hosts || echo "127.0.0.1 $NETHOST" | sudo tee -a /etc/hosts >/dev/null
   mkdir -p "$WORK/web"
-  head -c 100000000 /dev/urandom > "$WORK/web/blob.bin"
+  # 20 MB: about sixteen seconds at the 10 Mbps this policy sets, which is long
+  # enough for the opening burst to be a small share of the transfer and short
+  # enough to be a step in a test rather than a coffee break.
+  head -c 20000000 /dev/urandom > "$WORK/web/blob.bin"
   sudo pkill -f "[h]ttp[.]server" 2>/dev/null
   sleep 1
   ( cd "$WORK/web" && sudo nohup python3 -m http.server 80 --bind 127.0.0.1 >/dev/null 2>&1 & )
   sleep 2
-  [ "$(curl -s -o /dev/null -w '%{size_download}' http://127.0.0.1/blob.bin || echo 0)" = "100000000" ] && NETSERVER=yes
+  [ "$(curl -s -o /dev/null -w '%{size_download}' http://127.0.0.1/blob.bin || echo 0)" = "20000000" ] && NETSERVER=yes
 fi
 
 pushd "$PROJ" >/dev/null || exit 1
@@ -110,8 +122,8 @@ fi
 
 # ------------------------------------------------------------------ step 3 --
 step "3. dd into /work until ENOSPC at 1 GiB, and into scratch until ENOSPC at the default"
-out="$("$KELYFOS" exec --sandbox "$SB" "dd if=/dev/zero of=/work/fill bs=1M count=2000 2>&1 | tail -2")"
-echo "$out" | sed 's/^/        /'
+out="$("$KELYFOS" exec --sandbox "$SB" "dd if=/dev/zero of=/work/fill bs=1M count=2000 2>&1" 2>&1)"
+echo "$out" | tail -3 | sed 's/^/        /'
 if echo "$out" | grep -q "No space left on device"; then
   pass "/work filled to its 1 GiB device size and stopped with ENOSPC"
 else
@@ -119,8 +131,8 @@ else
 fi
 df="$("$KELYFOS" exec --sandbox "$SB" "df -m / | tail -1")"
 echo "        overlay: $df"
-out="$("$KELYFOS" exec --sandbox "$SB" "dd if=/dev/zero of=/tmp/fill bs=1M count=400 2>&1 | tail -2")"
-echo "$out" | sed 's/^/        /'
+out="$("$KELYFOS" exec --sandbox "$SB" "dd if=/dev/zero of=/tmp/fill bs=1M count=400 2>&1" 2>&1)"
+echo "$out" | tail -3 | sed 's/^/        /'
 got="$(echo "$out" | awk '/records out/{print $1}' | cut -d+ -f1)"
 if echo "$out" | grep -q "No space left on device" && [ "${got:-0}" -ge 200 ] && [ "${got:-0}" -le 260 ]; then
   pass "scratch stopped at ${got} MiB — the unset default of 50% of the 512M guest RAM"
@@ -156,17 +168,36 @@ print(f"{moved*8/1e6/max(secs,1):.2f} {max(moved-2*cap,0)*8/1e6/max(secs,1):.2f}
 fi
 
 # ------------------------------------------------------------------ step 5 --
+# Steps 2-4 are done with; the long-budget sandbox has served its purpose.
+kill -INT "$RUNPID" 2>/dev/null
+wait "$RUNPID" 2>/dev/null
+
+# Step 3 filled /work to a gigabyte, and the teardown above faithfully synced
+# that gigabyte back to the host. Left in place it would make the next
+# sandbox's --disk 1G too small for its own workspace, and step 5 would fail
+# for a reason that has nothing to do with time budgets.
+rm -f "$PROJ/ws/fill"
+
 step "5. let the 60 s budget fire"
-echo "        waiting for max_runtime to expire (started ${STARTED}s into this run)..."
-wait "$RUNPID"; code=$?
-sed -n '/budget of/p' "$PROJ/run.log" | sed 's/^/        /'
-grep -E "workspace written back" "$PROJ/run.log" | sed 's/^/        /'
+sed -i 's/max_runtime = "600s"/max_runtime = "60s"/' "$PROJ/kelyfos.toml"
+echo "        now with the list's own file: $(tr '\n' ' ' < "$PROJ/kelyfos.toml")"
+pushd "$PROJ" >/dev/null || exit 1
+"$KELYFOS" run --arch "$ARCH" --image dev --cpus 1 --mem 512M --disk 1G \
+  --workspace "$PROJ/ws" --allow "$NETHOST" -- sh -c 'sleep 600' > "$PROJ/timeout.log" 2>&1
+code=$?
+popd >/dev/null || exit 1
+SB="$(awk '/^sandbox /{print $2; exit}' "$PROJ/timeout.log")"
+if [ -z "$SB" ]; then
+  echo "        the sandbox never started:"; sed 's/^/        /' "$PROJ/timeout.log"
+fi
+sed -n '/budget of/p' "$PROJ/timeout.log" | sed 's/^/        /'
+grep -E "workspace written back" "$PROJ/timeout.log" | sed 's/^/        /'
 if [ "$code" -eq 124 ]; then
   pass "the run exited 124, which is what a timeout means"
 else
   fail "the run exited $code, not 124"
 fi
-if grep -q "workspace written back" "$PROJ/run.log" && [ -f "$PROJ/ws/seed.txt" ]; then
+if grep -q "workspace written back" "$PROJ/timeout.log" && [ -f "$PROJ/ws/seed.txt" ]; then
   pass "the workspace was synced back during the timeout teardown"
 else
   fail "the workspace was not synced back"
@@ -179,6 +210,9 @@ fi
 
 # ------------------------------------------------------------------ step 6 --
 step "6. the record: verify, resource.timeout, resource.summary, and the export"
+if [ -z "$SB" ]; then
+  fail "step 5 left no session to inspect"
+fi
 "$KELYFOS" log --session "$SB" | tail -4 | sed 's/^/        /'
 if "$KELYFOS" log --session "$SB" --verify 2>&1 | tee /dev/stderr | grep -q "chain intact"; then
   pass "kelyfos log --verify passes"
@@ -186,7 +220,7 @@ else
   fail "kelyfos log --verify does not pass"
 fi
 for want in resource.timeout resource.summary; do
-  if grep -q "\"$want\"" "$HOME/.cache/kelyfos/sessions/$SB/events.jsonl"; then
+  if [ -n "$SB" ] && grep -q "\"$want\"" "$HOME/.cache/kelyfos/sessions/$SB/events.jsonl" 2>/dev/null; then
     pass "the log contains $want"
   else
     fail "the log has no $want"
