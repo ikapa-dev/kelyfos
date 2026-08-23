@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/p4r4n0rm4l/KelyfOS/internal/config"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/team"
@@ -36,6 +37,16 @@ type plannedAgent struct {
 	image string
 	res   config.AgentResources
 	spawn *config.SpawnBudget
+
+	// The three things that make an agent a machine of its own rather than a
+	// name in a graph: what it may reach, what credentials it may spend there,
+	// and which host directory is its /work. All three are per agent by
+	// design — there is deliberately no team-wide allowlist (docs/teams.md
+	// §1.2), because a shared list hands the least trusted agent the most
+	// trusted agent's network.
+	allow     []string
+	secrets   []string
+	workspace string
 }
 
 func planTeam(cfg *config.Config) (*teamPlan, error) {
@@ -59,13 +70,17 @@ func planTeam(cfg *config.Config) (*teamPlan, error) {
 		if a.Image == "" {
 			a.Image = "base"
 		}
+		if err := checkAgentPolicy(cfg.Path, a); err != nil {
+			return nil, err
+		}
 		for _, name := range expandCount(a.Name, a.Count) {
 			if seen[name] {
 				return nil, fmt.Errorf("%s:%d: two agents are both called %q", cfg.Path, a.Line, name)
 			}
 			seen[name] = true
 			plan.agents = append(plan.agents, plannedAgent{
-				name: name, image: a.Image, res: a.Resources, spawn: a.Spawn})
+				name: name, image: a.Image, res: a.Resources, spawn: a.Spawn,
+				allow: a.Allow, secrets: a.Secrets, workspace: a.Workspace})
 		}
 	}
 
@@ -118,6 +133,50 @@ func planTeam(cfg *config.Config) (*teamPlan, error) {
 		plan.storeEnabled, plan.storeRules = true, rules
 	}
 	return plan, nil
+}
+
+// checkAgentPolicy refuses, before anything boots, the combinations this host
+// cannot honour. Every one of them was previously accepted and then silently
+// dropped, which is the failure mode this project refuses everywhere else: a
+// policy file whose keys do nothing is worse than one that will not load.
+func checkAgentPolicy(path string, a config.TeamAgent) error {
+	where := fmt.Sprintf("%s:%d", path, a.Line)
+
+	// A secret is only useful for a domain this agent may reach at all, and the
+	// check belongs here rather than at the proxy: an agent whose credential
+	// can never be sent is a policy mistake, not a runtime condition.
+	for _, spec := range a.Secrets {
+		name, domain, ok := strings.Cut(strings.SplitN(spec, ":", 2)[0], "@")
+		if !ok || name == "" || domain == "" {
+			return fmt.Errorf("%s: secrets must be NAME@domain, got %q", where, spec)
+		}
+		if !containsDomain(a.Allow, domain) {
+			return fmt.Errorf("%s: agent %q binds %s to %s, which is not in its allow list\n"+
+				"    add %q to this agent's allow, or drop the secret",
+				where, a.Name, name, domain, domain)
+		}
+	}
+
+	// Two machines writing one host directory back is not a workspace, it is a
+	// race whose loser's work disappears. Refuse the declaration rather than
+	// discover it at sync-back.
+	if a.Workspace != "" && a.Count > 1 {
+		return fmt.Errorf("%s: agent %q has count = %d and one workspace directory (%s)\n"+
+			"    give each replica its own agent block, or drop the workspace",
+			where, a.Name, a.Count, a.Workspace)
+	}
+
+	// idle_timeout needs an answer to "has *this agent* done anything lately",
+	// and inside a team the only activity signal the host has is one shared
+	// flight recorder that every agent writes into (F-D20). max_runtime is
+	// well defined per agent and is honoured.
+	if a.Resources.IdleTimeout > 0 {
+		return fmt.Errorf("%s: idle_timeout is not available per agent yet (F-D20)\n"+
+			"    a team shares one flight recorder, so the host cannot yet tell which agent went quiet;\n"+
+			"    use max_runtime, which is per agent and does work",
+			where)
+	}
+	return nil
 }
 
 // spawnResources is the caps a worker spawned by this agent gets: the budget's

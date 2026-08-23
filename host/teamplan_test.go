@@ -3,6 +3,7 @@ package main
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/p4r4n0rm4l/KelyfOS/internal/config"
 )
@@ -128,5 +129,115 @@ func TestStoreRulesAreCheckedAtPlanTime(t *testing.T) {
 	}
 	if plan.storeEnabled {
 		t.Error("a team with no [team.store] got one anyway")
+	}
+}
+
+// Everything [[team.agent]] declares must reach the agent. These four keys were
+// parsed and then silently dropped for a whole release, which is the failure
+// this project refuses everywhere else — so the plan now carries them, and
+// refuses the combinations the host cannot honour.
+func TestPerAgentPolicyReachesThePlan(t *testing.T) {
+	plan, err := planFrom(t, &config.Team{
+		Name: "t",
+		Agents: []config.TeamAgent{{
+			Name: "master", Count: 1,
+			Allow:     []string{"api.github.com"},
+			Secrets:   []string{"GITHUB_TOKEN@api.github.com"},
+			Workspace: "/tmp/ws",
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := plan.agents[0]
+	if len(a.allow) != 1 || a.allow[0] != "api.github.com" {
+		t.Errorf("allow did not reach the plan: %v", a.allow)
+	}
+	if len(a.secrets) != 1 {
+		t.Errorf("secrets did not reach the plan: %v", a.secrets)
+	}
+	if a.workspace != "/tmp/ws" {
+		t.Errorf("workspace did not reach the plan: %q", a.workspace)
+	}
+}
+
+// A credential bound to a domain the agent may not reach can never be spent.
+// That is a policy mistake, so it is refused at the file rather than discovered
+// as a connection that is simply never allowed.
+func TestASecretOutsideItsAgentsAllowlistIsRefused(t *testing.T) {
+	_, err := planFrom(t, &config.Team{
+		Name: "t",
+		Agents: []config.TeamAgent{{
+			Name: "master", Count: 1,
+			Allow:   []string{"example.com"},
+			Secrets: []string{"GITHUB_TOKEN@api.github.com"},
+		}},
+	})
+	if err == nil {
+		t.Fatal("a secret bound outside the agent's allowlist was accepted")
+	}
+	for _, want := range []string{"api.github.com", "allow list"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not mention %q: %v", want, err)
+		}
+	}
+	// A subdomain of an allowed domain is reachable, so binding to it is fine —
+	// the same suffix rule the proxy enforces.
+	if _, err := planFrom(t, &config.Team{
+		Name: "t",
+		Agents: []config.TeamAgent{{
+			Name: "master", Count: 1,
+			Allow:   []string{"github.com"},
+			Secrets: []string{"GITHUB_TOKEN@api.github.com:basic"},
+		}},
+	}); err != nil {
+		t.Errorf("a secret on a subdomain of an allowed domain was refused: %v", err)
+	}
+}
+
+// Two machines writing one host directory back is a race whose loser's work
+// disappears, so the declaration is refused rather than the sync.
+func TestOneWorkspaceCannotBackACountGroup(t *testing.T) {
+	_, err := planFrom(t, &config.Team{
+		Name:   "t",
+		Agents: []config.TeamAgent{{Name: "worker", Count: 3, Workspace: "/tmp/shared"}},
+	})
+	if err == nil {
+		t.Fatal("three agents were given one workspace directory")
+	}
+	if !strings.Contains(err.Error(), "workspace") {
+		t.Errorf("the refusal does not name the problem: %v", err)
+	}
+}
+
+// idle_timeout has no per-agent activity signal inside a team yet (F-D20), so
+// it is refused by name and line rather than accepted and ignored. max_runtime
+// is well defined per agent and is not.
+func TestIdleTimeoutIsRefusedPerAgentAndMaxRuntimeIsNot(t *testing.T) {
+	_, err := planFrom(t, &config.Team{
+		Name: "t",
+		Agents: []config.TeamAgent{{
+			Name: "a", Count: 1,
+			Resources: config.AgentResources{IdleTimeout: 30 * time.Second},
+		}},
+	})
+	if err == nil {
+		t.Fatal("idle_timeout was accepted per agent")
+	}
+	if !strings.Contains(err.Error(), "F-D20") {
+		t.Errorf("the refusal does not cite the decision: %v", err)
+	}
+	plan, err := planFrom(t, &config.Team{
+		Name: "t",
+		Agents: []config.TeamAgent{{
+			Name: "a", Count: 1,
+			Resources: config.AgentResources{MaxRuntime: 30 * time.Second},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("max_runtime was refused per agent: %v", err)
+	}
+	if plan.agents[0].res.MaxRuntime != 30*time.Second {
+		t.Errorf("max_runtime did not reach the plan: %v", plan.agents[0].res.MaxRuntime)
 	}
 }

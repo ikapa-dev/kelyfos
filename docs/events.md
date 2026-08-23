@@ -71,6 +71,14 @@ Type-specific fields follow, and are documented per type below. **A reader must
 ignore fields it does not recognise** — adding a field is not a breaking change,
 and `v` is bumped only when the meaning of an existing field changes.
 
+`sandbox` names the **session**, and a team is one session by design (E2-1), so
+inside a team every event carries the team's id there rather than the id of the
+machine it came from. The `agent` field is what says which machine: it started
+on the team message types and now appears on every host-side event a single
+agent produced — `egress.attempt`, `secret.use`, `resource.timeout`. A reader
+that sees no `agent` is looking at a single sandbox's session, or at an event
+about the team as a whole.
+
 ## 4. Event types
 
 ### `session.start`
@@ -158,6 +166,7 @@ One outbound connection attempt. Written from P2-5.
 | `reason` | string | Why, when blocked: `not_in_allowlist`, `dns_blocked`, `no_nic`. |
 | `mode` | string | `tunnelled` or `terminated`. **Required whenever `allowed` is true.** |
 | `bytes_in`, `bytes_out` | integer | Transferred, when the connection closed. |
+| `agent` | string | Present inside a team: which agent's proxy this was. |
 
 `mode` exists because of decision D6. KelyfOS terminates TLS only for domains
 with a secret bound to them, and tunnels everything else; recording which
@@ -171,6 +180,7 @@ A credential was attached to a request. Written from P2-6.
 | --- | --- | --- |
 | `name` | string | Secret name, e.g. `GITHUB_TOKEN`. |
 | `host` | string | Where it was sent. |
+| `agent` | string | Present inside a team: whose credential it was. |
 
 **The value is never recorded, in any field, in any form** — not truncated, not
 hashed. A hash of a short credential is a credential. The whole point of
@@ -266,6 +276,7 @@ A time budget expired and ended the run. Written from E1-6.
 | --- | --- | --- |
 | `budget` | string | `max_runtime` or `idle_timeout` — which one fired. |
 | `budget_ms` | integer | The budget's size. |
+| `agent` | string | Present inside a team: which agent's budget expired. |
 | `elapsed_ms` | integer | How long the run actually lasted, or how long it had been idle. |
 
 The `session.end` that follows carries `reason: "timeout"`, and `kelyfos run`

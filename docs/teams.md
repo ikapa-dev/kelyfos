@@ -83,6 +83,35 @@ own VM is that it gets its own answer to "what may this reach", and a shared
 list would quietly hand the least trusted agent the most trusted agent's
 network.
 
+What each key actually does, because for one release these were parsed and then
+silently dropped:
+
+- `allow` builds this agent a TAP, an egress proxy bound on it, and the nftables
+  table that makes the proxy the only reachable destination — the same order and
+  the same machinery `kelyfos run` uses. **An agent with no `allow` gets no
+  network interface at all**, which is why a worker in `kelyfos team ps` shows
+  `EGRESS none` rather than an empty allowlist.
+- `secrets` binds a host credential to a domain for this agent alone. The value
+  stays on the host, the proxy terminates TLS for that domain and attaches the
+  header, and the guest is handed the per-run trust anchor and nothing else
+  (D6). A secret bound to a domain outside **this agent's** `allow` is refused
+  at the file: a credential that can never be spent is a policy mistake, not a
+  runtime condition.
+- `workspace` packs that host directory as this agent's `/work` before it boots,
+  and `kelyfos team down` writes it back — every agent's own, in the reverse of
+  the order they started. One directory behind a `count` group is refused: two
+  machines writing one directory back is a race whose loser's work disappears.
+- `[team.agent.resources]` applies per agent exactly as `[resources]` applies to
+  a run, including `cpu_quota`, which puts that agent's Firecracker process in
+  its own cgroup v2 slice. One exception, written down rather than left to be
+  discovered: `idle_timeout` is **refused** per agent (F-D20, and
+  `docs/resources.md`), because a team shares one flight recorder and the host
+  cannot yet tell which agent went quiet. `max_runtime` is per agent and works.
+
+Every one of these is enforced host-side (F-D2). Nothing in the guest is asked
+to respect any of it, and a guest that tried could not: it has no interface to
+bring up, no credential to withhold and no cgroup to leave.
+
 ### 1.3 `[[team.edge]]`
 
 | key | type | meaning |

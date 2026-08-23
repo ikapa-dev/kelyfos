@@ -919,6 +919,26 @@
         <code>team ps</code> and in the flight recorder like every other fact about it. The cost is honest and is F-D17&rsquo;s
         cost, now paid deliberately: there are two boot paths in <code>team up</code>, and a team of egress-granted agents gets
         no benefit at all from this work.</td></tr>
+        <tr><td class="mono">F-D20</td><td class="mono">2026-08-23</td>
+        <td>Inside a <code>[team]</code>, <code>[team.agent.resources] idle_timeout</code> is <b>refused at the
+        file</b> &mdash; by name, by line, citing this decision and naming what to use instead. <code>max_runtime</code>
+        is honoured per agent. The refusal lifts when E2-7 gives the team transcript a per-agent activity signal;
+        until then the key does not exist for a team member.</td>
+        <td>E1-6&rsquo;s idle watchdog answers &ldquo;has anything happened lately&rdquo; from two host-side facts:
+        the session&rsquo;s flight-recorder file grew, and the egress proxy moved a byte. Both are properties of a
+        <i>session</i>, and a team is deliberately <i>one</i> session &mdash; E2-1 chose one verifiable transcript over
+        five that have to be correlated afterwards, and that choice is worth more than this key. So inside a team the
+        first fact is a team-level signal: a busy master keeps an idle worker&rsquo;s clock alive indefinitely, and the
+        budget would be inert in precisely the case a user writes it for. Two alternatives were considered and rejected.
+        Giving each agent its own recorder would make the timer work and would cost the single team transcript, which is
+        a much larger promise to break for a much smaller feature. Filtering the shared log on the <code>agent</code>
+        field is the right answer and is not available yet: an <code>exec</code> against a team member currently writes
+        into that member&rsquo;s own session file rather than the team&rsquo;s, which is exactly what E2-7 exists to fix
+        &mdash; so the mechanism is one task away rather than absent. Refusing is what the project does everywhere else
+        with something it cannot enforce, and it is the opposite of what this task had to come back and fix:
+        <code>allow</code>, <code>secrets</code> and <code>workspace</code> were accepted per agent and silently dropped
+        for a release, which is the failure mode a refusal exists to prevent. <code>max_runtime</code> needs none of this
+        &mdash; an agent&rsquo;s wall clock starts when the host boots it, and the host is holding the clock.</td></tr>
     <!-- Claude Code: append rows above this line. -->
       <tr><td class="mono">F-D10</td><td class="mono">2026-08-22</td>
         <td>The resource knobs E1-0 goes looking for shipped <b>partly</b>: <code>--vcpus</code>/<code>--mem</code> and
@@ -1961,6 +1981,58 @@ PLAN-FEATURES.html &sect;4 +2 entries; docs/launch/hn-post.md +1 note</pre></td>
         honest-reporting stance is what the new decision inherits. Also noted there: the same fast path is <i>not</i> being
         built for E2-5&rsquo;s runtime spawns, which stay cold boots.</td>
         <td class="mono">PLAN-FEATURES.html &sect;5 F-D19; supersedes the<br>&ldquo;cannot be met&rdquo; clause of F-D17 only</td></tr>
+        <tr><td class="mono">2026-08-23</td><td class="mono">E2-4</td>
+        <td><b>Correcting the record: three per-agent keys were parsed and then thrown away.</b> Re-reading the boot
+        path before starting E2-6 found that <code>bootAgent</code> carried an agent&rsquo;s image, cores, RAM, scratch
+        and I/O rates into <code>sandbox.Options</code> and carried nothing else. <code>allow</code>,
+        <code>secrets</code>, <code>workspace</code> and <code>cpu_quota</code> were read by the parser, validated,
+        stored on <code>config.TeamAgent</code> &mdash; and never read again. So a team agent had no network interface
+        whatever its allowlist said, no <code>/work</code> whatever its workspace said, and no cgroup whatever its quota
+        said. Proved on three real machines before touching anything: an agent declaring
+        <code>allow = ["example.com"]</code> came up with <code>lo</code> and nothing else. The earlier E2-4 row claims
+        &ldquo;its own egress&rdquo;; that claim was not true of the code that shipped, and this row is the correction
+        &mdash; the old row stays as written, because log rows are immutable and a log that edits itself is not one.
+        <b>What changed.</b> Each agent now gets the whole environment <code>kelyfos run</code> builds for a single
+        sandbox: TAP, proxy, firewall, per-run CA and trust anchor when a secret is bound, its own packed workspace, its
+        own cgroup slice, and a <code>max_runtime</code> the host enforces. It is torn down in the reverse of the order
+        it was built &mdash; machine, proxy, TAP, cgroup, then the workspace last, once nothing can still be writing into
+        the disk it came from &mdash; and every path out of a half-built agent unwinds what it had already built, because
+        a live TAP with no machine on the end of it is worse than a failure. Three combinations are now refused at the
+        file rather than discovered later: a secret bound outside its own agent&rsquo;s allowlist, one workspace
+        directory behind a <code>count</code> group, and <code>idle_timeout</code> per agent (F-D20). The egress and
+        secret events land in the team&rsquo;s one recorder with an <code>agent</code> field saying which machine they
+        came from, and <code>team ps</code> grew an EGRESS column so &ldquo;none&rdquo; is visible rather than
+        inferred.</td>
+        <td class="mono"><pre>$ kelyfos team up                     (aarch64, nested &mdash; D15)
+team fixcheck: 2 agents, 2 edges
+  master     484aa615 ready in 1778 ms
+             egress example.com &middot; cpu 60% &middot; workspace /tmp/e2fix/ws
+  worker     3abafa55 ready in 908 ms
+
+$ kelyfos team ps
+AGENT   SANDBOX   CPU   MEM     DISK WRITTEN  EGRESS       REACHES
+master  484aa615  1.4s  52 MiB  16.0 MiB      example.com  worker
+worker  3abafa55  1.0s  31 MiB  0 B           none         master
+
+master:  cat /work/note.txt          -&gt; hello from the host
+         curl https://example.com/   -&gt; 200
+         curl https://api.github.com -&gt; 000 (rc=7, refused)
+         cpu.max in its own scope    -&gt; 60000 100000
+worker:  ip -o link                  -&gt; lo only, no eth0
+         curl https://example.com/   -&gt; 000 (rc=28, no route out)
+
+$ kelyfos team down
+  master     workspace written back to /tmp/e2fix/ws
+$ cat /tmp/e2fix/ws/reply.txt   written-by-master   &lt;- written in the guest
+
+a second team, one agent, DEMO_TOKEN@example.com:
+  curl https://example.com/ -&gt; 200        mode=terminated
+  env | grep -c DEMO_TOKEN  -&gt; 0          the value never entered the guest
+  events: secret.use agent=solo host=example.com
+          egress.attempt agent=solo mode=terminated
+  session a73831c3: chain intact, 6 events verified
+
+$ go test ./... -race     all packages ok</pre></td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>

@@ -246,6 +246,15 @@ The grace period is not politeness. An agent killed outright leaves the
 workspace mid-edit, and the sync-back that follows would carry that state to the
 host as if it were a result.
 
+Inside a `[team]`, `max_runtime` works per agent and `idle_timeout` is
+**refused** — by name and line, at the file, rather than accepted and ignored
+(F-D20). A team is deliberately one session with one flight recorder, so "the
+recorder grew" is a fact about the whole team: a busy master would keep an idle
+worker's clock alive forever and the key would be inert in exactly the case it
+was written for. `max_runtime` needs none of that — an agent's wall clock starts
+when the host boots it, and the host is holding the clock. The refusal lifts
+when the team transcript carries a per-agent activity signal (E2-7).
+
 ### How the I/O throttles are applied
 
 `net_mbps_rx` / `net_mbps_tx` become `rx_rate_limiter` / `tx_rate_limiter` on

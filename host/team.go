@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/p4r4n0rm4l/KelyfOS/internal/config"
+	"github.com/p4r4n0rm4l/KelyfOS/internal/egress"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/proto"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/report"
@@ -141,11 +142,13 @@ func teamUp(argv []string) error {
 	teardown := func() {
 		// Reverse order, so the agent booted last is stopped first — the same
 		// order a single run's defers would have taken. Spawned workers are in
-		// this list too, and are the last in, so they are the first out.
+		// this list too, and are the last in, so they are the first out. Each
+		// one syncs its own workspace on the way past, which is what `down`
+		// promises: all VMs gone, all workspaces written back.
 		running := crew.snapshot()
 		for i := len(running) - 1; i >= 0; i-- {
-			if err := running[i].Shutdown(10 * time.Second); err != nil {
-				fmt.Fprintf(os.Stderr, "kelyfos: %s: %v\n", running[i].State.Agent, err)
+			if err := running[i].stop(10 * time.Second); err != nil {
+				fmt.Fprintf(os.Stderr, "kelyfos: %s: %v\n", running[i].name, err)
 			}
 		}
 		_ = os.Remove(teamStatePath())
@@ -164,13 +167,18 @@ func teamUp(argv []string) error {
 		}
 	}
 	broker.OnSpawn = func(req team.SpawnRequest) error {
+		// A spawned worker gets the budget's caps and nothing else: no egress,
+		// no secrets, no workspace. The budget template has no place to declare
+		// them, and inventing an inheritance rule would let an agent hand its
+		// own network to a machine the user never wrote down (E2-5).
 		res := plan.spawnResources(req.Spawner)
-		sb, err := bootAgent(ctx, plannedAgent{name: req.Name, image: req.Image, res: res},
-			broker, *arch, *timeout)
+		rig, err := bootAgent(ctx, plannedAgent{name: req.Name, image: req.Image, res: res},
+			broker, rec, *arch, *timeout)
 		if err != nil {
 			return err
 		}
-		crew.add(sb, req.Spawner+" -> "+req.Name, req.Name+" -> "+req.Spawner)
+		sb := rig.sb
+		crew.add(rig, req.Spawner+" -> "+req.Name, req.Name+" -> "+req.Spawner)
 		fmt.Printf("  %-12s %s spawned by %s, ready in %d ms\n",
 			req.Name, sb.State.ID, req.Spawner, sb.State.BootReadyMS)
 
@@ -186,7 +194,7 @@ func teamUp(argv []string) error {
 				fmt.Printf("  %-12s reached its %s lifetime; stopping it\n", req.Name, req.Lifetime)
 				broker.Despawn(req.Name)
 				crew.remove(req.Name)
-				_ = sb.Shutdown(10 * time.Second)
+				_ = rig.stop(10 * time.Second)
 			}()
 		}
 		return nil
@@ -199,7 +207,7 @@ func teamUp(argv []string) error {
 	started := time.Now()
 	type booted struct {
 		i   int
-		sb  *sandbox.Sandbox
+		rig *agentRig
 		err error
 	}
 	results := make(chan booted, len(plan.agents))
@@ -208,8 +216,8 @@ func teamUp(argv []string) error {
 		wg.Add(1)
 		go func(i int, a plannedAgent) {
 			defer wg.Done()
-			sb, err := bootAgent(ctx, a, broker, *arch, *timeout)
-			results <- booted{i, sb, err}
+			rig, err := bootAgent(ctx, a, broker, rec, *arch, *timeout)
+			results <- booted{i, rig, err}
 		}(i, a)
 	}
 	wg.Wait()
@@ -217,7 +225,7 @@ func teamUp(argv []string) error {
 
 	// Collected in declaration order, so the output reads like the file and a
 	// failure names the agent the user wrote rather than whichever lost a race.
-	order := make([]*sandbox.Sandbox, len(plan.agents))
+	order := make([]*agentRig, len(plan.agents))
 	var bootErr error
 	for r := range results {
 		if r.err != nil {
@@ -226,20 +234,48 @@ func teamUp(argv []string) error {
 			}
 			continue
 		}
-		order[r.i] = r.sb
+		order[r.i] = r.rig
 	}
-	for _, sb := range order {
-		if sb != nil {
-			crew.add(sb)
+	for _, rig := range order {
+		if rig != nil {
+			crew.add(rig)
 		}
 	}
 	if bootErr != nil {
 		return bootErr
 	}
-	for i, sb := range order {
-		fmt.Printf("  %-12s %s ready in %d ms\n", plan.agents[i].name, sb.State.ID, sb.State.BootReadyMS)
+	for i, rig := range order {
+		fmt.Printf("  %-12s %s ready in %d ms\n",
+			plan.agents[i].name, rig.sb.State.ID, rig.sb.State.BootReadyMS)
+		if d := describeAgent(plan.agents[i], rig); d != "" {
+			fmt.Printf("  %-12s %s\n", "", d)
+		}
 	}
 	fmt.Printf("team up in %d ms\n", time.Since(started).Milliseconds())
+
+	// A max_runtime is a host-side cap on one agent's wall clock, enforced here
+	// for the same reason the spawn lifetime is: the budget is the user's, and
+	// an agent asked to police its own deadline is not a limit (E1-6, F-D2).
+	for i, rig := range order {
+		limit := plan.agents[i].res.MaxRuntime
+		if limit <= 0 {
+			continue
+		}
+		go func(rig *agentRig, limit time.Duration) {
+			select {
+			case <-time.After(limit):
+			case <-ctx.Done():
+				return
+			}
+			_ = rec.Append(recorder.Event{Type: recorder.TypeResourceTimeout,
+				Agent: rig.name, Budget: "max_runtime", BudgetMS: limit.Milliseconds(),
+				ElapsedMS: limit.Milliseconds()})
+			fmt.Fprintf(os.Stderr, "\nkelyfos: %s reached its max_runtime of %s; stopping it\n",
+				rig.name, limit)
+			crew.remove(rig.name)
+			_ = rig.stop(10 * time.Second)
+		}(rig, limit)
+	}
 
 	if err := crew.write(); err != nil {
 		return err
@@ -250,13 +286,82 @@ func teamUp(argv []string) error {
 	return nil
 }
 
+// agentRig is one team member and everything the host built around it: the
+// egress path its own policy granted, the workspace it was given, and the
+// cgroup slice that caps its CPU time.
+//
+// It exists because an agent in a team is a whole sandbox, not a name in a
+// graph — `kelyfos run` builds exactly this much machinery for one, and a team
+// that built less would be handing its agents a weaker version of the product.
+type agentRig struct {
+	name  string
+	sb    *sandbox.Sandbox
+	net   *sandbox.Network
+	proxy *egress.Proxy
+	ws    *sandbox.Workspace
+	slice *sandbox.Slice
+}
+
+// stop unwinds one member in the reverse of the order it was built. The machine
+// goes first, because everything after it is plumbing the machine is still
+// using; the workspace is written back last, once nothing can still be writing
+// into the disk it came from.
+func (r *agentRig) stop(timeout time.Duration) error {
+	err := r.sb.Shutdown(timeout)
+	if r.proxy != nil {
+		r.proxy.Close()
+	}
+	if r.net != nil {
+		r.net.Down()
+	}
+	r.slice.Close()
+	if r.ws != nil {
+		dest, diverted, syncErr := r.ws.SyncBack()
+		switch {
+		case syncErr != nil:
+			fmt.Fprintf(os.Stderr, "kelyfos: %s: workspace sync-back failed: %v\n", r.name, syncErr)
+		case diverted:
+			fmt.Printf("  %-12s host directory changed while the team ran; results written to %s\n",
+				r.name, dest)
+		default:
+			fmt.Printf("  %-12s workspace written back to %s\n", r.name, dest)
+		}
+		_ = os.Remove(r.ws.ImagePath)
+	}
+	return err
+}
+
 // bootAgent brings up one member of a team: its own network, its own caps, its
 // own workspace, and a team channel wired to the shared broker.
-func bootAgent(ctx context.Context, a plannedAgent, broker *team.Broker, arch string, timeout time.Duration) (*sandbox.Sandbox, error) {
+//
+// Everything it builds is torn down by the returned rig, including on the paths
+// out of this function that fail — a half-built member with a live TAP and no
+// machine on the end of it is worse than none.
+func bootAgent(ctx context.Context, a plannedAgent, broker *team.Broker, rec *recorder.Recorder,
+	arch string, timeout time.Duration) (*agentRig, error) {
+
 	id, err := sandbox.NewID()
 	if err != nil {
 		return nil, err
 	}
+	rig := &agentRig{name: a.name}
+	ok := false
+	defer func() {
+		if ok {
+			return
+		}
+		if rig.proxy != nil {
+			rig.proxy.Close()
+		}
+		if rig.net != nil {
+			rig.net.Down()
+		}
+		rig.slice.Close()
+		if rig.ws != nil {
+			_ = os.Remove(rig.ws.ImagePath)
+		}
+	}()
+
 	opts := sandbox.Options{
 		ID: id, Arch: arch, Flavor: a.image, Agent: a.name, MaySpawn: a.spawn != nil,
 		VcpuCount: a.res.CPUs, MemMiB: a.res.MemMiB, ScratchBytes: a.res.ScratchByte,
@@ -269,10 +374,90 @@ func bootAgent(ctx context.Context, a plannedAgent, broker *team.Broker, arch st
 			return broker.Serve(a.name, req)
 		},
 	}
+
+	// The CPU quota is a host-side cap on the VMM process, exactly as a single
+	// run applies it (E1-2, F-D11). Per agent, because contention inside a team
+	// is the thing a team budget exists to divide.
+	if a.res.CPUQuota > 0 {
+		slice, err := sandbox.NewCPUSlice(id, a.res.CPUQuota)
+		if err != nil {
+			return nil, fmt.Errorf("cpu_quota: %w", err)
+		}
+		rig.slice = slice
+		opts.CPUSlice = slice
+	}
+
+	// Egress is per agent and opt-in, built in the same order `run` builds it:
+	// the TAP, then the proxy bound on it, then the firewall that makes the
+	// proxy the only reachable destination, and only then a machine that can
+	// send a packet anywhere (docs/networking.md). An agent with no `allow`
+	// gets no interface at all — not a filtered one.
+	var ca *egress.CA
+	if len(a.allow) > 0 {
+		rig.net, err = sandbox.NewNetwork(id)
+		if err != nil {
+			return nil, err
+		}
+		policy := egress.Policy{Allow: a.allow}
+		for _, spec := range a.secrets {
+			sec, err := egress.ParseSecret(spec)
+			if err != nil {
+				return nil, err
+			}
+			policy.Secrets = append(policy.Secrets, sec)
+		}
+		if len(policy.Secrets) > 0 {
+			if ca, err = egress.NewCA(); err != nil {
+				return nil, err
+			}
+		}
+		rig.proxy = &egress.Proxy{Policy: policy, CA: ca}
+		port, err := rig.proxy.Listen(rig.net.HostIP.String() + ":0")
+		if err != nil {
+			return nil, err
+		}
+		if err := rig.net.Restrict(port); err != nil {
+			return nil, err
+		}
+		// One record for the whole team, so an egress attempt and the message
+		// that prompted it sit in the same chain. `agent` is what says which
+		// machine it came from — `sandbox` names the team's session.
+		rig.proxy.OnSecret = func(name, host string) {
+			_ = rec.Append(recorder.Event{Type: recorder.TypeSecretUse,
+				Agent: a.name, Name: name, Host: host})
+		}
+		rig.proxy.OnEvent = func(at egress.Attempt) {
+			allowed := at.Allowed
+			_ = rec.Append(recorder.Event{
+				Type: recorder.TypeEgressAttempt, Agent: a.name,
+				Host: at.Host, Port: at.Port, Allowed: &allowed,
+				Reason: at.Reason, Mode: at.Mode,
+				BytesIn: at.BytesIn, BytesOut: at.BytesOut,
+			})
+		}
+		go rig.proxy.Serve()
+		opts.Allow = a.allow
+		opts.Net = rig.net
+	}
+
+	// A workspace is a copy in and a copy out rather than a mount, because
+	// Firecracker has no shared-filesystem device. Packing happens before boot
+	// because the image has to exist to be attached.
+	if a.workspace != "" {
+		ws, err := sandbox.PackWorkspace(a.workspace,
+			filepath.Join(sandbox.Root(), "workspaces", id+".ext4"), a.res.DiskByte)
+		if err != nil {
+			return nil, err
+		}
+		rig.ws = ws
+		opts.Workspace = ws
+	}
+
 	sb, err := sandbox.New(opts)
 	if err != nil {
 		return nil, err
 	}
+	rig.sb = sb
 	if err := sb.Start(ctx); err != nil {
 		return nil, err
 	}
@@ -282,7 +467,40 @@ func bootAgent(ctx context.Context, a plannedAgent, broker *team.Broker, arch st
 		_ = sb.Shutdown(5 * time.Second)
 		return nil, fmt.Errorf("never became ready: %w", err)
 	}
-	return sb, nil
+	// The guest must trust the per-run CA before anything inside it tries to
+	// use the proxy for a terminated domain (D6).
+	if ca != nil {
+		if err := sb.InstallTrustAnchor(ca.AnchorPEM()); err != nil {
+			_ = sb.Shutdown(5 * time.Second)
+			return nil, err
+		}
+	}
+	ok = true
+	return rig, nil
+}
+
+// describeAgent is the one-line summary `up` prints under each member: what it
+// was given, said in the same words `kelyfos run` uses for a single sandbox.
+// Silence would read as "nothing was applied", which is exactly the mistake
+// this whole change exists to stop.
+func describeAgent(a plannedAgent, rig *agentRig) string {
+	var parts []string
+	if rig.net != nil {
+		parts = append(parts, "egress "+strings.Join(a.allow, ","))
+		for _, sec := range rig.proxy.Policy.Secrets {
+			parts = append(parts, "secret "+sec.Name+"->"+sec.Domain)
+		}
+	}
+	if rig.slice != nil {
+		parts = append(parts, fmt.Sprintf("cpu %d%%", rig.slice.Percent))
+	}
+	if rig.ws != nil {
+		parts = append(parts, "workspace "+a.workspace)
+	}
+	if a.res.MaxRuntime > 0 {
+		parts = append(parts, "max_runtime "+a.res.MaxRuntime.String())
+	}
+	return strings.Join(parts, " · ")
 }
 
 // roster is the set of machines this team has right now: the declared agents
@@ -294,13 +512,13 @@ type roster struct {
 	plan    *teamPlan
 	session string
 	started time.Time
-	running []*sandbox.Sandbox
+	running []*agentRig
 	edges   []string
 }
 
-func (r *roster) add(sb *sandbox.Sandbox, edges ...string) {
+func (r *roster) add(rig *agentRig, edges ...string) {
 	r.mu.Lock()
-	r.running = append(r.running, sb)
+	r.running = append(r.running, rig)
 	r.edges = append(r.edges, edges...)
 	written := !r.started.IsZero()
 	r.mu.Unlock()
@@ -314,9 +532,9 @@ func (r *roster) add(sb *sandbox.Sandbox, edges ...string) {
 func (r *roster) remove(name string) {
 	r.mu.Lock()
 	kept := r.running[:0]
-	for _, sb := range r.running {
-		if sb.State.Agent != name {
-			kept = append(kept, sb)
+	for _, rig := range r.running {
+		if rig.name != name {
+			kept = append(kept, rig)
 		}
 	}
 	r.running = kept
@@ -331,10 +549,10 @@ func (r *roster) remove(name string) {
 	_ = r.write()
 }
 
-func (r *roster) snapshot() []*sandbox.Sandbox {
+func (r *roster) snapshot() []*agentRig {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return append([]*sandbox.Sandbox(nil), r.running...)
+	return append([]*agentRig(nil), r.running...)
 }
 
 func (r *roster) write() error {
@@ -344,11 +562,11 @@ func (r *roster) write() error {
 	}
 	st := teamState{Name: r.plan.name, PID: os.Getpid(), Session: r.session,
 		StartedAt: r.started, Edges: append([]string(nil), r.edges...)}
-	for _, sb := range r.running {
+	for _, rig := range r.running {
 		st.Agents = append(st.Agents, struct {
 			Name    string `json:"name"`
 			Sandbox string `json:"sandbox"`
-		}{sb.State.Agent, sb.State.ID})
+		}{rig.name, rig.sb.State.ID})
 	}
 	r.mu.Unlock()
 
@@ -375,9 +593,13 @@ func teamPS(argv []string) error {
 		time.Since(st.StartedAt).Truncate(time.Second), st.Session)
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "AGENT\tSANDBOX\tCPU\tMEM\tDISK WRITTEN\tREACHES")
+	fmt.Fprintln(w, "AGENT\tSANDBOX\tCPU\tMEM\tDISK WRITTEN\tEGRESS\tREACHES")
 	for _, a := range st.Agents {
 		cpu, mem, disk := "—", "—", "—"
+		// "none" rather than a blank: an agent with no network interface is a
+		// deliberate state and reads differently from a column that failed to
+		// fill in, which is what "—" means everywhere else in this table.
+		out := "?"
 		state, err := sandbox.Load(a.Sandbox)
 		if err == nil {
 			if u, err := state.Sample(); err == nil {
@@ -385,8 +607,12 @@ func teamPS(argv []string) error {
 				mem = report.HumanKiB(u.RSSKiB)
 				disk = humanBytes(u.DiskWriteBytes)
 			}
+			out = "none"
+			if len(state.Allow) > 0 {
+				out = strings.Join(state.Allow, ",")
+			}
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", a.Name, a.Sandbox, cpu, mem, disk,
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", a.Name, a.Sandbox, cpu, mem, disk, out,
 			strings.Join(reaches(st, a.Name), " "))
 	}
 	_ = w.Flush()
