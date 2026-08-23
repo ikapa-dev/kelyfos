@@ -22,8 +22,8 @@ closing mid-call answers with an error, not silence; the inert spawn-budget keys
 are refused; `fork` closes its sessions; three smalls fixed, one parked (F-D34).
 8/8 recipes still pass; CI caught a racy test of mine that this machine hid.
 
-Then the seam check (F-D35), E4-0's spec (F-D36, F-D37), and E4-1 —
-`kelyfos serve-mcp` is live, with the policy ceiling refusing in the E1-1 style.
+Then the seam check (F-D35), E4-0's spec (F-D36, F-D37), and E4-1 — serve-mcp
+is live, with the policy ceiling refusing in the E1-1 style.
 
 ## Blocked / debts
 - P4-4, P4-5 [BLOCKED] — Phase 4 backlog. Per-agent `idle_timeout` still refused
