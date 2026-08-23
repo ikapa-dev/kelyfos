@@ -17,11 +17,10 @@ first try**, finding ten defects (F-D28..32). Then John's F-D33 hardening batch
 (F-D34), the seam check (F-D35), and E4-0's spec (F-D36, F-D37).
 
 E4-1 put serve-mcp live, the policy ceiling refusing in the E1-1 style. E4-2
-added five tools and found two holes rather than new mechanism: the MCP frame
-limit was 1 MiB while its tools promised 8 MiB, so reads over a megabyte died
-with a bare EOF — one constant now, every reader and writer, proved at 8 MiB
-(F-D38); and a restore met no ceiling at all, so snapshots record their size and
-both allowlist ceilings are checked (F-D39).
+added five tools and found two holes: the MCP frame limit was 1 MiB while its
+tools promised 8 MiB, so reads over a megabyte died with a bare EOF — one
+constant now, every reader and writer, proved at 8 MiB (F-D38); and a restore
+met no ceiling at all (F-D39).
 
 ## Blocked / debts
 - P4-4, P4-5 [BLOCKED] — Phase 4 backlog. Per-agent `idle_timeout` still refused
