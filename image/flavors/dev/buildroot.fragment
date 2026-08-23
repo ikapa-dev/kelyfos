@@ -33,4 +33,14 @@ BR2_PACKAGE_LIBCURL_PROXY_SUPPORT=y
 # to the tmpfs overlay, so this only has to hold the content — sizing it for
 # runtime writes would reserve space nothing can ever use. 128 MiB leaves room
 # for the toolbox to grow and stays inside the plan's 200 MB budget.
+# stress-ng, for E1-8: the resource caps are a claim until something inside the
+# guest tries to exceed each of them and the host watches it fail. It is a test
+# instrument, so it belongs in the dev flavor and nowhere near base — the base
+# image's smallness is a security property, not a preference.
+#
+# GPL-2.0+, which is the same footing as the BusyBox already in every flavor: a
+# guest image is an aggregate of separately licensed programs, and KelyfOS's own
+# Apache-2.0 source links against none of it.
+BR2_PACKAGE_STRESS_NG=y
+
 BR2_TARGET_ROOTFS_EXT2_SIZE="128M"

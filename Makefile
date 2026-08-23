@@ -77,7 +77,7 @@ KERNEL_ARTIFACT := vmlinux
 endif
 
 .DEFAULT_GOAL := help
-.PHONY: help versions toolchain kernel supervisor cli image run bench clean test test-integration linux-only fetch-kernel
+.PHONY: help versions toolchain kernel supervisor cli image run bench prove-caps clean test test-integration linux-only fetch-kernel
 
 help: ## Show this target list
 	@echo "KelyfOS — targets (ARCH=$(ARCH), FLAVOR=$(FLAVOR))"
@@ -206,6 +206,12 @@ BENCH_RUNS ?= 10
 
 bench: cli ## Measure cold boot-to-ready (BENCH_RUNS cold boots)
 	$(OUT_DIR)/kelyfos bench --runs $(BENCH_RUNS) --arch $(ARCH) --image $(FLAVOR)
+
+# The caps are a claim until something tries to exceed each one and the host
+# watches it fail (E1-8). Needs the dev flavor, which carries stress-ng.
+prove-caps: linux-only cli ## Drive every resource cap past its limit and check it held
+	@echo "note: binding numbers come from the bare-KVM CI runner (D15); this run is informational"
+	ARCH=$(ARCH) bash $(CURDIR)/dev/prove-caps.sh
 
 run: cli ## Boot a microVM from the built image under Firecracker
 	$(OUT_DIR)/kelyfos run --image $(FLAVOR) --arch $(ARCH)

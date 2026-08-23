@@ -1,0 +1,113 @@
+# KelyfOS — the resource caps, proved on hardware that can actually strain them.
+#
+# Epic E1's caps are claims until something inside a guest tries to exceed each
+# one and the host watches it fail (E1-8). This workflow is where that happens,
+# and it is deliberately separate from ci.yml: it takes tens of minutes, it
+# needs the dev flavor rather than base, and its numbers are a statement about
+# hardware rather than a regression gate.
+#
+# Decision D15 makes a bare-KVM x86_64 runner the environment that *defines*
+# whether a resource number is met. Under nested virtualisation a guest cannot
+# generate enough demand to make a CPU cap visible at all, so a local run of the
+# same script is informational and this one is not.
+name: caps
+
+on:
+  workflow_dispatch:
+    inputs:
+      arch:
+        description: "Guest architecture"
+        required: false
+        default: "x86_64"
+
+permissions:
+  contents: read
+
+jobs:
+  prove:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      ARCH: ${{ github.event.inputs.arch || 'x86_64' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Grant access to /dev/kvm
+        run: |
+          set -eux
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -l /dev/kvm
+
+      # A CPU quota needs a cgroup with the cpu controller available in it. On a
+      # runner the root cgroup has the controller but does not delegate it
+      # downward, so nothing can be created with a cpu.max until it does.
+      - name: Make the cpu controller available to child cgroups
+        run: |
+          set -eux
+          cat /sys/fs/cgroup/cgroup.controllers
+          echo "+cpu" | sudo tee /sys/fs/cgroup/cgroup.subtree_control || true
+          cat /sys/fs/cgroup/cgroup.subtree_control
+
+      - name: Cache Buildroot downloads
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/kelyfos/dl
+          key: kelyfos-dl-${{ hashFiles('versions.mk') }}
+          restore-keys: kelyfos-dl-
+
+      - name: Cache the Buildroot tree
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/kelyfos/build/${{ env.ARCH }}-dev
+          key: kelyfos-tree-${{ env.ARCH }}-dev-${{ hashFiles('versions.mk', 'image/buildroot/configs/*', 'image/buildroot/kernel/*', 'image/flavors/dev/*') }}
+          restore-keys: kelyfos-tree-${{ env.ARCH }}-dev-
+
+      - name: Cache the compiler cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/kelyfos/ccache
+          key: kelyfos-ccache-${{ env.ARCH }}-${{ hashFiles('versions.mk') }}
+
+      - name: Install build dependencies
+        run: bash dev/install-build-deps.sh
+
+      - name: Install Firecracker
+        run: bash dev/install-firecracker.sh
+
+      - name: Build the dev image
+        run: make image ARCH="$ARCH" FLAVOR=dev
+
+      - name: Build the CLI
+        run: make cli
+
+      # As root, and for one reason: a CPU quota needs to create a cgroup and
+      # place a process in it, and a GitHub runner has no systemd user session
+      # to ask on its behalf. HOME is passed explicitly rather than trusted to
+      # survive sudo, because the image built in the step above lives under it
+      # and root's HOME is a different directory with no image in it.
+      - name: Prove the caps
+        run: |
+          set -o pipefail
+          sudo -E env "PATH=$PATH" "HOME=$HOME" ARCH="$ARCH" \
+            bash dev/prove-caps.sh 2>&1 | tee caps.log
+
+      - name: Publish the verdict
+        if: always()
+        run: |
+          {
+            echo "### Resource caps — bare-KVM reference"
+            echo
+            echo '```'
+            sed -e 's/\x1b\[[0-9;]*m//g' caps.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: caps-${{ env.ARCH }}
+          path: caps.log
+          if-no-files-found: warn
