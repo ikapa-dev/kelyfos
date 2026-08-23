@@ -7,20 +7,19 @@ Updated 2026-08-23 · tree clean, synced with origin/main
 - PLAN-FEATURES.html — 27/42. **E1–E3 closed, v0.6 released. Epic E4 at 2/9.**
 
 ## Now
-E4-2 — file and state tools over existing machinery: `sandbox_read_file`,
-`sandbox_write_file`, `sandbox_snapshot`, `sandbox_fork`, `sandbox_restore`.
+E4-2 — file and state tools: read_file, write_file, snapshot, fork, restore.
 
 ## This session
 Epic E3 built and closed, **v0.6 tagged and published**: a reference generated
 from the product with CI failing on drift, `llms.txt` at spec v2, eight cookbook
-recipes each run before being written down, `docs/integrating.md`, and a
-docs-only exam that **passed first try** and found ten defects (F-D28..32).
+recipes each run before being written down, `docs/integrating.md`, and a docs-only
+exam that **passed first try**, finding ten defects (F-D28..32).
 
 Then John's F-D33 hardening batch, six commits: the shim reads `kelyfos.toml`,
 enforces caps and writes a recorder; plain HTTP records `mode: plain`; a bridge
 closing mid-call answers with an error, not silence; the inert spawn-budget keys
 are refused; `fork` closes its sessions; three smalls fixed, one parked (F-D34).
-8/8 recipes still pass; CI caught a racy test of mine that this machine hid.
+8/8 recipes pass; CI caught a racy test of mine that this machine hid.
 
 Then the seam check (F-D35), E4-0's spec (F-D36, F-D37), and E4-1 — serve-mcp
 is live, with the policy ceiling refusing in the E1-1 style.
