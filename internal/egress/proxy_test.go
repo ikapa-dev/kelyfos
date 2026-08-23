@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestAllowlistMatchesSubdomains(t *testing.T) {
@@ -79,9 +80,13 @@ func TestPlainHTTPIsNotRecordedAsTunnelled(t *testing.T) {
 	defer upstream.Close()
 
 	host, port, _ := net.SplitHostPort(strings.TrimPrefix(upstream.URL, "http://"))
-	var got []Attempt
+	// A channel rather than a slice: the proxy reports from its own goroutine
+	// after the response has been written, so a test that reads a shared slice
+	// the moment the client returns is racing it — and wins on a fast machine,
+	// which is the worst way for a test to be wrong.
+	attempts := make(chan Attempt, 4)
 	p := &Proxy{Policy: Policy{Allow: []string{host}, Ports: []int{atoiOrZero(port)}}}
-	p.OnEvent = func(a Attempt) { got = append(got, a) }
+	p.OnEvent = func(a Attempt) { attempts <- a }
 	addr, err := p.Listen("127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -98,10 +103,12 @@ func TestPlainHTTPIsNotRecordedAsTunnelled(t *testing.T) {
 	_, _ = io.ReadAll(resp.Body)
 	resp.Body.Close()
 
-	if len(got) != 1 {
-		t.Fatalf("want one attempt, got %d: %+v", len(got), got)
+	var a Attempt
+	select {
+	case a = <-attempts:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the proxy never reported the attempt")
 	}
-	a := got[0]
 	if !a.Allowed {
 		t.Fatalf("the request was refused: %+v", a)
 	}
