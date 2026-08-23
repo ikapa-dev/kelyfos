@@ -520,7 +520,25 @@ the team's record and says so. After `team down` the run directories are gone,
 so the team session is found by its own id or with `kelyfos log --list`, which
 marks the sessions that hold a team.
 
-### 7.2 The recorder is not a delivery buffer
+### 7.2 Watching it live
+
+`kelyfos watch` on a team session shows one lane per agent, side by side: each
+agent's commands and their output, its files, its egress attempts, and what it
+is consuming against its own caps. The team's collective budget sits above them
+and the messages between agents run in a ticker underneath — a message belongs
+to two agents, so it belongs in neither lane.
+
+There is no flag and no second command. A team is one session, so the same file
+feeds both views, and the events' own `agent` field is what splits it into
+lanes. It is still only a reader: it never opens a channel to a guest, and
+quitting it leaves the team running (D7).
+
+Lanes need room. Below about twenty-two columns each, the view stops laying out
+columns, says how wide the terminal would have to be, and shows one column with
+each line labelled by the agent it came from — the information without the
+layout, rather than the layout without the information.
+
+### 7.3 The recorder is not a delivery buffer
 
 These two facts are orthogonal and are stated together because they look
 contradictory at a glance:

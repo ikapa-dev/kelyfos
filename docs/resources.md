@@ -384,6 +384,12 @@ asked.
 Limits that fire leave their own audit events: `resource.oom` when the guest
 OOM-killer runs, `resource.timeout` naming which budget expired.
 
+Watching a **team** session shows the same thing per agent: one lane each, with
+that agent's own consumption against its own caps, and the team's collective
+budget on the line above — read from the parent cgroup the cap is written on, so
+the number and the limit cannot be about different things (E2-8). Nothing has to
+be asked for: a session whose events name agents is a team.
+
 That is the point of enforcing host-side: the record of what the sandbox
 consumed is written by the same side that imposed the limits, so it is worth
 something.

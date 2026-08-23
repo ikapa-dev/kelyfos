@@ -126,7 +126,7 @@
      improvements to the existing product land here as epics. Inert until its gate opens.</p>
   <div class="meta">
     owner: <b>John</b> &nbsp;&middot;&nbsp; developer: <b>Claude Code</b> &nbsp;&middot;&nbsp;
-    status: <b class="ok" id="meta-status">Epic E2 — active, 8/10 (next: E2-8, multi-lane watch)</b> &nbsp;&middot;&nbsp;
+    status: <b class="ok" id="meta-status">Epic E2 — active, 9/10 (next: E2-9, the proof demo)</b> &nbsp;&middot;&nbsp;
     last updated: <b id="meta-updated">2026-08-23</b><br>
     repo file: <b>PLAN-FEATURES.html</b> (lives at the repository root next to <code>PLAN.html</code>)<br>
     <span class="quiet">Companion to PLAN.html — same protocol, same rules, later timeline.</span>
@@ -166,7 +166,7 @@
     <span class="bl-name">All epics</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">E2-8 — multi-lane <code>kelyfos watch</code>: one lane per agent, plus a message-flow ticker</b></div>
+  <div class="focusline">Current focus: <b id="focus">E2-9 — the proof demo, and the F-D19 fork fast path for no-egress agents</b></div>
 </div>
 
 <!-- ====================================================== 1. ACTIVATION GATE -->
@@ -379,7 +379,7 @@
         <span class="tid">E2-7</span><span class="tk">Team transcript: <code>kelyfos log --verify</code> covers the whole team chain;
         <code>kelyfos log --export team.html</code> renders per-agent lanes with message flow between them — a replayable
         record of who told what to whom, with the store accesses inline.</span></li>
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">E2-8</span><span class="tk"><code>kelyfos watch</code> multi-lane team view: one lane per agent (exec activity,
         egress, resource use vs caps) plus a message-flow ticker. Supersedes the build plan&rsquo;s P4-6 idea for the team case.</span></li>
     <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
@@ -1012,6 +1012,28 @@
         new reader that tails and parses the chain per agent, plus a new call site (the team path enforces
         <code>max_runtime</code> itself and never calls <code>watchBudgets</code>). It is the next thing that could be
         done, and until it is, the refusal stands and this row is why.</td></tr>
+        <tr><td class="mono">F-D23</td><td class="mono">2026-08-23</td>
+        <td>D25&rsquo;s parked Bubble Tea v2 / Lip Gloss v2 move is <b>declined, not deferred again</b>, at the point
+        D25 itself named. KelyfOS stays on <code>bubbletea v1.3.10</code> and <code>lipgloss v1.1.0</code>. The
+        condition for taking a major version is now written down: a v2 API this project actually needs. Revisit if the
+        v1 line stops receiving releases, if an advisory lands on it, or if a future TUI task needs something only v2
+        offers.</td>
+        <td>D25 parked the move and named the revisit point precisely: &ldquo;E1-7 adds a resources lane to kelyfos
+        watch and E2-8 rebuilds it as a multi-lane team view, so the file is going to be rewritten on purpose soon
+        enough; that is when the v2 API should be adopted, <i>if it is adopted at all</i>.&rdquo; E2-8 is that rewrite,
+        so the question is due and answering it is not optional &mdash; leaving it open a second time would turn a
+        decision into a habit.
+        The facts were checked rather than assumed. <code>go list -m -u all</code> reports no update available for
+        either pinned module, so both are the newest release of their line; the v2 lines are separate module paths and
+        the proxy gives <code>bubbletea/v2 v2.0.9</code> (2026-08-19) and <code>lipgloss/v2 v2.0.6</code> (2026-08-11),
+        exactly what D25 recorded, so nothing has drifted. <code>govulncheck ./...</code> reports no vulnerabilities.
+        Neither line is abandoned and neither carries an advisory.
+        What settles it is that E2-8 needed nothing from v2. The multi-lane view is fixed-width columns joined
+        horizontally, a bounded ticker and a status line &mdash; the v1 API renders all of it, and the one library call
+        that matters is <code>lipgloss.Width</code>, which measures a styled string in terminal columns and exists in
+        both. Adopting a major version whose only argument is that it exists would be paying an API rewrite for nothing,
+        during the task that has the most reason to be about something else. D25&rsquo;s own phrasing left this open;
+        this closes it, with a condition rather than a date.</td></tr>
     <!-- Claude Code: append rows above this line. -->
       <tr><td class="mono">F-D10</td><td class="mono">2026-08-22</td>
         <td>The resource knobs E1-0 goes looking for shipped <b>partly</b>: <code>--vcpus</code>/<code>--mem</code> and
@@ -2235,6 +2257,58 @@ wrote team.html (26 events, 16140 bytes)
   no &lt;script, no http://, no src=
 
 $ go test ./... -race     all packages ok (12 new tests in internal/report)</pre></td></tr>
+        <tr><td class="mono">2026-08-23</td><td class="mono">E2-8</td>
+        <td><b>One lane per agent, and no flag to ask for it.</b> A team is one session (E2-7), so
+        <code>kelyfos watch</code> reads the same file it always read and the events&rsquo; own <code>agent</code>
+        field splits it into columns &mdash; the view learns it is watching a team from the chain rather than from the
+        user. Each lane carries that agent&rsquo;s commands and their output, its files, its egress attempts, its OOM
+        kills, and one line of what it is consuming against <i>its own</i> caps. The team&rsquo;s collective budget sits
+        above them, read from the parent cgroup the cap is written on so the number and the limit cannot be about
+        different things. The messages between agents run in a ticker underneath: a message belongs to two agents, so it
+        belongs in neither lane, and a refusal is loud there because a refusal is what a watcher is watching for. Still a
+        reader and nothing else &mdash; no channel is opened to any guest and quitting leaves the team running (D7), and
+        the live figures are readings alongside the record rather than in it (F-D14).
+        <b>Two defects the first live render found, neither visible to a unit test as written.</b> Lane order came out
+        <i>master, worker-2, worker-1</i>, because sampling is also where a lane is first created for an agent that has
+        not acted yet, and that loop ranged a Go map &mdash; so the columns would have been in a different order on
+        every run. Sampling now carries the roster's order, and a test pins it. And every lane line began with twelve
+        characters of timestamp, which in a 25-column lane left three characters for the content: the clock now lives in
+        the full-width ticker, and a lane spends its width on what its agent is doing.
+        <b>What it does when there is no room.</b> Below twenty-two columns a lane is a puzzle, not a view, so under that
+        the layout stops: one column, each line labelled with the agent it came from, and a line saying how wide the
+        terminal would have to be. The information without the layout beats the layout without the information.
+        The Bubble Tea v2 question D25 parked for exactly this task is answered in F-D23 &mdash; declined, with a
+        condition, because E2-8 needed nothing v2 has.</td>
+        <td class="mono"><pre>$ kelyfos watch --session 69bc819a          (150 columns, 3 agents)
+KelyfOS  team session 69bc819a  3 agents  running
+uptime 1s · 0 messages · 0 refused · 3 commands (0 failed) · egress 1 ok / 0 blocked
+  team budget: none declared
+────────────────────────────────────────────────────────────────────────────
+master                       │ worker-1                     │ worker-2
+cpu 0%/1 core mem 49 MiB/512M│ cpu 0%/1 core mem 35 MiB/384M│ cpu 1%/1 core …
+$       /bin/sh -c echo live-│ $       /bin/sh -c echo scann│
+|       live-lane-check      │ |       scanning supplier lis│
+exit    0 · 79 ms            │ exit    0 · 72 ms            │
+$       /bin/sh -c curl -s -o│                              │
+egress  example.com:443 · tun│                              │
+exit    0 · 545 ms           │                              │
+────────────────────────────────────────────────────────────────────────────
+message flow
+08:32:12.301 msg     master → worker-1  send · 10 bytes
+08:32:16.312 REFUSED worker-1 → worker-2  send · 4 bytes  (no_edge)
+q to quit — the team keeps running
+
+  (captured through a pty; the columns above are exact &mdash; a test asserts
+   every line of a lane block is the same terminal width, styles included)
+
+at 40 columns, the same session:
+  terminal is 40 columns; 3 lanes need 70 — showing one column instead
+  [master]   $ /bin/sh -c echo live-lane-check
+  [worker-1] $ /bin/sh -c echo scanning supplier list
+
+$ go list -m -u all | grep charm     no update in either v1 line
+$ govulncheck ./...                  No vulnerabilities found.
+$ go test ./... -race                all packages ok (8 new tests in host)</pre></td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
