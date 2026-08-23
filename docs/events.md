@@ -186,12 +186,13 @@ One outbound connection attempt. Written from P2-5.
 | `upstream_unreachable` | Policy allowed it and the dial failed. |
 | `tls_pinning_rejected_our_ca` | A secret-bound domain was terminated and the client refused the run's CA — a pinned client, behaving correctly (`docs/networking.md` §6). |
 
-`mode` exists because of decision D6. KelyfOS terminates TLS only for domains
-with a secret bound to them, and tunnels everything else; recording which
-happened per connection is how a user proves which traffic the proxy could read.
-One case understates itself today: a plain absolute-URI HTTP request is read in
-full by any HTTP proxy and is nonetheless recorded as `tunnelled`. It is a
-recorded defect (F-D27), not a subtlety — see `docs/networking.md` §6.
+`mode` exists because of decision D6, and answers exactly one question: how much
+of this connection could the host read? `tunnelled` means nothing — a `CONNECT`
+relayed unopened. `terminated` means everything, because a secret is bound to the
+domain and the session was decrypted to attach it. `plain` also means
+everything, because an ordinary HTTP request is parsed and re-issued by any
+proxy that forwards it. Three values rather than two, so that a reader looking
+for what the proxy saw cannot be misled by a word (`docs/networking.md` §6).
 
 ### `secret.use`
 A credential was attached to a request. Written from P2-6.

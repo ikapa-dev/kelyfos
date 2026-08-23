@@ -153,20 +153,20 @@ hoped for.
 - Every attempt is written to the flight recorder as an `egress.attempt` event,
   allowed or blocked, with the reason and the byte counts
   (`docs/events.md` §4).
-- Allowed connections record `mode`: `tunnelled` for a `CONNECT` the proxy
-  relayed without opening, `terminated` when a secret is bound to the domain and
-  the proxy decrypted the session to attach it (decision D6). That field is how
-  a user proves which traffic the proxy could read.
+- Allowed connections record `mode`, which says **how much of the connection the
+  proxy could read**. Three values, and the distinction is the whole point of
+  the field (decision D6):
 
-  **One case is currently mislabelled, and it is written down rather than left
-  to be found.** A plain absolute-URI HTTP request — no `CONNECT`, no TLS — is
-  necessarily read in full by any HTTP proxy: it is parsed, its URL is rewritten
-  and it is re-issued upstream. KelyfOS records that as `tunnelled`, which
-  understates what was read. Nothing is decrypted, because nothing was
-  encrypted; the honest statement is that the proxy saw it all. Recorded as a
-  defect in F-D27. Until it is fixed, read `mode: tunnelled` on port 80 as "the
-  proxy read this", and `mode: tunnelled` on port 443 as "the proxy relayed
-  bytes it could not read".
+  | `mode` | What the proxy saw |
+  | --- | --- |
+  | `tunnelled` | Nothing. A `CONNECT` relayed without being opened. |
+  | `terminated` | Everything. A secret is bound to this domain, so the session was decrypted to attach the credential. |
+  | `plain` | Everything. An ordinary HTTP request, which any proxy that forwards it necessarily parses, rewrites and re-issues. Nothing was decrypted because nothing was encrypted. |
+
+  `plain` exists because the alternative was recording it as `tunnelled`, and
+  that is the one thing this field must never do: **understate what the host
+  could see.** Anyone grepping for `terminated` to find the traffic the proxy
+  read would have missed every plaintext request on port 80 (F-D33).
 
 - **Certificate pinning breaks for a secret-bound domain, by construction.**
   This is the cost D6 accepted, and it belongs here as well as in the threat

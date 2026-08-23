@@ -75,7 +75,12 @@ func (p *Proxy) terminate(client net.Conn, host string, port int, secret *Secret
 		if p.OnSecret != nil {
 			p.OnSecret(secret.Name, host)
 		}
-		out += req.ContentLength
+		// A chunked body reports -1, which is not a byte count. Adding it
+		// walked the receipt backwards; an unknown length contributes nothing
+		// rather than subtracting (F-D33).
+		if req.ContentLength > 0 {
+			out += req.ContentLength
+		}
 		if resp.ContentLength > 0 {
 			in += resp.ContentLength
 		}

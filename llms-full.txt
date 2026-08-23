@@ -467,10 +467,10 @@ accepting:
 It is scoped as tightly as the feature allows: the CA is minted per run, lives
 only in memory, is never written to disk, and only domains you deliberately
 bound a credential to are terminated. Everything else is tunnelled untouched,
-and `kelyfos log` records `terminated` versus `tunnelled` per connection so you
-can prove which traffic the proxy could read — with one exception recorded as a
-defect in F-D27: a plain, non-TLS HTTP request is read in full by the proxy and
-is nonetheless recorded as `tunnelled` (`docs/networking.md` §6).
+and `kelyfos log` records per connection how much the proxy could read, so you
+can always prove it: `terminated` for a session it decrypted, `plain` for an
+ordinary HTTP request it necessarily parsed, and `tunnelled` only for a
+connection it relayed without opening.
 
 ### Side channels
 No defence is claimed against Spectre-class attacks, cache timing, or any other
@@ -1201,20 +1201,20 @@ hoped for.
 - Every attempt is written to the flight recorder as an `egress.attempt` event,
   allowed or blocked, with the reason and the byte counts
   (`docs/events.md` §4).
-- Allowed connections record `mode`: `tunnelled` for a `CONNECT` the proxy
-  relayed without opening, `terminated` when a secret is bound to the domain and
-  the proxy decrypted the session to attach it (decision D6). That field is how
-  a user proves which traffic the proxy could read.
+- Allowed connections record `mode`, which says **how much of the connection the
+  proxy could read**. Three values, and the distinction is the whole point of
+  the field (decision D6):
 
-  **One case is currently mislabelled, and it is written down rather than left
-  to be found.** A plain absolute-URI HTTP request — no `CONNECT`, no TLS — is
-  necessarily read in full by any HTTP proxy: it is parsed, its URL is rewritten
-  and it is re-issued upstream. KelyfOS records that as `tunnelled`, which
-  understates what was read. Nothing is decrypted, because nothing was
-  encrypted; the honest statement is that the proxy saw it all. Recorded as a
-  defect in F-D27. Until it is fixed, read `mode: tunnelled` on port 80 as "the
-  proxy read this", and `mode: tunnelled` on port 443 as "the proxy relayed
-  bytes it could not read".
+  | `mode` | What the proxy saw |
+  | --- | --- |
+  | `tunnelled` | Nothing. A `CONNECT` relayed without being opened. |
+  | `terminated` | Everything. A secret is bound to this domain, so the session was decrypted to attach the credential. |
+  | `plain` | Everything. An ordinary HTTP request, which any proxy that forwards it necessarily parses, rewrites and re-issues. Nothing was decrypted because nothing was encrypted. |
+
+  `plain` exists because the alternative was recording it as `tunnelled`, and
+  that is the one thing this field must never do: **understate what the host
+  could see.** Anyone grepping for `terminated` to find the traffic the proxy
+  read would have missed every plaintext request on port 80 (F-D33).
 
 - **Certificate pinning breaks for a secret-bound domain, by construction.**
   This is the cost D6 accepted, and it belongs here as well as in the threat
@@ -2142,12 +2142,13 @@ One outbound connection attempt. Written from P2-5.
 | `upstream_unreachable` | Policy allowed it and the dial failed. |
 | `tls_pinning_rejected_our_ca` | A secret-bound domain was terminated and the client refused the run's CA — a pinned client, behaving correctly (`docs/networking.md` §6). |
 
-`mode` exists because of decision D6. KelyfOS terminates TLS only for domains
-with a secret bound to them, and tunnels everything else; recording which
-happened per connection is how a user proves which traffic the proxy could read.
-One case understates itself today: a plain absolute-URI HTTP request is read in
-full by any HTTP proxy and is nonetheless recorded as `tunnelled`. It is a
-recorded defect (F-D27), not a subtlety — see `docs/networking.md` §6.
+`mode` exists because of decision D6, and answers exactly one question: how much
+of this connection could the host read? `tunnelled` means nothing — a `CONNECT`
+relayed unopened. `terminated` means everything, because a secret is bound to the
+domain and the session was decrypted to attach it. `plain` also means
+everything, because an ordinary HTTP request is parsed and re-issued by any
+proxy that forwards it. Three values rather than two, so that a reader looking
+for what the proxy saw cannot be misled by a word (`docs/networking.md` §6).
 
 ### `secret.use`
 A credential was attached to a request. Written from P2-6.
@@ -4987,7 +4988,7 @@ One outbound connection attempt, permitted or not. Written by the **host**.
 | `port` | integer | requested port *(the request parsed)* |
 | `allowed` | boolean | whether policy permitted it |
 | `reason` | string | not_in_allowlist, port_not_allowed, bad_request, upstream_unreachable, tls_pinning_rejected_our_ca *(it did not go through)* |
-| `mode` | string | tunnelled or terminated *(allowed)* |
+| `mode` | string | how much the proxy could read: tunnelled (a CONNECT it relayed unopened), terminated (a secret-bound domain it decrypted), or plain (ordinary HTTP, which it necessarily read in full) *(allowed)* |
 | `bytes_in` | integer | bytes read from upstream |
 | `bytes_out` | integer | bytes written upstream |
 | `agent` | string | which machine produced it; present inside a team *(in a team)* |

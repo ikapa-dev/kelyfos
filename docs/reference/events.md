@@ -116,7 +116,7 @@ One outbound connection attempt, permitted or not. Written by the **host**.
 | `port` | integer | requested port *(the request parsed)* |
 | `allowed` | boolean | whether policy permitted it |
 | `reason` | string | not_in_allowlist, port_not_allowed, bad_request, upstream_unreachable, tls_pinning_rejected_our_ca *(it did not go through)* |
-| `mode` | string | tunnelled or terminated *(allowed)* |
+| `mode` | string | how much the proxy could read: tunnelled (a CONNECT it relayed unopened), terminated (a secret-bound domain it decrypted), or plain (ordinary HTTP, which it necessarily read in full) *(allowed)* |
 | `bytes_in` | integer | bytes read from upstream |
 | `bytes_out` | integer | bytes written upstream |
 | `agent` | string | which machine produced it; present inside a team *(in a team)* |

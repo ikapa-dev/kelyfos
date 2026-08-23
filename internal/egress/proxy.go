@@ -22,9 +22,23 @@ import (
 )
 
 // Modes recorded per allowed connection (decision D6).
+// How much of a connection the proxy could read, recorded on every allowed
+// attempt. D6's binding condition (2) is that a user can always prove which
+// traffic the proxy was able to see, and that only works if the value never
+// understates it.
 const (
-	ModeTunnelled  = "tunnelled"
+	// ModeTunnelled: a CONNECT relayed without being opened. The proxy moved
+	// bytes it could not read.
+	ModeTunnelled = "tunnelled"
+	// ModeTerminated: a secret is bound to this domain, so the proxy decrypted
+	// the session to attach the credential and saw the plaintext.
 	ModeTerminated = "terminated"
+	// ModePlain: an ordinary HTTP request, which the proxy necessarily parsed,
+	// rewrote and re-issued. Nothing was decrypted because nothing was
+	// encrypted — and the proxy still read all of it. Recording this as
+	// tunnelled was the one place the audit log understated the host's own
+	// visibility (F-D33).
+	ModePlain = "plain"
 )
 
 // Reasons recorded when a connection is refused.
@@ -282,8 +296,20 @@ func (p *Proxy) forwardHTTP(client net.Conn, req *http.Request, host string, por
 		return
 	}
 	defer resp.Body.Close()
+	// Counted rather than left at zero: this path moved bytes like any other,
+	// and a receipt that reads 0 for a transfer that happened is its own small
+	// lie. ContentLength is -1 for a chunked body, which is not a byte count,
+	// so an unknown length is recorded as unknown.
+	var out, in int64
+	if req.ContentLength > 0 {
+		out = req.ContentLength
+	}
+	counted := &countingReader{r: resp.Body}
+	resp.Body = counted
 	_ = resp.Write(client)
-	p.report(Attempt{Host: host, Port: port, Allowed: true, Mode: ModeTunnelled})
+	in = counted.n
+	p.report(Attempt{Host: host, Port: port, Allowed: true, Mode: ModePlain,
+		BytesOut: out, BytesIn: in})
 }
 
 func splitTarget(req *http.Request) (string, int, error) {
@@ -325,3 +351,18 @@ func halfClose(c net.Conn) {
 		_ = h.CloseWrite()
 	}
 }
+
+// countingReader counts what passes through it, so a plain-HTTP transfer has a
+// byte count like every other kind.
+type countingReader struct {
+	r io.ReadCloser
+	n int64
+}
+
+func (c *countingReader) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	c.n += int64(n)
+	return n, err
+}
+
+func (c *countingReader) Close() error { return c.r.Close() }

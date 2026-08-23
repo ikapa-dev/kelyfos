@@ -123,7 +123,7 @@ func Types() []EventType {
 				{Name: "port", Type: "integer", Doc: "requested port", When: "the request parsed"},
 				{Name: "allowed", Type: "boolean", Doc: "whether policy permitted it"},
 				{Name: "reason", Type: "string", Doc: "not_in_allowlist, port_not_allowed, bad_request, upstream_unreachable, tls_pinning_rejected_our_ca", When: "it did not go through"},
-				{Name: "mode", Type: "string", Doc: "tunnelled or terminated", When: "allowed"},
+				{Name: "mode", Type: "string", Doc: "how much the proxy could read: tunnelled (a CONNECT it relayed unopened), terminated (a secret-bound domain it decrypted), or plain (ordinary HTTP, which it necessarily read in full)", When: "allowed"},
 				{Name: "bytes_in", Type: "integer", Doc: "bytes read from upstream"},
 				{Name: "bytes_out", Type: "integer", Doc: "bytes written upstream"},
 				agentField(),
