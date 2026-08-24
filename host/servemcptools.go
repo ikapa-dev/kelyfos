@@ -440,7 +440,7 @@ func (s *hostServer) boot(opts sandbox.Options) (*servedBox, error) {
 	_ = b.rec.Append(recorder.Event{
 		Type: recorder.TypeSessionReady, BootMS: b.sb.State.BootReadyMS,
 		Kernel: ready.Kernel, Supervisor: ready.Supervisor, Overlay: &overlay,
-	})
+	}.WithPosture(b.sb.State.Jailed, b.sb.State.Profile))
 	ok = true
 	return b, nil
 }

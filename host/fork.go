@@ -169,7 +169,7 @@ func recordFork(sb *sandbox.Sandbox, flavor, arch, snapshot string, elapsed time
 	}
 	if err := rec.Append(recorder.Event{
 		Type: recorder.TypeSessionReady, BootMS: elapsed.Milliseconds(),
-	}); err != nil {
+	}.WithPosture(sb.State.Jailed, sb.State.Profile)); err != nil {
 		_ = rec.Close()
 		return nil, err
 	}

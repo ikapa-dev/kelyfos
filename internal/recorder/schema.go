@@ -61,6 +61,7 @@ func Types() []EventType {
 				{Name: "kelyfos", Type: "string", Doc: "CLI version"},
 				{Name: "argv", Type: "string array", Doc: "how the sandbox was launched, for reproduction"},
 				{Name: "jailed", Type: "boolean", Doc: "whether the VMM ran inside the jailer — a chroot, a dropped uid, and only the devices it needs", When: "kelyfos knows, which is every run from v0.9"},
+				{Name: "profile", Type: "string", Doc: "what the guest's supervisor confined everything it spawned with: the flavor, the writable trees, the count of refused syscalls. Absent means no confinement — a machine restored from a snapshot taken before v0.9 has none, because restoring does not upgrade the guest inside it", When: "the guest reports one, which is every machine from v0.9"},
 				{Name: "cwd", Type: "string", Doc: "the directory it was launched from, which argv alone does not capture", When: "kelyfos run"},
 				{Name: "reason", Type: "string", Doc: "where the machine came from", When: "restore and fork"},
 			}},

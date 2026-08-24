@@ -173,7 +173,7 @@
     <span class="bl-name">Overall</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">P5-7 &mdash; a restored machine&rsquo;s confinement in the record and in the terminal. A pre-v0.9 snapshot restores into the guest it captured, and the chain must not let that look like a confined run (D32)</b></div>
+  <div class="focusline">Current focus: <b id="focus">P5-9 &mdash; <code>snapshot restore</code> is broken for any machine that had a workspace, since P5-1 changed the recorded drive path to a jail-relative one. Found by P5-7&rsquo;s own acceptance</b></div>
 </div>
 
 <!-- ====================================================== 1. END GOAL -->
@@ -586,7 +586,7 @@
         kernel cannot apply them. <code>/work</code> stays writable, the read-only root stays read-only, and the
         supervisor&rsquo;s own vsock channels stay reachable: a profile that breaks the toolbox has hardened
         nothing.</span></li>
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file &mdash; add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file &mdash; add the checked attribute in the markup.">
         <span class="tid">P5-7</span><span class="tk"><b>A restored machine&rsquo;s confinement, in the record and
         in the terminal.</b> <b class="blocked">[ADDED 2026-08-24, D32.]</b> A snapshot taken before v0.9 restores
         into the guest it captured, which has no profile &mdash; and the restore path never learns the posture,
@@ -597,6 +597,17 @@
         <b>Refusal is deliberately not required</b> &mdash; the host walls are unchanged and guest confinement is
         depth behind them &mdash; but the record and the warning are, and
         <code>docs/threat-model.md</code> and the release notes say it in those terms.</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file &mdash; add the checked attribute in the markup.">
+        <span class="tid">P5-9</span><span class="tk"><b><code>snapshot restore</code> is broken for any machine
+        that had a workspace.</b> <b class="blocked">[ADDED 2026-08-24, found by P5-7; a task rather than a fold-in
+        under D30&rsquo;s rule.]</b> Firecracker refuses the load with <i>&ldquo;Error manipulating the backing
+        file: No such file or directory /workspace.ext4&rdquo;</i>. The cause is the jail: a snapshot records its
+        drives by the path written in it, which since P5-1 is the chroot-relative <code>/workspace.ext4</code>, and
+        <code>Restore</code> loads the snapshot <i>before</i> it copies the workspace and repoints the drive &mdash;
+        an order that worked when the recorded path was an absolute host one that still existed. The same family as
+        the rootfs-at-both-names fix P5-1 made for the three-agent recipe, and missed because no suite snapshots a
+        machine with a workspace. Fix the staging order, and add the case to an acceptance so it cannot go missing
+        again.</span></li>
     <li><input type="checkbox" onclick="return false" title="Source of truth is this file &mdash; add the checked attribute in the markup.">
         <span class="tid">P5-8</span><span class="tk"><b>The sibling-ptrace refusal, made legible.</b>
         <b class="blocked">[ADDED 2026-08-24, D33.]</b> P5-3&rsquo;s per-process Landlock domains refuse
@@ -1622,6 +1633,28 @@ after:
         not, because relaxing it would mean confining PID 1).</td>
         <td class="mono">PLAN.html &sect;8 rule 8, tasks P5-7 and P5-8, decisions D32 and D33<br>
         the product owner&rsquo;s ruling of 2026-08-24</td></tr>
+        <tr><td class="mono">2026-08-24</td><td class="mono">P5-7</td>
+        <td><b>A restored machine says what it brought back, and the chain keeps it.</b> A restore gets no ready
+        frame &mdash; the machine was already running when its memory was written to disk &mdash; so the host asks
+        it over the control channel, on the resync round trip the restore already makes and which is already the
+        proof the machine is answering. The posture then rides <code>session.ready</code> rather than
+        <code>session.start</code>, which is both more honest and wider than the ruling asked: a wall that was
+        <i>chosen</i> belongs where the chain opens, a wall that was <i>observed</i> belongs where there was
+        something to observe &mdash; and <code>session.ready</code> is emitted once per machine on all eight paths,
+        including team members and the shim, which <code>session.start</code> never covered. Restoring a
+        pre-confinement snapshot warns in the terminal with the fix that fixes it, and does not refuse (D32).</td>
+        <td class="mono">dev/accept-profile.sh <b>29/29</b> (was 23/23; six new)<br>
+        restore prints <code>profile landlock abi 6 &middot; dev &middot; &hellip;</code> and a command inside the
+        restored machine reports <code>Seccomp: 2</code><br>
+        <code>kelyfos log --session &lt;restored&gt; --json</code> &rarr; <code>"profile":"landlock abi 6 &hellip;"</code>
+        and <code>"jailed":true</code> on session.ready<br>
+        the warning is a pure function with its own test, because staging its main case needs an image built before
+        the feature existed: three states, three messages, and a test that the two unconfined ones never collapse
+        into one &mdash; one says commands are refused, the other says they are not<br>
+        P5-1&rsquo;s <code>jailed</code> gap is closed by the same change: it was on one of eight chain-opening
+        sites and is now on all of them<br>
+        found on the way, not fixed here: <code>snapshot restore</code> fails for any machine that had a workspace.
+        Reproduced standalone. It is P5-9</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>

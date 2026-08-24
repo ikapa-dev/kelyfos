@@ -207,7 +207,7 @@ func (s *hostServer) toolRestore(raw json.RawMessage) *mcp.CallToolResult {
 	}
 	_ = b.rec.Append(recorder.Event{
 		Type: recorder.TypeSessionReady, BootMS: elapsed.Milliseconds(),
-	})
+	}.WithPosture(sb.State.Jailed, sb.State.Profile))
 
 	if err := s.adopt(b); err != nil {
 		return mcp.Errorf("%v", err)
@@ -370,7 +370,7 @@ func (s *hostServer) toolFork(raw json.RawMessage) *mcp.CallToolResult {
 			})
 			_ = rec.Append(recorder.Event{
 				Type: recorder.TypeSessionReady, BootMS: r.elapsed.Milliseconds(),
-			})
+			}.WithPosture(r.sb.State.Jailed, r.sb.State.Profile))
 		}
 		if err := s.adopt(b); err != nil {
 			// The limit was checked before any of this started, so getting here

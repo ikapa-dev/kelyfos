@@ -450,7 +450,8 @@ func raiseTeam(parent context.Context, opt teamOptions) (*teamRig, error) {
 		// in the record beside everything else about it rather than only in the
 		// terminal that happened to be watching (F-D19).
 		_ = rec.Append(recorder.Event{Type: recorder.TypeSessionReady, Agent: rig.name,
-			Image: plan.agents[i].image, Via: rig.via, BootMS: rig.sb.State.BootReadyMS})
+			Image: plan.agents[i].image, Via: rig.via, BootMS: rig.sb.State.BootReadyMS}.
+			WithPosture(rig.sb.State.Jailed, rig.sb.State.Profile))
 	}
 	summary := fmt.Sprintf("team up in %d ms  (%d cold)", total.Milliseconds(), len(cold))
 	if forked := len(plan.agents) - len(cold); forked > 0 {

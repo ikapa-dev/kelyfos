@@ -98,19 +98,42 @@ Opens the file. Records what the sandbox is.
 | `kelyfos` | string | CLI version. |
 | `argv` | array of string | How the sandbox was launched, for reproduction. |
 | `cwd` | string | The directory it was launched from, on `kelyfos run`. |
+| `jailed` | boolean | Whether the VMM ran inside the jailer. Present from v0.9. |
 
 `cwd` is there because `argv` alone does not reproduce a run: `--workspace .` is
 relative, and the policy file is found by walking up from wherever the command
 was typed. `kelyfos rerun` needs both, and §11 says what else it needs.
 
+`jailed` is here rather than on `session.ready` because it is a *choice*, made
+before the machine boots and knowable whether or not it ever does. The guest
+profile is the opposite — an observation of a machine that is answering — so it
+is on `session.ready`. That distinction is the rule for this pair of fields: a
+wall that was chosen is recorded when the chain opens, and a wall that was
+observed is recorded when there was something to observe.
+
 ### `session.ready`
-The guest announced itself.
+The guest announced itself — or, on a restore, answered.
+
+This is where both walls are recorded for *every* machine, and it is the only
+event that can be: `session.start` opens one chain per command, and a `team up`
+of five agents is one chain with five machines in it. `session.ready` is emitted
+once per machine on every path there is — `run`, `fork`, `snapshot restore`,
+`resume`, `team up`, `serve-mcp` and the shim.
+
+**An absent `profile` is a fact, not a gap.** A machine restored from a snapshot
+taken before v0.9 has a supervisor with no confinement in it, because restoring
+a snapshot does not upgrade the guest inside it; the restore says so on the
+terminal as well. The host walls — the jailer, the VMM's own syscall filter, the
+egress policy, the cgroup — are unchanged by the age of a snapshot, which is why
+such a restore is warned about rather than refused (D32).
 
 | Field | Type | Meaning |
 | --- | --- | --- |
 | `boot_ms` | integer | Host-measured boot-to-ready. |
 | `kernel` | string | Guest kernel release. |
 | `supervisor` | string | Supervisor version. |
+| `jailed` | boolean | Whether the VMM ran inside the jailer. Present from v0.9. |
+| `profile` | string | What the guest's supervisor confines everything it spawns with: the flavor, the writable trees, how many syscalls it refuses. **Absent means unconfined.** |
 | `agent` | string | Present inside a team: one of these per member. |
 | `via` | string | Present inside a team: `cold` or `fork` — how this member was started (F-D19). |
 | `overlay` | boolean | Whether the writable overlay came up. |

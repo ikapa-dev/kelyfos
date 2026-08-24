@@ -3,15 +3,20 @@
 Updated 2026-08-24 · synced with origin/main · CI green (run 32704409463)
 
 ## Plans
-- PLAN.html — **41/52**. Phase 5 (hardening, v0.9): P5-0, P5-1, P5-2, P5-6, P5-3 done.
+- PLAN.html — **42/53**. Phase 5 (hardening, v0.9): P5-0, P5-1, P5-2, P5-6, P5-3 done.
 - PLAN-FEATURES.html — **COMPLETE and closed.** 42/42, five epics, v0.4–v0.8 released.
 
 ## Now
-P5-7 — a restored machine's confinement, in the record and in the terminal (D32). A
-pre-v0.9 snapshot restores into the guest it captured, which has no profile, and the
-restore path never learns the posture because a restore gets no ready frame. The chain
-must not let that look like a confined run. Refusal is deliberately not required.
-Then P5-8 (D33), then P5-4.
+P5-9 — `kelyfos snapshot restore` fails for any machine that had a workspace: the
+snapshot records its drive at the jail-relative `/workspace.ext4` and `Restore` loads the
+snapshot before it stages that file. A P5-1-era regression, same family as the
+rootfs-at-both-names fix, found by P5-7's acceptance and reproduced standalone. Then P5-8
+(D33), then P5-4.
+
+**P5-7 done.** A restore learns the guest's confinement over the control channel — on the
+resync round trip it already makes — and `session.ready` carries it on all eight paths,
+including team members and the shim, which `session.start` never covered. That also closes
+P5-1's `jailed` gap. A pre-confinement snapshot warns and is not refused (D32).
 
 **Protocol change, in force now:** PLAN.html §8 gains rule 8 — start-up reconciles against
 the latest CI run for `origin/main`, and a red `main` is fixed before any new task.

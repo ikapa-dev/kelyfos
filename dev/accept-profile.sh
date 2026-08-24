@@ -184,7 +184,41 @@ echo "  shell -> ${out:-<nothing>}"
 check "$(grep -qE '^Seccomp:[[:space:]]*2' <<<"$out" && echo yes || echo no)" \
       "a shell started on the pty channel carries the same filter"
 
+say "a restored machine reports its own confinement, and the record keeps it"
+# A restore gets no ready frame — the machine was already running when its
+# memory was written to disk — so the host asks it over the control channel.
+# Without this, every restored session would be silent about the wall around it
+# and a reader could not tell a confined machine from an old one (P5-7, D32).
+# Deliberately a machine with no workspace. `snapshot restore` is broken for a
+# machine that had one — the snapshot records its drive at the jail-relative
+# /workspace.ext4 and nothing stages that into the new jail before the load — so
+# this would be measuring that bug rather than this task. It is P5-9.
 halt
+rm -f run2.log
+(timeout 300 kelyfos run > run2.log 2>&1 &)
+for i in $(seq 1 90); do kelyfos exec true >/dev/null 2>&1 && break; sleep 1; done
+kelyfos exec 'echo snapshot-marker > /tmp/marker' >/dev/null 2>&1
+save="$(kelyfos snapshot save --name profiletest 2>&1 | head -2)"
+sed 's/^/  /' <<<"$save"
+check "$(grep -q 'saved snapshot' <<<"$save" && echo yes || echo no)" \
+      "a confined machine snapshots"
+halt
+rm -f restore.log
+(timeout 200 kelyfos snapshot restore --name profiletest > restore.log 2>&1 &)
+for i in $(seq 1 90); do kelyfos exec true >/dev/null 2>&1 && break; sleep 1; done
+grep -E 'restored|profile|predates' restore.log | sed 's/^/  /'
+check "$(grep -qE 'landlock abi [0-9]' restore.log && echo yes || echo no)"       "the restore learned the profile from the machine it brought back"
+check "$(grep -q 'predates guest confinement' restore.log && echo no || echo yes)"       "and did not warn, because this snapshot was taken under this version"
+st="$(kelyfos exec 'grep -E "^Seccomp:" /proc/self/status' 2>&1)"
+echo "  a command in the restored machine: ${st:-<nothing>}"
+check "$(grep -qE '^Seccomp:[[:space:]]*2' <<<"$st" && echo yes || echo no)"       "and what it spawns is still confined after the restore"
+rsession="$(kelyfos log --list | sed -n 1p | awk '{print $1}')"
+halt
+kelyfos log --session "$rsession" --json > rlog.json 2>/dev/null
+grep -o '"profile":"[^"]*"' rlog.json | head -1 | sed 's/^/  /'
+check "$(grep -q '"profile":"' rlog.json && echo yes || echo no)"       "session.ready in the restored chain carries the profile"
+check "$(grep -q '"jailed":true' rlog.json && echo yes || echo no)"       "and the jail, so the chain names both walls and not one"
+
 
 say "summary"
 printf '%s\n' "${SUMMARY[@]}" | sed 's/^/  /'

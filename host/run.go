@@ -637,7 +637,7 @@ status. This is how you hand an agent a sandbox and nothing else:
 	_ = rec.Append(recorder.Event{
 		Type: recorder.TypeSessionReady, BootMS: sb.State.BootReadyMS,
 		Kernel: ready.Kernel, Supervisor: ready.Supervisor, Overlay: &overlay,
-	})
+	}.WithPosture(sb.State.Jailed, sb.State.Profile))
 
 	fmt.Printf("sandbox %s ready in %d ms (vmm %d ms + guest %d ms)\n",
 		sb.State.ID, sb.State.BootReadyMS, sb.State.BootReadyMS-guestMS, guestMS)

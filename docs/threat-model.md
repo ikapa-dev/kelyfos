@@ -194,6 +194,25 @@ is a freshly booted machine and nothing that came from you. A snapshot *you*
 take with `kelyfos snapshot save` is a different matter: whatever the agent had
 in memory is in it.
 
+**A snapshot also carries the authority of the version that took it.** Restoring
+one does not upgrade the guest inside it: a snapshot taken before v0.9 restores
+into a supervisor with no confinement code in it, so nothing that machine spawns
+is confined by Landlock or by the guest seccomp profile, however new the
+`kelyfos` doing the restoring is.
+
+What that does *not* change is the host side. The jailer, the VMM's own syscall
+filter, the egress policy and the cgroup are properties of the run being started
+now, not of the snapshot, and all four still apply. Guest confinement is depth
+behind a boundary that still holds — which is why such a restore is **warned
+about and not refused** (D32): refusing would make old snapshots unusable to buy
+nothing the boundary does not already give.
+
+Two things make it impossible to miss. The restore says so on the terminal, with
+the fix that actually fixes it — re-create the snapshot under this version — and
+`session.ready` in the flight recorder carries the guest profile, so its absence
+is a recorded fact rather than a silence. A transcript can never make an
+unconfined-guest run look like a confined one.
+
 ### Data at rest
 Snapshots and workspace images are ordinary files on the host with no
 encryption. A snapshot contains the guest's entire memory — including anything

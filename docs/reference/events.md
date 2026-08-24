@@ -33,6 +33,7 @@ Opens the file, and records what the sandbox is. Written by the **host**.
 | `kelyfos` | string | CLI version |
 | `argv` | string array | how the sandbox was launched, for reproduction |
 | `jailed` | boolean | whether the VMM ran inside the jailer — a chroot, a dropped uid, and only the devices it needs *(kelyfos knows, which is every run from v0.9)* |
+| `profile` | string | what the guest's supervisor confined everything it spawned with: the flavor, the writable trees, the count of refused syscalls. Absent means no confinement — a machine restored from a snapshot taken before v0.9 has none, because restoring does not upgrade the guest inside it *(the guest reports one, which is every machine from v0.9)* |
 | `cwd` | string | the directory it was launched from, which argv alone does not capture *(kelyfos run)* |
 | `reason` | string | where the machine came from *(restore and fork)* |
 

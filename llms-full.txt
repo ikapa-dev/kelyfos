@@ -581,6 +581,25 @@ is a freshly booted machine and nothing that came from you. A snapshot *you*
 take with `kelyfos snapshot save` is a different matter: whatever the agent had
 in memory is in it.
 
+**A snapshot also carries the authority of the version that took it.** Restoring
+one does not upgrade the guest inside it: a snapshot taken before v0.9 restores
+into a supervisor with no confinement code in it, so nothing that machine spawns
+is confined by Landlock or by the guest seccomp profile, however new the
+`kelyfos` doing the restoring is.
+
+What that does *not* change is the host side. The jailer, the VMM's own syscall
+filter, the egress policy and the cgroup are properties of the run being started
+now, not of the snapshot, and all four still apply. Guest confinement is depth
+behind a boundary that still holds — which is why such a restore is **warned
+about and not refused** (D32): refusing would make old snapshots unusable to buy
+nothing the boundary does not already give.
+
+Two things make it impossible to miss. The restore says so on the terminal, with
+the fix that actually fixes it — re-create the snapshot under this version — and
+`session.ready` in the flight recorder carries the guest profile, so its absence
+is a recorded fact rather than a silence. A transcript can never make an
+unconfined-guest run look like a confined one.
+
 ### Data at rest
 Snapshots and workspace images are ordinary files on the host with no
 encryption. A snapshot contains the guest's entire memory — including anything
@@ -2323,19 +2342,42 @@ Opens the file. Records what the sandbox is.
 | `kelyfos` | string | CLI version. |
 | `argv` | array of string | How the sandbox was launched, for reproduction. |
 | `cwd` | string | The directory it was launched from, on `kelyfos run`. |
+| `jailed` | boolean | Whether the VMM ran inside the jailer. Present from v0.9. |
 
 `cwd` is there because `argv` alone does not reproduce a run: `--workspace .` is
 relative, and the policy file is found by walking up from wherever the command
 was typed. `kelyfos rerun` needs both, and §11 says what else it needs.
 
+`jailed` is here rather than on `session.ready` because it is a *choice*, made
+before the machine boots and knowable whether or not it ever does. The guest
+profile is the opposite — an observation of a machine that is answering — so it
+is on `session.ready`. That distinction is the rule for this pair of fields: a
+wall that was chosen is recorded when the chain opens, and a wall that was
+observed is recorded when there was something to observe.
+
 ### `session.ready`
-The guest announced itself.
+The guest announced itself — or, on a restore, answered.
+
+This is where both walls are recorded for *every* machine, and it is the only
+event that can be: `session.start` opens one chain per command, and a `team up`
+of five agents is one chain with five machines in it. `session.ready` is emitted
+once per machine on every path there is — `run`, `fork`, `snapshot restore`,
+`resume`, `team up`, `serve-mcp` and the shim.
+
+**An absent `profile` is a fact, not a gap.** A machine restored from a snapshot
+taken before v0.9 has a supervisor with no confinement in it, because restoring
+a snapshot does not upgrade the guest inside it; the restore says so on the
+terminal as well. The host walls — the jailer, the VMM's own syscall filter, the
+egress policy, the cgroup — are unchanged by the age of a snapshot, which is why
+such a restore is warned about rather than refused (D32).
 
 | Field | Type | Meaning |
 | --- | --- | --- |
 | `boot_ms` | integer | Host-measured boot-to-ready. |
 | `kernel` | string | Guest kernel release. |
 | `supervisor` | string | Supervisor version. |
+| `jailed` | boolean | Whether the VMM ran inside the jailer. Present from v0.9. |
+| `profile` | string | What the guest's supervisor confines everything it spawns with: the flavor, the writable trees, how many syscalls it refuses. **Absent means unconfined.** |
 | `agent` | string | Present inside a team: one of these per member. |
 | `via` | string | Present inside a team: `cold` or `fork` — how this member was started (F-D19). |
 | `overlay` | boolean | Whether the writable overlay came up. |
@@ -7823,6 +7865,7 @@ Opens the file, and records what the sandbox is. Written by the **host**.
 | `kelyfos` | string | CLI version |
 | `argv` | string array | how the sandbox was launched, for reproduction |
 | `jailed` | boolean | whether the VMM ran inside the jailer — a chroot, a dropped uid, and only the devices it needs *(kelyfos knows, which is every run from v0.9)* |
+| `profile` | string | what the guest's supervisor confined everything it spawned with: the flavor, the writable trees, the count of refused syscalls. Absent means no confinement — a machine restored from a snapshot taken before v0.9 has none, because restoring does not upgrade the guest inside it *(the guest reports one, which is every machine from v0.9)* |
 | `cwd` | string | the directory it was launched from, which argv alone does not capture *(kelyfos run)* |
 | `reason` | string | where the machine came from *(restore and fork)* |
 

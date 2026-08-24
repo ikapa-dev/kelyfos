@@ -191,6 +191,29 @@ type Event struct {
 	// connection is the unit somebody would ask about, so this is written per
 	// connection and never per packet or per byte.
 	GuestPort int `json:"guest_port,omitempty"`
+
+	// session.start and session.resume (P5-3, P5-7). What the guest's own
+	// supervisor confined every process it spawned with — the flavor's profile,
+	// the writable trees, how many syscalls it refused. Empty means no
+	// confinement, which is what a machine restored from a pre-v0.9 snapshot
+	// has: restoring a snapshot does not upgrade the guest inside it, and a
+	// chain that said nothing here would let such a run read as a confined one
+	// (D32). Appended at the end, like Jailed before it, because the field order
+	// in this struct is the order the hash is computed over.
+	Profile string `json:"profile,omitempty"`
+}
+
+// WithPosture fills the two fields that say which walls were around a machine.
+//
+// One call rather than two assignments, because the failure this guards against
+// has already happened once: P5-1 added Jailed and set it at one of the eight
+// places that open a chain, so seven kinds of session said nothing about a wall
+// that was in fact around them. A pair that is always written together is
+// harder to write half of.
+func (e Event) WithPosture(jailed bool, profile string) Event {
+	e.Jailed = &jailed
+	e.Profile = profile
+	return e
 }
 
 type EvError struct {

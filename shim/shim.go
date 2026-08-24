@@ -300,7 +300,7 @@ func (s *Server) boot(parent context.Context) (*box, error) {
 	_ = b.rec.Append(recorder.Event{
 		Type: recorder.TypeSessionReady, BootMS: b.sb.State.BootReadyMS,
 		Kernel: ready.Kernel, Supervisor: ready.Supervisor, Overlay: &overlay,
-	})
+	}.WithPosture(b.sb.State.Jailed, b.sb.State.Profile))
 	ok = true
 	return b, nil
 }

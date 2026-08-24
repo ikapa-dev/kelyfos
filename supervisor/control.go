@@ -34,7 +34,13 @@ func handleControl(conn net.Conn, shutdown chan<- struct{}) {
 			}
 			return
 		}
-		resp := proto.ControlResponse{V: proto.Version, ID: req.ID, OK: true}
+		// Every answer carries the confinement, not just the ones that were
+		// asked for it: the host may reach a machine it did not boot, and the
+		// posture is a property of the machine rather than of the question.
+		resp := proto.ControlResponse{
+			V: proto.Version, ID: req.ID, OK: true,
+			Profile: profileSummary, ProfileError: profileError,
+		}
 		switch req.Op {
 		case proto.OpPing:
 			// Nothing to do: reaching this line is the answer.

@@ -195,6 +195,10 @@ type Sandbox struct {
 	ready    chan proto.Ready
 	done     chan struct{}
 	waitErr  error
+	// profileError is why the guest could not confine what it spawns, when it
+	// could not. Kept off State because it is a fault to report rather than a
+	// fact to record: a machine that has one does not become a session.
+	profileError string
 }
 
 const stateFile = "sandbox.json"
@@ -855,6 +859,11 @@ func (s *Sandbox) Resync() error {
 	if !resp.OK {
 		return fmt.Errorf("guest refused resync: %v", resp.Error)
 	}
+	// A restored machine sends no ready frame, so this round trip — which the
+	// restore already makes, and which is the proof the machine is answering —
+	// is also where the host learns what the guest confines (P5-7).
+	s.State.Profile = resp.Profile
+	s.profileError = resp.ProfileError
 	return nil
 }
 
@@ -1158,6 +1167,22 @@ func Restore(snapDir string, opts Options) (*Sandbox, time.Duration, error) {
 	if err := s.confirmSeccomp(); err != nil {
 		_ = s.Shutdown(2 * time.Second)
 		return nil, 0, err
+	}
+	// A restored machine is the machine that was snapshotted, and restoring it
+	// does not upgrade it. One taken before v0.9 has a supervisor that confines
+	// nothing it spawns, and the host cannot fix that from out here — so it says
+	// so, every restore, rather than letting the absence pass unremarked.
+	//
+	// Not a refusal, deliberately (D32): the jailer, the VMM's own filter, the
+	// egress policy and the cgroup are all unchanged by the age of a snapshot,
+	// and guest confinement is depth behind a boundary that still holds.
+	// Refusing would make old snapshots unusable to buy nothing.
+	//
+	// Printed here rather than by each of the five commands that restore, for
+	// the reason requireJail lives in New: a warning five call sites have to
+	// remember is one that four of them will.
+	if w := restoreWarning(s.State.Profile, s.profileError); w != "" {
+		warnf("%s", w)
 	}
 	return s, elapsed, nil
 }

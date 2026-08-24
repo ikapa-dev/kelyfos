@@ -157,7 +157,7 @@ func snapshotRestore(argv []string) error {
 	})
 	_ = rec.Append(recorder.Event{
 		Type: recorder.TypeSessionReady, BootMS: elapsed.Milliseconds(),
-	})
+	}.WithPosture(sb.State.Jailed, sb.State.Profile))
 
 	fmt.Printf("sandbox %s restored from %q in %d ms\n", sb.State.ID, *name, elapsed.Milliseconds())
 	fmt.Printf("  vsock       %s\n", sb.State.UDSPath)
@@ -165,6 +165,12 @@ func snapshotRestore(argv []string) error {
 		fmt.Printf("  egress      %s via %s\n", strings.Join(sb.State.Allow, ", "), sb.State.TAP)
 	}
 	fmt.Println("  clock and entropy resynced")
+	if sb.State.Profile != "" {
+		// A restore says what it brought back for the same reason a run says
+		// what it started: the machine is not the one in front of you, and the
+		// absence of this line is what the warning above it explains (P5-7).
+		fmt.Printf("  profile     %s\n", sb.State.Profile)
+	}
 	fmt.Println("\nCtrl-C to stop.")
 
 	ctx, stop := signal.NotifyContext(gocontext.Background(), os.Interrupt, syscall.SIGTERM)

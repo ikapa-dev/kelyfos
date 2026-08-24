@@ -265,6 +265,14 @@ type ControlResponse struct {
 	ID    string `json:"id"`
 	OK    bool   `json:"ok"`
 	Error *Error `json:"error,omitempty"`
+	// Profile and ProfileError are the guest's confinement, the same pair the
+	// ready frame carries. They are on the control response as well because a
+	// restored machine never sends a ready frame — it was already running when
+	// its memory was written to disk — and the host has to be able to ask a
+	// machine it did not boot (P5-7, D32). Empty on a guest older than v0.9,
+	// which is the case that matters: it means no confinement, not no answer.
+	Profile      string `json:"profile,omitempty"`
+	ProfileError string `json:"profile_error,omitempty"`
 }
 
 // Control operations.
