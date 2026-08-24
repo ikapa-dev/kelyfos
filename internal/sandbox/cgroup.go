@@ -33,8 +33,11 @@ const DefaultCPUWeight = 100
 // this is a host-side control on the VMM process, which is the only place a
 // limit on untrusted code is worth anything (F-D2).
 //
-// If PLAN.html's P4-1 jailer ever lands, the jailer takes this over — it
-// creates cgroups itself. Until then this is standalone and deliberately small.
+// The jailer landed at P5-1 and did not take this over: it creates cgroups only
+// when given --cgroup arguments, which KelyfOS does not use. What it does
+// instead is move its own process into a cgroup this package already made and
+// configured — see jailArgv — so the slice stays owned here and the jail simply
+// starts inside it.
 type Slice struct {
 	Path    string
 	Percent int

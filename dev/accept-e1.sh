@@ -15,6 +15,13 @@ set -uo pipefail
 ARCH="${ARCH:-$(uname -m | sed -e 's/^arm64$/aarch64/' -e 's/^amd64$/x86_64/')}"
 KELYFOS="${KELYFOS:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/kelyfos}"
 RUN_ROOT="${HOME}/.cache/kelyfos/run"
+
+# The run directory moved when the jailer landed (P5-1): a sandbox's state now
+# lives at <run>/firecracker/<id>/root/sandbox.json rather than <run>/<id>/.
+# Resolve it instead of spelling either layout, so a script that reads it keeps
+# working across the change rather than quietly measuring nothing (P5-6).
+statefile() { ls -t "$RUN_ROOT"/*/"$1"/root/sandbox.json "$RUN_ROOT/$1/sandbox.json" 2>/dev/null | head -1; }
+
 WORK="$(mktemp -d)"
 NETHOST="kelyfos-accept.test"
 PASSES=0 FAILURES=0 SKIPS=0
@@ -92,8 +99,8 @@ if ! grep -q "ready in" "$PROJ/run.log" 2>/dev/null; then
   printf '%s\n' "${SUMMARY[@]}"; exit 1
 fi
 SB="$(awk '/^sandbox /{print $2; exit}' "$PROJ/run.log")"
-VMPID="$(python3 -c "import json;print(json.load(open('$RUN_ROOT/$SB/sandbox.json'))['pid'])")"
-TAP="$(python3 -c "import json;print(json.load(open('$RUN_ROOT/$SB/sandbox.json')).get('tap',''))")"
+VMPID="$(python3 -c "import json;print(json.load(open('$(statefile "$SB")'))['pid'])")"
+TAP="$(python3 -c "import json;print(json.load(open('$(statefile "$SB")')).get('tap',''))")"
 grep -E "^  (cpu|scratch|net limit|egress|workspace)" "$PROJ/run.log" | sed 's/^/        /'
 pass "the sandbox booted under the committed policy (sandbox $SB)"
 
@@ -101,7 +108,7 @@ pass "the sandbox booted under the committed policy (sandbox $SB)"
 # there is a cgroup to read — which there is here, because cpu_quota created
 # one. /proc is the fallback for a sandbox without a quota, and measures the
 # same process.
-CGROUP="$(python3 -c "import json;print(json.load(open('$RUN_ROOT/$SB/sandbox.json')).get('cgroup_path',''))")"
+CGROUP="$(python3 -c "import json;print(json.load(open('$(statefile "$SB")')).get('cgroup_path',''))")"
 [ -n "$CGROUP" ] && echo "        cgroup: $CGROUP" && echo "        cpu.max: $(cat "$CGROUP/cpu.max" 2>/dev/null)"
 
 cpu_seconds() {
@@ -213,10 +220,15 @@ if grep -q "workspace written back" "$PROJ/timeout.log" && [ -f "$PROJ/ws/seed.t
 else
   fail "the workspace was not synced back"
 fi
-if [ -z "$(ls "$RUN_ROOT" 2>/dev/null)" ]; then
-  pass "teardown left no run directory behind"
+# Not "run/ is empty": the jailer's path scheme keeps a firecracker/ level
+# under it that teardown is not meant to remove, so emptiness stopped being the
+# question at P5-1. What must be gone is the sandbox — its state and its
+# sockets, wherever they were (P5-6).
+LEFT="$(find "$RUN_ROOT" \( -name sandbox.json -o -name 'v.sock*' -o -name 'fc.sock' \) 2>/dev/null | tr '\n' ' ')"
+if [ -z "$LEFT" ]; then
+  pass "teardown left no sandbox behind"
 else
-  fail "teardown left $(ls "$RUN_ROOT" | tr '\n' ' ') behind"
+  fail "teardown left $LEFT behind"
 fi
 
 # ------------------------------------------------------------------ step 6 --

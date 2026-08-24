@@ -173,7 +173,7 @@
     <span class="bl-name">Overall</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">P5-6 &mdash; the cgroup and the jail, composed. <code>--cpu-quota</code> is refused whenever a run is jailed on a systemd-user host: a P5-1 regression P5-2 found by reading the same <code>/proc</code>, and D30 turned into a task rather than a footnote</b></div>
+  <div class="focusline">Current focus: <b id="focus">P5-3 &mdash; guest hardening: per-flavor restrictions on what the supervisor grants what it spawns. Landlock needs a guest kernel config change and a rebuild, and needs both halves &mdash; compiled in <i>and</i> named in <code>CONFIG_LSM</code></b></div>
 </div>
 
 <!-- ====================================================== 1. END GOAL -->
@@ -566,7 +566,7 @@
         warranted, it is built from Firecracker&rsquo;s published one rather than written from scratch &mdash; a
         hand-rolled syscall allowlist for somebody else&rsquo;s binary is a way to produce a crash that looks like a
         security feature.</span></li>
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file &mdash; add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file &mdash; add the checked attribute in the markup.">
         <span class="tid">P5-6</span><span class="tk"><b>The cgroup and the jail, composed rather than each
         assuming the other.</b> <b class="blocked">[ADDED 2026-08-24, D30.]</b> Found by P5-2 on the machine the
         quickstart describes: <code>kelyfos run --cpu-quota</code> is refused whenever the run is jailed on a host
@@ -1536,6 +1536,33 @@ after:
         same refusal under <code>sudo -n -E</code>, so it is not a privilege problem<br>
         internal/sandbox/sandbox.go Start: WrapArgv is on the else branch; jail.go jailArgv: --parent-cgroup only
         when slice.Direct()</td></tr>
+        <tr><td class="mono">2026-08-24</td><td class="mono">P5-6</td>
+        <td><b>The cgroup and the jail compose, and it was not the one-line fix D30 guessed at.</b> Two independent
+        defects, not one: <code>Start</code> and <code>Restore</code> replaced the command line with the
+        jailer&rsquo;s instead of also wrapping it, so on the systemd path no scope was ever created &mdash; and on
+        the direct path <code>--parent-cgroup</code> was passed without <code>--cgroup-version 2</code>, which the
+        jailer&rsquo;s own default of version 1 turns into a silent no-op on a v2 host. Fixing only the first would
+        have left CI, which runs as root and therefore always takes the direct path, testing a broken mechanism and
+        reporting green. Three acceptance scripts were also still reading the pre-jail run-directory layout, so E1&rsquo;s
+        own acceptance had been measuring nothing rather than failing.
+        <b>D30 asked to be answered plainly if the fix turned out to be small; it did not, and the record says so
+        here rather than in a decision that could be read as retrospective justification.</b></td>
+        <td class="mono">before: <code>--cpu-quota 150%</code> jailed &rarr; refused, VMM in session-4.scope<br>
+        after (systemd path, dev machine): cgroup
+        &hellip;/app.slice/kelyfos-3ca95748.scope &middot; <code>/proc/&lt;pid&gt;/cgroup</code> agrees &middot;
+        cpu.max <b>150000 100000</b> &middot; still chrooted, uid 501, seccomp filter on all 4 threads<br>
+        after (direct path, KELYFOS_CGROUP_ROOT): VMM in <code>0::/kelyfosprobe/kelyfos-88c38461</code>, the slice
+        KelyfOS made &mdash; the jailer moves into the named parent itself rather than a child, and teardown removed
+        it<br>
+        dev/accept-jail.sh <b>17/17</b> (was 14/14; three new checks close this phase&rsquo;s acceptance item 2)<br>
+        dev/accept-e1.sh <b>13/13, 0 skipped</b> &mdash; and now measuring: &ldquo;host cgroup accounting shows
+        <b>0.49 core(s)</b> consumed against a 0.5 ceiling&rdquo;, throughput 10.02 Mbps against a 10 Mbps cap.
+        Before this task the same suite reported 10 passed / 2 failed with both figures <i>empty</i><br>
+        go vet + go test ./... clean; new unit test keeps --parent-cgroup and --cgroup-version together<br>
+        primary sources: jailer.md and src/jailer/src/{env,cgroup}.rs at v1.16.1 &mdash; &ldquo;If no
+        <code>--cgroup</code> parameters are specified and <code>--cgroup-version=2</code> is passed, the jailer
+        &hellip; will move the process to the specified cgroup&rdquo;, and a parent that does not exist is a silent
+        no-op</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>

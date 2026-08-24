@@ -140,6 +140,37 @@ check "$(grep -q 'survived-the-jail' <<<"$marker" && echo yes || echo no)" \
       "a jailed machine snapshots and restores with its full state"
 pkill -f "kelyfos snapshot" 2>/dev/null; sleep 2
 
+say "the cgroup it sits in is the one KelyfOS asked for"
+# The other half of this phase's second acceptance item. P5-1 proved the seccomp
+# half from /proc and left this one; P5-6 is the task that made it true and this
+# is the check that says so.
+#
+# Read from the process, not from sandbox.json: the state file says where
+# KelyfOS meant to put the VMM and /proc/<pid>/cgroup says where the kernel
+# actually did, and only the second is evidence. It needs a quota, because
+# without one there is no slice to sit in.
+halt
+boot --cpu-quota 150%
+vmm3="$(pgrep -n firecracker)"
+grep -E '^  cpu |^  cgroup ' run.log | sed 's/^/  /'
+sits="$(awk -F: '$1=="0"{print $3}' "/proc/$vmm3/cgroup" 2>/dev/null)"
+state3="$(ls -t ~/.cache/kelyfos/run/firecracker/*/root/sandbox.json 2>/dev/null | head -1)"
+asked="$(python3 -c "import json;print(json.load(open('$state3')).get('cgroup_path',''))" 2>/dev/null)"
+echo "  asked for: ${asked:-<none>}"
+echo "  sits in:   ${sits:-<none>}"
+check "$([ -n "$asked" ] && [ -n "$sits" ] && [ "$asked" = "/sys/fs/cgroup$sits" ] && echo yes || echo no)" \
+      "the VMM's own cgroup line names the slice KelyfOS created for it"
+echo "  cpu.max:   $(cat "/sys/fs/cgroup$sits/cpu.max" 2>/dev/null || echo '<unreadable>')"
+check "$(grep -q '^150000 ' "/sys/fs/cgroup$sits/cpu.max" 2>/dev/null && echo yes || echo no)" \
+      "and that slice carries the 150% quota this run asked for"
+# The quota must not have cost the jail. Both walls, on the same process.
+mroot3="$(sudo -n awk '$5=="/"{print $4; exit}' "/proc/$vmm3/mountinfo" 2>/dev/null)"
+uid3="$(awk '/^Uid:/{print $2}' "/proc/$vmm3/status" 2>/dev/null)"
+echo "  root: ${mroot3:-<unreadable>} · uid: ${uid3:-?}"
+check "$(grep -q 'run/firecracker/.*/root' <<<"$mroot3" && [ "$uid3" != "0" ] && echo yes || echo no)" \
+      "and a capped machine is still chrooted and still not root"
+halt
+
 say "summary"
 printf '%s\n' "${SUMMARY[@]}" | sed 's/^/  /'
 printf '\n  %d passed, %d failed\n' "$PASSES" "$FAILURES"

@@ -455,11 +455,13 @@ func (s *Sandbox) Start(ctx context.Context) error {
 		argv = jailArgv(s.State.ID, s.opts.CPUSlice, []string{
 			"--api-sock", inJail("fc.sock"),
 			"--config-file", inJail("config.json")})
-	} else {
-		// Under systemd this prefixes the command with the scope request; on
-		// the direct path it is unchanged (F-D11).
-		argv = s.opts.CPUSlice.WrapArgv(argv)
 	}
+	// Under systemd this prefixes the command with the scope request; on the
+	// direct path it is unchanged (F-D11). It wraps the jailer as readily as it
+	// wraps Firecracker, and it has to: the scope is the only thing that puts
+	// the VMM in a cgroup on a machine that resolves to the systemd path, and
+	// skipping it here is what made --cpu-quota refuse every jailed run (P5-6).
+	argv = s.opts.CPUSlice.WrapArgv(argv)
 	cmd := exec.Command(argv[0], argv[1:]...)
 	// Its own process group, so a Ctrl-C delivered to the whole foreground
 	// group does not race our orderly shutdown.
@@ -910,11 +912,14 @@ func Restore(snapDir string, opts Options) (*Sandbox, time.Duration, error) {
 	s.api = newAPI(s.State.APIPath)
 
 	started := time.Now()
-	argv := s.opts.CPUSlice.WrapArgv([]string{"firecracker", "--api-sock", s.State.APIPath})
+	argv := []string{"firecracker", "--api-sock", s.State.APIPath}
 	if s.State.Jailed {
 		argv = jailArgv(s.State.ID, s.opts.CPUSlice,
 			[]string{"--api-sock", inJail("fc.sock")})
 	}
+	// After the jailer wrapping rather than instead of it, for the reason in
+	// Start: on the systemd path the scope is what places the VMM (P5-6).
+	argv = s.opts.CPUSlice.WrapArgv(argv)
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	// The same placement a cold boot gets: at clone time on the direct path, so

@@ -19,6 +19,13 @@ set -uo pipefail
 ARCH="${ARCH:-$(uname -m | sed -e 's/^arm64$/aarch64/' -e 's/^amd64$/x86_64/')}"
 KELYFOS="${KELYFOS:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/kelyfos}"
 RUN_ROOT="${HOME}/.cache/kelyfos/run"
+
+# The run directory moved when the jailer landed (P5-1): a sandbox's state now
+# lives at <run>/firecracker/<id>/root/sandbox.json rather than <run>/<id>/.
+# Resolve it instead of spelling either layout, so a script that reads it keeps
+# working across the change rather than quietly measuring nothing (P5-6).
+statefile() { ls -t "$RUN_ROOT"/*/"$1"/root/sandbox.json "$RUN_ROOT/$1/sandbox.json" 2>/dev/null | head -1; }
+
 WORK="$(mktemp -d)"
 PASSES=0 FAILURES=0 SKIPS=0
 SUMMARY=()
@@ -57,9 +64,9 @@ start() {
     return 1
   fi
   SB="$(awk '/^sandbox /{print $2; exit}' "$dir/run.log")"
-  VMPID="$(python3 -c "import json;print(json.load(open('$RUN_ROOT/$SB/sandbox.json'))['pid'])" 2>/dev/null)"
+  VMPID="$(python3 -c "import json;print(json.load(open('$(statefile "$SB")'))['pid'])" 2>/dev/null)"
   if [ -z "${VMPID:-}" ]; then
-    echo "      could not read the sandbox's pid from $RUN_ROOT/$SB/sandbox.json"
+    echo "      could not read the sandbox's pid for $SB under $RUN_ROOT"
     return 1
   fi
   echo "      sandbox $SB (firecracker pid $VMPID)"
@@ -278,7 +285,7 @@ else
   if [ "${NETSERVER:-no}" = "no" ]; then
     :
   elif start "$dir" --mem 512M --allow "$NETHOST"; then
-    tap="$(python3 -c "import json;print(json.load(open('$RUN_ROOT/$SB/sandbox.json'))['tap'])")"
+    tap="$(python3 -c "import json;print(json.load(open('$(statefile "$SB")'))['tap'])")"
     before="$(tap_bytes "$tap" tx_bytes)"
     t0=$SECONDS
     "$KELYFOS" exec --sandbox "$SB" \

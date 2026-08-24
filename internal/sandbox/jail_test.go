@@ -49,6 +49,37 @@ func TestTheVMMIsNeverStartedWithoutItsFilter(t *testing.T) {
 	}
 }
 
+// The jailer's --cgroup-version defaults to "1", and KelyfOS only ever runs on
+// a cgroup v2 host — pickMode refuses anything else before a slice exists. So
+// naming a parent cgroup without also naming the version asks the jailer to
+// place the VMM using a hierarchy that is not mounted, which it does not do and
+// does not complain about: the VMM stays where it started, and the quota
+// KelyfOS then reads back from /proc is missing. That was the whole of the
+// direct-mode half of P5-6, and it is one flag, so it is worth a test that
+// keeps the two arguments together.
+func TestNamingAParentCgroupAlsoNamesTheVersion(t *testing.T) {
+	argv := jailArgv("abc123",
+		&Slice{Percent: 150, Path: "/sys/fs/cgroup/kelyfos/abc123", mode: modeDirect},
+		[]string{"--api-sock", inJail("fc.sock")})
+	joined := strings.Join(argv, " ")
+
+	if !strings.Contains(joined, "--parent-cgroup kelyfos/abc123") {
+		t.Fatalf("the parent cgroup is not named, or not relative to the mount point:\n  %s", joined)
+	}
+	if !strings.Contains(joined, "--cgroup-version 2") {
+		t.Errorf("--parent-cgroup without --cgroup-version 2 is a silent no-op on a v2 host:\n  %s", joined)
+	}
+
+	// The systemd path does not use --parent-cgroup at all: there the scope
+	// created around this command line is what places the VMM, and naming a
+	// parent as well would be two answers to one question.
+	sysd := jailArgv("abc123", &Slice{Percent: 150, mode: modeSystemd},
+		[]string{"--api-sock", inJail("fc.sock")})
+	if j := strings.Join(sysd, " "); strings.Contains(j, "--parent-cgroup") {
+		t.Errorf("the systemd path named a parent cgroup as well as a scope:\n  %s", j)
+	}
+}
+
 // The separator matters: the jailer reads its own arguments up to `--` and
 // hands the rest to Firecracker. A Firecracker flag on the wrong side of it is
 // an argument the jailer does not understand, and a jailer flag on the wrong

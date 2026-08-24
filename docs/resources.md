@@ -177,6 +177,23 @@ is **read back and checked** after launch. If the quota did not land, the
 sandbox refuses to start rather than running unlimited while claiming a cap.
 If neither path is available, `--cpu-quota` fails with the reason.
 
+Since v0.9 the VMM runs inside Firecracker's jailer by default, and the jailer
+forks — so the clone-time placement above is not available to it. Each path
+composes with the jail differently, and both were wrong for one release (P5-6):
+
+- **the systemd path** wraps the jailer rather than Firecracker, so the scope
+  contains `sudo`, the jailer, and the VMM it execs into;
+- **the direct path** hands the jailer `--parent-cgroup <slice>` and, with it,
+  `--cgroup-version 2`. That second flag is not decoration: the jailer's own
+  default is version 1, and naming a parent without the version makes it a
+  silent no-op — the VMM stays where it started and the read-back is the only
+  thing that notices.
+
+The read-back is what makes either safe to rely on. It asks
+`/proc/<pid>/cgroup` where the VMM actually is, not where it was meant to go,
+which is why a jailer that quietly placed nothing produced a refused run rather
+than an uncapped one.
+
 ### When the RAM cap is reached
 
 The `mem` cap is the VM's hardware: the guest cannot allocate a byte the machine

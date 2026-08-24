@@ -127,7 +127,7 @@
   <div class="meta">
     owner: <b>John</b> &nbsp;&middot;&nbsp; developer: <b>Claude Code</b> &nbsp;&middot;&nbsp;
     status: <b class="ok" id="meta-status">COMPLETE — 42/42 tasks, five epics, v0.4 through v0.8 released. This document is closed.</b> &nbsp;&middot;&nbsp;
-    last updated: <b id="meta-updated">2026-08-23</b><br>
+    last updated: <b id="meta-updated">2026-08-24</b><br>
     repo file: <b>PLAN-FEATURES.html</b> (lives at the repository root next to <code>PLAN.html</code>)<br>
     <span class="quiet">Companion to PLAN.html — same protocol, same rules, later timeline.</span>
   </div>
@@ -484,13 +484,13 @@
 </section>
 
 <!-- ====================================================== 3d. EPIC E4 -->
-<section class="phase" id="e4" data-phase="E4" data-status="active">
+<section class="phase" id="e4" data-phase="E4" data-status="done">
   <div class="phase-head">
     <div>
       <div class="kconfig">config KELYFOS_EPIC_E4</div>
       <h2>Epic E4 — MCP surface (v0.7)</h2>
     </div>
-    <span class="badge">ACTIVE</span>
+    <span class="badge">DONE</span>
   </div>
   <p>Goal: <b>MCP in both directions.</b> Outward: <code>kelyfos serve-mcp</code> makes KelyfOS a tool for any MCP client —
      Claude Code, Cursor, anything — one config line and the client&rsquo;s agent gains <code>sandbox_run</code>,
@@ -571,13 +571,13 @@
 </section>
 
 <!-- ====================================================== 3e. EPIC E5 -->
-<section class="phase" id="e5" data-phase="E5" data-status="todo">
+<section class="phase" id="e5" data-phase="E5" data-status="done">
   <div class="phase-head">
     <div>
       <div class="kconfig">config KELYFOS_EPIC_E5</div>
       <h2>Epic E5 — Daily-driver QoL (v0.8)</h2>
     </div>
-    <span class="badge">QUEUED</span>
+    <span class="badge">DONE</span>
   </div>
   <p>Goal: <b>remove every friction a developer hits daily once they already use KelyfOS.</b> Eight small features that
      promote together: named pause/resume, diff + review-before-sync, an interactive shell, actionable denials, inbound
@@ -4529,6 +4529,22 @@ $ gofmt -l . ; go vet ./... ; go test ./...
         <b>What governs next is <a href="PLAN.html">PLAN.html</a></b>, where the jailer and a seccomp/Landlock
         profile are promoted as a hardening phase exiting at v0.9 (F-D56). This document is history now and is not
         edited again.</td></tr>
+        <tr><td class="mono">2026-08-24</td><td class="mono">NOTE</td>
+        <td><b>Two stale status attributes in a closed document, corrected on the product owner&rsquo;s
+        instruction of 2026-08-24.</b> Epic E4 still carried <code>data-status="active"</code> and Epic E5
+        <code>data-status="todo"</code>, both left over from before their exits &mdash; so a document whose masthead
+        has said COMPLETE since v0.8 rendered two of its five epics as unfinished. Both are now <code>done</code>
+        with <code>DONE</code> badges, which is what their own task lists have said all along: 9/9, 10/10, 6/6, 9/9
+        and 8/8, all five checked. Nothing about the work changed; the dashboard now says what the tasks say.</td>
+        <td class="mono">before: e4 data-status=&quot;active&quot; badge ACTIVE &middot; e5 data-status=&quot;todo&quot; badge QUEUED<br>
+        after:  all five epics data-status=&quot;done&quot;, badge DONE &rarr; the boot-log renders
+        <b>[&nbsp;&nbsp;OK&nbsp;&nbsp;]</b> in green for E1&ndash;E5 (the tag text and colour are computed from
+        <code>data-status</code>, script at the foot of this file)<br>
+        overall bar was already 100% &mdash; it is computed from checkboxes, which were always 42/42<br>
+        checked while there, per the same instruction: <b>PLAN.html has no staleness of this class</b>. Its four
+        <code>done</code> phases all carry DONE badges and fully checked lists; its two <code>active</code> phases
+        are both genuinely open &mdash; Phase 4 is a backlog with no exit checkpoint (7 unchecked, D27 keeps it
+        open) and Phase 5 is the phase being worked.</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>

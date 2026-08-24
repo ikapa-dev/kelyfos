@@ -174,7 +174,7 @@ func jailArgv(id string, slice *Slice, fcArgs []string) []string {
 	// jailer forks — so the parent cgroup is named instead.
 	if slice.Direct() && slice.Path != "" {
 		if rel := cgroupRelative(slice.Path); rel != "" {
-			argv = append(argv, "--parent-cgroup", rel)
+			argv = append(argv, "--cgroup-version", "2", "--parent-cgroup", rel)
 		}
 	}
 	argv = append(argv, "--")

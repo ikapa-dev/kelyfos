@@ -19,6 +19,13 @@ set -uo pipefail
 ARCH="${ARCH:-$(uname -m | sed -e 's/^arm64$/aarch64/' -e 's/^amd64$/x86_64/')}"
 KELYFOS="${KELYFOS:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/kelyfos}"
 RUN_ROOT="${HOME}/.cache/kelyfos/run"
+
+# The run directory moved when the jailer landed (P5-1): a sandbox's state now
+# lives at <run>/firecracker/<id>/root/sandbox.json rather than <run>/<id>/.
+# Resolve it instead of spelling either layout, so a script that reads it keeps
+# working across the change rather than quietly measuring nothing (P5-6).
+statefile() { ls -t "$RUN_ROOT"/*/"$1"/root/sandbox.json "$RUN_ROOT/$1/sandbox.json" 2>/dev/null | head -1; }
+
 WORK="$(mktemp -d)"
 PASSES=0 FAILURES=0 SKIPS=0
 SUMMARY=()
@@ -262,7 +269,7 @@ else
   # measured from the same place a single sandbox is: the VMM processes.
   before=0; after=0
   for sb in $SBS; do
-    p="$(python3 -c "import json;print(json.load(open('$RUN_ROOT/$sb/sandbox.json'))['pid'])" 2>/dev/null)"
+    p="$(python3 -c "import json;print(json.load(open('$(statefile "$sb")'))['pid'])" 2>/dev/null)"
     v="$(python3 -c "
 blob=open('/proc/$p/stat').read(); f=blob[blob.rindex(')')+1:].split()
 print(int(f[11])+int(f[12]))" 2>/dev/null)"
@@ -271,7 +278,7 @@ print(int(f[11])+int(f[12]))" 2>/dev/null)"
   stress_agents
   wall="$STRESS_WALL"
   for sb in $SBS; do
-    p="$(python3 -c "import json;print(json.load(open('$RUN_ROOT/$sb/sandbox.json'))['pid'])" 2>/dev/null)"
+    p="$(python3 -c "import json;print(json.load(open('$(statefile "$sb")'))['pid'])" 2>/dev/null)"
     v="$(python3 -c "
 blob=open('/proc/$p/stat').read(); f=blob[blob.rindex(')')+1:].split()
 print(int(f[11])+int(f[12]))" 2>/dev/null)"
