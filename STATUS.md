@@ -3,41 +3,49 @@
 Updated 2026-08-24 · synced with origin/main · **v0.9 released** · CI green on main · **Phase 6 open**
 
 ## Plans
-- PLAN.html — **53/74**. Phases 0–3 and 5 done. **Phase 4 dispositioned and parked** (D35): every row now has a
-  verdict and none will be ticked there. **Phase 6 open — "v1.0, the promise", 21 tasks**, drafted spec-first at P6-0.
+- PLAN.html — **54/81**. Phases 0–3 and 5 done. **Phase 4 dispositioned and parked** (D35). **Phase 6 open —
+  "v1.0, the promise", now 28 tasks**: an external security audit arrived mid-phase and added seven (D45).
 - PLAN-FEATURES.html — **COMPLETE and closed.** 42/42, five epics, v0.4–v0.8 released.
 - **The overall bar will not reach 100% and is not meant to.** Seven of the denominator's boxes are Phase 4's
   permanent record rows. A denominator adjusted to flatter the numerator is the same defect as a ticked box.
 
 ## Now
-**P6-6 done, both halves.** The hash preimage landed first (commit `95e139e`): the digest is recomputed from the
-bytes as written, so a chain from a newer build no longer comes back as `event N has been modified`. This commit is
-the other half — **the export made verifiable by its reader**.
+**An external security audit of `babec8f` arrived** — 23 findings, 1 critical, 6 high, 9 medium, 7 low. D45 is its
+receipt and its plan, and **v1.0 does not tag until its trust-boundary group is closed and proven**: C-1, H-1 and
+H-2 are one defect wearing three hats. The workspace block device is a guest→host surface and §5's trust-boundary
+table does not list it — the table calls guest→host "Firecracker + KVM", which is true of the VM and silent about
+the disk the VM writes and the host then reads with `debugfs`. Seven tasks, P6-21 to P6-27, inserted before P6-7
+because list position is work order.
 
-The record the page was rendered from now travels *inside* it: base64 of `events.jsonl`, exactly as the host wrote
-it, in a `<pre id="kelyfos-chain">` at the foot of the page. The chain head is printed as text.
-`kelyfos verify <report.html>` re-runs the same walk the recorder already implements — offline, no key, no network,
-no trust root of ours — and takes a raw `events.jsonl` too, so sender and receiver check the same thing with the
-same command. The green tick the file used to render about itself is gone; what replaced it is a statement of what
-the file carries and the command somebody else runs. **The failure case is kept**, because the asymmetry is the
-point: a file certifying itself is worth nothing, a file reporting a problem with itself is worth reading.
+**P6-21 done (M-3).** `--review` no longer destroys an edit somebody made while they were reading the review.
+`Stage` fingerprinted, a person read the diff for as long as they took, and `Commit` renamed that directory away
+without looking again. It looks again now, and `.kelyfos-previous` is kept until the next successful run rather
+than deleted one statement after the swap that made it worth having.
 
-**The limit is stated before the capability** — on the page, in the command's output, and in the threat model.
-Verification covers the *record*, not the page's rendering of it: a page whose visible text was edited afterwards
-still carries an intact record. `kelyfos verify --replay` prints the record's own account so the two can be
-compared. Nothing keyless closes that gap and the product says so rather than implying otherwise.
+**P6-6 was corrected twice, by two reviews that found different things.** The design review found a false claim and
+an unchecked value; the diff review found five more, four of them regressions P6-6 itself introduced.
+- **The false claim**: a chain cut short at its *end* still verifies — nothing after the cut exists to break — and
+  the footer said verification proves no line was removed. Withdrawn from the page, `docs/events.md` and the
+  cookbook. `verify` now *observes* whether a record ends with `session.end`, as an observation and never a
+  verdict, because "no end event" is an open session as often as a truncated one.
+- **The unchecked value**: the page could state any chain head at all and `verify` said "chain intact". The head is
+  the one number this product tells a reader to write down and compare against one they were given separately, so
+  a file able to change it quietly turns that instruction into a trap. Head, event count and session id are marked,
+  read back and compared now; a missing marker fails too. The **timeline stays unchecked** and the page says so.
+- **The regressions**: a failed export truncated the report already at that path (25 bytes → 0); the summary
+  printed the verified *prefix* as the event count; an empty record printed a blank head and advertised a check
+  that refused the file; `log --verify` called an empty chain intact against the exit-code table P6-6 had just
+  edited; and a 0-byte recorder was refused as "not a flight recorder".
 
-**Two live defects, both found by an adversarial review of the design commissioned before the code.**
-A chain with **no digests at all verified** — `"hash":""` on every line, the cheapest forgery there is, because the
-digest of a line with an empty hash was defined as empty and matched it. Harmless while the file being checked was
-one this machine wrote; `kelyfos verify` is what made a stranger's file the input. And **`html/template` escapes
-`+`**, which is an ordinary base64 character — the island was shipping corrupted for any record whose encoding
-contained one, and the reader would have been told an untouched record had been modified. That is precisely the
-false alarm this task's first half removed, reintroduced at the export. Both are fixed, both have tests that fail
-without the fix.
+**Two lessons worth keeping.** Reviewing the design and reviewing the diff are different jobs — running only the
+first would have shipped four regressions, running only the second would have shipped the false claim. And
+`main` went red once on the way, on the drift gate: P6-21 edited `docs/qol.md` without regenerating
+`llms-full.txt`. §8 rule 9 exists for exactly that and caught it in one commit.
 
-**Next: P6-7** — signed exports, `--sign-key`, ed25519 from the standard library, a key the reader holds. It is a
-promotion of something that already works rather than a substitute for it, which is why it was sequenced second.
+**Next: P6-22** — the hostile corpus and its CI job, before any boundary fix, so every finding is a failing test
+before it is a fixed one. The finding under the findings: this project has nineteen fuzz targets and, until P6-6
+put one on a file a stranger sends, every one of them fed a parser a *host-authored* string. None was a guest→host
+path, and the guest is the untrusted party.
 
 ## Blocked / needs John
 - **DCO.** `CONTRIBUTING.md` and the README require a `Signed-off-by`; 0 of the last 50 commits carry one and
@@ -60,10 +68,13 @@ promotion of something that already works rather than a substitute for it, which
 - **Cleared by P6-6:** `docs/events.md` §3's "adding a field is not breaking" is true now and says it was false
   until v1.0; §2's "verification re-serializes each parsed event" was stale after the fix and is corrected; the
   conformance table no longer points the verifiable export at the dead id P4-3.
-- **The rendering gap is open by design and permanent.** `kelyfos verify` covers the record a report carries, not
-  the page's drawing of it. Cross-checking the numbers the page prints was considered and declined: it couples the
-  verifier to the template, catches only an edit nobody would bother to make, and a partly-checked page invites a
-  reader to treat the rest as checked — the badge's failure wearing a hex string.
+- **The rendering gap is open by design and permanent, and now narrower than it was.** The values the page
+  *states* about its record — head, event count, session id — are checked. Its *drawing* of the events is not, and
+  will not be: the list of things to compare in a timeline has no end, and a partial answer would invite a reader
+  to treat the rest as checked. `--replay` is what a reader uses instead.
+- **A record cut short at its end verifies and cannot be distinguished from an open session.** Nothing keyless
+  closes it — the head compared against one obtained separately is the only answer, and signing it is P6-7. The
+  product says so on the page, in `verify`'s output and in `docs/events.md` rather than implying otherwise.
 - **`Verify` still ignores `v` and does not check that every event carries the same `sandbox`.** A changed one is
   caught (both fields are inside the digest); a chain written with mixed ids from the start is not. Named here
   rather than fixed, because it belongs with P6-14's freeze of what the record promises.
