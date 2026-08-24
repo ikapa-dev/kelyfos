@@ -1,6 +1,6 @@
 # KelyfOS — session status
 
-Updated 2026-08-24 · synced with origin/main · CI green through P5-8 (run 32713825239)
+Updated 2026-08-24 · synced with origin/main · **v0.9 released** · CI green on main
 
 ## Plans
 - PLAN.html — **46/53**. Phase 5 **closed at v0.9**. What remains is Phase 4, an unordered backlog
@@ -8,10 +8,9 @@ Updated 2026-08-24 · synced with origin/main · CI green through P5-8 (run 3271
 - PLAN-FEATURES.html — **COMPLETE and closed.** 42/42, five epics, v0.4–v0.8 released.
 
 ## Now
-Nothing in flight. Phase 5's acceptance passed all eight items and v0.9 is tagged and
-published. The one item that outlives the tag is acceptance item 8: re-time the quickstart
-against the artifacts this release actually ships, and put the measured number in the
-README with its provenance.
+Nothing in flight. Phase 5 closed, v0.9 tagged and published, and acceptance item 8
+answered: the quickstart is re-timed against the v0.9 release and the README carries the
+measured figures. What remains is Phase 4, an unordered backlog with no exit checkpoint.
 
 **P5-5 done.** The recording is a real session from a committed script — boot, a refused
 egress with its fix line, five agents, the chain verified — 202 KB, 14.3 s, with the cast

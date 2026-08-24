@@ -102,20 +102,17 @@ On macOS, clone it somewhere under your home directory — that is what the Lima
 VM mounts, and `limactl shell` keeps your working directory, so the commands
 below just work.
 
-Measured end to end — `git clone` to the first `kelyfos exec` output, on a
-machine with no Lima VM, no image cache and no KelyfOS anything: **2 minutes
-29 seconds on macOS, 10 seconds on a Linux/KVM box**.
+Measured end to end — `git clone` to the first `kelyfos exec` output —
+**against the v0.9 release**, which is what the commands below actually download.
 
-Building the macOS Linux layer is **138 s** of that, and on Linux there is no
-such step: clone 1 s, then firecracker, the CLI, the image, the sudoers grant
-and `doctor` together 9 s, then the first `kelyfos exec` 1 s. Lima's image cache
-was purged first, so this is a first-time visitor's cost rather than a repeat
-visit's. The sudoers grant below is included and is about a second of it.
+**KelyfOS's own part is 10 seconds**: firecracker, the CLI, the guest image, the
+sudoers grant and `doctor` together 9 s, then the first `kelyfos exec` 1 s. On a
+Linux/KVM box that is the whole of it.
 
-*Measured against the published release, which is what a visitor actually
-downloads — so the CLI and image were the previous release's while this was
-timed. The steps are the same either way and the KelyfOS downloads are a few
-seconds of the total; the figure is re-confirmed against each release.*
+On macOS you also pay for the Linux layer, and that part is Lima's rather than
+ours: **28 s** when it already has the Ubuntu image, **138 s** when it has to
+download it. Both are measured, on the same machine, minutes apart. We are not
+going to quote you the flattering one and call it the number.
 
 **On macOS first — a Linux layer with nested virtualisation** (skip on Linux).
 This step downloads and boots an Ubuntu VM, and is most of that wall clock:

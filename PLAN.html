@@ -1816,6 +1816,28 @@ after:
         <td class="mono">CI run 32724608634 &rarr; failure in checks, &ldquo;the generated documentation disagrees
         with the source&rdquo;, one line of llms-full.txt<br>
         the gate is doing its job: this is the third time this session it has refused a stale generated file</td></tr>
+        <tr><td class="mono">2026-08-24</td><td class="mono">P5</td>
+        <td><b>Acceptance item 8 answered, and a claim of my own withdrawn.</b> The quickstart was re-timed against
+        the v0.9 release itself &mdash; the guest reports 6.12.105 and <code>doctor</code> lists the jailer check
+        the v0.8 CLI did not have, so this is the release it ships in. <b>KelyfOS&rsquo;s own part is 10 s</b>,
+        unchanged: 9 s for firecracker, the CLI, the image, the sudoers grant and <code>doctor</code>, then 1 s to
+        the first <code>exec</code>. The macOS total is not one number and the README no longer prints it as one:
+        the Linux layer took <b>138 s</b> when Lima had to download Ubuntu and <b>28 s</b> when it did not, both
+        measured on this machine minutes apart, and that part is Lima&rsquo;s rather than ours.
+        <b>Withdrawn:</b> the commit that turned containerd off in <code>dev/lima.yaml</code> said the nerdctl
+        download &ldquo;sat for twenty minutes and then stalled&rdquo;. Nobody watched it for twenty minutes &mdash;
+        the loop I was watching with used <code>grep -c</code> on a file that did not exist, which prints two zeros,
+        so the guard <code>[ "$q" != "0" ]</code> was true every time and every wait exited after one cycle. The
+        same two-zeros mistake this session already fixed once in <code>dev/accept-seccomp.sh</code>. The change
+        itself stands on the reason that does not depend on it: half a gigabyte of container tooling the product
+        never touches, on the critical path to a usable VM.</td>
+        <td class="mono">v0.9 run: clone 4 s &middot; lima 28 s &middot; setup 9 s &middot; first exec 1 s &middot;
+        total 42 s, Ubuntu image cached<br>
+        v0.8 run, same script: clone 1 s &middot; lima 138 s &middot; setup 9 s &middot; first exec 1 s &middot;
+        total 149 s, Ubuntu image downloaded<br>
+        the comparable half &mdash; everything KelyfOS is responsible for &mdash; is 9&ndash;10 s in both<br>
+        evidence it was v0.9: guest <code>Linux kelyfos 6.12.105</code> (v0.8&rsquo;s image reported 6.18.46), and
+        <code>[ok] jailer present, with the privileges to use it</code></td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>

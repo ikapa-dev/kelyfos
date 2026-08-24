@@ -24,10 +24,16 @@ arch: "aarch64"
 # VM is usable — for tooling KelyfOS never touches. It runs Firecracker
 # microVMs; there is no container runtime anywhere in the product.
 #
-# Found by the P5 exit's own quickstart measurement, which purged Lima's cache
-# to measure what a first-time visitor pays and then sat for twenty minutes on
-# that download before it stalled. Every quickstart figure published before this
-# was measured with it already cached, and so understated a first run.
+# Found by the P5 exit's quickstart measurement, which purges Lima's cache to
+# measure what a first-time visitor pays rather than what a repeat visit pays.
+# With the cache cold, this download is on the critical path to a usable VM and
+# nothing in KelyfOS ever uses what it installs.
+#
+# The commit that added this said the download "stalled for twenty minutes".
+# That was wrong and is corrected here: the poll loop watching it was broken and
+# exited after one cycle, so nobody ever watched it for twenty minutes. The
+# reason to turn containerd off stands on its own — half a gigabyte for tooling
+# the product does not have — but it is not that.
 containerd:
   system: false
   user: false
