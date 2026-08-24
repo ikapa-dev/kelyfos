@@ -658,6 +658,16 @@
           in the README and in <code>docs/</code> are the measured ones.</li>
       <li>The README contains no sentence claiming a protection this phase did not build, and
           <code>docs/threat-model.md</code> agrees with it line for line.</li>
+      <li><b class="blocked">[ADDED 2026-08-24 &mdash; the product owner, before the final publish is called
+          done.]</b> The quickstart is re-timed <b>against the actual v0.9 release artifacts</b>, so the number the
+          README prints is a measurement of the release it ships in rather than of the one before it. P5-4 measured
+          149 s on macOS and about 10 s of it on a Linux/KVM box against the published v0.8, because that is what a
+          visitor downloaded that day; this closes the gap that leaves. Either order is acceptable: publish a
+          release candidate the way v0.3 did, measure, then finalise &mdash; or publish the release and re-time
+          immediately after, which is simpler when nothing is expected to move. The figure is expected within noise
+          of 149 s and ~10 s; <b>if it drifts materially the measured number is what goes in, never the remembered
+          one</b>, and the provenance sentence beneath it is updated to say which release it was measured
+          against.</li>
     </ol>
   </div>
   <p class="exit">Exit checkpoint: <b>tag v0.9</b> &mdash; &ldquo;the boundary is the hardware, and everything around it
@@ -1726,6 +1736,15 @@ after:
         <b>every acceptance suite in dev/, re-run green:</b> denials 12, e1 13, e2 18, e4 22, e5 33, forward 19,
         jail 18, notify 22, profile 31, runs 18, seccomp 15, shell 13, watch 5 &mdash; <b>239 checks, 0 failed</b>,
         one skip (e2&rsquo;s own) &mdash; plus all fourteen cookbook recipes and the Go suite</td></tr>
+        <tr><td class="mono">2026-08-24</td><td class="mono">P5</td>
+        <td><b>One item added to the phase exit: the quickstart is re-timed against the v0.9 artifacts before the
+        publish is called done.</b> P5-4 measured it against the published v0.8, which is what a visitor downloaded
+        that day and is stated as such &mdash; but it leaves the README quoting a number measured on a release other
+        than the one it ships in. Either order satisfies it: an rc published first and measured, as v0.3 did, or a
+        re-time straight after the final publish. Nothing is expected to move; if something does, the measured
+        number is what goes in.</td>
+        <td class="mono">PLAN.html &sect;6 Phase 5, acceptance item 8<br>
+        the product owner&rsquo;s instruction of 2026-08-24</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>

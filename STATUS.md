@@ -10,7 +10,11 @@ Updated 2026-08-24 · synced with origin/main · CI green through P5-8 (run 3271
 P5-5 — the launch assets, committed and posted nowhere: a ~20-second terminal recording
 at the top of the README, a first-time-visitor pass over its opening screen, and
 docs/launch/hn-post.md refreshed to v0.9 reality. Then the Phase 5 exit: full acceptance,
-tag v0.9, publish the release the way v0.4–v0.8 were published.
+tag v0.9, publish the release the way v0.4–v0.8 were published — and, added to the exit
+today, **re-time the quickstart against the actual v0.9 artifacts** before the publish is
+called done, so the README's number is a measurement of the release it ships in. P5-4's
+149 s / ~10 s was measured against the published v0.8. Expected within noise; if it
+drifts, the measured number goes in.
 
 **P5-4 done.** Bars re-earned on the bare-KVM reference across the change of posture:
 cold boot 123 → **135 ms**, restore 37 → **49 ms** (about 12 ms each way for the jailer,
