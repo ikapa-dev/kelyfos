@@ -180,7 +180,7 @@
     <span class="bl-name">Overall</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">P6-6 done &mdash; the export carries the record it was rendered from and <code>kelyfos verify</code> re-runs the chain over it offline. <b>An external security audit then arrived (D45) and v1.0 is gated on its trust-boundary group</b>: the workspace block device is a guest&rarr;host surface the threat model does not list. Seven tasks inserted before P6-7. <b>P6-21 done</b> &mdash; <code>--review</code> no longer destroys an edit made while somebody was reading it. <b>P6-6 corrected</b>: its own adversarial review landed late and found a false claim about truncation and an unchecked chain head, both reproduced and both fixed. Next: <b>P6-22</b>, the hostile corpus, before any boundary fix</b></div>
+  <div class="focusline">Current focus: <b id="focus">P6-6 done &mdash; the export carries the record it was rendered from and <code>kelyfos verify</code> re-runs the chain over it offline. <b>An external security audit then arrived (D45) and v1.0 is gated on its trust-boundary group</b>: the workspace block device is a guest&rarr;host surface the threat model does not list. Seven tasks inserted before P6-7. <b>P6-21 done</b> &mdash; <code>--review</code> no longer destroys an edit made while somebody was reading it. <b>P6-6 corrected</b>: its own adversarial review landed late and found a false claim about truncation and an unchecked chain head, both reproduced and both fixed. <b>P6-22 in progress</b> &mdash; the hostile corpus, its ledger and its CI job are in, with the whole trust-boundary group (C-1, H-1, H-2) reproduced as failing fixtures. <b>D46</b> triaged seven findings against HEAD and corrected two of them. Next: the remaining fixtures, then <b>P6-24</b></b></div>
 </div>
 
 <!-- ====================================================== 1. END GOAL -->
@@ -3680,6 +3680,40 @@ after:
         independently outside the product; H-1, H-3, H-4 and M-5 confirmed against current source by the owner;
         H-6 partly fixed since <code>babec8f</code>. <i>Revisit when</i> the boundary group is proven: the gate
         lifts on evidence, not on the tasks being ticked.</td></tr>
+        <tr><td class="mono">D46</td><td class="mono">2026-08-25</td>
+        <td><b>Seven findings triaged against HEAD, and two of them do not say what the audit said they say.</b>
+        The first instalment of P6-23, recorded now because two of its verdicts change what the blocking set
+        contains and a fixture written to a wrong sentence asserts a wrong thing. Each was read in current source
+        and reproduced by driving the real code in-process; none was accepted on the report&rsquo;s wording.
+        <i>CONFIRMED-against-current-code.</i> <b>H-1</b> &mdash; <code>write_file</code> and
+        <code>read_file</code> pass the agent&rsquo;s path to the operating system with nothing between:
+        <code>grep</code> for <code>filepath.Clean</code>, <code>IsAbs</code> or <code>IsLocal</code> across
+        <code>supervisor/</code> returns nothing, and PID 1 is unconfined because <code>applyLandlock</code> is
+        reached only from the re-exec&rsquo;d <code>--confine</code> helper. <b>H-3</b> &mdash; unclamped at three
+        independent hops; <code>broker.go</code> has a floor and no ceiling, and <b>nothing in the tree calls
+        <code>Broker.Serve</code> at all</b>. <b>H-4</b> &mdash; a store key is validated nowhere on the path from
+        the guest, there is no accounting and no <code>Delete</code>. <b>H-5</b> &mdash; <code>describe</code>
+        captures the body on the <i>refused</i> path, beside the digest that would have done.
+        <i>And two corrections, which are the reason this entry exists rather than waiting for the rest.</i>
+        <b>H-6 is not partly fixed.</b> The instruction carried that it was; the tree says otherwise.
+        <code>git diff babec8f..HEAD -- shim/</code> is five lines, all of them <code>OnScrubbed</code> audit
+        wiring, and <code>host/shim.go</code> and <code>docs/e2b-shim.md</code> are byte-identical to the
+        audit&rsquo;s base commit. Both halves &mdash; no ceiling on concurrent sandboxes, no bearer token &mdash;
+        are present, measured. <b>M-9 as worded is already fixed</b>, by <code>ac8968f</code> in P6-3, after the
+        audit read <code>babec8f</code>: there <i>is</i> a total-output ceiling. But the rest of that finding&rsquo;s
+        own sentence is live and worse than the half that was fixed &mdash; the ceiling counts <b>bytes</b>, so a
+        guest sending frames that carry none, and never sending <code>StreamExit</code>, makes
+        <code>sandbox.Exec</code> never return. The <code>timeout</code> argument is not a host-side deadline; it is
+        a number mailed to the untrusted party. Four hangs reproduced in-process.
+        <i>What changes.</i> M-9 stays in the blocking set under its true description &mdash; a host call that
+        never returns, driven from the guest &mdash; and not under &ldquo;no total-output ceiling&rdquo;, which
+        would have been a fixture for a defect that no longer exists. H-6 stays in the blocking set whole rather
+        than half. Neither would have been visible to a triage that read the report instead of the code, which is
+        what the &ldquo;against HEAD, not against <code>babec8f</code>&rdquo; rule is for.</td>
+        <td>P6-23, first instalment; the remaining sixteen follow. Every verdict here was reproduced by driving the
+        real code in-process, KVM-free, and the reproductions are what P6-22&rsquo;s fixtures are built from.
+        <i>Revisit when</i> the rest are triaged: two corrections in seven is a rate worth remembering when
+        reading the other sixteen.</td></tr>
     <!-- Claude Code: append rows above this line. -->
   </table>
 </section>
