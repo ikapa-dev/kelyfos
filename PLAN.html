@@ -44,6 +44,7 @@
   .bl-tag.done{color:var(--ok)}
   .bl-tag.active{color:var(--amber)}
   .bl-tag.todo{color:var(--muted)}
+  .bl-tag.parked{color:var(--warn)}
   .bl-name{flex:1;overflow:hidden;text-overflow:ellipsis;color:var(--text)}
   .bl-name a{color:inherit;text-decoration:none;border-bottom:1px dotted var(--line)}
   .bl-bar{flex:none;width:180px;height:9px;background:#0c1117;border:1px solid var(--line);border-radius:2px;overflow:hidden}
@@ -89,6 +90,7 @@
   .phase[data-status="todo"]   .badge{color:var(--muted)}
   .phase[data-status="active"] .badge{color:var(--amber);border-color:var(--amber)}
   .phase[data-status="done"]   .badge{color:var(--ok);border-color:var(--ok)}
+  .phase[data-status="parked"] .badge{color:var(--warn);border-color:var(--warn)}
   .goal{margin:14px 0 4px;color:var(--text)}
   .goal b{color:var(--amber);font-weight:600}
   ul.tasks{list-style:none;padding:0;margin:10px 0 0}
@@ -128,7 +130,7 @@
      injected secrets, full audit replay, and millisecond forking.</p>
   <div class="meta">
     owner: <b>John</b> &nbsp;·&nbsp; developer: <b>Claude Code</b> &nbsp;·&nbsp;
-    status: <b class="amber" id="meta-status">v0.9 released — phases 0–3 and 5 done; PLAN-FEATURES complete and closed; Phase 4 is the remaining backlog, and is a direction rather than a deadline</b> &nbsp;·&nbsp;
+    status: <b class="amber" id="meta-status">Phase 6 open &mdash; <b>v1.0, the promise</b>. Phases 0&ndash;3 and 5 done, v0.9 released; PLAN-FEATURES complete and closed; Phase 4 dispositioned and parked, every row with a verdict (D35). The overall bar will not reach 100% and is not meant to &mdash; seven of its boxes are Phase 4&rsquo;s permanent record rows (D34)</b> &nbsp;·&nbsp;
     last updated: <b id="meta-updated">2026-08-24</b><br>
     repo file: <b>PLAN.html</b> (commit this document at the repository root — it is the single source of truth)<br>
     <span class="quiet">KelyfOS — from κέλυφος (kélyfos), "shell": the guest OS wrapped around the agent. Formerly working-titled "agos" (D4 → D10).</span>
@@ -168,12 +170,17 @@
     <span class="bl-name"><a href="#p5">Phase 5 — Hardening (v0.9)</a></span>
     <span class="bl-bar"><i></i></span><span class="bl-pct">0%</span>
   </div>
+  <div class="bl-row" data-phase="6" data-s="todo">
+    <span class="bl-tag todo">[ TODO ]</span>
+    <span class="bl-name"><a href="#p6">Phase 6 &mdash; v1.0, the promise</a></span>
+    <span class="bl-bar"><i></i></span><span class="bl-pct">0%</span>
+  </div>
   <div class="bl-row bl-total" data-s="todo">
     <span class="bl-tag active">[ INIT ]</span>
     <span class="bl-name">Overall</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">Nothing in flight. Phase 5 closed at v0.9; what remains is Phase 4, an unordered backlog with no exit checkpoint &mdash; P4-3, P4-6 and P4-7 unstarted, P4-4 and P4-5 [BLOCKED] on the conditions they were written with</b></div>
+  <div class="focusline">Current focus: <b id="focus">Phase 6 is drafted and open. Next: <b>P6-1, the honesty sweep</b> &mdash; every claim this repository makes that it has not earned, withdrawn before a 1.0 is built on top of it</b></div>
 </div>
 
 <!-- ====================================================== 1. END GOAL -->
@@ -495,13 +502,13 @@
 </section>
 
 <!-- ====================================================== PHASE 4 -->
-<section class="phase" id="p4" data-phase="4" data-status="active">
+<section class="phase" id="p4" data-phase="4" data-status="parked">
   <div class="phase-head">
     <div>
       <div class="kconfig">config KELYFOS_PHASE_4</div>
       <h2>Phase 4 — Hardening &amp; direction (backlog, post-launch)</h2>
     </div>
-    <span class="badge">ACTIVE</span>
+    <span class="badge">PARKED</span>
   </div>
   <p class="goal"><b>Goal:</b> defense in depth and the strategic thread. Unordered backlog — prioritize by community pull.</p>
   <ul class="tasks">
@@ -512,17 +519,39 @@
         <span class="tid">P4-2</span><span class="tk">Guest hardening: seccomp / Landlock profiles per flavor.
         <b class="promoted">[PROMOTED 2026-08-23 &rarr; <a href="#p5">Phase 5</a>, P5-2 and P5-3. Listed here for history; the work happens there (D27).]</b></span></li>
     <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
-        <span class="tid">P4-3</span><span class="tk">Compliance groundwork: reproducible builds, signed images, SBOM per release — the substrate of the EU angle. Extend signing to session exports: <code>kelyfos log --export --sign</code> produces a report whose event chain and signature verify offline (<code>kelyfos verify report.html</code>).</span></li>
+        <span class="tid">P4-3</span><span class="tk">Compliance groundwork: reproducible builds, signed images, SBOM per release — the substrate of the EU angle. Extend signing to session exports: <code>kelyfos log --export --sign</code> produces a report whose event chain and signature verify offline 
+        <b class="promoted">[PROMOTED 2026-08-24 &rarr; <a href="#p6">Phase 6</a>, P6-6 through P6-11. Listed here for history; the work happens there (D35).]</b> (<code>kelyfos verify report.html</code>).</span></li>
     <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
-        <span class="tid">P4-4</span><span class="tk"><code>browser</code> flavor (headless Chromium) if users ask for it. <b class="blocked">[BLOCKED: conditional on demand — the task says &ldquo;if users ask for it&rdquo;, and the repo went public today. Nothing to build against until someone asks; implementing it anyway would tick a box whose own condition is unmet.]</b></span></li>
+        <span class="tid">P4-4</span><span class="tk"><code>browser</code> flavor (headless Chromium) if users ask for it. <b class="blocked">[BLOCKED: conditional on demand — the task says &ldquo;if users ask for it&rdquo;, and the repo went public today. Nothing to build against until someone asks; implementing it anyway would tick a box whose own condition is unmet.]</b>
+        <b class="blocked">[RE-VERIFIED 2026-08-24 &mdash; still unmet: zero stars, zero forks, zero issues, discussions off.
+        <i>Revisit thirty days after the v1.0 launch</i>, on whatever evidence the launch produces &mdash; this phase&rsquo;s own
+        exit performs the act most likely to change these facts, so an undated block would be stale within hours (D35).]</b></span></li>
     <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
-        <span class="tid">P4-5</span><span class="tk">Decision gate: is there real pull for a paid EU-compliance pack (audit retention, hardened images, support)? Decide with evidence; record in the decision log. <b class="blocked">[BLOCKED: no evidence to decide on — the task requires deciding &ldquo;with evidence&rdquo; whether there is real pull for a paid EU-compliance pack. There are no users yet, so any decision recorded today would be a guess wearing a decision's clothes.]</b></span></li>
+        <span class="tid">P4-5</span><span class="tk">Decision gate: is there real pull for a paid EU-compliance pack (audit retention, hardened images, support)? Decide with evidence; record in the decision log. <b class="blocked">[BLOCKED: no evidence to decide on — the task requires deciding &ldquo;with evidence&rdquo; whether there is real pull for a paid EU-compliance pack. There are no users yet, so any decision recorded today would be a guess wearing a decision's clothes.]</b>
+        <b class="blocked">[RE-VERIFIED 2026-08-24 &mdash; still unmet, same evidence as P4-4. <i>Revisit thirty days after the
+        v1.0 launch</i> (D35).]</b></span></li>
     <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
-        <span class="tid">P4-6</span><span class="tk">Multi-lane <code>kelyfos watch</code>: one lane per running sandbox/fork, k9s-style, so <code>kelyfos fork -n 4</code> shows four agents working side by side. Still a reader of the flight recorder only — no management actions beyond kill/stop passthrough to the CLI.</span></li>
+        <span class="tid">P4-6</span><span class="tk">Multi-lane <code>kelyfos watch</code>: one lane per running sandbox/fork, k9s-style, so <code>kelyfos fork -n 4</code> shows four agents working side by side. Still a reader of the flight recorder only — no management actions beyond kill/stop passthrough to the CLI.
+        <b class="blocked">[CLOSED 2026-08-24 &mdash; half delivered, residual parked (D35). E2-8 delivered the lane
+        <i>rendering</i>; what is not delivered is lane <i>selection</i> &mdash; <code>watch</code> reads one session chain and
+        makes a lane per <code>agent</code> field, so <code>fork -n 4</code> shows one of the four. Parked on cost and value, not
+        on principle: D7 permits a terminal reader of JSONL and names this task in its sanctioned half. The cheap path to the
+        literal demo is recorded in D35 so it need not be rediscovered.]</b></span></li>
     <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
-        <span class="tid">P4-7</span><span class="tk">One-command host integration (the Docker Desktop pattern): ship the <code>kelyfos</code> CLI for macOS/Windows/Linux, where on macOS/Windows it transparently provisions, starts, and stops its own Linux layer (Lima / WSL2) — <code>kelyfos doctor</code> creates it if missing, and users never touch the VM by hand. Same commands, same <code>kelyfos.toml</code>, same images everywhere. Backlog experiment behind it: a native macOS backend via libkrun on Apple's hypervisor, replacing the VM layer entirely.</span></li>
+        <span class="tid">P4-7</span><span class="tk">One-command host integration (the Docker Desktop pattern): ship the <code>kelyfos</code> CLI for macOS/Windows/Linux, where on macOS/Windows it transparently provisions, starts, and stops its own Linux layer (Lima / WSL2) — <code>kelyfos doctor</code> creates it if missing, and users never touch the VM by hand. Same commands, same <code>kelyfos.toml</code>, same images everywhere. Backlog experiment behind it: a native macOS backend via libkrun on Apple's hypervisor, replacing the VM layer entirely.
+        <b class="promoted">[PROMOTED 2026-08-24 &rarr; <a href="#p6">Phase 6</a>, P6-12, scoped to macOS on the owner&rsquo;s
+        ruling; Windows/WSL2 and the libkrun experiment are post-1.0 by name (D35).]</b>
+        <b class="blocked">[AMENDED 2026-08-24, D35: &ldquo;same commands, same <code>kelyfos.toml</code>, same images
+        everywhere&rdquo; is <i>not</i> what v1.0 delivers and is retired from the 1.0 copy. It needs every command proxied
+        across <code>limactl shell</code>, and an interrupt does not cross it &mdash; which orphans a microVM and discards the
+        workspace its teardown was syncing back. macOS means &ldquo;KelyfOS manages the Linux layer&rdquo;.]</b></span></li>
   </ul>
-  <p class="exit">Exit checkpoint: none — this phase is a direction, not a deadline.</p>
+  <p class="exit">Exit checkpoint: none — this phase is a direction, not a deadline.
+     <b>Dispositioned 2026-08-24 (D35) and parked:</b> every row above now has a verdict, and none of them will ever be
+     ticked here — P4-1 and P4-2 are the history of work done in Phase 5, P4-3 and P4-7 of work done in Phase 6, P4-6 is
+     closed with its residual parked, and P4-4 and P4-5 are blocked on conditions this project cannot manufacture. The
+     dashboard keeps counting all seven rather than excluding them, because a denominator adjusted to flatter the numerator
+     is the same defect as a ticked box with unmet conditions. <b>v1.0 does not mean 100%.</b></p>
 </section>
 
 <!-- ====================================================== PHASE 5 -->
@@ -674,6 +703,403 @@
      is locked too.&rdquo;</p>
 </section>
 
+
+<!-- ====================================================== PHASE 6 -->
+<section class="phase" id="p6" data-phase="6" data-status="active">
+  <div class="phase-head">
+    <div>
+      <div class="kconfig">config KELYFOS_PHASE_6</div>
+      <h2>Phase 6 &mdash; v1.0, the promise</h2>
+    </div>
+    <span class="badge">ACTIVE</span>
+  </div>
+  <p class="goal"><b>Goal:</b> the number 1.0 is a promise made to a stranger &mdash; that the surfaces they build
+     against will not move under them, that the bytes they download can be traced back to the source that made them,
+     and that everything this repository says about itself is true. Phases 0&ndash;5 built the product. This phase
+     makes it something somebody outside the project can rely on, which is a different kind of work: three of its
+     five pillars are not features at all but the withdrawal of every claim the repository has not earned, the
+     enumeration of what stabilises, and the mechanism that lets a stranger check the first two without asking us.
+     <br><b>Opened by P6-0 on the product owner&rsquo;s instruction of 2026-08-24</b>, spec-first in the P5-0 pattern.
+     The pillars are the owner&rsquo;s; the sizing is this seat&rsquo;s, and where a pillar was scoped down the case
+     is in the decision log rather than in a quiet omission &mdash; <b>D34</b> for the phase, <b>D35</b> for the P4
+     disposition, <b>D36</b> for the credential window, <b>D37</b> for output scrubbing, <b>D38</b> for
+     reproducibility, <b>D39</b> for the signing mechanism, <b>D40</b> for the documentation rule this document
+     never had, <b>D41</b> for the clients <code>connect</code> supports.</p>
+
+  <div class="callout"><b>The order is not arbitrary.</b> P6-1 comes first because every later task would otherwise
+     inherit a false sentence and republish it. P6-8 (the release, built by CI) precedes the artifacts it signs,
+     because the tag cannot be cut by a mechanism that does not exist. P6-14 (the compatibility promise) comes after
+     every task that changes a schema, because a promise drafted against a moving surface is wrong the week it lands.
+     P6-18 through P6-20 are the exit and are budgeted as work, not as ceremony: thirteen acceptance suites, 239
+     checks, two manual workflow dispatches with 180-minute timeouts, and a machine with KVM in front of it.</div>
+
+  <ul class="tasks">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P6-0</span><span class="tk"><b>The phase, drafted before it is built.</b> Read the P4
+        backlog, <a href="PLAN-FEATURES.html#parking">PLAN-FEATURES.html &sect;4</a>&rsquo;s parking lot and every
+        carried debt, then write this section: a verdict for each P4 item, a task list sized against the code rather
+        than against the backlog&rsquo;s wording, an acceptance test that names the six criteria in &sect;1 by number,
+        and the decisions above. Includes the two mechanical fixes without which this document would misreport
+        itself &mdash; <code>tools/check-plan.py</code>&rsquo;s dangling-reference check matched only
+        <code>P[0-4]-\d+</code>, so a Phase 6 task id could be cited and never defined, and the dashboard had
+        hand-written rows for phases 0&ndash;5 only while the script counted a sixth phase&rsquo;s boxes against the
+        total.</span></li>
+
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P6-1</span><span class="tk"><b>The honesty sweep: every claim this repository has not
+        earned, withdrawn before anything is built on top of it.</b> A 1.0 cannot be assembled on sentences that are
+        already false, and the audit that opened this phase found them in numbers. At least: the three places
+        claiming the published artifacts are byte-identical to what <code>make image</code> produces
+        (<code>README.md</code>, <code>Makefile</code>, <code>dev/fetch-image.sh</code>) &mdash; the shipped v0.9
+        kernels name two different build hosts, one of them a laptop; <code>llms.txt</code>&rsquo;s
+        &ldquo;not hardened yet&rdquo;, which is a <i>generated</i> string, so the drift gate has been keeping a
+        retracted claim consistently wrong; the README&rsquo;s provenance paragraph, which attributes
+        &ldquo;every figure above&rdquo; to <code>make bench</code> and ten runs when the five-agent pair comes from
+        one run of a different workflow; <code>docs/protocol.md</code> &sect;7&rsquo;s claim that the host refuses a
+        protocol revision it does not implement, which no code does; the generated CLI reference&rsquo;s silent loss
+        of one-letter boolean flags, so <code>kelyfos log -f</code> exists and is undocumented and the gate
+        structurally cannot see it; the supervisor&rsquo;s <code>Version = "0.2.0-p2"</code> and both
+        <code>os-release</code> files at <code>0.1.0-dev</code>; <code>tools/gendocs</code>&rsquo;s hardcoded MCP
+        revision string beside the constant it should read; and the two client-configuration blocks
+        this repository prints for a stranger to copy. <code>docs/integrating.md</code> says of its block
+        &ldquo;that is <code>.mcp.json</code> in this repository, verbatim&rdquo; and it is not &mdash; the file has
+        run a launcher script since F-D48 changed it; the README stops short of the word but makes the same claim in
+        substance, printing that block under &ldquo;this repository ships a <code>.mcp.json</code> that attaches
+        Claude Code&rdquo;. The block itself is the defect either way: it names the <i>inward</i> bridge, which is
+        the P2-era mistake F-D48 found and fixed, relies on a bare name on a <code>PATH</code> a non-interactive
+        <code>limactl shell</code> does not have, and omits the <code>--policy</code> whose absence F-D44 exists to
+        prevent. Two of the highest-traffic pages in the repository, telling a stranger to configure a client in a
+        way that would give it no ceiling at all. Each one is small. Together they are the difference
+        between a 1.0 and a number. <b>The sweep is one commit and it is exhaustive rather than illustrative</b>
+        &mdash; the list above is what one audit found, not a budget.</span></li>
+
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P6-2</span><span class="tk"><b>A security contact that exists, and a scanner on a
+        schedule.</b> Three documents tell a person who has found a vulnerability not to open a public issue and to
+        contact the maintainer privately; none of them says how, and there is no address anywhere. That is the most
+        user-visible dead end in the repository and it is on the security path. <code>SECURITY.md</code> with a real
+        disclosure policy: the channel, the response commitment, the supported-versions statement (which the
+        compatibility promise then has to agree with), and what a reporter should expect. And
+        <code>govulncheck</code> promoted from a habit into CI &mdash; it has been run by hand at least ten times and
+        once found a real advisory, so this is not new tooling, it is a discipline the project already practises
+        being written down where it cannot be forgotten. The task states which workflow, whether a finding fails the
+        build or opens an issue, and it does not pretend to have flipped a repository setting only the owner can
+        flip.</span></li>
+
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P6-3</span><span class="tk"><b>Fuzz harnesses for every parser on a trust boundary
+        &mdash; and the boundary named, because &ldquo;every untrusted-input parser&rdquo; has no completion
+        criterion without one.</b> The instruction named four targets and two of them are not where it thinks:
+        <code>internal/vsock</code> parses no bytes at all (it is AF_VSOCK socket setup), and the MCP stdio line
+        protocol is <code>internal/proto</code>&rsquo;s newline-delimited JSON reader plus
+        <code>encoding/json</code>, so a byte-level harness there measures the standard library. The real framing on
+        both channels is <code>internal/proto</code>, and the audit found roughly eighteen further decode sites the
+        list of four omits. So: declare the boundary &mdash; guest&rarr;host and network&rarr;host are hostile;
+        on-disk state KelyfOS itself wrote is corruption-tolerance, not adversary &mdash; and fuzz everything on the
+        hostile side of it. Corpora committed, a short run per push, a longer run on its own schedule rather than
+        sharing the Monday run whose whole purpose is to fail loudly about caches. <b>And an inventory guard test</b>,
+        because <code>go test -fuzz</code> takes one target in one package per invocation, so any CI list drifts
+        silently &mdash; the same class of decay the drift gate already prevents for documentation and the schema
+        test already prevents for the config parser.</span></li>
+
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P6-4</span><span class="tk"><b>The credential window, narrowed as far as the
+        architecture allows &mdash; and the rest parked with its blocking questions intact (D36).</b> Today a secret
+        is bound to a <i>domain</i> for the whole life of the proxy and attached to any allowed request that reaches
+        it; the parked idea asks for a handle that is call-bound, destination-locked, scope-limited and single-use.
+        Three of those four are buildable now and one is not. Deliver: <b>destination-locking</b> &mdash; a secret
+        binds to an endpoint, not to a domain and every subdomain under it; <b>scope-limiting</b> &mdash; a method
+        allowlist the proxy enforces per request; <b>a receipt that names what was spent where</b> &mdash;
+        <code>egress.attempt</code> and <code>secret.use</code> gain the method and path, which today they cannot
+        say at all; and <b>call-binding with single-use redemption on the two paths where one process holds both
+        the tool-call boundary and the proxy</b> (<code>serve-mcp</code> and the shim). What is <i>not</i> delivered
+        is a handle the guest presents, because the guest has no call identity on the <code>exec</code> path and
+        there is no guest&rarr;host request channel for a non-team sandbox; and correlation on the flagship
+        <code>run</code> + <code>mcp</code> path, because those are two processes sharing only a locked file. Both
+        are stated in <code>docs/networking.md</code> as loudly as that document already states which traffic the
+        proxy can read. <b>Six</b> secret-parsing sites and <b>five</b> proxy constructions, one of them shared by
+        two entry points: all of them, or the feature is the <code>jailed</code> bug again.</span></li>
+
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P6-5</span><span class="tk"><b>Echo suppression: the bound secret scrubbed out of what
+        the proxy can read &mdash; named for what it is rather than for what it sounds like (D37).</b> KelyfOS keeps
+        secret values out of the guest by construction, so there has never been anything to redact. The case
+        construction does not reach is a legitimate, allowlisted, secret-bound call whose <i>response</i> carries a
+        credential. Exact matching on the bound values catches the half of that case that is real and cheap &mdash;
+        an API reflecting the header back, an error quoting the token, a redirect carrying basic credentials
+        &mdash; with zero false positives. It does not catch a response that mints a <i>new</i> credential, because
+        a new token equals no bound string, and the general recogniser that would catch it is a false-positive
+        machine that would corrupt a tarball or a JSON document undiagnosably from inside the guest. So the feature
+        ships as echo suppression, length-preserving so a keep-alive connection cannot desync, on the terminated and
+        plain-HTTP paths only, with the tunnelled majority stated <i>before</i> anything else is stated, and the
+        compressed-body case handled or declared rather than left to be discovered. The record gains a way to say
+        the proxy altered bytes, because a chain that reports only how much the proxy could <i>read</i> understates
+        a proxy that <i>writes</i>.</span></li>
+
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P6-6</span><span class="tk"><b>The session export made verifiable by its reader
+        &mdash; <code>kelyfos verify</code>, and no cryptography at all.</b> &sect;1 has required a
+        &ldquo;standalone, <i>verifiable</i> HTML session report&rdquo; since the day this plan was written, and the
+        export is not one: it embeds no events, no per-event hash and no chain head, and it renders the
+        <i>exporter&rsquo;s own</i> verdict as a green badge. A reader is trusting a sentence the file wrote about
+        itself. Embed the chain as an inert data island, print the chain head as text, and add
+        <code>kelyfos verify &lt;report.html&gt;</code> that extracts it and re-runs the same verification the
+        recorder already implements &mdash; offline, keyless, no trust root, no network. This is the unmet
+        definition-of-done criterion, it is separable from signing, and it is worth more to a reader than a
+        signature would be. It lands <b>before</b> P6-7 so that signing is a promotion of something that already
+        works rather than a substitute for it.</span></li>
+
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P6-7</span><span class="tk"><b>Signed exports &mdash; with a key the reader can
+        anchor, or the word withdrawn.</b> P4-3 asks for <code>kelyfos log --export --sign</code> verified offline
+        by <code>kelyfos verify</code>. The only shape that gives a reader something the hash chain has not already
+        given them is a key <i>the user holds</i>: <code>--sign-key</code>, ed25519 from the standard library, no new
+        dependency, and the verifier reports a vocabulary rather than a badge &mdash; chain intact or broken,
+        crossed with signed-by-K or unsigned. A per-run ephemeral key is explicitly rejected: it proves one process
+        made both halves, which the chain already proves, and a green &ldquo;signed&rdquo; beside a key nobody has
+        ever seen invites the reader to stop asking. An unsigned report still verifies, so the signature is optional
+        by construction and never becomes mandatory by accident. Decide and pin what is signed &mdash; the chain head
+        plus a digest of the embedded events, so a re-export of the same session does not change the
+        signature.</span></li>
+
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P6-8</span><span class="tk"><b>The release, built and published by CI rather than by a
+        laptop.</b> There is no release workflow. Every release this project has cut was assembled by hand, and the
+        v0.9 artifacts prove it: the two architectures were built on two different machines, one of them the
+        developer&rsquo;s. Nothing above the weakest provenance claim is reachable until this changes, so it changes
+        first. A tag-triggered workflow builds both architectures from source, cross-builds both CLIs, stages
+        <code>dist/</code>, regenerates <code>SHA256SUMS</code> <i>from scratch</i> &mdash; both release targets
+        currently append to it and nothing truncates it &mdash; and publishes. Two cheap fixes ride along because
+        the workflow needs them: the CI cache key hardcodes the <code>base</code> flavor while the build directory is
+        per-flavor, so every release-flavor build has been running cold at about forty minutes. This task is the
+        prerequisite of P6-11 and of the exit itself.</span></li>
+
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P6-9</span><span class="tk"><b>Determinism configured, and reproducibility measured
+        rather than claimed (D38).</b> The Go binaries are already bit-reproducible &mdash; measured, cold cache,
+        different source path, identical digest. The image layer is not, and the reasons are four knobs:
+        <code>BR2_REPRODUCIBLE</code>, <code>SOURCE_DATE_EPOCH</code>, a fixed filesystem UUID and hash seed, and
+        <code>gzip -n</code>. Turn them on. Then <b>do not write the word down</b>: add a <code>repro-check</code>
+        workflow that rebuilds and diffs, and let its result &mdash; per artifact, pass or fail &mdash; be the
+        statement the project makes. Whether a full Buildroot tree rebuilds byte-identically has never been measured
+        here, upstream calls the feature experimental and requires an identical build path, and the compiler cache
+        has been mixing cached and fresh objects in every build this project has ever done. The honest experiment is
+        a matrix and it costs hours of runner time. <b>A reproducible-builds statement that says
+        &ldquo;the CLI is, the rootfs is not, here is the run that shows it&rdquo; is worth more than one that says
+        &ldquo;reproducible&rdquo;</b>, and it is the only one this project is entitled to.</span></li>
+
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P6-10</span><span class="tk"><b>An SBOM per release, covering the whole image rather
+        than the convenient half.</b> The pinned Buildroot already ships a CycloneDX generator, and the stripped CLI
+        still carries complete Go module build information, so both halves have tooling. The gap is the seam: the
+        guest supervisor is cross-compiled by KelyfOS&rsquo;s own toolchain and arrives through the rootfs overlay
+        rather than as a Buildroot package, so a Buildroot-only SBOM would omit the one component this project
+        actually wrote. An SBOM that is confidently incomplete is the supply-chain form of an audit record that is
+        confidently wrong. Merge the three sources per architecture, emit the component count from the build
+        information rather than transcribing it, and publish it as a release asset covered by
+        <code>SHA256SUMS</code>.</span></li>
+
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P6-11</span><span class="tk"><b>Attested release artifacts, and exactly one claim made
+        about them (D39).</b> With the build in a workflow, <code>actions/attest</code> takes the checksums file
+        KelyfOS already produces, in the format it already produces it, and creates one provenance attestation
+        covering every asset, plus a second attestation over the SBOM. That is SLSA v1.0 Build Level 2 &mdash; a
+        hosted platform signing a statement about which workflow, from which commit, produced these bytes &mdash;
+        and it verifies offline against a trusted root fetched once. It is <b>not</b> the same claim as GitHub&rsquo;s
+        immutable-release attestation, which carries no builder identity at all and asserts only that GitHub received
+        these bytes under this tag; that one is a separate owner setting, worth having, and must never be described
+        with the same sentence. The four places that currently say &ldquo;not yet signed &mdash; that is P4-3&rdquo;
+        are retired atomically with the mechanism, and the README gains the one command a stranger runs to check
+        it.</span></li>
+
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P6-12</span><span class="tk"><b>macOS: the CLI ports, and <code>doctor</code> owns the
+        Linux layer (P4-7, scoped by D35).</b> The owner&rsquo;s ruling is that a macOS user never runs
+        <code>limactl</code>, and that is exactly deliverable. Today the CLI does not compile for darwin at all
+        &mdash; the whole compile-level delta is seven lines behind two build-tag file pairs &mdash; and the release
+        ships Linux binaries only. So: port it; ship it; teach <code>doctor</code> to provision, start, stop and
+        report on the Lima layer from an embedded copy of the configuration, <i>including drift detection</i>,
+        because Lima freezes its template into an instance at creation and this machine already carries an instance
+        whose configuration no longer matches the file; bootstrap the layer&rsquo;s tools and print the in-VM
+        <code>doctor</code>&rsquo;s own output on the Mac; and <b>refuse every other command on darwin with one
+        sentence naming the way in</b>, rather than letting a user who downloaded a macOS binary discover a missing
+        <code>/dev/kvm</code>. <b>What this task does not do, and what P4-7&rsquo;s own wording must stop promising,
+        is &ldquo;same commands everywhere&rdquo;</b> &mdash; that needs a transport across
+        <code>limactl shell</code>, and the audit measured that an interrupt does not cross it, which would orphan a
+        microVM and silently discard the workspace it was syncing back. Windows and WSL2 are post-1.0 and the
+        compatibility document says so by name.</span></li>
+
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P6-13</span><span class="tk"><b><code>kelyfos connect &lt;client&gt;</code> &mdash;
+        one-command client setup.</b> <b class="blocked">[ADDED 2026-08-24 &mdash; the product owner, into this
+        draft.]</b> Attaching an agent is currently a paragraph of hand-edited JSON per client, and every one of the
+        lessons this project paid for lives in the details of that paragraph. The command writes the client&rsquo;s
+        own configuration, in its own format and its own location, with the policy path absolute and explicit rather
+        than discovered (the F-D44 rule) and the launch path whatever P6-12&rsquo;s architecture makes correct, so
+        the two features compose instead of duplicating. Idempotent: a second run updates the entry in place,
+        <code>--remove</code> uninstalls it, and a client that cannot be found refuses with a fix line rather than a
+        stack trace. The supported list is short and was researched live rather than remembered
+        &mdash; <b>six clients, named with their evidence and their rejections in D41</b> &mdash; with a
+        <code>generic</code> mode that prints the correct snippet for everything else, and every supported
+        entry in the generated documentation carrying the tool and version and date it was verified against.
+        <b>One template with a swapped key is impossible</b> and D41 says why: the working-directory and expansion
+        matrix is asymmetric across all six, so half of them would silently attach the wrong policy under a shared
+        snippet &mdash; F-D44&rsquo;s failure, once per client.
+        <b><code>--check</code> spawns the server the configuration names and completes a real MCP handshake</b>,
+        because &ldquo;configured&rdquo; asserted without evidence is the thing this command exists to replace
+        &mdash; and it reports what a handshake honestly proves (this server starts and speaks MCP, here, now) as
+        distinct from what it cannot (that the client will find the file, or expand the same variables, or speak this
+        era of the protocol). The client is written dual-era from the first line: probe first, fall back on any other
+        answer, which costs one round trip against KelyfOS&rsquo;s own servers and needs no rewrite when the
+        protocol revision moves.
+        <br><b>Settled before the task starts, so it need not be rediscovered:</b> the surface a fresh
+        user&rsquo;s client is pointed at is <code>serve-mcp</code>, not <code>mcp</code> &mdash; F-D48 already
+        found and fixed that mistake once in this repository&rsquo;s own <code>.mcp.json</code>; and
+        <code>dev/mcp-server.sh</code> is the hand-written prototype of what this command generates, so it is the
+        specification to read rather than a file to ignore. <b>Sequenced after P6-12</b>, because the macOS launch
+        path is whatever that task&rsquo;s architecture makes correct.
+        <b>Four rulings the task makes and records rather than assuming:</b> whether &ldquo;that client is not
+        installed&rdquo; is a catalog refusal or a plain failure &mdash; the catalog already holds environment
+        conditions with typeable fixes, but D33 shows the owner enforcing that boundary strictly, so it is ruled on
+        explicitly; whether the written path is absolute or the client&rsquo;s own variable, which F-D44 and recipe
+        9 currently answer differently; what happens to a configuration file that already holds other servers, for
+        which this repository has no precedent at all &mdash; nothing here has ever merged into a file the product
+        did not create; and how the write is made testable, since every home-touching path in this codebase is
+        redirectable by one environment variable and there is not a single <code>t.Setenv("HOME")</code> in the
+        tree, so an override is a design requirement rather than a convenience.</span></li>
+
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P6-14</span><span class="tk"><b>The compatibility promise &mdash; the document that
+        makes this a 1.0.</b> The words &ldquo;semver&rdquo; and &ldquo;deprecated&rdquo; appear nowhere in this
+        repository. What does exist is unusually good raw material: seven surfaces already have a machine-readable
+        source of truth and a CI-enforced generated page, so the promise can cite rather than re-list and cannot go
+        stale by the mechanism that already keeps the reference honest. The promise names what stabilises &mdash;
+        the <code>kelyfos.toml</code> schema, the CLI surface, the host/guest protocol revision policy, the MCP tool
+        surface, the flight-recorder record, exit codes, denial identifiers &mdash; and, just as explicitly, what
+        does <i>not</i>: guest confinement profiles are a security surface that must be allowed to narrow, and the
+        E2B subset has always described itself as best-effort. It states what a major, minor and patch bump mean
+        <i>here</i>, and what they attach to, because three independent version constants exist with no stated
+        relationship to the product number and every release so far has shipped the same two of them. It defines a
+        deprecation mechanism, since none exists and two configuration spellings have been kept
+        &ldquo;for compatibility&rdquo; since v0.4 with no removal path. It carries the clause D41 requires: <b>client configuration formats are
+        external surfaces</b>, re-verified on their own cadence, explicitly outside the drift gate and outside the
+        semver promise, because there is no universal standard coming and per-client writers are permanent
+        infrastructure. And it settles three questions the audit raised: whether a new record <i>type</i> breaks a consumer, whether the hash chain&rsquo;s dependence on Go
+        struct field order is now frozen ABI (with a test that pins it, because none does), and what KelyfOS does
+        about an MCP revision that has already moved on without it. Sequenced after every task that changes a
+        schema, deliberately.</span></li>
+
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P6-15</span><span class="tk"><b>The E3-0 pattern, re-run whole.</b> Parallel audits of
+        every hand-written document against the code that implements it &mdash; not against the other documents,
+        which is the version that reports a tidy directory. E3-0 read seven documents and found roughly forty drifts
+        and four real code defects; the corpus has more than doubled since, and seven pages have never been through
+        it at all. The generated set is named explicitly and excluded, because a hand edit there is reverted by the
+        next regeneration and turns the pipeline red; findings against a generated page are routed to the generator
+        instead. Findings first, corrections second, in that order and in that many commits, so the record of what
+        was found survives the fixing of it.</span></li>
+
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P6-16</span><span class="tk"><b>The documents a 1.0 is expected to have and this one
+        does not.</b> A <code>CHANGELOG.md</code> aggregated from every release&rsquo;s notes, v0.0 through v1.0
+        &mdash; today those notes exist only as GitHub release bodies, outside the tree, outside the drift gate, and
+        three of them carry breaking-change statements the project treats as commitments. An <b>upgrade guide</b>
+        whose centrepiece is the pre-v0.9 snapshot break, scoped to the breaks the project has actually shipped and
+        can name from the code rather than to an archaeology of eleven tags. <code>CONTRIBUTING.md</code> refreshed
+        against reality: it currently describes a pre-v0.1 project, calls the hardening that shipped in Phase 5
+        &ldquo;phase 4 work&rdquo;, points a security reporter at a contact that does not exist, and requires a
+        sign-off that no commit in this repository carries. And issue and pull-request templates &mdash; where a
+        template that restates the &sect;2 non-goals does more work than a template that asks for a stack trace.
+        The task decides, once, whether the changelog is the source the release notes are cut from or a mirror
+        something regenerates; a second copy of the truth that nothing keeps honest is the exact failure the
+        generated reference exists to prevent.</span></li>
+
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P6-17</span><span class="tk"><b>The generated set regenerated, and a token count
+        measured by a command that is committed.</b> Every task above changes a flag, a key, a tool or an event, so
+        the reference, <code>llms.txt</code> and <code>llms-full.txt</code> are regenerated and the count is
+        re-measured. <b>The measurement command goes into the repository this time</b> &mdash; the last count was
+        taken with an invocation recorded only as a sentence in a progress row, which is the class of unrecorded
+        provenance this project refuses everywhere else. A number that cannot be reproduced is an estimate wearing a
+        measurement&rsquo;s clothes.</span></li>
+
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P6-18</span><span class="tk"><b>The bars re-earned, every suite green, and the two
+        criteria nobody owns, discharged.</b> Cold boot-to-ready and snapshot restore re-measured on the bare-KVM
+        reference (D15) across everything this phase put on the boot path; all thirteen acceptance suites and every
+        cookbook recipe re-run; and the two &sect;1 criteria that no pillar covers, faced rather than assumed
+        &mdash; the verifiable export (P6-6 builds it; this proves it) and the E2B SDK smoke test, which was run once
+        by hand in August and has no suite, no job and no HTTP test behind it. That one gets a decision: a
+        fourteenth acceptance suite with a pinned SDK, or a re-worded criterion citing the evidence that exists.
+        Deciding it is the point; letting it pass unexamined is what this task exists to prevent. Budgeted as work:
+        two manual workflow dispatches, a Linux/KVM host, and hours rather than minutes.</span></li>
+
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P6-19</span><span class="tk"><b>The docs-only exam, re-run against the v1.0
+        artifacts.</b> The E3-5 bar: a fresh session, the installed binaries and the documentation, no source tree,
+        no plan files, no git history, no web &mdash; and a task it can only complete if the documentation is true.
+        The environment is the thing that makes it evidence rather than theatre, so it is set up as E3-5 specifies
+        and the transcript is committed whatever it says. The task is chosen against the surface this phase added,
+        which is what E4 and E5 both did, rather than repeated for comparability.</span></li>
+
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P6-20</span><span class="tk"><b>The quickstart re-timed against the actual v1.0
+        release, the README&rsquo;s first screen, and the post.</b> P5&rsquo;s eighth acceptance item is now doctrine:
+        the number the README prints is measured against the release it ships in, not the one before it, and a
+        release candidate is available if the ordering needs it. Then a first-time-visitor pass over the opening
+        screen &mdash; a stranger&rsquo;s ten seconds is the scarcest resource this project has &mdash; and
+        <code>docs/launch/hn-post.md</code> brought to v1.0 reality: the new numbers, the supply-chain paragraph
+        rewritten from a confession into a mechanism, and the honest limits kept rather than quietly dropped now
+        that there are fewer of them. John submits things; this task produces artifacts.</span></li>
+  </ul>
+
+  <div class="callout red"><b>Owner actions this phase cannot take for itself.</b> Each is recorded as
+     <b class="blocked">[BLOCKED &mdash; needs John]</b> where it blocks a task, and carried in
+     <code>STATUS.md</code> and the final report: <b>(1)</b> the DCO ruling &mdash; sign from here on, gate only new
+     commits, or amend <code>CONTRIBUTING.md</code> to match a history that cannot be rewritten; <b>(2)</b> a
+     security contact or the private-reporting channel for <code>SECURITY.md</code>; <b>(3)</b> whether immutable
+     releases are enabled, which locks published assets and protects tags and is therefore a commitment rather than
+     a toggle; <b>(4)</b> whether Dependabot security updates are enabled; <b>(5)</b> whether a macOS binary is
+     distributed as a raw download, which Gatekeeper quarantines, or through a package manager that does not
+     &mdash; and, if the former, whether a signing identity exists.</div>
+
+  <div class="accept">
+    <h4>Acceptance test &mdash; v1.0 means this list, run</h4>
+    <ol>
+      <li><b>The six criteria in &sect;1, each answered by name and by evidence</b>, not by assertion: the
+          five-minute quickstart, the one-command run with egress refused and the secret outside the guest, the two
+          boot bars and a four-way fork, <b>the complete, tamper-evident, exportable and <i>verifiable</i> audit
+          record</b>, the E2B shim passing an SDK smoke test, and published-with-a-quickstart-and-a-demo plus the
+          owner using it for his own runs. Two of the six were unmet when this phase opened and are named in P6-6
+          and P6-18; a 1.0 declared with them unexamined would be the same error P5&rsquo;s eighth item caught and
+          withdrew.</li>
+      <li>Every acceptance suite in <code>dev/</code> re-run green on the reference, plus every cookbook recipe and
+          the Go suite &mdash; and the count of each stated, so &ldquo;green&rdquo; is a number.</li>
+      <li>Cold boot-to-ready and snapshot restore re-measured on the bare-KVM reference, ten runs each, and the
+          figures in the README and in <code>docs/</code> are those measurements. Bars not met are reported as not
+          met.</li>
+      <li><b>A release built and published by CI</b>, and a stranger&rsquo;s verification command run against the
+          published artifacts, with its output pasted. The reproducibility statement is whatever the
+          <code>repro-check</code> run measured &mdash; per artifact, pass or fail &mdash; and never a word that
+          outruns it.</li>
+      <li>The compatibility promise exists, and every surface it names either has a generated page it cites or an
+          explicit exclusion. No surface is silently in or silently out.</li>
+      <li>The documentation audit&rsquo;s findings are landed rather than filed; <code>make docs</code> is clean;
+          the token count is re-measured by the committed command; and the docs-only exam has been re-run against
+          the v1.0 artifacts with its transcript committed whatever it says.</li>
+      <li>The quickstart is re-timed against the actual v1.0 release artifacts, and the README&rsquo;s provenance
+          sentence says which release each figure was measured against.</li>
+      <li><code>kelyfos connect</code> proved per supported client: the configuration asserted byte-for-byte into a
+          sandboxed home, and the handshake check run live against what it wrote.</li>
+      <li><b>No document in this repository contains a claim this project has not earned.</b> That is the
+          phase&rsquo;s whole thesis, it is the hardest item to prove, and the way it is proved is that P6-1 ran
+          first and P6-15 ran last.</li>
+    </ol>
+  </div>
+  <p class="exit">Exit checkpoint: <b>tag v1.0</b> &mdash; &ldquo;the surfaces hold, the bytes are traceable, and
+     everything it says about itself is true.&rdquo;</p>
+</section>
+
 <!-- ====================================================== QUICKSTART -->
 <section id="quickstart">
   <p class="eyebrow">section 7</p>
@@ -726,6 +1152,7 @@ make image         <span class="c"># kernel Image (aarch64) / vmlinux (x86_64) +
     <li><b>6. Append, never rewrite history.</b> Log rows are immutable. Update <code>#meta-updated</code> with today's date on every edit of this file.</li>
     <li><b>7. Blocked?</b> Mark the task with <code>[BLOCKED: reason]</code> appended to its text, log it, and move to the next task. Surface all blockers at the end of the session summary.</li>
     <li><b>8. Reconcile against CI, not only against the tree.</b> Session start-up reads the latest CI run for <code>origin/main</code> alongside <code>git status</code> and <code>git log</code>. <b>A red <code>main</code> is a blocker and is fixed before any new task is started</b> &mdash; not noted, not carried, fixed. This rule exists because <code>main</code> was red from P5-1 until P5-2 found it three tasks later: the failure was in the job after the one that had always passed, every session read the tree and none read the pipeline, and nothing in these rules required anyone to look. A clean tree is not a green build, and P3-6 asked for a green pipeline on <code>main</code>, not for one that is usually green. (The product owner&rsquo;s ruling of 2026-08-24.)</li>
+    <li><b>9. Documentation rides with the task that changed the surface.</b> No task is ticked until <code>make docs</code> is clean (CI enforces the generated reference &mdash; F-D4); <code>llms.txt</code> and <code>llms-full.txt</code> are regenerated and committed <i>with</i> it; every new user-facing command, flag, <code>kelyfos.toml</code> key or MCP tool has a cookbook recipe that CI executes; the <code>llms-full.txt</code> token count is re-measured and logged whenever the generated set changed; and, when a phase added commands or MCP tools, the docs-only exam is re-run against that phase&rsquo;s artifacts before its exit. This is <b>F-D9</b>, which governed <a href="PLAN-FEATURES.html">PLAN-FEATURES.html</a> through five epics and then evaporated when that file closed &mdash; this document&rsquo;s protocol never carried it, and the consequence is that Phase 5 shipped v0.9 with no token re-measurement and no exam, not because anyone decided to skip them but because nothing here required them. A rule that governed the project through its most productive stretch does not stop being true when the file it lived in is finished. (D40.)</li>
   </ul>
 </section>
 
@@ -1838,6 +2265,69 @@ after:
         the comparable half &mdash; everything KelyfOS is responsible for &mdash; is 9&ndash;10 s in both<br>
         evidence it was v0.9: guest <code>Linux kelyfos 6.12.105</code> (v0.8&rsquo;s image reported 6.18.46), and
         <code>[ok] jailer present, with the privileges to use it</code></td></tr>
+        <tr><td class="mono">2026-08-24</td><td class="mono">P6-0</td>
+        <td><b>Phase 6 drafted spec-first, against the code rather than against the backlog&rsquo;s wording.</b>
+        Eleven parallel audits &mdash; one per pillar, each required to cite <code>file:line</code> and to put what
+        it could not verify in an open-questions list rather than in a sentence &mdash; plus two adversarial critics
+        reading the combined findings for gaps and for over-commitment. <b>Their verdict is in D34 because acting on
+        it is the decision:</b> as briefed this was three to four phases wearing one phase&rsquo;s name, and two
+        pillars would have produced claims this project cannot honestly make. Every pillar is in. Three are scoped
+        to their honest version with the case in its own row &mdash; D36 (the credential handle is three quarters
+        buildable and the fourth quarter needs a guest&rarr;host channel that does not exist), D37 (scrubbing ships
+        as echo suppression; the general recogniser is declined rather than deferred, because a false positive
+        inside a tarball is undiagnosable from inside the guest), D38 (reproducibility is measured and the
+        measurement <i>is</i> the claim). D35 dispositions all seven P4 rows. <b>D40 gives &sect;8 a ninth rule</b>,
+        which is F-D9 restated here after it evaporated with the file that held it &mdash; the reason Phase 5
+        shipped v0.9 with no token re-measurement and no docs-only exam.
+        <b>Three findings that changed the draft rather than decorating it.</b> (1) Two of the four named fuzz
+        targets are not where the brief thinks: <code>internal/vsock</code> parses no bytes at all, and the MCP
+        stdio protocol is <code>internal/proto</code> plus <code>encoding/json</code> &mdash; so P6-3 names the
+        trust boundary instead of a list, since &ldquo;every untrusted-input parser&rdquo; has no completion
+        criterion without one. (2) &sect;1 has required a <i>verifiable</i> session report since this plan was
+        written and the export is not one &mdash; it embeds no events and renders the exporter&rsquo;s own verdict
+        as a green badge. That is an unmet definition-of-done criterion needing no cryptography, so it became P6-6
+        and it lands <i>before</i> signing. (3) The MCP specification moved: the current revision removes the
+        <code>initialize</code> handshake entirely, so P6-13&rsquo;s check is written dual-era from the first line
+        and P6-14 has to state a policy rather than a version.
+        <b>The client landscape was surveyed live for P6-13</b> &mdash; two independent surveys reconciled by a third
+        pass that re-fetched every disputed claim &mdash; and the answer is D41: six supported, the rest generic,
+        four rejected on evidence (two archived, one retired as a brand, one with 48k stars and no MCP
+        implementation at all). Its finding is not the list but the shape: <b>one template with a swapped key is
+        impossible</b>, because Claude Code has no working-directory field at all while others do and expand
+        variables differently &mdash; so half of them would silently attach the wrong policy under a shared snippet,
+        which is F-D44&rsquo;s failure once per client.
+        <b>And one correction made to an audit before it could decide anything:</b> a reader argued P4-6&rsquo;s
+        residual is forbidden by D7&rsquo;s &ldquo;no fleet view&rdquo;. D7 names P4-6 by id in the
+        <i>sanctioned</i> half of that sentence and attaches the prohibition to a server with auth and persistence.
+        P4-6 is parked on cost and value, not on principle.</td>
+        <td class="mono">PLAN.html: <b>53 &rarr; 74 tasks, 46 &rarr; 47 checked, 33 &rarr; 40 decisions</b>;
+        <code>tools/check-plan.py</code> coherent<br>
+        two mechanical fixes, both negative-tested rather than assumed: the dangling-reference regex was
+        <code>P[0-4]-\d+</code>, so <b>phases 5 and 6 had never been audited at all</b> &mdash; a fabricated task id
+        in either phase now fails the check, as this row&rsquo;s own first draft discovered by containing one; and a
+        phase section with no dashboard row was counted into the total and shown nowhere &mdash; deleting the
+        phase-6 row now fails<br>
+        measured by the audits, not assumed: the shipped v0.9 kernels name <code>ioanniskapageridis@lima-kelyfos-dev</code>
+        and <code>runner@runnervm76f27</code> &mdash; two machines, one a laptop, against three claims of
+        byte-identity &middot; the Go CLI already rebuilds bit-identically from a cold cache at a different path
+        &middot; the ext4 layer reached 0 differing bytes with <code>SOURCE_DATE_EPOCH</code> + <code>-U</code> +
+        <code>-E hash_seed=</code> &middot; the darwin port is <b>7 lines</b> &middot; an interrupt does not cross
+        <code>limactl shell</code> &middot; six secret-parsing sites against five proxy constructions &middot;
+        21 denial-catalog entries &middot; 0 of the last 50 commits carry a DCO sign-off<br>
+        verified here rather than taken on report, because it is now in this record: the shipped kernels
+        decompressed and read &mdash; <code>Linux version 6.12.105 (ioanniskapageridis@lima-kelyfos-dev)</code> and
+        <code>(runner@runnervm76f27)</code>, both gzip wrappers carrying <code>FLG=0x08</code> and a non-zero mtime;
+        <code>llms.txt:9</code> and its generator line; <code>host/log.go:28</code> defining <code>-f</code> against
+        zero occurrences in <code>docs/reference/cli.md</code>; <code>docs/protocol.md:581</code>. <b>One claim of
+        this row&rsquo;s own first draft was wrong and was corrected before commit</b> &mdash; it put
+        <code>integrating.md</code>&rsquo;s word &ldquo;verbatim&rdquo; in the README&rsquo;s mouth, which the README
+        does not say; both blocks are false, differently, and the sweep now says so exactly<br>
+        pins chosen live for D39, no prereleases: <code>actions/attest</code> <b>v4.2.2</b> (2026-08-04,
+        <code>1e69f48acb82d1966a394da916b4c1698aa569d6</code>), <code>subject-checksums</code> consuming
+        <code>SHA256SUMS</code> unchanged, SLSA v1.0 Build L2; Buildroot <b>2025.02.17</b> already ships
+        <code>utils/generate-cyclonedx</code>; <code>cyclonedx-gomod</code> <b>v1.12.0</b>. Rejected with reasons:
+        the two attest wrappers (retired by their own release notes), cosign (v3.1.3 floor, buys nothing native
+        does not), the SLSA reference generator (18 months stale)</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
@@ -2195,6 +2685,298 @@ after:
         <code>SysProcAttr.UseLandlock</code> lands and the ruleset is built once in the parent &mdash; the domain
         shape does not change, so this answer should survive it, and if it does not, this row is wrong and should be
         replaced rather than reinterpreted.</td></tr>
+        <tr><td class="mono">D34</td><td class="mono">2026-08-24</td>
+        <td><b>Phase 6 is opened as &ldquo;v1.0, the promise&rdquo;, on the product owner&rsquo;s instruction, with
+        five pillars fixed by him and the sizing done here &mdash; and three of the five are scoped down, each with
+        its own row rather than by a quiet omission.</b>
+        <i>Why the sizing had to be done first.</i> P6-0 read the pillars against the code instead of against the
+        backlog&rsquo;s wording, in eleven parallel audits plus two adversarial critics. The verdict was blunt and is
+        recorded because acting on it is the decision: <b>as briefed this is three to four phases wearing one
+        phase&rsquo;s name, and at least two pillars would produce a claim the project cannot honestly make.</b> The
+        response is not to decline the pillars &mdash; they are the owner&rsquo;s and every one of them is in &mdash;
+        but to write each task at the size of the honest version of it, and to say in the task text what the honest
+        version does not include.
+        <i>What was scoped, and where.</i> Per-call credential handles &rarr; D36. Output-side secret scrubbing
+        &rarr; D37. Reproducible builds &rarr; D38. P4-7&rsquo;s macOS half &rarr; D35. Everything else is promoted
+        whole.
+        <i>What the audit found that no pillar had asked about, and which is now P6-1.</i> The repository asserts in
+        three places that the published artifacts are byte-identical to what <code>make image</code> produces; the
+        shipped v0.9 kernels name two different build hosts, one of them the developer&rsquo;s laptop.
+        <code>llms.txt</code> still ships &ldquo;not hardened yet&rdquo; &mdash; a <i>generated</i> string, so the
+        drift gate has been keeping a retracted claim consistently wrong since P5-4 retired it everywhere a human
+        looks. The generated CLI reference silently drops one-letter boolean flags, so <code>kelyfos log -f</code>
+        is undocumented and the gate structurally cannot notice, because the generator and the file agree and both
+        are wrong. <code>docs/protocol.md</code> &sect;7 claims a host-side check that no code performs. A phase
+        called &ldquo;the promise&rdquo; that built anything on top of those would be building on sand, so the sweep
+        is task one and every later task inherits a repository that tells the truth.
+        <i>The arithmetic, decided up front rather than discovered at the exit.</i> Phase 4 can never read 7/7: two
+        rows are the history of work done in Phase 5, two more are the history of work now done here, one is closed
+        with its residual parked, and two are blocked on conditions this project cannot manufacture. The dashboard
+        keeps counting all seven and Phase 4 is marked <code>PARKED</code> rather than quietly excluded, because a
+        denominator adjusted to flatter the numerator is the same defect as a ticked box with unmet conditions.
+        <b>v1.0 does not mean 100%, and the masthead says so in words.</b></td>
+        <td>The product owner&rsquo;s instruction of 2026-08-24. P5-0 for the spec-first pattern; D27 for the
+        promotion machinery. <i>Revisit when</i> a pillar&rsquo;s scoped-down version is delivered and the parked
+        remainder has a user asking for it &mdash; each of D36, D37 and D38 names its own condition.</td></tr>
+
+        <tr><td class="mono">D35</td><td class="mono">2026-08-24</td>
+        <td><b>The Phase 4 disposition: every item gets a verdict, and the two that stay blocked get a revisit
+        condition instead of a permanent silence.</b>
+        <i>P4-3 &mdash; PROMOTED whole</i> into P6-6 through P6-11. It is the pillar the README already owes a
+        stranger in four separate places.
+        <i>P4-7 &mdash; PROMOTED, scoped by the owner&rsquo;s own ruling</i>, into P6-12. The ruling is that
+        <code>kelyfos doctor</code> provisions, starts and stops the Lima layer and the user never runs
+        <code>limactl</code>; that is deliverable and the audit sized it at five to seven tasks, of which the
+        compile-level port to darwin is <b>seven lines</b> behind two build-tag file pairs. What is <i>not</i>
+        deliverable is P4-7&rsquo;s own next sentence, &ldquo;same commands, same <code>kelyfos.toml</code>, same
+        images everywhere&rdquo;: that needs every command proxied across <code>limactl shell</code>, and the audit
+        measured that an interrupt does not cross it &mdash; which would leave a Firecracker microVM running and
+        silently discard the workspace the deferred teardown was syncing back. That is data loss, not polish. So the
+        sentence is retired in the v1.0 copy and the compatibility document says plainly that macOS means
+        &ldquo;KelyfOS manages the Linux layer&rdquo;, not &ldquo;KelyfOS runs on macOS&rdquo;. <b>Windows and WSL2
+        are explicitly post-1.0</b>, by name, in that same document. <b>Steering needed: no</b> &mdash; the
+        owner&rsquo;s ruling already scoped this to the half that is real; it is the plan&rsquo;s older wording that
+        needed correcting, not the ruling.
+        <i>P4-6 &mdash; CLOSED, half delivered and the residual parked.</i> E2-8 delivered the lane rendering
+        &mdash; fixed-width columns, per-lane live usage against caps, the message ticker, the collective budget,
+        the narrow-terminal fallback &mdash; and <code>watch</code>&rsquo;s own header comment says it supersedes
+        P4-6 for the team case. The residual is precise and is <i>not</i> what the first audit claimed: lane
+        <i>selection</i>. <code>watch</code> reads one session chain and creates a lane per <code>agent</code> field,
+        so <code>kelyfos fork -n 4</code> &mdash; the headline in P4-6&rsquo;s own text &mdash; shows one of the four.
+        <b>A correction to that audit, made here because it would otherwise have decided this:</b> one reader argued
+        the residual is forbidden by D7&rsquo;s &ldquo;no fleet view&rdquo;. It is not. D7 names P4-6 by id in the
+        <i>sanctioned</i> half of the same sentence and attaches the prohibition to a <i>server</i> with auth and
+        persistence; a terminal reader of JSONL is the category D7 permits. So this is parked on cost and value, not
+        on principle: a fork fleet is vsock-only with no broker and no parent cgroup, so three of the four lane
+        regions would render empty, and <code>team up</code> is now how this product runs several agents side by
+        side. The cheapest path to P4-6&rsquo;s literal demo is recorded so it need not be rediscovered &mdash; give
+        forks a shared session and agent names, about fifteen lines in <code>fork.go</code>, and the delivered lane
+        view works unchanged. <i>Revisit when</i> somebody asks for lanes over sandboxes that were not forked from
+        one command.
+        <i>P4-4 and P4-5 &mdash; still <code class="blocked">[BLOCKED]</code>, on their own written conditions,
+        verified rather than assumed:</i> the repository went public on 2026-08-22 and has zero stars, zero forks,
+        zero issues and discussions disabled, so &ldquo;if users ask for it&rdquo; and &ldquo;decide with
+        evidence&rdquo; are both unmeetable today. <b>But the block is now dated rather than eternal</b>, because
+        this phase&rsquo;s own exit performs the act most likely to change those facts: the launch. So both carry
+        an explicit revisit condition &mdash; thirty days after the v1.0 launch, on whatever evidence the launch
+        produced &mdash; in the shape D27 used for Phase 4. Restated in the 1.0 documents as demand-gated future
+        work rather than as absence.</td>
+        <td>The product owner&rsquo;s instruction of 2026-08-24; D27 for the promotion machinery and for the
+        &ldquo;promoted with the same explicitness or written off&rdquo; condition it set for v0.9, which this row
+        discharges; D7 for the monitoring ceiling and what it does and does not forbid; F-D26 on the cost of letting
+        a decision decay into a habit.</td></tr>
+
+        <tr><td class="mono">D36</td><td class="mono">2026-08-24</td>
+        <td><b>The per-call credential handle is scoped to the three quarters of it the architecture can carry, and
+        the word &ldquo;handle&rdquo; is not used for the part that is really scoped injection.</b>
+        <i>What was asked.</i> Evolve secret injection toward a credential that is call-bound, destination-locked,
+        scope-limited and single-use &mdash; a smaller window on the existing guarantee rather than a new one.
+        <i>What the code allows, measured.</i> Injection is a single line inside a keep-alive loop, and the proxy
+        can only inject on a connection it terminates &mdash; which it does precisely when a secret is bound, so
+        &ldquo;can inject&rdquo; and &ldquo;has a credential&rdquo; are today the same condition. Destination-locking
+        and scope-limiting are therefore free: the parsed request is already in hand at the injection point, and
+        adding a method and path matcher plus recording them is mechanical. Call-binding is not free. There is no
+        call boundary the proxy can observe: the guest&rsquo;s own MCP exec tool passes a constant identifier, the
+        exec request id crosses the wire and is never put in the child&rsquo;s environment, and on the flagship path
+        the proxy lives in <code>kelyfos run</code> while the tool-call boundary lives in <code>kelyfos mcp</code>
+        &mdash; two processes sharing only a locked file. In <code>serve-mcp</code> and the shim, one process holds
+        both, and there call-binding and single-use redemption are real.
+        <i>Chosen.</i> Ship destination-locking, scope-limiting and the receipt everywhere; ship call-binding and
+        single-use where one process holds both ends; park the guest-presented handle. <b>And say why it is parked
+        in the terms that matter</b>: the current design&rsquo;s strongest property is that there is
+        <i>nothing in the guest to steal</i>. A handle the guest holds is a bearer token in an untrusted
+        environment, readable by every process the agent spawns &mdash; it changes the guarantee&rsquo;s shape from
+        &ldquo;nothing exists&rdquo; to &ldquo;something short-lived exists&rdquo;, and that trade must be argued,
+        not assumed, before it is made. <b>One more honest limit</b>, which the docs must carry: even a full handle
+        only narrows the window for domains the proxy already terminates &mdash; that is, domains that already have
+        a credential bound. It is not a general egress improvement, and a prompt-injected agent that controls the
+        tool call holds that call&rsquo;s authority legitimately, so the window shrinks from a session to a request
+        rather than closing.
+        <i>The two questions the parking lot posed stay posed</i> and are the promotion condition: who mints and
+        redeems when the proxy is the only party that ever sees plaintext, and what &ldquo;a call&rdquo; means when
+        the caller is <code>exec</code> running arbitrary agent-written code rather than a tool with a
+        schema.</td>
+        <td>P6-4. <a href="PLAN-FEATURES.html#parking">PLAN-FEATURES.html &sect;4</a>&rsquo;s parked entry and its
+        Azure SRE Agent source; D6 for why the value stays on the host; F-D33 for the standard this project holds
+        itself to when describing what the proxy can and cannot see. <i>Revisit when</i> either blocking question
+        has an answer, or when a guest&rarr;host request channel exists for a non-team sandbox for some other
+        reason.</td></tr>
+
+        <tr><td class="mono">D37</td><td class="mono">2026-08-24</td>
+        <td><b>Output-side secret scrubbing ships as echo suppression, and the general credential recogniser is
+        declined rather than deferred.</b>
+        <i>The distinction, because the feature&rsquo;s name hides it.</i> Exact matching on the bound secret values
+        catches a credential being <i>echoed</i> &mdash; an API reflecting the header, an error quoting the token, a
+        redirect carrying basic credentials. It has zero false positives and the material is already in the same
+        package and already in memory. It does <b>not</b> catch the parking lot&rsquo;s own motivating case, a
+        response that mints a <i>new</i> credential, because a new token is equal to no bound string.
+        <i>Why the thing that would catch it is declined.</i> A general credential-pattern recogniser is a
+        false-positive machine operating on a byte stream the agent will parse. A wrong match inside a tarball, a
+        binary, or a JSON document produces a failure with no cause anybody can find, and it is undiagnosable from
+        inside the guest &mdash; the blast radius of a false positive is strictly worse than that of a missed scrub.
+        That is a worse trade than the one it is meant to improve.
+        <i>What ships, with its limits stated first rather than last.</i> Length-preserving replacement, so a
+        keep-alive connection cannot desync on a content length that no longer matches; the terminated and
+        plain-HTTP paths only, because the tunnelled majority is ciphertext the proxy cannot read and never will be;
+        the compressed-body case handled or declared, since the terminated path deliberately disables compression to
+        keep bodies untouched and a guest that asks for gzip gets a body the matcher sees as noise; and a record
+        field saying the proxy <i>altered</i> bytes, because a chain that reports only how much the proxy could read
+        understates a proxy that writes. And it is named for what it is in every document that mentions it, so
+        nobody reads it as a guarantee that a credential can never reach the agent.
+        <i>One thing it does not touch, stated because the obvious reading is wrong.</i> On the
+        <code>kelyfos run -- &lt;agent&gt;</code> form the agent is a host child process inheriting the
+        environment, so a bound credential is in it verbatim. &sect;1&rsquo;s wording &mdash; the value never exists
+        <i>inside the guest</i> &mdash; is still exactly true; any prose that drops the word &ldquo;guest&rdquo;
+        would not be.</td>
+        <td>P6-5. <a href="PLAN-FEATURES.html#parking">PLAN-FEATURES.html &sect;4</a>&rsquo;s parked entry, which
+        poses the recogniser question and leaves it open; F-D33 for the standard of describing what the proxy can
+        read. <i>Revisit when</i> a recogniser exists that can be wrong safely &mdash; one whose failure mode is a
+        refusal a person can see rather than a silent corruption they cannot.</td></tr>
+
+        <tr><td class="mono">D38</td><td class="mono">2026-08-24</td>
+        <td><b>Reproducibility is configured and then <i>measured</i>; the word does not enter the documentation
+        ahead of the measurement.</b>
+        <i>What is already true, measured rather than hoped.</i> The Go CLI is bit-reproducible today: a cold-cache
+        rebuild from a different source path produced an identical digest. The image layer is not, and the reasons
+        are four knobs &mdash; <code>BR2_REPRODUCIBLE</code> is absent, <code>SOURCE_DATE_EPOCH</code> is read by one
+        script and set by nothing, the compression wrapper keeps a filename and a timestamp, and every filesystem
+        gets a random UUID and hash seed and a wall-clock creation time. Setting an epoch, a fixed UUID and a fixed
+        hash seed produced a byte-identical filesystem in the audit&rsquo;s own experiment.
+        <i>What is unknown and expensive.</i> Whether a full Buildroot tree &mdash; a cross toolchain, a kernel,
+        musl, BusyBox, git, Python, OpenSSL, curl &mdash; rebuilds byte-identically has never been measured here.
+        Upstream calls the feature experimental and requires an identical build path, while this project&rsquo;s
+        build directory is under <code>$HOME</code> and therefore differs between CI and the dev machine; and the
+        compiler cache has been mixing cached and fresh objects in every build this project has ever done, so an
+        experiment that does not control for it measures the cache. One round is tens of minutes per architecture
+        and the honest experiment is a matrix.
+        <i>Chosen.</i> Ship the deterministic configuration, then a <code>repro-check</code> workflow that rebuilds
+        and diffs, and <b>let its result be the claim</b> &mdash; per artifact, pass or fail, with the run named.
+        &ldquo;The CLI reproduces; the rootfs does not yet, and here is the run that shows it&rdquo; is a statement
+        this project is entitled to make and a reader can act on. &ldquo;Reproducible builds&rdquo; is not, until
+        something has run twice. This is the same rule P5 item 8 was created to enforce, applied before the mistake
+        rather than after it.</td>
+        <td>P6-9, with P6-1 withdrawing the three byte-identity claims first. P5&rsquo;s acceptance item 8 for the
+        principle; D20 for the checksum-not-provenance posture the artifacts have carried since v0.3.
+        <i>Revisit when</i> the repro-check has run its matrix &mdash; the answer it returns is what the
+        documentation then says, whatever it is.</td></tr>
+
+        <tr><td class="mono">D39</td><td class="mono">2026-08-24</td>
+        <td><b>Release artifacts are attested by the platform that builds them, which means the build moves into CI
+        first; session exports are signed with a key the <i>user</i> holds, or not at all.</b>
+        <i>Chosen for artifacts, from live research on 2026-08-24.</i> A tag-triggered workflow builds both
+        architectures, then <code>actions/attest</code> at <b>v4.2.2</b> (2026-08-04, pinned by commit
+        <code>1e69f48acb82d1966a394da916b4c1698aa569d6</code>) takes the <code>SHA256SUMS</code> file KelyfOS already
+        emits, in the format it already emits it, through its <code>subject-checksums</code> input &mdash; one
+        attestation covering every asset, no reformatting &mdash; and a second call with <code>sbom-path</code>
+        attests the SBOM. Permissions are exactly <code>id-token: write</code>, <code>contents: read</code>,
+        <code>attestations: write</code>. That is <b>SLSA v1.0 Build Level 2</b>, and it verifies offline:
+        <code>gh attestation trusted-root</code> once, then <code>gh attestation verify --bundle
+        --custom-trusted-root</code>.
+        <i>Rejected, with reasons.</i> <code>actions/attest-build-provenance</code> and
+        <code>actions/attest-sbom</code> are now thin wrappers over <code>actions/attest</code> and their own release
+        notes say new implementations should not use them. Cosign keyless would need an installer, a pin no earlier
+        than <b>v3.1.3</b> (which exists because v3.1.2 and earlier had a verification bypass), and buys nothing the
+        native path does not already give a GitHub-hosted build. The SLSA reference generator and its verifier are
+        eighteen and fourteen months stale against a native path that is current.
+        <i>Named separately and never conflated.</i> GitHub&rsquo;s <b>immutable releases</b> produce a
+        GitHub-signed attestation over a release&rsquo;s assets however the release was cut &mdash; but its predicate
+        carries repository, tag and package identity and <b>no builder identity at all</b>, and
+        <code>gh release verify</code> has no offline mode. It asserts that GitHub received these bytes under this
+        tag; it says nothing about where they came from. It is worth enabling, it is an owner action because it locks
+        published assets and protects tags, and describing it with the same word as build provenance would be
+        precisely the overclaim P5&rsquo;s eighth item withdrew.
+        <i>Chosen for session exports.</i> The chain already gives keyless offline <i>integrity</i>. A signature adds
+        <i>who</i>, and the only shape that adds a &ldquo;who&rdquo; a reader can anchor is a key the user supplies:
+        <code>--sign-key</code>, ed25519 from the standard library, zero new dependencies against a
+        forty-line <code>go.sum</code>. A per-run ephemeral key is rejected &mdash; it proves one process produced
+        both halves, which the chain already proves, and it would be the first badge in this repository that invites
+        a reader to stop asking. Sigstore is rejected for exports: a hosted service in the verify path contradicts
+        both the non-goals and the report&rsquo;s own &ldquo;one file, no scripts, no external requests&rdquo;
+        premise, and keyless signing needs an interactive identity flow on a CLI that runs headless on servers.
+        <b>The developer holds no key and needs none</b>, which is the property that makes this shape work at
+        all.</td>
+        <td>P6-8, P6-10, P6-11 for artifacts; P6-6 and P6-7 for exports. Live research of 2026-08-24 against the
+        actions, cosign, SLSA and Buildroot sources, with versions and dates recorded in the P6-0 progress row.
+        <i>Revisit when</i> a reusable workflow is worth the isolation it buys (Build Level 3), or when
+        <code>gh</code> gains offline verification for release attestations, which would make the immutable-release
+        path independently useful.</td></tr>
+
+        <tr><td class="mono">D40</td><td class="mono">2026-08-24</td>
+        <td><b>&sect;8 gains rule 9: documentation rides with the task that changed the surface.</b> F-D9 said this
+        and enforced it through five epics, and F-D9 lives in <a href="PLAN-FEATURES.html">PLAN-FEATURES.html</a>,
+        which is closed. <b>This document&rsquo;s protocol never had the rule</b>, and the consequence is visible:
+        Phase 5 shipped v0.9 with no token re-measurement and no docs-only exam, not because anyone decided to skip
+        them but because nothing here required them. A rule that governed the project through its most productive
+        stretch should not have evaporated when the file it lived in closed, so it is restated in the governing
+        document, in the same shape rule 8 was added: as a rule, with the failure that produced it named.</td>
+        <td>P6-0. F-D9 in PLAN-FEATURES.html &sect;2; F-D4 for the generated-reference gate that makes half of it
+        automatic; rule 8 for the precedent of promoting a lesson into the protocol rather than into a memory.</td></tr>
+        <tr><td class="mono">D41</td><td class="mono">2026-08-24</td>
+        <td><b>The clients <code>kelyfos connect</code> supports: six, chosen from a live survey on 2026-08-24, with
+        the burden of proof on inclusion.</b> Every supported client costs a writer, an idempotent update, a
+        <code>--remove</code>, a byte-level assertion, a recipe, and a
+        &ldquo;verified against &lt;tool&gt; &lt;version&gt; on &lt;date&gt;&rdquo; line somebody re-verifies
+        forever. Two independent surveys of the landscape were reconciled by a third pass that re-fetched every
+        disputed claim.
+        <b>Supported, in order of how much they earn the slot:</b> <b>(1) Claude Code</b> v2.1.241 &mdash;
+        <code>.mcp.json</code> at the project root written directly, and <code>~/.claude.json</code> never
+        hand-edited but written through <code>claude mcp add-json</code>, because that file holds the live sign-in
+        session and a corrupt parse triggers a recovery flow. <b>(2) OpenAI Codex CLI</b> 0.149.1 &mdash;
+        <code>[mcp_servers.&lt;name&gt;]</code> in <code>config.toml</code>, snake_case and not
+        <code>mcpServers</code>; a direct merge-write is the <i>primary</i> path rather than a fallback, because
+        <code>codex mcp add</code> physically cannot target project scope &mdash; verified in the shipped source at
+        the release tag, not inferred from documentation. It is also the only one of the six publishing a JSON
+        schema, so its output is validated before it is written. <b>(3) Cursor</b> &mdash;
+        <code>.cursor/mcp.json</code>, a file dedicated to MCP, so a rewrite cannot clobber unrelated settings.
+        <b>(4) VS Code</b> &mdash; <code>.vscode/mcp.json</code>, whose top-level key is <code>servers</code> and not
+        <code>mcpServers</code>, which is the most common integration mistake and which this repository already gets
+        right in recipe 9. <b>(5) Gemini CLI</b> v0.56.0. <b>(6) JetBrains Junie</b> &mdash; the cheapest writer on
+        the list and the only one reaching the JetBrains population.
+        <b>The engineering consequence, which is the survey&rsquo;s real finding:</b> one template with a swapped
+        key is <i>impossible</i>, because the working-directory and variable-expansion matrix is asymmetric across
+        all six. Claude Code has <b>no <code>cwd</code> field at all</b> &mdash; zero occurrences in its whole MCP
+        page &mdash; and offers only a variable set in the <i>server&rsquo;s</i> environment, which independently
+        vindicates F-D44: under Claude Code there is genuinely no way to pin a server&rsquo;s working directory from
+        configuration, so <code>--policy</code> is not a nicety. Cursor has no <code>cwd</code> either and pins with
+        its own workspace variable; Codex, VS Code and Gemini have <code>cwd</code> but document expansion
+        differently or not at all; Junie has neither. <b>Half of them would silently attach the wrong policy under a
+        shared snippet</b> &mdash; which is F-D44&rsquo;s failure, once per client.
+        <b>Generic-only, and why the cheap-looking ones are not free:</b> opencode has the highest star count found
+        anywhere and its configuration is the user&rsquo;s whole-product file in a commented dialect, so an
+        idempotent rewrite needs a comment-preserving editor; Zed the same, plus an open bug that makes
+        project-scoped servers silently do nothing in multi-root workspaces &mdash; and a one-command flow that
+        silently does nothing is worse than a printed snippet; Cline&rsquo;s only documented path is user-scoped and
+        the extension path embeds the host editor&rsquo;s name, so deriving it is guessing; Continue is the
+        cleanest write target found anywhere and its format has churned three times; Goose is mid-move, with its
+        documentation renamed and open issues about whether its config file becomes a directory; Crush stores
+        configuration as executable shell, which cannot be idempotently rewritten at all. Qwen Code is the Gemini
+        schema with one path constant changed and is the first promotion if a seventh slot opens &mdash; held back
+        only because its release endpoint returns a tooling tag rather than a version, so no
+        &ldquo;verified against&rdquo; line can be written.
+        <b>Rejected outright</b>, on evidence rather than taste: Roo Code and Void are archived read-only; Windsurf
+        is retired as a brand and its MCP page now says so of itself, so it is struck from the generic text too;
+        Aider has 48k stars and no MCP implementation at all, which is the clearest illustration in the whole survey
+        that stars are not a liveness signal.
+        <b>Three rules that follow and are binding on the implementation.</b> Never emit Gemini&rsquo;s
+        <code>trust</code> flag &mdash; it bypasses every tool-call confirmation, which for a server whose tools boot
+        microVMs is exactly backwards, and it is precisely the field a later &ldquo;make setup smoother&rdquo;
+        change would reach for. Read the <i>installed</i> binary&rsquo;s version rather than assuming the latest,
+        because package managers lag npm by as much as ten minor versions. And <code>connect</code> must print the
+        per-client follow-up, because at least three of the six hold a newly written server behind a trust or
+        approval gate &mdash; a command that writes a file and says &ldquo;done&rdquo; would be lying on half the
+        list.
+        <b>And the maintenance clause the compatibility document has to carry:</b> there is no universal standard
+        coming. The proposal for one was opened in February, drew no maintainer response, and was never accepted.
+        Per-client writers are permanent infrastructure, not a bridge &mdash; so client formats are <i>external</i>
+        surfaces, re-verified on their own cadence, explicitly outside the drift gate and outside the semver promise.
+        Two of the six cannot anchor a version string at all and must be stamped with a date and the documentation
+        URL as fetched.</td>
+        <td>P6-13, and a required clause in P6-14. The product owner&rsquo;s addition of 2026-08-24. F-D44 for why
+        the policy path is explicit; F-D48 for why the surface is <code>serve-mcp</code>. Sources, versions and
+        fetch dates are recorded per client in the P6-13 working notes. <i>Revisit when</i> any supported
+        client&rsquo;s format moves &mdash; the highest-probability move on the list is Gemini CLI&rsquo;s, whose
+        successor already uses a different file in a different place, with no deprecation announced and no
+        end-of-life date.</td></tr>
     <!-- Claude Code: append rows above this line. -->
   </table>
 </section>
@@ -2246,7 +3028,8 @@ after:
     row.setAttribute('data-s',st);
     var tag=row.querySelector('.bl-tag');
     tag.className='bl-tag '+st;
-    tag.textContent = st==='done' ? '[  OK  ]' : st==='active' ? '[ACTIVE]' : '[ TODO ]';
+    tag.textContent = st==='done' ? '[  OK  ]' : st==='active' ? '[ACTIVE]'
+                    : st==='parked' ? '[PARKED]' : '[ TODO ]';
   });
   var t=totalAll? Math.round(100*doneAll/totalAll):0;
   document.getElementById('total-bar').style.width=t+'%';

@@ -61,8 +61,10 @@ def main() -> int:
         problems.append(f"{boxes} checkboxes but {len(ids)} task ids")
 
     # Every task id mentioned anywhere must exist, so a log entry cannot cite a
-    # task that was renamed or never written.
-    referenced = set(re.findall(r"\b(P[0-4]-\d+)\b", s))
+    # task that was renamed or never written. The range was P[0-4] until P6-0
+    # noticed that phases 5 and 6 had therefore never been checked at all — the
+    # audit had quietly stopped covering the phases being worked on.
+    referenced = set(re.findall(r"\b(P[0-9]-\d+)\b", s))
     missing = sorted(referenced - set(ids))
     if missing:
         problems.append(f"referenced but undefined task ids: {missing}")
@@ -71,6 +73,15 @@ def main() -> int:
     broken = sorted(set(re.findall(r'href="#([^"]+)"', s)) - anchors)
     if broken:
         problems.append(f"broken anchors: {broken}")
+
+    # Every phase section needs a dashboard row. The script sums a phase's
+    # checkboxes into the overall percentage and then returns early when it
+    # cannot find the row, so a phase with no row is counted and not shown —
+    # the plan under-reporting itself, silently.
+    phases = set(re.findall(r'<section class="phase" id="p\d+"[^>]*data-phase="([^"]+)"', s))
+    rows = set(re.findall(r'<div class="bl-row" data-phase="([^"]+)"', s))
+    if phases - rows:
+        problems.append(f"phases with no dashboard row: {sorted(phases - rows)}")
 
     for field in ("focus", "meta-status", "meta-updated"):
         if not re.search(rf'id="{field}"[^>]*>[^<]', s):
