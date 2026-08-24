@@ -608,6 +608,12 @@ status. This is how you hand an agent a sandbox and nothing else:
 	defer cancel()
 	ready, err := sb.WaitReady(readyCtx)
 	if err != nil {
+		// A refusal says what happened and what to do about it; wrapping one in
+		// "guest never became ready" would put a wrong cause in front of a
+		// right explanation. The machine that was refused is already down.
+		if _, isRefusal := denial.Of(err); isRefusal {
+			return err
+		}
 		return fmt.Errorf("guest never became ready: %w", err)
 	}
 
@@ -700,6 +706,15 @@ status. This is how you hand an agent a sandbox and nothing else:
 			"session record in it would be reachable.\n")
 	} else {
 		fmt.Printf("  jail        chroot, uid %d, %s\n", os.Getuid(), sb.State.RunDir)
+	}
+	if sb.State.Seccomp != "" {
+		// Printed on every run, jailed or not, because Firecracker's filter is
+		// the VMM's own and the jailer neither installs it nor takes it away.
+		// The number is threads, not a boolean: the filters go on per thread,
+		// so "on" without a count would be the reassuring half of the fact
+		// (P5-2).
+		fmt.Printf("  seccomp     %s mode, read from /proc on all %d VMM threads\n",
+			sb.State.Seccomp, sb.State.SeccompThreads)
 	}
 	if notifier.Enabled() {
 		// Which mechanism, out loud. A notification that never arrives is

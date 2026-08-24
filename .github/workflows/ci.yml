@@ -348,5 +348,45 @@ jobs:
             || { echo "teardown left run directories behind"; exit 1; }
           echo "smoke test passed"
 
+      # P5-2. The reference architecture is x86_64 (D15) and this is the only
+      # place a real x86_64 VMM runs, so this is where its filter is read out of
+      # the kernel and compared with what dev/expect records. The aarch64 half
+      # is proved on the dev machine.
+      - name: The host syscall filter, proved and recorded
+        run: |
+          set -o pipefail
+          ARCH=x86_64 bash dev/accept-seccomp.sh 2>&1 | tee seccomp.log
+
+      - name: Publish what that filter permits
+        if: always()
+        run: |
+          {
+            echo '## Host syscall filter — x86_64'
+            echo
+            echo '```'
+            sed -e 's/\x1b\[[0-9;]*m//g' seccomp.log | tail -45
+            echo '```'
+            # Present only until the record for this architecture is committed;
+            # after that the diff above is the answer and this is silent.
+            if [ -f dev/expect/host-seccomp-x86_64.txt.observed ]; then
+              echo
+              echo '<details><summary>what this run observed, verbatim</summary>'
+              echo
+              echo '```'
+              cat dev/expect/host-seccomp-x86_64.txt.observed
+              echo '```'
+              echo '</details>'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: host-seccomp-x86_64
+          path: |
+            dev/expect/host-seccomp-x86_64.txt.observed
+            seccomp.log
+          if-no-files-found: warn
+
       - name: Integration tests against a real microVM
         run: go test -count=1 -timeout 20m -run 'TestConcurrent|TestOrphans|TestExec|TestMCP' ./internal/sandbox/

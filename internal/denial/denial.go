@@ -256,6 +256,19 @@ var (
 		},
 	}
 
+	// --- the host syscall filter ------------------------------------------
+
+	SeccompNotInForce = Denial{
+		ID: "seccomp.not_in_force",
+		Doc: "the VMM came up without the syscall filter Firecracker compiles into its own " +
+			"release binaries, which a KelyfOS run requires rather than hopes for",
+		Msg: "Firecracker is running without its syscall filter (<detail>)",
+		Fix: "install an official Firecracker release — bash dev/install-firecracker.sh — " +
+			"because the filter is built into that binary, and a debug build or an " +
+			"unsupported target ships an empty one that installs nothing",
+		Sample: V{"detail": "fc_vcpu 0 (tid 41207) reports Seccomp: 0"},
+	}
+
 	// --- forwards: what is listening at the other end ---------------------
 
 	ForwardClosed = Denial{
@@ -324,6 +337,7 @@ func All() []Denial {
 		EgressHost, EgressPort,
 		ForwardClosed,
 		JailNoSudo,
+		SeccompNotInForce,
 		SecretUnallowed,
 		TeamEdge, TeamSpawnBudget, TeamSpawnImage, TeamSpawnNone, TeamStore,
 	}

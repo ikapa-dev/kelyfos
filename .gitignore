@@ -33,3 +33,7 @@
 
 # Local tool settings, not project configuration.
 /.claude/
+
+# The seccomp probe leaves what it observed here when no record for this
+# architecture is committed yet; the record itself is tracked.
+/dev/expect/*.observed

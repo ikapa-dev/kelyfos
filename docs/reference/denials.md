@@ -152,6 +152,17 @@ this build runs Firecracker under the jailer, which needs passwordless sudo (sud
 
 Named: `reason`, `sudoers`. The values above are an example.
 
+## `seccomp.not_in_force`
+
+The VMM came up without the syscall filter Firecracker compiles into its own release binaries, which a KelyfOS run requires rather than hopes for.
+
+```
+Firecracker is running without its syscall filter (fc_vcpu 0 (tid 41207) reports Seccomp: 0) [seccomp.not_in_force]
+    install an official Firecracker release — bash dev/install-firecracker.sh — because the filter is built into that binary, and a debug build or an unsupported target ships an empty one that installs nothing
+```
+
+Named: `detail`. The values above are an example.
+
 ## `secret.unbound`
 
 A secret was bound to a domain the sandbox cannot reach, so it could never be sent.

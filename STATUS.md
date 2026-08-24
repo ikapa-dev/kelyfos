@@ -1,38 +1,34 @@
 # KelyfOS — session status
 
-Updated 2026-08-23 · tree clean, synced with origin/main
+Updated 2026-08-24 · tree clean at session start, synced with origin/main (4c8fa5b)
 
 ## Plans
 - PLAN.html — 38/49. **Phase 5 (hardening, v0.9)**: P5-0, P5-1 done — the VMM is jailed.
 - PLAN-FEATURES.html — **COMPLETE and closed.** 42/42, five epics, v0.4–v0.8 released.
 
 ## Now
-P5-2 — the host syscall filter, recorded rather than assumed (mostly already observed).
+P5-2 — the host syscall filter. Three verbs in the task: establish *which* filter is in
+force, prove it is on rather than trusting a default, record what it permits. P5-1 already
+observes `Seccomp: 2` on the VMM from the host's `/proc`; the rest is this task.
 
 ## This session
-E1–E3 closed, **v0.6 released**; then the F-D33 batch and the E3→E4 seam check. Epic E4, all
-nine tasks: the spec; serve-mcp with its ceiling; five file and state tools, which found the
-MCP frame limit at 1 MiB against a promised 8 MiB (F-D38) and a restore held to no ceiling
-(F-D39); the team tools (F-D42); the audit lane (F-D43); two client recipes (F-D44); the
-plugins device and runtime (F-D45, F-D46). Exit: 22/22 checks, 11/11 recipes, three exams
-whose 22 findings are in `docs/exam/`. **v0.7 tagged and published**, and the batch those
-exams routed after it is done (F-D49). Epic E5, all eight: the v0.8 spec, named sessions,
-diff and review, `kelyfos shell`, one refusal catalog whose acceptance found the plan's own
-headline fix line never reaching the client (F-D53); inbound forwarding, proved by diffing
-nftables with two forwards and none; a run history that is the records read back (F-D54);
-`--notify`, best effort, data-never-script, off until asked.
+Start-up reconciliation done: tree clean, `main` == `origin/main` at 4c8fa5b, 38/49 boxes,
+v0.8 the latest release, Phase 5 active. Read CLAUDE.md, PLAN.html (§8 protocol, Phase 5,
+D27–D29, newest progress rows), docs/hardening.md, STATUS.md. CLI rebuilt at 4c8fa5b;
+`kelyfos-dev` Lima VM up, KVM present, Firecracker/Jailer v1.16.1, passwordless sudo
+in place, aarch64 (dev flavor, Buildroot 2025.02.17 / Linux 6.12.105) and x86_64 images
+present in the cache.
 
 ## Blocked / debts
-- P4-4, P4-5 [BLOCKED]. `idle_timeout` refused (F-D20; F-D22). IMAGE_DIR per-arch not per-flavor: parked.
+- P4-4, P4-5 [BLOCKED] on their own written conditions. `idle_timeout` refused (F-D20;
+  F-D22). IMAGE_DIR per-arch not per-flavor: parked.
+- Measurement debt carried into P5-4: cold boot-to-ready and snapshot restore must be
+  re-measured on the bare-KVM reference (D15) with the jail and the filter on the boot
+  path, and the quickstart ≤5-min figure re-measured *including* the sudoers step.
 
-## The E4→E5 seam
 ## Toolchain
-**Buildroot 2026.02.3 → 2025.02.17** (D28), the line buildroot.org itself lists as LTS, EOL
-March 2028. It supports kernel header series only to 6.12, so the guest kernel went back
-6.18.46 → **6.12.105** — kernel.org gives both the same projected EOL, December 2028, so the
-move costs six release cycles and buys a supported build system. Full aarch64 rebuild, 117
-acceptance checks across six suites and 14 recipes green; x86_64 and the boot/restore bars
-are CI's, dispatched. Bubble Tea v2 landed earlier at the seam (F-D41/F-D51). The HN post is
-John's.
+Buildroot **2025.02.17** (LTS, EOL March 2028) · Linux **6.12.105** (longterm, projected
+EOL December 2028) · Firecracker **v1.16.1** · Go **1.27.0**. The D28 hop is landed and
+retroactively endorsed; not to be revisited. The HN post is John's to submit.
 
 Steering needed: no.

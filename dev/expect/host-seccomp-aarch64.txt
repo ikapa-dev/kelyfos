@@ -1,0 +1,135 @@
+arch aarch64
+audit_arch 0xc00000b7
+exe firecracker
+
+filter vmm
+  instructions 179
+  sha256 e2b10f5c74d68cb103bb696703f96f39c24081cf30e5b200e03c3a152be1d34b
+  unlisted-syscall TRAP(0)
+  foreign-arch KILL_THREAD
+  complete true
+  allowed 37
+    brk
+    clock_gettime
+    close
+    connect
+    epoll_ctl
+    epoll_pwait
+    eventfd2
+    exit
+    exit_group
+    fstat
+    fsync
+    ftruncate
+    getrandom
+    gettid
+    io_uring_enter
+    io_uring_register
+    io_uring_setup
+    lseek
+    madvise
+    mincore
+    mremap
+    munmap
+    newfstatat
+    openat
+    read
+    readv
+    recvfrom
+    recvmsg
+    restart_syscall
+    rt_sigprocmask
+    rt_sigreturn
+    sched_yield
+    sendmsg
+    sendto
+    sigaltstack
+    write
+    writev
+  conditional 13
+    accept4 otherwise=TRAP(0)
+    fcntl otherwise=TRAP(0)
+    futex otherwise=TRAP(0)
+    ioctl otherwise=TRAP(0)
+    memfd_create otherwise=TRAP(0)
+    mmap otherwise=TRAP(0)
+    mprotect otherwise=TRAP(0)
+    msync otherwise=TRAP(0)
+    rt_sigaction otherwise=TRAP(0)
+    socket otherwise=TRAP(0)
+    timerfd_create otherwise=TRAP(0)
+    timerfd_settime otherwise=TRAP(0)
+    tkill otherwise=TRAP(0)
+
+filter api
+  instructions 103
+  sha256 830d937c12514838e46520c5d658310210e4efa93f58578847cb3ea2725ea6d2
+  unlisted-syscall TRAP(0)
+  foreign-arch KILL_THREAD
+  complete true
+  allowed 22
+    brk
+    clock_gettime
+    close
+    epoll_ctl
+    epoll_pwait
+    exit
+    exit_group
+    fstat
+    getrandom
+    gettid
+    mremap
+    munmap
+    openat
+    read
+    recvfrom
+    recvmsg
+    restart_syscall
+    rt_sigprocmask
+    sched_yield
+    sendto
+    sigaltstack
+    write
+  conditional 9
+    accept4 otherwise=TRAP(0)
+    fcntl otherwise=TRAP(0)
+    futex otherwise=TRAP(0)
+    ioctl otherwise=TRAP(0)
+    madvise otherwise=TRAP(0)
+    mmap otherwise=TRAP(0)
+    rt_sigaction otherwise=TRAP(0)
+    socket otherwise=TRAP(0)
+    tkill otherwise=TRAP(0)
+
+filter vcpu
+  instructions 103
+  sha256 477f0d1c9c0266b79f974cdbc7064d0815305b4fa427e90e004d381e33d1a03f
+  unlisted-syscall TRAP(0)
+  foreign-arch KILL_THREAD
+  complete true
+  allowed 17
+    brk
+    clock_gettime
+    close
+    exit
+    exit_group
+    fstat
+    gettid
+    mremap
+    munmap
+    openat
+    restart_syscall
+    rt_sigprocmask
+    rt_sigreturn
+    sched_yield
+    sendmsg
+    sigaltstack
+    write
+  conditional 7
+    futex otherwise=TRAP(0)
+    ioctl otherwise=TRAP(0)
+    madvise otherwise=TRAP(0)
+    mmap otherwise=TRAP(0)
+    rt_sigaction otherwise=TRAP(0)
+    timerfd_settime otherwise=TRAP(0)
+    tkill otherwise=TRAP(0)

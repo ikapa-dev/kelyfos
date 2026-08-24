@@ -155,6 +155,13 @@ type State struct {
 	Jailed      bool      `json:"jailed"`
 	StartedAt   time.Time `json:"started_at"`
 	BootReadyMS int64     `json:"boot_ready_ms"`
+	// Seccomp is the syscall-filter mode observed on the VMM's own threads once
+	// the machine was answering — "filter", or the run was refused. It is read
+	// from the host's /proc rather than inferred from the absence of a flag,
+	// because a protection nobody has ever observed is a protection nobody has
+	// (P5-2, docs/hardening.md §3).
+	Seccomp        string `json:"seccomp,omitempty"`
+	SeccompThreads int    `json:"seccomp_threads,omitempty"`
 }
 
 // RecordSession is the flight recorder this sandbox's events belong in: the
@@ -517,7 +524,15 @@ func (s *Sandbox) WaitReady(ctx context.Context) (proto.Ready, error) {
 	select {
 	case r := <-s.ready:
 		s.State.BootReadyMS = time.Since(s.State.StartedAt).Milliseconds()
-		return r, s.writeState()
+		// After the number is taken, so the bar measures the machine and not
+		// the checking of it, and after the guest is answering, so every one of
+		// the VMM's threads has reached the point where it installs its filter
+		// (P5-2). confirmSeccomp writes the state itself.
+		if err := s.confirmSeccomp(); err != nil {
+			_ = s.Shutdown(2 * time.Second)
+			return proto.Ready{}, err
+		}
+		return r, nil
 	case <-s.done:
 		return proto.Ready{}, fmt.Errorf("firecracker exited before the guest was ready: %w", s.waitErr)
 	case <-ctx.Done():
@@ -1113,7 +1128,15 @@ func Restore(snapDir string, opts Options) (*Sandbox, time.Duration, error) {
 	}
 	elapsed := time.Since(started)
 	s.State.BootReadyMS = elapsed.Milliseconds()
-	return s, elapsed, s.writeState()
+	// The restored machine gets the same check a booted one does, for the same
+	// reason: a snapshot is loaded into a fresh Firecracker process, and that
+	// process's filter is as much a fact about this run as the original's was
+	// about that one (P5-2). confirmSeccomp writes the state itself.
+	if err := s.confirmSeccomp(); err != nil {
+		_ = s.Shutdown(2 * time.Second)
+		return nil, 0, err
+	}
+	return s, elapsed, nil
 }
 
 // Wait blocks until Firecracker exits.
