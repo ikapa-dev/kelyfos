@@ -128,16 +128,29 @@ check "$(grep -q 'NOPASSWD' <<<"$out" && echo yes || echo no)" \
       "and its fix line is the sudoers line, ready to paste"
 
 say "snapshot and restore still work inside it"
-boot >/dev/null 2>&1
+# With a workspace attached, deliberately. A snapshot records its drives by the
+# path written in it, which since P5-1 is chroot-relative, and Firecracker will
+# not load one until every backing file is present at that path — so a machine
+# that had a workspace could not be restored at all until P5-9 staged the
+# captured copy into the new jail *before* the load. Nothing caught it because
+# no suite snapshotted a machine with a workspace. This one does.
+mkdir -p wsjail && echo seed > wsjail/seed.txt
+boot --workspace ./wsjail >/dev/null 2>&1
 kelyfos exec "echo survived-the-jail > /tmp/marker" >/dev/null 2>&1
+kelyfos exec "echo work-survived > /work/marker" >/dev/null 2>&1
 kelyfos snapshot save --name jailtest >/dev/null 2>&1
 halt
 (timeout 200 kelyfos snapshot restore --name jailtest > restore.log 2>&1 &)
 for i in $(seq 1 90); do kelyfos exec true >/dev/null 2>&1 && break; sleep 1; done
+grep -qi 'error\|refused' restore.log && sed 's/^/  /' restore.log | head -3
 marker="$(kelyfos exec 'cat /tmp/marker' 2>&1 | tail -1)"
-echo "  $marker"
+echo "  memory:    $marker"
 check "$(grep -q 'survived-the-jail' <<<"$marker" && echo yes || echo no)" \
       "a jailed machine snapshots and restores with its full state"
+wsmarker="$(kelyfos exec 'cat /work/marker' 2>&1 | tail -1)"
+echo "  workspace: $wsmarker"
+check "$(grep -q 'work-survived' <<<"$wsmarker" && echo yes || echo no)" \
+      "and a machine that had a workspace restores with that disk too"
 pkill -f "kelyfos snapshot" 2>/dev/null; sleep 2
 
 say "the cgroup it sits in is the one KelyfOS asked for"

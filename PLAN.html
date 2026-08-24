@@ -173,7 +173,7 @@
     <span class="bl-name">Overall</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">P5-9 &mdash; <code>snapshot restore</code> is broken for any machine that had a workspace, since P5-1 changed the recorded drive path to a jail-relative one. Found by P5-7&rsquo;s own acceptance</b></div>
+  <div class="focusline">Current focus: <b id="focus">P5-8 &mdash; the sibling-ptrace refusal made legible: named where a person will look, with what still works, and both halves proved rather than asserted (D33)</b></div>
 </div>
 
 <!-- ====================================================== 1. END GOAL -->
@@ -597,7 +597,7 @@
         <b>Refusal is deliberately not required</b> &mdash; the host walls are unchanged and guest confinement is
         depth behind them &mdash; but the record and the warning are, and
         <code>docs/threat-model.md</code> and the release notes say it in those terms.</span></li>
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file &mdash; add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file &mdash; add the checked attribute in the markup.">
         <span class="tid">P5-9</span><span class="tk"><b><code>snapshot restore</code> is broken for any machine
         that had a workspace.</b> <b class="blocked">[ADDED 2026-08-24, found by P5-7; a task rather than a fold-in
         under D30&rsquo;s rule.]</b> Firecracker refuses the load with <i>&ldquo;Error manipulating the backing
@@ -1655,6 +1655,23 @@ after:
         sites and is now on all of them<br>
         found on the way, not fixed here: <code>snapshot restore</code> fails for any machine that had a workspace.
         Reproduced standalone. It is P5-9</td></tr>
+        <tr><td class="mono">2026-08-24</td><td class="mono">P5-9</td>
+        <td><b>A snapshot of a machine with a workspace could not be restored at all, and the fix is an
+        ordering.</b> Firecracker will not load a snapshot until every block device&rsquo;s backing file exists at
+        the path written in it, and since P5-1 that path is the chroot-relative <code>/workspace.ext4</code> &mdash;
+        while <code>Restore</code> staged the captured workspace only <i>after</i> the load, which was enough when
+        the recorded path was an absolute host one that still existed. The copy now goes into the jail before the
+        load, by copy rather than by hard link, because two forks of one snapshot that shared those blocks would
+        make the independent-fork claim false in the most damaging possible way. Afterwards the jailed path has
+        nothing left to repoint: the file is already this machine&rsquo;s own at the name the snapshot records, and
+        repointing it at a host path would name a file the jailed VMM cannot open.</td>
+        <td class="mono">before: <code>snapshot restore</code> &rarr; firecracker 400 &ldquo;Error manipulating the
+        backing file: No such file or directory (os error 2) /workspace.ext4&rdquo;, reproduced standalone<br>
+        after: <code>sandbox 2233f65d restored from "wstest" in 179 ms</code> and <code>cat /work/marker</code>
+        &rarr; the content written before the snapshot<br>
+        dev/accept-jail.sh <b>18/18</b> &mdash; its snapshot section now attaches a workspace, which is the reason
+        this was invisible: no suite snapshotted a machine with one<br>
+        regression: accept-e2, accept-e5, accept-profile and all fourteen cookbook recipes</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>

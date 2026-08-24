@@ -1073,6 +1073,27 @@ func Restore(snapDir string, opts Options) (*Sandbox, time.Duration, error) {
 		if opts.Plugins != nil {
 			staged = append(staged, struct{ src, name string }{opts.Plugins.ImagePath, defaultJailNames().Plugins})
 		}
+		// The workspace, and by copy rather than by link (P5-9).
+		//
+		// A snapshot of a machine that had one records its drive at the
+		// chroot-relative /workspace.ext4, and Firecracker will not load a
+		// snapshot until every backing file is present at the path written in
+		// it — so this has to happen before the load, not after. Before P5-1 the
+		// recorded path was an absolute host one that still existed, which is
+		// why the staging below the load was enough and why nothing noticed:
+		// no suite snapshots a machine with a workspace.
+		//
+		// A copy, because this file is the machine's own from here on. Two forks
+		// of one snapshot that hard-linked it would write into the same blocks,
+		// which is the "independent fork" claim being false in the most damaging
+		// possible way (P3-2).
+		if metaErr == nil && meta.HasWorkspace {
+			dest := filepath.Join(s.State.RunDir, defaultJailNames().Workspace)
+			if err := copyFile(snapshotWorkspace(snapDir), dest); err != nil {
+				_ = s.Shutdown(2 * time.Second)
+				return nil, 0, fmt.Errorf("stage the workspace into the jail: %w", err)
+			}
+		}
 		for _, f := range staged {
 			dest := filepath.Join(s.State.RunDir, f.name)
 			if err := os.MkdirAll(filepath.Dir(dest), 0o700); err != nil {
@@ -1129,20 +1150,30 @@ func Restore(snapDir string, opts Options) (*Sandbox, time.Duration, error) {
 		// that was using it, because writing it back to the host is something
 		// that can only be done after the guest has stopped and flushed. The
 		// caller owns removing it (E5-1).
-		mine := filepath.Join(Root(), "workspaces", id+".ext4")
-		if err := os.MkdirAll(filepath.Dir(mine), 0o700); err != nil {
-			_ = s.Shutdown(2 * time.Second)
-			return nil, 0, err
+		if s.State.Jailed {
+			// Already done, and it had to be: the copy went into the jail
+			// before the load, because the load is what needs the file to
+			// exist. It is this machine's own copy at the name the snapshot
+			// records, so there is nothing left to repoint — and repointing it
+			// at a host path would name a file the jailed VMM cannot open
+			// (P5-9).
+			s.State.Workspace = filepath.Join(s.State.RunDir, defaultJailNames().Workspace)
+		} else {
+			mine := filepath.Join(Root(), "workspaces", id+".ext4")
+			if err := os.MkdirAll(filepath.Dir(mine), 0o700); err != nil {
+				_ = s.Shutdown(2 * time.Second)
+				return nil, 0, err
+			}
+			if err := copyFile(snapshotWorkspace(snapDir), mine); err != nil {
+				_ = s.Shutdown(2 * time.Second)
+				return nil, 0, fmt.Errorf("copy workspace for this fork: %w", err)
+			}
+			if err := s.api.patchDrive("workspace", mine); err != nil {
+				_ = s.Shutdown(2 * time.Second)
+				return nil, 0, fmt.Errorf("repoint workspace drive: %w", err)
+			}
+			s.State.Workspace = mine
 		}
-		if err := copyFile(snapshotWorkspace(snapDir), mine); err != nil {
-			_ = s.Shutdown(2 * time.Second)
-			return nil, 0, fmt.Errorf("copy workspace for this fork: %w", err)
-		}
-		if err := s.api.patchDrive("workspace", mine); err != nil {
-			_ = s.Shutdown(2 * time.Second)
-			return nil, 0, fmt.Errorf("repoint workspace drive: %w", err)
-		}
-		s.State.Workspace = mine
 	}
 	if err := s.api.resume(); err != nil {
 		_ = s.Shutdown(2 * time.Second)

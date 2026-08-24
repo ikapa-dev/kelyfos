@@ -3,15 +3,18 @@
 Updated 2026-08-24 · synced with origin/main · CI green (run 32704409463)
 
 ## Plans
-- PLAN.html — **42/53**. Phase 5 (hardening, v0.9): P5-0, P5-1, P5-2, P5-6, P5-3 done.
+- PLAN.html — **43/53**. Phase 5 (hardening, v0.9): P5-0, P5-1, P5-2, P5-6, P5-3 done.
 - PLAN-FEATURES.html — **COMPLETE and closed.** 42/42, five epics, v0.4–v0.8 released.
 
 ## Now
-P5-9 — `kelyfos snapshot restore` fails for any machine that had a workspace: the
-snapshot records its drive at the jail-relative `/workspace.ext4` and `Restore` loads the
-snapshot before it stages that file. A P5-1-era regression, same family as the
-rootfs-at-both-names fix, found by P5-7's acceptance and reproduced standalone. Then P5-8
-(D33), then P5-4.
+P5-8 — the sibling-ptrace refusal made legible (D33): named where a person will look, with
+what still works, and both halves proved rather than asserted. Then P5-4.
+
+**P5-9 done.** `snapshot restore` was failing outright for any machine that had a
+workspace — the captured copy was staged after the load, and since P5-1 the recorded drive
+path is chroot-relative, so the load had nothing to open. Staged before the load now, by
+copy rather than link so two forks cannot share the blocks. accept-jail's snapshot section
+attaches a workspace now, which is why it was invisible: no suite did.
 
 **P5-7 done.** A restore learns the guest's confinement over the control channel — on the
 resync round trip it already makes — and `session.ready` carries it on all eight paths,
