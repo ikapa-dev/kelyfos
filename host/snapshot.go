@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/p4r4n0rm4l/KelyfOS/internal/denial"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/egress"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/sandbox"
@@ -110,7 +111,7 @@ func snapshotRestore(argv []string) error {
 				return err
 			}
 			if !containsDomain(list, sec.Domain) {
-				return fmt.Errorf("--secret %s: %s is not in the allowlist", spec, sec.Domain)
+				return denial.SecretUnallowed.Err(denial.V{"spec": spec, "domain": sec.Domain})
 			}
 			vetted = append(vetted, sec)
 		}

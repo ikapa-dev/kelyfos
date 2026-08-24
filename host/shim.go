@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/p4r4n0rm4l/KelyfOS/internal/denial"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/egress"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/sandbox"
 	"github.com/p4r4n0rm4l/KelyfOS/shim"
@@ -99,8 +100,7 @@ commands. See docs/e2b-shim.md.
 					return err
 				}
 				if !containsDomain(pol.Allow, sec.Domain) {
-					return fmt.Errorf("%s: secret %s binds %s, which is not in the allowlist",
-						cfg.Path, spec, sec.Domain)
+					return denial.SecretUnallowed.Err(denial.V{"spec": spec, "domain": sec.Domain})
 				}
 				pol.Secrets = append(pol.Secrets, *sec)
 			}

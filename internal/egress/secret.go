@@ -52,8 +52,8 @@ func ParseSecret(spec string) (*Secret, error) {
 		return nil, fmt.Errorf("--secret must be NAME@domain, got %q", spec)
 	}
 	domain = NormaliseDomain(domain)
-	if domain == "" {
-		return nil, fmt.Errorf("--secret %q names no domain", spec)
+	if !validDomain(domain) {
+		return nil, fmt.Errorf("--secret %q does not name a domain a request could ever reach", spec)
 	}
 	value, ok := os.LookupEnv(name)
 	if !ok {
@@ -81,8 +81,59 @@ func ParseSecret(spec string) (*Secret, error) {
 // A trailing dot is the fully-qualified form of the same name; a leading `*.`
 // is how people write a wildcard, and the suffix rule already covers subdomains
 // without it.
+// validDomain reports whether a normalised domain could ever match a host.
+//
+// Checking for emptiness was not enough, and the gap is narrow enough to be
+// worth writing down. NormaliseDomain strips ONE trailing dot, so ".."
+// normalises to ".", which is not empty — and secretFor strips the trailing dot
+// from the host it is asked about, so it ends up comparing "" against ".". The
+// credential binds to something no request can ever match: it goes out
+// unauthenticated and the only symptom is a 401 from somewhere else.
+//
+// Found by the scheduled fuzz run on its first outing, by the same assertion
+// that caught the github.com. case in P6-3 — three minutes a target found what
+// forty-five seconds had not, which is the argument for having a schedule at
+// all rather than only a per-push pass.
+//
+// The same predicate closes two silent misbinds that predate all of this:
+// "T@a@b.com" bound the domain "a@b.com" and "T@host+GET" bound "host+get",
+// both accepted, both unmatchable. A domain must look like a host — the same
+// character rule the proxy applies to a request target — and must carry at
+// least one letter or digit, which is what ".", "-" and ":" lack.
+func validDomain(d string) bool {
+	if !plausibleHost(d) {
+		return false
+	}
+	// Labels, because a name with an empty one — "..github.com", "a..b" — passes
+	// every character test and still matches no host that exists. Enumerating
+	// malformed shapes one at a time does not converge; requiring the shape of a
+	// name does.
+	for _, label := range strings.Split(d, ".") {
+		if label == "" {
+			return false
+		}
+		alnum := false
+		for i := 0; i < len(label); i++ {
+			if c := label[i]; c >= 'a' && c <= 'z' || c >= '0' && c <= '9' {
+				alnum = true
+				break
+			}
+		}
+		if !alnum {
+			return false
+		}
+	}
+	return true
+}
+
 func NormaliseDomain(s string) string {
-	return strings.TrimPrefix(strings.TrimSuffix(strings.ToLower(s), "."), "*.")
+	// TrimRight rather than TrimSuffix: one trailing dot is the fully-qualified
+	// form, but two is not a name at all, and stripping only one left a domain
+	// ending in a dot that could never match. secretFor and allowsHost trim the
+	// trailing dot from the HOST they are asked about, so anything left on the
+	// domain side is a guaranteed non-match — "0.." bound "0." and matched
+	// nothing. Found by the scheduled fuzz run.
+	return strings.TrimPrefix(strings.TrimRight(strings.ToLower(s), "."), "*.")
 }
 
 // secretFor returns the credential bound to a host, if any. Matching follows
