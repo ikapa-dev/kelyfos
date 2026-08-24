@@ -78,7 +78,7 @@ KERNEL_ARTIFACT := vmlinux
 endif
 
 .DEFAULT_GOAL := help
-.PHONY: help versions toolchain kernel supervisor cli image run bench docs cookbook prove-caps prove-team demo-team accept-e2 clean test test-integration linux-only fetch-kernel
+.PHONY: help versions toolchain kernel supervisor cli image run bench docs cookbook vuln prove-caps prove-team demo-team accept-e2 clean test test-integration linux-only fetch-kernel
 
 help: ## Show this target list
 	@echo "KelyfOS — targets (ARCH=$(ARCH), FLAVOR=$(FLAVOR))"
@@ -261,6 +261,13 @@ docs: linux-only cli ## Regenerate docs/reference from the source
 # rather than by a stranger.
 cookbook: linux-only cli ## Run every cookbook recipe on this machine
 	bash $(CURDIR)/dev/cookbook.sh
+
+# The vulnerability scanner (P6-2). Reachability-based rather than a manifest
+# diff: it reports a vulnerable symbol only when this code can actually reach
+# it. One target so a developer and .github/workflows/security.yml run the same
+# scanner at the same pinned version, rather than two invocations that drift.
+vuln: ## Scan for known vulnerabilities in dependencies and the stdlib
+	go run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) ./...
 
 run: cli ## Boot a microVM from the built image under Firecracker
 	$(OUT_DIR)/kelyfos run --image $(FLAVOR) --arch $(ARCH)

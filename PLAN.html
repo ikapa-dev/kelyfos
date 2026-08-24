@@ -180,7 +180,7 @@
     <span class="bl-name">Overall</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">P6-1 done &mdash; 59 verified false or stale claims withdrawn, including a threat model that still said the v0.9 hardening did not exist. Next: <b>P6-2</b>, a security contact that exists and govulncheck on a schedule</b></div>
+  <div class="focusline">Current focus: <b id="focus">P6-2 done &mdash; <code>SECURITY.md</code> with a real scope section, and <code>govulncheck</code> on its own schedule; the channel itself is one owner toggle away (D42). Next: <b>P6-3</b>, fuzz harnesses for every parser on a trust boundary</b></div>
 </div>
 
 <!-- ====================================================== 1. END GOAL -->
@@ -773,7 +773,7 @@
         between a 1.0 and a number. <b>The sweep is one commit and it is exhaustive rather than illustrative</b>
         &mdash; the list above is what one audit found, not a budget.</span></li>
 
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">P6-2</span><span class="tk"><b>A security contact that exists, and a scanner on a
         schedule.</b> Three documents tell a person who has found a vulnerability not to open a public issue and to
         contact the maintainer privately; none of them says how, and there is no address anywhere. That is the most
@@ -1155,7 +1155,7 @@ make cli           <span class="c"># the kelyfos binary into bin/ — image does
     <li><b>5. Log deviations.</b> Any change of approach, library, or scope gets a Decision Log row with rationale <i>before</i> implementation. Non-goals in section 2 are hard boundaries — do not cross them; propose a decision-log entry and stop if a task seems to require it.</li>
     <li><b>6. Append, never rewrite history.</b> Log rows are immutable. Update <code>#meta-updated</code> with today's date on every edit of this file.</li>
     <li><b>7. Blocked?</b> Mark the task with <code>[BLOCKED: reason]</code> appended to its text, log it, and move to the next task. Surface all blockers at the end of the session summary.</li>
-    <li><b>8. Reconcile against CI, not only against the tree.</b> Session start-up reads the latest CI run for <code>origin/main</code> alongside <code>git status</code> and <code>git log</code>. <b>A red <code>main</code> is a blocker and is fixed before any new task is started</b> &mdash; not noted, not carried, fixed. This rule exists because <code>main</code> was red from P5-1 until P5-2 found it three tasks later: the failure was in the job after the one that had always passed, every session read the tree and none read the pipeline, and nothing in these rules required anyone to look. A clean tree is not a green build, and P3-6 asked for a green pipeline on <code>main</code>, not for one that is usually green. (The product owner&rsquo;s ruling of 2026-08-24.)</li>
+    <li><b>8. Reconcile against CI, not only against the tree.</b> Session start-up reads the latest CI run for <code>origin/main</code> alongside <code>git status</code> and <code>git log</code>. <b>A red <code>main</code> is a blocker and is fixed before any new task is started</b> &mdash; not noted, not carried, fixed. This rule exists because <code>main</code> was red from P5-1 until P5-2 found it three tasks later: the failure was in the job after the one that had always passed, every session read the tree and none read the pipeline, and nothing in these rules required anyone to look. A clean tree is not a green build, and P3-6 asked for a green pipeline on <code>main</code>, not for one that is usually green. (The product owner&rsquo;s ruling of 2026-08-24.) <b class="promoted">[AMENDED 2026-08-24, D42.]</b> &ldquo;The latest CI run&rdquo; means the latest run of <i>every</i> workflow that gates <code>main</code>, not only <code>ci.yml</code>. P6-2 added <code>security.yml</code>, whose whole purpose is to go red when nothing in this repository has changed &mdash; an advisory published against a dependency that has not moved. A rule that reads only the build would never see it.</li>
     <li><b>9. Documentation rides with the task that changed the surface.</b> No task is ticked until <code>make docs</code> is clean (CI enforces the generated reference &mdash; F-D4); <code>llms.txt</code> and <code>llms-full.txt</code> are regenerated and committed <i>with</i> it; every new user-facing command, flag, <code>kelyfos.toml</code> key or MCP tool has a cookbook recipe that CI executes; the <code>llms-full.txt</code> token count is re-measured and logged whenever the generated set changed; and, when a phase added commands or MCP tools, the docs-only exam is re-run against that phase&rsquo;s artifacts before its exit. This is <b>F-D9</b>, which governed <a href="PLAN-FEATURES.html">PLAN-FEATURES.html</a> through five epics and then evaporated when that file closed &mdash; this document&rsquo;s protocol never carried it, and the consequence is that Phase 5 shipped v0.9 with no token re-measurement and no exam, not because anyone decided to skip them but because nothing here required them. A rule that governed the project through its most productive stretch does not stop being true when the file it lived in is finished. (D40.)</li>
   </ul>
 </section>
@@ -2393,6 +2393,42 @@ after:
         <code>runner@runnervm76f27</code>, both wrappers <code>FLG=0x08</code> with non-zero mtimes &mdash; three
         claims of byte-identity withdrawn, and CI&rsquo;s per-push build is the <code>base</code> flavor while the
         download is <code>dev</code>, so it was not building the artifact it claimed to</td></tr>
+        <tr><td class="mono">2026-08-24</td><td class="mono">P6-2</td>
+        <td><b>A security contact that exists, and a scanner that runs when nothing has changed.</b>
+        <code>SECURITY.md</code> is new and its short half is the reporting instructions; its long half is
+        <b>what is and is not a vulnerability here</b>, which this project can state with unusual precision
+        because it already publishes what it does not defend. Nine documented design decisions are listed as
+        <i>not</i> findings &mdash; root inside your own guest, the chroot not being the boundary, the shared uid,
+        <code>--no-jail</code>, side channels, the unsigned artifacts &mdash; against seven that are, of which the
+        sharpest is <i>a record that overstates the walls that were around a run</i>. Three documents that
+        dead-ended at &ldquo;raise concerns privately with the maintainer&rdquo; now point at it.
+        <b>The channel is GitHub&rsquo;s private vulnerability reporting rather than a published address</b>
+        (D42) &mdash; and it is <b class="blocked">[BLOCKED &mdash; needs John]</b>, because it reads
+        <code>enabled:false</code> and turning it on is an owner action. So the document is written to be true
+        either way: it names the button, and says what to do when the button is not there, which is a public issue
+        containing only a request for a private channel and no details. A <code>SECURITY.md</code> that would be
+        wrong on the day it landed is precisely what P6-1 spent a commit undoing.
+        <b>No response time is promised</b>, deliberately: a number a solo maintainer cannot keep is worse than no
+        number, and what is promised instead is a plain answer including a plain disagreement.
+        <b><code>govulncheck</code> is promoted from a habit into CI</b> &mdash; it has caught a real advisory here
+        before, so this is a discipline being written down rather than new tooling. Its own workflow, its own day,
+        and a finding fails the run rather than opening an issue. It deliberately does not run on every push: a
+        scan of an unchanged dependency set against an unchanged database repeats the last answer. And
+        <b>&sect;8 rule 8 is amended in the same commit</b> to say that &ldquo;the latest CI run&rdquo; means every
+        workflow that gates <code>main</code> &mdash; a rule that read only the build would never see the one
+        workflow built to go red when nothing changed.</td>
+        <td class="mono">new: <code>SECURITY.md</code>, <code>.github/workflows/security.yml</code>,
+        <code>make vuln</code>, <code>GOVULNCHECK_VERSION</code> in <code>versions.mk</code><br>
+        run before it was written about, on the tree it scans: <b>18 root packages, 18 modules and the go1.27.0
+        standard library</b> &mdash; <code>No vulnerabilities found</code>, 3.3 s<br>
+        the pin is <b>v1.7.0</b> from <code>proxy.golang.org</code> (2026-08-13). golang/vuln&rsquo;s GitHub
+        releases page stops at <b>v1.1.4</b>, January 2025 &mdash; reading the familiar page would have pinned a
+        scanner nineteen months stale and recorded it as current, which is the P6-1 failure mode arriving through a
+        different door<br>
+        repository state read rather than assumed:
+        <code>private-vulnerability-reporting &rarr; {"enabled":false}</code>,
+        <code>dependabot_security_updates &rarr; disabled</code>, secret scanning and push protection enabled<br>
+        both workflows parse; <code>make help</code> lists <code>vuln</code>; docs regenerated</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
@@ -3042,6 +3078,60 @@ after:
         client&rsquo;s format moves &mdash; the highest-probability move on the list is Gemini CLI&rsquo;s, whose
         successor already uses a different file in a different place, with no deprecation announced and no
         end-of-life date.</td></tr>
+        <tr><td class="mono">D42</td><td class="mono">2026-08-24</td>
+        <td><b>The disclosure channel is GitHub&rsquo;s private vulnerability reporting rather than a published
+        address, and the scanner runs on a schedule because the failure it guards against needs nobody to do
+        anything.</b>
+        <i>The channel.</i> Three documents told a reporter to contact the maintainer privately and none said how.
+        The fix is not an email address: an address in a public file is a permanent spam target, GitHub&rsquo;s
+        channel authenticates the reporter and needs no inbox published &mdash; and, decisively, publishing the
+        maintainer&rsquo;s personal address is his call and not this seat&rsquo;s.
+        <b class="blocked">[BLOCKED &mdash; needs John: enable private vulnerability reporting on the repository
+        (Settings &rarr; Security, or <code>PUT /repos/p4r4n0rm4l/KelyfOS/private-vulnerability-reporting</code>).
+        It reads <code>{"enabled":false}</code> today. It is one toggle, it is reversible, and unlike immutable
+        releases it locks nothing and commits to nothing.]</b>
+        <i>So <code>SECURITY.md</code> is written to be true either way</i>, which is the part worth copying: it
+        names the button and its URL, and then says plainly that if the button is not there the channel is not
+        enabled yet &mdash; and what to do instead, which is a public issue containing <i>only</i> a request for a
+        private channel and no details at all. A document that would be wrong on the day it lands is the failure
+        P6-1 spent a commit undoing.
+        <i>What the document is actually for.</i> The reporting instructions are the short half. The long half is
+        <b>what is and is not a vulnerability here</b>, and this project can write that with unusual precision
+        because it already publishes what it does not defend: an agent being root in its own guest, the chroot not
+        being the boundary, the VMM sharing the invoking user&rsquo;s uid (D29), anything the policy permits,
+        <code>--no-jail</code>, a pre-v0.9 snapshot restoring unconfined, side channels, and &mdash; stated rather
+        than hidden &mdash; the unsigned artifacts, which this repository says about itself in four places. Against
+        that, the in-scope list is sharp: a guest&rarr;host path that is not a VMM zero-day, any way to read a bound
+        secret&rsquo;s value from inside a guest, any way to write or forge the record, egress leaving the
+        allowlist, a team edge unenforced, and <i>a record that overstates the walls that were around a run</i>.
+        <i>No response time is promised</i>, deliberately. This is a solo project and a number nobody can keep is
+        worse than no number; what is promised is a plain answer, including a plain disagreement.
+        <i>The scanner.</i> <code>govulncheck</code>, pinned at <b>v1.7.0</b> &mdash; and the pin is read from the
+        module proxy, not from GitHub releases, which stop at v1.1.4 in January 2025: the familiar page would have
+        pinned a scanner nineteen months stale and called it current. It runs through <code>make vuln</code> so a
+        developer and CI run the same scanner at the same version rather than two invocations that drift, and it
+        lives in its own workflow on its own day, because ci.yml&rsquo;s Monday cron means &ldquo;the build does not
+        secretly depend on a cache&rdquo; and cookbook.yml&rsquo;s Tuesday means &ldquo;the recipes still run&rdquo;,
+        and a third meaning in either would muddy both.
+        <i>Two choices inside that, made rather than defaulted.</i> It does <b>not</b> run on every push: a scan of
+        an unchanged dependency set against an unchanged database repeats the last answer, and a network call to
+        <code>vuln.go.dev</code> on the hot path of every commit buys nothing &mdash; so it runs on the schedule,
+        on a change to <code>go.mod</code>/<code>go.sum</code>, and on demand. And a finding <b>fails the run</b>
+        rather than opening an issue: everything in this product is fail-closed, an issue-opening step needs write
+        permissions and is a moving part that can break quietly, and a red run on a repository whose main is
+        otherwise green is the loudest signal available for free.
+        <i>The consequence, stated because it is real.</i> Under &sect;8 rule 8 a red run is a blocker fixed before
+        any new task &mdash; so an advisory against a transitive dependency will stop feature work. That is the
+        correct answer for a project that ships a security boundary, and it is better said now than discovered on a
+        Wednesday. Rule 8 is amended to say so in as many words.
+        <i>Noted, not done:</i> Dependabot security updates are also disabled on the repository. That is a second
+        owner toggle and a different kind of thing &mdash; it opens pull requests rather than reporting &mdash; so
+        it is recorded for John rather than folded in here.</td>
+        <td>P6-2. The <code>govulncheck</code> discipline this promotes has its own evidence trail: PLAN.html
+        records it catching GO-2026-5024 in <code>x/sys/windows</code>, and ten or more clean runs at gates across
+        both plan documents. D29 and the threat model for the scope section. <i>Revisit when</i> the compatibility
+        promise (P6-14) exists and can say more than &ldquo;the latest release is the supported one&rdquo;, and
+        when there is more than one maintainer to promise a response time on behalf of.</td></tr>
     <!-- Claude Code: append rows above this line. -->
   </table>
 </section>

@@ -315,4 +315,6 @@ on a hardened guest.
 
 ## 7. Reporting a vulnerability
 
-Do not open a public issue. See [`CONTRIBUTING.md`](../CONTRIBUTING.md).
+Do not open a public issue. [`SECURITY.md`](../SECURITY.md) has the channel and
+the scope — including the list of things that are deliberate design decisions
+rather than findings, so you can check before writing.

@@ -112,6 +112,6 @@ is confined by Landlock and a seccomp refusal list.
 defended, and [`docs/hardening.md`](docs/hardening.md) §5 is the longer list of
 what remains reachable.
 
-**There is no published security contact yet, and that is a gap rather than a
-policy.** Until one exists, raise concerns privately with the maintainer. A
-`SECURITY.md` with a real disclosure channel is P6-2.
+[`SECURITY.md`](SECURITY.md) has the reporting channel, what to include, and —
+the part worth reading first — which findings are in scope and which are
+documented design decisions this project already publishes.

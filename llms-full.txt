@@ -449,7 +449,8 @@ trade-off TLS termination represents. [`docs/hardening.md`](https://raw.githubus
 the specification these layers were built against, and its §5 is a longer list of
 what remains reachable.
 
-Report vulnerabilities privately — see [`CONTRIBUTING.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/CONTRIBUTING.md).
+Report vulnerabilities privately — [`SECURITY.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/SECURITY.md) has the channel,
+and says which findings are in scope and which are documented design decisions.
 
 ## Building on it
 
@@ -788,7 +789,9 @@ on a hardened guest.
 
 ## 7. Reporting a vulnerability
 
-Do not open a public issue. See [`CONTRIBUTING.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/CONTRIBUTING.md).
+Do not open a public issue. [`SECURITY.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/SECURITY.md) has the channel and
+the scope — including the list of things that are deliberate design decisions
+rather than findings, so you can check before writing.
 
 
 ---

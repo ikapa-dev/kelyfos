@@ -1,0 +1,73 @@
+# KelyfOS — the scanner that runs when nothing has changed (P6-2).
+#
+# govulncheck was already part of this project's discipline before it was part
+# of its CI: it has been run by hand at ten or more gates and once caught a real
+# advisory in a transitive dependency (GO-2026-5024, recorded in PLAN.html). The
+# problem with a discipline is that it only runs when somebody remembers, and
+# the failure mode it is guarding against does not need anybody to do anything:
+# an advisory is published against a dependency that has not moved, and a
+# repository that was clean on Monday is vulnerable on Tuesday having changed
+# nothing. A scanner that only runs on push cannot see that. That is why the
+# schedule is the point of this file and the push trigger is the afterthought.
+#
+# Why its own workflow, and its own day. ci.yml's Monday cron exists to run the
+# whole build with no caches restored, so a build that has quietly become
+# dependent on a cache fails within the week; cookbook.yml has Tuesday. Mixing a
+# vulnerability finding into either would muddy a signal that was designed to
+# mean one thing. This one takes Wednesday.
+#
+# Why a finding fails the run rather than opening an issue. Everything in this
+# product is fail-closed, and an issue-opening step needs write permissions plus
+# a moving part that can itself break quietly. A red run on a repository whose
+# main is otherwise green is the loudest available signal and needs no
+# machinery — and PLAN.html §8 rule 8 already makes a red main a blocker that is
+# fixed before any new task, which is the correct response to a live advisory in
+# a dependency this project ships.
+#
+# The version is pinned like everything else (P0-6). Note that it is pinned from
+# the module proxy rather than from GitHub releases: golang/vuln's releases page
+# stops at v1.1.4 in January 2025, while the module has shipped through v1.7.0.
+# Reading the wrong one would have pinned a scanner nineteen months stale.
+name: security
+
+on:
+  schedule:
+    # Wednesdays, 05:41 UTC. An odd minute on purpose: GitHub drops scheduled
+    # runs that pile up on the hour.
+    - cron: "41 5 * * 3"
+  workflow_dispatch:
+  # Not every push. A scan of an unchanged dependency set on an unchanged
+  # database tells you what the last one did, and putting a network call to
+  # vuln.go.dev on the hot path of every commit buys nothing. A dependency
+  # change is the one push where the answer can differ, so that is the one that
+  # runs it.
+  push:
+    branches: [main]
+    paths: [go.mod, go.sum, .github/workflows/security.yml]
+  pull_request:
+    paths: [go.mod, go.sum, .github/workflows/security.yml]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: false
+
+jobs:
+  govulncheck:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # Reachability-based, not a dependency-list diff: govulncheck reports a
+      # vulnerable symbol only when this code can actually call it, which is why
+      # it is worth running instead of reading a manifest. `./...` covers every
+      # main package including dev/seccomp-probe and the two tools.
+      - name: govulncheck
+        run: make vuln

@@ -51,3 +51,15 @@ FIRECRACKER_VERSION ?= v1.16.1
 GO_VERSION ?= 1.27.0
 GO_SHA256_aarch64 ?= 51798d2c42d0e1c6ed7fd9f48728b4193abac9e8aad6dbac2fe96a81f5909bda
 GO_SHA256_x86_64 ?= 675c26c449cbb18fc24b74650de1eabbae6e16f64326fd85a283fb3b58280685
+
+# --- govulncheck -----------------------------------------------------------
+# The vulnerability scanner, run by `make vuln` and by .github/workflows/
+# security.yml on a schedule (P6-2). It is a check rather than a build input, so
+# it never enters go.mod — `go run <module>@<version>` keeps the pin here and the
+# dependency graph unchanged.
+#
+# Pinned from the module proxy, not from GitHub releases, and the difference is
+# not academic: golang/vuln's releases page stops at v1.1.4 (January 2025) while
+# proxy.golang.org reports v1.7.0 (2026-08-13). Reading the familiar page would
+# have pinned a scanner nineteen months stale and called it current.
+GOVULNCHECK_VERSION ?= v1.7.0

@@ -402,7 +402,8 @@ trade-off TLS termination represents. [`docs/hardening.md`](docs/hardening.md) i
 the specification these layers were built against, and its §5 is a longer list of
 what remains reachable.
 
-Report vulnerabilities privately — see [`CONTRIBUTING.md`](CONTRIBUTING.md).
+Report vulnerabilities privately — [`SECURITY.md`](SECURITY.md) has the channel,
+and says which findings are in scope and which are documented design decisions.
 
 ## Building on it
 
