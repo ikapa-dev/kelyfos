@@ -344,8 +344,20 @@ jobs:
           ./bin/kelyfos log --session "$SID" --verify
 
           kill -INT $RUN_PID; wait $RUN_PID || true
-          test -z "$(ls ~/.cache/kelyfos/run 2>/dev/null)" \
-            || { echo "teardown left run directories behind"; exit 1; }
+          # Written when a sandbox's run directory was a direct child of run/.
+          # Under the jailer the layout is run/firecracker/<id>/root, and
+          # run/firecracker is a structural level the jailer's own path scheme
+          # requires — teardown removes the sandbox, not the level above it, so
+          # an emptiness test on run/ has been failing since P5-1 while nothing
+          # was actually left behind. Test the claim instead: no sandbox state
+          # and no sockets survive, wherever they were.
+          left="$(find ~/.cache/kelyfos/run \( -name sandbox.json -o -name 'v.sock*' \
+                    -o -name config.json -o -name 'fc.sock' \) 2>/dev/null)"
+          if [ -n "$left" ]; then
+            echo "teardown left a sandbox behind:"
+            find ~/.cache/kelyfos/run -mindepth 1 | head -20
+            exit 1
+          fi
           echo "smoke test passed"
 
       # P5-2. The reference architecture is x86_64 (D15) and this is the only
