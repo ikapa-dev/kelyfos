@@ -60,6 +60,7 @@ func Types() []EventType {
 				{Name: "arch", Type: "string", Doc: "aarch64 or x86_64"},
 				{Name: "kelyfos", Type: "string", Doc: "CLI version"},
 				{Name: "argv", Type: "string array", Doc: "how the sandbox was launched, for reproduction"},
+				{Name: "jailed", Type: "boolean", Doc: "whether the VMM ran inside the jailer — a chroot, a dropped uid, and only the devices it needs", When: "kelyfos knows, which is every run from v0.9"},
 				{Name: "cwd", Type: "string", Doc: "the directory it was launched from, which argv alone does not capture", When: "kelyfos run"},
 				{Name: "reason", Type: "string", Doc: "where the machine came from", When: "restore and fork"},
 			}},

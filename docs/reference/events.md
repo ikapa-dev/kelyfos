@@ -32,6 +32,7 @@ Opens the file, and records what the sandbox is. Written by the **host**.
 | `arch` | string | aarch64 or x86_64 |
 | `kelyfos` | string | CLI version |
 | `argv` | string array | how the sandbox was launched, for reproduction |
+| `jailed` | boolean | whether the VMM ran inside the jailer — a chroot, a dropped uid, and only the devices it needs *(kelyfos knows, which is every run from v0.9)* |
 | `cwd` | string | the directory it was launched from, which argv alone does not capture *(kelyfos run)* |
 | `reason` | string | where the machine came from *(restore and fork)* |
 

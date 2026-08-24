@@ -11,10 +11,19 @@ edit.
 ![KelyfOS in a terminal](docs/media/demo.gif)
 
 > **Status: v0.8, early development, building in the open.** Cold boot-to-ready
-> is **69 ms** median and snapshot restore **33 ms** (10 runs each, x86_64 on a
-> bare-KVM CI runner); a five-agent team comes up in **366 ms**. **Not hardened
-> yet** — read [`docs/threat-model.md`](docs/threat-model.md) before trusting it
-> with anything.
+> is **123 ms** median and snapshot restore **37 ms** (10 runs each, x86_64 on a
+> bare-KVM CI runner, two independent samples); a five-agent team comes up in
+> **366 ms**. **Not hardened yet** — read
+> [`docs/threat-model.md`](docs/threat-model.md) before trusting it with
+> anything.
+>
+> *Boot was 69 ms and restore 33 ms until 2026-08-24, when the build system
+> moved to Buildroot's supported LTS line and the guest kernel moved with it,
+> 6.18.46 → 6.12.105 (D28). Both targets — ≤ 300 ms cold, ≤ 100 ms restore —
+> still hold with room, and the numbers above are the ones measured rather than
+> the ones we would rather quote. The 366 ms team figure is from the previous
+> kernel and has not been re-measured since; it is re-earned at the v0.9 exit
+> with the rest.*
 
 KelyfOS — from κέλυφος (*kélyfos*), "shell": the guest wrapped around the agent.
 
@@ -51,6 +60,9 @@ below just work.
 
 Measured end to end — `git clone` to the first `kelyfos exec` output, on a
 machine with no Lima VM, no image cache and no KelyfOS anything: **2 minutes 31 seconds on macOS, 9 seconds on a Linux/KVM box**.
+*(Measured before the jailer step below existed; it is re-measured with that
+step included at the v0.9 exit, and whatever it then is, is what will be
+printed here.)*
 Building the macOS Linux layer is 142 s of that — on Linux there is no such step. Measured against the published v0.3 release with Lima's image cache purged; the KelyfOS downloads themselves are 5 s of the total.
 
 **On macOS first — a Linux layer with nested virtualisation** (skip on Linux).
@@ -66,11 +78,23 @@ limactl shell kelyfos-dev          # everything below runs in here
 is a static binary and the guest image is prebuilt:
 
 ```sh
-bash dev/install-firecracker.sh    # the VMM
+bash dev/install-firecracker.sh    # the VMM and its jailer
 bash dev/install-kelyfos.sh        # the CLI
 bash dev/fetch-image.sh            # the guest image
-./bin/kelyfos doctor
+
+# KelyfOS runs Firecracker inside the jailer — a chroot, a dropped uid, only
+# the devices it needs — and the jailer needs root. This grants it for the
+# jailer alone, and for nothing else:
+echo "$USER ALL=(root) NOPASSWD: $(command -v jailer)" \
+  | sudo tee /etc/sudoers.d/kelyfos-jailer
+sudo chmod 0440 /etc/sudoers.d/kelyfos-jailer
+
+./bin/kelyfos doctor               # checks all four, the jailer included
 ```
+
+`kelyfos run --no-jail` works without that grant. It says what is not enforced
+on every run that uses it, and the session record says so too — see
+[`docs/hardening.md`](docs/hardening.md).
 
 Each of those verifies what it downloaded against a published checksum before
 installing it, and shows you doing so — a mismatch aborts with nothing written:

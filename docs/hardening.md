@@ -92,7 +92,7 @@ Verified against the jailer documentation for v1.16.1, the version pinned in
 | | |
 | --- | --- |
 | `--chroot-base-dir` | builds `<base>/<exec-file-name>/<id>/root` and `pivot_root()`s into it |
-| `--uid` / `--gid` | drops to them after the namespaces are set up |
+| `--uid` / `--gid` | drops to them after the namespaces are set up — to the invoking user, which under sudo is the drop that keeps the jail from being a regression (D29) |
 | `--parent-cgroup` | places the process inside an existing cgroup — which is how it composes with the caps KelyfOS already sets |
 | `--netns` | joins a network namespace, if one is given |
 | `--resource-limit` | `fsize` and `no-file` bounds |
@@ -193,6 +193,13 @@ relying on it.
 
 Stated here, before the code, so the README sentence at the end of the phase can
 be checked against it rather than composed to sound good.
+
+**The invoking user's own processes.** The jailed VMM drops to the user who
+started it rather than to a dedicated account (D29). The chroot takes the host
+filesystem away entirely — verified from the host's own `mountinfo`, not claimed
+— but a uid shared with your shell is a uid that can signal and `ptrace` your
+other processes. A dedicated service account closes that and costs a second
+setup step; the trade is priced in D29 and is revisitable.
 
 **The guest kernel.** An agent is still root inside its own guest and can still
 reach the whole syscall surface the seccomp profile permits. Landlock restricts

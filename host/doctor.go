@@ -111,6 +111,7 @@ func doctorCmd(argv []string) error {
 		checkFirecracker(),
 		checkTUN(host),
 		checkNetTools(),
+		checkJailer(),
 		checkWorkspaceTools(),
 		images,
 		checkDisk(images.ok),
@@ -248,6 +249,21 @@ func checkNetTools() check {
 				"Sandboxes without --allow are unaffected."}
 	}
 	return check{"egress tooling", true, "ip, nft, and privileges to use them", ""}
+}
+
+// checkJailer is the one privilege check that is not optional, because a run is
+// jailed by default (P5-1). Egress tooling is "needed only for --allow"; this is
+// needed for `kelyfos run`.
+func checkJailer() check {
+	if err := sandbox.JailAvailable(); err != nil {
+		return check{"jailer", false, "cannot run it",
+			"Firecracker runs inside the jailer \u2014 a chroot, a dropped uid, only the devices\n" +
+				"it needs \u2014 and that needs passwordless sudo for the jailer alone:\n" +
+				"    echo '" + sandbox.SudoersLine() + "' | sudo tee /etc/sudoers.d/kelyfos-jailer\n" +
+				"    sudo chmod 0440 /etc/sudoers.d/kelyfos-jailer\n" +
+				"`kelyfos run --no-jail` works without it and says so on every run."}
+	}
+	return check{"jailer", true, "present, with the privileges to use it", ""}
 }
 
 func checkWorkspaceTools() check {

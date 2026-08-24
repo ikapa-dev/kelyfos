@@ -55,10 +55,19 @@ edit.
 ![KelyfOS in a terminal](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/media/demo.gif)
 
 > **Status: v0.8, early development, building in the open.** Cold boot-to-ready
-> is **69 ms** median and snapshot restore **33 ms** (10 runs each, x86_64 on a
-> bare-KVM CI runner); a five-agent team comes up in **366 ms**. **Not hardened
-> yet** — read [`docs/threat-model.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/threat-model.md) before trusting it
-> with anything.
+> is **123 ms** median and snapshot restore **37 ms** (10 runs each, x86_64 on a
+> bare-KVM CI runner, two independent samples); a five-agent team comes up in
+> **366 ms**. **Not hardened yet** — read
+> [`docs/threat-model.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/threat-model.md) before trusting it with
+> anything.
+>
+> *Boot was 69 ms and restore 33 ms until 2026-08-24, when the build system
+> moved to Buildroot's supported LTS line and the guest kernel moved with it,
+> 6.18.46 → 6.12.105 (D28). Both targets — ≤ 300 ms cold, ≤ 100 ms restore —
+> still hold with room, and the numbers above are the ones measured rather than
+> the ones we would rather quote. The 366 ms team figure is from the previous
+> kernel and has not been re-measured since; it is re-earned at the v0.9 exit
+> with the rest.*
 
 KelyfOS — from κέλυφος (*kélyfos*), "shell": the guest wrapped around the agent.
 
@@ -95,6 +104,9 @@ below just work.
 
 Measured end to end — `git clone` to the first `kelyfos exec` output, on a
 machine with no Lima VM, no image cache and no KelyfOS anything: **2 minutes 31 seconds on macOS, 9 seconds on a Linux/KVM box**.
+*(Measured before the jailer step below existed; it is re-measured with that
+step included at the v0.9 exit, and whatever it then is, is what will be
+printed here.)*
 Building the macOS Linux layer is 142 s of that — on Linux there is no such step. Measured against the published v0.3 release with Lima's image cache purged; the KelyfOS downloads themselves are 5 s of the total.
 
 **On macOS first — a Linux layer with nested virtualisation** (skip on Linux).
@@ -110,11 +122,23 @@ limactl shell kelyfos-dev          # everything below runs in here
 is a static binary and the guest image is prebuilt:
 
 ```sh
-bash dev/install-firecracker.sh    # the VMM
+bash dev/install-firecracker.sh    # the VMM and its jailer
 bash dev/install-kelyfos.sh        # the CLI
 bash dev/fetch-image.sh            # the guest image
-./bin/kelyfos doctor
+
+# KelyfOS runs Firecracker inside the jailer — a chroot, a dropped uid, only
+# the devices it needs — and the jailer needs root. This grants it for the
+# jailer alone, and for nothing else:
+echo "$USER ALL=(root) NOPASSWD: $(command -v jailer)" \
+  | sudo tee /etc/sudoers.d/kelyfos-jailer
+sudo chmod 0440 /etc/sudoers.d/kelyfos-jailer
+
+./bin/kelyfos doctor               # checks all four, the jailer included
 ```
+
+`kelyfos run --no-jail` works without that grant. It says what is not enforced
+on every run that uses it, and the session record says so too — see
+[`docs/hardening.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/hardening.md).
 
 Each of those verifies what it downloaded against a published checksum before
 installing it, and shows you doing so — a mismatch aborts with nothing written:
@@ -4217,7 +4241,7 @@ Verified against the jailer documentation for v1.16.1, the version pinned in
 | | |
 | --- | --- |
 | `--chroot-base-dir` | builds `<base>/<exec-file-name>/<id>/root` and `pivot_root()`s into it |
-| `--uid` / `--gid` | drops to them after the namespaces are set up |
+| `--uid` / `--gid` | drops to them after the namespaces are set up — to the invoking user, which under sudo is the drop that keeps the jail from being a regression (D29) |
 | `--parent-cgroup` | places the process inside an existing cgroup — which is how it composes with the caps KelyfOS already sets |
 | `--netns` | joins a network namespace, if one is given |
 | `--resource-limit` | `fsize` and `no-file` bounds |
@@ -4318,6 +4342,13 @@ relying on it.
 
 Stated here, before the code, so the README sentence at the end of the phase can
 be checked against it rather than composed to sound good.
+
+**The invoking user's own processes.** The jailed VMM drops to the user who
+started it rather than to a dedicated account (D29). The chroot takes the host
+filesystem away entirely — verified from the host's own `mountinfo`, not claimed
+— but a uid shared with your shell is a uid that can signal and `ptrace` your
+other processes. A dedicated service account closes that and costs a second
+setup step; the trade is priced in D29 and is revisitable.
 
 **The guest kernel.** An agent is still root inside its own guest and can still
 reach the whole syscall surface the seccomp profile permits. Landlock restricts
@@ -6655,6 +6686,7 @@ kelyfos run [flags]
 | `--image-dir` | string | the build output | directory holding the kernel and rootfs |
 | `--max-runtime` | string | no limit | stop the sandbox after this long, e.g. 30m |
 | `--mem` | string | 512 | guest memory, e.g. 2G or 512M; a bare number is MiB |
+| `--no-jail` | boolean | — | run Firecracker outside the jailer. It then runs as you, in your namespace, with your home directory addressable if the VM boundary ever fails. Says so on every run that uses it. |
 | `--no-sync-back` | boolean | — | do not write the workspace back to the host on shutdown |
 | `--notify` | boolean | — | send a desktop notification when this run finishes, is blocked, times out, or waits for a review |
 | `-p` | value | — | carry a host port to a guest-local port: host:guest, as in 8080:80. The transport is vsock, not the network, so the firewall is untouched. Repeatable. |
@@ -7457,6 +7489,7 @@ Opens the file, and records what the sandbox is. Written by the **host**.
 | `arch` | string | aarch64 or x86_64 |
 | `kelyfos` | string | CLI version |
 | `argv` | string array | how the sandbox was launched, for reproduction |
+| `jailed` | boolean | whether the VMM ran inside the jailer — a chroot, a dropped uid, and only the devices it needs *(kelyfos knows, which is every run from v0.9)* |
 | `cwd` | string | the directory it was launched from, which argv alone does not capture *(kelyfos run)* |
 | `reason` | string | where the machine came from *(restore and fork)* |
 
@@ -7938,6 +7971,17 @@ a connection to the forwarded port 8080 found nothing listening on port 80 insid
 ```
 
 Named: `guest`, `host`. The values above are an example.
+
+## `jail.no_sudo`
+
+This machine cannot run the jailer, which needs passwordless sudo, and a run is jailed by default.
+
+```
+this build runs Firecracker under the jailer, which needs passwordless sudo (sudo: a password is required) [jail.no_sudo]
+    add a sudoers line — you ALL=(root) NOPASSWD: /usr/local/bin/jailer — or rerun with --no-jail, which says what is not enforced, every time
+```
+
+Named: `reason`, `sudoers`. The values above are an example.
 
 ## `secret.unbound`
 

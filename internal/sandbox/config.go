@@ -228,6 +228,49 @@ func firecrackerConfig(opts Options, kernel, rootfs, udsPath, id string) Firecra
 	return cfg
 }
 
+// jailPaths rewrites every path in a machine's configuration to where the file
+// appears inside the jail (P5-1).
+//
+// The run directory is the chroot root, so every device is at the top level. It
+// is done here, after the configuration is otherwise complete, rather than
+// threaded through every branch above: one place to read, and a device added
+// later cannot forget to be rewritten because it is rewritten by its position
+// rather than by its name.
+func jailPaths(cfg FirecrackerConfig, names jailNames) FirecrackerConfig {
+	cfg.BootSource.KernelImagePath = inJail(names.Kernel)
+	for i := range cfg.Drives {
+		switch cfg.Drives[i].DriveID {
+		case "rootfs":
+			cfg.Drives[i].PathOnHost = inJail(names.Rootfs)
+		case "workspace":
+			cfg.Drives[i].PathOnHost = inJail(names.Workspace)
+		case "plugins":
+			cfg.Drives[i].PathOnHost = inJail(names.Plugins)
+		}
+	}
+	if cfg.Vsock != nil {
+		cfg.Vsock.UDSPath = inJail(names.Vsock)
+	}
+	return cfg
+}
+
+// jailNames are the file names inside a jail. Fixed rather than derived from
+// the host paths, because the host names differ per run and the guest's view
+// should not.
+type jailNames struct {
+	Kernel, Rootfs, Workspace, Plugins, Vsock string
+}
+
+func defaultJailNames() jailNames {
+	return jailNames{
+		Kernel:    "kernel",
+		Rootfs:    "rootfs.ext4",
+		Workspace: "workspace.ext4",
+		Plugins:   "plugins.ext4",
+		Vsock:     "v.sock",
+	}
+}
+
 type BootSource struct {
 	KernelImagePath string `json:"kernel_image_path"`
 	BootArgs        string `json:"boot_args"`

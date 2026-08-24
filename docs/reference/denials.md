@@ -141,6 +141,17 @@ a connection to the forwarded port 8080 found nothing listening on port 80 insid
 
 Named: `guest`, `host`. The values above are an example.
 
+## `jail.no_sudo`
+
+This machine cannot run the jailer, which needs passwordless sudo, and a run is jailed by default.
+
+```
+this build runs Firecracker under the jailer, which needs passwordless sudo (sudo: a password is required) [jail.no_sudo]
+    add a sudoers line — you ALL=(root) NOPASSWD: /usr/local/bin/jailer — or rerun with --no-jail, which says what is not enforced, every time
+```
+
+Named: `reason`, `sudoers`. The values above are an example.
+
 ## `secret.unbound`
 
 A secret was bound to a domain the sandbox cannot reach, so it could never be sent.

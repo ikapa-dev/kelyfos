@@ -66,6 +66,7 @@ kelyfos run [flags]
 | `--image-dir` | string | the build output | directory holding the kernel and rootfs |
 | `--max-runtime` | string | no limit | stop the sandbox after this long, e.g. 30m |
 | `--mem` | string | 512 | guest memory, e.g. 2G or 512M; a bare number is MiB |
+| `--no-jail` | boolean | — | run Firecracker outside the jailer. It then runs as you, in your namespace, with your home directory addressable if the VM boundary ever fails. Says so on every run that uses it. |
 | `--no-sync-back` | boolean | — | do not write the workspace back to the host on shutdown |
 | `--notify` | boolean | — | send a desktop notification when this run finishes, is blocked, times out, or waits for a review |
 | `-p` | value | — | carry a host port to a guest-local port: host:guest, as in 8080:80. The transport is vsock, not the network, so the firewall is untouched. Repeatable. |

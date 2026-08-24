@@ -62,6 +62,9 @@ func runWithSandbox(argv []string, reviewDeclinedOut *bool) error {
 		reviewFirst = fs.Bool("review", false, "show what changed and ask before writing the workspace back")
 		notifyMe    = fs.Bool("notify", false, "send a desktop notification when this run finishes, "+
 			"is blocked, times out, or waits for a review")
+		noJail = fs.Bool("no-jail", false, "run Firecracker outside the jailer. It then runs as you, "+
+			"in your namespace, with your home directory addressable if the VM boundary ever fails. "+
+			"Says so on every run that uses it.")
 		secrets    multiFlag
 		forwards   multiFlag
 		policyPath = fs.String("policy", "", "the kelyfos.toml to run under (default: the nearest one, found by walking up)")
@@ -307,6 +310,7 @@ status. This is how you hand an agent a sandbox and nothing else:
 	opts := sandbox.Options{
 		CPUSlice:     cpuSlice,
 		IO:           ioLimits,
+		NoJail:       *noJail,
 		ScratchBytes: scratchBytes,
 		OnGuestEvent: func(ev proto.GuestEvent) {
 			if fn := onGuestEvent.Load(); fn != nil {
@@ -560,9 +564,10 @@ status. This is how you hand an agent a sandbox and nothing else:
 	// Beside the record, so `kelyfos rerun` reproduces the run and not merely
 	// the command line (E5-6).
 	freezeRunPolicy(sb.State.ID, cfg)
+	jailed := sb.State.Jailed
 	if err := rec.Append(recorder.Event{
 		Type: recorder.TypeSessionStart, Image: *flavor, Arch: *arch,
-		Kelyfos: Version, Argv: os.Args, Cwd: startCwd,
+		Kelyfos: Version, Argv: os.Args, Cwd: startCwd, Jailed: &jailed,
 	}); err != nil {
 		return err
 	}
@@ -685,6 +690,16 @@ status. This is how you hand an agent a sandbox and nothing else:
 		if err := fwd.start(theForwards); err != nil {
 			return err
 		}
+	}
+	if *noJail {
+		// Every run, in the terminal, because this is the one flag that makes
+		// the product weaker than it says it is by default. The record says so
+		// too, in session.start, so a transcript cannot look like a jailed run.
+		fmt.Fprintf(os.Stderr, "kelyfos: --no-jail — Firecracker is running as you, in your "+
+			"namespace.\n    If the VM boundary ever failed, your home directory and every "+
+			"session record in it would be reachable.\n")
+	} else {
+		fmt.Printf("  jail        chroot, uid %d, %s\n", os.Getuid(), sb.State.RunDir)
 	}
 	if notifier.Enabled() {
 		// Which mechanism, out loud. A notification that never arrives is

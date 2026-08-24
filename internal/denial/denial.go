@@ -241,6 +241,21 @@ var (
 			"file": "/home/you/project/kelyfos.toml"},
 	}
 
+	// --- the jail: the wall around the VMM --------------------------------
+
+	JailNoSudo = Denial{
+		ID: "jail.no_sudo",
+		Doc: "this machine cannot run the jailer, which needs passwordless sudo, and a run " +
+			"is jailed by default",
+		Msg: "this build runs Firecracker under the jailer, which needs passwordless sudo (<reason>)",
+		Fix: "add a sudoers line — <sudoers> — or rerun with --no-jail, which says what is " +
+			"not enforced, every time",
+		Sample: V{
+			"reason":  "sudo: a password is required",
+			"sudoers": `you ALL=(root) NOPASSWD: /usr/local/bin/jailer`,
+		},
+	}
+
 	// --- forwards: what is listening at the other end ---------------------
 
 	ForwardClosed = Denial{
@@ -308,6 +323,7 @@ func All() []Denial {
 		CeilingFlag, CeilingResume, CeilingSnapshot, CeilingSnapshotUnknown, CeilingTool,
 		EgressHost, EgressPort,
 		ForwardClosed,
+		JailNoSudo,
 		SecretUnallowed,
 		TeamEdge, TeamSpawnBudget, TeamSpawnImage, TeamSpawnNone, TeamStore,
 	}

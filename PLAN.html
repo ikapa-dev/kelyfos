@@ -173,7 +173,7 @@
     <span class="bl-name">Overall</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">P5-1 &mdash; Firecracker under the jailer: chroot, its own cgroup, dropped uid, and every file the microVM touches moved inside the jail while the flight recorder stays out of it</b></div>
+  <div class="focusline">Current focus: <b id="focus">P5-2 &mdash; the host syscall filter, proved in force rather than assumed. Most of it is already observed by <code>dev/accept-jail.sh</code>; what remains is recording what it permits</b></div>
 </div>
 
 <!-- ====================================================== 1. END GOAL -->
@@ -550,7 +550,7 @@
         &mdash; the longer half &mdash; what remains reachable afterwards. Names the threat each mechanism answers
         and the ones it does not, so the README sentence this phase replaces has something exact to be measured
         against rather than a feeling. Reviewed before P5-1 starts, the way <code>docs/qol.md</code> was.</span></li>
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">P5-1</span><span class="tk"><b>Firecracker under the jailer</b> (P4-1): chroot, its own
         cgroup, dropped uid/gid, and the device nodes it needs and nothing else. Every path that starts a VM goes
         through it &mdash; <code>run</code>, <code>team up</code>, <code>fork</code>, <code>snapshot restore</code>,
@@ -594,9 +594,14 @@
   <div class="accept">
     <h4>Acceptance test &mdash; recreate &amp; verify</h4>
     <ol>
-      <li>Boot a sandbox. On the host, the Firecracker process is <b>not</b> running as the invoking user and
-          <code>/proc/&lt;pid&gt;/root</code> is not <code>/</code> &mdash; read from the host, not claimed by the
-          CLI.</li>
+      <li>Boot a sandbox. On the host, <code>/proc/&lt;pid&gt;/mountinfo</code> shows the VMM&rsquo;s root is this
+          sandbox&rsquo;s chroot, its filesystem holds no <code>/etc</code>, <code>/home</code>, <code>/usr</code> or
+          <code>/var</code>, and it is not running as root &mdash; read from the host, not claimed by the CLI.
+          <b class="promoted">[AMENDED 2026-08-24, D29.]</b> This item first said &ldquo;not running as the invoking
+          user&rdquo; and named <code>/proc/&lt;pid&gt;/root</code>. Both were wrong: that link reports the path as
+          the <i>process</i> sees it, which is <code>/</code> for a chrooted process and <code>/</code> for an
+          unjailed one &mdash; the same answer for opposite facts &mdash; and the VMM drops to the invoking user
+          rather than to a dedicated account, which D29 argues for and prices.</li>
       <li>That process&rsquo;s <code>/proc/&lt;pid&gt;/status</code> reports a seccomp mode that is on, and the
           cgroup it sits in is the one KelyfOS asked for.</li>
       <li>From inside the guest, a command that tries to open a path the flavor&rsquo;s profile does not grant is
@@ -1429,6 +1434,42 @@ after:
         The longest section is §5, what remains reachable afterwards, written now so the sentence that replaces
         &ldquo;not hardened yet&rdquo; can be checked against it rather than composed to sound good.</td>
         <td class="mono">docs/hardening.md</td></tr>
+        <tr><td class="mono">2026-08-24</td><td class="mono">P5-1</td>
+        <td><b>Firecracker runs inside the jailer, on every entry point, and the host&rsquo;s own
+        <code>/proc</code> says so.</b> Fourteen checks in <code>dev/accept-jail.sh</code>, none of which ask the
+        CLI: <code>mountinfo</code> shows the VMM&rsquo;s root is this sandbox&rsquo;s chroot, its whole filesystem
+        is the jail&rsquo;s own contents with no <code>/etc</code>, <code>/home</code>, <code>/usr</code> or
+        <code>/var</code> in it, it is not root, <code>NoNewPrivs</code> is 1, and <code>Seccomp</code> is 2.
+        <b>The design turns on one fact found by running it:</b> the jailer accepts a chroot directory that already
+        exists with files in it. That is what lets the sandbox&rsquo;s run directory <i>be</i> the jail root, so the
+        host binds its listening sockets and writes the machine&rsquo;s configuration before the VMM starts and they
+        are inside the jail by construction rather than by copying. The flight recorder stays outside, because a
+        record the jailed process can reach is not a record.
+        <b>Every entry point, structurally.</b> The refusal lives in <code>sandbox.New</code> and
+        <code>sandbox.Restore</code> rather than at six call sites, so <code>run</code>, <code>team up</code>,
+        <code>fork</code>, <code>snapshot restore</code>, <code>serve-mcp</code> and <code>shim</code> cannot each
+        forget it. Without passwordless sudo a run refuses with <code>[jail.no_sudo]</code> whose fix line is the
+        sudoers line, built from this machine&rsquo;s own user and jailer path so it can be pasted rather than
+        adapted. <code>doctor</code> checks it; the quickstart now installs it.
+        <b>The posture is in the record</b> (the owner&rsquo;s ruling): <code>session.start</code> carries
+        <code>jailed</code>, true or false, so a transcript can never make an unjailed run look like a jailed one
+        &mdash; the same rule that made an egress attempt&rsquo;s <code>mode</code> say how much the proxy could
+        actually read. <code>--no-jail</code> discloses in the terminal on every run that uses it.
+        <b>Three things broke and were fixed rather than worked around.</b> <code>--new-pid-ns</code> makes the
+        jailer&rsquo;s parent return, so every run reported the VMM exiting the moment it started; it is dropped,
+        with the reason written where the flag would have gone. A jailed VMM can only create files inside its
+        chroot, so <code>snapshot save</code> asks for in-jail paths and the host moves the state and memory out
+        afterwards. And a snapshot records its drives by the path written in it &mdash; so the three-agent recipe,
+        whose cached template predates this change, could not find <code>/home/&hellip;/rootfs.ext4</code>; the
+        rootfs is now staged at both names, and all fourteen recipes pass.
+        <b>D29 amends the acceptance rather than quietly passing it.</b> The item asked that the VMM not run as the
+        invoking user; it does, because the alternative on the sudo path is root. It also named
+        <code>/proc/&lt;pid&gt;/root</code>, which returns <code>/</code> for a chrooted process and <code>/</code>
+        for an unjailed one &mdash; the same answer for opposite facts. Both corrected, with the residual named in
+        <code>docs/hardening.md</code> §5.
+        Regression: 33/33 on the epic acceptance, 12/12, 13/13, 18/18, 19/19 and 22/22 on the per-feature ones,
+        14/14 recipes, and the whole Go suite.</td>
+        <td class="mono">internal/sandbox/jail.go, dev/accept-jail.sh, D29</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
@@ -1613,6 +1654,35 @@ after:
         <td>F-D40 (PLAN-FEATURES, closed), F-D50 for the queue and the retry rule, F-D52 for the kernel reasoning
         this supersedes. <i>Revisit when</i> the Buildroot LTS line gains a header series at or above the kernel
         line KelyfOS wants, or when 2026.02.x appears on buildroot.org as supported.</td></tr>
+        <tr><td class="mono">D29</td><td class="mono">2026-08-24</td>
+        <td><b>The jailed VMM drops to the invoking user, not to a dedicated account &mdash; and the acceptance is
+        amended to say so rather than quietly passing.</b>
+        <i>What the acceptance said.</i> P5&rsquo;s recreate-and-verify list, written at P5-0 before the jailer had
+        been run, asked that the Firecracker process be &ldquo;not running as the invoking user&rdquo;. Two things
+        were established afterwards by running it: the jailer requires root, so KelyfOS invokes it through
+        <code>sudo -n</code> (the product owner&rsquo;s ruling of 2026-08-24), and <code>--uid</code> is therefore
+        what decides who the VMM ends up as.
+        <i>Alternatives.</i> A dedicated system account &mdash; strictly stronger, because a VMM escape could then
+        not signal or <code>ptrace</code> the invoking user&rsquo;s other processes, which sharing a uid permits even
+        across a mount namespace. It costs &ldquo;create a user&rdquo; in the quickstart, on top of the sudoers line
+        the owner has already ruled into it, and it costs a chown of every image and workspace file into that
+        account. Or leave <code>--uid</code> at root, which is not a drop at all and would make the jail a
+        regression: without it, <code>sudo jailer</code> leaves the VMM running as root, which is worse than the
+        unjailed status quo.
+        <i>Chosen: the invoking user.</i> It is a real drop relative to the only alternative on the sudo path, and
+        the chroot &mdash; verified from the host&rsquo;s own <code>mountinfo</code> &mdash; already takes the host
+        filesystem away entirely, which is the reach that mattered most. The residual is named in
+        <code>docs/hardening.md</code> §5 rather than left for a reader to discover: same-uid signal and
+        <code>ptrace</code> reach to the user&rsquo;s other processes is <i>not</i> closed by this phase.
+        <i>And the second half of the amendment is a correction of method.</i> The item named
+        <code>/proc/&lt;pid&gt;/root</code>, which reports the path as the process sees it: <code>/</code> for a
+        chrooted process and <code>/</code> for an unjailed one, the same answer for opposite facts. The acceptance
+        now reads <code>mountinfo</code>, which names the chroot from the host&rsquo;s side. Writing an acceptance
+        before the mechanism exists is right; keeping one that cannot distinguish what it claims to is not.
+        <i>Revisit when</i> somebody runs KelyfOS as a service account, where a dedicated uid costs nothing because
+        the account already exists.</td>
+        <td>P5-0&rsquo;s acceptance list, amended in place with this row cited beside it. <code>dev/accept-jail.sh</code>
+        is the check as it now stands: 14 of 14.</td></tr>
     <!-- Claude Code: append rows above this line. -->
   </table>
 </section>

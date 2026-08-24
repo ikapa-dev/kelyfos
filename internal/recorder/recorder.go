@@ -179,6 +179,13 @@ type Event struct {
 	Modified int `json:"modified,omitempty"`
 	Deleted  int `json:"deleted,omitempty"`
 
+	// session.start (P5-1). Whether the VMM ran inside the jailer: a chroot,
+	// a dropped uid, its own device nodes. In the record because a chain that
+	// does not say which wall was around a run is a chain that overstates the
+	// weaker one — the same rule that made `mode` on an egress attempt say how
+	// much of the connection the proxy could actually read.
+	Jailed *bool `json:"jailed,omitempty"`
+
 	// forward.accept (E5-5). Port is the host port the connection arrived on
 	// and GuestPort is where it was carried to; Peer is who connected. A
 	// connection is the unit somebody would ask about, so this is written per

@@ -3,11 +3,11 @@
 Updated 2026-08-23 · tree clean, synced with origin/main
 
 ## Plans
-- PLAN.html — 37/49. **Phase 5 (hardening, v0.9)**: P5-0 done, spec at `docs/hardening.md`.
+- PLAN.html — 38/49. **Phase 5 (hardening, v0.9)**: P5-0, P5-1 done — the VMM is jailed.
 - PLAN-FEATURES.html — **COMPLETE and closed.** 42/42, five epics, v0.4–v0.8 released.
 
 ## Now
-P5-1 — Firecracker under the jailer, on every entry point, records outside the jail.
+P5-2 — the host syscall filter, recorded rather than assumed (mostly already observed).
 
 ## This session
 E1–E3 closed, **v0.6 released**; then the F-D33 batch and the E3→E4 seam check. Epic E4, all

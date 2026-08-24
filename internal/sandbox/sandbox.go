@@ -101,6 +101,11 @@ type Options struct {
 	// Zero keeps the default. It exists because `team up --ready-timeout` is a
 	// promise about every agent, and four of five of them may be forks (E2-9).
 	ReadyTimeout time.Duration
+	// NoJail runs the VMM outside the jailer (P5-1, docs/hardening.md §2).
+	// The default is jailed; this exists for a machine that cannot give the
+	// jailer passwordless sudo, it is never a default, and the caller says so
+	// on every run that uses it.
+	NoJail bool
 	// OnGuestEvent receives what the guest reports on the events channel
 	// (docs/protocol.md §5.5). The caller decides what to record; the guest
 	// never writes the flight recorder itself (docs/events.md §1).
@@ -139,12 +144,17 @@ type State struct {
 	// path above says where the disk is; this says where it came from, which is
 	// what a later process needs to write it back — a pause and the resume that
 	// follows it are two processes, and neither is the one that packed it.
-	WorkspaceHost string    `json:"workspace_host,omitempty"`
-	Plugins       string    `json:"plugins,omitempty"`
-	Allow         []string  `json:"allow,omitempty"`
-	RunDir        string    `json:"run_dir"`
-	StartedAt     time.Time `json:"started_at"`
-	BootReadyMS   int64     `json:"boot_ready_ms"`
+	WorkspaceHost string   `json:"workspace_host,omitempty"`
+	Plugins       string   `json:"plugins,omitempty"`
+	Allow         []string `json:"allow,omitempty"`
+	RunDir        string   `json:"run_dir"`
+	// Jailed is whether this machine's VMM ran under the jailer. It is in the
+	// state and in the flight recorder because a record that does not say which
+	// wall was around a run is a record that overstates the weaker one
+	// (P5-1, the product owner's ruling of 2026-08-24).
+	Jailed      bool      `json:"jailed"`
+	StartedAt   time.Time `json:"started_at"`
+	BootReadyMS int64     `json:"boot_ready_ms"`
 }
 
 // RecordSession is the flight recorder this sandbox's events belong in: the
@@ -219,6 +229,11 @@ func New(opts Options) (*Sandbox, error) {
 		return nil, err
 	}
 
+	// Before anything is created, so a machine that cannot be jailed is refused
+	// rather than half built (P5-1).
+	if err := requireJail(opts); err != nil {
+		return nil, err
+	}
 	id := opts.ID
 	if id == "" {
 		var err error
@@ -226,7 +241,7 @@ func New(opts Options) (*Sandbox, error) {
 			return nil, err
 		}
 	}
-	runDir := filepath.Join(RunRoot(), id)
+	runDir := jailRunDir(id)
 	if err := os.MkdirAll(runDir, 0o700); err != nil {
 		return nil, fmt.Errorf("create run directory: %w", err)
 	}
@@ -271,6 +286,16 @@ func New(opts Options) (*Sandbox, error) {
 		s.State.HostMAC = opts.Net.HostMAC
 		s.State.ProxyPort = opts.Net.ProxyPort
 		s.State.Allow = opts.Allow
+	}
+	// The jail is built before anything is written into it, because the run
+	// directory *is* the chroot: config.json and the host's listening sockets
+	// have to be inside it for the VMM to reach them (P5-1).
+	s.State.Jailed = !opts.NoJail
+	if s.State.Jailed {
+		if cfg, err = stageJail(runDir, opts, kernel, rootfs, cfg); err != nil {
+			s.cleanup()
+			return nil, err
+		}
 	}
 	blob, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
@@ -417,9 +442,17 @@ func (s *Sandbox) Start(ctx context.Context) error {
 	argv := []string{"firecracker",
 		"--api-sock", s.State.APIPath,
 		"--config-file", filepath.Join(s.State.RunDir, "config.json")}
-	// Under systemd this prefixes the command with the scope request; on the
-	// direct path it is unchanged (F-D11).
-	argv = s.opts.CPUSlice.WrapArgv(argv)
+	if s.State.Jailed {
+		// Chroot-relative, because that is the filesystem the VMM will see.
+		// The host keeps its own absolute paths to the same two files.
+		argv = jailArgv(s.State.ID, s.opts.CPUSlice, []string{
+			"--api-sock", inJail("fc.sock"),
+			"--config-file", inJail("config.json")})
+	} else {
+		// Under systemd this prefixes the command with the scope request; on
+		// the direct path it is unchanged (F-D11).
+		argv = s.opts.CPUSlice.WrapArgv(argv)
+	}
 	cmd := exec.Command(argv[0], argv[1:]...)
 	// Its own process group, so a Ctrl-C delivered to the whole foreground
 	// group does not race our orderly shutdown.
@@ -427,7 +460,10 @@ func (s *Sandbox) Start(ctx context.Context) error {
 	// On the direct path, place it in its cgroup at clone time rather than
 	// moving it once it is already running: a quota that starts a moment late
 	// is a quota with a hole in it (E1-2).
-	if s.opts.CPUSlice.Direct() {
+	// Clone-time cgroup placement is the direct path's, and it is not available
+	// through the jailer, which forks: there the cgroup is named with
+	// --parent-cgroup instead (jail.go).
+	if s.opts.CPUSlice.Direct() && !s.State.Jailed {
 		cmd.SysProcAttr.UseCgroupFD = true
 		cmd.SysProcAttr.CgroupFD = s.opts.CPUSlice.FD()
 	}
@@ -446,6 +482,17 @@ func (s *Sandbox) Start(ctx context.Context) error {
 	}
 	s.cmd = cmd
 	s.State.PID = cmd.Process.Pid
+	if s.State.Jailed {
+		// Our own child is sudo; the VMM is its grandchild after the jailer
+		// execs. Everything host-side that wants the VMM — its cgroup, its
+		// seccomp mode, a signal — wants the pid the jailer wrote down.
+		pid, err := jailedPID(s.State.RunDir)
+		if err != nil {
+			_ = s.Shutdown(2 * time.Second)
+			return err
+		}
+		s.State.PID = pid
+	}
 	go s.drainConsole(stdout)
 	go func() {
 		s.waitErr = cmd.Wait()
@@ -453,7 +500,7 @@ func (s *Sandbox) Start(ctx context.Context) error {
 	}()
 	// Read the quota back rather than trusting that asking for it worked.
 	if s.opts.CPUSlice != nil {
-		if err := s.opts.CPUSlice.Confirm(cmd.Process.Pid); err != nil {
+		if err := s.opts.CPUSlice.Confirm(s.State.PID); err != nil {
 			_ = s.Shutdown(2 * time.Second)
 			return err
 		}
@@ -519,10 +566,18 @@ func (s *Sandbox) Snapshot(dir string) (statePath, memPath string, err error) {
 	statePath = filepath.Join(dir, "state")
 	memPath = filepath.Join(dir, "memory")
 
+	// A jailed VMM can only create files inside its own chroot, so it writes
+	// them there and the host moves them out afterwards. Asking it for a path
+	// it cannot open is how this first failed (P5-1).
+	askState, askMem := statePath, memPath
+	if s.State.Jailed {
+		askState, askMem = inJail(jailSnapState), inJail(jailSnapMem)
+	}
+
 	if err := s.api.pause(); err != nil {
 		return "", "", err
 	}
-	if err := s.api.createSnapshot(statePath, memPath); err != nil {
+	if err := s.api.createSnapshot(askState, askMem); err != nil {
 		// Leave the machine running rather than paused: a failed snapshot
 		// should cost a snapshot, not the session.
 		_ = s.api.resume()
@@ -530,6 +585,17 @@ func (s *Sandbox) Snapshot(dir string) (statePath, memPath string, err error) {
 	}
 	if err := s.api.resume(); err != nil {
 		return "", "", err
+	}
+	if s.State.Jailed {
+		for _, m := range []struct{ from, to string }{
+			{filepath.Join(s.State.RunDir, jailSnapState), statePath},
+			{filepath.Join(s.State.RunDir, jailSnapMem), memPath},
+		} {
+			if err := linkInto(m.from, m.to); err != nil {
+				return "", "", fmt.Errorf("bring the snapshot out of the jail: %w", err)
+			}
+			_ = os.Remove(m.from)
+		}
 	}
 	restrictSnapshot(statePath, memPath)
 	return statePath, memPath, nil
@@ -647,13 +713,34 @@ func SnapshotRunning(st *State, dir string) (statePath, memPath string, err erro
 	statePath = filepath.Join(dir, "state")
 	memPath = filepath.Join(dir, "memory")
 
+	// The same rule as (*Sandbox).Snapshot: a jailed VMM can only create files
+	// inside its own chroot, so it writes them there and the host moves them
+	// out. This is the path `kelyfos snapshot save` and `pause` take, from a
+	// process that did not start the machine (P5-1).
+	askState, askMem := statePath, memPath
+	if st.Jailed {
+		askState, askMem = inJail(jailSnapState), inJail(jailSnapMem)
+	}
+
 	a := newAPI(st.APIPath)
 	if err := a.pause(); err != nil {
 		return "", "", err
 	}
-	if err := a.createSnapshot(statePath, memPath); err != nil {
+	if err := a.createSnapshot(askState, askMem); err != nil {
 		_ = a.resume()
 		return "", "", err
+	}
+	if st.Jailed {
+		for _, m := range []struct{ from, to string }{
+			{filepath.Join(st.RunDir, jailSnapState), statePath},
+			{filepath.Join(st.RunDir, jailSnapMem), memPath},
+		} {
+			if err := linkInto(m.from, m.to); err != nil {
+				_ = a.resume()
+				return "", "", fmt.Errorf("bring the snapshot out of the jail: %w", err)
+			}
+			_ = os.Remove(m.from)
+		}
 	}
 
 	meta := SnapshotMeta{Arch: st.Arch, Flavor: st.Flavor, VcpuCount: st.VcpuCount, MemMiB: st.MemMiB}
@@ -752,6 +839,9 @@ func Restore(snapDir string, opts Options) (*Sandbox, time.Duration, error) {
 		}
 	}
 
+	if err := requireJail(opts); err != nil {
+		return nil, 0, err
+	}
 	id := opts.ID
 	if id == "" {
 		var err error
@@ -759,7 +849,7 @@ func Restore(snapDir string, opts Options) (*Sandbox, time.Duration, error) {
 			return nil, 0, err
 		}
 	}
-	runDir := filepath.Join(RunRoot(), id)
+	runDir := jailRunDir(id)
 	if err := os.MkdirAll(runDir, 0o700); err != nil {
 		return nil, 0, err
 	}
@@ -772,7 +862,7 @@ func Restore(snapDir string, opts Options) (*Sandbox, time.Duration, error) {
 			ID: id, Arch: opts.Arch, Flavor: opts.Flavor,
 			UDSPath: filepath.Join(runDir, "v.sock"),
 			APIPath: filepath.Join(runDir, "fc.sock"),
-			RunDir:  runDir, StartedAt: time.Now(),
+			RunDir:  runDir, StartedAt: time.Now(), Jailed: !opts.NoJail,
 			// Carried from the options rather than from the memory image,
 			// because the image is shared: every fork of one snapshot has the
 			// same machine baked into it and a different job in the team. The
@@ -806,11 +896,16 @@ func Restore(snapDir string, opts Options) (*Sandbox, time.Duration, error) {
 
 	started := time.Now()
 	argv := s.opts.CPUSlice.WrapArgv([]string{"firecracker", "--api-sock", s.State.APIPath})
+	if s.State.Jailed {
+		argv = jailArgv(s.State.ID, s.opts.CPUSlice,
+			[]string{"--api-sock", inJail("fc.sock")})
+	}
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	// The same placement a cold boot gets: at clone time on the direct path, so
-	// a quota that starts a moment late is not a quota with a hole in it (E1-2).
-	if s.opts.CPUSlice.Direct() {
+	// a quota that starts a moment late is not a quota with a hole in it (E1-2)
+	// — except through the jailer, which forks and is told the parent cgroup.
+	if s.opts.CPUSlice.Direct() && !s.State.Jailed {
 		cmd.SysProcAttr.UseCgroupFD = true
 		cmd.SysProcAttr.CgroupFD = s.opts.CPUSlice.FD()
 	}
@@ -829,6 +924,14 @@ func Restore(snapDir string, opts Options) (*Sandbox, time.Duration, error) {
 	}
 	s.cmd = cmd
 	s.State.PID = cmd.Process.Pid
+	if s.State.Jailed {
+		pid, err := jailedPID(s.State.RunDir)
+		if err != nil {
+			_ = s.Shutdown(2 * time.Second)
+			return nil, 0, err
+		}
+		s.State.PID = pid
+	}
 	go s.drainConsole(stdout)
 	go func() { s.waitErr = cmd.Wait(); close(s.done) }()
 
@@ -845,7 +948,7 @@ func Restore(snapDir string, opts Options) (*Sandbox, time.Duration, error) {
 	// Read the quota back rather than trusting that asking for it worked, and
 	// before the machine resumes rather than after.
 	if s.opts.CPUSlice != nil {
-		if err := s.opts.CPUSlice.Confirm(cmd.Process.Pid); err != nil {
+		if err := s.opts.CPUSlice.Confirm(s.State.PID); err != nil {
 			_ = s.Shutdown(2 * time.Second)
 			return nil, 0, err
 		}
@@ -882,11 +985,66 @@ func Restore(snapDir string, opts Options) (*Sandbox, time.Duration, error) {
 	// A machine frozen with a NIC cannot be loaded until that NIC has somewhere
 	// to attach. The TAP it was taken with is long gone, so it is re-paired to
 	// the one this restore just created (D22).
+	// The jailed VMM opens these by the only paths it has: its own. The files
+	// are linked into the chroot first — hard links on the same filesystem, so
+	// a restore does not copy a memory image to read it (P5-1).
+	//
+	// The devices go in too, and that is not optional: a snapshot taken from a
+	// jailed machine records its drives at chroot-relative paths, and
+	// Firecracker will not load one until every backing file is present at the
+	// path written in it. The rootfs is /rootfs.ext4 inside both jails, which
+	// is exactly why it works — the recorded path is portable precisely because
+	// it is not a host path.
+	loadState, loadMem, loadUDS := statePath, memPath, s.State.UDSPath
+	if s.State.Jailed {
+		staged := []struct{ src, name string }{
+			{statePath, jailSnapState},
+			{memPath, jailSnapMem},
+		}
+		// A restore is given no image directory — it boots from memory, not
+		// from a kernel — so it is resolved here the way a cold boot resolves
+		// it, from the architecture the snapshot recorded.
+		imageDir := opts.ImageDir
+		if imageDir == "" {
+			imageDir = ImageDir(opts.Arch)
+		}
+		if kernelName, err := KernelArtifact(opts.Arch); err == nil {
+			staged = append(staged,
+				struct{ src, name string }{filepath.Join(imageDir, kernelName), defaultJailNames().Kernel},
+				struct{ src, name string }{filepath.Join(imageDir, "rootfs.ext4"), defaultJailNames().Rootfs},
+				// The same rootfs a second time, at the host path a snapshot
+				// taken before P5-1 recorded. Firecracker opens a drive's
+				// backing file by the path written in the state file, and an
+				// older snapshot's is absolute; without this every template and
+				// every saved machine from before the jail would stop
+				// restoring. Found by the three-agent recipe, whose cached
+				// template predates the change.
+				struct{ src, name string }{
+					filepath.Join(imageDir, "rootfs.ext4"),
+					strings.TrimPrefix(filepath.Join(imageDir, "rootfs.ext4"), "/")})
+		}
+		if opts.Plugins != nil {
+			staged = append(staged, struct{ src, name string }{opts.Plugins.ImagePath, defaultJailNames().Plugins})
+		}
+		for _, f := range staged {
+			dest := filepath.Join(s.State.RunDir, f.name)
+			if err := os.MkdirAll(filepath.Dir(dest), 0o700); err != nil {
+				_ = s.Shutdown(2 * time.Second)
+				return nil, 0, err
+			}
+			if err := linkInto(f.src, dest); err != nil {
+				_ = s.Shutdown(2 * time.Second)
+				return nil, 0, fmt.Errorf("stage the snapshot into the jail: %w", err)
+			}
+		}
+		loadState, loadMem = inJail(jailSnapState), inJail(jailSnapMem)
+		loadUDS = inJail(defaultJailNames().Vsock)
+	}
 	load := snapshotLoad{
-		SnapshotPath:  statePath,
-		MemBackend:    memBackend{BackendPath: memPath, BackendType: "File"},
+		SnapshotPath:  loadState,
+		MemBackend:    memBackend{BackendPath: loadMem, BackendType: "File"},
 		ResumeVM:      false,
-		VsockOverride: &vsockOverride{UDSPath: s.State.UDSPath},
+		VsockOverride: &vsockOverride{UDSPath: loadUDS},
 	}
 	if metaErr == nil && meta.HasNetwork {
 		if opts.Net == nil {
@@ -978,12 +1136,21 @@ func (s *Sandbox) Shutdown(grace time.Duration) error {
 			if err := s.requestShutdown(grace); err == nil {
 				break
 			}
-			_ = s.cmd.Process.Signal(syscall.SIGTERM)
+			// The VMM, not our child: under the jailer our child is sudo, and
+			// signalling sudo asks it to pass one on rather than ending the
+			// machine. Falls back to the child when there is no separate VMM
+			// pid, which is the unjailed case.
+			s.signalVMM(syscall.SIGTERM)
 			select {
 			case <-s.done:
 			case <-time.After(grace):
-				_ = s.cmd.Process.Kill()
-				<-s.done
+				s.signalVMM(syscall.SIGKILL)
+				select {
+				case <-s.done:
+				case <-time.After(grace):
+					_ = s.cmd.Process.Kill()
+					<-s.done
+				}
 			}
 		}
 	}
@@ -1041,7 +1208,7 @@ func (s *Sandbox) requestShutdown(grace time.Duration) error {
 // RunDirOf is where a sandbox's run directory is, from its id alone. The
 // marker below lives there, and the process that has to read it may not be the
 // one holding the Sandbox.
-func RunDirOf(id string) string { return filepath.Join(RunRoot(), id) }
+func RunDirOf(id string) string { return jailRunDir(id) }
 
 // PauseMarker is where a pause records that this machine's stop is a pause.
 //
@@ -1103,10 +1270,29 @@ func RequestShutdown(st *State, grace time.Duration) error {
 	return fmt.Errorf("guest acknowledged shutdown but the microVM (pid %d) is still running", st.PID)
 }
 
-func (s *Sandbox) cleanup() {
-	if s.State.RunDir != "" {
-		_ = os.RemoveAll(s.State.RunDir)
+// signalVMM sends a signal to the Firecracker process itself.
+func (s *Sandbox) signalVMM(sig syscall.Signal) {
+	if s.State.PID > 0 && s.cmd != nil && s.cmd.Process != nil && s.State.PID != s.cmd.Process.Pid {
+		if p, err := os.FindProcess(s.State.PID); err == nil {
+			_ = p.Signal(sig)
+		}
+		// The wrapper too, so it does not outlive the machine it started.
+		_ = s.cmd.Process.Signal(sig)
+		return
 	}
+	if s.cmd != nil && s.cmd.Process != nil {
+		_ = s.cmd.Process.Signal(sig)
+	}
+}
+
+func (s *Sandbox) cleanup() {
+	if s.State.RunDir == "" {
+		return
+	}
+	// The level above the chroot, so nothing of the jail is left behind — and
+	// through sudo when a plain remove cannot finish, because the jailer leaves
+	// root-owned files inside it (jail.go).
+	_ = removeJail(filepath.Dir(s.State.RunDir))
 }
 
 func (s *Sandbox) writeState() error {
@@ -1166,9 +1352,12 @@ func Load(id string) (*State, error) {
 		id = os.Getenv("KELYFOS_SANDBOX")
 	}
 	if id != "" {
-		return readState(filepath.Join(RunRoot(), id))
+		return readState(RunDirOf(id))
 	}
-	entries, err := os.ReadDir(RunRoot())
+	// One level down from the run root: the layout is the jailer's,
+	// <run>/firecracker/<id>/root, because the run directory is the chroot
+	// (P5-1). Listing looks where the ids are rather than where they used to be.
+	entries, err := os.ReadDir(filepath.Join(RunRoot(), "firecracker"))
 	if err != nil {
 		return nil, fmt.Errorf("no running sandbox (nothing under %s)", RunRoot())
 	}
@@ -1177,7 +1366,7 @@ func Load(id string) (*State, error) {
 		if !e.IsDir() {
 			continue
 		}
-		st, err := readState(filepath.Join(RunRoot(), e.Name()))
+		st, err := readState(RunDirOf(e.Name()))
 		if err != nil || !alive(st.PID) {
 			continue
 		}
