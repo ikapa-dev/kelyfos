@@ -220,6 +220,35 @@ check "$(grep -q '"profile":"' rlog.json && echo yes || echo no)"       "session
 check "$(grep -q '"jailed":true' rlog.json && echo yes || echo no)"       "and the jail, so the chain names both walls and not one"
 
 
+say "the domain rule, both halves, without a debugger to install"
+# Landlock gives every spawned process its own domain and refuses ptrace between
+# siblings. The same check governs reading another process's /proc/<pid>/exe, so
+# both halves can be shown with nothing but a shell — which is just as well,
+# because neither image ships a debugger (D33).
+#
+# A child of the command being run inherits its domain and is therefore not a
+# sibling: that is exactly the relationship a debugger has to a target it
+# launched, and it is what `dev` keeps ptrace for.
+own="$(kelyfos exec 'sleep 30 & c=$!; sleep 1; readlink /proc/$c/exe; kill $c' 2>&1 | tail -1)"
+echo "  a command reading its own child:     ${own:-<empty>}"
+check "$(grep -q '/' <<<"$own" && echo yes || echo no)" \
+      "a process can introspect a child it started, which is what launching under a debugger needs"
+
+# A separate exec is a sibling domain, and must not be readable.
+#
+# The sibling writes its own pid to a file and the reader opens that pid
+# directly. Scanning /proc for a command line would match the scanning shell
+# itself — the pattern is in its own arguments — which is the trap that made the
+# first version of this check pass for the wrong reason.
+kelyfos exec 'rm -f /tmp/sibpid' >/dev/null 2>&1
+(timeout 60 kelyfos exec 'echo $$ > /tmp/sibpid; sleep 25' >/dev/null 2>&1 &)
+for i in $(seq 1 15); do kelyfos exec 'test -s /tmp/sibpid' >/dev/null 2>&1 && break; sleep 1; done
+sib="$(kelyfos exec 'p=$(cat /tmp/sibpid); echo "pid=$p exe=[$(readlink /proc/$p/exe 2>/dev/null)]"' 2>&1 | tail -1)"
+echo "  a command reading a sibling command: ${sib:-<nothing found>}"
+check "$(grep -q 'exe=\[\]' <<<"$sib" && echo yes || echo no)" \
+      "and cannot introspect a sibling, which is why attaching to a running process is refused"
+halt
+
 say "summary"
 printf '%s\n' "${SUMMARY[@]}" | sed 's/^/  /'
 printf '\n  %d passed, %d failed, %d skipped\n' "$PASSES" "$FAILURES" "$SKIPS"

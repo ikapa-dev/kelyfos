@@ -173,7 +173,7 @@
     <span class="bl-name">Overall</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">P5-8 &mdash; the sibling-ptrace refusal made legible: named where a person will look, with what still works, and both halves proved rather than asserted (D33)</b></div>
+  <div class="focusline">Current focus: <b id="focus">P5-4 &mdash; the bars re-earned on the bare-KVM reference with the jail and both filters on the boot path, the quickstart figure re-measured with the sudoers step in it, and the README&rsquo;s &ldquo;not hardened yet&rdquo; sentence replaced by one that is also true</b></div>
 </div>
 
 <!-- ====================================================== 1. END GOAL -->
@@ -608,7 +608,7 @@
         the rootfs-at-both-names fix P5-1 made for the three-agent recipe, and missed because no suite snapshots a
         machine with a workspace. Fix the staging order, and add the case to an acceptance so it cannot go missing
         again.</span></li>
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file &mdash; add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file &mdash; add the checked attribute in the markup.">
         <span class="tid">P5-8</span><span class="tk"><b>The sibling-ptrace refusal, made legible.</b>
         <b class="blocked">[ADDED 2026-08-24, D33.]</b> P5-3&rsquo;s per-process Landlock domains refuse
         <code>ptrace</code> between siblings, so attaching a debugger to an already-running process in a guest fails
@@ -1672,6 +1672,24 @@ after:
         dev/accept-jail.sh <b>18/18</b> &mdash; its snapshot section now attaches a workspace, which is the reason
         this was invisible: no suite snapshotted a machine with one<br>
         regression: accept-e2, accept-e5, accept-profile and all fourteen cookbook recipes</td></tr>
+        <tr><td class="mono">2026-08-24</td><td class="mono">P5-8</td>
+        <td><b>The sibling-ptrace refusal named where a person will look, and proved rather than asserted.</b> It is
+        in <code>docs/denials.md</code>&rsquo;s own section for what is deliberately not in the catalog &mdash; a
+        refusal the guest kernel makes to a syscall KelyfOS never sees has no raise site, and the catalog fails the
+        build for an entry nothing raises (D33) &mdash; and in the generated profiles page, which is where a reader
+        of <code>dev</code>&rsquo;s <code>ptrace</code> line lands. Both halves are checked with nothing but a
+        shell: reading another process&rsquo;s <code>/proc/&lt;pid&gt;/exe</code> goes through the same
+        <code>ptrace_may_access</code> the attach does, so a command can introspect a child it started and cannot
+        introspect a sibling. <b>One claim corrected while writing it:</b> the profile&rsquo;s own comment said
+        <code>dev</code> ships gdb-adjacent tooling. It ships none, and the sentence now says what is true &mdash;
+        this is about what somebody installs into a dev sandbox.</td>
+        <td class="mono">dev/accept-profile.sh <b>31/31</b> (was 29/29)<br>
+        a command reading its own child &rarr; <code>/bin/busybox</code>; the same command reading a sibling &rarr;
+        <code>pid=145 exe=[]</code><br>
+        the first version of the sibling check passed for the wrong reason &mdash; it scanned /proc for a command
+        line that was in its own arguments, so it found itself. It reads a pid the sibling wrote down instead<br>
+        docs/denials.md &sect;&ldquo;What is not in the catalog&rdquo;, docs/reference/profiles.md
+        &sect;&ldquo;Attaching a debugger&rdquo; (generated)</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>

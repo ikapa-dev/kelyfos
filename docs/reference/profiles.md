@@ -35,3 +35,16 @@ Refuses to run where the Landlock ABI is below **2**.
 Writable: `/work`, `/tmp`, `/run`, `/root`
 
 Refused, 27 syscalls: `init_module`, `finit_module`, `delete_module`, `kexec_load`, `kexec_file_load`, `mount`, `umount2`, `pivot_root`, `chroot`, `swapon`, `swapoff`, `reboot`, `clock_settime`, `clock_adjtime`, `adjtimex`, `settimeofday`, `setns`, `unshare`, `add_key`, `request_key`, `keyctl`, `open_by_handle_at`, `bpf`, `perf_event_open`, `acct`, `quotactl`, `syslog`
+
+## Attaching a debugger
+
+Every process the supervisor spawns gets its **own** Landlock domain, and Landlock
+refuses `ptrace` between sibling domains — which two commands in the same sandbox are.
+So attaching to a process that is already running fails with `Operation not permitted`
+on every flavor, including `dev`, whose profile leaves `ptrace` out of its refusal list
+on purpose. One command also cannot read another's `/proc/<pid>/exe`.
+
+**Launching a program under a debugger works**, on `dev`: a child inherits its
+parent's domain, so it is not a sibling. That is the whole of what `dev` buys here and
+what `base` refuses. Neither image ships a debugger, so this is about what you install
+into a `dev` sandbox. Why it is not a per-flavor knob is D33 in `PLAN.html`.

@@ -711,6 +711,16 @@ func profilesPage(sup string) (string, error) {
 		b.WriteString("\n\n")
 		fmt.Fprintf(&b, "Refused, %d syscalls: %s\n", len(p.refused), strings.Join(p.refused, ", "))
 	}
+	b.WriteString("\n## Attaching a debugger\n\n")
+	b.WriteString("Every process the supervisor spawns gets its **own** Landlock domain, and Landlock\n" +
+		"refuses `ptrace` between sibling domains \u2014 which two commands in the same sandbox are.\n" +
+		"So attaching to a process that is already running fails with `Operation not permitted`\n" +
+		"on every flavor, including `dev`, whose profile leaves `ptrace` out of its refusal list\n" +
+		"on purpose. One command also cannot read another's `/proc/<pid>/exe`.\n\n")
+	b.WriteString("**Launching a program under a debugger works**, on `dev`: a child inherits its\n" +
+		"parent's domain, so it is not a sibling. That is the whole of what `dev` buys here and\n" +
+		"what `base` refuses. Neither image ships a debugger, so this is about what you install\n" +
+		"into a `dev` sandbox. Why it is not a per-flavor knob is D33 in `PLAN.html`.\n")
 	return b.String(), nil
 }
 

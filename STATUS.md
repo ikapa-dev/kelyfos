@@ -3,12 +3,19 @@
 Updated 2026-08-24 · synced with origin/main · CI green (run 32704409463)
 
 ## Plans
-- PLAN.html — **43/53**. Phase 5 (hardening, v0.9): P5-0, P5-1, P5-2, P5-6, P5-3 done.
+- PLAN.html — **44/53**. Phase 5 (hardening, v0.9): P5-0, P5-1, P5-2, P5-6, P5-3 done.
 - PLAN-FEATURES.html — **COMPLETE and closed.** 42/42, five epics, v0.4–v0.8 released.
 
 ## Now
-P5-8 — the sibling-ptrace refusal made legible (D33): named where a person will look, with
-what still works, and both halves proved rather than asserted. Then P5-4.
+P5-4 — the bars re-earned on the bare-KVM reference (D15) with the jail and both filters on
+the boot path; the quickstart ≤5-min figure re-measured *including* the sudoers step; the
+README's "not hardened yet" sentence replaced by one that is also true; and
+docs/threat-model.md brought into line with it rather than softened.
+
+**P5-8 done.** The sibling-ptrace refusal is named in docs/denials.md's own
+what-is-not-in-the-catalog section and in the generated profiles page, with both halves
+proved by a shell: a command can introspect a child it started, and cannot introspect a
+sibling. A false claim was corrected on the way — `dev` ships no debugger.
 
 **P5-9 done.** `snapshot restore` was failing outright for any machine that had a
 workspace — the captured copy was staged after the load, and since P5-1 the recorded drive

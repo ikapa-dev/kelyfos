@@ -59,6 +59,36 @@ a person edits it. This is the same invariant the MCP tool surface is held to
 (F-D5): the ceiling in `kelyfos.toml` is not something the software can talk
 itself past, and a refusal that offered to raise it would be exactly that.
 
+**A refusal KelyfOS never sees cannot be in a catalog KelyfOS raises from.** The
+catalog is checked in both directions — `make docs` fails the build for an entry
+nothing raises (F-D4) — so an entry with no raise site would be a documented
+promise with no code behind it, which is the condition that check exists to
+prevent. One refusal falls squarely in that gap and is worth naming here, because
+it is the one people will meet:
+
+> **Attaching a debugger to a process already running inside a guest fails**,
+> with `Operation not permitted`, on every flavor — including `dev`, whose
+> profile deliberately leaves `ptrace` out of its refusal list.
+
+That is the guest kernel answering a syscall the host never sees. Every process
+the supervisor spawns is confined by its own Landlock domain, and Landlock
+refuses `ptrace` between *sibling* domains; two commands in the same sandbox are
+siblings. It is a protection nobody asked for and it is real: it also means one
+command cannot read another's `/proc/<pid>/exe` or otherwise introspect it.
+
+**What still works, which is the part that matters:** a debugger that *launches*
+its target. A child inherits its parent's domain and is therefore not a sibling,
+so tracing what you started is permitted; only attaching to something already
+running is refused. On `base` even launching is refused, by the seccomp half, and
+that is the per-flavor difference `dev` exists to make.
+
+Neither image ships a debugger, so this is about what you install into a `dev`
+sandbox rather than about `strace` and `gdb` by name.
+
+The reasoning, the alternative that was rejected, and why this is not a knob is
+D33 in `PLAN.html`; the profiles themselves are
+[`reference/profiles.md`](reference/profiles.md).
+
 ## When nobody is watching
 
 Everything above assumes somebody is looking at the terminal. The case this

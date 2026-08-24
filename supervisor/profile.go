@@ -99,11 +99,17 @@ func profileFor(flavor string) Profile {
 		DenySyscalls: deniedSyscalls(),
 	}
 	if flavor == "dev" {
-		// The dev flavor ships gdb-adjacent tooling and the whole point of it
-		// is to be worked in. Refusing ptrace there would refuse strace, gdb
-		// and every language's own debugger, and buy very little: a process
-		// may only ptrace another process it could already signal, and inside
-		// this guest that is every process, all of them the agent's own.
+		// dev is the flavor meant to be worked in — the one an agent installs
+		// into and runs a toolchain in — so a debugger it brings must be able
+		// to run the thing it is debugging. base is the opposite: a fixed
+		// toolbox, nothing added, nothing to debug.
+		//
+		// The image ships no debugger today, which is why this is about what
+		// somebody brings rather than about strace and gdb by name. And it buys
+		// less than it looks like: Landlock refuses ptrace between sibling
+		// domains whatever this says, so what this permits is a debugger
+		// launching its own target, and never attaching to something already
+		// running (D33, docs/reference/profiles.md).
 		p.AllowPtrace = true
 	}
 	return p
