@@ -46,7 +46,7 @@ func chainOf(t *testing.T, events []recorder.Event) []byte {
 func render(t *testing.T, events []recorder.Event) string {
 	t.Helper()
 	var buf bytes.Buffer
-	if err := Render(&buf, "s1", chainOf(t, events)); err != nil {
+	if _, err := Render(&buf, "s1", chainOf(t, events)); err != nil {
 		t.Fatal(err)
 	}
 	return buf.String()

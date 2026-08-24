@@ -38,7 +38,7 @@ func exportedSession(t *testing.T) (chain []byte, page []byte) {
 		t.Fatal(err)
 	}
 	var buf bytes.Buffer
-	if err := report.Render(&buf, "s1", chain); err != nil {
+	if _, err := report.Render(&buf, "s1", chain); err != nil {
 		t.Fatal(err)
 	}
 	return chain, buf.Bytes()
@@ -101,7 +101,6 @@ func TestAFileWithNoRecordIsRefusedByName(t *testing.T) {
 	}{
 		{"not a report", "<html><body>hello</body></html>"},
 		{"an export from before v1.0", "<h1>KelyfOS session report</h1><div class=\"chain ok\">intact</div>"},
-		{"empty", ""},
 	} {
 		_, _, _, err := recordIn([]byte(tc.blob))
 		if err == nil {
@@ -137,7 +136,7 @@ func TestEditingThePageLeavesTheRecordVerifiableAndDisagreeing(t *testing.T) {
 	// What the reader is told to do: render the record itself and compare. The
 	// record says what it always said, and the page in their hands does not.
 	var honest bytes.Buffer
-	if err := report.Render(&honest, "s1", chain); err != nil {
+	if _, err := report.Render(&honest, "s1", chain); err != nil {
 		t.Fatal(err)
 	}
 	if !bytes.Contains(honest.Bytes(), []byte("echo hi")) {
@@ -288,4 +287,118 @@ func TestARecordCutShortAtItsEndStillVerifies(t *testing.T) {
 	if !endsCleanly(chain) {
 		t.Error("a session that ended was not reported as ending cleanly")
 	}
+}
+
+// An empty file is an empty flight recorder, which is what a process that died
+// before its first append leaves behind — recorder.Open creates one. It used to
+// be refused as "not a flight recorder", which sends its owner looking for the
+// wrong problem: the file is exactly what it should be, and it is the *chain*
+// that has nothing in it.
+func TestAnEmptyFileIsAnEmptyRecordAndNotAMysteryFile(t *testing.T) {
+	// The shapes a recorder actually leaves: a file with nothing in it. A file
+	// of spaces is not one of them, and a verifier that shrugged at it would be
+	// being lenient about a file that has been through something.
+	for _, blob := range []string{"", "\n\n"} {
+		chain, kind, fromReport, err := recordIn([]byte(blob))
+		if err != nil {
+			t.Fatalf("%q was not recognised as a flight recorder: %v", blob, err)
+		}
+		if fromReport || !strings.Contains(kind, "flight recorder") {
+			t.Errorf("%q was classified as %q", blob, kind)
+		}
+		// And the chain rule then says the true thing about it.
+		n, head, err := verifiedChain(chain)
+		if err == nil {
+			t.Errorf("%q verified as a chain: %d events, head %q", blob, n, head)
+		} else if !strings.Contains(err.Error(), "nothing here to verify") {
+			t.Errorf("%q refused for the wrong reason: %v", blob, err)
+		}
+	}
+}
+
+// A chain with events in it is not empty, and the rule must not swallow it.
+func TestTheEmptyRuleDoesNotSwallowARealChain(t *testing.T) {
+	chain, _ := exportedSession(t)
+	n, head, err := verifiedChain(chain)
+	if err != nil || n != 4 || head == "" {
+		t.Errorf("a real chain was refused: %d events, head %q, %v", n, head, err)
+	}
+}
+
+// A failed export leaves the destination alone.
+//
+// The regression this pins was mine: moving the parse inside Render put
+// os.Create ahead of it, so a record with one unparseable line emptied whatever
+// report was already at that path and then wrote nothing. A host killed
+// mid-write is enough to produce such a record.
+func TestAFailedExportDoesNotDestroyWhatWasAlreadyThere(t *testing.T) {
+	chain, _ := exportedSession(t)
+	root := t.TempDir()
+	src := filepath.Join(root, "events.jsonl")
+	if err := os.WriteFile(src, append(chain, []byte("NOT JSON AT ALL\n")...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dest := filepath.Join(root, "report.html")
+	const previous = "last week's report, which somebody may still need"
+	if err := os.WriteFile(dest, []byte(previous), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := exportSession("s1", src, dest); err == nil {
+		t.Fatal("an unparseable record exported without complaint")
+	}
+	if got := read(t, dest); got != previous {
+		t.Errorf("the failed export destroyed the file that was there: %q", got)
+	}
+	// And it left nothing behind either.
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), ".kelyfos-export-") {
+			t.Errorf("a temporary file was left behind: %s", e.Name())
+		}
+	}
+}
+
+// The count the command prints is the count the page shows. It used to be
+// recorder.Verify's own count, which is the length of the verified prefix — so
+// on a broken chain the summary disagreed with the page it had just written,
+// about that page.
+func TestTheExportsCountIsThePagesCount(t *testing.T) {
+	chain, _ := exportedSession(t)
+	broken := bytes.Replace(chain, []byte(`"source":"host"`), []byte(`"source":"gues"`), 1)
+	if bytes.Equal(broken, chain) {
+		t.Fatal("the test did not manage to break the chain")
+	}
+	if n, _, err := recorder.Verify(bytes.NewReader(broken)); err == nil || n >= 4 {
+		t.Fatalf("the fixture is not a mid-chain break: %d events, %v", n, err)
+	}
+
+	root := t.TempDir()
+	src := filepath.Join(root, "events.jsonl")
+	if err := os.WriteFile(src, broken, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dest := filepath.Join(root, "report.html")
+	if err := exportSession("s1", src, dest); err != nil {
+		t.Fatal(err)
+	}
+	page, err := os.ReadFile(dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stated := report.ClaimsIn(page).Events; stated != "4" {
+		t.Errorf("the page states %q events for a 4-event record", stated)
+	}
+}
+
+func read(t *testing.T, path string) string {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
 }

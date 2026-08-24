@@ -197,20 +197,44 @@ func exportSession(id, path, dest string) error {
 		return fmt.Errorf("no flight recorder for session %s: %w", id, err)
 	}
 
-	f, err := os.Create(dest)
+	// Rendered beside the destination and moved into place, never written
+	// straight over it. An export that fails partway used to leave a truncated
+	// file where a good report had been: os.Create empties the destination
+	// before anything has read the record, so a record with one unparseable
+	// line — a host killed mid-write is enough — destroyed last week's report
+	// and produced nothing. A failed export must leave what was there alone.
+	tmp, err := os.CreateTemp(filepath.Dir(dest), ".kelyfos-export-*")
 	if err != nil {
 		return err
 	}
-	defer f.Close()
-	if err := report.Render(f, id, blob); err != nil {
+	defer func() {
+		tmp.Close()
+		_ = os.Remove(tmp.Name()) // a no-op once the rename has happened
+	}()
+	n, err := report.Render(tmp, id, blob)
+	if err != nil {
 		return err
 	}
-	n, head, verifyErr := recorder.Verify(bytes.NewReader(blob))
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp.Name(), dest); err != nil {
+		return err
+	}
+
+	_, head, verifyErr := recorder.Verify(bytes.NewReader(blob))
 	info, _ := os.Stat(dest)
 	fmt.Printf("wrote %s (%d events, %d bytes)\n", dest, n, sizeOf(info))
 	if verifyErr != nil {
 		fmt.Printf("  the chain does NOT verify: %v\n", verifyErr)
 		fmt.Printf("  the report says so, and still carries the record so a reader can see for themselves\n")
+		return nil
+	}
+	if n == 0 {
+		// No head, and nothing to check. Printing "chain head" with nothing
+		// after it and then advertising a command that refuses the file is two
+		// wrong answers in three lines.
+		fmt.Printf("  the record is empty, so there is no chain head and nothing to verify\n")
 		return nil
 	}
 	// The head is printed here so whoever sends the file can quote it out of
@@ -224,16 +248,20 @@ func exportSession(id, path, dest string) error {
 }
 
 func verifySession(id, path string) error {
-	f, err := os.Open(path)
+	blob, err := os.ReadFile(path)
 	if err != nil {
 		return fmt.Errorf("no flight recorder for session %s: %w", id, err)
 	}
-	defer f.Close()
-	n, _, err := recorder.Verify(f)
+	n, head, err := verifiedChain(blob)
 	if err != nil {
 		fmt.Printf("session %s: FAILED after %d events\n  %v\n", id, n, err)
 		return &exitError{code: 1}
 	}
+	// Deferred because the verdict has two shapes below — a team's names its
+	// members, a single sandbox's does not — and the head belongs under both.
+	// A reader on this machine quotes it to whoever they send the export to,
+	// which is the comparison an unsigned report rests on.
+	defer func() { fmt.Printf("  chain head %s\n", head) }()
 	// For a team, "the chain" is the whole team's — one file covering every
 	// agent's commands, messages, store accesses and egress. Saying which
 	// agents it covers is what makes the claim checkable: a reader can compare

@@ -134,16 +134,19 @@ type Row struct {
 // events than it carries cannot be produced. It also means the embedded record
 // is the file the host wrote, byte for byte, which is what verification needs
 // (chain.go).
-func Render(w io.Writer, sessionID string, chain []byte) error {
-	events, err := recorder.Read(bytes.NewReader(chain))
+//
+// It returns the number of events it rendered, so the caller's summary and the
+// page cannot disagree about what is in the file they describe.
+func Render(w io.Writer, sessionID string, chain []byte) (events int, err error) {
+	parsed, err := recorder.Read(bytes.NewReader(chain))
 	if err != nil {
-		return err
+		return 0, err
 	}
 	_, head, verifyErr := recorder.Verify(bytes.NewReader(chain))
 	v := View{
 		SessionID:  sessionID,
 		Generated:  time.Now().UTC().Format("2006-01-02 15:04:05 UTC"),
-		Events:     len(events),
+		Events:     len(parsed),
 		ChainHead:  head,
 		Chain:      embedChain(chain),
 		ChainBytes: len(chain),
@@ -158,7 +161,7 @@ func Render(w io.Writer, sessionID string, chain []byte) error {
 	// command is not a transcript.
 	byCall := map[string]int{}
 
-	for _, e := range events {
+	for _, e := range parsed {
 		ts := e.TS
 		if len(ts) > 23 {
 			ts = ts[11:23]
@@ -367,11 +370,19 @@ func Render(w io.Writer, sessionID string, chain []byte) error {
 			v.Rows = append(v.Rows, Row{ts, "oom", "OOM-killed " + e.Comm, detail, "", true})
 		}
 	}
-	v.Lanes, v.LaneRows = buildLanes(events)
+	v.Lanes, v.LaneRows = buildLanes(parsed)
 	if n := len(v.Lanes); n > 0 {
 		v.LaneWidth = template.CSS(fmt.Sprintf("grid-template-columns:88px repeat(%d,minmax(0,1fr))", n))
 	}
-	return tmpl.Execute(w, v)
+	if err := tmpl.Execute(w, v); err != nil {
+		return 0, err
+	}
+	// The count the page shows, returned rather than recomputed by the caller.
+	// The CLI used to print recorder.Verify's own count here, which is the
+	// length of the verified *prefix* and not the number of events in the file
+	// — so a broken chain made the command's summary disagree with the page it
+	// had just written, about the page.
+	return len(parsed), nil
 }
 
 // buildLanes turns the same events into a per-agent view.

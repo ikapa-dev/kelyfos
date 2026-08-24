@@ -54,7 +54,7 @@ func TestTheIslandSurvivesTheTemplate(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	if err := Render(&buf, "s1", chain); err != nil {
+	if _, err := Render(&buf, "s1", chain); err != nil {
 		t.Fatal(err)
 	}
 	page := buf.String()
@@ -219,7 +219,7 @@ func TestABrokenChainIsReportedAndStillCarried(t *testing.T) {
 		t.Fatal("the test did not manage to break the chain")
 	}
 	var buf bytes.Buffer
-	if err := Render(&buf, "s1", broken); err != nil {
+	if _, err := Render(&buf, "s1", broken); err != nil {
 		t.Fatal(err)
 	}
 	page := buf.String()

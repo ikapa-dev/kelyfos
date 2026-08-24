@@ -89,16 +89,9 @@ record — for that, compare the page against --replay.
 		}
 	}
 
-	n, head, verifyErr := recorder.Verify(bytes.NewReader(chain))
+	n, head, verifyErr := verifiedChain(chain)
 	if verifyErr != nil {
 		fmt.Fprintf(out, "%s: FAILED after %d events\n  %v\n", path, n, verifyErr)
-		return &exitError{code: 1}
-	}
-	if n == 0 {
-		// An empty chain verifies the way an empty file does, which is to say
-		// it says nothing. Reporting "intact" here would let a file with the
-		// evidence removed pass as a file that was checked.
-		fmt.Fprintf(out, "%s: the record it carries is empty — nothing to verify\n", path)
 		return &exitError{code: 1}
 	}
 	fmt.Fprintf(out, "%s: chain intact, %d events verified\n", path, n)
@@ -164,6 +157,25 @@ func endsCleanly(chain []byte) bool {
 	return events[len(events)-1].Type == recorder.TypeSessionEnd
 }
 
+// verifiedChain is the walk plus the one rule the walk does not have: a chain
+// with no events in it has not been checked, it has been read.
+//
+// recorder.Verify is right to accept it — nothing in an empty file contradicts
+// anything — but "chain intact, 0 events verified" is the sentence a file with
+// its evidence removed would like to be met with. Both `kelyfos verify` and
+// `kelyfos log --verify` go through here, because the same file must not get
+// two different answers depending on which command a person reached for.
+func verifiedChain(blob []byte) (events int, head string, err error) {
+	n, h, err := recorder.Verify(bytes.NewReader(blob))
+	if err != nil {
+		return n, "", err
+	}
+	if n == 0 {
+		return 0, "", errors.New("the record is empty — there is nothing here to verify")
+	}
+	return n, h, nil
+}
+
 // recordIn finds the flight recorder in whatever the reader was sent.
 //
 // Two shapes, told apart by what they are rather than by their file extension:
@@ -172,7 +184,12 @@ func endsCleanly(chain []byte) bool {
 // reader who points this at the wrong file needs to be told that, not told
 // their audit trail failed to verify.
 func recordIn(blob []byte) (chain []byte, kind string, fromReport bool, err error) {
-	if bytes.HasPrefix(bytes.TrimLeft(blob, " \t\r\n"), []byte("{")) {
+	trimmed := bytes.TrimLeft(blob, " \t\r\n")
+	// An empty file is an empty flight recorder, which is what a process that
+	// died before its first append leaves behind. recorder.Open creates one.
+	// Telling its owner it is "not a flight recorder" sends them looking for
+	// the wrong problem entirely.
+	if len(trimmed) == 0 || bytes.HasPrefix(trimmed, []byte("{")) {
 		return blob, "read from this file, which is a flight recorder itself", false, nil
 	}
 	chain, err = report.ExtractChain(blob)

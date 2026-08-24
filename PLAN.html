@@ -2806,6 +2806,38 @@ after:
         what it is. Caught by running it<br>
         <code>gofmt</code>, <code>vet</code>, 14 packages, <code>make docs</code> clean; the extractor&rsquo;s fuzz
         target clean over 20s</td></tr>
+        <tr><td class="mono">2026-08-24</td><td class="mono">P6-6 (cont. 2)</td>
+        <td><b>Five more defects in P6-6, four of them regressions it introduced, found by an adversarial review of
+        the diff itself.</b> Fourteen findings, deduplicated to five, every one reproduced here before it was
+        touched. Two review passes on one task is not thoroughness for its own sake: the first reviewed the
+        <i>design</i> and the second reviewed the <i>diff</i>, and they found different things.
+        <b>A failed export destroyed the report already at that path.</b> Moving the parse inside
+        <code>Render</code> put <code>os.Create</code> ahead of it, so a record with one unparseable line &mdash; a
+        host killed mid-write is enough &mdash; emptied last week&rsquo;s report to zero bytes and then wrote
+        nothing. It now renders beside the destination and renames into place, so a failure leaves what was there
+        alone and leaves nothing behind either.
+        <b>The command&rsquo;s event count was the verified <i>prefix</i>.</b> P6-6 replaced <code>len(events)</code>
+        with <code>Verify</code>&rsquo;s own count, which stops where the chain breaks &mdash; so on a broken chain
+        the summary disagreed with the page it had just written, about that page. <code>Render</code> returns the
+        count it rendered now, and the two cannot drift.
+        <b>An empty record printed <code>chain head</code> with nothing after it</b> and advertised
+        <code>kelyfos verify</code>, which then refused the file. Both halves were wrong and the second was the
+        one this task exists to prevent: a command pointing a reader at a check that fails.
+        <b><code>log --verify</code> called an empty chain intact</b> while the exit-code table P6-6 edited said
+        otherwise and <code>verify</code> implemented it. One rule now, <code>verifiedChain</code>, behind both
+        entry points &mdash; the same file must not get two answers depending on which command somebody reached
+        for. Both print the chain head now, for the same reason.
+        <b>And a 0-byte flight recorder was refused as &ldquo;not a flight recorder&rdquo;</b>, which is what a
+        process that died before its first append leaves behind. The file is exactly what it should be; it is the
+        chain that has nothing in it, and the two are different sentences.</td>
+        <td class="mono">every one reproduced before it was fixed &mdash; the destructive one in one line:
+        <code>25 bytes before</code> &rarr; <code>0 bytes after</code>, and after the fix
+        <code>25 bytes after</code> with the contents intact<br>
+        four new tests, each pinning one of them, including that the atomic export leaves no
+        <code>.kelyfos-export-*</code> behind<br>
+        the review that found them ran 32 agents over the diff and returned 14 findings; 14 more were raised and
+        refuted by the skeptics, several because the fixes had already landed while it was running<br>
+        <code>gofmt</code>, <code>vet</code>, 14 packages, <code>make docs</code> clean</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
