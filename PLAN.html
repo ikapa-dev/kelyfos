@@ -173,7 +173,7 @@
     <span class="bl-name">Overall</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">P5-2 &mdash; the host syscall filter, proved in force rather than assumed. Most of it is already observed by <code>dev/accept-jail.sh</code>; what remains is recording what it permits</b></div>
+  <div class="focusline">Current focus: <b id="focus">P5-6 &mdash; the cgroup and the jail, composed. <code>--cpu-quota</code> is refused whenever a run is jailed on a systemd-user host: a P5-1 regression P5-2 found by reading the same <code>/proc</code>, and D30 turned into a task rather than a footnote</b></div>
 </div>
 
 <!-- ====================================================== 1. END GOAL -->
@@ -559,13 +559,24 @@
         all move inside the chroot; the flight recorder and the named-session store stay outside it, because a
         record that the jailed process can reach is not a record. Existing cgroup limits (E1) keep working, on the
         jailer&rsquo;s hierarchy rather than beside it.</span></li>
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">P5-2</span><span class="tk"><b>The host-side syscall filter, stated rather than assumed.</b>
         Firecracker ships its own seccomp filter; this task establishes <i>which</i> filter is in force in a KelyfOS
         run, proves it is on rather than trusting a default, and records what it permits. If a custom filter is
         warranted, it is built from Firecracker&rsquo;s published one rather than written from scratch &mdash; a
         hand-rolled syscall allowlist for somebody else&rsquo;s binary is a way to produce a crash that looks like a
         security feature.</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file &mdash; add the checked attribute in the markup.">
+        <span class="tid">P5-6</span><span class="tk"><b>The cgroup and the jail, composed rather than each
+        assuming the other.</b> <b class="blocked">[ADDED 2026-08-24, D30.]</b> Found by P5-2 on the machine the
+        quickstart describes: <code>kelyfos run --cpu-quota</code> is refused whenever the run is jailed on a host
+        whose cgroup path resolves to the systemd user manager. The jailed path builds its command line through the
+        jailer and never calls <code>WrapArgv</code>, so no scope is created; <code>--parent-cgroup</code> is passed
+        only in direct mode, so nothing places the VMM either; <code>Confirm</code> then reads <code>/proc</code>
+        and correctly refuses a quota that was never applied. Fail-closed rather than silent, which is the design
+        working &mdash; but E1&rsquo;s caps have been unusable by default since P5-1, and this phase&rsquo;s own
+        acceptance asks that the cgroup a VMM sits in be the one KelyfOS asked for. Lands before P5-4, with the
+        check that proves it added to <code>dev/accept-jail.sh</code> rather than left as a claim.</span></li>
     <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">P5-3</span><span class="tk"><b>Guest hardening: what the supervisor grants what it
         spawns</b> (P4-2). Per-flavor restrictions on every process the supervisor starts &mdash; exec, plugins, the
@@ -1470,6 +1481,61 @@ after:
         Regression: 33/33 on the epic acceptance, 12/12, 13/13, 18/18, 19/19 and 22/22 on the per-feature ones,
         14/14 recipes, and the whole Go suite.</td>
         <td class="mono">internal/sandbox/jail.go, dev/accept-jail.sh, D29</td></tr>
+        <tr><td class="mono">2026-08-24</td><td class="mono">P5-2</td>
+        <td><b>The host syscall filter, read back out of the kernel rather than inferred from a flag nobody
+        passed.</b> <i>Which</i> filter is settled structurally: the jailer forwards everything after
+        <code>--</code> to Firecracker verbatim, so <code>internal/sandbox/jail_test.go</code> asserts that tail
+        carries neither <code>--no-seccomp</code> nor <code>--seccomp-filter</code>, which makes the filter&rsquo;s
+        identity the pinned binary&rsquo;s identity. <i>That it is on</i> is read from <code>/proc</code> on every
+        thread of the VMM once the guest answers &mdash; per thread because Firecracker installs without TSYNC and
+        one unfiltered thread is a hole a process-level read cannot see &mdash; and a VMM without one is refused
+        with <code>[seccomp.not_in_force]</code>, proved by causing it rather than by asserting it. <i>What it
+        permits</i> was pulled out of the running kernel with <code>PTRACE_SECCOMP_GET_FILTER</code> and interpreted
+        by an abstract interpreter over the real instructions, and agrees syscall for syscall with the JSON
+        Firecracker publishes for v1.16.1 on both architectures.</td>
+        <td class="mono">bash dev/accept-seccomp.sh &rarr; <b>15 passed, 0 failed</b> (aarch64, dev machine)<br>
+        CI 32704409463, boot job on the bare-KVM reference &rarr; <b>14 passed, 0 failed, 1 skipped</b> (x86_64;
+        the skip is the record it was there to produce)<br>
+        vmm 179 insns sha256 e2b10f5c&hellip; &middot; api 103 830d937c&hellip; &middot; vcpu 103 477f0d1c&hellip;
+        (aarch64)<br>
+        vmm 182 insns sha256 5fccc87e&hellip; &middot; api 105 6c84e690&hellip; &middot; vcpu 106 2ae943f4&hellip;
+        (x86_64)<br>
+        distinct syscalls vmm/api/vcpu = <b>50 / 31 / 24</b> on both, against 50 / 31 / 24 in
+        resources/seccomp/&lt;triple&gt;.json at v1.16.1<br>
+        unlisted syscall &rarr; TRAP(0) &middot; foreign arch &rarr; KILL_THREAD &middot; the two arch lists differ
+        in exactly two names: open/stat vs openat/newfstatat<br>
+        negative control: a PATH wrapper appending --no-seccomp &rarr; refused, all threads named, 0 firecracker
+        processes left<br>
+        record: dev/expect/host-seccomp-{aarch64,x86_64}.txt &middot; page: docs/host-seccomp.md<br>
+        regression: dev/accept-jail.sh 14/14, go vet + go test ./... clean, make docs clean</td></tr>
+        <tr><td class="mono">2026-08-24</td><td class="mono">&mdash;</td>
+        <td><b><code>main</code> had been red since P5-1 and nothing had read it.</b> The smoke test asserted that
+        <code>~/.cache/kelyfos/run</code> was empty after teardown, which stopped being the right question when the
+        jailer&rsquo;s path scheme <code>&lt;base&gt;/&lt;exec-file&gt;/&lt;id&gt;/root</code> put a
+        <code>firecracker/</code> level underneath it. Nothing was actually left behind &mdash; the whole of what
+        survives is one empty directory &mdash; so the check now tests the claim it meant: no sandbox state and no
+        sockets anywhere under <code>run/</code>, at any depth, printing what it found when it fails. It mattered
+        beyond tidiness because it sat in front of the step that records the x86_64 filter, so P5-2 could not have
+        finished behind it.</td>
+        <td class="mono">gh run view 32700907992 &rarr; boot: &quot;teardown left run directories behind&quot;, exit 1<br>
+        find ~/.cache/kelyfos/run -mindepth 1 &rarr; one entry, the empty <code>firecracker</code> directory<br>
+        after: CI 32704409463 &rarr; <b>success</b>, all five jobs</td></tr>
+        <tr><td class="mono">2026-08-24</td><td class="mono">P5-6</td>
+        <td><b>A P5-1 regression found while reading the same <code>/proc</code>, turned into a task rather than a
+        footnote (D30).</b> <code>kelyfos run --cpu-quota</code> is refused on every jailed run on a host whose
+        cgroup path resolves to the systemd user manager, which is the dev machine the quickstart describes: the
+        jailed path never calls <code>WrapArgv</code> so no scope is created, and <code>--parent-cgroup</code> is
+        passed only in direct mode so nothing places the VMM either. It is fail-closed, not silent, which is why it
+        went unnoticed rather than unreported. Not fixed here, because it is a design question about how the
+        jailer&rsquo;s cgroup handling composes with E1&rsquo;s two modes and not a line &mdash; P5-6, before
+        P5-4.</td>
+        <td class="mono">kelyfos run --cpu-quota 150% (jailed, default) &rarr; refused: &quot;cpu quota not applied:
+        &hellip;/session-4.scope/cpu.max is &lsquo;max 100000&rsquo;, expected &lsquo;150000 100000&rsquo;&quot;<br>
+        kelyfos run --no-jail --cpu-quota 150% &rarr; ready, cgroup
+        &hellip;/user@501.service/app.slice/kelyfos-64501949.scope &mdash; the same command works unjailed<br>
+        same refusal under <code>sudo -n -E</code>, so it is not a privilege problem<br>
+        internal/sandbox/sandbox.go Start: WrapArgv is on the else branch; jail.go jailArgv: --parent-cgroup only
+        when slice.Direct()</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
@@ -1683,6 +1749,38 @@ after:
         the account already exists.</td>
         <td>P5-0&rsquo;s acceptance list, amended in place with this row cited beside it. <code>dev/accept-jail.sh</code>
         is the check as it now stands: 14 of 14.</td></tr>
+        <tr><td class="mono">D30</td><td class="mono">2026-08-24</td>
+        <td><b>A regression found by one task becomes a task of its own, not a line in somebody else&rsquo;s commit
+        message.</b>
+        <i>What was found.</i> P5-2 read the VMM&rsquo;s <code>/proc</code> to prove its syscall filter, and while
+        it was in there it established that <code>kelyfos run --cpu-quota</code> is refused on every jailed run on a
+        host whose cgroup path resolves to the systemd user manager &mdash; which is the dev machine
+        <a href="#quickstart">section 7</a> tells a new user to build. The mechanism is not in doubt: the jailed
+        branch of <code>Sandbox.Start</code> replaces the command line with the jailer&rsquo;s and so never calls
+        <code>WrapArgv</code>, which is the only thing that creates a systemd scope; <code>--parent-cgroup</code> is
+        added only when the slice is in direct mode; so on a systemd-mode machine nothing places the VMM in a slice
+        at all, and <code>Confirm</code> reads <code>/proc</code> and refuses a quota that was never applied. The
+        same command works with <code>--no-jail</code>, which is the pre-P5-1 behaviour, and fails identically under
+        <code>sudo</code>, which rules out privilege.
+        <i>Alternatives.</i> Fold the fix into P5-2 &mdash; the temptation was real, because it is two files from
+        code that task already touches. Rejected: it is a design question about how the jailer&rsquo;s cgroup
+        handling composes with the two modes E1 chose between, not a line, and a commit that has to explain two
+        unrelated mechanisms is a commit nobody can review. Or leave it as a note for P5-4 to trip over. Also
+        rejected, and more firmly: P5-4 is where the bars are re-measured and the README&rsquo;s sentence is
+        replaced, and arriving there with a shipped feature broken either delays the phase exit or tempts somebody
+        into a sentence that steps around it. A hardening phase that quietly broke a v0.4 feature and did not say so
+        would be exactly the kind of thing this document exists to prevent.
+        <i>Chosen: a new task, P5-6, in list position immediately after P5-2 and before P5-3.</i> Section 6&rsquo;s
+        own rule &mdash; execution order is list position, task IDs are stable labels and may be non-sequential
+        after amendments &mdash; is what makes a P5-6 sitting third both legal and readable: the number says when it
+        was written, the position says when it runs. It carries its own check into
+        <code>dev/accept-jail.sh</code>, which is also the half of this phase&rsquo;s second acceptance item that
+        P5-1 left unobserved, so one task closes both.
+        <i>Revisit when</i> P5-6 lands: if the fix turns out to be the one-line move of <code>WrapArgv</code> that
+        it looks like from here, this row should say so plainly rather than let a careful decision stand as
+        retrospective justification for a small change.</td>
+        <td>Found by P5-2, 2026-08-24. Evidence in the progress row of the same date. The task text is P5-6;
+        this phase&rsquo;s acceptance item 2 is what makes it a phase-exit blocker rather than a backlog item.</td></tr>
     <!-- Claude Code: append rows above this line. -->
   </table>
 </section>

@@ -20,7 +20,7 @@ hand-written half, and this page says where each is still thin.
 | If you are… | Read, in order |
 | --- | --- |
 | trying it for the first time | the repository [`README.md`](../README.md) quickstart, then [`threat-model.md`](threat-model.md) before trusting it with anything |
-| an LLM or an agent framework | [`../llms.txt`](../llms.txt) — an index per the llmstxt.org spec — or [`../llms-full.txt`](../llms-full.txt), which is every page below in one file, about 93,000 tokens |
+| an LLM or an agent framework | [`../llms.txt`](../llms.txt) — an index per the llmstxt.org spec — or [`../llms-full.txt`](../llms-full.txt), which is every page below in one file, about 101,000 tokens |
 | deciding how much machine an agent gets | [`resources.md`](resources.md) |
 | running several agents together | [`teams.md`](teams.md) |
 | auditing what an agent did | [`events.md`](events.md) |
@@ -32,6 +32,7 @@ hand-written half, and this page says where each is still thin.
 | building KelyfOS into something else | [`protocol.md`](protocol.md), then [`e2b-shim.md`](e2b-shim.md) |
 | driving KelyfOS from an MCP client | [`mcp-surface.md`](mcp-surface.md) — `serve-mcp` and `[[plugin]]`, and [recipe 9](cookbook.md) for the configuration |
 | judging whether to trust it | [`threat-model.md`](threat-model.md), then [`hardening.md`](hardening.md) for what v0.9 is adding |
+| what the VMM process itself may ask the host kernel for | [`host-seccomp.md`](host-seccomp.md) — every syscall the filter permits, read out of a running machine |
 
 ## The map
 
@@ -47,12 +48,13 @@ hand-written half, and this page says where each is still thin.
 | [`qol.md`](qol.md) | concept | The v0.8 specification, written before the code: named sessions and their store, the workspace manifest, the PTY channel, and why inbound forwarding does not touch the firewall. |
 | [`mcp-surface.md`](mcp-surface.md) | concept | MCP in both directions: `serve-mcp` as a tool for any client, and `[[plugin]]` servers inside the guest. Specification, written before the code. |
 | [`hardening.md`](hardening.md) | concept | The v0.9 specification, written before the code: what a compromised agent reaches today, what the jailer and the guest profiles take away, and what remains reachable afterwards. |
+| [`host-seccomp.md`](host-seccomp.md) | mixed | The syscall filter around the VMM process: which one is in force and why that is settled, how it is proved from the kernel's own copy rather than from the absence of a flag, and every syscall it permits. |
 | [`threat-model.md`](threat-model.md) | concept | What KelyfOS defends against and — the longer half — what it does not. |
 | [`cookbook.md`](cookbook.md) | recipes | Fourteen complete, copy-pasteable recipes. Every one is a script CI extracts and runs on a real machine. |
 | [`integrating.md`](integrating.md) | mixed | For building on KelyfOS: the four ways in, orchestrator patterns, and a long list of the mistakes people actually make. |
 | [`e2b-shim.md`](e2b-shim.md) | mixed | The E2B-compatible REST subset: what it implements, what it does not, and why. |
 | [`../llms.txt`](../llms.txt) | **generated** | The index a machine reads first: every page above as a link with a one-line description, per the llmstxt.org spec. |
-| [`../llms-full.txt`](../llms-full.txt) | **generated** | Every page above concatenated, each with its source URL. About 93,000 tokens — measured by `make docs`, and re-measured at every epic exit because it is exactly the kind of number that goes stale quietly. |
+| [`../llms-full.txt`](../llms-full.txt) | **generated** | Every page above concatenated, each with its source URL. About 101,000 tokens — measured by `make docs`, and re-measured at every epic exit because it is exactly the kind of number that goes stale quietly. |
 | [`launch/hn-post.md`](launch/hn-post.md) | not documentation | The launch post draft. Unposted, and the maintainer's to send. |
 
 The plan files at the repository root — [`PLAN.html`](../PLAN.html) for phases 0–4
@@ -235,6 +237,21 @@ implemented.
 *Thin:* nothing yet, and that is a statement about a page written before its
 code rather than a claim of completeness. It is measured at the P5 exit, not
 here.
+
+### `host-seccomp.md` — the wall around the VMM process
+
+*Mixed:* which filter is in force and the single argument that settles it — that
+KelyfOS passes neither `--no-seccomp` nor `--seccomp-filter`, kept true by a test
+rather than by care; how the mode is read from `/proc` on every thread of the
+VMM and a machine without it refused; and the full permitted set for each of the
+three thread filters, produced by pulling the installed program back out of the
+kernel and interpreting it.
+*Reference:* `dev/expect/host-seccomp-<arch>.txt` is the machine-checked copy the
+acceptance diffs a live VMM against; this page is written from it.
+*Thin:* the conditions on argument-conditioned syscalls are quoted from
+Firecracker's published filter rather than read out of the program — the probe
+reports that a condition exists, not what it is. Nothing turns on the difference
+today, and the page says so where it matters.
 
 ### `threat-model.md` — what to trust
 

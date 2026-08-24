@@ -73,6 +73,8 @@ func docSet() []doc {
 			Summary: "MCP in both directions: kelyfos as a tool for any client, and plugins inside the guest"},
 		{Path: "docs/hardening.md", Title: "Hardening", Full: true,
 			Summary: "what a compromised agent can reach, what each layer takes away, and — the longer half — what remains"},
+		{Path: "docs/host-seccomp.md", Title: "The host syscall filter", Full: true,
+			Summary: "which filter is around the VMM process, how that is proved from the kernel's own copy, and every syscall it permits"},
 		{Path: "docs/e2b-shim.md", Title: "E2B-compatible shim", Full: true,
 			Summary: "the REST subset for existing E2B SDK code, and what it deliberately omits"},
 		{Path: "docs/cookbook.md", Title: "Cookbook", Full: true,

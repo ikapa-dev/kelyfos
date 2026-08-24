@@ -20,6 +20,7 @@ Apache-2.0. Single-host developer tool; not hardened yet — the threat model be
 - [Host/guest protocol](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/protocol.md): the vsock transport, the port map, and every channel's messages
 - [The MCP surface](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/mcp-surface.md): MCP in both directions: kelyfos as a tool for any client, and plugins inside the guest
 - [Hardening](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/hardening.md): what a compromised agent can reach, what each layer takes away, and — the longer half — what remains
+- [The host syscall filter](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/host-seccomp.md): which filter is around the VMM process, how that is proved from the kernel's own copy, and every syscall it permits
 - [E2B-compatible shim](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/e2b-shim.md): the REST subset for existing E2B SDK code, and what it deliberately omits
 - [Cookbook](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/cookbook.md): eight complete recipes, each one a script CI runs on a real machine
 - [Building on KelyfOS](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/integrating.md): for putting KelyfOS inside something else: the three ways in, orchestrator patterns, and the mistakes people actually make
@@ -36,6 +37,6 @@ Apache-2.0. Single-host developer tool; not hardened yet — the threat model be
 
 ## Optional
 
-- [Everything in one file](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/llms-full.txt): every page above concatenated, roughly 98k tokens, for a client that would rather spend context than fetch
+- [Everything in one file](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/llms-full.txt): every page above concatenated, roughly 102k tokens, for a client that would rather spend context than fetch
 - [Build plan and decision log](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/PLAN.html): HTML. Phases 0-4, every decision with its rationale and the command output behind each claim
 - [Feature plan and decision log](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/PLAN-FEATURES.html): HTML. The epics after the build plan, same protocol

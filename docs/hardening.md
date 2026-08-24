@@ -145,6 +145,15 @@ A hand-written syscall allowlist for somebody else's binary is a way to produce
 a crash that looks like a security feature. If a custom filter is ever
 warranted, it starts from Firecracker's published one.
 
+*Written after P5-2, because the task went further than this section asked.*
+The mode is read on **every thread** of the VMM, not on the process, because
+Firecracker installs its filters without `TSYNC` and one unfiltered thread is a
+hole a process-level read cannot see — and a VMM without a filter is refused
+with `[seccomp.not_in_force]` rather than merely reported. The permitted set is
+recorded in [`host-seccomp.md`](host-seccomp.md), read out of the running kernel
+with `PTRACE_SECCOMP_GET_FILTER` and interpreted, rather than transcribed from
+the JSON; the two agree exactly, which is the point of having done it twice.
+
 ---
 
 ## 4. Layer three: what the supervisor grants what it spawns
@@ -257,7 +266,7 @@ useful to an attacker; it does not turn the product into a public cloud.
 | --- | --- |
 | This spec | P5-0 |
 | Firecracker under the jailer, every entry point, records outside the jail | P5-1 |
-| The host filter proved in force rather than assumed | P5-2 |
+| The host filter proved in force rather than assumed, and what it permits recorded in [`host-seccomp.md`](host-seccomp.md) | P5-2 |
 | Per-flavor guest confinement, refusing rather than degrading; Landlock compiled in and named in `CONFIG_LSM` | P5-3 |
 | Bars re-earned on the bare-KVM reference; the README sentence replaced; the threat model agreeing | P5-4 |
 | Launch assets | P5-5 |
