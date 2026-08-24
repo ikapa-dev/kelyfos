@@ -170,7 +170,7 @@ A command was submitted, before it runs.
 | `call` | string | Correlates the start, output and exit of one command. |
 | `cmd` | array of string | The argv actually sent. A shell wrapper is visible here because it changes what the command can do. |
 | `cwd` | string | Working directory, if set. |
-| `via` | string | `exec` (the CLI) or `mcp` (a tool call). |
+| `via` | string | Which door asked: `exec` (the CLI), `mcp` (a guest tool call), or `serve-mcp` (an outside MCP client). |
 | `agent` | string | Present inside a team: which member ran it. |
 
 ### `command.output`
@@ -206,7 +206,7 @@ workspace, and a much worse place to leave it.
 | `path` | string | Path inside the guest. |
 | `bytes` | integer | Size written. |
 | `sha256` | string | Digest of the content, so a later claim about what was written can be checked. |
-| `via` | string | Tool name: `write_file` or `upload`. |
+| `via` | string | Which door the write came through: `write_file` or `upload` for a guest MCP tool, `serve-mcp` for an outside MCP client, `shim` for the E2B surface. |
 | `agent` | string | Present inside a team: which member wrote it. |
 
 ### `egress.attempt`
@@ -218,7 +218,7 @@ One outbound connection attempt. Written from P2-5.
 | `port` | integer | Requested port. |
 | `allowed` | boolean | Whether policy permitted it. |
 | `reason` | string | Why it did not go through. See below. |
-| `mode` | string | `tunnelled` or `terminated`. **Required whenever `allowed` is true.** |
+| `mode` | string | How much the proxy could read: `tunnelled` (a `CONNECT` it relayed unopened), `terminated` (a secret-bound domain it decrypted), or `plain` (ordinary HTTP, which it necessarily read in full). **Required whenever `allowed` is true.** |
 | `bytes_in`, `bytes_out` | integer | Transferred, when the connection closed. |
 | `agent` | string | Present inside a team: which agent's proxy this was. |
 
@@ -228,9 +228,9 @@ One outbound connection attempt. Written from P2-5.
 | --- | --- |
 | `not_in_allowlist` | The host is not permitted by this sandbox's `--allow`. |
 | `port_not_allowed` | Permitted host, but not port 80 or 443. |
-| `bad_request` | The proxy could not parse the request or its target. `host` and `port` may be absent. |
+| `bad_request` | The proxy could not parse the request or its target, or could not mint a certificate for a secret-bound domain. `host` and `port` may be absent. |
 | `upstream_unreachable` | Policy allowed it and the dial failed. |
-| `tls_pinning_rejected_our_ca` | A secret-bound domain was terminated and the client refused the run's CA — a pinned client, behaving correctly (`docs/networking.md` §6). |
+| `tls_pinning_rejected_our_ca` | A secret-bound domain was terminated and the TLS handshake with the guest failed. Pinning is the common cause and the one worth naming — a pinned client refusing the run's CA is behaving correctly — but any handshake failure on a terminated domain lands here (`docs/networking.md` §6). |
 
 `mode` exists because of decision D6, and answers exactly one question: how much
 of this connection could the host read? `tunnelled` means nothing — a `CONNECT`

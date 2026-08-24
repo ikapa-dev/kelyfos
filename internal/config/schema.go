@@ -111,7 +111,7 @@ func inSection(section string, keys []Key) []Key {
 func Sections() []Section {
 	return []Section{
 		{Name: "", Header: "(bare) or [sandbox]", Doc: "what to boot, and what it may reach"},
-		{Name: "resources", Header: "[resources]", Doc: "hard ceilings for a single run: a flag may ask for less, never more"},
+		{Name: "resources", Header: "[resources]", Doc: "hard ceilings for a single run, and the value when no flag asks: a flag may ask for less, never more"},
 		{Name: "team", Header: "[team]", Doc: "several agents on one host, and the paths between them"},
 		{Name: "mcp", Header: "[mcp]", Doc: "limits on the outward MCP server, kelyfos serve-mcp"},
 		{Name: "team.resources", Header: "[team.resources]", Doc: "the collective budget — cpu_quota is the only cap a team can share"},

@@ -6,9 +6,10 @@
 # nested virtualisation makes the virtualised device path expensive in a way the
 # real deployment target is not.
 #
-# Manual for now (workflow_dispatch). P3-6 extends this into the full pipeline:
-# both architectures, boot tests, Buildroot toolchain caching per arch, and a run
-# on every commit to main.
+# Manual by design (workflow_dispatch): it takes an hour and its numbers are a
+# claim about hardware, not a regression gate. The pipeline that gates main is
+# ci.yml, which P3-6 built — both architectures, boot tests and per-arch caching
+# live there.
 name: bench
 
 on:
@@ -61,7 +62,10 @@ jobs:
           PY
 
       # Buildroot downloads are large and identical between runs. The build tree
-      # itself is not cached here — per-arch toolchain caching is P3-6's job.
+      # itself is deliberately not cached here: this workflow runs rarely, so a
+      # restored tree would be stale more often than it would be useful, and a
+      # benchmark that built from a cache nobody checked is a benchmark of the
+      # cache. ci.yml caches the tree, because it runs on every commit.
       - name: Cache Buildroot downloads
         uses: actions/cache@v4
         with:

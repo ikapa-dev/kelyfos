@@ -82,12 +82,19 @@ The Linux layer is required — Firecracker runs on Linux/KVM only:
 limactl start --name kelyfos-dev dev/lima.yaml   # macOS; see dev/wsl2.md for WSL2
 limactl shell kelyfos-dev -- bash dev/install-build-deps.sh
 limactl shell kelyfos-dev -- bash dev/install-firecracker.sh
-limactl shell kelyfos-dev -- make
+limactl shell kelyfos-dev -- make cli
+limactl shell kelyfos-dev -- make image FLAVOR=dev
 ```
 
-External component versions are pinned in [`versions.mk`](versions.mk). Nothing
-floats. Bumping one means changing the version and its checksum in the same
-commit, with the reason in the progress log.
+Bare `make` prints the target list and builds nothing — the default goal is
+`help`. The first `make image` on a machine also builds the cross toolchain,
+which takes about thirty-five minutes; after that it is minutes.
+
+The guest toolchain — Buildroot, the kernel, Firecracker and Go — is pinned in
+[`versions.mk`](versions.mk), and Go modules in `go.mod`. Bumping one means
+changing the version and its checksum in the same commit, with the reason in the
+progress log. What is *not* pinned: the host build packages `apt` installs, and
+the build is not reproducible yet — that work is P6-9.
 
 Keep commits small and reference the task ID they belong to:
 
@@ -97,8 +104,14 @@ P1-6: exec over vsock
 
 ## Reporting a security issue
 
-Do not open a public issue. KelyfOS is pre-v0.1 and makes no hardened-security
-claims yet — host hardening (jailer) and guest hardening (seccomp/Landlock) are
-phase 4 work, and `docs/threat-model.md` will state plainly what is and is not
-defended. Until a security contact is published, raise concerns privately with
-the maintainer.
+Do not open a public issue. KelyfOS is at v0.9, and it does make security
+claims now: the VMM runs under the jailer with its own syscall filter read out
+of `/proc` and refused if absent, and everything the guest's supervisor spawns
+is confined by Landlock and a seccomp refusal list.
+[`docs/threat-model.md`](docs/threat-model.md) states what is and is not
+defended, and [`docs/hardening.md`](docs/hardening.md) §5 is the longer list of
+what remains reachable.
+
+**There is no published security contact yet, and that is a gap rather than a
+policy.** Until one exists, raise concerns privately with the maintainer. A
+`SECURITY.md` with a real disclosure channel is P6-2.

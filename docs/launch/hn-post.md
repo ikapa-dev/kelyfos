@@ -2,8 +2,9 @@
 
 Submission is the maintainer's action, not the build's. This file is the text,
 ready to paste. It tracks the repo: the numbers below are the ones the CI
-benchmark last published, with the run ids, and they get re-checked before the
-post goes out.
+benchmark last published, and they get re-checked before the post goes out. The
+run ids are recorded beside each figure below and in PLAN.html's progress log,
+which is where to look if a number is challenged.
 
 Current as of **v0.9** (hardening: the jailer, the VMM's own syscall filter
 proved in force, and per-flavor guest confinement). The numbers below come from
@@ -71,8 +72,10 @@ change of security posture.
 >
 > Boot-to-ready is 135 ms median (p95 149 ms) and snapshot restore 49 ms (p95 51),
 > both x86_64 on a bare-KVM CI runner, 10 runs each — the benchmark is a
-> workflow in the repo, not a number I typed. A five-agent team comes up in
-> 412 ms with all five cold and 286 ms once a fork template is cached. `kelyfos fork -n 4` gives you
+> workflow in the repo, not a number I typed (bench run 32715343990). A
+> five-agent team comes up in 412 ms with all five cold and 286 ms once a fork
+> template is cached (caps run 32715397107, one run of the five-agent graph in
+> the repo rather than ten). `kelyfos fork -n 4` gives you
 > four divergent copies of one prepared machine; each gets fresh entropy and a
 > corrected clock on resume, because four VMs restored from one memory image
 > otherwise share a random pool, which is a genuinely bad way to generate a key.
@@ -96,9 +99,10 @@ change of security posture.
 > build system went to Buildroot's supported LTS line, which only carries kernel
 > headers to 6.12, so the guest kernel went back from 6.18 — costing about a
 > third of the boot time and buying a build system whose maintainers support it
-> until 2028. And the hardening below sits on the boot path: the jailer, reading
-> the VMM's filter out of /proc, and probing the guest's profile cost about 12 ms
-> each way. Both targets — 300 ms cold, 100 ms restore — still hold with room,
+> until 2028. And the hardening below sits on the boot path: the jailer and
+> probing the guest's profile cost about 12 ms each way. Reading the VMM's filter
+> out of /proc happens after boot-to-ready has been taken, so it is deliberately
+> not in that number. Both targets — 300 ms cold, 100 ms restore — still hold with room,
 > and the numbers above are the ones measured after those changes rather than the
 > ones from before them.
 >
@@ -137,7 +141,7 @@ change of security posture.
   the first hour of replies decides the thread.
 - Re-run `make bench` (or check the newest `bench.yml` run) before posting and
   fix the four numbers in the comment if they moved: cold boot, restore, and the
-  cold/warm team-up pair. Say the run ids if challenged.
+  cold/warm team-up pair, and update the run ids beside them.
 - Expect these four questions; the answers are all in the repo:
   1. *"Why not just gVisor / a container?"* → the guarantees here are about
      what the guest **can express**, not just what the kernel blocks. A

@@ -559,11 +559,16 @@ MCP client ──stdio──► kelyfos mcp ──UDS + "CONNECT 10002\n"──�
 ```
 
 It MUST NOT reframe, reorder, buffer whole messages, or parse the JSON-RPC to
-decide anything. It may *observe* messages to feed the flight recorder, and it
-MUST forward bytes onward unmodified. Its only protocol responsibility is
-consuming the `OK …\n` acknowledgement line (§1.1) before the first byte of MCP
-traffic, and never emitting that line to the client's stdout — the spec forbids
-writing anything to stdout that is not a valid MCP message.
+decide anything, and it MUST forward bytes onward unmodified. It may *observe*
+messages to feed the flight recorder. It has two protocol responsibilities of
+its own, and no others. The first is consuming the `OK …\n` acknowledgement line
+(§1.1) before the first byte of MCP traffic, and never emitting that line to the
+client's stdout — the spec forbids writing anything to stdout that is not a valid
+MCP message. The second is that when the guest's end of the stream closes with a
+tool call outstanding, the bridge answers that call with a JSON-RPC error of its
+own (F-D33): a client left waiting forever on a dead sandbox is worse than a
+client told the sandbox is gone. Both are messages the bridge *originates*;
+neither modifies one it was given.
 
 `stderr` stays a logging channel in both directions' spirit: the bridge may write
 diagnostics there, and an MCP client is required not to treat that as failure.
@@ -593,7 +598,7 @@ logs it with every session and refuses a `v` it does not implement.
 | Boot-to-ready measured from first `ready` frame | P1-7 |
 | Supervisor serves `control` per §5.4 | P2-1 |
 | MCP server on `10002` with §6 framing | P2-2 |
-| `kelyfos mcp` is a byte-level pass-through | P2-3 |
+| `kelyfos mcp` forwards bytes unmodified, and originates only the two messages in §6.1 | P2-3, F-D33 |
 | `events` feeds the hash-chained recorder | P2-4 |
 | `resync` applied on every snapshot restore; per-fork `vsock_override` | P3-1, P3-2 |
 | Supervisor re-dials `10100`, `10101` and `10102` after a snapshot reset | P3-1, E2-1 |

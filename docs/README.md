@@ -20,7 +20,7 @@ hand-written half, and this page says where each is still thin.
 | If you are… | Read, in order |
 | --- | --- |
 | trying it for the first time | the repository [`README.md`](../README.md) quickstart, then [`threat-model.md`](threat-model.md) before trusting it with anything |
-| an LLM or an agent framework | [`../llms.txt`](../llms.txt) — an index per the llmstxt.org spec — or [`../llms-full.txt`](../llms-full.txt), which is every page below in one file, about 101,000 tokens |
+| an LLM or an agent framework | [`../llms.txt`](../llms.txt) — an index per the llmstxt.org spec — or [`../llms-full.txt`](../llms-full.txt), which is every page below in one file — `llms.txt` states its current size |
 | deciding how much machine an agent gets | [`resources.md`](resources.md) |
 | running several agents together | [`teams.md`](teams.md) |
 | auditing what an agent did | [`events.md`](events.md) |
@@ -54,7 +54,7 @@ hand-written half, and this page says where each is still thin.
 | [`integrating.md`](integrating.md) | mixed | For building on KelyfOS: the four ways in, orchestrator patterns, and a long list of the mistakes people actually make. |
 | [`e2b-shim.md`](e2b-shim.md) | mixed | The E2B-compatible REST subset: what it implements, what it does not, and why. |
 | [`../llms.txt`](../llms.txt) | **generated** | The index a machine reads first: every page above as a link with a one-line description, per the llmstxt.org spec. |
-| [`../llms-full.txt`](../llms-full.txt) | **generated** | Every page above concatenated, each with its source URL. About 101,000 tokens — measured by `make docs`, and re-measured at every epic exit because it is exactly the kind of number that goes stale quietly. |
+| [`../llms-full.txt`](../llms-full.txt) | **generated** | Every page above concatenated, each with its source URL. Its size is *estimated* by `make docs` and printed in `llms.txt`, rather than repeated here — because a hand-typed count is exactly the kind of number that goes stale quietly, and this one had: it said 101,000 while the generator said 108,000. |
 | [`launch/hn-post.md`](launch/hn-post.md) | not documentation | The launch post draft. Unposted, and the maintainer's to send. |
 
 The plan files at the repository root — [`PLAN.html`](../PLAN.html) for phases 0–4
@@ -151,9 +151,12 @@ data rather than script, and is off until asked for.
 *Reference:* none of it — the catalog itself is generated to
 [`reference/denials.md`](reference/denials.md), and this page links to it rather
 than repeating it, which is the arrangement E3-1 exists to make possible.
-*Thin:* nothing material. The catalog covers every refusal the product makes,
-which is checked by the build rather than by reading (`make docs` fails when an
-entry is raised nowhere), and E5-5 added its own the moment forwarding existed.
+*Thin:* the catalog covers every refusal that carries an ID, and the build checks
+that each entry is raised somewhere (`make docs` fails when one is not). What it
+does not cover is the refusals raised while reading `kelyfos.toml` or validating
+a team plan: those name their own file and line instead of an ID, deliberately,
+because the thing to look at is the line you wrote — but it means "every refusal"
+was too strong, and `denial.Of` does not recognise them.
 
 ### `teams.md` — several agents at once
 
@@ -164,8 +167,7 @@ cold-first, fork-warm and the measurements behind it (F-D25, F-D26).
 template-cache key and its 2 GiB bound, the boot paths.
 *Thin:* F-D20 and F-D21 refuse `idle_timeout` by pointing at each other, and
 neither refusal mentions the other, so a user who follows the first message hits
-the second; `[team.agent.spawn.resources]` accepts two keys nothing enforces
-(F-D27); `team ps` has no sample output; the store's `not_found` is described as
+the second; `team ps` has no sample output; the store's `not_found` is described as
 "not a refusal" and is recorded as one.
 
 ### `cookbook.md` — fourteen things that work
@@ -220,9 +222,10 @@ has to be agreed in advance — the named-session store and its frozen policy, t
 workspace manifest two commands share, the PTY channel as an additive protocol
 revision, and the vsock transport that lets inbound forwarding exist without a
 single nftables rule.
-*Thin:* it describes nothing that runs yet, and says so. The four features that
-are wrappers over existing machinery are not in it, because there is nothing to
-decide about them.
+*Thin:* written before its code, and the code has since answered it — §1.1 and
+§2.2 carry "corrected after the epic" notes where the built thing differed from
+the plan. The four features that are wrappers over existing machinery are not in
+it, because there was nothing to decide about them.
 
 ### `hardening.md` — the v0.9 specification
 
@@ -293,9 +296,10 @@ specification, not a description.
 **Snapshot restore's networking.** How a frozen NIC is re-paired to a fresh TAP
 (D22) is in the code and in no document.
 
-**Environment variables.** `KELYFOS_SANDBOX`, `KELYFOS_CACHE` and
-`KELYFOS_CGROUP_ROOT` are read by the CLI and named nowhere. `KELYFOS_SANDBOX`
-is the one an integrator needs, and E3-4 is its home.
+**Environment variables.** `KELYFOS_CACHE` and `KELYFOS_CGROUP_ROOT` are read by
+the CLI and named nowhere. `KELYFOS_SANDBOX` is covered in
+[`integrating.md`](integrating.md) and the cookbook, but has no entry in the
+generated reference; E3-4 is its home.
 
 **A JavaScript client that has been run.** [`integrating.md`](integrating.md)
 covers the configuration route and the wire format, and deliberately prints no
@@ -308,10 +312,10 @@ and has not been paid.
 1. **Generated where possible.** `make docs` regenerates
    [`reference/`](reference/) from the source and CI fails on any diff (F-D4,
    E3-1). A flag that exists cannot be missing from the reference, and a flag in
-   the reference cannot be one that no longer exists. Three of the five pages are
+   the reference cannot be one that no longer exists. Three of the seven pages are
    read straight out of the running product — the CLI's own `-h`, the
-   supervisor's own `tools/list` — and the other two out of tables the product
-   depends on, so there is no copy of the truth that only the documentation
+   supervisor's own `tools/list`, and its `--dump-profile` — and the other four
+   out of tables the product depends on, so there is no copy of the truth that only the documentation
    reads.
 2. **Executed where possible.** Every recipe in
    [`cookbook.md`](cookbook.md) is a script, extracted rather than transcribed,

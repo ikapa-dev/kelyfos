@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # Download a prebuilt KelyfOS guest image from a GitHub release (D20).
 #
-# The artifacts are byte-identical to what `make image` produces; this only
-# saves you the ~35 minutes of compiling a toolchain, a kernel and a userland.
-# SHA256SUMS gives you integrity, not provenance — nothing here is signed yet,
-# that is P4-3. If you need to know who built the bytes, build them yourself.
+# The artifacts are built from this source at the release tag, and save you the
+# ~35 minutes of compiling a toolchain, a kernel and a userland. They are not
+# bit-for-bit what `make image` produces on your machine: the build is not
+# reproducible yet (P6-9). SHA256SUMS gives you integrity, not provenance —
+# nothing here is signed yet, that is P6-11. If you need to know who built the
+# bytes, build them yourself.
 #
 # Usage: dev/fetch-image.sh [ARCH] [TAG]
 set -euo pipefail

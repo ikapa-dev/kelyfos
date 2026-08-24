@@ -6,7 +6,7 @@ Single host, no control plane, no hosted service. `kelyfos run` boots one sandbo
 
 The reference pages are generated from the source on every commit and CI fails when they disagree with it, so a flag or a key found there exists. The concept pages are written by hand.
 
-Apache-2.0. Single-host developer tool; not hardened yet — the threat model below is explicit about what that means.
+Apache-2.0. Single-host developer tool, not a multi-tenant sandbox for hostile code. From v0.9 the VMM runs under the jailer with its own syscall filter proved in force, and everything the guest spawns is confined by Landlock and a syscall refusal list; an agent is still root inside its own guest, and the VM rather than the chroot is the boundary. The threat model below is explicit about which is which.
 
 ## Docs
 
@@ -22,8 +22,9 @@ Apache-2.0. Single-host developer tool; not hardened yet — the threat model be
 - [Hardening](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/hardening.md): what a compromised agent can reach, what each layer takes away, and — the longer half — what remains
 - [The host syscall filter](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/host-seccomp.md): which filter is around the VMM process, how that is proved from the kernel's own copy, and every syscall it permits
 - [E2B-compatible shim](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/e2b-shim.md): the REST subset for existing E2B SDK code, and what it deliberately omits
-- [Cookbook](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/cookbook.md): eight complete recipes, each one a script CI runs on a real machine
-- [Building on KelyfOS](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/integrating.md): for putting KelyfOS inside something else: the three ways in, orchestrator patterns, and the mistakes people actually make
+- [Cookbook](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/cookbook.md): complete recipes, each one a script CI runs on a real machine
+- [Building on KelyfOS](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/integrating.md): for putting KelyfOS inside something else: the four ways in, orchestrator patterns, and the mistakes people actually make
+- [Daily-driver quality of life](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/qol.md): the shell, the diff, pause and resume, port forwarding and notifications — written before the code, with the places the built thing differed marked
 - [Documentation map](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/README.md): what every document is, and — deliberately — where each is still thin
 
 ## Reference
@@ -38,6 +39,6 @@ Apache-2.0. Single-host developer tool; not hardened yet — the threat model be
 
 ## Optional
 
-- [Everything in one file](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/llms-full.txt): every page above concatenated, roughly 108k tokens, for a client that would rather spend context than fetch
-- [Build plan and decision log](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/PLAN.html): HTML. Phases 0-4, every decision with its rationale and the command output behind each claim
+- [Everything in one file](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/llms-full.txt): every page above concatenated, roughly 114k tokens, for a client that would rather spend context than fetch
+- [Build plan and decision log](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/PLAN.html): HTML. Every phase and every decision with its rationale, and the command output behind each claim
 - [Feature plan and decision log](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/PLAN-FEATURES.html): HTML. The epics after the build plan, same protocol

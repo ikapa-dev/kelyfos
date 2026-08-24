@@ -16,7 +16,10 @@ kelyfos: api.stripe.com is not in this sandbox's allowlist [egress.host]
     add allow = ["api.stripe.com"] to kelyfos.toml, or rerun with --allow api.stripe.com
 ```
 
-Three parts, always in this order.
+Three parts, always in this order. Every refusal *the catalog raises* has them;
+the refusals raised while reading `kelyfos.toml` or validating a team plan do
+not, and are not in the catalog — they name their own file and line instead,
+because the thing to go and look at is the line you wrote.
 
 **The refusal.** What was asked for and why it was not permitted, naming the
 specifics — the domain, the ceiling, the file and the line it came from. A
@@ -129,7 +132,10 @@ to apply it anyway.
 
 ## For programs
 
-A refusal is a `*denial.Refusal`, carrying its ID and the values it named:
+A catalogued refusal is a `*denial.Refusal`, carrying its ID and the values it
+named. A policy-file or team-plan refusal is an ordinary error and
+`denial.Of` does not recognise it, so a program that branches on IDs should
+treat "no ID" as its own case rather than as "not a refusal":
 
 ```go
 if r, ok := denial.Of(err); ok && r.ID() == "budget.sandboxes" {

@@ -128,16 +128,19 @@ Run it with:  kelyfos run --image dev
 ./bin/kelyfos log --verify
 ```
 
-`kelyfos doctor` is the thing to run first on any new machine: it checks eight
+`kelyfos doctor` is the thing to run first on any new machine: it checks nine
 things and prints the exact fix for whatever is wrong, tailored to whether you
 are on Lima, WSL2, bare Linux or macOS.
 
 ### Building it yourself
 
-The downloads above are the same bytes the build produces — CI builds both
-arches from source on every commit that touches code — but building takes about
-thirty-five minutes, because it compiles a cross toolchain, a kernel and a
-userland:
+The downloads above are built from this source at the release tag. They are
+**not** bit-for-bit what your own `make image` produces: the build is not
+reproducible yet, the two architectures of v0.9 were built on two different
+machines, and CI's per-commit build is the `base` flavor while the download is
+`dev`. Making that claim true is measured rather than asserted — see
+[`PLAN.html`](PLAN.html) P6-9. Building it yourself takes about thirty-five
+minutes, because it compiles a cross toolchain, a kernel and a userland:
 
 ```sh
 bash dev/install-build-deps.sh     # compiler, Buildroot prerequisites, pinned Go
@@ -167,24 +170,42 @@ That boots a sandbox, runs your agent with `KELYFOS_SANDBOX` set so its tools
 attach to that machine, and tears everything down when the agent exits —
 `kelyfos` exits with the agent's own status, so it composes in a script.
 
-Under the hood, `kelyfos mcp` bridges any MCP client's standard streams to a
-running sandbox; this repository ships a [`.mcp.json`](.mcp.json) that attaches
-Claude Code:
+There are two doors, and which one a client wants depends on who owns the
+sandbox's lifetime. `kelyfos serve-mcp` is the outward one: the client has no
+sandbox yet, and the tools are for getting one. `kelyfos mcp` is the inward
+bridge to a sandbox that already exists.
+
+A client wants `serve-mcp`, and it must be told where the policy is —
+`--policy <path>`, absolutely, because the working directory a client launches
+from is the client's and not yours, and a server that finds no policy runs with
+no ceiling at all:
 
 ```json
-{ "mcpServers": { "kelyfos": { "command": "kelyfos", "args": ["mcp"] } } }
+{
+  "mcpServers": {
+    "kelyfos": {
+      "type": "stdio",
+      "command": "/abs/path/to/kelyfos",
+      "args": ["serve-mcp", "--policy", "/abs/path/to/kelyfos.toml"]
+    }
+  }
+}
 ```
 
-If the agent runs on macOS while the sandbox runs in the Lima layer, the bridge
-speaks stdio, so `limactl` passes it through unchanged:
+This repository's own [`.mcp.json`](.mcp.json) runs
+[`dev/mcp-server.sh`](dev/mcp-server.sh) instead of naming a binary directly,
+because the macOS form has to cross into the Lima layer — `limactl shell
+kelyfos-dev -- <abs path> serve-mcp --policy <abs path>` — and a VM name and an
+absolute path do not belong in a file a Linux contributor also checks out. The
+script picks the right form for the machine it runs on and says what is wrong
+when it cannot.
 
-```json
-{ "command": "limactl", "args": ["shell", "kelyfos-dev", "--", "kelyfos", "mcp"] }
-```
+Writing that file by hand is what `kelyfos connect <client>` is for; until it
+ships, [`docs/integrating.md`](docs/integrating.md) has the per-client shapes.
 
 The agent then sees six tools — `exec`, `read_file`, `write_file`, `list_dir`,
-`upload`, `download` — and nothing else. In a team it sees the team tools too,
-and nothing else still.
+`upload`, `download` — and nothing else. In a team it sees the team tools too, and a
+`[[plugin]]` adds its own namespaced ones — and nothing else still.
 
 ## Policy travels with the project
 
@@ -202,7 +223,7 @@ workspace = "."
 cpus        = 2             # cores the guest sees
 cpu_quota   = "150%"        # ...but at most 1.5 cores' worth of host CPU time
 mem         = "2G"
-disk        = "4G"          # the /work device
+disk        = "4G"          # ceiling on the packed /work image, refused before boot
 scratch     = "512M"        # everything written outside /work
 net_mbps_rx = 50
 disk_mbps   = 100
@@ -213,13 +234,17 @@ idle_timeout = "5m"         # no tool call and no traffic for that long ends it
 `[resources]` are limits, not defaults — `--cpus 8` against `cpus = 2` refuses
 at boot and names the line it came from, rather than quietly clamping.
 
-Every one of them is enforced on the **host**: KVM machine config, a cgroup v2
-`cpu.max`, Firecracker's own token-bucket rate limiters, device sizes and a host
-timer. The guest runs untrusted code and is never asked to police itself, and
-the same is true of the receipt: every session ends with a `resource.summary`
-event recording what it consumed beside what it was allowed, measured from
-counters the kernel keeps about the VMM process. `kelyfos watch` shows the same
-figures live. See [`docs/resources.md`](docs/resources.md), and
+Every one of them but `scratch` is enforced on the **host**: KVM machine config,
+a cgroup v2 `cpu.max`, Firecracker's own token-bucket rate limiters, device sizes
+and a host timer. The guest runs untrusted code and is never asked to police
+itself — `scratch` is the one exception and is named as one: it is a `size=` the
+guest's own kernel applies to its tmpfs, bounded underneath by the `mem` the VM
+was built with, which is enforced on the host. Much the same is true of the
+receipt: a `kelyfos run` session, and every agent in a team, ends with a
+`resource.summary` event recording what it consumed beside what it was allowed,
+measured from counters the kernel keeps about the VMM process. Sandboxes created
+through `serve-mcp`, `fork`, `snapshot restore` and the E2B shim do not carry one
+yet. `kelyfos watch` shows the same figures live. See [`docs/resources.md`](docs/resources.md), and
 `bash dev/prove-caps.sh` to watch each cap refuse to budge.
 
 ## Agent teams
@@ -261,8 +286,9 @@ draws one lane per agent with the message flow between them. `kelyfos watch`
 shows the same shape live.
 
 The first `team up` of a given shape boots every agent cold and builds a fork
-template in the background; a later one forks its no-egress agents from that
-template in tens of milliseconds. An agent with egress is always cold-booted — a
+template in the background; a later one forks the agents that have no egress and no
+workspace of their own, where two or more share a shape, from that template in
+tens of milliseconds. An agent with egress is always cold-booted — a
 fork cannot carry a network identity. `kelyfos team ps` says which path each
 machine took.
 
@@ -290,7 +316,7 @@ And the parts that make it a thing you reach for rather than tolerate (v0.8):
 | --- | --- |
 | `kelyfos pause --as <name>` / `resume` | stop for the day and pick up the *same machine* — its memory, its scratch, its half-finished thing — under the policy it was frozen with |
 | `kelyfos diff` / `run --review` | what the agent changed, and a yes before any of it reaches your directory |
-| `kelyfos shell` | a real terminal inside the sandbox: job control, line editing, resize. Recorded only with `--transcript` |
+| `kelyfos shell` | a real terminal inside the sandbox: job control, line editing, resize. The record always says one was opened and how it ended; what was typed and shown needs `--transcript` |
 | `kelyfos run -p 8080:80` | reach a server inside the sandbox. Over vsock, so the firewall is untouched and it works with no network at all |
 | `kelyfos runs` / `rerun <id>` | what has run here, and run one again under its own frozen policy |
 | every refusal | names the fix: `add allow = ["api.stripe.com"] to kelyfos.toml, or rerun with --allow api.stripe.com` |
@@ -301,7 +327,7 @@ And the parts that make it a thing you reach for rather than tolerate (v0.8):
 | | |
 | --- | --- |
 | [`docs/README.md`](docs/README.md) | the entry map: what each document is, and where it is thin |
-| [`llms.txt`](llms.txt) · [`llms-full.txt`](llms-full.txt) | for machine readers: an index per the llmstxt.org spec, and the whole set in one 54k-token file |
+| [`llms.txt`](llms.txt) · [`llms-full.txt`](llms-full.txt) | for machine readers: an index per the llmstxt.org spec, and the whole set in one file, whose current size `llms.txt` states |
 | [`docs/reference/`](docs/reference/) | every command, flag, toml key, MCP tool, event and exit code — generated from the source |
 | [`PLAN.html`](PLAN.html) · [`PLAN-FEATURES.html`](PLAN-FEATURES.html) | the living plan — every decision and the full progress log, phases then epics |
 | [`docs/cookbook.md`](docs/cookbook.md) | fourteen recipes that work: run one, allowlist a domain, fork, build a team, point a client at it, write a plugin, verify the log, pause and resume, review a diff, forward a port |
@@ -322,9 +348,10 @@ Every figure above is measured on the bare-KVM reference — a stock
 this repository. Local numbers on a Mac are 6–8× slower because of nested
 virtualisation and are never the published ones.
 
-Boot was 123 ms and restore 37 ms at v0.8. The jailer, the VMM filter check and
-the guest-profile probe all sit on the boot path and cost about 12 ms each way;
-both were re-measured across that change rather than assumed through it. The
+Boot was 123 ms and restore 37 ms at v0.8. The jailer and the guest-profile probe
+sit on the boot path and cost about 12 ms each way; the VMM's filter check is
+read after boot-to-ready has been taken and is not in the number. Both were
+re-measured across that change rather than assumed through it. The
 targets — ≤ 300 ms cold, ≤ 100 ms restore — still hold with room. The team
 figures replace 366 ms and 215 ms from before the guest kernel moved to the
 6.12 LTS line, measured the same way on the same five-agent graph.
@@ -345,9 +372,9 @@ Both layers exist now. Here is what that does and does not mean.
 | | |
 | --- | --- |
 | the boundary | a Firecracker microVM: a separate kernel, a hardware boundary. This was always the case and is still the thing that matters most. |
-| around the VMM | the jailer: a chroot holding only this sandbox's files, a dropped uid, `no_new_privs`, only the device nodes it needs, and the run's cgroup. Every entry point, or none — `run`, `team up`, `fork`, `snapshot restore`, `serve-mcp` and the shim all go through one refusal. |
+| around the VMM | the jailer: a chroot holding only this sandbox's files, a dropped uid, `no_new_privs`, only the device nodes it needs, and the run's cgroup when the policy set a quota. Every entry point, or none — `run`, `team up`, `fork`, `snapshot restore`, `serve-mcp` and the shim all go through one refusal. |
 | the VMM's syscalls | Firecracker's own seccomp filter, **read out of `/proc` on every one of its threads** at boot rather than assumed from the absence of a flag. A VMM without it is refused, not run. [`docs/host-seccomp.md`](docs/host-seccomp.md) lists every syscall it permits, read back out of the running kernel. |
-| inside the guest | every process the supervisor spawns — `exec`, a plugin, the shell — is confined by Landlock (writes only `/work`, `/tmp`, `/run`, `$HOME` and seven named device nodes) and a seccomp refusal list of 28 syscalls. Per flavor; [`docs/reference/profiles.md`](docs/reference/profiles.md) is generated from the code that enforces it. |
+| inside the guest | every process the supervisor spawns — `exec`, a plugin, the shell — is confined by Landlock (writes only `/work`, `/tmp`, `/run`, `$HOME`, `/dev/pts` and `/dev/shm`, plus seven named device nodes) and a seccomp refusal list of 28 syscalls. Per flavor; [`docs/reference/profiles.md`](docs/reference/profiles.md) is generated from the code that enforces it. |
 | the network | no interface at all without `--allow`; then deny-all plus a hostname allowlist, with credentials attached by the host's proxy so the value never exists inside the guest. |
 | the record | hash-chained, written by the host, and it names which walls were around each machine — so a transcript cannot make an unconfined run look like a confined one. |
 
@@ -379,7 +406,9 @@ Report vulnerabilities privately — see [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ## Building on it
 
-Everything is pinned in [`versions.mk`](versions.mk); nothing floats.
+The guest toolchain — Buildroot, the kernel, Firecracker and Go — is pinned in
+[`versions.mk`](versions.mk), and Go modules in `go.mod`. The host build packages
+are not pinned, and reproducible builds are still open.
 Contributions need a DCO `Signed-off-by` line. The non-goals in `PLAN.html`
 section 2 are hard boundaries — no orchestrator, no control plane, no hosted
 service.

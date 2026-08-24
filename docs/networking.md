@@ -78,8 +78,10 @@ Two details are deliberate and easy to get wrong:
 - **`forward` drops in both directions.** IP forwarding is off and nothing turns
   it on, but a rule that states the intent survives someone else's sysctl.
 
-The `counter` on each drop is what makes `kelyfos log` able to say a packet was
-blocked rather than merely not allowed.
+Each drop carries a `counter`, which `nft list table` will show you. Nothing
+reads it yet: `kelyfos log` reports what the **proxy** saw, so a packet the
+firewall dropped before it reached the proxy is counted here and appears in no
+event. Carrying that count into the session receipt is open work.
 
 ### 3.0 The guest always has a loopback interface
 
@@ -189,7 +191,9 @@ hoped for.
 - A refusal is answered with `403` and a body naming the domain and the edit
   that would allow it (`[egress.host]` in [`denials.md`](denials.md)). For plain
   HTTP the guest reads it; for a refused `CONNECT` most clients discard the
-  body, so the host prints the same refusal once, on its own stderr.
+  body, so the host prints the same refusal once, on its own stderr — `kelyfos
+  run` and `team up` do; `serve-mcp` and the shim record it without printing,
+  because there is no terminal of yours to print to.
 - Every attempt is written to the flight recorder as an `egress.attempt` event,
   allowed or blocked, with the reason and the byte counts
   (`docs/events.md` §4).
@@ -215,7 +219,9 @@ hoped for.
   a root — will refuse the connection, and it is right to: there genuinely is
   something in the middle. The refusal is recorded as an `egress.attempt` with
   `reason: tls_pinning_rejected_our_ca`, so it appears as a policy event and not
-  as a network fault. There is no way to have both a bound credential the guest
+  as a network fault. That reason covers any handshake failure on a terminated
+  domain, not only a pinned one — pinning is the cause worth naming, and the one
+  to suspect first. There is no way to have both a bound credential the guest
   cannot read and an unbroken pin; the choice is per domain and is made by
   whoever writes `--secret`.
 

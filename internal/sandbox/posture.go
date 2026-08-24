@@ -35,7 +35,7 @@ func postureWarning(src postureSource, profile, profileError string) string {
 		return "this snapshot predates guest confinement, so the machine restored from it " +
 			"confines nothing it spawns.\n" +
 			"    The host walls are unchanged — the jailer, the VMM's own syscall filter, the " +
-			"egress policy and the cgroup all still apply. To gain the guest profile as well, " +
+			"egress policy still apply, and the cgroup where the policy set a quota. To gain the guest profile as well, " +
 			"re-create the snapshot under this version: boot a fresh machine, prepare it, and " +
 			"`kelyfos snapshot save` over the old name."
 	case profile == "":
@@ -46,7 +46,7 @@ func postureWarning(src postureSource, profile, profileError string) string {
 		return "this guest image predates guest confinement, so nothing this machine spawns " +
 			"is confined.\n" +
 			"    The host walls are unchanged — the jailer, the VMM's own syscall filter, the " +
-			"egress policy and the cgroup all still apply. For the guest profile as well, " +
+			"egress policy still apply, and the cgroup where the policy set a quota. For the guest profile as well, " +
 			"update the image: `bash dev/fetch-image.sh`, or `make image` to build one."
 	}
 	return ""

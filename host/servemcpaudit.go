@@ -30,7 +30,14 @@ import (
 // contentKeys are the arguments a record must never hold, because they carry
 // content rather than intent. The rule is the one file.write already follows:
 // what was written is recorded by size and digest, never by value.
-var contentKeys = map[string]bool{"content": true, "stdin": true}
+//
+// `data` is here because the guest's `upload` carries base64 file contents under
+// that name and the guest-side summariser (supervisor/pluginhost.go) has always
+// redacted it. This list did not, so the two were not the same shape even though
+// docs/mcp-surface.md said they were — and the summariser's own promise, that an
+// argument carrying content is replaced "including on a tool that does not exist
+// yet", was only true for two of the three names.
+var contentKeys = map[string]bool{"content": true, "stdin": true, "data": true}
 
 // summariseArgs renders a call's arguments for the record.
 //

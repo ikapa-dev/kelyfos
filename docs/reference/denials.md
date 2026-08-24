@@ -3,8 +3,12 @@
 
 # Denials
 
-Every refusal KelyfOS makes, with the fix. A refusal prints its ID in brackets;
-that ID is the heading to look for here.
+Every refusal that carries an ID, with the fix. A refusal prints its ID in
+brackets; that ID is the heading to look for here.
+
+Refusals raised while reading `kelyfos.toml` or validating a team plan are not
+here: they name their own file and line instead of an ID, because the thing to
+go and look at is the line you wrote.
 
 Failures are not here. "The upstream did not answer" is not a refusal, has no
 fix line, and nothing you type changes it.

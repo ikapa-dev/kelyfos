@@ -403,6 +403,18 @@ func DumpProfile(w io.Writer, flavors []string) error {
 		for _, d := range p.Write {
 			fmt.Fprintf(w, "  write %s\n", d)
 		}
+		// The device grants are part of the writable set and were missing from
+		// this dump, so the generated page said "nothing else is writable" with
+		// two general-purpose writable trees outside its list — /dev/shm most of
+		// all, which is a tmpfs the kernel sizes at half the guest's RAM. A dump
+		// that omits a grant produces a reference that is wrong by omission, and
+		// the drift gate cannot see it because both halves come from here.
+		for _, d := range writableDeviceTrees {
+			fmt.Fprintf(w, "  write-tree %s\n", d)
+		}
+		for _, d := range writableDevices {
+			fmt.Fprintf(w, "  write-device %s\n", d)
+		}
 		// Every entry the policy names, including any this architecture does
 		// not have — printed as "-" rather than omitted, so the difference
 		// between "not refused" and "not a syscall here" is visible.

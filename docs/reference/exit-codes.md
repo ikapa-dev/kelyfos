@@ -3,8 +3,10 @@
 
 # Exit codes
 
-What `kelyfos` itself returns. A command run inside the guest passes its own
-status through unchanged, so `kelyfos exec` can exit with anything.
+What `kelyfos` itself returns. A status from something KelyfOS ran passes
+through unchanged, so these codes are not the whole range: `kelyfos exec` and
+`kelyfos shell` carry the guest command's status, and `kelyfos run -- <cmd>`
+carries the host command's.
 
 | Code | Meaning |
 | --- | --- |

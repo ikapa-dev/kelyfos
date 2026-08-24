@@ -25,7 +25,12 @@ import (
 // Version is the supervisor build reported in the ready frame, so the host can
 // log which guest it is talking to when the image and the CLI are different
 // builds (docs/protocol.md §7).
-const Version = "0.2.0-p2"
+//
+// Stamped at build time, like the CLI's. It was a constant reading "0.2.0-p2"
+// through v0.9 — so every boot printed, and every chain recorded, a version the
+// guest had not been for seven releases. A field whose whole purpose is to say
+// which build you are talking to is the last one that should be hand-maintained.
+var Version = "dev"
 
 const (
 	heartbeatInterval = 5 * time.Second

@@ -32,8 +32,7 @@ Opens the file, and records what the sandbox is. Written by the **host**.
 | `arch` | string | aarch64 or x86_64 |
 | `kelyfos` | string | CLI version |
 | `argv` | string array | how the sandbox was launched, for reproduction |
-| `jailed` | boolean | whether the VMM ran inside the jailer — a chroot, a dropped uid, and only the devices it needs *(kelyfos knows, which is every run from v0.9)* |
-| `profile` | string | what the guest's supervisor confined everything it spawned with: the flavor, the writable trees, the count of refused syscalls. Absent means no confinement — a machine restored from a snapshot taken before v0.9 has none, because restoring does not upgrade the guest inside it *(the guest reports one, which is every machine from v0.9)* |
+| `jailed` | boolean | whether the VMM ran inside the jailer — a chroot, a dropped uid, and only the devices it needs *(kelyfos run; every other entry point carries the posture on session.ready instead)* |
 | `cwd` | string | the directory it was launched from, which argv alone does not capture *(kelyfos run)* |
 | `reason` | string | where the machine came from *(restore and fork)* |
 
@@ -49,6 +48,8 @@ The guest announced itself on the ready channel. Written by the **host**.
 | `overlay` | boolean | whether the writable overlay came up |
 | `image` | string | this agent's flavor *(in a team)* |
 | `via` | string | cold or fork — how this member was started *(in a team)* |
+| `jailed` | boolean | whether the VMM ran inside the jailer — a chroot, a dropped uid, and only the devices it needs *(every path that opens a machine)* |
+| `profile` | string | what the guest's supervisor confined everything it spawned with: the flavor, the writable trees, the count of refused syscalls. Absent means no confinement — a machine restored from a snapshot taken before v0.9 has none, because restoring does not upgrade the guest inside it *(the guest reports one, which is every machine from v0.9)* |
 | `agent` | string | which machine produced it; present inside a team *(in a team)* |
 
 ## `session.end`

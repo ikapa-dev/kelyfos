@@ -65,18 +65,25 @@ compromised can still *use* the credential against the domain it is bound to —
 that is what binding it means — but it cannot read it, keep it, or send it
 anywhere else.
 
+**The binding is a suffix match**, so `--secret T@github.com` attaches the
+credential to `api.github.com` and `raw.githubusercontent.com` too, on any
+request the guest composes to any of them. Bind a credential only to a domain
+whose subdomains you would also hand it to.
+
 ### Tampering with the record
 Every event is written by the **host**, never the guest, and each carries the
 previous event's hash. A guest that could write its own audit trail could write
 a flattering one, so it cannot write one at all. A small class of events
-*transcribes* something the guest reported — the OOM killer running is the only
-one today — and those are marked `"source": "guest"` in the schema so a reader
+*transcribes* something the guest reported — the OOM killer, and a plugin's calls
+and crashes (`plugin.call`, `plugin.crash`) — and those are marked `"source": "guest"` in the schema so a reader
 can weigh them differently. The host still writes them; it just did not witness
 them.
 
 ### One agent reaching another, in a team
 A team is several sandboxes on one host, and **no guest ever has a network path
-to another guest**: there is no route, no shared bridge and no address to try.
+to another guest**: there is no route, no shared bridge and no address to
+try, and every packet in or out of a sandbox's TAP is dropped by that sandbox's
+own forward chain, so guessing another's address gets nowhere.
 Every message goes through a host broker that checks it against the edge list
 you declared and records it either way, refusals included. Three things follow
 that are worth saying out loud, because a team is a *deliberate* data path
@@ -111,7 +118,7 @@ This section matters more than the one above.
 
 The VMM now runs under the jailer: a chroot containing only this sandbox's own
 files, a dropped uid, `no_new_privs`, only the device nodes it needs, and the
-run's cgroup. Firecracker's own seccomp filter is read out of `/proc` on every
+run's cgroup when the policy set a quota. Firecracker's own seccomp filter is read out of `/proc` on every
 one of its threads at boot, and a VMM without one is refused rather than run —
 see [`host-seccomp.md`](host-seccomp.md), which lists every syscall it permits,
 read back out of the running kernel rather than transcribed from documentation.
@@ -132,9 +139,11 @@ That is depth, not a boundary. Two things it does not do:
 Every process the supervisor spawns — `exec`, a plugin, the interactive shell —
 is confined by Landlock and a seccomp refusal list, declared per flavor and
 generated into [`reference/profiles.md`](reference/profiles.md) from the code
-that enforces it. Writes go to `/work`, `/tmp`, `/run`, `$HOME` and seven named
-device nodes and nowhere else, so an agent can no longer edit the toolbox it was
-handed; 28 syscalls are refused with `EPERM`, among them `mount`, `reboot`, the
+that enforces it. Writes go to `/work`, `/tmp`, `/run`, `$HOME`, `/dev/pts` and
+`/dev/shm`, plus seven named device nodes, and nowhere else — so an agent can no
+longer edit the toolbox it was handed. `/dev/shm` is worth naming on its own: it
+is a tmpfs the guest kernel sizes at half the machine's RAM, so it is a
+general-purpose writable area, bounded by `mem` rather than by the profile; 28 syscalls are refused with `EPERM`, among them `mount`, `reboot`, the
 clock-setting family, the keyring calls and module loading.
 
 What that leaves:
@@ -267,7 +276,9 @@ Two things make it impossible to miss. The restore says so on the terminal, with
 the fix that actually fixes it — re-create the snapshot under this version — and
 `session.ready` in the flight recorder carries the guest profile, so its absence
 is a recorded fact rather than a silence. A transcript can never make an
-unconfined-guest run look like a confined one.
+unconfined-guest run look like a confined one. The field is in the JSONL;
+`kelyfos log`'s rendered output does not print it yet, so read the record rather
+than the rendering when the question is which walls were up.
 
 ### Data at rest
 Snapshots and workspace images are ordinary files on the host with no
@@ -283,14 +294,14 @@ can read every session record and attach to every running sandbox.
 
 | Boundary | Enforced by | Status |
 | --- | --- | --- |
-| guest → host | Firecracker + KVM | active; VMM unconfined until P4-1 |
+| guest → host | Firecracker + KVM | active; the VMM is jailed and filtered since v0.9 |
 | guest → network | no NIC, or TAP + nftables + proxy | active |
 | guest → credentials | injection at the proxy | active |
-| guest → audit record | host-side, hash-chained | active; absent under `kelyfos shim` |
+| guest → audit record | host-side, hash-chained | active, including under `kelyfos shim` |
 | guest → guest (team) | host broker + declared edge list | active |
 | guest → host CPU/RAM/IO | KVM config, cgroup v2, rate limiters | active, and only when configured |
-| host process → host | the jailer | **not yet** (P4-1) |
-| in-guest process → guest | seccomp / Landlock | **not yet** (P4-2) |
+| host process → host | the jailer | active (P5-1); `--no-jail` turns it off and says so on every run |
+| in-guest process → guest | Landlock + seccomp | active (P5-3); absent on images and snapshots made before v0.9, which is warned about rather than refused |
 
 ## 6. If you are evaluating KelyfOS
 

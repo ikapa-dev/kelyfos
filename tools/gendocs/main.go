@@ -138,7 +138,16 @@ var (
 	usageLine = regexp.MustCompile(`^  kelyfos (\S+)(.*)$`)
 	gap       = regexp.MustCompile(`\s{2,}`)
 	flagLine  = regexp.MustCompile(`^  -(\S+)(?: (.*))?$`)
-	defaultAt = regexp.MustCompile(`\s*\(default:? (.*)\)$`)
+	// A one-letter boolean is the one shape `flag` formats differently: it puts
+	// the usage on the *same* line after a tab, because "  -x" is short enough
+	// to leave room. flagLine cannot match that — it wants a space or an end of
+	// line after the name — so every such flag was silently dropped from the
+	// generated reference, and neither the generator nor the drift gate could
+	// notice, because the committed file agreed with the generator and both
+	// were missing it. `kelyfos log -f` was undocumented from the day it was
+	// added until P6-1 went looking.
+	flagInline = regexp.MustCompile("^  -(\\S+)\t(.*)$")
+	defaultAt  = regexp.MustCompile(`\s*\(default:? (.*)\)$`)
 	// The architecture flags default to whatever machine ran the generator, so
 	// the value is replaced rather than recorded. It is the only host-dependent
 	// default in the CLI; anything else that appears here would make `make docs`
@@ -221,9 +230,25 @@ func flagsOf(bin, name string) ([]Flag, error) {
 	if err != nil {
 		return nil, fmt.Errorf("asking for `%s -h`: %w", name, err)
 	}
+	return parseFlags(text), nil
+}
+
+// parseFlags takes `flag.PrintDefaults` output apart. Split out of flagsOf so a
+// test can feed it the real thing rather than a hand-written imitation: the bug
+// this function was carrying was a disagreement with how `flag` actually formats
+// a line, and a test that writes its own lines would have agreed with the bug.
+func parseFlags(text string) []Flag {
 	var out []Flag
 	lines := strings.Split(text, "\n")
 	for i := 0; i < len(lines); i++ {
+		// The same-line form first: its tab would otherwise be read as part of
+		// nothing at all, and the flag would vanish.
+		if m := flagInline.FindStringSubmatch(lines[i]); m != nil {
+			f := Flag{Name: m[1], Type: "boolean"}
+			f.Doc, f.Default = docAndDefault(m[2])
+			out = append(out, f)
+			continue
+		}
 		m := flagLine.FindStringSubmatch(lines[i])
 		if m == nil {
 			continue
@@ -234,12 +259,7 @@ func flagsOf(bin, name string) ([]Flag, error) {
 			f.Type = "boolean"
 		}
 		if i+1 < len(lines) && strings.HasPrefix(lines[i+1], "    \t") {
-			doc := strings.TrimSpace(lines[i+1])
-			if d := defaultAt.FindStringSubmatch(doc); d != nil {
-				f.Default = d[1]
-				doc = defaultAt.ReplaceAllString(doc, "")
-			}
-			f.Doc = doc
+			f.Doc, f.Default = docAndDefault(lines[i+1])
 			i++
 		}
 		if f.Name == "arch" && archDefault.MatchString(f.Default) {
@@ -247,7 +267,17 @@ func flagsOf(bin, name string) ([]Flag, error) {
 		}
 		out = append(out, f)
 	}
-	return out, nil
+	return out
+}
+
+// docAndDefault splits a usage string from the "(default X)" tail flag appends.
+func docAndDefault(s string) (doc, def string) {
+	doc = strings.TrimSpace(s)
+	if d := defaultAt.FindStringSubmatch(doc); d != nil {
+		def = d[1]
+		doc = defaultAt.ReplaceAllString(doc, "")
+	}
+	return doc, def
 }
 
 // capture runs the binary and returns everything it printed. A command asked for
@@ -358,6 +388,7 @@ lists cannot be one that was removed.
 | [events.md](events.md) | the flight recorder's event schema |
 | [exit-codes.md](exit-codes.md) | the exit statuses the CLI returns |
 | [denials.md](denials.md) | the refusal catalog, and the fix line each one carries |
+| [profiles.md](profiles.md) | the guest confinement profiles, from the supervisor's own dump |
 
 The prose that explains *why* any of it is shaped this way is in the documents
 [one level up](../README.md); this directory is the part a machine should read
@@ -477,8 +508,11 @@ func denialsPage() string {
 	var b strings.Builder
 	b.WriteString(banner)
 	b.WriteString("\n# Denials\n\n" +
-		"Every refusal KelyfOS makes, with the fix. A refusal prints its ID in brackets;\n" +
-		"that ID is the heading to look for here.\n\n" +
+		"Every refusal that carries an ID, with the fix. A refusal prints its ID in\n" +
+		"brackets; that ID is the heading to look for here.\n\n" +
+		"Refusals raised while reading `kelyfos.toml` or validating a team plan are not\n" +
+		"here: they name their own file and line instead of an ID, because the thing to\n" +
+		"go and look at is the line you wrote.\n\n" +
 		"Failures are not here. \"The upstream did not answer\" is not a refusal, has no\n" +
 		"fix line, and nothing you type changes it.\n")
 	for _, d := range denial.All() {
@@ -614,8 +648,10 @@ func exitPage() string {
 	var b strings.Builder
 	b.WriteString(banner)
 	b.WriteString("\n# Exit codes\n\n" +
-		"What `kelyfos` itself returns. A command run inside the guest passes its own\n" +
-		"status through unchanged, so `kelyfos exec` can exit with anything.\n\n")
+		"What `kelyfos` itself returns. A status from something KelyfOS ran passes\n" +
+		"through unchanged, so these codes are not the whole range: `kelyfos exec` and\n" +
+		"`kelyfos shell` carry the guest command's status, and `kelyfos run -- <cmd>`\n" +
+		"carries the host command's.\n\n")
 	b.WriteString("| Code | Meaning |\n| --- | --- |\n")
 	for _, c := range exitcode.All() {
 		fmt.Fprintf(&b, "| `%d` | %s |\n", c.Code, cell(c.Doc))
@@ -632,10 +668,22 @@ type toolDump struct {
 // profilesPage is the guest confinement every flavor applies, asked of the
 // supervisor rather than transcribed from it (P5-3).
 //
-// The syscall numbers are this build's architecture. That is the honest thing to
-// print — a refusal list is numbers by the time the kernel sees it, and the same
-// name is a different number on another architecture — and it is why the page
-// says which architecture it was generated on.
+// The page is deliberately architecture-independent: it prints syscall names and
+// never their numbers. A refusal list is numbers by the time the kernel sees it
+// and the same name is a different number on another architecture, so a page
+// built from numbers would fail its own drift check depending on which machine
+// ran `make docs`. `kelyfos-supervisor --dump-profile` prints the resolved
+// numbers for the machine it runs on, and the acceptance reads them there.
+// backticked joins paths as an inline code list, in the order the profile named
+// them: the order is the order the rules are applied in, not alphabetical.
+func backticked(paths []string) string {
+	q := make([]string, len(paths))
+	for i, p := range paths {
+		q[i] = "`" + p + "`"
+	}
+	return strings.Join(q, ", ")
+}
+
 func profilesPage(sup string) (string, error) {
 	out, err := exec.Command(sup, "--dump-profile", "base", "dev").Output()
 	if err != nil {
@@ -643,11 +691,13 @@ func profilesPage(sup string) (string, error) {
 	}
 
 	type profile struct {
-		name    string
-		arch    string
-		abi     string
-		write   []string
-		refused []string
+		name        string
+		arch        string
+		abi         string
+		write       []string
+		writeTree   []string
+		writeDevice []string
+		refused     []string
 	}
 	var profiles []profile
 	var cur *profile
@@ -666,6 +716,10 @@ func profilesPage(sup string) (string, error) {
 			cur.abi = f[1]
 		case "write":
 			cur.write = append(cur.write, f[1])
+		case "write-tree":
+			cur.writeTree = append(cur.writeTree, f[1])
+		case "write-device":
+			cur.writeDevice = append(cur.writeDevice, f[1])
 		case "refuse":
 			// The name only. A syscall's number is the architecture's, and
 			// `make docs` runs on whichever architecture CI uses, so a page
@@ -688,7 +742,11 @@ func profilesPage(sup string) (string, error) {
 		"never to the supervisor. [`../hardening.md`](../hardening.md) \u00a74 says why each\n" +
 		"mechanism is here and what it does not do.\n\n")
 	b.WriteString("**Landlock** governs the filesystem: the listed trees are writable, everything\n" +
-		"else on the image is readable and executable, and nothing else is writable.\n" +
+		"else on the image is readable and executable, and nothing else is writable. The\n" +
+		"device trees are writable the same way the others are \u2014 a program may create files\n" +
+		"and directories under them \u2014 which for `/dev/shm` means a general-purpose writable\n" +
+		"area the guest kernel sizes at half the machine's RAM. The named device nodes are\n" +
+		"narrower: read, write and truncate that file, and nothing else.\n" +
 		"**seccomp** refuses the listed syscalls with `EPERM` \u2014 a refusal list rather than\n" +
 		"an allowlist, because an allowlist for an arbitrary agent command is a crash waiting\n" +
 		"to be mistaken for a security feature.\n\n")
@@ -701,14 +759,14 @@ func profilesPage(sup string) (string, error) {
 	for _, p := range profiles {
 		fmt.Fprintf(&b, "\n## `%s`\n\n", p.name)
 		fmt.Fprintf(&b, "Refuses to run where the Landlock ABI is below **%s**.\n\n", p.abi)
-		b.WriteString("Writable: ")
-		for i, w := range p.write {
-			if i > 0 {
-				b.WriteString(", ")
-			}
-			fmt.Fprintf(&b, "`%s`", w)
+		b.WriteString("Writable: " + backticked(p.write) + "\n\n")
+		if len(p.writeTree) > 0 {
+			b.WriteString("Writable device trees: " + backticked(p.writeTree) + "\n\n")
 		}
-		b.WriteString("\n\n")
+		if len(p.writeDevice) > 0 {
+			b.WriteString("Writable device nodes, read/write/truncate only: " +
+				backticked(p.writeDevice) + "\n\n")
+		}
 		fmt.Fprintf(&b, "Refused, %d syscalls: %s\n", len(p.refused), strings.Join(p.refused, ", "))
 	}
 	b.WriteString("\n## Attaching a debugger\n\n")
@@ -777,7 +835,11 @@ func toolsPage(sup, bin string) (string, error) {
 		"Which tools appear depends on what the sandbox is: the team tools exist only\n" +
 		"for a sandbox in a team, and `team_spawn` only for an agent whose policy\n" +
 		"granted a spawn budget. A tool that is always advertised and always fails\n" +
-		"teaches a model to ignore failures, so it is not advertised (F-D18).\n")
+		"teaches a model to ignore failures, so it is not advertised (F-D18).\n\n" +
+		"A `[[plugin]]` in `kelyfos.toml` adds its own tools on top of these, namespaced\n" +
+		"under the plugin's name. They come from that server rather than from KelyfOS,\n" +
+		"so they are not listed here — `tools/list` on a running sandbox is the only\n" +
+		"complete answer for a machine that has one.\n")
 
 	host, err := hostTools(bin)
 	if err != nil {

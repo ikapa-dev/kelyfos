@@ -235,8 +235,9 @@ left to the kernel rather than restated by KelyfOS: a number copied into two
 places is a number that will eventually disagree with itself.
 
 At the cap, writes fail with `ENOSPC`, which is an error the program doing the
-writing can see and handle. `/work` is a separate block device sized by `disk`
-and is completely unaffected; so is `/dev/shm`, which is its own tmpfs with its
+writing can see and handle. `/work` is a separate block device, sized from the
+directory packed into it and refused if that would exceed `disk`, and is
+completely unaffected; so is `/dev/shm`, which is its own tmpfs with its
 own kernel default of half the RAM.
 
 A `scratch` larger than `mem` is refused at boot rather than accepted:
@@ -409,18 +410,26 @@ the disk, and cannot run past half an hour.
 cap:
 
 ```
-cpu  50.0% of 60% quota · mem 122 MiB of 512 MiB · net 3.0 MiB in / 1 KiB out
-(cap 10/0 Mbps) · disk 40.0 MiB written
+cpu  50.0% of 60% quota · mem 122 MiB (VMM), machine 512 MiB · net 3.0 MiB in /
+1 KiB out (cap 10/0 Mbps) · disk 40.0 MiB written
 ```
+
+The memory figure is the **VMM's** resident set, not the guest's: it holds the
+guest's memory and whatever the host has cached for the guest's disks, so it can
+sit above the machine's RAM without the machine having exceeded it. That is why
+the lane names the two separately rather than printing one "of" the other.
 
 CPU is a rate, so it needs two readings; the first tick shows the machine's
 shape and no percentage rather than a number it has not measured yet. Once the
 sandbox stops there is nothing left to sample and the lane shows the recorded
 receipt instead.
 
-Every session ends with a `resource.summary` event in the flight recorder — CPU
-seconds, peak RSS, bytes in and out, disk bytes written, each alongside the cap
-it was consumed under — which `kelyfos log --export` renders as a receipt. Both
+A `kelyfos run` session, and every agent in a team, ends with a
+`resource.summary` event in the flight recorder — CPU seconds, peak RSS, bytes in
+and out, disk bytes written, each alongside the cap it was consumed under — which
+`kelyfos log --export` renders as a receipt. A sandbox created through
+`serve-mcp`, `fork`, `snapshot restore` or the E2B shim does not carry one yet:
+those paths append `session.end` alone. Both
 the lane and the receipt read the same host-side counters: cgroup `cpu.stat` and
 `memory.current` when the sandbox has a cgroup, `/proc/<pid>` when it does not,
 the TAP's own byte counters, and `/proc/<pid>/io` for storage. The guest is never

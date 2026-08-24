@@ -109,3 +109,44 @@ func TestLLMsIndexLinksResolve(t *testing.T) {
 		}
 	}
 }
+
+// The converse of the test above, and the one that was missing. TestLLMsIndex-
+// LinksResolve proves every entry has a file; nothing proved every file has an
+// entry, so docs/qol.md sat in the documentation map and in neither llms file
+// while llms-full.txt introduced itself as "every documentation page in one
+// file". Both halves are needed for that sentence to be true, and only one of
+// them was being checked.
+//
+// A new page under docs/ therefore has to be placed deliberately — named in
+// docSet, or named here as a deliberate omission with the reason. That is the
+// same shape as the generated reference's drift gate: the cost of forgetting is
+// paid by the person adding the file rather than by a reader months later.
+func TestEveryDocumentUnderDocsIsInTheLLMsSet(t *testing.T) {
+	const root = "../.."
+
+	// Deliberate omissions go here with a reason. Empty on purpose: every page
+	// under docs/ is currently in the set, which is what llms-full.txt claims.
+	omitted := map[string]string{}
+
+	listed := map[string]bool{}
+	for _, d := range append(docSet(), referenceSet()...) {
+		listed[filepath.ToSlash(d.Path)] = true
+	}
+
+	found, err := filepath.Glob(filepath.Join(root, "docs", "*.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(found) == 0 {
+		t.Fatal("no documents found under docs/ — the test is looking in the wrong place")
+	}
+	for _, abs := range found {
+		rel := "docs/" + filepath.Base(abs)
+		if listed[rel] || omitted[rel] != "" {
+			continue
+		}
+		t.Errorf("%s is not in docSet(), so llms-full.txt would not contain it "+
+			"while still calling itself every documentation page. Add an entry, "+
+			"or list it in `omitted` above with the reason.", rel)
+	}
+}

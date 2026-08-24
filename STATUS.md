@@ -10,31 +10,25 @@ Updated 2026-08-24 · synced with origin/main · **v0.9 released** · CI green o
   permanent record rows. A denominator adjusted to flatter the numerator is the same defect as a ticked box.
 
 ## Now
-**P6-0 done.** Phase 6 drafted into PLAN.html against the code rather than against the backlog's wording — eleven
-parallel audits plus two adversarial critics, whose verdict is recorded in D34 because acting on it *is* the
-decision: as briefed this was three to four phases wearing one phase's name, and two pillars would have produced
-claims this project cannot honestly make. Every pillar is in; three are scoped down with the case in a decision row
-(D36 credential handles, D37 output scrubbing, D38 reproducibility), and P4-7's own "same commands everywhere"
-sentence is retired because an interrupt does not cross `limactl shell` and losing it orphans a microVM and discards
-the workspace (D35). §8 gained **rule 9** — documentation rides with the task — which is F-D9 restated in the
-governing document after it evaporated with the file that held it (D40).
+**P6-1 done.** The honesty sweep, and it was not the list P6-0 wrote: six parallel readers, each required to cite
+the claim *and* the code refuting it, then an adversarial reconciler that re-checked every finding and **dropped
+eight** — two as *unverified* rather than corrected on a guess. **59 verified claims** against the twelve known.
 
-John's addition — **`kelyfos connect <client>`** — is folded in as P6-13 under the adoption pillar, sequenced after
-P6-12 because the macOS launch path is whatever doctor's architecture makes correct. The client landscape was
-surveyed live: **six supported** (Claude Code, Codex CLI, Cursor, VS Code, Gemini CLI, JetBrains Junie), the rest
-generic, four rejected on evidence — two archived, one retired as a brand, one with 48k stars and no MCP
-implementation. D41 has the list and the rule that matters: **one template with a swapped key is impossible**,
-because Claude Code has no working-directory field at all and the others expand variables differently, so half of
-them would silently attach the wrong policy under a shared snippet — F-D44's failure, once per client.
+The three worst were **understatements**, which is the direction nobody audits for: `docs/threat-model.md`'s
+summary table still said the jailer and guest confinement were "not yet", four releases after they shipped;
+it said the audit record was absent under the shim, which F-D33 fixed; and `CONTRIBUTING.md` told a security
+reporter KelyfOS is "pre-v0.1 and makes no hardened-security claims yet". Three were overstatements: the
+generated profiles page said "nothing else is writable" while `/dev/shm` — a tmpfs sized at half the guest's RAM —
+carries the same write rights as `/work`; the README claimed every `[resources]` cap is host-enforced when
+`scratch` is applied by the guest's own kernel; and it promised a `resource.summary` on every session when only
+`run` and team members emit one.
 
-**Next: P6-1, the honesty sweep.** Every claim this repository makes that it has not earned, withdrawn before a 1.0
-is built on top of it. The audit found them in numbers, and two are on the highest-traffic pages: the three
-byte-identity claims (the shipped v0.9 kernels name two different build hosts, one of them a laptop), `llms.txt`'s
-*generated* "not hardened yet" — so the drift gate has kept a retracted claim consistently wrong — the two client-configuration blocks
-the repo prints for a stranger to copy (`integrating.md` calls its block `.mcp.json` "verbatim" and it has not been
-since F-D48; the README claims the same in substance) — both naming the *inward* bridge with no `--policy`, `docs/protocol.md` §7's
-host-side check that no code performs, and the generated CLI reference's silent loss of one-letter boolean flags,
-which the gate structurally cannot see because generator and file agree and both are wrong.
+Generated pages were fixed **in their generator**, since a hand edit there is reverted by the next build. Four code
+fixes came out of doc claims rather than the reverse — most notably the host argument summariser was missing
+`data`, so base64 file contents could reach the record, and the supervisor's version was a constant reading
+`0.2.0-p2`, printed on every boot and written into every chain for seven releases.
+
+**Next: P6-2** — SECURITY.md with a real disclosure channel, and govulncheck promoted from a habit into CI.
 
 ## Blocked / needs John
 - **DCO.** `CONTRIBUTING.md` and the README require a `Signed-off-by`; 0 of the last 50 commits carry one and
@@ -58,6 +52,13 @@ which the gate structurally cannot see because generator and file agree and both
 - `kelyfos runs --all` counts an unreadable session directory as missing rather than reporting it.
 - On x86_64 the VMM carries a fifth KVM-created task; the filter check requires it to report filter mode.
 - The E2B SDK smoke test (§1 criterion 5) was run once by hand in August: no suite, no CI job, no HTTP test. P6-18.
+- **Routed out of P6-1, not dropped:** the guest `os-release` still says `0.1.0-dev`. Fixing it needs the overlay
+  templated and an image build to verify, so it goes to P6-9 where that build is already open. Also routed: the
+  shim ignores `max_runtime`/`idle_timeout` (documented as a gap now, enforcement is a task); `resource.summary`
+  is absent on four close paths; the nftables drop counter is read by nothing; policy-file and team-plan refusals
+  carry no catalog ID.
+- `llms-full.txt` is now **440,396 bytes, ~114k tokens** (estimated, not measured — a committed measurement
+  command is P6-17).
 
 ## Toolchain
 Buildroot **2025.02.17** · Linux **6.12.105** · Firecracker **v1.16.1** · Go **1.27.0**. MCP revision spoken:

@@ -10,13 +10,18 @@
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-default_version="v1.16.1"
-
 version="${FIRECRACKER_VERSION:-}"
 if [ -z "$version" ] && [ -f "$here/versions.mk" ]; then
   version="$(sed -n 's/^[[:space:]]*FIRECRACKER_VERSION[[:space:]]*[:?]\{0,1\}=[[:space:]]*//p' "$here/versions.mk" | tail -1)"
 fi
-version="${version:-$default_version}"
+# No fallback default. There used to be one, which quietly made this script a
+# second place that says which Firecracker to install — the exact thing the
+# header above promises it is not. dev/install-go.sh has always failed here.
+if [ -z "$version" ]; then
+  echo "cannot read FIRECRACKER_VERSION from $here/versions.mk" >&2
+  echo "  set FIRECRACKER_VERSION in the environment to override, or fix versions.mk" >&2
+  exit 1
+fi
 
 arch="$(uname -m)"
 case "$arch" in

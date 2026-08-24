@@ -78,9 +78,11 @@ func docSet() []doc {
 		{Path: "docs/e2b-shim.md", Title: "E2B-compatible shim", Full: true,
 			Summary: "the REST subset for existing E2B SDK code, and what it deliberately omits"},
 		{Path: "docs/cookbook.md", Title: "Cookbook", Full: true,
-			Summary: "eight complete recipes, each one a script CI runs on a real machine"},
+			Summary: "complete recipes, each one a script CI runs on a real machine"},
 		{Path: "docs/integrating.md", Title: "Building on KelyfOS", Full: true,
-			Summary: "for putting KelyfOS inside something else: the three ways in, orchestrator patterns, and the mistakes people actually make"},
+			Summary: "for putting KelyfOS inside something else: the four ways in, orchestrator patterns, and the mistakes people actually make"},
+		{Path: "docs/qol.md", Title: "Daily-driver quality of life", Full: true,
+			Summary: "the shell, the diff, pause and resume, port forwarding and notifications — written before the code, with the places the built thing differed marked"},
 		{Path: "docs/README.md", Title: "Documentation map", Full: true,
 			Summary: "what every document is, and — deliberately — where each is still thin"},
 	}
@@ -135,8 +137,15 @@ func llmsIndex(fullTokens int) string {
 	b.WriteString("The reference pages are generated from the source on every commit and CI fails " +
 		"when they disagree with it, so a flag or a key found there exists. The concept pages are " +
 		"written by hand.\n\n")
-	b.WriteString("Apache-2.0. Single-host developer tool; not hardened yet — the threat model " +
-		"below is explicit about what that means.\n\n")
+	// "not hardened yet" was retired at P5-4 everywhere a person looks, and
+	// survived here for a release because it is generated: the drift gate keeps
+	// llms.txt in step with this line, so it kept a retracted claim consistently
+	// wrong. A generated string is not checked by anything that reads the docs.
+	b.WriteString("Apache-2.0. Single-host developer tool, not a multi-tenant sandbox for hostile " +
+		"code. From v0.9 the VMM runs under the jailer with its own syscall filter proved in " +
+		"force, and everything the guest spawns is confined by Landlock and a syscall refusal " +
+		"list; an agent is still root inside its own guest, and the VM rather than the chroot " +
+		"is the boundary. The threat model below is explicit about which is which.\n\n")
 
 	section := func(title string, docs []doc) {
 		b.WriteString("## " + title + "\n\n")
@@ -158,8 +167,8 @@ func llmsIndex(fullTokens int) string {
 	fmt.Fprintf(&b, "- [Everything in one file](%sllms-full.txt): every page above concatenated, "+
 		"roughly %dk tokens, for a client that would rather spend context than fetch\n",
 		rawBase, (fullTokens+500)/1000)
-	fmt.Fprintf(&b, "- [Build plan and decision log](%sPLAN.html): HTML. Phases 0-4, every "+
-		"decision with its rationale and the command output behind each claim\n", rawBase)
+	fmt.Fprintf(&b, "- [Build plan and decision log](%sPLAN.html): HTML. Every phase and "+
+		"every decision with its rationale, and the command output behind each claim\n", rawBase)
 	fmt.Fprintf(&b, "- [Feature plan and decision log](%sPLAN-FEATURES.html): HTML. The epics "+
 		"after the build plan, same protocol\n", rawBase)
 	return b.String()

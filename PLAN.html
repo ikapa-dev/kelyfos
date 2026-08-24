@@ -180,7 +180,7 @@
     <span class="bl-name">Overall</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">Phase 6 is drafted and open. Next: <b>P6-1, the honesty sweep</b> &mdash; every claim this repository makes that it has not earned, withdrawn before a 1.0 is built on top of it</b></div>
+  <div class="focusline">Current focus: <b id="focus">P6-1 done &mdash; 59 verified false or stale claims withdrawn, including a threat model that still said the v0.9 hardening did not exist. Next: <b>P6-2</b>, a security contact that exists and govulncheck on a schedule</b></div>
 </div>
 
 <!-- ====================================================== 1. END GOAL -->
@@ -745,7 +745,7 @@
         hand-written rows for phases 0&ndash;5 only while the script counted a sixth phase&rsquo;s boxes against the
         total.</span></li>
 
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">P6-1</span><span class="tk"><b>The honesty sweep: every claim this repository has not
         earned, withdrawn before anything is built on top of it.</b> A 1.0 cannot be assembled on sentences that are
         already false, and the audit that opened this phase found them in numbers. At least: the three places
@@ -1118,19 +1118,23 @@ limactl shell kelyfos-dev
 ls -l /dev/kvm
 <span class="out">crw-rw-rw- 1 root kvm 10, 232 ... /dev/kvm</span>
 
-<span class="c"># 3. Build tools (inside the VM):</span>
+<span class="c"># 3. Clone first — every script below lives in the repository:</span>
+git clone &lt;repo-url&gt; kelyfos &amp;&amp; cd kelyfos
+
+<span class="c"># 4. Build tools (inside the VM):</span>
 bash dev/install-build-deps.sh   <span class="c"># apt build deps + the pinned Go toolchain (D11)</span>
 <span class="c">#    equivalently, by hand:</span>
-sudo apt update &amp;&amp; sudo apt install -y build-essential git bc flex bison \
-     libssl-dev libelf-dev libncurses-dev unzip rsync file cpio wget curl e2fsprogs
+sudo apt update &amp;&amp; sudo apt install -y build-essential git bc flex bison cmake \
+     libssl-dev libelf-dev libncurses-dev unzip rsync file cpio wget curl \
+     ca-certificates e2fsprogs
 bash dev/install-go.sh              <span class="c"># Go from versions.mk; apt ships 1.22, too old</span>
 
-<span class="c"># 4. Clone and build (ARCH defaults to the machine — aarch64 here):</span>
-git clone &lt;repo-url&gt; kelyfos &amp;&amp; cd kelyfos
+<span class="c"># 5. Build (ARCH defaults to the machine — aarch64 here):</span>
 make toolchain     <span class="c"># downloads pinned Buildroot (long, once)</span>
 make image         <span class="c"># kernel Image (aarch64) / vmlinux (x86_64) + rootfs.ext4</span>
+make cli           <span class="c"># the kelyfos binary into bin/ — image does not build it</span>
 
-<span class="c"># 5. Check, run, verify:</span>
+<span class="c"># 6. Check, run, verify:</span>
 ./bin/kelyfos doctor
 ./bin/kelyfos run --image base &amp;
 ./bin/kelyfos exec "uname -a"
@@ -2328,6 +2332,67 @@ after:
         <code>utils/generate-cyclonedx</code>; <code>cyclonedx-gomod</code> <b>v1.12.0</b>. Rejected with reasons:
         the two attest wrappers (retired by their own release notes), cosign (v3.1.3 floor, buys nothing native
         does not), the SLSA reference generator (18 months stale)</td></tr>
+        <tr><td class="mono">2026-08-24</td><td class="mono">P6-1</td>
+        <td><b>The honesty sweep, and it was not the list P6-0 wrote.</b> Six parallel readers, one per class of
+        claim, each required to name the <code>file:line</code> of the claim <i>and</i> of the code that refutes it
+        &mdash; a finding without both halves was not a finding &mdash; then an adversarial reconciler that
+        re-checked every one and <b>dropped eight</b>, two of them as <i>unverified</i> rather than asserted. What
+        survived was <b>59 verified claims</b> against the twelve P6-0 knew about.
+        <b>The three that matter most were all understatements, which is the direction nobody audits for.</b>
+        <code>docs/threat-model.md</code>&rsquo;s summary table &mdash; the table a reader consults to decide
+        whether to trust this &mdash; still said the two headline v0.9 layers were <i>&ldquo;not yet (P4-1)&rdquo;</i>
+        and <i>&ldquo;not yet (P4-2)&rdquo;</i>, four releases after they shipped; it also said the audit record was
+        absent under the shim, which F-D33 fixed. And <code>CONTRIBUTING.md</code> told a security reporter that
+        KelyfOS is &ldquo;pre-v0.1 and makes no hardened-security claims yet&rdquo;.
+        <b>Three were overstatements of the kind this phase exists to catch:</b> the generated profiles page said
+        &ldquo;nothing else is writable&rdquo; while <code>/dev/pts</code> and <code>/dev/shm</code> are granted the
+        <i>same</i> write rights as <code>/work</code> &mdash; and <code>/dev/shm</code> is a tmpfs the kernel sizes
+        at half the machine&rsquo;s RAM, so a general-purpose writable area sat outside a list a reader would take
+        as closed; the README said every <code>[resources]</code> cap is enforced on the host when
+        <code>scratch</code> is applied by the guest&rsquo;s own kernel; and it said every session ends with a
+        <code>resource.summary</code> when only <code>run</code> and team members emit one.
+        <b>Fixed in the source rather than in the page wherever the page is generated</b>, because a hand edit there
+        is reverted by the next build: the supervisor&rsquo;s profile dump now emits its device grants, the recorder
+        schema moves <code>jailed</code> and <code>profile</code> to <code>session.ready</code> where D32 put them
+        and all eight writers actually set them, and the flag extractor learned the one shape
+        <code>flag.PrintDefaults</code> formats differently &mdash; a one-letter boolean, whose usage goes on the
+        <i>same</i> line after a tab. That is why <code>kelyfos log -f</code> was defined, named in the usage prose,
+        and absent from the reference with CI green throughout: the generator and the committed file agreed, and
+        both were wrong.
+        <b>Four code fixes came out of doc claims</b> rather than the reverse: the host-side argument summariser was
+        missing <code>data</code>, so base64 file contents could reach the record on a door its own comment promised
+        covered &ldquo;a tool that does not exist yet&rdquo;; <code>serve-mcp</code>&rsquo;s OOM event carried the
+        resident set without the cap it was measured against; <code>install-firecracker.sh</code> carried a fallback
+        version that made it a second place naming a Firecracker, which its own header denied; and the
+        supervisor&rsquo;s version was a constant reading <code>0.2.0-p2</code>, printed on every boot and written
+        into every chain for seven releases &mdash; now stamped from git the way the CLI&rsquo;s always was.
+        <b>Deliberately not done here:</b> the guest <code>os-release</code> is still <code>0.1.0-dev</code>, which
+        needs the overlay templated and an image build to verify; it goes to P6-9, where that build is already open.
+        Fixing a build I cannot run would be a claim of a different kind.</td>
+        <td class="mono">59 verified, 8 dropped, 11 routed to tasks &middot; 24 files &middot; docs regenerated and
+        proved idempotent on a second run<br>
+        the sweep&rsquo;s own discipline, worth recording: <code>README.md</code>&rsquo;s
+        <code>no_new_privs</code> attribution was dropped as <b>UNVERIFIED</b> by two independent readers rather
+        than corrected on a guess, and <code>docs/README.md</code>&rsquo;s &ldquo;139 comments across 61 Go
+        files&rdquo; was dropped because no counting rule reproduces 61 and the original rule is recorded nowhere<br>
+        proved rather than asserted: <code>gofmt</code> clean, <code>go vet</code> clean, <code>go test ./...</code>
+        all 13 packages ok, <code>tools/check-plan.py</code> coherent; <code>make docs</code> re-run against a
+        snapshot of its own output &mdash; byte-identical<br>
+        both new guard tests negative-tested by breaking them: disable the one-letter-flag branch and
+        <code>TestParseFlagsSeesEveryShapeFlagPrints</code> fails on all three assertions with
+        <code>flag</code>&rsquo;s real output in the message; remove <code>docs/qol.md</code> from
+        <code>docSet()</code> and <code>TestEveryDocumentUnderDocsIsInTheLLMsSet</code> names it &mdash; that page
+        was in the documentation map and in neither llms file while <code>llms-full.txt</code> called itself
+        &ldquo;every documentation page in one file&rdquo;<br>
+        <code>llms-full.txt</code> 412,437 &rarr; <b>440,396</b> bytes, ~108k &rarr; <b>~114k</b> tokens, the growth
+        being <code>qol.md</code> arriving; the hand-typed &ldquo;54k&rdquo; and &ldquo;101,000&rdquo; figures are
+        gone rather than corrected, because <code>llms.txt</code> already prints the number the generator
+        computed<br>
+        verified first-hand before being written down: <code>Image-aarch64</code> reports
+        <code>ioanniskapageridis@lima-kelyfos-dev</code> and <code>vmlinux-x86_64</code> reports
+        <code>runner@runnervm76f27</code>, both wrappers <code>FLG=0x08</code> with non-zero mtimes &mdash; three
+        claims of byte-identity withdrawn, and CI&rsquo;s per-push build is the <code>base</code> flavor while the
+        download is <code>dev</code>, so it was not building the artifact it claimed to</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>

@@ -9,7 +9,11 @@ never to the supervisor. [`../hardening.md`](../hardening.md) §4 says why each
 mechanism is here and what it does not do.
 
 **Landlock** governs the filesystem: the listed trees are writable, everything
-else on the image is readable and executable, and nothing else is writable.
+else on the image is readable and executable, and nothing else is writable. The
+device trees are writable the same way the others are — a program may create files
+and directories under them — which for `/dev/shm` means a general-purpose writable
+area the guest kernel sizes at half the machine's RAM. The named device nodes are
+narrower: read, write and truncate that file, and nothing else.
 **seccomp** refuses the listed syscalls with `EPERM` — a refusal list rather than
 an allowlist, because an allowlist for an arbitrary agent command is a crash waiting
 to be mistaken for a security feature.
@@ -26,6 +30,10 @@ Refuses to run where the Landlock ABI is below **2**.
 
 Writable: `/work`, `/tmp`, `/run`, `/root`
 
+Writable device trees: `/dev/pts`, `/dev/shm`
+
+Writable device nodes, read/write/truncate only: `/dev/null`, `/dev/zero`, `/dev/full`, `/dev/random`, `/dev/urandom`, `/dev/tty`, `/dev/ptmx`
+
 Refused, 28 syscalls: `init_module`, `finit_module`, `delete_module`, `kexec_load`, `kexec_file_load`, `mount`, `umount2`, `pivot_root`, `chroot`, `swapon`, `swapoff`, `reboot`, `clock_settime`, `clock_adjtime`, `adjtimex`, `settimeofday`, `setns`, `unshare`, `add_key`, `request_key`, `keyctl`, `open_by_handle_at`, `bpf`, `perf_event_open`, `acct`, `quotactl`, `syslog`, `ptrace`
 
 ## `dev`
@@ -33,6 +41,10 @@ Refused, 28 syscalls: `init_module`, `finit_module`, `delete_module`, `kexec_loa
 Refuses to run where the Landlock ABI is below **2**.
 
 Writable: `/work`, `/tmp`, `/run`, `/root`
+
+Writable device trees: `/dev/pts`, `/dev/shm`
+
+Writable device nodes, read/write/truncate only: `/dev/null`, `/dev/zero`, `/dev/full`, `/dev/random`, `/dev/urandom`, `/dev/tty`, `/dev/ptmx`
 
 Refused, 27 syscalls: `init_module`, `finit_module`, `delete_module`, `kexec_load`, `kexec_file_load`, `mount`, `umount2`, `pivot_root`, `chroot`, `swapon`, `swapoff`, `reboot`, `clock_settime`, `clock_adjtime`, `adjtimex`, `settimeofday`, `setns`, `unshare`, `add_key`, `request_key`, `keyctl`, `open_by_handle_at`, `bpf`, `perf_event_open`, `acct`, `quotactl`, `syslog`
 

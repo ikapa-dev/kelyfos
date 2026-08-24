@@ -41,9 +41,12 @@ unless the policy grants it, the project's resource caps, and a flight recorder
 of its own.
 
 **The policy file applies here.** The shim reads `kelyfos.toml` the way
-`kelyfos run` does: `[resources]` caps every sandbox it creates, `allow` and
-`secrets` decide what those sandboxes may reach, and the flags on
-`kelyfos shim` are the operator's, not the client's. There is no request
+`kelyfos run` does — with one gap, stated here rather than discovered:
+`cpus`, `mem`, `cpu_quota`, `scratch` and the four I/O rates cap every sandbox
+it creates, and `allow` and `secrets` decide what those sandboxes may reach, but
+the **time budgets `max_runtime` and `idle_timeout` are not applied here**. A
+shim sandbox lives until it is killed or the shim stops. The flags on
+`kelyfos shim` are the operator's, not the client's, and there is no request
 parameter that widens any of it — an SDK client cannot ask for a bigger machine
 or another domain, which is the point of the door being in the wall rather than
 beside it (F-D5, F-D33).

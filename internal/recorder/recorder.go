@@ -179,7 +179,8 @@ type Event struct {
 	Modified int `json:"modified,omitempty"`
 	Deleted  int `json:"deleted,omitempty"`
 
-	// session.start (P5-1). Whether the VMM ran inside the jailer: a chroot,
+	// session.ready (P5-1, placed by D32). Whether the VMM ran inside the
+	// jailer: a chroot,
 	// a dropped uid, its own device nodes. In the record because a chain that
 	// does not say which wall was around a run is a chain that overstates the
 	// weaker one — the same rule that made `mode` on an egress attempt say how
@@ -192,7 +193,7 @@ type Event struct {
 	// connection and never per packet or per byte.
 	GuestPort int `json:"guest_port,omitempty"`
 
-	// session.start and session.resume (P5-3, P5-7). What the guest's own
+	// session.ready (P5-3, P5-7). What the guest's own
 	// supervisor confined every process it spawned with — the flavor's profile,
 	// the writable trees, how many syscalls it refused. Empty means no
 	// confinement, which is what a machine restored from a pre-v0.9 snapshot

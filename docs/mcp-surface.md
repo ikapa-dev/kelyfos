@@ -322,8 +322,11 @@ a matter of taste — it decides whether a model can recover.
 command that exited non-zero, a file that does not exist, a policy refusal. The
 model sees it and adapts.
 
-**A request that could not be attempted** is a JSON-RPC error: an unknown tool,
-a malformed call, a missing required argument.
+**A request that could not be attempted at all** is a JSON-RPC error, and that
+is a narrower set than it sounds: only a `params` object that will not parse,
+because then there is no call to answer. An unknown tool and a missing required
+argument come back the way a failed tool does — a result with `isError` set —
+for the same reason: the model is meant to see it and adapt.
 
 A policy refusal is deliberately the first kind. "You asked for four cores and
 this project allows two" is something an agent can act on by asking for two.
@@ -644,8 +647,8 @@ plan's review rounds, and `docs/protocol.md` §6 carries it.
 rest of the protocol uses. Nothing here is chunked — a `read_file` result is a
 whole file on one line — and the per-call limit on a file is 8 MiB, so a 1 MiB
 frame would refuse messages the tools above it promise to carry. Sixteen leaves
-room for JSON escaping around eight and still bounds the buffer. Every reader
-*and writer* on both sides of the channel takes the number from one constant
+room for JSON escaping around eight and still bounds the buffer. Every reader on both
+sides of the channel takes the number from one constant
 (`proto.MaxMCPLine`), because a writer that will send more than the reader
 opposite it accepts is a connection that dies mid-answer — which is what a
 caller sees as an unexplained EOF. `docs/protocol.md` §3 carries it.

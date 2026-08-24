@@ -3,7 +3,8 @@
 # Everything here runs on Linux (the Lima VM on macOS, WSL2 on Windows, or a bare
 # Linux/KVM box). See dev/lima.yaml and dev/wsl2.md.
 #
-# Targets are stubs until phase 1 (P1-1 onward); each prints what it will do.
+# The default goal is `help`. The build entry points are `toolchain` (once per
+# architecture), `image` and `cli`.
 
 # Version stamped into the CLI. A dev build says so rather than claiming a
 # release number it does not have.
@@ -154,7 +155,7 @@ linux-only:
 supervisor: ## Cross-compile the guest supervisor into the rootfs overlay
 	@mkdir -p $(GUEST_OVERLAY)/sbin $(GUEST_OVERLAY)/.oldroot
 	CGO_ENABLED=0 GOOS=linux GOARCH=$(GOARCH) \
-	  go build -trimpath -ldflags="-s -w" \
+	  go build -trimpath -ldflags="-s -w -X main.Version=$(KELYFOS_VERSION)" \
 	    -o $(GUEST_OVERLAY)/sbin/kelyfos-supervisor ./supervisor
 	@file $(GUEST_OVERLAY)/sbin/kelyfos-supervisor
 
@@ -167,8 +168,10 @@ image: linux-only supervisor fetch-kernel $(BUILD_DIR)/.config ## Build the gues
 	@$(CURDIR)/image/check-image.sh "$(ARCH)" "$(IMAGE_DIR)" "$(KERNEL_ARTIFACT)"
 	@$(CURDIR)/image/write-manifest.sh "$(ARCH)" "$(FLAVOR)" "$(IMAGE_DIR)" "$(KERNEL_ARTIFACT)" "$(BUILDROOT_VERSION)" "$(LINUX_VERSION)"
 
-# Prebuilt guest images from the GitHub release (D20). Same bytes `image` makes,
-# without the 35-minute build. Checksum-verified; not signed until P4-3.
+# Prebuilt guest images from the GitHub release (D20), built from this tree,
+# without the 35-minute build. Checksum-verified for integrity, not provenance:
+# they are not bit-for-bit what `image` makes here, because the build is not
+# reproducible yet (P6-9), and they are not signed (P6-11).
 fetch-image: ## Download a prebuilt guest image for ARCH instead of building it
 	@$(CURDIR)/dev/fetch-image.sh "$(ARCH)" "$(RELEASE_TAG)"
 

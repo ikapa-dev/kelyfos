@@ -314,6 +314,7 @@ kelyfos log [flags]
 | Flag | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `--export` | string | — | write a self-contained HTML report to this path |
+| `-f` | boolean | — | alias for --follow |
 | `--follow` | boolean | — | stream events as they are recorded |
 | `--json` | boolean | — | print the raw events instead of a readable replay |
 | `--list` | boolean | — | list recorded sessions |

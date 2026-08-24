@@ -181,6 +181,13 @@ in `CONFIG_LSM` leaves it inactive, which is exactly the kind of half-measure
 that reads as protection in a config file and is none at runtime. P5-3 includes
 a kernel config change and a rebuild.
 
+*Written after P5-3: this is done.* `image/buildroot/kernel/kelyfos.fragment`
+now sets `CONFIG_SECURITY_LANDLOCK=y` and names `landlock` first in
+`CONFIG_LSM`, and the guest reports ABI 6 —
+`/sys/kernel/security/lsm` reads `capability,landlock`. The paragraph above is
+kept as written because it is the reasoning the change was made from, and
+because "both are needed" is the part a future kernel bump can quietly undo.
+
 ### 4.2 What a profile may not break
 
 A profile that breaks the toolbox has hardened nothing. Three things must keep
@@ -199,16 +206,24 @@ anywhere outside those trees now fails with `EACCES`, and that includes creating
 a new directory at the root — `mkdir /prepared`, which one of the cookbook
 recipes did. There is no way to permit that and still refuse `/etc`: a Landlock
 rule covers a tree, so granting the root grants everything under it. The recipe
-now prepares in `/tmp`, which is where it belonged, and the release notes say
-plainly that a command writing outside `/work`, `/tmp`, `/run` and `$HOME` is
-refused from v0.9 where it succeeded before.
+now prepares in `/tmp`, which is where it belonged, and the v0.9 release notes
+say plainly that a command writing outside `/work`, `/tmp`, `/run` and `$HOME`
+is refused from v0.9 where it succeeded before. Those notes live only in the
+GitHub release body: this repository has no `CHANGELOG.md` yet, so nothing in
+the tree carries that statement and nothing keeps the two in step. P6-16.
 
 ### 4.3 Per flavor, and refusing rather than degrading
 
 The profile is declared per image flavor, because `base` and `dev` are different
 machines with different jobs. And when the kernel cannot apply it — an ABI that
-is too old, an LSM that is not compiled in — the supervisor **refuses to start**
-rather than continuing with the profile silently absent.
+is too old, an LSM that is not compiled in — nothing continues with the profile
+silently absent. *Written after P5-3, because the shape is not the one this
+sentence first predicted:* the supervisor comes up and reports the absence in
+its ready frame; the **host** refuses a cold boot with `[profile.not_enforced]`;
+every process the supervisor would spawn is refused by the confining step
+itself; and a restore is warned about rather than refused, because the host
+walls are unchanged and refusing would make old snapshots unusable to buy
+nothing (D32).
 
 That is the same rule the rest of this product follows and for the same reason:
 a limit that is quietly not applied is worse than no limit, because somebody is
@@ -307,7 +322,12 @@ buys a boundary weaker than the one already around it, and costs every recipe.
 **No new policy surface.** Nothing here adds a way to widen anything: the
 profiles narrow, and `kelyfos.toml` gains no key that can turn a layer off. A
 hardening feature with an off switch in the project's own config file is a
-hardening feature with an off switch.
+hardening feature with an off switch. *Stated precisely, because there is one
+off switch:* `kelyfos run --no-jail` exists, on the command line and not in the
+policy file, for a machine that cannot grant the jailer passwordless sudo. It
+prints what is not enforced on every run that uses it and records
+`jailed: false` in the chain, so it cannot be used quietly — which is the
+property that matters, not its absence.
 
 **No claim that this makes KelyfOS suitable for hostile multi-tenancy.** It is a
 single-host developer tool (D1). This phase makes a compromised agent much less

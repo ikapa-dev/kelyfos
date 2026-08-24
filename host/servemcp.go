@@ -170,6 +170,7 @@ func (b *servedBox) guestEvent(ev proto.GuestEvent) {
 		_ = rec.Append(recorder.Event{
 			Type: recorder.TypeResourceOOM, Source: recorder.SourceGuest,
 			PID: ev.PID, Comm: ev.Comm, RSSKiB: ev.RSSKiB,
+			MemMiB: b.sb.State.MemMiB,
 		})
 	case proto.GuestEventPluginCall, proto.GuestEventPluginCrash:
 		_ = rec.Append(pluginEvent(ev))
@@ -418,8 +419,9 @@ func (s *hostServer) dispatch(req *mcp.Request) *mcp.Response {
 
 // callTool answers one tool call. A tool that ran and failed comes back as a
 // result with isError set, never as a JSON-RPC error: the model is meant to see
-// it and adapt (docs/mcp-surface.md §2.4). Only an unknown tool or an
-// unparseable argument object is a protocol error.
+// it and adapt (docs/mcp-surface.md §2.4). An unknown tool and a missing
+// argument come back the same way, for the same reason. Only an unparseable
+// `params` object is a protocol error, because there is no call to answer.
 func (s *hostServer) callTool(p *mcp.CallToolParams) *mcp.CallToolResult {
 	// One place, so no tool can be added that skips the record — the same
 	// reason the guest's events are written by the host and not by the guest

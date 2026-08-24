@@ -11,6 +11,11 @@ for a sandbox in a team, and `team_spawn` only for an agent whose policy
 granted a spawn budget. A tool that is always advertised and always fails
 teaches a model to ignore failures, so it is not advertised (F-D18).
 
+A `[[plugin]]` in `kelyfos.toml` adds its own tools on top of these, namespaced
+under the plugin's name. They come from that server rather than from KelyfOS,
+so they are not listed here — `tools/list` on a running sandbox is the only
+complete answer for a machine that has one.
+
 ## Every sandbox
 
 Always available.

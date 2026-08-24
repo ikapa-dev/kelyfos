@@ -44,8 +44,12 @@ sudo udevadm control --reload-rules && sudo udevadm trigger --name-match=kvm
 
 ```sh
 bash dev/install-firecracker.sh
-make
+make cli
+make image FLAVOR=dev
 ```
+
+Bare `make` prints the target list and builds nothing — the default goal is
+`help`.
 
 `kelyfos doctor` (P3-11) detects the host flavor and prints the fix for whichever
 of these is wrong.

@@ -24,7 +24,7 @@ What to boot, and what it may reach.
 
 ## `[resources]`
 
-Hard ceilings for a single run: a flag may ask for less, never more.
+Hard ceilings for a single run, and the value when no flag asks: a flag may ask for less, never more.
 
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |

@@ -124,19 +124,45 @@ confidently-wrong reference F-D4 exists to prevent. What follows is what *is*
 verified.
 
 **If you have an MCP client already** — Claude Code, Cursor, anything speaking
-the standard — it needs one line of configuration and no code:
+the standard — it needs one entry of configuration and no code. Point it at
+`serve-mcp`, the outward door, and **name the policy file absolutely**:
 
 ```json
-{ "mcpServers": { "kelyfos": { "command": "kelyfos", "args": ["mcp"] } } }
+{
+  "mcpServers": {
+    "kelyfos": {
+      "type": "stdio",
+      "command": "/abs/path/to/kelyfos",
+      "args": ["serve-mcp", "--policy", "/abs/path/to/kelyfos.toml"]
+    }
+  }
+}
 ```
 
-That is [`.mcp.json`](../.mcp.json) in this repository, verbatim. When the agent
-runs on macOS and the sandbox runs in a Lima layer, the bridge speaks stdio and
-`limactl` passes it through unchanged:
+`--policy` is not optional in a client configuration, and this is the paragraph
+that says why: the policy is otherwise found by searching upward from the
+working directory, and under a client that directory is the client's, not yours.
+A server launched from `$HOME` would find no policy and run with **no ceiling at
+all**. A `--policy` naming a file that does not exist is an error rather than a
+fallback, for the same reason.
+
+When the agent runs on macOS and the sandbox runs in a Lima layer, the whole
+command crosses the boundary — and a non-interactive `limactl shell` gets a
+minimal `PATH`, so a bare `kelyfos` is not found there even when it exists:
 
 ```json
-{ "command": "limactl", "args": ["shell", "kelyfos-dev", "--", "kelyfos", "mcp"] }
+{
+  "command": "limactl",
+  "args": ["shell", "kelyfos-dev", "--",
+           "/abs/path/to/kelyfos", "serve-mcp", "--policy", "/abs/path/to/kelyfos.toml"]
+}
 ```
+
+This repository's own [`.mcp.json`](../.mcp.json) runs
+[`dev/mcp-server.sh`](../dev/mcp-server.sh) rather than either of these, because
+a VM name and an absolute path do not belong in a file a Linux contributor also
+checks out; the script chooses the right form for the machine it runs on. Doing
+this by hand is what `kelyfos connect <client>` will replace.
 
 **If you are writing a client from scratch**, the transport is a subprocess and
 the framing is newline-delimited JSON-RPC — one message per line, no embedded

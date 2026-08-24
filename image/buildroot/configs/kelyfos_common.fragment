@@ -39,10 +39,11 @@ BR2_CCACHE_INITIAL_SETUP="-M 2G"
 BR2_CCACHE_USE_BASEDIR=y
 
 # --- init ------------------------------------------------------------------
-# No init system from Buildroot. PID 1 is the KelyfOS init script in phase 1
-# (P1-3) and the Go supervisor from phase 2 (P2-1), both delivered by the rootfs
-# overlay. Installing an init system we immediately replace would only add
-# attack surface to an image whose selling point is not having any.
+# No init system from Buildroot. PID 1 is the Go supervisor (P2-1), delivered by
+# the rootfs overlay and selected by `init=/sbin/kelyfos-supervisor` on the
+# kernel command line — there is no /init on the image. Installing an init system
+# we immediately replace would only add attack surface to an image whose selling
+# point is not having any.
 BR2_INIT_NONE=y
 
 # --- system ----------------------------------------------------------------
@@ -68,8 +69,9 @@ BR2_TARGET_ROOTFS_TAR=n
 
 # --- rootfs overlay --------------------------------------------------------
 # Two directories, templated by the Makefile: the flavor's tracked overlay
-# (/init, /etc/os-release) and a generated one holding the cross-compiled
-# supervisor and the pre-created directories /init needs on a read-only root.
+# (/etc/os-release) and a generated one holding the cross-compiled supervisor at
+# /sbin/kelyfos-supervisor plus the directories it needs pre-created on a
+# read-only root, /.oldroot among them.
 BR2_ROOTFS_OVERLAY="@OVERLAY_DIRS@"
 
 # --- kernel --------------------------------------------------------------
