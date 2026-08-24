@@ -1804,6 +1804,18 @@ after:
         item 6: cold 135 ms median / p95 149, restore 49 ms / p95 51 (bench run 32715343990)<br>
         item 7: README and docs/threat-model.md were rewritten together at P5-4; the &ldquo;what is not&rdquo; list
         is the same list in both, and threat-model &sect;4 is longer than it was rather than shorter</td></tr>
+        <tr><td class="mono">2026-08-24</td><td class="mono">&mdash;</td>
+        <td><b>The drift gate caught the exit commit, and the tag carries the drift.</b> The stale
+        &ldquo;~33 ms&rdquo; the acceptance found was fixed in <code>README.md</code> without regenerating
+        <code>llms-full.txt</code>, which embeds it &mdash; so <code>main</code> went red on the check F-D4 built
+        for exactly this, one commit after the phase closed. Regenerated and green again. <b>Stated rather than
+        tidied away:</b> the <code>v0.9</code> tag&rsquo;s tree therefore contains a generated file that disagrees
+        with its own source by that one figure. The tag is not moved &mdash; tags are not moved here &mdash; and the
+        release artifacts are unaffected, because neither the CLI nor the image embeds that file. It is one line, in
+        a generated index, fixed in the commit after the tag.</td>
+        <td class="mono">CI run 32724608634 &rarr; failure in checks, &ldquo;the generated documentation disagrees
+        with the source&rdquo;, one line of llms-full.txt<br>
+        the gate is doing its job: this is the third time this session it has refused a stale generated file</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>

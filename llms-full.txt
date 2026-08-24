@@ -321,7 +321,7 @@ machine took.
 
 | | |
 | --- | --- |
-| `kelyfos snapshot save\|restore` | freeze a prepared machine, bring it back in ~33 ms |
+| `kelyfos snapshot save\|restore` | freeze a prepared machine, bring it back in ~49 ms |
 | `kelyfos fork -n 4` | four divergent copies of one snapshot, sharing its memory image |
 | `kelyfos run --workspace ./dir` | your files at `/work`, written back on clean shutdown |
 | `kelyfos log --export report.html` | a self-contained session report you can send to someone |
