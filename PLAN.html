@@ -180,7 +180,7 @@
     <span class="bl-name">Overall</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">P6-6 done &mdash; the export carries the record it was rendered from, <code>kelyfos verify</code> re-runs the chain over it offline, and the green badge the file wrote about itself is gone. Two live defects closed on the way: a chain with no digests verified, and the escaper would have corrupted the record it embedded. Next: <b>P6-7</b>, signed exports with a key the reader can anchor</b></div>
+  <div class="focusline">Current focus: <b id="focus">P6-6 done &mdash; the export carries the record it was rendered from and <code>kelyfos verify</code> re-runs the chain over it offline. <b>An external security audit then arrived (D45) and v1.0 is gated on its trust-boundary group</b>: the workspace block device is a guest&rarr;host surface the threat model does not list. Seven tasks inserted before P6-7. Next: <b>P6-21</b>, the six lines that stop <code>--review</code> destroying an edit made while somebody was reading it</b></div>
 </div>
 
 <!-- ====================================================== 1. END GOAL -->
@@ -855,6 +855,95 @@
         report <code>event N has been modified</code> &mdash; tamper-detection firing on a legitimate record.
         Hashing a canonical form instead is what makes <code>docs/events.md</code> &sect;3&rsquo;s
         &ldquo;adding a field is not breaking&rdquo; true, which it is not today.</span></li>
+
+    <div class="callout red"><b>The audit, and the gate it puts in front of the tag.</b> An independent external
+       security audit of <code>babec8f</code> arrived on 2026-08-24: 23 findings, 1 critical, 6 high, 9 medium,
+       7 low. It is high quality and largely real. <b>D45</b> records its receipt and this triage plan.
+       <b>v1.0 does not tag until the trust-boundary group is closed and proven</b> &mdash; C-1, H-1 and H-2, which
+       are one defect wearing three hats: the workspace block device is a guest&rarr;host surface the threat model
+       does not list at all, and the product&rsquo;s central claim fails on it. The seven tasks below are inserted
+       <i>here</i>, before P6-7, because list position is work order and the owner&rsquo;s ruling is that the
+       blocking set precedes the tag while the long tail and <code>connect</code> continue after it. The order
+       inside them is the owner&rsquo;s too: M-3 first because it is six lines and a live data-loss bug in the
+       default flow, then the fixtures <i>before</i> any boundary fix so that every finding is a failing test
+       before it is a fixed one.</div>
+
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P6-21</span><span class="tk"><b>M-3: the window in which <code>--review</code> destroys
+        an edit somebody made while they were reading the review.</b> First of everything, on the owner&rsquo;s
+        ruling and on the arithmetic: it is about six lines and it is live data loss in the <i>default</i> flow.
+        <code>Stage()</code> fingerprints the host directory, the review is then shown to a person and waits on
+        them for as long as they take, and <code>Commit()</code> renames over the destination without looking
+        again. Everything that person edited in that window is gone. Re-fingerprint immediately before the rename,
+        divert on mismatch exactly as <code>Stage</code> already would, and <b>keep
+        <code>.kelyfos-previous</code></b> until the next successful run rather than deleting it on the line after
+        the swap &mdash; a backup removed at the moment it becomes useful is not a backup.</span></li>
+
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P6-22</span><span class="tk"><b>Adversarial fixtures: a committed hostile corpus, and a
+        CI job named for what it does.</b> Before any finding is fixed, because a fixed finding with no fixture is
+        a finding that grows back. <code>testdata/hostile/</code> and a job that runs it, seeded with the nine
+        KVM-free fixtures the report enumerates: a crafted-dirent ext4 image, an image whose modes are
+        <code>0777</code>, <code>write_file</code> with <code>/dev/vdb</code>, with <code>/etc/passwd</code> and
+        with <code>../escape</code>, a team frame carrying <code>timeout_ms = 1&lt;&lt;40</code>, a
+        ten-thousand-unique-key store loop, edgeless refusal spam with <code>record_payloads</code> on, a hundred
+        concurrent <code>POST /sandboxes</code>, a stub sandbox answering <code>OK:false</code> to
+        <code>OpTrust</code>, and a guest stub streaming 1&nbsp;MiB frames with no <code>StreamExit</code>.
+        <b>Each one is a failing test first and green only when its finding is fixed.</b> This is the gap the
+        report found in this project&rsquo;s own hardening: nineteen fuzz targets, and until P6-6 every one of them
+        fed a parser a <i>host-authored</i> string. None of them was a guest&rarr;host path, and the guest is the
+        untrusted party.</span></li>
+
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P6-23</span><span class="tk"><b>Every finding triaged against HEAD, with a verdict, in
+        the decision log.</b> Not against <code>babec8f</code>, which is what the audit read: the tree has moved
+        and H-6 is already partly fixed. Four verdicts and no fifth:
+        <code>CONFIRMED-against-current-code</code>, <code>ALREADY-FIXED-since-babec8f</code>, <code>STALE</code>,
+        <code>WONTFIX</code> with the reason written down. <b>Nothing is fixed that was not first reproduced or
+        read as present in current source</b> &mdash; the rule that keeps a triage from turning into a rewrite of
+        code somebody else described.</span></li>
+
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P6-24</span><span class="tk"><b>The trust boundary the threat model does not have: the
+        workspace block device. C-1, H-1, H-2 &mdash; and this is the v1.0 gate.</b> The guest writes an ext4 image
+        the host then extracts with <code>debugfs rdump</code>, and a dirent the guest authored decides where the
+        host writes. That is arbitrary host file write as the invoking user, from inside the sandbox, on the one
+        surface &sect;5&rsquo;s table omits. Two layers, both of them, because either alone is one bug from
+        failing: <b>validate the image and refuse rather than sanitise</b> any name carrying <code>/</code>,
+        <code>\0</code>, <code>.</code> or <code>..</code>; <b>and extract beneath a pinned root</b> with
+        <code>openat2(RESOLVE_BENEATH|RESOLVE_NO_SYMLINKS)</code> semantics, so the second layer holds when the
+        first is wrong. With them: H-1, where <code>write_file</code> and <code>read_file</code> validate no path
+        at all and hand back <code>/dev/vda</code> and <code>/dev/vdb</code> &mdash; the block devices the Landlock
+        profile deliberately withholds, reachable because PID 1 is not confined by it; and H-2, guest-authored
+        modes surviving the write-back onto the host, including the workspace root&rsquo;s own. <b>The workspace
+        device joins the trust-boundary table as a first-class guest&rarr;host path</b>, and the boot and restore
+        bars are re-earned if the extraction path moved the timing.</span></li>
+
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P6-25</span><span class="tk"><b>The clamps a hostile agent can reach: H-3, H-4, H-5,
+        H-6, M-9.</b> Each is small, each is a denial of service on the <i>host</i> driven from the untrusted side,
+        and together they are the rest of the v1.0-blocking set. A <code>timeout_ms</code> the guest chooses with
+        no ceiling; a team store that accounts no keys and cannot delete one; a record that writes a body where a
+        digest would do, and describes before it checks; a ceiling and a bearer token the report found missing,
+        one of which has moved since <code>babec8f</code> and is re-read rather than re-fixed; and no total-output
+        ceiling anywhere. Every one of them has a fixture in P6-22 before it has a fix.</span></li>
+
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P6-26</span><span class="tk"><b>M-2 and M-5, which are not trivia.</b> <code>fork</code>
+        applies no CPU quota, so a documented <i>hard ceiling</i> is bypassed by asking for it from the untrusted
+        side &mdash; a cap that is not applied is worse than a cap that was never claimed. And an agent name
+        reaches the kernel command line, where a second <code>init=</code> is a sentence somebody else gets to
+        finish. Both before the long tail, because both are the shape this phase exists to remove: a claim the
+        code does not keep.</span></li>
+
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P6-27</span><span class="tk"><b>The long tail, batched, and the documentation table
+        corrected as each fix lands.</b> M-1, M-4, M-6, M-7, M-8, every <code>L-*</code> and D-1: fixed in batches
+        where they are cheap, parked with a logged reason where sizing says post-1.0. And the overstatements the
+        report lists are corrected in P6-1&rsquo;s spirit &mdash; <b>including the README&rsquo;s &ldquo;Both
+        layers exist now&rdquo;, which is untrue of the host-side workspace path until C-1 is closed</b>. Each
+        correction lands with the fix underneath it and not before it, because a document that claims a fix which
+        is not in yet is the exact defect P6-1 spent a commit removing.</span></li>
 
     <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">P6-7</span><span class="tk"><b>Signed exports &mdash; with a key the reader can
@@ -3435,6 +3524,60 @@ after:
         and the cross-version hash break, each reproduced before being accepted. <i>Revisit when</i>
         <code>[[secret]]</code> exists: methods and call-binding both belong in it, and neither needs the string
         grammar to change.</td></tr>
+        <tr><td class="mono">D45</td><td class="mono">2026-08-24</td>
+        <td><b>An independent external security audit is received, and v1.0 does not tag until its trust-boundary
+        group is closed and proven.</b> 23 findings against <code>babec8f</code> &mdash; 1 critical, 6 high,
+        9 medium, 7 low &mdash; from a static-analysis pass outside this project. The product owner&rsquo;s ruling
+        of 2026-08-24, recorded here with its plan rather than acted on quietly, because a phase whose thesis is
+        &ldquo;no claim this project has not earned&rdquo; cannot absorb an audit informally.
+        <i>What it found, and why it lands hard.</i> C-1 is a guest-authored ext4 dirent turning
+        <code>debugfs rdump</code> into an arbitrary host file write as the invoking user; it has been reproduced
+        independently, outside the product. H-1 is <code>write_file</code>/<code>read_file</code> validating no
+        path and handing back <code>/dev/vda</code> and <code>/dev/vdb</code> &mdash; the block devices the
+        Landlock profile withholds &mdash; because PID 1 is not confined by it. H-2 is guest-authored file modes
+        surviving the write-back onto the host. The three are one defect: <b>the workspace block device is a
+        guest&rarr;host surface and &sect;5&rsquo;s trust-boundary table does not list it</b>. The table listing
+        <code>guest &rarr; host</code> as &ldquo;Firecracker + KVM&rdquo; is true of the VM and silent about the
+        disk the VM writes and the host then reads, which is the surface an agent actually has.
+        <i>The gate.</i> No v1.0 tag until C-1, H-1 and H-2 are closed and proven, fixed in the report&rsquo;s
+        two-layer shape: <b>validate and refuse rather than sanitise</b> on any name carrying <code>/</code>,
+        <code>\0</code>, <code>.</code> or <code>..</code>, <b>and</b> extract beneath a pinned root with
+        <code>openat2(RESOLVE_BENEATH|RESOLVE_NO_SYMLINKS)</code> semantics &mdash; two layers because a boundary
+        held by one check is a boundary one mistake from gone. The workspace device joins the table. The boot and
+        restore bars are re-earned if the extraction path moved the timing.
+        <i>The order, and why fixtures come before fixes.</i> P6-21 takes M-3 first: six lines, and live data loss
+        in the <i>default</i> <code>--review</code> flow. P6-22 builds
+        <code>testdata/hostile/</code> and its CI job <b>before</b> any boundary fix, seeded with the nine KVM-free
+        fixtures the report enumerates, each a failing test before it is a fixed one. That is the finding under the
+        findings: this project has nineteen fuzz targets and, until P6-6 put one on a file a stranger sends, every
+        single one fed a parser a <i>host-authored</i> string. None was a guest&rarr;host path, and the guest is the
+        untrusted party. A hostile corpus is what stops the list regrowing.
+        <i>The triage rule.</i> P6-23 gives every finding one of four verdicts &mdash;
+        <code>CONFIRMED-against-current-code</code>, <code>ALREADY-FIXED-since-babec8f</code>, <code>STALE</code>,
+        <code>WONTFIX</code> with its reason &mdash; re-checked against <b>HEAD and not against
+        <code>babec8f</code></b>, since the tree has moved and H-6 is already partly fixed. <b>Nothing is fixed
+        that was not first reproduced or read as present in current source.</b> An audit is evidence, not an
+        instruction set, and fixing a finding one cannot find is how a codebase acquires changes nobody can
+        explain.
+        <i>The blocking set beyond the boundary group</i> is the exhaustion clamps a hostile agent can reach:
+        H-3 (an unbounded <code>timeout_ms</code>), H-4 (a store that accounts no keys and cannot delete one),
+        H-5 (a record writing a body where a digest would do, and describing before it checks), H-6 (a missing
+        ceiling and bearer token, partly moved since the audit read it) and M-9 (no total-output ceiling). Each is
+        small; each is a host-side denial of service driven from the untrusted side. <b>Not blocking</b>, and
+        ahead of the trivia because both are claims the code does not keep: M-2, where <code>fork</code> applies no
+        CPU quota and bypasses a documented hard ceiling, and M-5, where an agent name reaches the kernel command
+        line. The rest &mdash; M-1, M-4, M-6, M-7, M-8, every <code>L-*</code> and D-1 &mdash; is batched into
+        P6-27 or parked with a reason.
+        <i>Documentation last, deliberately.</i> Every overstatement the report lists is corrected in P6-1&rsquo;s
+        spirit, <b>as each underlying fix lands and not before it</b>, the README&rsquo;s &ldquo;Both layers exist
+        now&rdquo; included &mdash; untrue of the host-side workspace path until C-1 is closed. A document that
+        claims a fix which is not in yet is the exact defect P6-1 spent a commit removing, and doing it in the
+        wrong order here would re-introduce it while nominally fixing security.</td>
+        <td>The product owner&rsquo;s ruling of 2026-08-24, on an external audit of <code>babec8f</code>.
+        Tasks P6-21 through P6-27, inserted before P6-7 because list position is work order. C-1 reproduced
+        independently outside the product; H-1, H-3, H-4 and M-5 confirmed against current source by the owner;
+        H-6 partly fixed since <code>babec8f</code>. <i>Revisit when</i> the boundary group is proven: the gate
+        lifts on evidence, not on the tasks being ticked.</td></tr>
     <!-- Claude Code: append rows above this line. -->
   </table>
 </section>
