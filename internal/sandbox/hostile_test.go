@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/p4r4n0rm4l/KelyfOS/internal/hostile"
 )
 
 // The hostile corpus for the workspace block device (P6-22).
@@ -90,7 +92,7 @@ func TestHostileDirentCannotEscapeTheExtractionTree(t *testing.T) {
 			if err != nil {
 				t.Logf("the image was refused, which is a correct answer: %v", err)
 			}
-			holds(t, "dirent/"+name.Key, problem)
+			hostile.Holds(t, "dirent/"+name.Key, problem)
 		})
 	}
 }
@@ -158,7 +160,7 @@ func TestGuestChosenModesDoNotSurviveOntoTheHost(t *testing.T) {
 			if got.Perm()&0o022 != 0 {
 				problem = fmt.Sprintf("the guest made a host file group- or world-writable: %v", got.Perm())
 			}
-			holds(t, "modes/"+mode.String(), problem)
+			hostile.Holds(t, "modes/"+mode.String(), problem)
 		})
 	}
 }
@@ -200,5 +202,5 @@ func TestTheWorkspaceRootKeepsTheHostsMode(t *testing.T) {
 		problem = fmt.Sprintf("the workspace root's mode changed from %v to %v — the guest chose the second one",
 			before.Mode().Perm(), after.Mode().Perm())
 	}
-	holds(t, "workspace-root-mode", problem)
+	hostile.Holds(t, "workspace-root-mode", problem)
 }
