@@ -128,7 +128,7 @@
      injected secrets, full audit replay, and millisecond forking.</p>
   <div class="meta">
     owner: <b>John</b> &nbsp;·&nbsp; developer: <b>Claude Code</b> &nbsp;·&nbsp;
-    status: <b class="amber" id="meta-status">v0.8 released — phases 0–3 done; PLAN-FEATURES complete and closed; Phase 5 (hardening, v0.9) active, exiting at P5-5</b> &nbsp;·&nbsp;
+    status: <b class="amber" id="meta-status">v0.9 released — phases 0–3 and 5 done; PLAN-FEATURES complete and closed; Phase 4 is the remaining backlog, and is a direction rather than a deadline</b> &nbsp;·&nbsp;
     last updated: <b id="meta-updated">2026-08-24</b><br>
     repo file: <b>PLAN.html</b> (commit this document at the repository root — it is the single source of truth)<br>
     <span class="quiet">KelyfOS — from κέλυφος (kélyfos), "shell": the guest OS wrapped around the agent. Formerly working-titled "agos" (D4 → D10).</span>
@@ -173,7 +173,7 @@
     <span class="bl-name">Overall</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: the <b id="focus">Phase 5 exit &mdash; the acceptance list run as written, tag v0.9, publish the release the way v0.4&ndash;v0.8 were, then re-time the quickstart against the artifacts that release actually ships (acceptance item 8)</b></div>
+  <div class="focusline">Current focus: <b id="focus">Nothing in flight. Phase 5 closed at v0.9; what remains is Phase 4, an unordered backlog with no exit checkpoint &mdash; P4-3, P4-6 and P4-7 unstarted, P4-4 and P4-5 [BLOCKED] on the conditions they were written with</b></div>
 </div>
 
 <!-- ====================================================== 1. END GOAL -->
@@ -526,13 +526,13 @@
 </section>
 
 <!-- ====================================================== PHASE 5 -->
-<section class="phase" id="p5" data-phase="5" data-status="active">
+<section class="phase" id="p5" data-phase="5" data-status="done">
   <div class="phase-head">
     <div>
       <div class="kconfig">config KELYFOS_PHASE_5</div>
       <h2>Phase 5 &mdash; Hardening (v0.9 &middot; "and now it is hardened")</h2>
     </div>
-    <span class="badge">ACTIVE</span>
+    <span class="badge">DONE</span>
   </div>
   <p class="goal"><b>Goal:</b> make the README&rsquo;s one remaining apology unnecessary. Every release so far has
      carried the sentence <i>&ldquo;not hardened yet&rdquo;</i>, and it has been true: KelyfOS relies on the
@@ -1779,6 +1779,31 @@ after:
         into nothing, the relationship this project already has with the GCC that builds its kernel<br>
         corrected while writing the post: the team figures P5-4 published were <code>prove-team</code>&rsquo;s
         CPU-capped pair. See the correction row above</td></tr>
+        <tr><td class="mono">2026-08-24</td><td class="mono">P5</td>
+        <td><b>Phase 5 acceptance test &mdash; passed, all eight items, run as the list words them.</b> Items 1 to 3
+        were run against a live machine rather than delegated to the suites that cover the same ground, because a
+        phase closes on its own words: the VMM&rsquo;s root read from the host&rsquo;s <code>mountinfo</code>, its
+        whole filesystem listed and holding no <code>/etc</code>, <code>/home</code>, <code>/usr</code> or
+        <code>/var</code>, its uid, its seccomp mode, the cgroup the kernel says it is in against the one KelyfOS
+        asked for, and a write the profile does not grant refused while the same write in <code>/work</code>
+        succeeded. Item 5 is answered the way the list allows &mdash; the incompatibility is stated in the release
+        notes as a break, and the product warns about it at restore time rather than leaving it to be discovered.
+        Item 8 is the one that outlives the tag: the quickstart is re-timed against the artifacts this release
+        actually ships, immediately after publishing.
+        <b>One stale number found by item 6 and fixed before the tag:</b> the feature table still promised a restore
+        &ldquo;in ~33 ms&rdquo;, which was v0.7&rsquo;s figure and better than anything measured since.
+        Phase 5 closed; tagged <b>v0.9</b>.</td>
+        <td class="mono">items 1&ndash;3, run live: <b>8 passed, 0 failed</b> &mdash; mountinfo root
+        &hellip;/run/firecracker/126f9a2c/root &middot; its filesystem: config.json dev fc.sock firecracker
+        firecracker.pid kernel rootfs.ext4 run sandbox.json sys v.sock v.sock_10100 v.sock_10101 workspace.ext4
+        &middot; Uid 501 &middot; Seccomp 2 &middot; the cgroup asked for = the one the kernel reports, cpu.max
+        150000 100000 &middot; /etc refused, /work granted<br>
+        item 4, every suite in dev/: denials 12, e1 13, e2 18, e4 22, e5 33, forward 19, jail 18, notify 22,
+        profile 31, runs 18, seccomp 15, shell 13, watch 5 &mdash; <b>239 checks, 0 failed</b>, one skip that is
+        e2&rsquo;s own &mdash; plus all <b>14</b> cookbook recipes and the Go suite<br>
+        item 6: cold 135 ms median / p95 149, restore 49 ms / p95 51 (bench run 32715343990)<br>
+        item 7: README and docs/threat-model.md were rewritten together at P5-4; the &ldquo;what is not&rdquo; list
+        is the same list in both, and threat-model &sect;4 is longer than it was rather than shorter</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>

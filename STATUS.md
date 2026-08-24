@@ -3,14 +3,15 @@
 Updated 2026-08-24 · synced with origin/main · CI green through P5-8 (run 32713825239)
 
 ## Plans
-- PLAN.html — **46/53**. Phase 5 (hardening, v0.9): **all six tasks done**; the exit remains.
+- PLAN.html — **46/53**. Phase 5 **closed at v0.9**. What remains is Phase 4, an unordered backlog
+  with no exit checkpoint: P4-3, P4-6, P4-7 unstarted; P4-4 and P4-5 [BLOCKED] on their own conditions.
 - PLAN-FEATURES.html — **COMPLETE and closed.** 42/42, five epics, v0.4–v0.8 released.
 
 ## Now
-The Phase 5 exit. Its acceptance list run as written, tag v0.9, publish the release the
-way v0.4–v0.8 were — then acceptance item 8, added today: re-time the quickstart against
-the artifacts that release actually ships, and put the measured number in the README with
-its provenance. P4-4 and P4-5 stay [BLOCKED] on their own written conditions.
+Nothing in flight. Phase 5's acceptance passed all eight items and v0.9 is tagged and
+published. The one item that outlives the tag is acceptance item 8: re-time the quickstart
+against the artifacts this release actually ships, and put the measured number in the
+README with its provenance.
 
 **P5-5 done.** The recording is a real session from a committed script — boot, a refused
 egress with its fix line, five agents, the chain verified — 202 KB, 14.3 s, with the cast
