@@ -144,7 +144,9 @@ func Schema() []Key {
 		{Name: "allow", Type: TypeStrings, Default: "no network interface at all", Sample: `["github.com"]`,
 			Doc: "egress allowlist; a bare hostname also matches its subdomains"},
 		{Name: "secrets", Type: TypeStrings, Default: "none", Sample: `["GITHUB_TOKEN@api.github.com"]`,
-			Doc: "NAME@domain[:bearer|basic] — names only; a value here is refused"},
+			Doc: "NAME@host[:bearer|basic][/path] — names only; a value here is refused. " +
+				"A path binds the credential to that endpoint on that host exactly, instead of " +
+				"to the domain and every subdomain of it"},
 		{Name: "vcpus", Type: TypeInt, Default: "2", Sample: "2",
 			Doc: "pre-v0.4 spelling of a cpus default; kept working, prefer [resources] cpus"},
 		{Name: "mem_mib", Type: TypeInt, Default: "512", Sample: "1024",

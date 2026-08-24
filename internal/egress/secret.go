@@ -14,6 +14,7 @@ type Secret struct {
 	Name   string // the environment variable it came from, e.g. GITHUB_TOKEN
 	Domain string // the domain it may be sent to
 	Scheme string // Authorization scheme: "Bearer" or "Basic"
+	Scope  Scope  // where it may be spent; the zero value is the whole domain
 	value  string // never logged, never serialized, never sent to the guest
 }
 
@@ -35,26 +36,11 @@ func (s *Secret) String() string {
 //	GITHUB_TOKEN@api.github.com
 //	GITHUB_TOKEN@github.com:basic
 func ParseSecret(spec string) (*Secret, error) {
-	scheme := "Bearer"
-	if at := strings.LastIndex(spec, ":"); at > 0 && !strings.Contains(spec[at:], "@") {
-		switch strings.ToLower(spec[at+1:]) {
-		case "bearer":
-		case "basic":
-			scheme = "Basic"
-		default:
-			return nil, fmt.Errorf("unknown scheme %q in --secret %q (use bearer or basic)", spec[at+1:], spec)
-		}
-		spec = spec[:at]
+	parsed, err := ParseSecretSpec(spec)
+	if err != nil {
+		return nil, err
 	}
-
-	name, domain, ok := strings.Cut(spec, "@")
-	if !ok || name == "" || domain == "" {
-		return nil, fmt.Errorf("--secret must be NAME@domain, got %q", spec)
-	}
-	domain = NormaliseDomain(domain)
-	if !validDomain(domain) {
-		return nil, fmt.Errorf("--secret %q does not name a domain a request could ever reach", spec)
-	}
+	name := parsed.Name
 	value, ok := os.LookupEnv(name)
 	if !ok {
 		return nil, fmt.Errorf("--secret %s: no environment variable %s on the host", spec, name)
@@ -62,7 +48,97 @@ func ParseSecret(spec string) (*Secret, error) {
 	if value == "" {
 		return nil, fmt.Errorf("--secret %s: %s is set but empty", spec, name)
 	}
-	return &Secret{Name: name, Domain: domain, Scheme: scheme, value: value}, nil
+	return &Secret{
+		Name: name, Domain: parsed.Host, Scheme: parsed.Scheme,
+		Scope: Scope{Path: parsed.Path}, value: value,
+	}, nil
+}
+
+// SecretSpec is a parsed --secret string, before the host environment is
+// consulted. Separated from ParseSecret so the places that only need to
+// understand the syntax — the policy-file check and the team-plan check — can
+// use the same parser instead of writing a third and a fourth. There were four
+// before P6-4, and the one in host/teamplan.go took everything after the "@" as
+// the domain, which a path would have broken.
+type SecretSpec struct {
+	Name   string
+	Host   string
+	Path   string // "" when the spec named no path
+	Scheme string
+}
+
+// ParseSecretSpec reads the grammar and nothing else.
+//
+//	NAME@host[:scheme][/path]
+//
+// The order of the steps is the design. The split on the first "/" happens
+// BEFORE any other delimiter is looked for, so no character in a path can be
+// mistaken for a scheme or anything else — which is what makes the grammar
+// extensible without becoming ambiguous. plausibleHost already refuses "/" in a
+// hostname, so the new delimiter cannot collide with what came before it.
+func ParseSecretSpec(spec string) (SecretSpec, error) {
+	var out SecretSpec
+
+	// A target is a host and a path and nothing else. "?" and "#" would make it
+	// a URL, and a query string is where credentials live on the APIs where
+	// this feature is most attractive.
+	for i := 0; i < len(spec); i++ {
+		if c := spec[i]; c == '?' || c == '#' || c < 0x20 || c == 0x7f {
+			return out, fmt.Errorf("--secret %q contains %q, which cannot appear in a secret binding", spec, string(c))
+		}
+	}
+
+	name, target, ok := strings.Cut(spec, "@")
+	if !ok || name == "" || target == "" {
+		return out, fmt.Errorf("--secret must be NAME@domain, got %q", spec)
+	}
+	if strings.ContainsAny(name, "=/:") {
+		return out, fmt.Errorf("--secret %q: %q is not an environment variable name", spec, name)
+	}
+	if strings.Contains(target, "@") {
+		return out, fmt.Errorf("--secret %q has more than one @, so it names no single domain", spec)
+	}
+
+	hostpart, rest, hasPath := strings.Cut(target, "/")
+
+	// The scheme is looked for in the host part only, exactly as it always was,
+	// so ":BEARER" keeps working and "github.com:8080" stays the loud error it
+	// has always been rather than becoming a credential bound to nothing.
+	out.Scheme = "Bearer"
+	if at := strings.LastIndex(hostpart, ":"); at > 0 {
+		switch strings.ToLower(hostpart[at+1:]) {
+		case "bearer":
+		case "basic":
+			out.Scheme = "Basic"
+		default:
+			return out, fmt.Errorf("unknown scheme %q in --secret %q (use bearer or basic)", hostpart[at+1:], spec)
+		}
+		hostpart = hostpart[:at]
+	}
+	if strings.Contains(hostpart, ":") {
+		return out, fmt.Errorf("--secret %q: %q is not a domain", spec, hostpart)
+	}
+
+	if hasPath {
+		// A path names one endpoint, so it binds this host exactly. "*." asks
+		// for the opposite, and NormaliseDomain would strip it — turning the
+		// broadest form a user can type into the narrowest binding in the
+		// grammar, silently.
+		if strings.HasPrefix(hostpart, "*.") {
+			return out, fmt.Errorf("--secret %q: a path binds one host exactly, so %q cannot also be a wildcard", spec, hostpart)
+		}
+		out.Path = "/" + rest
+	}
+
+	// The host is normalised; the path never is. Hosts are case-insensitive and
+	// paths are not, and running the whole target through NormaliseDomain would
+	// have lower-cased somebody's path segment.
+	out.Host = NormaliseDomain(hostpart)
+	if !validDomain(out.Host) {
+		return out, fmt.Errorf("--secret %q does not name a domain a request could ever reach", spec)
+	}
+	out.Name = name
+	return out, nil
 }
 
 // NormaliseDomain puts a policy domain into the single form that matching
@@ -142,9 +218,38 @@ func (p *Policy) secretFor(host string) *Secret {
 	host = strings.ToLower(strings.TrimSuffix(host, "."))
 	// Domains are normalised once, when the secret is parsed.
 	for _, s := range p.Secrets {
-		if host == s.Domain || strings.HasSuffix(host, "."+s.Domain) {
+		if s.bindsHost(host) {
 			return s
 		}
 	}
 	return nil
+}
+
+// bindsHost reports whether this secret is bound to a host at all — the
+// question that decides whether the proxy terminates, before any request has
+// been read.
+//
+// A secret that names a path binds one host exactly. Naming an endpoint and
+// then expanding to every subdomain of it would contradict the thing the path
+// was written to do.
+func (s *Secret) bindsHost(host string) bool {
+	if s.Scope.Path != "" {
+		return host == s.Domain
+	}
+	return host == s.Domain || strings.HasSuffix(host, "."+s.Domain)
+}
+
+// secretsFor is every secret bound to a host, in declaration order. The proxy
+// picks among them per request, because two secrets on one host with different
+// paths is the obvious use of endpoint scoping and a single first-match would
+// make the second unreachable.
+func (p *Policy) secretsFor(host string) []*Secret {
+	host = strings.ToLower(strings.TrimSuffix(host, "."))
+	var out []*Secret
+	for _, s := range p.Secrets {
+		if s.bindsHost(host) {
+			out = append(out, s)
+		}
+	}
+	return out
 }

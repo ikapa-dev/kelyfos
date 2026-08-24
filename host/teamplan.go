@@ -2,8 +2,8 @@ package main
 
 import (
 	"fmt"
+	"github.com/p4r4n0rm4l/KelyfOS/internal/egress"
 	"sort"
-	"strings"
 
 	"github.com/p4r4n0rm4l/KelyfOS/internal/config"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/team"
@@ -212,10 +212,16 @@ func checkAgentPolicy(path string, a config.TeamAgent) error {
 	// check belongs here rather than at the proxy: an agent whose credential
 	// can never be sent is a policy mistake, not a runtime condition.
 	for _, spec := range a.Secrets {
-		name, domain, ok := strings.Cut(strings.SplitN(spec, ":", 2)[0], "@")
-		if !ok || name == "" || domain == "" {
-			return fmt.Errorf("%s: secrets must be NAME@domain, got %q", where, spec)
+		// The package that owns the grammar parses it. This used to be a fourth
+		// hand-rolled reading — everything after the first "@" taken as the
+		// domain — which a path-scoped binding would have turned into a domain
+		// that is a path, refused with a fix line naming something the user
+		// could not add to an allow list (P6-4).
+		parsed, err := egress.ParseSecretSpec(spec)
+		if err != nil {
+			return fmt.Errorf("%s: %w", where, err)
 		}
+		name, domain := parsed.Name, parsed.Host
 		if !containsDomain(a.Allow, domain) {
 			return fmt.Errorf("%s: agent %q binds %s to %s, which is not in its allow list\n"+
 				"    add %q to this agent's allow, or drop the secret",

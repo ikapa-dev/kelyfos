@@ -247,8 +247,8 @@ func (p *Proxy) handle(client net.Conn) {
 		// Terminate only when a secret is bound to this domain. Everything else
 		// is tunnelled untouched, so the proxy sees plaintext for exactly the
 		// domains the user handed a credential to (decision D6).
-		if secret := p.Policy.secretFor(host); secret != nil {
-			p.terminate(client, host, port, secret)
+		if bound := p.Policy.secretsFor(host); len(bound) > 0 {
+			p.terminate(client, host, port, bound)
 			return
 		}
 		p.tunnel(client, host, port)
@@ -295,6 +295,15 @@ func (p *Proxy) tunnel(client net.Conn, host string, port int) {
 
 // forwardHTTP handles a plain (non-CONNECT) proxied request.
 func (p *Proxy) forwardHTTP(client net.Conn, req *http.Request, host string, port int) {
+	// A credential is never attached to a plaintext request, and never has
+	// been: injection lives on the terminated path alone. That is right —
+	// nobody should put a bearer token on an unencrypted request — but it had
+	// never been said anywhere, so a user who bound a secret and then reached
+	// the domain over http:// got an unauthenticated request and no reason for
+	// it. Now the record gives the reason (P6-4).
+	if bound := p.Policy.secretsFor(host); len(bound) > 0 && p.OnWithheld != nil {
+		p.OnWithheld(bound[0].Name, host, WithheldUnencrypted)
+	}
 	req.RequestURI = ""
 	if req.URL.Scheme == "" {
 		req.URL.Scheme = "http"

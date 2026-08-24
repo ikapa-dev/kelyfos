@@ -10,8 +10,12 @@ import (
 //
 // A secret with an empty Scope is what every secret was before v1.0: bound to a
 // domain and its subdomains, attached to any request that reaches it. A scope
-// turns "one domain" into "one endpoint" — a path beneath one exact host, and
-// optionally only some methods.
+// turns "one domain" into "one endpoint": a path beneath one exact host.
+//
+// There is no method set here, deliberately. D44 cut it from the grammar — the
+// policy file cannot carry a comma and "+" is an ordinary path character — and
+// a field nothing can populate is a feature that does not exist wearing the
+// clothes of one.
 //
 // It narrows *injection*, never egress. A request outside the scope still goes;
 // it simply goes without the credential, and the record says so. Refusing the
@@ -23,9 +27,6 @@ type Scope struct {
 	// path is naming an endpoint, and letting it expand to subdomains would
 	// contradict the thing it was written to do.
 	Path string
-	// Methods, when set, is the set of HTTP methods the credential may be
-	// attached to. Empty means any.
-	Methods []string
 }
 
 // Why a credential was not attached, recorded so the failure is diagnosable.
@@ -35,7 +36,6 @@ type Scope struct {
 const (
 	WithheldPath     = "path_not_covered"
 	WithheldNotPlain = "path_not_literal"
-	WithheldMethod   = "method_not_allowed"
 	// WithheldUnencrypted is not a scope decision — it is decided before the
 	// scope is consulted, and it has always been the behaviour. A credential is
 	// attached only on the terminated path, so a guest that reaches a
@@ -51,18 +51,6 @@ const (
 
 // covers reports whether a request is inside the scope, and if not, why.
 func (s Scope) covers(req *http.Request) (bool, string) {
-	if len(s.Methods) > 0 {
-		ok := false
-		for _, m := range s.Methods {
-			if req.Method == m {
-				ok = true
-				break
-			}
-		}
-		if !ok {
-			return false, WithheldMethod
-		}
-	}
 	if s.Path == "" {
 		return true, ""
 	}

@@ -272,11 +272,14 @@ else — a 401 from a server that has no idea why. That failure mode has now bee
 found four separate times in this codebase, so it gets an event rather than a
 comment.
 
-`reason` is, today, one value:
+`reason` is one of four:
 
 | `reason` | Meaning |
 | --- | --- |
 | `host_mismatch` | The request addressed a different host than the connection was opened to. |
+| `path_not_covered` | The credential is bound to an endpoint and the request was outside it. |
+| `path_not_literal` | The path carried an encoded slash or dot, or dot segments — forms a server may re-segment into somewhere else, so it is not compared. |
+| `not_encrypted` | A plaintext request. A credential is only ever attached on the terminated path. |
 
 **`host_mismatch` is worth understanding**, because it was a defect rather than
 a rule. Inside a terminated session the guest writes its own `Host:` header, and

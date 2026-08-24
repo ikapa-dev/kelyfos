@@ -149,7 +149,10 @@ func Types() []EventType {
 				{Name: "name", Type: "string", Doc: "the secret's environment-variable name"},
 				{Name: "host", Type: "string", Doc: "the domain the connection was bound to"},
 				{Name: "reason", Type: "string", Doc: "why it was withheld: host_mismatch (the request " +
-					"addressed a different host than the connection was opened to)"},
+					"addressed a different host than the connection was opened to), path_not_covered " +
+					"(outside the endpoint the credential is bound to), path_not_literal (a path carrying " +
+					"an encoded slash or dot, or dot segments, which a server may re-segment into somewhere " +
+					"else), or not_encrypted (a plaintext request, which never carries a credential)"},
 				agentField(),
 			}},
 		{Type: TypeResourceOOM, Source: SourceGuest,

@@ -8,8 +8,14 @@ import (
 )
 
 func request(t *testing.T, method, target string) *http.Request {
+	return requestTo(t, method, target, "api.github.com")
+}
+
+// requestTo builds a request whose Host header names the host given, so a test
+// about scopes is not accidentally a test about the host check.
+func requestTo(t *testing.T, method, target, host string) *http.Request {
 	t.Helper()
-	raw := method + " " + target + " HTTP/1.1\r\nHost: api.github.com\r\n\r\n"
+	raw := method + " " + target + " HTTP/1.1\r\nHost: " + host + "\r\n\r\n"
 	req, err := http.ReadRequest(bufio.NewReader(strings.NewReader(raw)))
 	if err != nil {
 		t.Fatalf("building a request for %q: %v", target, err)
@@ -73,24 +79,6 @@ func TestAnExactPathScopeCoversNothingBeneathIt(t *testing.T) {
 	}
 	if ok, _ := scope.covers(request(t, "GET", "/user/emails")); ok {
 		t.Error("an exact scope covers a path beneath it; it should name one path and no more")
-	}
-}
-
-func TestMethodScopeRefusesTheMethodsItDoesNotName(t *testing.T) {
-	scope := Scope{Methods: []string{"GET", "HEAD"}}
-	for _, m := range []string{"GET", "HEAD"} {
-		if ok, _ := scope.covers(request(t, m, "/anything")); !ok {
-			t.Errorf("%s is named in the scope and was refused", m)
-		}
-	}
-	for _, m := range []string{"POST", "DELETE", "PUT", "PATCH"} {
-		ok, why := scope.covers(request(t, m, "/anything"))
-		if ok {
-			t.Errorf("%s is not named in the scope and was allowed", m)
-		}
-		if why != WithheldMethod {
-			t.Errorf("%s withheld for %q, want %q", m, why, WithheldMethod)
-		}
 	}
 }
 

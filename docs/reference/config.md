@@ -17,7 +17,7 @@ What to boot, and what it may reach.
 | `arch` | string | the build host's architecture | guest architecture: aarch64 or x86_64 |
 | `workspace` | string | no /work device | host directory to pack and attach at /work, resolved against this file |
 | `allow` | string array | no network interface at all | egress allowlist; a bare hostname also matches its subdomains |
-| `secrets` | string array | none | NAME@domain[:bearer\|basic] — names only; a value here is refused |
+| `secrets` | string array | none | NAME@host[:bearer\|basic][/path] — names only; a value here is refused. A path binds the credential to that endpoint on that host exactly, instead of to the domain and every subdomain of it |
 | `vcpus` | integer | 2 | pre-v0.4 spelling of a cpus default; kept working, prefer [resources] cpus |
 | `mem_mib` | integer | 512 | pre-v0.4 spelling of a mem default, in MiB; prefer [resources] mem |
 | `notify` | boolean | false | send a desktop notification when a run finishes, is blocked, times out, or waits for a review |

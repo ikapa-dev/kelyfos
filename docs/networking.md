@@ -212,6 +212,25 @@ hoped for.
   could see.** Anyone grepping for `terminated` to find the traffic the proxy
   read would have missed every plaintext request on port 80 (F-D33).
 
+- **A credential can be bound to an endpoint rather than a domain.**
+  `--secret NAME@host/path` binds it to that path on that host *exactly* — no
+  subdomains, because naming an endpoint and then expanding to a family of hosts
+  would contradict the thing the path was written to do. A request outside it
+  still goes; it goes without the credential, and a `secret.withheld` event says
+  which secret and why. Scope narrows *injection*, never egress: `allow` is
+  where egress is decided, and putting a second egress policy inside the
+  credential grammar would make one typo a hard outage.
+
+  Two things it deliberately does **not** narrow, because a reader will assume
+  otherwise. It does not narrow what the proxy *decrypts*: termination is still
+  decided by the host, so binding `T@api.example.com/v1` still terminates every
+  request to `api.example.com`, including the ones that will never carry the
+  credential — `mode: terminated` continues to mean what it always meant. And a
+  path is only compared when it is literal and already in normal form: a request
+  carrying an encoded slash or dot, or dot segments, is not measured against the
+  scope at all, because the path this proxy would match and the path the server
+  routes are then two different strings.
+
 - **Certificate pinning breaks for a secret-bound domain, by construction.**
   This is the cost D6 accepted, and it belongs here as well as in the threat
   model. A terminated domain is presented a certificate minted by the run's own

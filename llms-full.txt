@@ -1566,6 +1566,25 @@ hoped for.
   could see.** Anyone grepping for `terminated` to find the traffic the proxy
   read would have missed every plaintext request on port 80 (F-D33).
 
+- **A credential can be bound to an endpoint rather than a domain.**
+  `--secret NAME@host/path` binds it to that path on that host *exactly* — no
+  subdomains, because naming an endpoint and then expanding to a family of hosts
+  would contradict the thing the path was written to do. A request outside it
+  still goes; it goes without the credential, and a `secret.withheld` event says
+  which secret and why. Scope narrows *injection*, never egress: `allow` is
+  where egress is decided, and putting a second egress policy inside the
+  credential grammar would make one typo a hard outage.
+
+  Two things it deliberately does **not** narrow, because a reader will assume
+  otherwise. It does not narrow what the proxy *decrypts*: termination is still
+  decided by the host, so binding `T@api.example.com/v1` still terminates every
+  request to `api.example.com`, including the ones that will never carry the
+  credential — `mode: terminated` continues to mean what it always meant. And a
+  path is only compared when it is literal and already in normal form: a request
+  carrying an encoded slash or dot, or dot segments, is not measured against the
+  scope at all, because the path this proxy would match and the path the server
+  routes are then two different strings.
+
 - **Certificate pinning breaks for a secret-bound domain, by construction.**
   This is the cost D6 accepted, and it belongs here as well as in the threat
   model. A terminated domain is presented a certificate minted by the run's own
@@ -2790,11 +2809,14 @@ else — a 401 from a server that has no idea why. That failure mode has now bee
 found four separate times in this codebase, so it gets an event rather than a
 comment.
 
-`reason` is, today, one value:
+`reason` is one of four:
 
 | `reason` | Meaning |
 | --- | --- |
 | `host_mismatch` | The request addressed a different host than the connection was opened to. |
+| `path_not_covered` | The credential is bound to an endpoint and the request was outside it. |
+| `path_not_literal` | The path carried an encoded slash or dot, or dot segments — forms a server may re-segment into somewhere else, so it is not compared. |
+| `not_encrypted` | A plaintext request. A credential is only ever attached on the terminated path. |
 
 **`host_mismatch` is worth understanding**, because it was a defect rather than
 a rule. Inside a terminated session the guest writes its own `Host:` header, and
@@ -8155,7 +8177,7 @@ What to boot, and what it may reach.
 | `arch` | string | the build host's architecture | guest architecture: aarch64 or x86_64 |
 | `workspace` | string | no /work device | host directory to pack and attach at /work, resolved against this file |
 | `allow` | string array | no network interface at all | egress allowlist; a bare hostname also matches its subdomains |
-| `secrets` | string array | none | NAME@domain[:bearer\|basic] — names only; a value here is refused |
+| `secrets` | string array | none | NAME@host[:bearer\|basic][/path] — names only; a value here is refused. A path binds the credential to that endpoint on that host exactly, instead of to the domain and every subdomain of it |
 | `vcpus` | integer | 2 | pre-v0.4 spelling of a cpus default; kept working, prefer [resources] cpus |
 | `mem_mib` | integer | 512 | pre-v0.4 spelling of a mem default, in MiB; prefer [resources] mem |
 | `notify` | boolean | false | send a desktop notification when a run finishes, is blocked, times out, or waits for a review |
@@ -8743,7 +8765,7 @@ A credential was bound to this domain and deliberately not attached to a request
 | --- | --- | --- |
 | `name` | string | the secret's environment-variable name |
 | `host` | string | the domain the connection was bound to |
-| `reason` | string | why it was withheld: host_mismatch (the request addressed a different host than the connection was opened to) |
+| `reason` | string | why it was withheld: host_mismatch (the request addressed a different host than the connection was opened to), path_not_covered (outside the endpoint the credential is bound to), path_not_literal (a path carrying an encoded slash or dot, or dot segments, which a server may re-segment into somewhere else), or not_encrypted (a plaintext request, which never carries a credential) |
 | `agent` | string | which machine produced it; present inside a team *(in a team)* |
 
 ## `resource.oom`

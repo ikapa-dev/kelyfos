@@ -10,35 +10,31 @@ Updated 2026-08-24 · synced with origin/main · **v0.9 released** · CI green o
   permanent record rows. A denominator adjusted to flatter the numerator is the same defect as a ticked box.
 
 ## Now
-**P6-3 done. Sixteen fuzz targets, and seven real defects out of writing them** — which is the part worth reading.
+**P6-4 done**, in four commits, because the enumeration it opened with kept returning things that had to be fixed
+before the feature made sense. **Two live defects closed on the way**, both predating the task:
 
-The boundary is declared first (D43), because "every untrusted-input parser" has no completion criterion without
-one: **hostile** is anything a guest wrote, anything the network returned, and anything arriving with a cloned
-repo or a download (`kelyfos.toml` is *meant* to be committed and cloned). **Not hostile** is state KelyfOS wrote
-to its own cache — a corrupt state file is a bug, not an adversary, and calling it one would make the word mean
-nothing.
+- **A restored machine recorded no egress at all.** Five proxies exist; four wired their audit hooks by hand and
+  `kelyfos snapshot restore` never grew them — so a restore wrote a chain with a start, a ready and an end and
+  nothing in between. Not a broken-looking chain, a *finished*-looking one. One function now, guarded by an AST
+  test that fails any file building a proxy without calling it.
+- **The credential went to whatever host the guest named.** Go prefers a request's own `Host` header over the
+  URL's, so a guest could open a tunnel to a bound domain, take its certificate, and have the credentialed request
+  processed as a different virtual host on the same edge — with the record naming the tunnel's target.
 
-Four of the seven findings came from asserting a *property* rather than waiting for a panic. Two were silent
-failures, the worse kind: a credential bound to `github.com.` — the fully-qualified spelling — parsed cleanly and
-matched nothing, so requests went out unauthenticated with a 401 from somewhere else as the only symptom; and a
-`mem` value large enough to overflow int64 became a **negative** ceiling that every flag was then compared
-against. The credential bug had a cause worth naming: one normalisation expression in four copies with three
-behaviours, and the copy in `containsDomain` carried a comment promising it matched the proxy. Three findings were
-the same class three times — agent-chosen text reaching a rendered transcript line (an argument key, a value, an
-OOM victim's process name). Two were the proxy accepting a port of 99999 and a host of `/`.
+And **`main` went red**, which is how the scheduled fuzz sweep proved itself on its first outing: three minutes a
+target found a parser bug forty-five seconds hadn't, one layer under P6-3's. Patching shapes didn't converge, so a
+domain must now have the shape of a name.
 
-The runner **discovers** its targets rather than listing them, so the drift a guard test would have detected cannot
-happen. Coverage is stated as coverage, not totality — `docs/threat-model.md` names which parsers are fuzzed and
-which are left out with the reason. Sixteen is not "every parser", and this phase opened by deleting claims of that
-shape.
+The feature is smaller than D36 promised, and the difference is **D44** — written before the code, on an
+adversarial review commissioned because P6-14 freezes this grammar. Method scoping cut (the policy file cannot
+carry a comma; `+` is an ordinary path character). Call-binding cut (needs a structured home). The guest's request
+path is never recorded in any form, because a path *is* the credential on several real APIs.
 
-Two more findings arrived from the parser enumeration *after* the commit, and reading it rather than filing it was
-the point: a guest chooses the string on the boot line that says how it is confined (an escape sequence there can
-rewrite the line a person reads to learn which walls are around their sandbox), and the buffering `Exec` used by
-`serve-mcp` and the shim had no output ceiling at all. Both fixed; the three copies of the sanitising helper are
-now one.
+Shipped: `NAME@host[:scheme][/path]`, a matcher that refuses to compare a path a server could re-segment,
+per-request selection so two credentials on one host are both reachable, and `secret.withheld` — which secret,
+which domain, why not.
 
-**Next: P6-4** — the credential window narrowed as far as the architecture allows.
+**Next: P6-5** — echo suppression on the paths the proxy can read.
 
 ## Blocked / needs John
 - **DCO.** `CONTRIBUTING.md` and the README require a `Signed-off-by`; 0 of the last 50 commits carry one and
@@ -58,6 +54,15 @@ now one.
   change those facts.
 
 ## Debts carried into Phase 6
+- **`docs/events.md` §3 says "adding a field is not breaking". It is false**, measured: a chain written by a build
+  with one more `Event` field makes an older build report `event N has been modified`. The fix — hashing a
+  canonical form rather than the marshalled struct — is now part of P6-6 and must land before v1.0 freezes.
+- **Every `snapshot restore` session recorded before this phase is missing its egress events entirely.** Belongs in
+  the upgrade guide, P6-16.
+- Pre-existing and unfixed: `args = ["server.js", "--x=a,b"]` in a `[[plugin]]` block fails to load, because the
+  toml array parser splits on the comma before parsing quotes. Same cause as the cut method syntax.
+- `kelyfos snapshot restore` never reads `kelyfos.toml` at all — no ceilings, no allow, no secrets from the file.
+  Defensible, undocumented, and a question P6-14's promise has to answer.
 - Two figures in the *previous* STATUS.md were stale and are corrected here: the five-agent pair is **412 ms cold /
   286 ms forked** on `demo-team`'s graph, not `prove-team`'s CPU-capped 737/149; and the macOS quickstart is not one
   number — **10 s is KelyfOS's own part**, the Linux layer was 28 s warm and 138 s cold and that part is Lima's.

@@ -144,7 +144,7 @@ A credential was bound to this domain and deliberately not attached to a request
 | --- | --- | --- |
 | `name` | string | the secret's environment-variable name |
 | `host` | string | the domain the connection was bound to |
-| `reason` | string | why it was withheld: host_mismatch (the request addressed a different host than the connection was opened to) |
+| `reason` | string | why it was withheld: host_mismatch (the request addressed a different host than the connection was opened to), path_not_covered (outside the endpoint the credential is bound to), path_not_literal (a path carrying an encoded slash or dot, or dot segments, which a server may re-segment into somewhere else), or not_encrypted (a plaintext request, which never carries a credential) |
 | `agent` | string | which machine produced it; present inside a team *(in a team)* |
 
 ## `resource.oom`

@@ -180,7 +180,7 @@
     <span class="bl-name">Overall</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">P6-3 done &mdash; 16 fuzz targets on a declared trust boundary, 7 real defects found and fixed, two of them silent failures. Next: <b>P6-4</b>, the credential window narrowed as far as the architecture allows</b></div>
+  <div class="focusline">Current focus: <b id="focus">P6-4 done &mdash; a credential binds to an endpoint now, and two live defects were closed on the way: a restore recorded no egress at all, and the credential went to whatever host the guest named. Next: <b>P6-5</b>, echo suppression on the paths the proxy can read</b></div>
 </div>
 
 <!-- ====================================================== 1. END GOAL -->
@@ -802,17 +802,18 @@
         silently &mdash; the same class of decay the drift gate already prevents for documentation and the schema
         test already prevents for the config parser.</span></li>
 
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">P6-4</span><span class="tk"><b>The credential window, narrowed as far as the
         architecture allows &mdash; and the rest parked with its blocking questions intact (D36).</b> Today a secret
         is bound to a <i>domain</i> for the whole life of the proxy and attached to any allowed request that reaches
         it; the parked idea asks for a handle that is call-bound, destination-locked, scope-limited and single-use.
         Three of those four are buildable now and one is not. Deliver: <b>destination-locking</b> &mdash; a secret
-        binds to an endpoint, not to a domain and every subdomain under it; <b>scope-limiting</b> &mdash; a method
-        allowlist the proxy enforces per request; <b>a receipt that names what was spent where</b> &mdash;
-        <code>egress.attempt</code> and <code>secret.use</code> gain the method and path, which today they cannot
-        say at all; and <b>call-binding with single-use redemption on the two paths where one process holds both
-        the tool-call boundary and the proxy</b> (<code>serve-mcp</code> and the shim). What is <i>not</i> delivered
+        binds to an endpoint, not to a domain and every subdomain under it; <b>a receipt that says when a credential was
+        <i>not</i> attached and why</b>, which today is a silence.
+        <b class="blocked">[AMENDED 2026-08-24, D44, before implementation.]</b> Method scoping, the request path
+        in the record, and call-binding are cut, each for a reason found by an adversarial review of the design and
+        re-verified against the code: the policy file cannot carry a comma, a path <i>is</i> a credential on
+        several real APIs, and call-binding needs a structured home the string grammar cannot give it. What is <i>not</i> delivered
         is a handle the guest presents, because the guest has no call identity on the <code>exec</code> path and
         there is no guest&rarr;host request channel for a non-team sandbox; and correlation on the flagship
         <code>run</code> + <code>mcp</code> path, because those are two processes sharing only a locked file. Both
@@ -847,7 +848,13 @@
         recorder already implements &mdash; offline, keyless, no trust root, no network. This is the unmet
         definition-of-done criterion, it is separable from signing, and it is worth more to a reader than a
         signature would be. It lands <b>before</b> P6-7 so that signing is a promotion of something that already
-        works rather than a substitute for it.</span></li>
+        works rather than a substitute for it.
+        <b class="blocked">[EXTENDED 2026-08-24, D44.]</b> And it fixes the hash preimage, which P6-4 measured and
+        which has to be right before v1.0 freezes anything: the digest is computed over the marshalled
+        <code>Event</code> <i>struct</i>, so a chain written by a build with one more field makes an older build
+        report <code>event N has been modified</code> &mdash; tamper-detection firing on a legitimate record.
+        Hashing a canonical form instead is what makes <code>docs/events.md</code> &sect;3&rsquo;s
+        &ldquo;adding a field is not breaking&rdquo; true, which it is not today.</span></li>
 
     <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">P6-7</span><span class="tk"><b>Signed exports &mdash; with a key the reader can
@@ -2504,6 +2511,54 @@ after:
         <b>16 fuzz targets</b> clean afterwards<br>
         <code>ci</code> run 32749092953 green on the commit before this one &mdash; including the new ten-second
         per-push fuzz pass</td></tr>
+        <tr><td class="mono">2026-08-24</td><td class="mono">P6-4</td>
+        <td><b>The credential window narrowed &mdash; and two live defects closed on the way there, both found by
+        looking before building.</b> Four commits, because the enumeration this task opened with kept returning
+        things that had to be fixed before the feature made sense.
+        <b>A restored machine recorded nothing about egress.</b> Five proxies exist; four wired their audit hooks by
+        hand and the fifth, <code>kelyfos snapshot restore</code>, never grew them &mdash; so a restore wrote a
+        chain with a start, a ready and an end and nothing in between. Not a broken-looking chain: a finished-looking
+        one. The four copies are one function now, and an AST test fails any file that builds a proxy without calling
+        it.
+        <b>The credential went to whatever host the guest named.</b> Go prefers a request's own <code>Host</code>
+        header over the URL's when it writes upstream, so a guest could open a tunnel to a bound domain, take that
+        domain's certificate, and have the credentialed request processed as a different virtual host on the same
+        edge &mdash; while the record named the tunnel's target. That is a defeat of the only thing binding a
+        credential to a domain has ever meant, and it predates this task entirely.
+        <b>And <code>main</code> went red, which is how the scheduled fuzz sweep proved its worth on its first
+        outing:</b> three minutes a target found a parser bug forty-five seconds had not. Its root cause was one
+        layer under P6-3's: the normaliser trimmed one trailing dot where the host side trims all of them, so
+        <code>..</code> bound <code>&quot;.&quot;</code> and <code>0..</code> bound <code>&quot;0.&quot;</code>.
+        Patching shapes did not converge, so a domain must now have the shape of a name.
+        <b>The feature itself is smaller than D36 promised and the difference is D44</b>, written before the code on
+        an adversarial review of the design &mdash; commissioned because P6-14 freezes this grammar, and every
+        fatal finding re-verified here before it was accepted. Method scoping is cut: the policy file cannot carry
+        a comma and <code>+</code> is an ordinary path character. Call-binding is cut: it needs a structured home
+        the string grammar cannot give it. The guest's request path is never recorded in any form, because a path
+        <i>is</i> the credential on several real APIs and this record is meant to be forwardable.
+        <b>What shipped:</b> <code>NAME@host[:scheme][/path]</code>, binding a credential to one endpoint on one
+        exact host; a matcher that refuses to compare a path a server could re-segment; per-request selection, so
+        two credentials on one host are both reachable; and <code>secret.withheld</code> &mdash; which secret,
+        which domain, why not &mdash; because a credential that silently fails to attach is the failure this
+        codebase has now found five times.</td>
+        <td class="mono">commits <code>2052f13</code>, <code>4ba3dca</code>, <code>7589719</code> and this one<br>
+        the path rule was measured before it was written, against Go's own parser &mdash;
+        <code>/repos/../admin</code>, <code>/repos/%2e%2e/admin</code> and <code>/repos%2f..%2fadmin</code> all have
+        a <code>URL.Path</code> under <code>/repos/</code> and all three reach <code>/admin</code>; the rule refuses
+        all of them and still allows <code>/repos/my%20repo/x</code>, which is an ordinary request<br>
+        the host-misdirection test drives a real terminated session: with the check disabled the upstream reports
+        <code>Authorization: Bearer ghp_&hellip;</code> on a request addressed elsewhere<br>
+        <b>a new event type rather than new event fields, and the reason is measured:</b> a chain written by a build
+        with one more <code>Event</code> field makes an older build report <code>event N has been modified</code>
+        &mdash; so <code>docs/events.md</code> &sect;3's &ldquo;adding a field is not breaking&rdquo; is false, and
+        the fix is now P6-6's, before the v1.0 freeze<br>
+        the six secret-parsing sites had five behaviours and now have one grammar: <code>host/teamplan.go</code>
+        was a fourth hand-rolled parser that took everything after the <code>@</code> as the domain,
+        <code>shim</code> and <code>snapshot restore</code> raised uncatalogued errors, and two
+        <code>serve-mcp</code> paths dropped a project credential in silence &mdash; that drop is right and is now
+        recorded rather than silent<br>
+        <code>gofmt</code>, <code>vet</code>, 14 packages, all 16 fuzz targets and <code>make vuln</code> clean;
+        the compatibility pin holds, with the three deliberate breaks listed in it</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
@@ -3246,6 +3301,52 @@ after:
         parser stays hand-rolled, which the <code>parse</code> extraction leaves untouched. <i>Revisit when</i> a
         parser is added on the hostile side that is not stdlib-shaped &mdash; the runner will pick up its target
         automatically, but the boundary paragraph is prose and only a person can extend it.</td></tr>
+        <tr><td class="mono">D44</td><td class="mono">2026-08-24</td>
+        <td><b>D36 is amended: the credential grammar carries an endpoint and not a method set, the guest&rsquo;s
+        request path is never recorded in any form, and call-binding leaves P6-4.</b> Written before the code, on
+        an adversarial review of the design commissioned because P6-14 freezes this grammar &mdash; three
+        independent critiques and a judge, every fatal finding re-verified here against the repository before it
+        was accepted.
+        <i>Cut: <code>+METHODS</code> in the spec string.</i> Three independent reasons, any one sufficient. The
+        policy file <b>cannot carry it</b>: <code>internal/config/config.go</code> splits an array&rsquo;s inner
+        text on the comma <i>before</i> parsing quoted strings, so <code>secrets = ["T@h/p+GET,POST"]</code> fails
+        to load and there is no escape &mdash; and widening that parser is what F-D16 argued against. <code>+</code>
+        is a legal and ordinary path character, so an anchored suffix rule silently misreads
+        <code>/search/A+B</code> as a method. And a method set is a second dimension on a surface about to be
+        frozen. Scope-limiting by method is not abandoned; it needs a structured home
+        (<code>[[secret]]</code>) rather than a corner of a string, and that is post-1.0 work with somewhere to
+        live.
+        <i>Cut: call-binding and single-use redemption.</i> D36 committed to them on the two paths where one
+        process holds both the tool-call boundary and the proxy, and this amends that rather than quietly dropping
+        it. They have no home in the string grammar, they are the part of the parked idea whose two blocking
+        questions are still unanswered, and P6-4 is already carrying two security fixes it did not set out to make.
+        The window they would close &mdash; a credential spendable between tool calls &mdash; stays open and stays
+        named in <code>docs/networking.md</code>.
+        <i>Cut, and this one removes a capability rather than deferring it: <b>the guest&rsquo;s request path is
+        never recorded</b></i>, in any field, in any form &mdash; not truncated, not hashed, not scrubbed.
+        <code>docs/events.md</code> already promises exactly that of a credential&rsquo;s <i>value</i>, and a path
+        <i>is</i> the credential on more APIs than is comfortable:
+        <code>api.telegram.org/bot&lt;TOKEN&gt;/&hellip;</code>, a Slack webhook, a Discord webhook. The record is
+        append-only, outlives the sandbox and is meant to be forwardable. A withheld event says which secret, which
+        domain and why not, and that is enough to diagnose without writing somebody&rsquo;s token into a file they
+        will send to someone else.
+        <i>Chosen: a new event type rather than new event fields, and the reason is measured.</i> A chain written
+        by a binary whose <code>Event</code> struct has one more field makes an <i>older</i> binary report
+        <code>event N has been modified</code> &mdash; the hash preimage is the marshalled struct, and a verifier
+        drops the key it does not know before re-serialising. That is tamper-detection firing on a legitimate
+        record, which is the loudest false alarm this product can produce. <b>So <code>docs/events.md</code>
+        &sect;3&rsquo;s &ldquo;adding a field is not breaking&rdquo; is false</b>, and the fix &mdash; hashing a
+        canonical form rather than the struct &mdash; is added to P6-6 and must land before v1.0 freezes anything.
+        <i>The grammar that survives:</i> <code>NAME@host[:scheme][/path]</code>, split on the first
+        <code>/</code> <i>before</i> any sigil is looked for, so nothing in a path can be mistaken for anything
+        else; the scheme parsed exactly as today so <code>:BEARER</code> keeps working and
+        <code>:8080</code> stays a loud error; the host normalised and the path never touched, because hosts are
+        case-insensitive and paths are not.</td>
+        <td>P6-4, amending D36. The adversarial review of 2026-08-24 and this seat&rsquo;s own verification of each
+        finding &mdash; the toml comma, the second spec parser in <code>host/teamplan.go</code>, the record promise,
+        and the cross-version hash break, each reproduced before being accepted. <i>Revisit when</i>
+        <code>[[secret]]</code> exists: methods and call-binding both belong in it, and neither needs the string
+        grammar to change.</td></tr>
     <!-- Claude Code: append rows above this line. -->
   </table>
 </section>

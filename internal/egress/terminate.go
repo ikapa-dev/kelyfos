@@ -21,7 +21,7 @@ import (
 //
 // Everything about it is recorded as mode=terminated, so a user can always tell
 // which traffic the proxy was able to read (decision D6).
-func (p *Proxy) terminate(client net.Conn, host string, port int, secret *Secret) {
+func (p *Proxy) terminate(client net.Conn, host string, port int, bound []*Secret) {
 	if p.CA == nil {
 		p.report(Attempt{Host: host, Port: port, Reason: ReasonBadRequest})
 		writeStatus(client, http.StatusInternalServerError, "kelyfos: no CA for TLS termination")
@@ -54,7 +54,7 @@ func (p *Proxy) terminate(client net.Conn, host string, port int, secret *Secret
 	// A single TLS connection carries many requests when keep-alive is in play,
 	// and each one needs the credential.
 	for {
-		attached := false
+		var attached *Secret
 		req, err := http.ReadRequest(br)
 		if err != nil {
 			if !errors.Is(err, io.EOF) && in == 0 && out == 0 {
@@ -88,13 +88,15 @@ func (p *Proxy) terminate(client net.Conn, host string, port int, secret *Secret
 		// Withheld rather than rewritten: rewriting a guest's Host header would
 		// silently change what it asked for, and the request itself is allowed
 		// — `allow` decided that. What is refused is the credential.
-		if !sameHost(req.Host, host) {
-			if p.OnWithheld != nil {
-				p.OnWithheld(secret.Name, host, WithheldHostMismatch)
-			}
-		} else {
+		secret, why := pick(bound, req, host)
+		if secret != nil {
 			req.Header.Set("Authorization", secret.Header())
-			attached = true
+			attached = secret
+		} else if len(bound) > 0 && p.OnWithheld != nil {
+			// Say so. A credential that silently does not attach sends the
+			// request out unauthenticated and the only symptom is a failure
+			// from somewhere else.
+			p.OnWithheld(bound[0].Name, host, why)
 		}
 
 		resp, err := p.upstream().RoundTrip(req)
@@ -103,8 +105,8 @@ func (p *Proxy) terminate(client net.Conn, host string, port int, secret *Secret
 			p.report(Attempt{Host: host, Port: port, Reason: ReasonDialFailed})
 			return
 		}
-		if attached && p.OnSecret != nil {
-			p.OnSecret(secret.Name, host)
+		if attached != nil && p.OnSecret != nil {
+			p.OnSecret(attached.Name, host)
 		}
 		// A chunked body reports -1, which is not a byte count. Adding it
 		// walked the receipt backwards; an unknown length contributes nothing
@@ -167,4 +169,27 @@ func sameHost(reqHost, bound string) bool {
 		h = only
 	}
 	return strings.ToLower(strings.TrimRight(h, ".")) == bound
+}
+
+// pick chooses which bound credential, if any, may be attached to one request,
+// and says why when none may.
+//
+// Declaration order decides between two secrets that both cover a request: the
+// policy file is read top to bottom and the first binding that fits wins, which
+// is the rule a person can predict without knowing how prefixes compare.
+func pick(bound []*Secret, req *http.Request, host string) (*Secret, string) {
+	// The host check comes first and applies to all of them: a request that
+	// addresses another name is not inside anybody's scope.
+	if !sameHost(req.Host, host) {
+		return nil, WithheldHostMismatch
+	}
+	why := ""
+	for _, s := range bound {
+		if ok, reason := s.Scope.covers(req); ok {
+			return s, ""
+		} else if why == "" {
+			why = reason
+		}
+	}
+	return nil, why
 }

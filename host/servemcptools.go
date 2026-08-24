@@ -367,6 +367,8 @@ func (s *hostServer) boot(opts sandbox.Options) (*servedBox, error) {
 	}
 
 	var ca *egress.CA
+	// Declared out here so the boot can record them once the recorder exists.
+	var dropped []*egress.Secret
 	if len(opts.Allow) > 0 {
 		if b.net, err = sandbox.NewNetwork(id); err != nil {
 			return nil, err
@@ -381,6 +383,15 @@ func (s *hostServer) boot(opts sandbox.Options) (*servedBox, error) {
 				}
 				if containsDomain(opts.Allow, sec.Domain) {
 					pol.Secrets = append(pol.Secrets, sec)
+				} else {
+					// A call may narrow the project's allowlist, and a
+					// credential for a domain this sandbox cannot reach could
+					// never be sent — so dropping it is right. Saying nothing
+					// was not: the agent asked for a sandbox, got one with
+					// fewer credentials than the project declares, and the
+					// first symptom was an unauthenticated request failing
+					// somewhere else (P6-4).
+					dropped = append(dropped, sec)
 				}
 			}
 		}
@@ -419,6 +430,12 @@ func (s *hostServer) boot(opts sandbox.Options) (*servedBox, error) {
 		Kelyfos: Version, Argv: s.argv, Reason: "created through serve-mcp session " + s.auditID,
 	})
 	b.wireAudit()
+	for _, sec := range dropped {
+		_ = b.rec.Append(recorder.Event{
+			Type: recorder.TypeSecretWithheld, Name: sec.Name, Host: sec.Domain,
+			Reason: "not_in_allowlist",
+		})
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
