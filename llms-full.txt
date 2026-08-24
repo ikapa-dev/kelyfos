@@ -1571,7 +1571,14 @@ hoped for.
   model. A terminated domain is presented a certificate minted by the run's own
   CA, so a client that pins a public key or a certificate — rather than trusting
   a root — will refuse the connection, and it is right to: there genuinely is
-  something in the middle. The refusal is recorded as an `egress.attempt` with
+  something in the middle. The credential also goes only to the host the tunnel
+  was opened and verified against: a request that addresses a different name in
+  its `Host:` header is still sent, without the credential, and a
+  `secret.withheld` event says so. Go prefers a request's own `Host` header over
+  the connection's target when it writes upstream, so before v1.0 a guest could
+  open a tunnel to a bound domain and have the credential presented to another
+  name on the same edge.
+  The pinning refusal is recorded as an `egress.attempt` with
   `reason: tls_pinning_rejected_our_ca`, so it appears as a policy event and not
   as a network fault. That reason covers any handshake failure on a terminated
   domain, not only a pinned one — pinning is the cause worth naming, and the one
@@ -2764,6 +2771,47 @@ A credential was attached to a request. Written from P2-6.
 hashed. A hash of a short credential is a credential. The whole point of
 injecting at the proxy is that the value exists in one place; writing it to an
 audit log would put it in two.
+
+### `secret.withheld`
+A credential was bound to this domain and deliberately **not** attached to a
+request. Written from P6-4.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `name` | string | The secret's environment-variable name. |
+| `host` | string | The domain the connection was opened and verified against. |
+| `reason` | string | Why it was withheld. |
+| `agent` | string | Present inside a team: whose credential it was. |
+
+This is the counterpart of `secret.use`, and it is the more useful of the two
+when something is wrong. A credential that silently does not attach sends the
+request out unauthenticated, and the only symptom is a failure from somewhere
+else — a 401 from a server that has no idea why. That failure mode has now been
+found four separate times in this codebase, so it gets an event rather than a
+comment.
+
+`reason` is, today, one value:
+
+| `reason` | Meaning |
+| --- | --- |
+| `host_mismatch` | The request addressed a different host than the connection was opened to. |
+
+**`host_mismatch` is worth understanding**, because it was a defect rather than
+a rule. Inside a terminated session the guest writes its own `Host:` header, and
+Go prefers that header over the connection's target when it writes the request
+upstream. So a guest could open a tunnel to a domain a credential was bound to,
+receive that domain's certificate, and then address the credentialed request to
+any other name it chose. On a virtual-hosted or shared-edge origin that routes
+on `Host`, the bound credential would be presented to a different site — and the
+record named the target of the tunnel, so it said the wrong thing too. The
+credential is now withheld, and the request itself still goes: `allow` decides
+what may leave, and this decides only what a credential may be spent on.
+
+**The value is never recorded here either** — and neither is the request path.
+A path is a credential on more APIs than is comfortable
+(`api.telegram.org/bot<TOKEN>/…` is the plainest example), and this record is
+append-only, outlives the sandbox and is meant to be forwardable. What it says
+is which secret, which domain, and why not.
 
 ### `team.message` and `team.refused`
 One inter-agent message, or one the edge list did not permit. Written from E2-1.
@@ -8685,6 +8733,17 @@ A bound credential was attached to a request — by name, never by value. Writte
 | --- | --- | --- |
 | `name` | string | the secret's environment-variable name |
 | `host` | string | the domain it was attached for |
+| `agent` | string | which machine produced it; present inside a team *(in a team)* |
+
+## `secret.withheld`
+
+A credential was bound to this domain and deliberately not attached to a request. The counterpart of secret.use, and the more useful of the two when something is wrong: a credential that silently does not attach sends the request out unauthenticated, and the only symptom is a failure from somewhere else. Written by the **host**.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `name` | string | the secret's environment-variable name |
+| `host` | string | the domain the connection was bound to |
+| `reason` | string | why it was withheld: host_mismatch (the request addressed a different host than the connection was opened to) |
 | `agent` | string | which machine produced it; present inside a team *(in a team)* |
 
 ## `resource.oom`

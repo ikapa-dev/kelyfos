@@ -149,6 +149,12 @@ func wireProxyAudit(proxy *egress.Proxy, rec *recorder.Recorder, agent string, b
 			Type: recorder.TypeSecretUse, Agent: agent, Name: name, Host: host,
 		})
 	}
+	proxy.OnWithheld = func(name, host, reason string) {
+		_ = rec.Append(recorder.Event{
+			Type: recorder.TypeSecretWithheld, Agent: agent,
+			Name: name, Host: host, Reason: reason,
+		})
+	}
 	proxy.OnEvent = func(a egress.Attempt) {
 		if blocked != nil {
 			// The person watching the run is the one with the policy file open,

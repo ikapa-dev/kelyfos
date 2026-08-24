@@ -254,6 +254,47 @@ hashed. A hash of a short credential is a credential. The whole point of
 injecting at the proxy is that the value exists in one place; writing it to an
 audit log would put it in two.
 
+### `secret.withheld`
+A credential was bound to this domain and deliberately **not** attached to a
+request. Written from P6-4.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `name` | string | The secret's environment-variable name. |
+| `host` | string | The domain the connection was opened and verified against. |
+| `reason` | string | Why it was withheld. |
+| `agent` | string | Present inside a team: whose credential it was. |
+
+This is the counterpart of `secret.use`, and it is the more useful of the two
+when something is wrong. A credential that silently does not attach sends the
+request out unauthenticated, and the only symptom is a failure from somewhere
+else — a 401 from a server that has no idea why. That failure mode has now been
+found four separate times in this codebase, so it gets an event rather than a
+comment.
+
+`reason` is, today, one value:
+
+| `reason` | Meaning |
+| --- | --- |
+| `host_mismatch` | The request addressed a different host than the connection was opened to. |
+
+**`host_mismatch` is worth understanding**, because it was a defect rather than
+a rule. Inside a terminated session the guest writes its own `Host:` header, and
+Go prefers that header over the connection's target when it writes the request
+upstream. So a guest could open a tunnel to a domain a credential was bound to,
+receive that domain's certificate, and then address the credentialed request to
+any other name it chose. On a virtual-hosted or shared-edge origin that routes
+on `Host`, the bound credential would be presented to a different site — and the
+record named the target of the tunnel, so it said the wrong thing too. The
+credential is now withheld, and the request itself still goes: `allow` decides
+what may leave, and this decides only what a credential may be spent on.
+
+**The value is never recorded here either** — and neither is the request path.
+A path is a credential on more APIs than is comfortable
+(`api.telegram.org/bot<TOKEN>/…` is the plainest example), and this record is
+append-only, outlives the sandbox and is meant to be forwardable. What it says
+is which secret, which domain, and why not.
+
 ### `team.message` and `team.refused`
 One inter-agent message, or one the edge list did not permit. Written from E2-1.
 

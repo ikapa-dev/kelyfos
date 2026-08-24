@@ -136,6 +136,17 @@ A bound credential was attached to a request — by name, never by value. Writte
 | `host` | string | the domain it was attached for |
 | `agent` | string | which machine produced it; present inside a team *(in a team)* |
 
+## `secret.withheld`
+
+A credential was bound to this domain and deliberately not attached to a request. The counterpart of secret.use, and the more useful of the two when something is wrong: a credential that silently does not attach sends the request out unauthenticated, and the only symptom is a failure from somewhere else. Written by the **host**.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `name` | string | the secret's environment-variable name |
+| `host` | string | the domain the connection was bound to |
+| `reason` | string | why it was withheld: host_mismatch (the request addressed a different host than the connection was opened to) |
+| `agent` | string | which machine produced it; present inside a team *(in a team)* |
+
 ## `resource.oom`
 
 The guest's OOM killer ran; the supervisor read it off /dev/kmsg and the host wrote it. Written by the **guest**.

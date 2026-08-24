@@ -217,7 +217,14 @@ hoped for.
   model. A terminated domain is presented a certificate minted by the run's own
   CA, so a client that pins a public key or a certificate — rather than trusting
   a root — will refuse the connection, and it is right to: there genuinely is
-  something in the middle. The refusal is recorded as an `egress.attempt` with
+  something in the middle. The credential also goes only to the host the tunnel
+  was opened and verified against: a request that addresses a different name in
+  its `Host:` header is still sent, without the credential, and a
+  `secret.withheld` event says so. Go prefers a request's own `Host` header over
+  the connection's target when it writes upstream, so before v1.0 a guest could
+  open a tunnel to a bound domain and have the credential presented to another
+  name on the same edge.
+  The pinning refusal is recorded as an `egress.attempt` with
   `reason: tls_pinning_rejected_our_ca`, so it appears as a policy event and not
   as a network fault. That reason covers any handshake failure on a terminated
   domain, not only a pinned one — pinning is the cause worth naming, and the one

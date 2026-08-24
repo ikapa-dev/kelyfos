@@ -315,6 +315,11 @@ func (s *Server) wireEgressAudit(b *box) {
 	b.proxy.OnSecret = func(name, host string) {
 		_ = b.rec.Append(recorder.Event{Type: recorder.TypeSecretUse, Name: name, Host: host})
 	}
+	b.proxy.OnWithheld = func(name, host, reason string) {
+		_ = b.rec.Append(recorder.Event{
+			Type: recorder.TypeSecretWithheld, Name: name, Host: host, Reason: reason,
+		})
+	}
 	b.proxy.OnEvent = func(a egress.Attempt) {
 		allowed := a.Allowed
 		_ = b.rec.Append(recorder.Event{

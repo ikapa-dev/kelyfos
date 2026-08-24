@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"strings"
 )
 
 // terminate handles a CONNECT to a domain that has a secret bound to it.
@@ -53,6 +54,7 @@ func (p *Proxy) terminate(client net.Conn, host string, port int, secret *Secret
 	// A single TLS connection carries many requests when keep-alive is in play,
 	// and each one needs the credential.
 	for {
+		attached := false
 		req, err := http.ReadRequest(br)
 		if err != nil {
 			if !errors.Is(err, io.EOF) && in == 0 && out == 0 {
@@ -64,7 +66,36 @@ func (p *Proxy) terminate(client net.Conn, host string, port int, secret *Secret
 		req.URL.Scheme = "https"
 		req.URL.Host = upstreamAddr
 		req.RequestURI = ""
-		req.Header.Set("Authorization", secret.Header())
+
+		// The credential goes only to the host this connection was opened,
+		// verified and recorded against.
+		//
+		// This is not a new rule, it is a defect being closed. http.ReadRequest
+		// fills req.Host from the guest's own Host: header, and Go's
+		// Request.write prefers req.Host over req.URL.Host — so setting the URL
+		// host above does not change the header on the wire. A guest could
+		// CONNECT to a bound domain, get the certificate for it, and then
+		// address the credentialed request to any other name it liked:
+		//
+		//	dialled and TLS-verified : api.github.com:443   (the bound host)
+		//	Host: on the wire        : whatever it chose
+		//
+		// On a virtual-hosted or shared-edge origin that routes on Host, the
+		// bound credential is then presented to a different site — and the
+		// record named the CONNECT target, so it said the wrong thing too.
+		// Measured against Go's own Request.write before being written down.
+		//
+		// Withheld rather than rewritten: rewriting a guest's Host header would
+		// silently change what it asked for, and the request itself is allowed
+		// — `allow` decided that. What is refused is the credential.
+		if !sameHost(req.Host, host) {
+			if p.OnWithheld != nil {
+				p.OnWithheld(secret.Name, host, WithheldHostMismatch)
+			}
+		} else {
+			req.Header.Set("Authorization", secret.Header())
+			attached = true
+		}
 
 		resp, err := p.upstream().RoundTrip(req)
 		if err != nil {
@@ -72,7 +103,7 @@ func (p *Proxy) terminate(client net.Conn, host string, port int, secret *Secret
 			p.report(Attempt{Host: host, Port: port, Reason: ReasonDialFailed})
 			return
 		}
-		if p.OnSecret != nil {
+		if attached && p.OnSecret != nil {
 			p.OnSecret(secret.Name, host)
 		}
 		// A chunked body reports -1, which is not a byte count. Adding it
@@ -122,4 +153,18 @@ func (p *Proxy) upstream() http.RoundTripper {
 		return p.Upstream
 	}
 	return terminatedTransport
+}
+
+// sameHost reports whether a request's Host header names the host the
+// connection was opened to. An empty Host is fine: Go then falls back to
+// req.URL.Host, which is the CONNECT target itself.
+func sameHost(reqHost, bound string) bool {
+	if reqHost == "" {
+		return true
+	}
+	h := reqHost
+	if only, _, err := net.SplitHostPort(h); err == nil {
+		h = only
+	}
+	return strings.ToLower(strings.TrimRight(h, ".")) == bound
 }

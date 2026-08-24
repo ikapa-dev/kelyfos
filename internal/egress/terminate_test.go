@@ -19,12 +19,13 @@ const testToken = "ghp_thisisaverysecrettokenvalue"
 
 // proxyFor starts a proxy in front of an upstream test server, with the given
 // policy, and returns its address plus everything it reported.
-func proxyFor(t *testing.T, upstream *httptest.Server, policy Policy, ca *CA) (string, func() []Attempt, func() []string) {
+func proxyFor(t *testing.T, upstream *httptest.Server, policy Policy, ca *CA) (string, func() []Attempt, func() []string, func() []string) {
 	t.Helper()
 
 	var mu sync.Mutex
 	var attempts []Attempt
 	var secrets []string
+	var withheld []string
 
 	p := &Proxy{
 		Policy: policy,
@@ -41,6 +42,11 @@ func proxyFor(t *testing.T, upstream *httptest.Server, policy Policy, ca *CA) (s
 			mu.Lock()
 			defer mu.Unlock()
 			secrets = append(secrets, name+"@"+host)
+		},
+		OnWithheld: func(name, host, reason string) {
+			mu.Lock()
+			defer mu.Unlock()
+			withheld = append(withheld, name+"@"+host+":"+reason)
 		},
 	}
 	port, err := p.Listen("127.0.0.1:0")
@@ -60,6 +66,11 @@ func proxyFor(t *testing.T, upstream *httptest.Server, policy Policy, ca *CA) (s
 			mu.Lock()
 			defer mu.Unlock()
 			return append([]string(nil), secrets...)
+		},
+		func() []string {
+			mu.Lock()
+			defer mu.Unlock()
+			return append([]string(nil), withheld...)
 		}
 }
 
@@ -101,9 +112,21 @@ func throughProxy(t *testing.T, proxyAddr, target string, roots *x509.CertPool) 
 	if err := inner.Handshake(); err != nil {
 		return nil, nil, fmt.Errorf("inner handshake: %w", err)
 	}
-	fmt.Fprintf(inner, "GET / HTTP/1.1\r\nHost: %s\r\nConnection: close\r\n\r\n", host)
+	fmt.Fprintf(inner, "GET / HTTP/1.1\r\nHost: %s\r\nConnection: close\r\n\r\n", hostHeader(host))
 	resp, err := http.ReadResponse(bufio.NewReader(inner), nil)
 	return resp, raw, err
+}
+
+// hostHeaderOverride lets one test address the inner request to a name other
+// than the one it opened the tunnel to. Package-level rather than a parameter
+// so the existing callers stay unchanged.
+var hostHeaderOverride string
+
+func hostHeader(connectHost string) string {
+	if hostHeaderOverride != "" {
+		return hostHeaderOverride
+	}
+	return connectHost
 }
 
 // TestTerminationInjectsTheCredential is the heart of P2-6: the client is never
@@ -122,7 +145,7 @@ func TestTerminationInjectsTheCredential(t *testing.T) {
 	secret := &Secret{Name: "GITHUB_TOKEN", Domain: host, Scheme: "Bearer", value: testToken}
 	policy := Policy{Allow: []string{host}, Ports: []int{upstreamPort(t, upstream)}, Secrets: []*Secret{secret}}
 
-	proxyAddr, attempts, secretUses := proxyFor(t, upstream, policy, ca)
+	proxyAddr, attempts, secretUses, _ := proxyFor(t, upstream, policy, ca)
 
 	roots := x509.NewCertPool()
 	if !roots.AppendCertsFromPEM(ca.AnchorPEM()) {
@@ -166,7 +189,7 @@ func TestNoSecretMeansNoTermination(t *testing.T) {
 	host, _, _ := net.SplitHostPort(strings.TrimPrefix(upstream.URL, "https://"))
 
 	policy := Policy{Allow: []string{host}, Ports: []int{upstreamPort(t, upstream)}}
-	proxyAddr, attempts, _ := proxyFor(t, upstream, policy, nil)
+	proxyAddr, attempts, _, _ := proxyFor(t, upstream, policy, nil)
 
 	// No KelyfOS CA anywhere: the client validates the real server certificate,
 	// which only works because nothing is in the middle.
@@ -252,4 +275,66 @@ func upstreamPort(t *testing.T, s *httptest.Server) int {
 	var port int
 	fmt.Sscanf(portStr, "%d", &port)
 	return port
+}
+
+// A guest must not be able to have the credential presented to a name other
+// than the one the connection was opened, verified and recorded against.
+//
+// This was a live defect rather than a new rule. http.ReadRequest fills
+// req.Host from the guest's own Host: header, and Go's Request.write prefers
+// req.Host over req.URL.Host — so the proxy setting the URL host did not change
+// the header on the wire. The request was dialled to the bound domain and its
+// certificate verified there, and then carried whatever Host the guest liked.
+// On a virtual-hosted or shared-edge origin that routes on Host, that is the
+// bound credential presented to a different site; and the record named the
+// CONNECT target, so it said the wrong thing too.
+func TestTheCredentialIsWithheldWhenTheRequestAddressesAnotherHost(t *testing.T) {
+	var sawAuth string
+	upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sawAuth = r.Header.Get("Authorization")
+		fmt.Fprint(w, "ok")
+	}))
+	defer upstream.Close()
+	host, _, _ := net.SplitHostPort(strings.TrimPrefix(upstream.URL, "https://"))
+
+	ca, err := NewCA()
+	if err != nil {
+		t.Fatal(err)
+	}
+	secret := &Secret{Name: "GITHUB_TOKEN", Domain: host, Scheme: "Bearer", value: testToken}
+	policy := Policy{Allow: []string{host}, Ports: []int{upstreamPort(t, upstream)}, Secrets: []*Secret{secret}}
+
+	proxyAddr, _, secretUses, withheld := proxyFor(t, upstream, policy, ca)
+
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM(ca.AnchorPEM()) {
+		t.Fatal("the CA anchor is not usable as a trust root")
+	}
+
+	// Open the tunnel to the bound host, then address the inner request
+	// somewhere else entirely.
+	hostHeaderOverride = "another-tenant.example"
+	t.Cleanup(func() { hostHeaderOverride = "" })
+
+	target := strings.TrimPrefix(upstream.URL, "https://")
+	resp, _, err := throughProxy(t, proxyAddr, target, roots)
+	if err != nil {
+		t.Fatalf("request through the proxy: %v", err)
+	}
+	resp.Body.Close()
+
+	if sawAuth != "" {
+		t.Errorf("the credential was attached to a request addressed to %q: Authorization %q",
+			hostHeaderOverride, sawAuth)
+	}
+	if uses := secretUses(); len(uses) != 0 {
+		t.Errorf("secret.use was reported for a request that never carried the credential: %v", uses)
+	}
+	got := withheld()
+	if len(got) == 0 {
+		t.Fatal("the credential was withheld and nothing said so — the silent failure this event exists to prevent")
+	}
+	if !strings.HasSuffix(got[0], ":"+WithheldHostMismatch) {
+		t.Errorf("withheld for %q, want reason %q", got[0], WithheldHostMismatch)
+	}
 }

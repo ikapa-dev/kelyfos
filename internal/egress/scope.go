@@ -44,6 +44,9 @@ const (
 	// never been said anywhere, so a user who bound a secret and used
 	// http:// saw an unauthenticated request and no reason for it.
 	WithheldUnencrypted = "not_encrypted"
+	// WithheldHostMismatch is the one that was a live defect rather than a new
+	// rule. See sameHost in terminate.go.
+	WithheldHostMismatch = "host_mismatch"
 )
 
 // covers reports whether a request is inside the scope, and if not, why.

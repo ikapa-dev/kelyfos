@@ -109,6 +109,14 @@ type Proxy struct {
 	// OnSecret is called with the secret's NAME and the host it went to —
 	// never the value, in any form (docs/events.md §4).
 	OnSecret func(name, host string)
+	// OnWithheld is the counterpart: a credential was bound to this domain and
+	// deliberately not attached, with the reason. It is the more useful of the
+	// two when something is wrong — a credential that silently does not attach
+	// sends the request out unauthenticated, and the only symptom is a failure
+	// from somewhere else. Name and host only, like OnSecret; never a value and
+	// never a request path, because a path is a credential on more APIs than is
+	// comfortable (docs/events.md §4).
+	OnWithheld func(name, host, reason string)
 	// CA terminates TLS for secret-bound domains. Ephemeral, per run.
 	CA *CA
 	// Upstream is the transport used for terminated requests. Injectable so

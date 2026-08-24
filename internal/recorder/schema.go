@@ -140,6 +140,18 @@ func Types() []EventType {
 				{Name: "host", Type: "string", Doc: "the domain it was attached for"},
 				agentField(),
 			}},
+		{Type: TypeSecretWithheld, Source: SourceHost,
+			Doc: "a credential was bound to this domain and deliberately not attached to a request. " +
+				"The counterpart of secret.use, and the more useful of the two when something is wrong: " +
+				"a credential that silently does not attach sends the request out unauthenticated, and " +
+				"the only symptom is a failure from somewhere else",
+			Fields: []Field{
+				{Name: "name", Type: "string", Doc: "the secret's environment-variable name"},
+				{Name: "host", Type: "string", Doc: "the domain the connection was bound to"},
+				{Name: "reason", Type: "string", Doc: "why it was withheld: host_mismatch (the request " +
+					"addressed a different host than the connection was opened to)"},
+				agentField(),
+			}},
 		{Type: TypeResourceOOM, Source: SourceGuest,
 			Doc: "the guest's OOM killer ran; the supervisor read it off /dev/kmsg and the host wrote it",
 			Fields: []Field{
