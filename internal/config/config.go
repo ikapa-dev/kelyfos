@@ -12,6 +12,7 @@ package config
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -125,6 +126,18 @@ func Load(path string) (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	return parse(blob, path)
+}
+
+// parse is Load without the file read.
+//
+// Split out so a fuzz harness can drive the parser from bytes rather than
+// writing a temporary file per input (P6-3). Nothing about the parsing moved:
+// F-D16 argued for keeping this small and hand-rolled and that is unchanged —
+// this only separates "get the bytes" from "understand them", which is also
+// what lets the error messages keep naming the real path.
+func parse(blob []byte, path string) (*Config, error) {
+	var err error
 	cfg := &Config{Path: path, ResLine: map[string]int{}}
 	section := ""
 
@@ -190,7 +203,7 @@ func Load(path string) (*Config, error) {
 			cfg.ResLine[key] = n + 1
 			switch key {
 			case "cpus":
-				cfg.ResCPUs, err = parseInt(value, where)
+				cfg.ResCPUs, err = parseCount(value, where, key)
 			case "mem":
 				cfg.ResMemMiB, err = parseMiB(value, where)
 			case "disk":
@@ -282,6 +295,25 @@ func stripComment(s string) string {
 	return out.String()
 }
 
+// parseCount reads a whole-number ceiling and refuses a negative one.
+//
+// Every other ceiling in [resources] already refuses negatives — parseBytes
+// says "size cannot be negative", parseRate says "must be positive" — and the
+// deprecated `vcpus` spelling is checked too. `cpus` was the one that was not,
+// so `cpus = -1` parsed cleanly and became the ceiling every flag is compared
+// against. Zero stays legal because it is how the rest of the code spells
+// "no ceiling set". Found by FuzzConfigParse (P6-3).
+func parseCount(value, where, key string) (int, error) {
+	n, err := parseInt(value, where)
+	if err != nil {
+		return 0, err
+	}
+	if n < 0 {
+		return 0, fmt.Errorf("%s: %s cannot be negative", where, key)
+	}
+	return n, nil
+}
+
 func parseString(v, where string) (string, error) {
 	if len(v) < 2 || !strings.HasPrefix(v, `"`) || !strings.HasSuffix(v, `"`) {
 		return "", fmt.Errorf("%s: expected a quoted string, got %s", where, v)
@@ -350,6 +382,14 @@ func parseBytes(value, where string) (int64, error) {
 	}
 	if n < 0 {
 		return 0, fmt.Errorf("%s: size cannot be negative", where)
+	}
+	// The multiplication is where a plausible-looking size becomes a hostile
+	// one: `mem = 8700000000G` parses as a positive number and then wraps int64
+	// into a *negative* ceiling, which every flag is afterwards compared
+	// against. The number itself was checked; the product was not. Found by
+	// FuzzConfigParse (P6-3).
+	if mult > 1 && n > math.MaxInt64/mult {
+		return 0, fmt.Errorf("%s: %q is larger than this machine can express", where, value)
 	}
 	return n * mult, nil
 }

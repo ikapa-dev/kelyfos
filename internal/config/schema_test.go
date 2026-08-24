@@ -110,7 +110,7 @@ func TestSchemaCoversTheParser(t *testing.T) {
 	// to the parser and forgotten here would make this whole test pass by not
 	// looking (E4-6).
 	keyFuncs := map[string]bool{
-		"Load": true, "teamKey": true, "assignResources": true, "pluginKey": true,
+		"parse": true, "teamKey": true, "assignResources": true, "pluginKey": true,
 		"forwardKey": true,
 	}
 
@@ -253,7 +253,7 @@ func keyFunctions(t *testing.T) map[string]bool {
 // list against the parser itself.
 func TestEveryKeyFunctionIsScanned(t *testing.T) {
 	scanned := map[string]bool{
-		"Load": true, "teamKey": true, "assignResources": true, "pluginKey": true,
+		"parse": true, "teamKey": true, "assignResources": true, "pluginKey": true,
 		"forwardKey": true,
 	}
 	for name := range keyFunctions(t) {

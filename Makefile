@@ -78,7 +78,7 @@ KERNEL_ARTIFACT := vmlinux
 endif
 
 .DEFAULT_GOAL := help
-.PHONY: help versions toolchain kernel supervisor cli image run bench docs cookbook vuln prove-caps prove-team demo-team accept-e2 clean test test-integration linux-only fetch-kernel
+.PHONY: help versions toolchain kernel supervisor cli image run bench docs cookbook vuln fuzz prove-caps prove-team demo-team accept-e2 clean test test-integration linux-only fetch-kernel
 
 help: ## Show this target list
 	@echo "KelyfOS — targets (ARCH=$(ARCH), FLAVOR=$(FLAVOR))"
@@ -268,6 +268,13 @@ cookbook: linux-only cli ## Run every cookbook recipe on this machine
 # scanner at the same pinned version, rather than two invocations that drift.
 vuln: ## Scan for known vulnerabilities in dependencies and the stdlib
 	go run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) ./...
+
+# Every fuzz target in the repository, discovered rather than listed (P6-3).
+# FUZZTIME is per target: 10s is the per-push pass, minutes are the scheduled
+# one. A target added anywhere is picked up with nothing to remember.
+FUZZTIME ?= 10s
+fuzz: ## Run every fuzz target for FUZZTIME each (default 10s)
+	bash $(CURDIR)/dev/fuzz.sh $(FUZZTIME)
 
 run: cli ## Boot a microVM from the built image under Firecracker
 	$(OUT_DIR)/kelyfos run --image $(FLAVOR) --arch $(ARCH)

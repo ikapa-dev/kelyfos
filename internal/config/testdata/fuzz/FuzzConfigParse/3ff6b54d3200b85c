@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("[resources]\nmem=8700000000G ")

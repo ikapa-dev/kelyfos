@@ -180,7 +180,7 @@
     <span class="bl-name">Overall</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">P6-2 done &mdash; <code>SECURITY.md</code> with a real scope section, and <code>govulncheck</code> on its own schedule; the channel itself is one owner toggle away (D42). Next: <b>P6-3</b>, fuzz harnesses for every parser on a trust boundary</b></div>
+  <div class="focusline">Current focus: <b id="focus">P6-3 done &mdash; 16 fuzz targets on a declared trust boundary, 7 real defects found and fixed, two of them silent failures. Next: <b>P6-4</b>, the credential window narrowed as far as the architecture allows</b></div>
 </div>
 
 <!-- ====================================================== 1. END GOAL -->
@@ -786,7 +786,7 @@
         build or opens an issue, and it does not pretend to have flipped a repository setting only the owner can
         flip.</span></li>
 
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">P6-3</span><span class="tk"><b>Fuzz harnesses for every parser on a trust boundary
         &mdash; and the boundary named, because &ldquo;every untrusted-input parser&rdquo; has no completion
         criterion without one.</b> The instruction named four targets and two of them are not where it thinks:
@@ -2429,6 +2429,48 @@ after:
         <code>private-vulnerability-reporting &rarr; {"enabled":false}</code>,
         <code>dependabot_security_updates &rarr; disabled</code>, secret scanning and push protection enabled<br>
         both workflows parse; <code>make help</code> lists <code>vuln</code>; docs regenerated</td></tr>
+        <tr><td class="mono">2026-08-24</td><td class="mono">P6-3</td>
+        <td><b>Sixteen fuzz targets, and seven real defects out of writing them.</b> The boundary is declared
+        first (D43) because &ldquo;every untrusted-input parser&rdquo; has no completion criterion without one, and
+        the targets follow from the declaration rather than from a list somebody kept.
+        <b>The findings are the point, and four of the seven came from asserting a <i>property</i> rather than
+        waiting for a panic.</b> Two were silent failures, which is the worse kind: a credential bound to
+        <code>github.com.</code> &mdash; the fully-qualified spelling &mdash; parsed cleanly and then matched
+        nothing, so the request went out unauthenticated and the only symptom was a 401 from somewhere else; and
+        <code>mem</code> large enough to overflow <code>int64</code> became a <b>negative</b> ceiling that every
+        flag was afterwards compared against. The credential bug had a cause worth naming: one normalisation
+        expression existed in four copies with three different behaviours, and the copy in
+        <code>containsDomain</code> carried a comment promising it matched the proxy. There is one now.
+        <b>Three were the same class arriving three times</b> &mdash; agent-chosen text reaching a rendered line of
+        transcript: a tool-call argument <i>key</i> containing a newline, a short string value, and an OOM
+        victim&rsquo;s process name, which is whatever the agent called its binary. The chain was never at risk
+        (marshalling escapes it); what was at risk is what a person reads. <b>And two were the proxy accepting
+        things that are not what they claim to be:</b> a port of 99999 and a host of <code>/</code>, both refused
+        downstream and both reaching the record first as a destination that is not one.
+        <b>The runner discovers its targets instead of listing them</b>, so the drift a guard test would have
+        detected cannot happen &mdash; and the one failure a discovering runner still has, finding nothing and
+        exiting cleanly, is checked. <b>The coverage claim is scoped rather than total</b>, and names what is left
+        out with the reason; sixteen targets is not &ldquo;every parser&rdquo;, and this phase opened by deleting
+        claims of that shape.</td>
+        <td class="mono">new: 6 <code>fuzz_test.go</code> files, <code>dev/fuzz.sh</code>, <code>make fuzz</code>,
+        a <code>fuzz</code> job in <code>security.yml</code>, a 10 s pass in <code>ci.yml</code>&rsquo;s
+        <code>checks</code><br>
+        <b>16 fuzz targets</b> discovered and run: proto ×4, recorder ×1, egress ×2, config ×1, host ×2,
+        supervisor ×4, shim ×2<br>
+        fuzzed for real before being called done, per target: shell framing 6.1M execs, NDJSON reader 2.5M,
+        recorder differential 9.6M, config 15.0M, <code>shellQuote</code> 6.0M against a reference unquoter,
+        summarisers 3.6M<br>
+        <b>7 defects found and fixed:</b> <code>splitTarget</code> port out of range &middot;
+        <code>splitTarget</code> host that is not a hostname &middot; the four-copy domain normalisation, so
+        <code>--secret T@github.com.</code> never attached &middot; <code>cpus = -1</code> accepted while the
+        deprecated <code>vcpus = -1</code> was refused &middot; <code>mem</code> size multiplication overflowing to
+        negative &middot; control characters in a tool-call summary, host and guest copies &middot; control
+        characters in an OOM process name<br>
+        crashing inputs committed under <code>testdata/fuzz/</code> as permanent regression seeds, and CI uploads
+        any new one as an artifact rather than losing it with the runner<br>
+        one production extraction, <code>config.parse</code> split from <code>Load</code> &mdash; and the
+        project&rsquo;s own AST-reading guard caught it, because key dispatch moved between functions<br>
+        gofmt, vet, 14 test packages and <code>make vuln</code> all clean</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
@@ -3132,6 +3174,45 @@ after:
         both plan documents. D29 and the threat model for the scope section. <i>Revisit when</i> the compatibility
         promise (P6-14) exists and can say more than &ldquo;the latest release is the supported one&rdquo;, and
         when there is more than one maintainer to promise a response time on behalf of.</td></tr>
+        <tr><td class="mono">D43</td><td class="mono">2026-08-24</td>
+        <td><b>The trust boundary for fuzzing is declared as three sources, the runner discovers its targets
+        instead of listing them, and the coverage claim names what it covers.</b>
+        <i>Why a declaration was needed at all.</i> The instruction said &ldquo;every untrusted-input parser&rdquo;,
+        which has no completion criterion: on one reading it is four functions and on another it is every
+        <code>json.Unmarshal</code> in the tree. So the boundary is written down first and the target list follows
+        from it. <b>Hostile:</b> anything a guest wrote (a guest runs whatever the agent decided to run); anything
+        the network returned (an allowlisted domain is not a trusted one); anything arriving with a cloned
+        repository or a download (<code>kelyfos.toml</code> is <i>meant</i> to be committed and cloned, which makes
+        a policy file a stranger&rsquo;s file). <b>Not hostile:</b> state KelyfOS wrote to its own cache for its own
+        use &mdash; a corrupt sandbox state file is a bug worth fixing and is not an adversary, and calling it one
+        would make the word mean nothing.
+        <i>Two of the four targets the instruction named do not exist as described</i>, which P6-0 had already
+        found: <code>internal/vsock</code> parses no bytes, and the MCP stdio protocol is
+        <code>internal/proto</code> plus <code>encoding/json</code>. Retargeted rather than faked.
+        <i>Discovery instead of an inventory.</i> <code>go test -fuzz</code> takes one target in one package per
+        invocation, so something must enumerate them &mdash; and a list in a workflow file is a list that goes stale
+        silently, which is why a guard test was the obvious answer. The better answer is to remove the list:
+        <code>go test -list</code> reports fuzz targets, so <code>dev/fuzz.sh</code> asks the toolchain what exists.
+        <b>Drift becomes impossible rather than detectable</b>, and the only failure left &mdash; discovering
+        nothing and exiting cleanly, which looks exactly like success &mdash; is checked explicitly.
+        <i>The claim is scoped, deliberately.</i> Sixteen targets is not &ldquo;every parser&rdquo;, and
+        <code>docs/threat-model.md</code> now says which parsers rather than asserting totality, and names what is
+        left out with the reason: the message types above the framing and the image manifest are the standard
+        library decoding into typed structs, the exported report is <code>html/template</code>, and the MCP
+        observer&rsquo;s pairing is state rather than parsing. A list that reads as a boundary is worth more than
+        one that reads as everything somebody got to &mdash; and this phase spent its first commit deleting claims
+        of the second kind.
+        <i>Where the harness could assert a property, it does.</i> Crash-freedom is the weakest thing a fuzzer can
+        check. <code>Verify</code> and <code>Read</code> must agree about a chain; a credential must match the
+        domain it was just bound to; an argument carrying content must never appear in the record verbatim; a
+        shell-quoted string must survive a shell unchanged, checked against a reference unquoter rather than by
+        spawning one. Four of the seven defects found came from those assertions and would not have come from
+        waiting for a panic.</td>
+        <td>P6-3. The four-target brief in this document&rsquo;s Phase 6 text, corrected here rather than
+        implemented as written. F-D4 for the drift-gate pattern the discovery replaces; F-D16 for why the policy
+        parser stays hand-rolled, which the <code>parse</code> extraction leaves untouched. <i>Revisit when</i> a
+        parser is added on the hostile side that is not stdlib-shaped &mdash; the runner will pick up its target
+        automatically, but the boundary paragraph is prose and only a person can extend it.</td></tr>
     <!-- Claude Code: append rows above this line. -->
   </table>
 </section>

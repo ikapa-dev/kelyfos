@@ -82,7 +82,7 @@ type Policy struct {
 func (p *Policy) allowsHost(host string) bool {
 	host = strings.ToLower(strings.TrimSuffix(host, "."))
 	for _, a := range p.Allow {
-		a = strings.ToLower(strings.TrimPrefix(strings.TrimSuffix(a, "."), "*."))
+		a = NormaliseDomain(a)
 		if host == a || strings.HasSuffix(host, "."+a) {
 			return true
 		}
@@ -343,7 +343,52 @@ func splitTarget(req *http.Request) (string, int, error) {
 	if err != nil {
 		return "", 0, fmt.Errorf("bad port %q", portStr)
 	}
-	return strings.ToLower(host), port, nil
+	// net.SplitHostPort splits on the last colon and does not check that what
+	// follows is a port, so `host:99999` parses and Atoi accepts it. The
+	// connection would be refused downstream — allowsPort permits 80 and 443
+	// and nothing else — but the number reaches the flight recorder first, and
+	// a record that says a guest tried to reach port 99999 is a record saying
+	// something that is not a port. Found by FuzzSplitTarget (P6-3).
+	if port < 1 || port > 65535 {
+		return "", 0, fmt.Errorf("bad port %q", portStr)
+	}
+	host = strings.ToLower(host)
+	if !plausibleHost(host) {
+		return "", 0, fmt.Errorf("bad host %q", host)
+	}
+	return host, port, nil
+}
+
+// plausibleHost reports whether a string can be a host at all.
+//
+// This is an allowlist of characters rather than a list of forbidden ones,
+// because of what happens next: whatever comes back from splitTarget is the
+// string the allowlist is asked about, the string a bound credential is matched
+// against, and the string written into the flight recorder as the destination.
+// A `Host: /` header used to produce the host `/`, which was then compared
+// against an allowlist, refused, and recorded as somewhere a guest tried to
+// reach. Nothing escaped — but a refusal naming a destination that is not a
+// destination is the record saying something untrue, and the check costs a
+// loop. Found by FuzzSplitTarget (P6-3).
+//
+// Letters, digits, `-`, `.` and `_` cover DNS names; `:` covers an IPv6 literal,
+// which SplitHostPort has already unbracketed. Anything else is refused loudly
+// with the offending string quoted, which is diagnosable in a way that a silent
+// policy check on garbage is not.
+func plausibleHost(host string) bool {
+	if host == "" {
+		return false
+	}
+	for i := 0; i < len(host); i++ {
+		c := host[i]
+		switch {
+		case c >= 'a' && c <= 'z', c >= '0' && c <= '9':
+		case c == '-' || c == '.' || c == '_' || c == ':':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func writeStatus(w io.Writer, code int, body string) {

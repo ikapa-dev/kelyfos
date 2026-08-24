@@ -148,6 +148,29 @@ jobs:
       - name: unit tests
         run: go test -count=1 ./...
 
+      # A short mutation pass over every parser on a trust boundary (P6-3). The
+      # seed corpora already ran above as ordinary subtests; this is the part
+      # that goes looking. Ten seconds a target is not a search — the real one
+      # is the scheduled run in security.yml — but it catches a parser that a
+      # change just made trivially reachable, on the commit that made it so.
+      #
+      # The targets are discovered rather than listed, so a new one is picked up
+      # here with nothing to remember. See dev/fuzz.sh.
+      - name: fuzz, briefly
+        run: make fuzz FUZZTIME=10s
+
+      # A crasher is written into the package's testdata/fuzz/<Target>/ and is
+      # the whole value of the run. On an ephemeral runner it is lost unless it
+      # leaves, so it leaves.
+      - name: keep any crashing input
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-crashers-${{ github.run_id }}
+          path: '**/testdata/fuzz/**'
+          if-no-files-found: ignore
+          retention-days: 30
+
       - name: the plan is still coherent
         run: python3 tools/check-plan.py
 

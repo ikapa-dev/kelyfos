@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -71,7 +72,7 @@ func summariseArgs(raw json.RawMessage) string {
 				continue
 			}
 		}
-		parts = append(parts, k+"="+compactValue(v))
+		parts = append(parts, safeLine(k)+"="+compactValue(v))
 	}
 	return strings.Join(parts, " ")
 }
@@ -84,7 +85,7 @@ func compactValue(v any) string {
 		if len(t) > 120 {
 			return fmt.Sprintf("%q…(%d bytes)", t[:120], len(t))
 		}
-		return t
+		return safeLine(t)
 	case []any:
 		parts := make([]string, 0, len(t))
 		for _, e := range t {
@@ -103,6 +104,29 @@ func compactValue(v any) string {
 		}
 		return string(blob)
 	}
+}
+
+// safeLine keeps a summary to one line.
+//
+// A summary is written into the record and then *rendered* — by `kelyfos log`
+// and into the exported HTML report — so a control character in it is not a
+// display nuisance, it is a caller deciding what a transcript looks like. An
+// argument object with a newline in a key produced the summary "\n=0", which
+// reads as two lines of transcript for one tool call. The chain itself was
+// never at risk, because the summary is a JSON string field and marshalling
+// escapes it; what was at risk is the thing a person reads. Found by
+// FuzzSummariseArgs (P6-3).
+//
+// Ordinary strings are returned untouched, so every summary that was already
+// one line is byte-for-byte what it was. Only a string that could break the
+// line gets quoted, and then it is visibly quoted.
+func safeLine(s string) string {
+	for _, r := range s {
+		if r < 0x20 || r == 0x7f {
+			return strconv.Quote(s)
+		}
+	}
+	return s
 }
 
 // argSandbox is the sandbox a call names, when it names one. It is a lane in

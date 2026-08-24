@@ -51,6 +51,10 @@ func ParseSecret(spec string) (*Secret, error) {
 	if !ok || name == "" || domain == "" {
 		return nil, fmt.Errorf("--secret must be NAME@domain, got %q", spec)
 	}
+	domain = NormaliseDomain(domain)
+	if domain == "" {
+		return nil, fmt.Errorf("--secret %q names no domain", spec)
+	}
 	value, ok := os.LookupEnv(name)
 	if !ok {
 		return nil, fmt.Errorf("--secret %s: no environment variable %s on the host", spec, name)
@@ -58,13 +62,34 @@ func ParseSecret(spec string) (*Secret, error) {
 	if value == "" {
 		return nil, fmt.Errorf("--secret %s: %s is set but empty", spec, name)
 	}
-	return &Secret{Name: name, Domain: strings.ToLower(domain), Scheme: scheme, value: value}, nil
+	return &Secret{Name: name, Domain: domain, Scheme: scheme, value: value}, nil
+}
+
+// NormaliseDomain puts a policy domain into the single form that matching
+// compares against.
+//
+// It exists because four copies of this expression had drifted into three
+// different behaviours. allowsHost normalised both the host and the allowlist
+// entry; secretFor normalised only the host, and ParseSecret stored the domain
+// lowercased and otherwise as typed; containsDomain normalised only the entry.
+// So `--allow github.com.` worked and `--secret TOKEN@github.com.` did not —
+// the credential was bound to a domain that could never match, the request went
+// out unauthenticated, and the only symptom was a 401 from somewhere else.
+// Found by FuzzParseSecret (P6-3), which asserts that a secret matches the
+// domain it was just bound to.
+//
+// A trailing dot is the fully-qualified form of the same name; a leading `*.`
+// is how people write a wildcard, and the suffix rule already covers subdomains
+// without it.
+func NormaliseDomain(s string) string {
+	return strings.TrimPrefix(strings.TrimSuffix(strings.ToLower(s), "."), "*.")
 }
 
 // secretFor returns the credential bound to a host, if any. Matching follows
 // the allowlist rule: a bound domain covers its subdomains.
 func (p *Policy) secretFor(host string) *Secret {
 	host = strings.ToLower(strings.TrimSuffix(host, "."))
+	// Domains are normalised once, when the secret is parsed.
 	for _, s := range p.Secrets {
 		if host == s.Domain || strings.HasSuffix(host, "."+s.Domain) {
 			return s

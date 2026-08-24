@@ -996,8 +996,9 @@ func (m *multiFlag) Set(v string) error { *m = append(*m, v); return nil }
 // containsDomain reports whether an allowlist covers a domain, using the same
 // suffix rule the proxy enforces.
 func containsDomain(allow []string, domain string) bool {
+	domain = egress.NormaliseDomain(domain)
 	for _, a := range allow {
-		a = strings.ToLower(strings.TrimPrefix(strings.TrimSuffix(a, "."), "*."))
+		a = egress.NormaliseDomain(a)
 		if domain == a || strings.HasSuffix(domain, "."+a) {
 			return true
 		}

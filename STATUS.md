@@ -10,27 +10,29 @@ Updated 2026-08-24 · synced with origin/main · **v0.9 released** · CI green o
   permanent record rows. A denominator adjusted to flatter the numerator is the same defect as a ticked box.
 
 ## Now
-**P6-2 done.** `SECURITY.md` exists. Its short half is how to report; its long half is **what is and is not a
-vulnerability here**, which this project can state unusually precisely because it already publishes what it does
-not defend — nine documented design decisions listed as *not* findings (root inside your own guest, the chroot not
-being the boundary, the shared uid, `--no-jail`, side channels, the unsigned artifacts) against seven that are, the
-sharpest being *a record that overstates the walls that were around a run*. The three documents that dead-ended at
-"raise concerns privately with the maintainer" now point at it.
+**P6-3 done. Sixteen fuzz targets, and seven real defects out of writing them** — which is the part worth reading.
 
-The channel is GitHub's private vulnerability reporting rather than a published address (D42) — and **it is one
-owner toggle away**, so the document is written to be true either way: it names the button, and says what to do
-when the button is not there. A SECURITY.md that would be wrong on the day it landed is what P6-1 just spent a
-commit undoing. No response time is promised; a number a solo maintainer cannot keep is worse than none.
+The boundary is declared first (D43), because "every untrusted-input parser" has no completion criterion without
+one: **hostile** is anything a guest wrote, anything the network returned, and anything arriving with a cloned
+repo or a download (`kelyfos.toml` is *meant* to be committed and cloned). **Not hostile** is state KelyfOS wrote
+to its own cache — a corrupt state file is a bug, not an adversary, and calling it one would make the word mean
+nothing.
 
-`govulncheck` is promoted from a habit into CI — it has caught a real advisory here before. Own workflow, own day,
-fails the run rather than opening an issue, and deliberately *not* on every push. **§8 rule 8 is amended** in the
-same commit: "the latest CI run" now means every workflow that gates main, because a rule that read only the build
-would never see the one workflow built to go red when nothing changed.
+Four of the seven findings came from asserting a *property* rather than waiting for a panic. Two were silent
+failures, the worse kind: a credential bound to `github.com.` — the fully-qualified spelling — parsed cleanly and
+matched nothing, so requests went out unauthenticated with a 401 from somewhere else as the only symptom; and a
+`mem` value large enough to overflow int64 became a **negative** ceiling that every flag was then compared
+against. The credential bug had a cause worth naming: one normalisation expression in four copies with three
+behaviours, and the copy in `containsDomain` carried a comment promising it matched the proxy. Three findings were
+the same class three times — agent-chosen text reaching a rendered transcript line (an argument key, a value, an
+OOM victim's process name). Two were the proxy accepting a port of 99999 and a host of `/`.
 
-Pin worth noting: `govulncheck` is **v1.7.0** from the module proxy. Its GitHub releases page stops at v1.1.4 in
-January 2025 — reading the familiar page would have pinned a scanner nineteen months stale and called it current.
+The runner **discovers** its targets rather than listing them, so the drift a guard test would have detected cannot
+happen. Coverage is stated as coverage, not totality — `docs/threat-model.md` names which parsers are fuzzed and
+which are left out with the reason. Sixteen is not "every parser", and this phase opened by deleting claims of that
+shape.
 
-**Next: P6-3** — fuzz harnesses for every parser on a trust boundary, with the boundary named.
+**Next: P6-4** — the credential window narrowed as far as the architecture allows.
 
 ## Blocked / needs John
 - **DCO.** `CONTRIBUTING.md` and the README require a `Signed-off-by`; 0 of the last 50 commits carry one and
@@ -62,7 +64,10 @@ January 2025 — reading the familiar page would have pinned a scanner nineteen 
   shim ignores `max_runtime`/`idle_timeout` (documented as a gap now, enforcement is a task); `resource.summary`
   is absent on four close paths; the nftables drop counter is read by nothing; policy-file and team-plan refusals
   carry no catalog ID.
-- `llms-full.txt` is now **440,396 bytes, ~114k tokens** (estimated, not measured — a committed measurement
+- **The two MCP argument summarisers are the same function in two binaries and have now diverged twice** — P6-1
+  found one redacting a `data` key the other did not, P6-3 found the control-character hole in both. Unifying them
+  touches the guest binary; recorded as a debt rather than folded into a fuzzing task.
+- `llms-full.txt` is now **444,241 bytes, ~115k tokens** (estimated, not measured — a committed measurement
   command is P6-17).
 
 ## Toolchain

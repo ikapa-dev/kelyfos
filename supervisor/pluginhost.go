@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -463,6 +464,27 @@ var contentKeys = map[string]bool{"content": true, "stdin": true, "data": true}
 // than knowing the tools, so an argument a plugin adds later appears without
 // anyone remembering, and one carrying content is withheld even on a tool nobody
 // here has seen (F-D49).
+// safeArgLine keeps a plugin-call summary to one line.
+//
+// The same fix as host/servemcpaudit.go's safeLine, and the duplication is the
+// point rather than an accident worth hiding: these two summarisers are the
+// same function in two binaries, and they have now diverged twice — P6-1 found
+// this one redacting a `data` argument that the host-side one did not, and
+// P6-3's FuzzSummariseArgs found the control-character hole in both. A plugin
+// names its own argument keys, so a plugin can put a newline in one, and the
+// summary is rendered in `kelyfos log` as a line of transcript.
+//
+// Unifying them is real work in a guest binary and is recorded as a debt rather
+// than folded in here.
+func safeArgLine(s string) string {
+	for _, r := range s {
+		if r < 0x20 || r == 0x7f {
+			return strconv.Quote(s)
+		}
+	}
+	return s
+}
+
 func summarisePluginArgs(raw json.RawMessage) string {
 	if len(raw) == 0 {
 		return ""
@@ -482,7 +504,7 @@ func summarisePluginArgs(raw json.RawMessage) string {
 			parts = append(parts, fmt.Sprintf("%s=<%d bytes>", k, len(str)))
 			continue
 		}
-		parts = append(parts, k+"="+compactArg(m[k]))
+		parts = append(parts, safeArgLine(k)+"="+compactArg(m[k]))
 	}
 	return strings.Join(parts, " ")
 }
@@ -493,7 +515,7 @@ func compactArg(v any) string {
 		if len(t) > 120 {
 			return fmt.Sprintf("%q…(%d bytes)", t[:120], len(t))
 		}
-		return t
+		return safeArgLine(t)
 	case []any:
 		parts := make([]string, 0, len(t))
 		for _, e := range t {

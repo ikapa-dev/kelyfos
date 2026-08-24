@@ -44,11 +44,17 @@ func parseOOM(line string) (proto.GuestEvent, bool) {
 	if err != nil {
 		return proto.GuestEvent{}, false
 	}
+	// The process name is the one field here the agent chooses: `comm` is
+	// whatever it called the binary. It travels to the host, into the record,
+	// and out again through every renderer, so a control character in it is a
+	// line of transcript the agent gets to shape. Quoted rather than stripped,
+	// so an odd name is still recognisable as itself. Found by FuzzParseOOM
+	// (P6-3), which is the third place this class turned up in one task.
 	return proto.GuestEvent{
 		V:      proto.Version,
 		Type:   proto.GuestEventOOM,
 		PID:    pid,
-		Comm:   m[2],
+		Comm:   safeArgLine(m[2]),
 		RSSKiB: rss,
 	}, true
 }

@@ -1,0 +1,2 @@
+go test fuzz v1
+string("Killed process 0 (\r) total-vm:0kB, anon-rss:0kB")

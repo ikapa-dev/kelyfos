@@ -1,4 +1,11 @@
-# KelyfOS — the scanner that runs when nothing has changed (P6-2).
+# KelyfOS — the checks that run when nothing has changed (P6-2, P6-3).
+#
+# Both jobs here answer the same shape of question, which is why they share a
+# workflow: what can become true about code that did not change? For
+# govulncheck it is knowledge arriving from outside — an advisory published
+# against a dependency that has not moved. For fuzzing it is knowledge that was
+# always there and had not been found yet. Neither is discoverable by a trigger
+# that waits for a push.
 #
 # govulncheck was already part of this project's discipline before it was part
 # of its CI: it has been run by hand at ten or more gates and once caught a real
@@ -71,3 +78,31 @@ jobs:
       # main package including dev/seccomp-probe and the two tools.
       - name: govulncheck
         run: make vuln
+
+  # The real fuzzing run. ci.yml does ten seconds a target on every push, which
+  # catches a parser a change just made reachable; this is the one that searches.
+  # Separate job so a crasher and an advisory are never the same red X.
+  fuzz:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # Targets are discovered, not listed (dev/fuzz.sh), so this line does not
+      # change when one is added. Three minutes each against fourteen targets is
+      # comfortably inside the timeout with room for the set to grow.
+      - name: fuzz
+        run: make fuzz FUZZTIME=3m
+
+      - name: keep any crashing input
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-crashers-${{ github.run_id }}
+          path: '**/testdata/fuzz/**'
+          if-no-files-found: ignore
+          retention-days: 30
