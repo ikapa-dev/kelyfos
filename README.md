@@ -10,20 +10,26 @@ edit.
 
 ![KelyfOS in a terminal](docs/media/demo.gif)
 
-> **Status: v0.8, early development, building in the open.** Cold boot-to-ready
-> is **123 ms** median and snapshot restore **37 ms** (10 runs each, x86_64 on a
-> bare-KVM CI runner, two independent samples); a five-agent team comes up in
-> **366 ms**. **Not hardened yet** — read
-> [`docs/threat-model.md`](docs/threat-model.md) before trusting it with
-> anything.
+> **Status: v0.9, early development, building in the open.** Cold boot-to-ready
+> is **135 ms** median and snapshot restore **49 ms** (10 runs each, x86_64 on a
+> bare-KVM CI runner); five agents come up in **737 ms** cold, or **149 ms**
+> forked from a cached template.
 >
-> *Boot was 69 ms and restore 33 ms until 2026-08-24, when the build system
-> moved to Buildroot's supported LTS line and the guest kernel moved with it,
-> 6.18.46 → 6.12.105 (D28). Both targets — ≤ 300 ms cold, ≤ 100 ms restore —
-> still hold with room, and the numbers above are the ones measured rather than
-> the ones we would rather quote. The 366 ms team figure is from the previous
-> kernel and has not been re-measured since; it is re-earned at the v0.9 exit
-> with the rest.*
+> **What is enforced, and what is not.** The VMM runs inside the jailer — chroot,
+> dropped uid, its own cgroup — with Firecracker's own syscall filter read out of
+> `/proc` on every one of its threads and the run refused if it is missing; inside
+> the guest, every process the supervisor spawns is confined by Landlock and a
+> 28-syscall refusal list. An agent is still root in its own guest, the VM and not
+> the chroot is the boundary, and side channels and the supply chain are
+> untouched. [`docs/threat-model.md`](docs/threat-model.md) before trusting it
+> with anything; [`docs/hardening.md`](docs/hardening.md) for how each layer was
+> specified before it was built.
+>
+> *Boot was 123 ms and restore 37 ms at v0.8. The jailer, the filter check and the
+> guest-profile probe are all on the boot path and cost about 12 ms each way —
+> measured across the change rather than assumed through it. Both targets —
+> ≤ 300 ms cold, ≤ 100 ms restore — still hold with room. The team figures replace
+> a 366 ms number from the pre-D28 kernel and are the first measured on this one.*
 
 KelyfOS — from κέλυφος (*kélyfos*), "shell": the guest wrapped around the agent.
 
@@ -59,11 +65,19 @@ VM mounts, and `limactl shell` keeps your working directory, so the commands
 below just work.
 
 Measured end to end — `git clone` to the first `kelyfos exec` output, on a
-machine with no Lima VM, no image cache and no KelyfOS anything: **2 minutes 31 seconds on macOS, 9 seconds on a Linux/KVM box**.
-*(Measured before the jailer step below existed; it is re-measured with that
-step included at the v0.9 exit, and whatever it then is, is what will be
-printed here.)*
-Building the macOS Linux layer is 142 s of that — on Linux there is no such step. Measured against the published v0.3 release with Lima's image cache purged; the KelyfOS downloads themselves are 5 s of the total.
+machine with no Lima VM, no image cache and no KelyfOS anything: **2 minutes
+29 seconds on macOS, 10 seconds on a Linux/KVM box**.
+
+Building the macOS Linux layer is **138 s** of that, and on Linux there is no
+such step: clone 1 s, then firecracker, the CLI, the image, the sudoers grant
+and `doctor` together 9 s, then the first `kelyfos exec` 1 s. Lima's image cache
+was purged first, so this is a first-time visitor's cost rather than a repeat
+visit's. The sudoers grant below is included and is about a second of it.
+
+*Measured against the published release, which is what a visitor actually
+downloads — so the CLI and image were the previous release's while this was
+timed. The steps are the same either way and the KelyfOS downloads are a few
+seconds of the total; the figure is re-confirmed against each release.*
 
 **On macOS first — a Linux layer with nested virtualisation** (skip on Linux).
 This step downloads and boots an Ubuntu VM, and is most of that wall clock:
@@ -314,10 +328,45 @@ And the parts that make it a thing you reach for rather than tolerate (v0.8):
 
 ## Security
 
-**Not hardened yet.** The Firecracker jailer (P4-1) and guest seccomp/Landlock
-profiles (P4-2) are not done. The accurate description today is *isolation-first
-architecture*. [`docs/threat-model.md`](docs/threat-model.md) is explicit about
-what that means, including the trade-off TLS termination represents.
+Every release before v0.9 said **"not hardened yet"**, and it was true: KelyfOS
+relied on the boundary Firecracker gives it and added nothing of its own around
+the VMM process or around what a compromised agent could reach inside its guest.
+Both layers exist now. Here is what that does and does not mean.
+
+**What is enforced.**
+
+| | |
+| --- | --- |
+| the boundary | a Firecracker microVM: a separate kernel, a hardware boundary. This was always the case and is still the thing that matters most. |
+| around the VMM | the jailer: a chroot holding only this sandbox's files, a dropped uid, `no_new_privs`, only the device nodes it needs, and the run's cgroup. Every entry point, or none — `run`, `team up`, `fork`, `snapshot restore`, `serve-mcp` and the shim all go through one refusal. |
+| the VMM's syscalls | Firecracker's own seccomp filter, **read out of `/proc` on every one of its threads** at boot rather than assumed from the absence of a flag. A VMM without it is refused, not run. [`docs/host-seccomp.md`](docs/host-seccomp.md) lists every syscall it permits, read back out of the running kernel. |
+| inside the guest | every process the supervisor spawns — `exec`, a plugin, the shell — is confined by Landlock (writes only `/work`, `/tmp`, `/run`, `$HOME` and seven named device nodes) and a seccomp refusal list of 28 syscalls. Per flavor; [`docs/reference/profiles.md`](docs/reference/profiles.md) is generated from the code that enforces it. |
+| the network | no interface at all without `--allow`; then deny-all plus a hostname allowlist, with credentials attached by the host's proxy so the value never exists inside the guest. |
+| the record | hash-chained, written by the host, and it names which walls were around each machine — so a transcript cannot make an unconfined run look like a confined one. |
+
+**What is not.** None of this is a claim to be a multi-tenant sandbox for
+hostile code; it is a single-host developer tool (D1).
+
+- **An agent is still root inside its own guest**, and always was. The profile
+  narrows what root can ask the kernel for; it does not make the kernel smaller.
+- **The chroot is not the boundary.** The VM is. The jailer makes an escape from
+  Firecracker far less useful; anyone who tells you a chroot is a security
+  boundary is selling something.
+- **The VMM drops to you, not to a dedicated account** (D29), so a uid it shares
+  with your shell is a uid that could signal or `ptrace` your other processes.
+  A service account closes that and costs a setup step.
+- **Side channels** — timing, cache, speculative execution — are untouched.
+  KelyfOS inherits Firecracker's position and adds nothing.
+- **The supply chain** is untouched: reproducible builds, signed images and an
+  SBOM are P4-3 and are not done. A hardened runtime built from an unverified
+  toolchain is a locked door in a wall nobody measured.
+- **Anything your policy permits.** A sandbox allowed to reach `api.github.com`
+  with a token bound to it can do whatever that token can do.
+
+[`docs/threat-model.md`](docs/threat-model.md) is the long version, including the
+trade-off TLS termination represents. [`docs/hardening.md`](docs/hardening.md) is
+the specification these layers were built against, and its §5 is a longer list of
+what remains reachable.
 
 Report vulnerabilities privately — see [`CONTRIBUTING.md`](CONTRIBUTING.md).
 

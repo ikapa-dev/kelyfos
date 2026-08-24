@@ -552,6 +552,13 @@ func (s *Sandbox) WaitReady(ctx context.Context) (proto.Ready, error) {
 			_ = s.Shutdown(2 * time.Second)
 			return proto.Ready{}, denial.ProfileNotEnforced.Err(denial.V{"reason": r.ProfileError})
 		}
+		// An image older than this CLI reports no profile at all. Not refused,
+		// for D32's reason — the host walls are unchanged and every image built
+		// before v0.9 would otherwise stop booting — but never silent, because
+		// a run that confines nothing must not read like one that does (P5-4).
+		if w := postureWarning(fromImage, r.Profile, ""); w != "" {
+			warnf("%s", w)
+		}
 		s.State.Profile = r.Profile
 		if err := s.writeState(); err != nil {
 			return proto.Ready{}, err
@@ -1212,7 +1219,7 @@ func Restore(snapDir string, opts Options) (*Sandbox, time.Duration, error) {
 	// Printed here rather than by each of the five commands that restore, for
 	// the reason requireJail lives in New: a warning five call sites have to
 	// remember is one that four of them will.
-	if w := restoreWarning(s.State.Profile, s.profileError); w != "" {
+	if w := postureWarning(fromSnapshot, s.State.Profile, s.profileError); w != "" {
 		warnf("%s", w)
 	}
 	return s, elapsed, nil

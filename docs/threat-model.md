@@ -1,13 +1,20 @@
 # KelyfOS threat model
 
-**Status:** current as of v0.5. This document is a launch gate (P3-5) and is
+**Status:** current as of v0.9. This document is a launch gate (P3-5) and is
 meant to be read before anyone trusts KelyfOS with anything.
 
 Its job is to be honest about the shape of the protection, including where it
-stops. **KelyfOS is not hardened yet.** Host hardening (the Firecracker jailer)
-is P4-1 and guest hardening (seccomp, Landlock) is P4-2, and neither is done.
-Until they are, the accurate description is *isolation-first architecture*, not
-*hardened*.
+stops. **Through v0.8 this page said KelyfOS was not hardened**, because it was
+not: the VM boundary was the whole of it, and nothing stood around the VMM
+process on the host or around what a compromised agent could reach inside its
+own guest. Both layers landed in v0.9 — the jailer and the VMM's own syscall
+filter on one side, per-flavor Landlock and a syscall refusal list on the other
+— so that sentence has been replaced rather than softened.
+
+What has **not** changed is the shape of the argument. The VM is still the
+boundary; everything added in v0.9 is depth behind it. An agent is still root
+inside its own guest. §4 below is longer than §3 on purpose, and got longer in
+v0.9, not shorter.
 
 ---
 
@@ -100,16 +107,65 @@ at-most-once — so a chatty agent cannot make the host buffer without bound.
 
 This section matters more than the one above.
 
-### Host-side attacks before the jailer (P4-1)
-Firecracker currently runs as your user, unconfined. A Firecracker
-vulnerability, or a bug in the KelyfOS CLI, gets the attacker your user account.
-The jailer — chroot, cgroups, dropped privileges, seccomp on the VMM — is
-Phase 4 and is not done. **This is the largest open gap.**
+### The chroot is not the boundary, and the uid is shared (v0.9)
 
-### A compromised guest is unconfined *inside* the guest
-There is no seccomp or Landlock profile yet (P4-2). Code in the sandbox runs as
-root in its own machine and can do anything a root user can do to that machine.
-That is contained by the VM boundary, not by anything inside it.
+The VMM now runs under the jailer: a chroot containing only this sandbox's own
+files, a dropped uid, `no_new_privs`, only the device nodes it needs, and the
+run's cgroup. Firecracker's own seccomp filter is read out of `/proc` on every
+one of its threads at boot, and a VMM without one is refused rather than run —
+see [`host-seccomp.md`](host-seccomp.md), which lists every syscall it permits,
+read back out of the running kernel rather than transcribed from documentation.
+
+That is depth, not a boundary. Two things it does not do:
+
+- **A chroot is not a security boundary.** If Firecracker itself is escaped, the
+  jail makes the result far less useful — no home directory, no session records,
+  no host filesystem — but "far less useful" is not "impossible".
+- **The VMM drops to the invoking user, not to a dedicated account** (D29).
+  Sharing a uid with your shell means a VMM escape could signal or `ptrace` your
+  other processes, which the mount namespace does not prevent. A dedicated
+  service account closes this and costs one setup step; the trade is priced in
+  D29 and is revisitable.
+
+### A compromised guest is confined, and still root (v0.9)
+
+Every process the supervisor spawns — `exec`, a plugin, the interactive shell —
+is confined by Landlock and a seccomp refusal list, declared per flavor and
+generated into [`reference/profiles.md`](reference/profiles.md) from the code
+that enforces it. Writes go to `/work`, `/tmp`, `/run`, `$HOME` and seven named
+device nodes and nowhere else, so an agent can no longer edit the toolbox it was
+handed; 28 syscalls are refused with `EPERM`, among them `mount`, `reboot`, the
+clock-setting family, the keyring calls and module loading.
+
+What that leaves:
+
+- **The agent is root in its own guest.** It always was, and §6 of
+  [`hardening.md`](hardening.md) says it will stay that way: adding a second user
+  inside a single-purpose VM buys a boundary weaker than the one already around
+  it.
+- **The refusal list is a list, not an allowlist.** The syscall surface it
+  leaves is everything the guest kernel offers root minus 28 names. That is a
+  real reduction at the places that matter and it is not a small surface. An
+  allowlist for an arbitrary agent command is a crash waiting to be mistaken for
+  a security feature.
+- **Landlock cannot restrict everything.** By its own documentation it does not
+  govern `chdir`, `stat`, `chmod`, `chown`, `access` or `fcntl`, and it cannot
+  restrict a file descriptor that was already open when the profile was applied —
+  so what the supervisor hands a child on its stdin and stdout is outside this
+  layer by construction.
+- **An older image or snapshot has none of it.** Guest confinement lives in the
+  guest's supervisor, so a machine booted from a pre-v0.9 image, or restored from
+  a pre-v0.9 snapshot, confines nothing it spawns. KelyfOS says so on the
+  terminal and records it — see *Snapshots and fork templates* below — rather
+  than refusing, because the host walls are unchanged either way.
+
+### The KelyfOS CLI itself
+The two sections above describe what stands around Firecracker. Nothing stands
+around the CLI: it runs as you, it is what talks to the jailer through
+`sudo -n`, and a bug in it is a bug with your user account's reach. The sudoers
+grant it asks for is deliberately narrow — one line, the `jailer` binary and
+nothing else, so it is not a general `NOPASSWD` — but the process that invokes
+it is still ordinary code running as you.
 
 ### TLS termination is a real trade-off (decision D6)
 For a domain with a secret bound to it, the proxy decrypts. Consequences you are

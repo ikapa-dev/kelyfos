@@ -234,9 +234,11 @@ applied refuses rather than degrades; and a longer §5 on what is still reachabl
 afterwards.
 *Reference:* none — every mechanism it names is documented where it is
 implemented.
-*Thin:* nothing yet, and that is a statement about a page written before its
-code rather than a claim of completeness. It is measured at the P5 exit, not
-here.
+*Thin:* it was written before its code, and the code has since answered it: §3
+and §4 carry "written after P5-2/P5-3" notes where the built thing went further
+than the specification asked, and §4.4 records a protection nobody asked for.
+The sentence it exists to replace was replaced at P5-4, in both places the README
+carried it.
 
 ### `host-seccomp.md` — the wall around the VMM process
 
@@ -257,10 +259,12 @@ today, and the page says so where it matters.
 
 Concept throughout, deliberately, and the document the README sends a first-time
 reader to.
-*Thin:* nothing known. Brought to v0.5 at E3-0 — resource caps and what each
-kind of cap is actually worth, teams as a deliberate data path between sandboxes,
-the shim's unauthenticated port, and the two guarantees a shim sandbox does not
-get.
+*Thin:* nothing known. Brought to v0.9 at P5-4, where §3 gained the two layers
+this release adds and §4 — the longer half — gained what each of them does *not*
+do: a chroot is not a boundary, the VMM shares your uid, the guest profile is a
+refusal list and not an allowlist, and an older image or snapshot has neither.
+It was brought to v0.5 at E3-0 before that, for resource caps, teams as a
+deliberate data path, and the shim's unauthenticated port.
 
 ### `e2b-shim.md` — the compatibility subset
 

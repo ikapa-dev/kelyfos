@@ -31,6 +31,12 @@ true**, and the replacement must say what *is* enforced and what is *not*. A
 sentence that says "hardened" and stops would be a worse lie than the one it
 replaced.
 
+*Replaced at P5-4.* The README now carries a two-part statement in both places
+the old sentence appeared — a table of what is enforced, and a list of what is
+not, the second longer than the first. The word "hardened" does not appear in
+either as a claim about the product. What replaced it can be checked against §5
+below, which was written before any of it was built for exactly that purpose.
+
 ---
 
 ## 1. What a compromised agent can reach today

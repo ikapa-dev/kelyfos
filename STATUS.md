@@ -1,16 +1,24 @@
 # KelyfOS — session status
 
-Updated 2026-08-24 · synced with origin/main · CI green (run 32704409463)
+Updated 2026-08-24 · synced with origin/main · CI green through P5-8 (run 32713825239)
 
 ## Plans
-- PLAN.html — **44/53**. Phase 5 (hardening, v0.9): P5-0, P5-1, P5-2, P5-6, P5-3 done.
+- PLAN.html — **45/53**. Phase 5 (hardening, v0.9): everything but P5-5 done.
 - PLAN-FEATURES.html — **COMPLETE and closed.** 42/42, five epics, v0.4–v0.8 released.
 
 ## Now
-P5-4 — the bars re-earned on the bare-KVM reference (D15) with the jail and both filters on
-the boot path; the quickstart ≤5-min figure re-measured *including* the sudoers step; the
-README's "not hardened yet" sentence replaced by one that is also true; and
-docs/threat-model.md brought into line with it rather than softened.
+P5-5 — the launch assets, committed and posted nowhere: a ~20-second terminal recording
+at the top of the README, a first-time-visitor pass over its opening screen, and
+docs/launch/hn-post.md refreshed to v0.9 reality. Then the Phase 5 exit: full acceptance,
+tag v0.9, publish the release the way v0.4–v0.8 were published.
+
+**P5-4 done.** Bars re-earned on the bare-KVM reference across the change of posture:
+cold boot 123 → **135 ms**, restore 37 → **49 ms** (about 12 ms each way for the jailer,
+the filter check and the profile probe); both targets hold with room. Five agents:
+**737 ms** cold, **149 ms** forked. Quickstart re-measured from nothing, sudoers step
+included: **149 s** on macOS, 10 s of it on a Linux box. The "not hardened yet" sentence
+is gone from both places it appeared. Every acceptance suite in dev/ green — 239 checks,
+0 failed — plus the cookbook and the Go suite.
 
 Both P5 deviations were endorsed by the owner (2026-08-24) and logged in D32 and D33.
 The `session.ready` placement is now doctrine for any record field added later: a choice

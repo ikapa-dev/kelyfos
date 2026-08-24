@@ -37,7 +37,7 @@ func TestARestoreSaysWhatItBroughtBack(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := restoreWarning(tc.profile, tc.profileError)
+			got := postureWarning(fromSnapshot, tc.profile, tc.profileError)
 			if tc.silent {
 				if got != "" {
 					t.Fatalf("a confined machine warned about itself:\n%s", got)
@@ -61,12 +61,37 @@ func TestARestoreSaysWhatItBroughtBack(t *testing.T) {
 // machine that will run everything unconfined. Telling somebody the wrong one
 // sends them to fix the wrong thing.
 func TestTheTwoUnconfinedStatesAreNotTheSameMessage(t *testing.T) {
-	old := restoreWarning("", "")
-	broken := restoreWarning("", "landlock is not available in this kernel")
+	old := postureWarning(fromSnapshot, "", "")
+	broken := postureWarning(fromSnapshot, "", "landlock is not available in this kernel")
 	if old == broken {
 		t.Fatal("a pre-confinement snapshot and a kernel without Landlock got the same warning")
 	}
 	if strings.Contains(old, "are refused") {
 		t.Error("the old-snapshot warning claims commands are refused; they are not")
+	}
+}
+
+// An old snapshot and an old image are the same absence with different fixes,
+// and sending somebody to the wrong one wastes the only thing the warning has:
+// their attention.
+func TestAnOldSnapshotAndAnOldImageAreToldDifferentThings(t *testing.T) {
+	snap := postureWarning(fromSnapshot, "", "")
+	image := postureWarning(fromImage, "", "")
+	if snap == image {
+		t.Fatal("an old snapshot and an old image got the same warning")
+	}
+	if !strings.Contains(snap, "snapshot save") {
+		t.Error("the snapshot warning does not name re-creating the snapshot")
+	}
+	if !strings.Contains(image, "fetch-image") {
+		t.Error("the image warning does not name updating the image")
+	}
+	for _, w := range []string{snap, image} {
+		if !strings.Contains(w, "host walls are unchanged") {
+			t.Errorf("a warning overstates what was lost:\n%s", w)
+		}
+	}
+	if postureWarning(fromImage, "landlock abi 6 · dev · …", "") != "" {
+		t.Error("a confined machine was warned about")
 	}
 }

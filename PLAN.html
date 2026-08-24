@@ -128,7 +128,7 @@
      injected secrets, full audit replay, and millisecond forking.</p>
   <div class="meta">
     owner: <b>John</b> &nbsp;·&nbsp; developer: <b>Claude Code</b> &nbsp;·&nbsp;
-    status: <b class="amber" id="meta-status">v0.8 released — phases 0–3 done; PLAN-FEATURES complete and closed; Phase 5 (hardening, v0.9) active</b> &nbsp;·&nbsp;
+    status: <b class="amber" id="meta-status">v0.8 released — phases 0–3 done; PLAN-FEATURES complete and closed; Phase 5 (hardening, v0.9) active, exiting at P5-5</b> &nbsp;·&nbsp;
     last updated: <b id="meta-updated">2026-08-24</b><br>
     repo file: <b>PLAN.html</b> (commit this document at the repository root — it is the single source of truth)<br>
     <span class="quiet">KelyfOS — from κέλυφος (kélyfos), "shell": the guest OS wrapped around the agent. Formerly working-titled "agos" (D4 → D10).</span>
@@ -173,7 +173,7 @@
     <span class="bl-name">Overall</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">P5-4 &mdash; the bars re-earned on the bare-KVM reference with the jail and both filters on the boot path, the quickstart figure re-measured with the sudoers step in it, and the README&rsquo;s &ldquo;not hardened yet&rdquo; sentence replaced by one that is also true</b></div>
+  <div class="focusline">Current focus: <b id="focus">P5-5 &mdash; the launch assets: a ~20-second terminal recording at the top of the README, a first-time-visitor pass over its opening screen, and the HN post refreshed to v0.9 reality. Committed, posted nowhere</b></div>
 </div>
 
 <!-- ====================================================== 1. END GOAL -->
@@ -618,7 +618,7 @@
         person will look, states what still works, and proves both halves in the acceptance rather than asserting
         them. Whether <code>dev</code> should relax it is decided and logged in D33; <code>base</code> stays strict
         either way.</span></li>
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">P5-4</span><span class="tk"><b>The bars, re-earned, and the sentence replaced.</b>
         The jailer and a seccomp filter sit on the boot path, so cold boot-to-ready and snapshot restore are
         re-measured on the bare-KVM reference (D15) and the numbers reported are the ones measured &mdash; a bar is
@@ -1701,6 +1701,31 @@ after:
         no guest-side refusal mechanism is to be built to create one.</td>
         <td class="mono">the product owner&rsquo;s rulings of 2026-08-24, logged in D32 and D33 beside the
         deviations they answer<br>docs/events.md &sect;4, stated as doctrine</td></tr>
+        <tr><td class="mono">2026-08-24</td><td class="mono">P5-4</td>
+        <td><b>The bars re-earned across the change of posture, and the sentence replaced in both places it
+        appeared.</b> The jailer, the filter check and the guest-profile probe are all on the boot path, so both
+        numbers were measured again on the bare-KVM reference rather than carried: cold boot-to-ready
+        <b>123 &rarr; 135 ms</b> and restore <b>37 &rarr; 49 ms</b>, about 12 ms each way, both still inside the
+        &le; 300 ms and &le; 100 ms targets with room. The quickstart was re-measured from a machine with nothing on
+        it, with the sudoers grant the jailer added included and priced. The README&rsquo;s
+        &ldquo;not hardened yet&rdquo; is gone from the status block and from the Security section, replaced by a
+        table of what is enforced and a longer list of what is not; <code>docs/threat-model.md</code> says the same
+        in more words, and its §4 got longer rather than shorter.
+        <b>One thing built here rather than described:</b> a cold boot from an image older than the CLI reported no
+        profile and said nothing, so it is warned about now the way a pre-confinement snapshot already was &mdash;
+        the sentence in the README could not be true otherwise.</td>
+        <td class="mono">bench run 32715343990, x86_64 bare-KVM, base, 2 vcpu / 512 MiB, n=10 each:<br>
+        cold <b>min 128 &middot; median 135 &middot; p95 149 &middot; max 149</b> ms<br>
+        restore <b>min 45 &middot; median 49 &middot; p95 51 &middot; max 51</b> ms<br>
+        five agents: <b>737 ms</b> cold, <b>149 ms</b> forked from a cached template (caps run 32715397107,
+        the first team figures measured on the 6.12 kernel)<br>
+        quickstart, Lima cache purged, clone &rarr; first exec output: <b>149 s</b> total &mdash; clone 1 s, the
+        macOS Linux layer 138 s, firecracker + CLI + image + sudoers + doctor 9 s, first exec 1 s. On a Linux/KVM
+        box there is no Lima step, so the same work is <b>10 s</b><br>
+        on the reference in the same run: accept-e1 13/13, prove-caps 8/8, prove-team 6/6<br>
+        <b>every acceptance suite in dev/, re-run green:</b> denials 12, e1 13, e2 18, e4 22, e5 33, forward 19,
+        jail 18, notify 22, profile 31, runs 18, seccomp 15, shell 13, watch 5 &mdash; <b>239 checks, 0 failed</b>,
+        one skip (e2&rsquo;s own) &mdash; plus all fourteen cookbook recipes and the Go suite</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
