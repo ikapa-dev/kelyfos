@@ -188,6 +188,19 @@ routes the result to `<dir>.kelyfos-out`, which is P3-10's existing diversion
 mechanism rather than a new one — the host directory is untouched until an
 explicit yes.
 
+**The wait is where your editor lives, so the check happens twice.** The
+fingerprint that decides whether a sync-back would overwrite somebody's edit is
+taken when the image is extracted, and then again immediately before the
+directories are swapped. Only the second one covers the window the review itself
+opens: the sandbox has already stopped, and a person reading a diff for five
+minutes is five minutes in which the directory can change. A yes answered over a
+directory you edited while reading diverts, and says so.
+
+And the copy that is replaced is **kept**, as `<dir>.kelyfos-previous`, until the
+next successful run clears it. One generation deep, not a growing pile — but the
+moment somebody wants it is the moment immediately after a sync-back, which is
+exactly when it used to be deleted.
+
 The answer is a `run.review` event carrying the decision and the counts. A
 declined review is a fact worth keeping: it is the one place the product asks a
 person to make a judgement, and a transcript that recorded only the accepted ones

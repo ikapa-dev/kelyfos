@@ -107,10 +107,12 @@ func AdoptWorkspace(hostDir, imagePath string) *Workspace {
 
 // SyncBack writes the workspace image back over the host directory.
 //
-// If the host directory changed while the sandbox was running, it refuses and
+// If the host directory changed since the image was packed, it refuses and
 // writes to "<dir>.kelyfos-out" instead. Overwriting an edit someone made in
-// their editor during the run would be the single most destructive thing this
-// tool could do, and it would do it silently.
+// their editor would be the single most destructive thing this tool could do,
+// and it would do it silently. "Since it was packed" rather than "while the
+// sandbox was running" because Commit checks again at the last moment: with
+// --review the sandbox has already stopped and the person is still typing.
 func (w *Workspace) SyncBack() (dest string, diverted bool, err error) {
 	staged, err := w.Stage()
 	if err != nil {
@@ -169,8 +171,9 @@ func (w *Workspace) Stage() (*Staged, error) {
 	return s, nil
 }
 
-// Diverted reports that the host directory changed while the sandbox ran, so a
-// commit will write beside it rather than over it.
+// Diverted reports that the host directory changed since the image was packed,
+// so a commit will write beside it rather than over it. It is what Stage found;
+// Commit looks again, because a review is a person and people take time.
 func (s *Staged) Diverted() (bool, string) { return s.diverted, s.dest }
 
 // Changes is what the sandbox did to the workspace, against the manifest
@@ -202,8 +205,29 @@ func (s *Staged) Divert() (string, error) {
 func (s *Staged) Discard() { _ = os.RemoveAll(s.tree) }
 
 // Commit puts the extracted tree where it belongs.
+//
+// It looks at the host directory again first, and that is the whole point of
+// the function rather than a detail of it. Stage took its fingerprint before
+// the review was shown, and a review is a person reading: the gap between the
+// two is however long they took, and everything they edited in it lives in the
+// directory this is about to rename away. Diverting here is the same answer
+// Stage would have given had it been asked at the right moment, and it is the
+// answer that keeps their work.
 func (s *Staged) Commit() (dest string, diverted bool, err error) {
-	w, tmp, dest, diverted := s.w, s.tree, s.dest, s.diverted
+	w, tmp := s.w, s.tree
+	if !s.diverted {
+		// A fingerprint that cannot be taken is not evidence of no change, but
+		// it is also not evidence of one, and refusing to write back a whole
+		// session's work over a failed stat would be the worse mistake. Stage
+		// treats an unreadable directory as fatal; by here the work exists and
+		// the honest move is to proceed as Stage's own answer said.
+		if now, ferr := Fingerprint(w.HostDir); ferr == nil && now != w.fingerprint {
+			s.dest = w.HostDir + ".kelyfos-out"
+			s.diverted = true
+		}
+	}
+	dest, diverted = s.dest, s.diverted
+
 	// Swap rather than merge: the image is the authoritative post-run state, so
 	// a file the agent deleted should be gone rather than resurrected. The old
 	// copy is kept until the new one is in place.
@@ -218,7 +242,11 @@ func (s *Staged) Commit() (dest string, diverted bool, err error) {
 		_ = os.Rename(old, dest) // put it back rather than leave nothing
 		return "", diverted, err
 	}
-	_ = os.RemoveAll(old)
+	// The previous copy stays, until the next successful run clears it on the
+	// line above. It used to be deleted here, one statement after the swap that
+	// made it worth having — a backup removed at the moment it becomes useful
+	// is not a backup, and the person who wants it is the person who has just
+	// watched a run overwrite something.
 	s.tree = "" // moved into place; there is nothing left to discard
 	return dest, diverted, nil
 }

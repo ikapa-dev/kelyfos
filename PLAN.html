@@ -180,7 +180,7 @@
     <span class="bl-name">Overall</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">P6-6 done &mdash; the export carries the record it was rendered from and <code>kelyfos verify</code> re-runs the chain over it offline. <b>An external security audit then arrived (D45) and v1.0 is gated on its trust-boundary group</b>: the workspace block device is a guest&rarr;host surface the threat model does not list. Seven tasks inserted before P6-7. Next: <b>P6-21</b>, the six lines that stop <code>--review</code> destroying an edit made while somebody was reading it</b></div>
+  <div class="focusline">Current focus: <b id="focus">P6-6 done &mdash; the export carries the record it was rendered from and <code>kelyfos verify</code> re-runs the chain over it offline. <b>An external security audit then arrived (D45) and v1.0 is gated on its trust-boundary group</b>: the workspace block device is a guest&rarr;host surface the threat model does not list. Seven tasks inserted before P6-7. <b>P6-21 done</b> &mdash; <code>--review</code> no longer destroys an edit made while somebody was reading it, and the copy it replaces is kept. Next: <b>P6-22</b>, the hostile corpus, before any boundary fix</b></div>
 </div>
 
 <!-- ====================================================== 1. END GOAL -->
@@ -868,7 +868,7 @@
        default flow, then the fixtures <i>before</i> any boundary fix so that every finding is a failing test
        before it is a fixed one.</div>
 
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">P6-21</span><span class="tk"><b>M-3: the window in which <code>--review</code> destroys
         an edit somebody made while they were reading the review.</b> First of everything, on the owner&rsquo;s
         ruling and on the arithmetic: it is about six lines and it is live data loss in the <i>default</i> flow.
@@ -2736,6 +2736,34 @@ after:
         of a page that already renders its output<br>
         <code>llms-full.txt</code> is 460,521 bytes, about 119,659 tokens &mdash; still gendocs&rsquo;s own
         character estimate, which is what P6-17 is for</td></tr>
+        <tr><td class="mono">2026-08-24</td><td class="mono">P6-21</td>
+        <td><b>M-3: the review window stops destroying the edit somebody made while they were reading it.</b>
+        First of the audit work on the owner&rsquo;s ruling, and the arithmetic agrees: the change is small and the
+        failure is silent data loss in the <i>default</i> <code>--review</code> flow. <code>Stage</code>
+        fingerprinted the host directory, the summary printed, a person read it for as long as they took, and
+        <code>Commit</code> renamed that directory away without looking again. Every edit made in that window was
+        gone, and nothing said so &mdash; the run reported a successful write-back.
+        <b>Commit looks again</b>, immediately before the swap, and diverts to <code>.kelyfos-out</code> exactly as
+        <code>Stage</code> would have done had it been asked at the right moment. A fingerprint that cannot be
+        <i>taken</i> is not treated as a change: refusing to write back a whole session&rsquo;s work over a failed
+        stat is the worse mistake, and <code>Stage</code> has already had the fatal version of that question.
+        An explicit diversion &mdash; a declined review &mdash; is not second-guessed by the new check.
+        <b>And <code>.kelyfos-previous</code> is kept.</b> It was deleted one statement after the swap that made it
+        worth having, which is to say at the exact moment somebody would want it. It now survives until the next
+        successful run clears it: one generation deep rather than an accumulating pile.
+        The message a person sees says &ldquo;changed since the workspace was packed&rdquo; rather than
+        &ldquo;while the sandbox was running&rdquo;, because under <code>--review</code> the sandbox has already
+        stopped and the old sentence described a window that had closed.</td>
+        <td class="mono">four tests in <code>internal/sandbox/workspace_test.go</code>, driving
+        <code>Commit</code> directly so they need neither <code>mke2fs</code> nor <code>debugfs</code> and run
+        anywhere<br>
+        the two that matter fail without the fix, and the failure is the bug in one line:
+        <code>the commit overwrote a directory that changed while the review was open</code> and
+        <code>open &hellip;/work/notes.md: no such file or directory</code> &mdash; the edit, destroyed<br>
+        the ordinary path still writes back over the directory, and a file the sandbox deleted still stays
+        deleted, so the guard did not buy safety by making the feature useless<br>
+        <code>gofmt</code>, <code>vet</code>, 14 packages green; <code>docs/qol.md</code> &sect;2.3 documents both
+        the second check and the kept copy</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>

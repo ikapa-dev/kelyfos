@@ -451,7 +451,7 @@ status. This is how you hand an agent a sandbox and nothing else:
 				return
 			}
 			if diverted {
-				fmt.Printf("\nthe host directory changed while the sandbox was running, so it was NOT "+
+				fmt.Printf("\nthe host directory changed since the workspace was packed, so it was NOT "+
 					"overwritten.\nresults written to %s instead\n", dest)
 			} else {
 				fmt.Printf("workspace written back to %s\n", dest)
