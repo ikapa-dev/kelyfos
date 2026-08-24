@@ -657,6 +657,14 @@ the same machinery a team's transcript uses, because it is the same question.
 A call naming no sandbox spans every lane, and a refused call is drawn like a
 refused message.
 
+**An ask and its reply are recorded by two different agents**, and either may
+reach the chain first. The asking side cannot record its `team.message` until the
+send has returned — until then nobody knows whether the message was delivered or
+the mailbox was full — so the answering side can wake, reply and record in
+between. The `ts` field is what orders them for a reader; `seq` orders the chain,
+which is not the same question. Serialising the broker so one always landed first
+would be paying for tidiness with the concurrency the record exists to describe.
+
 **A team is one session**, so `--verify` over a team session verifies the whole
 team: every member's commands, messages, store accesses and egress attempts are
 lines in the same chain. The verification says how many agents it covered, so a

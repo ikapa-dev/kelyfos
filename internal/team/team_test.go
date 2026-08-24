@@ -181,8 +181,24 @@ func TestAskAndReplyOverAUnidirectionalEdge(t *testing.T) {
 	if string(answer) != "42" {
 		t.Errorf("answer = %q", answer)
 	}
-	if len(c.all()) != 2 || c.all()[0].Kind != KindAsk || c.all()[1].Kind != KindReply {
-		t.Errorf("events = %+v", c.all())
+	// One ask and one reply, in either order.
+	//
+	// The order used to be asserted and it is not the broker's to promise. The
+	// ask is recorded by the asking side *after* the message is in the
+	// answerer's mailbox — it has to be, because until the send returns nobody
+	// knows whether it was delivered or the mailbox was full — so the answerer
+	// can wake, reply and record first. Two agents are two processes in a real
+	// team, and serialising the broker to make one record land before the other
+	// would be paying with the thing the record is about.
+	//
+	// It failed on CI once before this was written, with the reply first. A test
+	// that is usually green is the thing §8 rule 8 exists to be suspicious of.
+	kinds := map[string]int{}
+	for _, e := range c.all() {
+		kinds[e.Kind]++
+	}
+	if len(c.all()) != 2 || kinds[KindAsk] != 1 || kinds[KindReply] != 1 {
+		t.Errorf("events = %+v, want one ask and one reply", c.all())
 	}
 }
 

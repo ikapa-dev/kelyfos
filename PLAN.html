@@ -917,7 +917,20 @@
         profile deliberately withholds, reachable because PID 1 is not confined by it; and H-2, guest-authored
         modes surviving the write-back onto the host, including the workspace root&rsquo;s own. <b>The workspace
         device joins the trust-boundary table as a first-class guest&rarr;host path</b>, and the boot and restore
-        bars are re-earned if the extraction path moved the timing.</span></li>
+        bars are re-earned if the extraction path moved the timing.
+        <b class="blocked">[AMENDED 2026-08-25 &mdash; the product owner, three additions to the definition of
+        done.]</b> <b>(1) The documentation corrections ride the same commit as the fix and not one earlier.</b>
+        The trust-boundary table gains the workspace block device there, and the README&rsquo;s &ldquo;Both layers
+        exist now&rdquo; becomes true in the commit that makes it true &mdash; a document claiming a fix that is
+        not in yet is the defect P6-1 spent a commit removing, and doing it while nominally fixing security would
+        reintroduce it at the worst possible place. <b>(2) The boot and restore bars are re-measured on the
+        bare-KVM reference if the extraction path moved</b>, and a validation walk plus <code>openat2</code>
+        beneath a pinned root is new work on the sync-back path, so the assumption is that it did until measured.
+        The bars have wide headroom; that is a reason to expect the numbers to hold, not a reason to leave the
+        record stale. Measured figures are reported whether or not they moved. <b>(3) The gate opens on the
+        fixtures <i>and</i> the full acceptance suite</b>, not on the fixtures alone. Green fixtures prove the
+        three findings are closed; they do not prove the fix left everything else standing, and a boundary repair
+        that quietly broke the feature it guards would pass a fixture-only gate.</span></li>
 
     <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">P6-25</span><span class="tk"><b>The clamps a hostile agent can reach: H-3, H-4, H-5,
