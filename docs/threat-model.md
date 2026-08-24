@@ -79,7 +79,14 @@ whose subdomains you would also hand it to.
 
 ### Tampering with the record
 Every event is written by the **host**, never the guest, and each carries the
-previous event's hash. A guest that could write its own audit trail could write
+previous event's hash. Since v1.0 the exported report carries that record inside
+it, so the person you send it to re-runs the chain themselves —
+`kelyfos verify <report.html>`, offline, no key. That closes a gap this section
+used to leave open: a report that renders a verdict about itself asks a reader
+to trust the file, and a file is exactly the thing under discussion. What it
+does **not** close is the rendering: verification covers the record the page
+carries, not the page's drawing of it, and `kelyfos verify --replay` exists so
+the two can be compared rather than assumed. A guest that could write its own audit trail could write
 a flattering one, so it cannot write one at all. A small class of events
 *transcribes* something the guest reported — the OOM killer, and a plugin's calls
 and crashes (`plugin.call`, `plugin.crash`) — and those are marked `"source": "guest"` in the schema so a reader
@@ -326,7 +333,7 @@ What is deliberately **not** on this list: the state KelyfOS writes to its own
 cache for its own use. A corrupt sandbox state file is a bug worth fixing and is
 not an adversary, and calling it one would make the word mean nothing.
 
-Sixteen Go fuzz targets cover the hostile side of that line. They run for ten
+Nineteen Go fuzz targets cover the hostile side of that line. They run for ten
 seconds each on every commit and for minutes each on a schedule, and the runner
 *discovers* the targets rather than listing them, so one added later cannot be
 quietly left out.
@@ -336,7 +343,9 @@ useful question is which ones: the framing of every host/guest channel, and the
 decode of each message type the host reads from a guest; the policy parsers —
 `kelyfos.toml`, `--secret`, and the proxy's target parse that every allowlist
 decision keys on; the flight recorder; the argument summarisers on both sides of
-the MCP surface; and the shim's shell quoting.
+the MCP surface; the shim's shell quoting; and, since v1.0, the extractor that
+takes a record back out of an exported report — the one file in this product
+that arrives from *outside* it, sent by whoever wants you to read it.
 
 Where a function has a property worth more than "does not crash", the harness
 asserts the property instead — that `Verify` and `Read` agree about a chain,
@@ -346,9 +355,10 @@ string survives a shell unchanged.
 
 What is **not** fuzzed, and why: the image manifest and the message types above
 the framing are `encoding/json` decoding into typed structs, so a harness there
-measures the standard library; the exported HTML report is built with
-`html/template`, which escapes by construction; and the MCP observer's
-request/response pairing is state rather than parsing. These are named so the
+measures the standard library; *writing* the exported HTML report goes through
+`html/template`, which escapes by construction — reading one back does not, and
+that half is fuzzed; and the MCP observer's request/response pairing is state
+rather than parsing. These are named so the
 list above reads as a boundary rather than as everything somebody got to.
 
 Seven defects came out of writing them, and they are the reason this section
@@ -365,6 +375,7 @@ places where agent-chosen text reached a rendered line of the transcript.
 | guest → network | no NIC, or TAP + nftables + proxy | active |
 | guest → credentials | injection at the proxy | active |
 | guest → audit record | host-side, hash-chained | active, including under `kelyfos shim` |
+| a report → whoever received it | the record travels in the file; `kelyfos verify` | active since v1.0; covers the record, not the rendering |
 | guest → guest (team) | host broker + declared edge list | active |
 | guest → host CPU/RAM/IO | KVM config, cgroup v2, rate limiters | active, and only when configured |
 | host process → host | the jailer | active (P5-1); `--no-jail` turns it off and says so on every run |

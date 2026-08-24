@@ -35,6 +35,8 @@ usage:
   kelyfos rerun <id>               run a recorded session again, under its own policy
   kelyfos log [flags]              replay, follow (-f) or verify a session's record
                                    (kelyfos logs is the same command)
+  kelyfos verify <file>            check the record an exported report carries,
+                                   offline and with no key
   kelyfos watch [flags]            live view of a sandbox (reads the record only)
   kelyfos bench [flags]            measure cold boot-to-ready over several runs
   kelyfos version                  print the version and exit
@@ -84,6 +86,8 @@ func main() {
 	// unknown command. One implementation, so the two cannot behave differently.
 	case "log", "logs":
 		err = logCmd(os.Args[2:])
+	case "verify":
+		err = verifyCmd(os.Args[2:])
 	case "team":
 		err = teamCmd(os.Args[2:])
 	case "watch":

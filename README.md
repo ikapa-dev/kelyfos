@@ -41,7 +41,9 @@ Three things it does that a container does not:
   the value on the host; the proxy attaches it on the way out. `env` in the
   sandbox shows nothing.
 - **The record is written by the host.** A guest that could write its own audit
-  trail could write a flattering one, so it cannot write one at all.
+  trail could write a flattering one, so it cannot write one at all. And the
+  export carries that record inside it, so whoever you send it to checks it
+  themselves — `kelyfos verify report.html`, offline, no key.
 
 ## Quickstart
 
@@ -281,7 +283,8 @@ guest sees seven more MCP tools: `team_send`, `team_recv`, `team_ask`,
 `team_spawn` shown only to an agent whose policy granted a spawn budget.
 
 A team is **one session**, so `kelyfos log --verify` over it verifies the whole
-team and says which agents it covered, and `kelyfos log --export team.html`
+team and says which agents it covered, `kelyfos verify team.html` lets whoever
+you send the export to do the same, and `kelyfos log --export team.html`
 draws one lane per agent with the message flow between them. `kelyfos watch`
 shows the same shape live.
 
@@ -301,7 +304,8 @@ machine took.
 | `kelyfos snapshot save\|restore` | freeze a prepared machine, bring it back in ~49 ms |
 | `kelyfos fork -n 4` | four divergent copies of one snapshot, sharing its memory image |
 | `kelyfos run --workspace ./dir` | your files at `/work`, written back on clean shutdown |
-| `kelyfos log --export report.html` | a self-contained session report you can send to someone |
+| `kelyfos log --export report.html` | a self-contained session report, carrying the record it was rendered from |
+| `kelyfos verify report.html` | re-runs the chain over that record: offline, no key, no network |
 | `kelyfos watch` | a live view, one lane per agent when it is a team |
 | `kelyfos team up\|ps\|down` | boot a declared team, see it, stop it |
 | `kelyfos serve-mcp` | [KelyfOS as an MCP server](docs/mcp-surface.md): any client gets sandboxes, files, snapshots, forks and teams as tools |

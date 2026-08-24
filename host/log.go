@@ -185,33 +185,41 @@ func listSessions() error {
 	return nil
 }
 
-// exportSession renders the report. It verifies the chain as part of rendering,
-// because a report that does not say whether its own source has been tampered
-// with is worth very little as evidence.
+// exportSession renders the report from the record's bytes.
+//
+// The bytes rather than the parsed events, because the report carries the
+// record inside it now: the page a reader sees and the record they can check
+// are made from one blob by one call, so an export whose timeline and evidence
+// disagree cannot be produced (P6-6).
 func exportSession(id, path, dest string) error {
 	blob, err := os.ReadFile(path)
 	if err != nil {
 		return fmt.Errorf("no flight recorder for session %s: %w", id, err)
 	}
-	events, err := recorder.Read(bytes.NewReader(blob))
-	if err != nil {
-		return err
-	}
-	_, verifyErr := recorder.Verify(bytes.NewReader(blob))
 
 	f, err := os.Create(dest)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
-	if err := report.Render(f, id, events, verifyErr); err != nil {
+	if err := report.Render(f, id, blob); err != nil {
 		return err
 	}
+	n, head, verifyErr := recorder.Verify(bytes.NewReader(blob))
 	info, _ := os.Stat(dest)
-	fmt.Printf("wrote %s (%d events, %d bytes)\n", dest, len(events), sizeOf(info))
+	fmt.Printf("wrote %s (%d events, %d bytes)\n", dest, n, sizeOf(info))
 	if verifyErr != nil {
-		fmt.Printf("  warning: the chain does NOT verify — the report says so prominently\n")
+		fmt.Printf("  the chain does NOT verify: %v\n", verifyErr)
+		fmt.Printf("  the report says so, and still carries the record so a reader can see for themselves\n")
+		return nil
 	}
+	// The head is printed here so whoever sends the file can quote it out of
+	// band. A reader who was told the head separately is checking the record
+	// against something the sender could not change afterwards, which is the
+	// most an unsigned export can offer — and P6-7 is what removes the "out of
+	// band" from that sentence.
+	fmt.Printf("  chain head %s\n", head)
+	fmt.Printf("  anyone can check it: kelyfos verify %s\n", dest)
 	return nil
 }
 
@@ -221,7 +229,7 @@ func verifySession(id, path string) error {
 		return fmt.Errorf("no flight recorder for session %s: %w", id, err)
 	}
 	defer f.Close()
-	n, err := recorder.Verify(f)
+	n, _, err := recorder.Verify(f)
 	if err != nil {
 		fmt.Printf("session %s: FAILED after %d events\n  %v\n", id, n, err)
 		return &exitError{code: 1}
@@ -297,6 +305,14 @@ func followSession(path string, asJSON bool) error {
 			return err
 		}
 	}
+}
+
+// replayRecord prints a record a reader was handed, rather than one of this
+// machine's sessions. Same renderer as `kelyfos log`, deliberately: a reader
+// comparing an export against its own record must be looking at the same words
+// in both places, or the comparison proves nothing.
+func replayRecord(chain []byte, asJSON bool) error {
+	return replay(bytes.NewReader(chain), asJSON)
 }
 
 func replay(r io.Reader, asJSON bool) error {

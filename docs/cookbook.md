@@ -396,7 +396,7 @@ kelyfos log --verify
 
 ---
 
-## 6. Read the record, and prove it has not been edited
+## 6. Read the record, prove it has not been edited, and send it to somebody who can check it too
 
 Every event is written by the host and carries the hash of the one before it. A
 guest that could write its own audit trail could write a flattering one, so it
@@ -407,6 +407,13 @@ rewrite it end to end and recompute every hash. What the chain buys is that a
 *selective* edit — deleting one blocked connection, softening one command —
 breaks every hash after it. That is exactly the edit somebody covering their
 tracks wants to make, so the recipe makes it and watches it fail.
+
+The export carries the record it was rendered from, so the person you send it to
+does not have to take the page's word for anything: `kelyfos verify` reads the
+record back out of the file and re-runs the chain over it. Offline, no key, no
+network, nothing of ours to trust. What that checks is the record and not the
+page's rendering of it — `--replay` prints the record's own account, which is
+how the two get compared.
 
 <!-- recipe: audit-log -->
 
@@ -438,6 +445,57 @@ echo
 echo "== a report you can send someone, with no server behind it =="
 kelyfos log --export report.html
 ls -l report.html
+
+# The report carries the record it was rendered from, so the recipient checks it
+# rather than believing the page. That is the whole point of the export: no
+# server, no key, no network, and nothing on their machine has to have run.
+echo
+echo "== and the recipient checks it themselves =="
+kelyfos verify report.html
+
+# Even without kelyfos. The report prints this line itself, and what comes out is
+# the record the sender has on disk, byte for byte.
+echo
+echo "== the record comes back out with two lines of shell =="
+sed -n '/<pre id="kelyfos-chain">/,/<\/pre>/p' report.html | sed '1d;$d' | base64 -d > extracted.jsonl
+session="$(kelyfos log --verify | sed -n 's/^session \([0-9a-f]*\):.*/\1/p')"
+cmp extracted.jsonl "$HOME/.cache/kelyfos/sessions/$session/events.jsonl"
+echo "byte-identical to the flight recorder"
+
+# With kelyfos, the same thing and a check in one command. The record goes to
+# stdout and the verdict to stderr, so the redirect captures the record and
+# nothing else.
+kelyfos verify --json report.html > piped.jsonl
+cmp piped.jsonl "$HOME/.cache/kelyfos/sessions/$session/events.jsonl"
+echo "and the same through kelyfos verify --json"
+
+# Editing the page and leaving the record alone is the one thing verification
+# cannot catch, so the product says so rather than implying otherwise — and the
+# reader is given a way to see the disagreement for themselves.
+echo
+echo "== editing the page does not change the record it carries =="
+sed 's/a result/a different result/g' report.html > doctored.html
+kelyfos verify doctored.html
+kelyfos verify --replay doctored.html | grep -q "a result"
+echo "the record still says what it always said"
+
+# But editing the record inside the page is caught, exactly the way editing the
+# flight recorder is.
+echo
+echo "== editing the record inside the page is caught =="
+python3 - report.html tampered.html <<'EDIT'
+import sys
+src, dst = sys.argv[1], sys.argv[2]
+s = open(src).read()
+i = s.index('<pre id="kelyfos-chain">') + len('<pre id="kelyfos-chain">') + 40
+s = s[:i] + ("B" if s[i] != "B" else "C") + s[i+1:]
+open(dst, "w").write(s)
+EDIT
+if kelyfos verify tampered.html; then
+  echo "a tampered report verified, which it must never do"
+  exit 1
+fi
+echo "refused, as it must be"
 
 # Tamper-evidence is a claim, so check it rather than repeat it. Every event
 # carries the hash of the one before, so editing one breaks every hash after it

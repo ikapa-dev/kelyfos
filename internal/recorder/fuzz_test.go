@@ -30,12 +30,13 @@ func FuzzVerifyAgreesWithRead(f *testing.F) {
 	f.Add([]byte(`{"seq":1,"type":"session.start"}` + "\n"))
 	f.Add([]byte("not json\n"))
 	f.Add([]byte(`{"seq":1,"prev":"","hash":"deadbeef","type":"session.start"}` + "\n"))
+	f.Add([]byte(`{"v":1,"seq":1,"ts":"","sandbox":"","type":"session.start","source":"host","prev":"","hash":""}` + "\n"))
 	f.Add([]byte(`{"seq":2,"type":"session.end"}` + "\n"))
 	f.Add([]byte(`{"seq":1,"type":"session.start"}` + "\n" + `{"seq":2,"type":"session.end"}` + "\n"))
 	f.Add(validChain(f, 3))
 
 	f.Fuzz(func(t *testing.T, data []byte) {
-		n, verr := Verify(bytes.NewReader(data))
+		n, _, verr := Verify(bytes.NewReader(data))
 		if verr != nil {
 			// A refusal is a correct outcome. Verify's own count is a prefix
 			// length and is not required to mean anything once it has failed.
@@ -78,7 +79,7 @@ func validChain(f *testing.F, n int) []byte {
 	if err != nil {
 		f.Fatalf("reading the seed chain back: %v", err)
 	}
-	if _, err := Verify(bytes.NewReader(blob)); err != nil {
+	if _, _, err := Verify(bytes.NewReader(blob)); err != nil {
 		f.Fatalf("the seed chain this test built does not verify: %v", err)
 	}
 	return blob

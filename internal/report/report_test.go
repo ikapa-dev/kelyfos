@@ -3,6 +3,7 @@ package report
 import (
 	"bytes"
 	"encoding/base64"
+	"os"
 	"strings"
 	"testing"
 
@@ -13,10 +14,39 @@ func ev(t string, agent string) recorder.Event {
 	return recorder.Event{Type: t, Agent: agent, TS: "2026-08-23T10:00:00.000Z"}
 }
 
+// chainOf writes these events through the real recorder and hands back the file
+// it wrote.
+//
+// Marshalling the events here instead would be quicker and would test a path
+// that cannot happen: a report is rendered from a chain the host wrote, digests
+// and all, and the digests are the thing every assertion about the embedded
+// record ultimately rests on.
+func chainOf(t *testing.T, events []recorder.Event) []byte {
+	t.Helper()
+	root := t.TempDir()
+	rec, err := recorder.Open(root, "s1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range events {
+		if err := rec.Append(e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := rec.Close(); err != nil {
+		t.Fatal(err)
+	}
+	blob, err := os.ReadFile(recorder.Path(root, "s1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return blob
+}
+
 func render(t *testing.T, events []recorder.Event) string {
 	t.Helper()
 	var buf bytes.Buffer
-	if err := Render(&buf, "s1", events, nil); err != nil {
+	if err := Render(&buf, "s1", chainOf(t, events)); err != nil {
 		t.Fatal(err)
 	}
 	return buf.String()
@@ -197,11 +227,7 @@ func TestPerAgentReceiptsDoNotBecomeTheSessionsReceipt(t *testing.T) {
 		e.CPUSeconds, e.PeakRSSKiB = 1.5, 40960
 		events = append(events, e)
 	}
-	var buf bytes.Buffer
-	if err := Render(&buf, "s1", events, nil); err != nil {
-		t.Fatal(err)
-	}
-	html := buf.String()
+	html := render(t, events)
 	if strings.Contains(html, "usage receipt</td>") {
 		t.Error("a team's per-agent receipts were rendered as the session's single receipt")
 	}
@@ -214,13 +240,29 @@ func TestPerAgentReceiptsDoNotBecomeTheSessionsReceipt(t *testing.T) {
 
 // The report is one file. A compliance artefact that needs a CDN to render is
 // not one, and a lane view is exactly where a chart library would creep in.
+//
+// The scan skips the embedded record, and that is a correction rather than a
+// convenience: the island is inert base64, and its alphabet can end in `src=`
+// wherever the padding lands — about one report in a million, failing a build
+// for a string that is data and not markup. Asking whether the *page* reaches
+// outside itself is the question this test means; TestTheIslandIsOnlyEverBase64
+// asks the other half, which is whether the island can be markup at all.
 func TestTheReportIsSelfContained(t *testing.T) {
 	html := render(t, []recorder.Event{
 		ev(recorder.TypeCommandStart, "master"),
 		ev(recorder.TypeCommandStart, "worker-1"),
 	})
+	start := strings.Index(html, chainOpen)
+	if start < 0 {
+		t.Fatal("the report carries no record")
+	}
+	end := strings.Index(html[start:], chainClose)
+	if end < 0 {
+		t.Fatal("the report's record is never closed")
+	}
+	page := html[:start] + html[start+end+len(chainClose):]
 	for _, forbidden := range []string{"<script", "http://", "https://", "src="} {
-		if strings.Contains(html, forbidden) {
+		if strings.Contains(page, forbidden) {
 			t.Errorf("the report reaches outside itself: found %q", forbidden)
 		}
 	}
@@ -276,12 +318,8 @@ func TestPerAgentReadyDoesNotBecomeTheSessionsBootFigures(t *testing.T) {
 	a.Via, a.BootMS = "cold", 1283
 	b := ev(recorder.TypeSessionReady, "worker-1")
 	b.Via, b.BootMS = "fork", 411
-	var buf bytes.Buffer
-	if err := Render(&buf, "s1", []recorder.Event{a, b}, nil); err != nil {
-		t.Fatal(err)
-	}
 	// 411 is worker-1's, and it must not be reported as the session's boot time.
-	if strings.Contains(buf.String(), `<div class="n">411</div>`) {
+	if strings.Contains(render(t, []recorder.Event{a, b}), `<div class="n">411</div>`) {
 		t.Error("an agent's boot time was rendered as the whole session's")
 	}
 }

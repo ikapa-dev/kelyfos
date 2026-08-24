@@ -28,6 +28,7 @@ Go's `flag` accepts one dash or two, so `-image` and `--image` are the same flag
 | [`kelyfos runs`](#kelyfos-runs) | what has run here, from the records themselves |
 | [`kelyfos rerun`](#kelyfos-rerun) | run a recorded session again, under its own policy |
 | [`kelyfos log`](#kelyfos-log) | replay, follow (-f) or verify a session's record (kelyfos logs is the same command) |
+| [`kelyfos verify`](#kelyfos-verify) | check the record an exported report carries, offline and with no key |
 | [`kelyfos watch`](#kelyfos-watch) | live view of a sandbox (reads the record only) |
 | [`kelyfos bench`](#kelyfos-bench) | measure cold boot-to-ready over several runs |
 | [`kelyfos version`](#kelyfos-version) | print the version and exit |
@@ -320,6 +321,20 @@ kelyfos log [flags]
 | `--list` | boolean | — | list recorded sessions |
 | `--session` | string | the most recent | session id |
 | `--verify` | boolean | — | check the hash chain and report the first break |
+
+## kelyfos verify
+
+Check the record an exported report carries, offline and with no key.
+
+```
+kelyfos verify <file>
+```
+
+| Flag | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `--extract` | string | — | write the record it carries to this path (- for stdout) |
+| `--json` | boolean | — | print the record's raw events instead of a readable replay (implies --replay) |
+| `--replay` | boolean | — | print the session from the record it carries, rather than only checking it |
 
 ## kelyfos watch
 

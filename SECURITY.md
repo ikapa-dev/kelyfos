@@ -41,7 +41,8 @@ GitHub authenticates than at an inbox.
   different finding.
 - A reproducer, ideally a `kelyfos.toml` and a command line.
 - The flight recorder chain if you have one — `kelyfos log --export` produces a
-  self-contained report.
+  self-contained report that carries the record itself, so I can re-run the
+  chain over exactly what you saw rather than over a screenshot of it.
 
 ### What happens next
 

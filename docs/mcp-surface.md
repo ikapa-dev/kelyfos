@@ -369,7 +369,8 @@ lane per sandbox**, exactly as a team's transcript renders one lane per agent �
 the same machinery, because it is the same question: which machine did this
 belong to. A call naming no sandbox spans every lane. A refused call is drawn
 like a refused message, because it is the same thing: the wall saying no, where
-a reader can see it.
+a reader can see it. The file carries the server's record inside it, so
+`kelyfos verify` re-runs that chain wherever the file ends up.
 
 **The record never holds content.** A call's arguments are summarised into one
 line, keys sorted, with anything carrying content — `content`, `stdin` —

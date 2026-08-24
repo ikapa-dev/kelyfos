@@ -42,8 +42,22 @@ string and empty optional fields omitted. Field order is the declaration order
 of the `recorder.Event` struct in `internal/recorder/recorder.go`, which is
 where an independent implementation must take it from: §3 pins the eight common
 fields, and the type-specific fields that follow are in struct order rather than
-in the order the tables below happen to list them. Verification re-serializes
-each parsed event the same way and recomputes the digest.
+in the order the tables below happen to list them.
+
+**Verification does not re-serialize.** It recomputes the digest from the line
+as written, with the value of `hash` replaced by `""` in place. For a chain this
+build wrote, that is the same preimage — `hash` carries no `omitempty`, so
+blanking it in the text is exactly what the writer hashed. The two differ for a
+chain written by a build with a field this one does not know: re-serializing
+would drop that field before re-hashing and report a legitimate record as
+modified. Working from the bytes is what makes §3's "adding a field is not
+breaking" true, and it was not true until v1.0.
+
+`hash` is **mandatory and never empty**. Every line a recorder writes carries 64
+hex characters there, and a verifier refuses a line that does not — otherwise the
+cheapest forgery there is, a chain somebody typed with `"hash":""` on every line,
+would verify: the digest of a line with an empty hash is empty, and an empty
+digest matches an empty hash. That was true here until v1.0.
 
 This makes the log **tamper-evident, not tamper-proof**. Anyone who can write
 the file can rewrite it end to end and recompute every hash. What the chain
@@ -52,8 +66,13 @@ one command — breaks every hash after it, which is exactly the edit someone
 covering their tracks wants to make. `kelyfos log --verify` reports the first
 sequence number where the chain breaks.
 
-Signing, which turns tamper-evidence into something a third party can check
-offline, is P4-3.
+**A reader can run this themselves, on a file you send them.** `kelyfos log
+--export` embeds the record in the report it writes, so `kelyfos verify
+<report.html>` re-runs the chain over the record the page carries — offline,
+with no key, no network and no trust root. §5 has the shape of it. Signing,
+which turns "this record is internally consistent" into "and it was exported by
+the holder of this key", is P6-7 and is deliberately separate: the chain is
+worth checking whether or not anybody signed it.
 
 ## 3. Common fields
 
@@ -597,7 +616,24 @@ what happened.
 - `kelyfos log --json` prints the raw events instead of a readable replay — the
   form to parse.
 - `kelyfos log --export <file>.html` renders the session as one self-contained
-  HTML file — no scripts, no external requests.
+  HTML file — no scripts, no external requests — **carrying the record it was
+  rendered from**, base64 of this file, in a `<pre id="kelyfos-chain">` element
+  at the foot of the page. That is what makes the export verifiable by whoever
+  receives it, and it costs roughly 4/3 of the record's size on top of the page.
+- `kelyfos verify <report.html>` re-runs the chain over the record a report
+  carries, and prints the chain head. It takes a raw `events.jsonl` too, so the
+  sender and the receiver check the same thing with the same command. What it
+  checks is the **record**, not the page's rendering of it: a page whose visible
+  text was edited afterwards still carries an intact record, and
+  `kelyfos verify --replay` prints the record's own account so the two can be
+  compared. `--extract` writes the record back out.
+
+  Without KelyfOS at all, the record comes out of a report with two lines of
+  shell — the report prints them itself:
+
+  ```
+  sed -n '/<pre id="kelyfos-chain">/,/<\/pre>/p' report.html | sed '1d;$d' | base64 -d > events.jsonl
+  ```
 
 A session that is still running has no `session.end`. That is not corruption:
 a reader should present the session as open rather than truncated.
@@ -701,4 +737,5 @@ between for the two to get out of step.
 | `run.review` for every decision, including the declined ones | E5-2 |
 | `shell.start` / `shell.end` always, contents only with `--transcript` | E5-3 |
 | `forward.accept` per connection, carried or refused | E5-5 |
-| Signed exports verifiable offline | P4-3 |
+| The export carries its record; `kelyfos verify` re-runs the chain offline | P6-6 |
+| Signed exports, verifiable offline against a key the reader holds | P6-7 |

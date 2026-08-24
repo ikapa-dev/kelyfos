@@ -40,7 +40,7 @@ hand-written half, and this page says where each is still thin.
 | --- | --- | --- |
 | [`reference/`](reference/) | **generated** | Every command, flag, `kelyfos.toml` key, MCP tool, event type, exit code, refusal and guest confinement profile, with types and defaults. Extracted from the source; CI fails on drift. |
 | [`protocol.md`](protocol.md) | mixed | How the host and the guest talk: Firecracker's hybrid vsock, the port map, newline-delimited JSON framing, and every channel's message shape. |
-| [`events.md`](events.md) | mixed | What the flight recorder writes: the common fields, the hash chain, every event type with its payload, and why `kelyfos runs` is the record read back rather than a second one. |
+| [`events.md`](events.md) | mixed | What the flight recorder writes: the common fields, the hash chain, every event type with its payload, how an exported report carries its own record so its reader can re-run the chain, and why `kelyfos runs` is the record read back rather than a second one. |
 | [`networking.md`](networking.md) | mixed | Why a sandbox has no NIC by default, what `--allow` builds, the nftables template, and why the guest has no DNS. |
 | [`resources.md`](resources.md) | mixed | Every resource cap: units, precedence, what enforces it, and what happens when it is reached. |
 | [`teams.md`](teams.md) | mixed | The `[team]` schema, the host broker and its edge rules, the team store, the collective budget, and how a team boots. |
@@ -175,7 +175,8 @@ the second; `team ps` has no sample output; the store's `not_found` is described
 *Recipes:* one sandbox; an allowlist and an injected credential; a workspace
 round-trip; snapshot and fork; a three-agent team with an ask round-trip and a
 refused edge; reading and verifying the record, including watching one altered
-byte break the chain; driving a sandbox from the E2B SDK; an orchestrator built
+byte break the chain and checking an exported report the way its recipient
+would; driving a sandbox from the E2B SDK; an orchestrator built
 on the official MCP Python SDK; the configuration that points Claude Code and
 VS Code at `serve-mcp`, checked by running exactly what each file names; and the
 same SDK driving the host rather than a guest, ending in the record the server

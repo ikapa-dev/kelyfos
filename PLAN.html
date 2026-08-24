@@ -180,7 +180,7 @@
     <span class="bl-name">Overall</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">P6-5 done &mdash; a credential that comes back is replaced before the guest sees it, with its three limits documented ahead of the capability. Next: <b>P6-6</b>, the session export made verifiable by its reader, and the hash preimage fixed with it</b></div>
+  <div class="focusline">Current focus: <b id="focus">P6-6 done &mdash; the export carries the record it was rendered from, <code>kelyfos verify</code> re-runs the chain over it offline, and the green badge the file wrote about itself is gone. Two live defects closed on the way: a chain with no digests verified, and the escaper would have corrupted the record it embedded. Next: <b>P6-7</b>, signed exports with a key the reader can anchor</b></div>
 </div>
 
 <!-- ====================================================== 1. END GOAL -->
@@ -837,7 +837,7 @@
         the proxy altered bytes, because a chain that reports only how much the proxy could <i>read</i> understates
         a proxy that <i>writes</i>.</span></li>
 
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">P6-6</span><span class="tk"><b>The session export made verifiable by its reader
         &mdash; <code>kelyfos verify</code>, and no cryptography at all.</b> &sect;1 has required a
         &ldquo;standalone, <i>verifiable</i> HTML session report&rdquo; since the day this plan was written, and the
@@ -2597,6 +2597,56 @@ after:
         end to end: a server echoing the credential in both a header and the body, and the guest receiving neither,
         with the body length unchanged<br>
         17 fuzz targets now; gofmt, vet, 14 packages and <code>make vuln</code> clean</td></tr>
+        <tr><td class="mono">2026-08-24</td><td class="mono">P6-6</td>
+        <td><b>The export carries its own record, and the badge it wrote about itself is gone.</b>
+        &sect;1 has asked for a <i>verifiable</i> HTML report since the day this plan was written, and what
+        existed was a page that rendered the exporter&rsquo;s own conclusion as a green tick. A reader was
+        trusting a sentence the file wrote about itself. The record it was rendered from now travels inside it
+        &mdash; base64 of <code>events.jsonl</code>, exactly as the host wrote it, in a
+        <code>&lt;pre id="kelyfos-chain"&gt;</code> at the foot of the page &mdash; the chain head is printed
+        as text, and <code>kelyfos verify &lt;report.html&gt;</code> re-runs the same walk the recorder already
+        implements: offline, no key, no network, no trust root of ours. It takes a raw
+        <code>events.jsonl</code> too, so the sender and the receiver check the same thing with the same
+        command.
+        <b>The page and the record cannot disagree by construction</b>: <code>Render</code> takes the
+        record&rsquo;s bytes and reads its events from them, so there is no second source to drift from.
+        <b>What replaced the badge is a statement, not a better verdict</b> &mdash; what the file carries, and
+        the command somebody else runs. The failure case is kept, because the asymmetry is the point: a file
+        certifying itself is worth nothing, and a file reporting a problem with itself is worth reading.
+        <b>The limit is stated before the capability</b>, on the page, in the command&rsquo;s own output and in
+        the threat model: verification covers the <i>record</i>, not the page&rsquo;s rendering of it, and
+        <code>--replay</code> prints the record&rsquo;s own account so the two can be compared.
+        <b>Two live defects closed on the way, both found by an adversarial review of the design commissioned
+        before the code.</b> A chain with no digests at all verified &mdash; <code>"hash":""</code> on every
+        line, the cheapest forgery there is, because the digest of a line with an empty hash was defined as
+        empty and matched it. It predates this task and was harmless while the file being checked was one this
+        machine wrote; <code>kelyfos verify</code> is what made a stranger&rsquo;s file the input. And
+        <code>html/template</code> escapes <code>+</code> in element text, which is an ordinary base64
+        character: the island was already shipping corrupted for any record whose encoding contained one, and
+        the reader would have been told an untouched record had been modified. That is the exact false alarm
+        this task&rsquo;s first half removed, and it had been reintroduced at the export.
+        <b>Declined, with the reason:</b> having the verifier cross-check the numbers the page prints against
+        the record. It couples the verifier to the template, it catches only an edit nobody would bother to
+        make, and a page that is partly checked invites a reader to treat the rest as checked &mdash; which is
+        the badge&rsquo;s failure wearing a hex string.</td>
+        <td class="mono">the hash preimage half of this task landed earlier in commit <code>95e139e</code><br>
+        end to end on a real microVM, as cookbook recipe 6 now runs it: export, verify, extract with
+        <code>sed | base64 -d</code> and <code>cmp</code> against the flight recorder &mdash; byte-identical;
+        edit the page and the record still verifies and still disagrees; edit the record inside the page and it
+        is refused<br>
+        <code>TestTheIslandSurvivesTheTemplate</code> was written after the escaping defect was measured and
+        fails without the fix: <code>the template escaped the island&rsquo;s + characters</code>, then
+        <code>illegal base64 data at input byte 267</code><br>
+        <code>TestAChainWithNoDigestsIsRefused</code> covers both shapes &mdash; every digest blank, and no
+        <code>hash</code> key at all &mdash; plus a real chain with one digest removed<br>
+        two new fuzz targets on the extractor, which is the first thing that touches a file a stranger sent:
+        <b>19 targets</b> now, all clean; the forged-chain shape is a seed in the recorder&rsquo;s corpus<br>
+        <code>gofmt</code>, <code>vet</code>, 14 packages, <code>make vuln</code> clean;
+        <code>dev/accept-e4.sh</code> green, which is the server-lane export path<br>
+        the report grows: 23,855 &rarr; 62,454 bytes on a 72-event session, which is the record at 4/3 on top
+        of a page that already renders its output<br>
+        <code>llms-full.txt</code> is 460,521 bytes, about 119,659 tokens &mdash; still gendocs&rsquo;s own
+        character estimate, which is what P6-17 is for</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>

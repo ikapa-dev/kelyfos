@@ -8,6 +8,7 @@
 package report
 
 import (
+	"bytes"
 	"encoding/base64"
 	"fmt"
 	"html/template"
@@ -20,13 +21,28 @@ import (
 
 // View is what the template renders.
 type View struct {
-	SessionID  string
-	Generated  string
-	Verified   bool
-	VerifyNote string
-	Events     int
-	Summary    Summary
-	Rows       []Row
+	SessionID string
+	Generated string
+	Events    int
+	// ChainHead is the digest the record ends on, printed as text so a reader
+	// holding two reports of the same session can tell whether they hold the
+	// same record. Empty when the chain does not verify: a head read off a line
+	// nobody could check is a number a reader would quote.
+	ChainHead string
+	// Chain is the record itself, base64 of the file as the host wrote it. It
+	// is why this page is evidence rather than a claim about one, and it is
+	// template.HTML for a reason chain.go states at length: the escaper rewrites
+	// `+`, which is an ordinary base64 character.
+	Chain      template.HTML
+	ChainBytes int
+	// SelfCheck is what the exporter's own verification said, and it is
+	// rendered only when it said the chain is broken. A page that certifies
+	// itself is worth nothing; a page that reports a problem with itself is
+	// worth reading, and dropping the failure to avoid the appearance of a
+	// verdict would be hiding the one sentence a reader needs.
+	SelfCheck string
+	Summary   Summary
+	Rows      []Row
 	// Lanes is the team view: one column per agent, in boot order. Empty for a
 	// session with one machine in it, and the whole lane section then does not
 	// render at all (E2-7).
@@ -110,16 +126,30 @@ type Row struct {
 	IsError bool
 }
 
-// Render writes the report.
-func Render(w io.Writer, sessionID string, events []recorder.Event, verifyErr error) error {
+// Render writes the report from a session's flight recorder.
+//
+// It takes the record's bytes rather than its parsed events, and that is the
+// whole design: the page and the record embedded in it are made from one blob
+// by one call, so a report whose visible timeline was drawn from different
+// events than it carries cannot be produced. It also means the embedded record
+// is the file the host wrote, byte for byte, which is what verification needs
+// (chain.go).
+func Render(w io.Writer, sessionID string, chain []byte) error {
+	events, err := recorder.Read(bytes.NewReader(chain))
+	if err != nil {
+		return err
+	}
+	_, head, verifyErr := recorder.Verify(bytes.NewReader(chain))
 	v := View{
-		SessionID: sessionID,
-		Generated: time.Now().UTC().Format("2006-01-02 15:04:05 UTC"),
-		Verified:  verifyErr == nil,
-		Events:    len(events),
+		SessionID:  sessionID,
+		Generated:  time.Now().UTC().Format("2006-01-02 15:04:05 UTC"),
+		Events:     len(events),
+		ChainHead:  head,
+		Chain:      embedChain(chain),
+		ChainBytes: len(chain),
 	}
 	if verifyErr != nil {
-		v.VerifyNote = verifyErr.Error()
+		v.SelfCheck = verifyErr.Error()
 	}
 
 	seenSecret := map[string]bool{}

@@ -24,10 +24,24 @@ const reportHTML = `<!DOCTYPE html>
   h1{font:700 28px/1.2 var(--mono);margin:0;color:#e8eef4}
   h1 span{color:var(--amber)}
   .sub{color:var(--muted);font:13px/1.7 var(--mono);margin-top:8px}
-  .chain{display:inline-block;margin-top:14px;padding:6px 12px;border-radius:4px;
-         font:600 13px var(--mono)}
-  .chain.ok{background:rgba(88,196,112,.12);color:var(--ok);border:1px solid rgba(88,196,112,.35)}
-  .chain.bad{background:rgba(217,106,95,.12);color:var(--warn);border:1px solid rgba(217,106,95,.45)}
+  /* Deliberately not a badge. The green tick this replaced was the file's own
+     verdict on itself, which is the one thing a reader must not take from it —
+     so what sits here now is a statement of what the file carries, in the same
+     colour as everything else, ending in the command somebody else runs. */
+  .chain{margin-top:14px;padding:10px 14px;border-radius:4px;background:var(--panel);
+         border:1px solid var(--line);font:13px/1.65 var(--mono);max-width:840px}
+  .chain code{color:var(--amber);word-break:break-all}
+  .chain .limit{display:block;margin-top:8px;color:var(--muted)}
+  .chain.bad{background:rgba(217,106,95,.12);color:var(--warn);border-color:rgba(217,106,95,.45)}
+  .chain.bad code{color:var(--warn)}
+  /* The island. Closed by default because it is evidence rather than reading,
+     and open in two clicks because a reader who wants to see it should not need
+     a developer console to. */
+  .island{margin-top:36px;border-top:1px solid var(--line);padding-top:16px;color:var(--muted)}
+  .island summary{cursor:pointer;font:600 13px var(--mono);color:var(--text)}
+  .island p{font-size:12.5px;max-width:840px}
+  .island pre.howto{white-space:pre-wrap}
+  #kelyfos-chain{font-size:11px;color:var(--muted);max-height:260px}
   .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:28px 0}
   .card{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:14px 16px}
   .card .n{font:700 22px var(--mono);color:#e8eef4}
@@ -108,11 +122,22 @@ const reportHTML = `<!DOCTYPE html>
 
 <h1>Kelyf<span>OS</span> session report</h1>
 <div class="sub">session {{.SessionID}} · {{.Events}} events · generated {{.Generated}}</div>
-{{if .Verified}}
-<div class="chain ok">✓ audit chain intact — {{.Events}} events verified</div>
-{{else}}
-<div class="chain bad">✗ audit chain FAILED — {{.VerifyNote}}</div>
+{{if .SelfCheck}}
+<div class="chain bad">The exporter's own check of this record failed — {{.SelfCheck}}.
+That is this file reporting a problem with itself. Check it rather than take its word:
+<code>kelyfos verify &lt;this file&gt;</code>.</div>
 {{end}}
+<div class="chain">
+  <b>This page does not verify itself.</b> It carries the record it was rendered from —
+  {{.Events}} event{{if ne .Events 1}}s{{end}}{{if .ChainHead}}, chain head
+  <code>{{.ChainHead}}</code>{{end}} — so that
+  somebody else can. <code>kelyfos verify &lt;this file&gt;</code> reads that record out of the
+  file and re-runs the chain over it: offline, no key, no network, nothing of ours to trust.
+  <span class="limit">What that checks is the record, not this rendering. The timeline below was
+  drawn from the record by the exporter, and a page whose text was edited afterwards still carries
+  an intact record. <code>kelyfos verify --replay &lt;this file&gt;</code> prints the timeline from
+  the record instead, so the two can be compared.</span>
+</div>
 
 <div class="cards">
   <div class="card"><div class="n">{{.Summary.Commands}}</div><div class="l">commands</div></div>
@@ -149,13 +174,13 @@ const reportHTML = `<!DOCTYPE html>
 <p class="lanes-note">One column per sandbox, in the order they were created. A
 call that names no sandbox spans every column; a refused call is drawn like a
 refused message, because it is the same thing — the wall saying no, where a
-reader can see it. Everything below came from the same chain the badge above
-verifies: one record of what the client asked for, beside what happened.</p>
+reader can see it. Everything below came from the record embedded at the foot of
+this page: one record of what the client asked for, beside what happened.</p>
 {{else}}
 <p class="lanes-note">One column per agent, in boot order. A message between two
 agents spans the columns it connects; store accesses sit inline in the lane of
-the agent that made them. Everything below came from the same chain the badge
-above verifies — one record for the whole team, not five to correlate.</p>
+the agent that made them. Everything below came from the record embedded at the
+foot of this page — one record for the whole team, not five to correlate.</p>
 {{end}}
 <div class="lanes" style="{{.LaneWidth}}">
   <div class="lane-head gutter">time</div>
@@ -183,11 +208,23 @@ above verifies — one record for the whole team, not five to correlate.</p>
 </div>
 {{end}}
 
+<details class="island">
+<summary>The record this page was rendered from — {{.Events}} event{{if ne .Events 1}}s{{end}}, {{.ChainBytes}} bytes</summary>
+<p>Base64 of the session's <code>events.jsonl</code>, exactly as the host wrote it.
+<code>kelyfos verify</code> reads it from here. Without KelyfOS, this takes it out:</p>
+<pre class="howto">sed -n '/&lt;pre id="kelyfos-chain"&gt;/,/&lt;\/pre&gt;/p' FILE | sed '1d;$d' | base64 -d &gt; events.jsonl</pre>
+<pre id="kelyfos-chain">
+{{.Chain}}</pre>
+</details>
+
 <footer>
-Rendered by KelyfOS from the session's flight recorder. Every command, file write
-and network attempt the host observed is above; the guest cannot write to this
-record. Chain verification checks that the file has not been edited since it was
-written — see docs/events.md.
+Rendered by KelyfOS from the session's flight recorder, which is embedded in this
+file rather than summarised by it. Every command, file write and network attempt
+the host observed is in that record, and the guest cannot write to it.
+Verification checks that no line was altered or removed after it was written. It
+does not check that everything worth recording was recorded, and it is not a
+signature: anyone who can rewrite the whole record can recompute every digest.
+See docs/events.md.
 </footer>
 </div></body></html>
 `

@@ -88,7 +88,9 @@ Three things it does that a container does not:
   the value on the host; the proxy attaches it on the way out. `env` in the
   sandbox shows nothing.
 - **The record is written by the host.** A guest that could write its own audit
-  trail could write a flattering one, so it cannot write one at all.
+  trail could write a flattering one, so it cannot write one at all. And the
+  export carries that record inside it, so whoever you send it to checks it
+  themselves — `kelyfos verify report.html`, offline, no key.
 
 ## Quickstart
 
@@ -328,7 +330,8 @@ guest sees seven more MCP tools: `team_send`, `team_recv`, `team_ask`,
 `team_spawn` shown only to an agent whose policy granted a spawn budget.
 
 A team is **one session**, so `kelyfos log --verify` over it verifies the whole
-team and says which agents it covered, and `kelyfos log --export team.html`
+team and says which agents it covered, `kelyfos verify team.html` lets whoever
+you send the export to do the same, and `kelyfos log --export team.html`
 draws one lane per agent with the message flow between them. `kelyfos watch`
 shows the same shape live.
 
@@ -348,7 +351,8 @@ machine took.
 | `kelyfos snapshot save\|restore` | freeze a prepared machine, bring it back in ~49 ms |
 | `kelyfos fork -n 4` | four divergent copies of one snapshot, sharing its memory image |
 | `kelyfos run --workspace ./dir` | your files at `/work`, written back on clean shutdown |
-| `kelyfos log --export report.html` | a self-contained session report you can send to someone |
+| `kelyfos log --export report.html` | a self-contained session report, carrying the record it was rendered from |
+| `kelyfos verify report.html` | re-runs the chain over that record: offline, no key, no network |
 | `kelyfos watch` | a live view, one lane per agent when it is a team |
 | `kelyfos team up\|ps\|down` | boot a declared team, see it, stop it |
 | `kelyfos serve-mcp` | [KelyfOS as an MCP server](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/mcp-surface.md): any client gets sandboxes, files, snapshots, forks and teams as tools |
@@ -553,7 +557,14 @@ whose subdomains you would also hand it to.
 
 ### Tampering with the record
 Every event is written by the **host**, never the guest, and each carries the
-previous event's hash. A guest that could write its own audit trail could write
+previous event's hash. Since v1.0 the exported report carries that record inside
+it, so the person you send it to re-runs the chain themselves —
+`kelyfos verify <report.html>`, offline, no key. That closes a gap this section
+used to leave open: a report that renders a verdict about itself asks a reader
+to trust the file, and a file is exactly the thing under discussion. What it
+does **not** close is the rendering: verification covers the record the page
+carries, not the page's drawing of it, and `kelyfos verify --replay` exists so
+the two can be compared rather than assumed. A guest that could write its own audit trail could write
 a flattering one, so it cannot write one at all. A small class of events
 *transcribes* something the guest reported — the OOM killer, and a plugin's calls
 and crashes (`plugin.call`, `plugin.crash`) — and those are marked `"source": "guest"` in the schema so a reader
@@ -800,7 +811,7 @@ What is deliberately **not** on this list: the state KelyfOS writes to its own
 cache for its own use. A corrupt sandbox state file is a bug worth fixing and is
 not an adversary, and calling it one would make the word mean nothing.
 
-Sixteen Go fuzz targets cover the hostile side of that line. They run for ten
+Nineteen Go fuzz targets cover the hostile side of that line. They run for ten
 seconds each on every commit and for minutes each on a schedule, and the runner
 *discovers* the targets rather than listing them, so one added later cannot be
 quietly left out.
@@ -810,7 +821,9 @@ useful question is which ones: the framing of every host/guest channel, and the
 decode of each message type the host reads from a guest; the policy parsers —
 `kelyfos.toml`, `--secret`, and the proxy's target parse that every allowlist
 decision keys on; the flight recorder; the argument summarisers on both sides of
-the MCP surface; and the shim's shell quoting.
+the MCP surface; the shim's shell quoting; and, since v1.0, the extractor that
+takes a record back out of an exported report — the one file in this product
+that arrives from *outside* it, sent by whoever wants you to read it.
 
 Where a function has a property worth more than "does not crash", the harness
 asserts the property instead — that `Verify` and `Read` agree about a chain,
@@ -820,9 +833,10 @@ string survives a shell unchanged.
 
 What is **not** fuzzed, and why: the image manifest and the message types above
 the framing are `encoding/json` decoding into typed structs, so a harness there
-measures the standard library; the exported HTML report is built with
-`html/template`, which escapes by construction; and the MCP observer's
-request/response pairing is state rather than parsing. These are named so the
+measures the standard library; *writing* the exported HTML report goes through
+`html/template`, which escapes by construction — reading one back does not, and
+that half is fuzzed; and the MCP observer's request/response pairing is state
+rather than parsing. These are named so the
 list above reads as a boundary rather than as everything somebody got to.
 
 Seven defects came out of writing them, and they are the reason this section
@@ -839,6 +853,7 @@ places where agent-chosen text reached a rendered line of the transcript.
 | guest → network | no NIC, or TAP + nftables + proxy | active |
 | guest → credentials | injection at the proxy | active |
 | guest → audit record | host-side, hash-chained | active, including under `kelyfos shim` |
+| a report → whoever received it | the record travels in the file; `kelyfos verify` | active since v1.0; covers the record, not the rendering |
 | guest → guest (team) | host broker + declared edge list | active |
 | guest → host CPU/RAM/IO | KVM config, cgroup v2, rate limiters | active, and only when configured |
 | host process → host | the jailer | active (P5-1); `--no-jail` turns it off and says so on every run |
@@ -2307,7 +2322,9 @@ back, a refusal is flagged and still drawn, because what was attempted is the
 part worth seeing. Store accesses sit inline in the lane of the agent that made
 them; commands, files, egress attempts, OOM kills and each member's usage
 receipt sit in that member's lane. Events that belong to the team rather than to
-any member span every lane.
+any member span every lane. That export carries the team's record inside it, so
+whoever receives it runs `kelyfos verify team.html` and checks the whole team's
+chain without asking you for anything.
 
 While the team is up, `kelyfos log --session <agent's sandbox id>` redirects to
 the team's record and says so. After `team down` the run directories are gone,
@@ -2369,6 +2386,7 @@ orchestrator waiting on a quiet agent should not expect the record to say so.
 | Spawn under a declared budget | E2-5 |
 | Team-level cgroup hierarchy, per-agent slices beneath it | E2-6 |
 | `log --verify` over the whole team, `log --export team.html` | E2-7 |
+| The team's export carries the team's record; `kelyfos verify` re-runs it | P6-6 |
 | Multi-lane `kelyfos watch` | E2-8 |
 | The committed demo, including a refused edge | E2-9 |
 
@@ -2608,8 +2626,22 @@ string and empty optional fields omitted. Field order is the declaration order
 of the `recorder.Event` struct in `internal/recorder/recorder.go`, which is
 where an independent implementation must take it from: §3 pins the eight common
 fields, and the type-specific fields that follow are in struct order rather than
-in the order the tables below happen to list them. Verification re-serializes
-each parsed event the same way and recomputes the digest.
+in the order the tables below happen to list them.
+
+**Verification does not re-serialize.** It recomputes the digest from the line
+as written, with the value of `hash` replaced by `""` in place. For a chain this
+build wrote, that is the same preimage — `hash` carries no `omitempty`, so
+blanking it in the text is exactly what the writer hashed. The two differ for a
+chain written by a build with a field this one does not know: re-serializing
+would drop that field before re-hashing and report a legitimate record as
+modified. Working from the bytes is what makes §3's "adding a field is not
+breaking" true, and it was not true until v1.0.
+
+`hash` is **mandatory and never empty**. Every line a recorder writes carries 64
+hex characters there, and a verifier refuses a line that does not — otherwise the
+cheapest forgery there is, a chain somebody typed with `"hash":""` on every line,
+would verify: the digest of a line with an empty hash is empty, and an empty
+digest matches an empty hash. That was true here until v1.0.
 
 This makes the log **tamper-evident, not tamper-proof**. Anyone who can write
 the file can rewrite it end to end and recompute every hash. What the chain
@@ -2618,8 +2650,13 @@ one command — breaks every hash after it, which is exactly the edit someone
 covering their tracks wants to make. `kelyfos log --verify` reports the first
 sequence number where the chain breaks.
 
-Signing, which turns tamper-evidence into something a third party can check
-offline, is P4-3.
+**A reader can run this themselves, on a file you send them.** `kelyfos log
+--export` embeds the record in the report it writes, so `kelyfos verify
+<report.html>` re-runs the chain over the record the page carries — offline,
+with no key, no network and no trust root. §5 has the shape of it. Signing,
+which turns "this record is internally consistent" into "and it was exported by
+the holder of this key", is P6-7 and is deliberately separate: the chain is
+worth checking whether or not anybody signed it.
 
 ## 3. Common fields
 
@@ -3163,7 +3200,24 @@ what happened.
 - `kelyfos log --json` prints the raw events instead of a readable replay — the
   form to parse.
 - `kelyfos log --export <file>.html` renders the session as one self-contained
-  HTML file — no scripts, no external requests.
+  HTML file — no scripts, no external requests — **carrying the record it was
+  rendered from**, base64 of this file, in a `<pre id="kelyfos-chain">` element
+  at the foot of the page. That is what makes the export verifiable by whoever
+  receives it, and it costs roughly 4/3 of the record's size on top of the page.
+- `kelyfos verify <report.html>` re-runs the chain over the record a report
+  carries, and prints the chain head. It takes a raw `events.jsonl` too, so the
+  sender and the receiver check the same thing with the same command. What it
+  checks is the **record**, not the page's rendering of it: a page whose visible
+  text was edited afterwards still carries an intact record, and
+  `kelyfos verify --replay` prints the record's own account so the two can be
+  compared. `--extract` writes the record back out.
+
+  Without KelyfOS at all, the record comes out of a report with two lines of
+  shell — the report prints them itself:
+
+  ```
+  sed -n '/<pre id="kelyfos-chain">/,/<\/pre>/p' report.html | sed '1d;$d' | base64 -d > events.jsonl
+  ```
 
 A session that is still running has no `session.end`. That is not corruption:
 a reader should present the session as open rather than truncated.
@@ -3267,7 +3321,8 @@ between for the two to get out of step.
 | `run.review` for every decision, including the declined ones | E5-2 |
 | `shell.start` / `shell.end` always, contents only with `--transcript` | E5-3 |
 | `forward.accept` per connection, carried or refused | E5-5 |
-| Signed exports verifiable offline | P4-3 |
+| The export carries its record; `kelyfos verify` re-runs the chain offline | P6-6 |
+| Signed exports, verifiable offline against a key the reader holds | P6-7 |
 
 
 ---
@@ -4277,7 +4332,8 @@ lane per sandbox**, exactly as a team's transcript renders one lane per agent �
 the same machinery, because it is the same question: which machine did this
 belong to. A call naming no sandbox spans every lane. A refused call is drawn
 like a refused message, because it is the same thing: the wall saying no, where
-a reader can see it.
+a reader can see it. The file carries the server's record inside it, so
+`kelyfos verify` re-runs that chain wherever the file ends up.
 
 **The record never holds content.** A call's arguments are summarised into one
 line, keys sorted, with anything carrying content — `content`, `stdin` —
@@ -5736,7 +5792,7 @@ kelyfos log --verify
 
 ---
 
-## 6. Read the record, and prove it has not been edited
+## 6. Read the record, prove it has not been edited, and send it to somebody who can check it too
 
 Every event is written by the host and carries the hash of the one before it. A
 guest that could write its own audit trail could write a flattering one, so it
@@ -5747,6 +5803,13 @@ rewrite it end to end and recompute every hash. What the chain buys is that a
 *selective* edit — deleting one blocked connection, softening one command —
 breaks every hash after it. That is exactly the edit somebody covering their
 tracks wants to make, so the recipe makes it and watches it fail.
+
+The export carries the record it was rendered from, so the person you send it to
+does not have to take the page's word for anything: `kelyfos verify` reads the
+record back out of the file and re-runs the chain over it. Offline, no key, no
+network, nothing of ours to trust. What that checks is the record and not the
+page's rendering of it — `--replay` prints the record's own account, which is
+how the two get compared.
 
 <!-- recipe: audit-log -->
 
@@ -5778,6 +5841,57 @@ echo
 echo "== a report you can send someone, with no server behind it =="
 kelyfos log --export report.html
 ls -l report.html
+
+# The report carries the record it was rendered from, so the recipient checks it
+# rather than believing the page. That is the whole point of the export: no
+# server, no key, no network, and nothing on their machine has to have run.
+echo
+echo "== and the recipient checks it themselves =="
+kelyfos verify report.html
+
+# Even without kelyfos. The report prints this line itself, and what comes out is
+# the record the sender has on disk, byte for byte.
+echo
+echo "== the record comes back out with two lines of shell =="
+sed -n '/<pre id="kelyfos-chain">/,/<\/pre>/p' report.html | sed '1d;$d' | base64 -d > extracted.jsonl
+session="$(kelyfos log --verify | sed -n 's/^session \([0-9a-f]*\):.*/\1/p')"
+cmp extracted.jsonl "$HOME/.cache/kelyfos/sessions/$session/events.jsonl"
+echo "byte-identical to the flight recorder"
+
+# With kelyfos, the same thing and a check in one command. The record goes to
+# stdout and the verdict to stderr, so the redirect captures the record and
+# nothing else.
+kelyfos verify --json report.html > piped.jsonl
+cmp piped.jsonl "$HOME/.cache/kelyfos/sessions/$session/events.jsonl"
+echo "and the same through kelyfos verify --json"
+
+# Editing the page and leaving the record alone is the one thing verification
+# cannot catch, so the product says so rather than implying otherwise — and the
+# reader is given a way to see the disagreement for themselves.
+echo
+echo "== editing the page does not change the record it carries =="
+sed 's/a result/a different result/g' report.html > doctored.html
+kelyfos verify doctored.html
+kelyfos verify --replay doctored.html | grep -q "a result"
+echo "the record still says what it always said"
+
+# But editing the record inside the page is caught, exactly the way editing the
+# flight recorder is.
+echo
+echo "== editing the record inside the page is caught =="
+python3 - report.html tampered.html <<'EDIT'
+import sys
+src, dst = sys.argv[1], sys.argv[2]
+s = open(src).read()
+i = s.index('<pre id="kelyfos-chain">') + len('<pre id="kelyfos-chain">') + 40
+s = s[:i] + ("B" if s[i] != "B" else "C") + s[i+1:]
+open(dst, "w").write(s)
+EDIT
+if kelyfos verify tampered.html; then
+  echo "a tampered report verified, which it must never do"
+  exit 1
+fi
+echo "refused, as it must be"
 
 # Tamper-evidence is a claim, so check it rather than repeat it. Every event
 # carries the hash of the one before, so editing one breaks every hash after it
@@ -7539,7 +7653,7 @@ hand-written half, and this page says where each is still thin.
 | --- | --- | --- |
 | [`reference/`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/reference/README.md) | **generated** | Every command, flag, `kelyfos.toml` key, MCP tool, event type, exit code, refusal and guest confinement profile, with types and defaults. Extracted from the source; CI fails on drift. |
 | [`protocol.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/protocol.md) | mixed | How the host and the guest talk: Firecracker's hybrid vsock, the port map, newline-delimited JSON framing, and every channel's message shape. |
-| [`events.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/events.md) | mixed | What the flight recorder writes: the common fields, the hash chain, every event type with its payload, and why `kelyfos runs` is the record read back rather than a second one. |
+| [`events.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/events.md) | mixed | What the flight recorder writes: the common fields, the hash chain, every event type with its payload, how an exported report carries its own record so its reader can re-run the chain, and why `kelyfos runs` is the record read back rather than a second one. |
 | [`networking.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/networking.md) | mixed | Why a sandbox has no NIC by default, what `--allow` builds, the nftables template, and why the guest has no DNS. |
 | [`resources.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/resources.md) | mixed | Every resource cap: units, precedence, what enforces it, and what happens when it is reached. |
 | [`teams.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/teams.md) | mixed | The `[team]` schema, the host broker and its edge rules, the team store, the collective budget, and how a team boots. |
@@ -7674,7 +7788,8 @@ the second; `team ps` has no sample output; the store's `not_found` is described
 *Recipes:* one sandbox; an allowlist and an injected credential; a workspace
 round-trip; snapshot and fork; a three-agent team with an ask round-trip and a
 refused edge; reading and verifying the record, including watching one altered
-byte break the chain; driving a sandbox from the E2B SDK; an orchestrator built
+byte break the chain and checking an exported report the way its recipient
+would; driving a sandbox from the E2B SDK; an orchestrator built
 on the official MCP Python SDK; the configuration that points Claude Code and
 VS Code at `serve-mcp`, checked by running exactly what each file names; and the
 same SDK driving the host rather than a guest, ending in the record the server
@@ -7865,6 +7980,7 @@ Go's `flag` accepts one dash or two, so `-image` and `--image` are the same flag
 | [`kelyfos runs`](#kelyfos-runs) | what has run here, from the records themselves |
 | [`kelyfos rerun`](#kelyfos-rerun) | run a recorded session again, under its own policy |
 | [`kelyfos log`](#kelyfos-log) | replay, follow (-f) or verify a session's record (kelyfos logs is the same command) |
+| [`kelyfos verify`](#kelyfos-verify) | check the record an exported report carries, offline and with no key |
 | [`kelyfos watch`](#kelyfos-watch) | live view of a sandbox (reads the record only) |
 | [`kelyfos bench`](#kelyfos-bench) | measure cold boot-to-ready over several runs |
 | [`kelyfos version`](#kelyfos-version) | print the version and exit |
@@ -8157,6 +8273,20 @@ kelyfos log [flags]
 | `--list` | boolean | — | list recorded sessions |
 | `--session` | string | the most recent | session id |
 | `--verify` | boolean | — | check the hash chain and report the first break |
+
+## kelyfos verify
+
+Check the record an exported report carries, offline and with no key.
+
+```
+kelyfos verify <file>
+```
+
+| Flag | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `--extract` | string | — | write the record it carries to this path (- for stdout) |
+| `--json` | boolean | — | print the record's raw events instead of a readable replay (implies --replay) |
+| `--replay` | boolean | — | print the session from the record it carries, rather than only checking it |
 
 ## kelyfos watch
 
@@ -9063,7 +9193,7 @@ carries the host command's.
 | Code | Meaning |
 | --- | --- |
 | `0` | success |
-| `1` | a kelyfos error, printed as `kelyfos: <message>`; also a failed `doctor` check and a broken chain from `log --verify` |
+| `1` | a kelyfos error, printed as `kelyfos: <message>`; also a failed `doctor` check, and a broken or empty chain from `log --verify` or `verify` |
 | `2` | no subcommand, an unknown subcommand, or a bad flag |
 | `124` | a time budget expired — `--max-runtime`, `--idle-timeout`, or `exec --timeout`. Same as timeout(1) |
 | `126` | the command was found in the guest and could not be executed |

@@ -50,7 +50,7 @@ type Code struct {
 func All() []Code {
 	return []Code{
 		{OK, "success"},
-		{Fail, "a kelyfos error, printed as `kelyfos: <message>`; also a failed `doctor` check and a broken chain from `log --verify`"},
+		{Fail, "a kelyfos error, printed as `kelyfos: <message>`; also a failed `doctor` check, and a broken or empty chain from `log --verify` or `verify`"},
 		{Usage, "no subcommand, an unknown subcommand, or a bad flag"},
 		{TimedOut, "a time budget expired — `--max-runtime`, `--idle-timeout`, or `exec --timeout`. Same as timeout(1)"},
 		{NotExecutable, "the command was found in the guest and could not be executed"},

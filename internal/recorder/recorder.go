@@ -388,7 +388,14 @@ func hashOf(e Event) (string, error) {
 // to end and recompute every digest. What the chain catches is the *selective*
 // edit — removing one blocked-egress event, softening one command — which is
 // the edit someone covering their tracks actually wants to make.
-func Verify(r io.Reader) (events int, err error) {
+//
+// The head is the digest of the last event, and it is returned by the walk
+// rather than read off the last line afterwards. The two would be the same
+// value on an intact chain and could differ on a broken one — a head taken from
+// a line nobody verified is a number a reader would quote. Returning it here
+// makes "how many events, and what did the chain end on" one answer about one
+// file, which is what a reader comparing two reports needs it to be.
+func Verify(r io.Reader) (events int, head string, err error) {
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 64<<10), 8<<20)
 	prev := ""
@@ -401,24 +408,38 @@ func Verify(r io.Reader) (events int, err error) {
 		}
 		var e Event
 		if err := json.Unmarshal(raw, &e); err != nil {
-			return events, fmt.Errorf("line %d is not a valid event: %w", line, err)
+			return events, "", fmt.Errorf("line %d is not a valid event: %w", line, err)
 		}
 		if e.Seq != line {
-			return events, fmt.Errorf("line %d has seq %d — the chain has a gap or was reordered", line, e.Seq)
+			return events, "", fmt.Errorf("line %d has seq %d — the chain has a gap or was reordered", line, e.Seq)
 		}
 		if e.Prev != prev {
-			return events, fmt.Errorf("event %d does not follow event %d — prev is %q, expected %q",
+			return events, "", fmt.Errorf("event %d does not follow event %d — prev is %q, expected %q",
 				e.Seq, e.Seq-1, short(e.Prev), short(prev))
+		}
+		// A line with no digest is not an event this product wrote: Append
+		// always fills Hash, and `hash` carries no omitempty, so every recorded
+		// line has 64 hex characters there. Without this, the cheapest possible
+		// forgery passes — a hand-written chain with `"hash":""` on every line
+		// verifies, because the digest of a line with an empty hash is defined
+		// as empty and an empty digest matches an empty hash. Found by an
+		// adversarial review of P6-6's design, and it mattered from the moment
+		// the file being checked stopped being one this machine wrote.
+		if e.Hash == "" {
+			return events, "", fmt.Errorf("event %d carries no digest — nothing here was written by a flight recorder", e.Seq)
 		}
 		want := digestOfLine(raw, e.Hash)
 		if want != e.Hash {
-			return events, fmt.Errorf("event %d has been modified — its contents hash to %s, but it carries %s",
+			return events, "", fmt.Errorf("event %d has been modified — its contents hash to %s, but it carries %s",
 				e.Seq, short(want), short(e.Hash))
 		}
 		prev = e.Hash
 		events++
 	}
-	return events, sc.Err()
+	if err := sc.Err(); err != nil {
+		return events, "", err
+	}
+	return events, prev, nil
 }
 
 // digestOfLine recomputes an event's digest from the bytes as written, rather
@@ -439,11 +460,9 @@ func Verify(r io.Reader) (events int, err error) {
 //
 // A line whose digest appears twice, or not where the key is, simply fails —
 // the substitution is anchored on the key, and anything else is a line nobody
-// wrote.
+// wrote. The caller has already refused an empty digest, which would otherwise
+// make the substitution an identity and the comparison vacuous.
 func digestOfLine(raw []byte, hash string) string {
-	if hash == "" {
-		return ""
-	}
 	pre := bytes.Replace(raw, []byte(`"hash":"`+hash+`"`), []byte(`"hash":""`), 1)
 	sum := sha256.Sum256(pre)
 	return hex.EncodeToString(sum[:])

@@ -11,7 +11,7 @@ carries the host command's.
 | Code | Meaning |
 | --- | --- |
 | `0` | success |
-| `1` | a kelyfos error, printed as `kelyfos: <message>`; also a failed `doctor` check and a broken chain from `log --verify` |
+| `1` | a kelyfos error, printed as `kelyfos: <message>`; also a failed `doctor` check, and a broken or empty chain from `log --verify` or `verify` |
 | `2` | no subcommand, an unknown subcommand, or a bad flag |
 | `124` | a time budget expired — `--max-runtime`, `--idle-timeout`, or `exec --timeout`. Same as timeout(1) |
 | `126` | the command was found in the guest and could not be executed |

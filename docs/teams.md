@@ -642,7 +642,9 @@ back, a refusal is flagged and still drawn, because what was attempted is the
 part worth seeing. Store accesses sit inline in the lane of the agent that made
 them; commands, files, egress attempts, OOM kills and each member's usage
 receipt sit in that member's lane. Events that belong to the team rather than to
-any member span every lane.
+any member span every lane. That export carries the team's record inside it, so
+whoever receives it runs `kelyfos verify team.html` and checks the whole team's
+chain without asking you for anything.
 
 While the team is up, `kelyfos log --session <agent's sandbox id>` redirects to
 the team's record and says so. After `team down` the run directories are gone,
@@ -704,5 +706,6 @@ orchestrator waiting on a quiet agent should not expect the record to say so.
 | Spawn under a declared budget | E2-5 |
 | Team-level cgroup hierarchy, per-agent slices beneath it | E2-6 |
 | `log --verify` over the whole team, `log --export team.html` | E2-7 |
+| The team's export carries the team's record; `kelyfos verify` re-runs it | P6-6 |
 | Multi-lane `kelyfos watch` | E2-8 |
 | The committed demo, including a refused edge | E2-9 |
