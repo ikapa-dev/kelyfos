@@ -1,0 +1,23 @@
+# The boundary cases that do not hold yet.
+#
+# One case per line: the test's own name for it, a space, and why it is here.
+# Everything not on this list must hold, and everything on it must still fail.
+# CI checks both directions, which is what makes this a ledger rather than a
+# list of excuses:
+#
+#   a case fails and is NOT here  →  a new break, on the commit that made it
+#   a case holds and IS here      →  it was fixed; take it off, in that commit
+#
+# So the file can only shrink, and it cannot shrink quietly. That is the same
+# discipline the generated reference already lives under: the gate is not that
+# the number is small, it is that the number cannot move without somebody saying
+# so in the same commit.
+#
+# Every line here is a finding from the external audit of 2026-08-24 (D45), and
+# every one of them is fixed by P6-24. When this file has only comments left,
+# the trust-boundary group is closed.
+
+dirent/climbs-out                 C-1 · `../../pwn.` — a guest-authored entry leaves the extraction tree entirely
+modes/-rwxrwxrwx                  H-2 · the guest's 0777 becomes 0777 on the host's filesystem
+modes/-rw-rw-rw-                  H-2 · the guest's 0666 becomes 0666 on the host's filesystem
+workspace-root-mode               H-2 · the swap gives the workspace root whatever mode the image's root carried

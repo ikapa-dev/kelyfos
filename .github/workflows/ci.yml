@@ -171,6 +171,27 @@ jobs:
           if-no-files-found: ignore
           retention-days: 30
 
+      # The corpus of inputs the untrusted side writes (P6-22). Its own job
+      # rather than a line in "unit tests", because it answers a different
+      # question: not "does this work" but "does the boundary hold when the
+      # guest is trying". Every case here came from a real finding.
+      #
+      # KELYFOS_HOSTILE=required turns a missing mke2fs or debugfs from a skip
+      # into a failure. A hostile-input job that passes by running nothing is
+      # worse than no job: it reports a boundary as tested when nothing touched
+      # it, which is the shape of every defect this phase exists to remove.
+      #
+      # The cases that do not hold yet are on testdata/hostile/known-broken.txt
+      # and the check is symmetric — an unlisted failure is a new break, and a
+      # listed case that starts holding must take its own line off in the same
+      # commit. So the list can only shrink, and it cannot shrink silently.
+      - name: The boundary holds against what the guest can write
+        env:
+          KELYFOS_HOSTILE: required
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq e2fsprogs
+          go test -count=1 -run 'TestHostile|TestGuestChosen|TestTheWorkspaceRoot' ./...
+
       - name: the plan is still coherent
         run: python3 tools/check-plan.py
 
