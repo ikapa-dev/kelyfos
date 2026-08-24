@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strconv"
 )
 
 // Version is the protocol version carried by every message (docs/protocol.md §4).
@@ -355,4 +356,31 @@ func (p *Reader) Read(v any) error {
 		}
 		return json.Unmarshal(line, v)
 	}
+}
+
+// SafeText renders a string that came from a guest so it cannot forge a line.
+//
+// Everything a guest sends is a guest's choice of bytes, and several of those
+// strings are printed to a terminal or written into the record and rendered
+// later: a profile name on the boot line, an OOM victim's process name, a tool
+// argument. A control character in one of those is not a display nuisance — it
+// is the guest deciding what the host's output looks like. The boot line is the
+// sharpest case, because it is where a person reads which walls are around
+// their sandbox, and an escape sequence can rewrite a line that has already
+// been printed.
+//
+// Ordinary strings come back untouched, so nothing that was already fine
+// changes; only a string that could break a line is quoted, and then it is
+// visibly quoted.
+//
+// One copy on purpose. Three had appeared by the end of P6-3 — in the host's
+// audit summariser, the supervisor's, and here — which is how the same class of
+// bug turned up three times in one task.
+func SafeText(s string) string {
+	for _, r := range s {
+		if r < 0x20 || r == 0x7f {
+			return strconv.Quote(s)
+		}
+	}
+	return s
 }

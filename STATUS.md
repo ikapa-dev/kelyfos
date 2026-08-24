@@ -32,6 +32,12 @@ happen. Coverage is stated as coverage, not totality — `docs/threat-model.md` 
 which are left out with the reason. Sixteen is not "every parser", and this phase opened by deleting claims of that
 shape.
 
+Two more findings arrived from the parser enumeration *after* the commit, and reading it rather than filing it was
+the point: a guest chooses the string on the boot line that says how it is confined (an escape sequence there can
+rewrite the line a person reads to learn which walls are around their sandbox), and the buffering `Exec` used by
+`serve-mcp` and the shim had no output ceiling at all. Both fixed; the three copies of the sanitising helper are
+now one.
+
 **Next: P6-4** — the credential window narrowed as far as the architecture allows.
 
 ## Blocked / needs John
@@ -64,9 +70,9 @@ shape.
   shim ignores `max_runtime`/`idle_timeout` (documented as a gap now, enforcement is a task); `resource.summary`
   is absent on four close paths; the nftables drop counter is read by nothing; policy-file and team-plan refusals
   carry no catalog ID.
-- **The two MCP argument summarisers are the same function in two binaries and have now diverged twice** — P6-1
-  found one redacting a `data` key the other did not, P6-3 found the control-character hole in both. Unifying them
-  touches the guest binary; recorded as a debt rather than folded into a fuzzing task.
+- The two MCP argument summarisers are still the same function duplicated in two binaries (P6-1 found one
+  redacting a `data` key the other did not). The *helper* they shared is now one — `proto.SafeText` — but the
+  summarisers themselves are not, and unifying them touches the guest binary.
 - `llms-full.txt` is now **444,241 bytes, ~115k tokens** (estimated, not measured — a committed measurement
   command is P6-17).
 

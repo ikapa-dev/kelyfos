@@ -550,7 +550,7 @@ func (s *Sandbox) WaitReady(ctx context.Context) (proto.Ready, error) {
 		// dev/accept-profile.sh checks by doing it (P5-3).
 		if r.ProfileError != "" {
 			_ = s.Shutdown(2 * time.Second)
-			return proto.Ready{}, denial.ProfileNotEnforced.Err(denial.V{"reason": r.ProfileError})
+			return proto.Ready{}, denial.ProfileNotEnforced.Err(denial.V{"reason": proto.SafeText(r.ProfileError)})
 		}
 		// An image older than this CLI reports no profile at all. Not refused,
 		// for D32's reason — the host walls are unchanged and every image built
@@ -559,7 +559,7 @@ func (s *Sandbox) WaitReady(ctx context.Context) (proto.Ready, error) {
 		if w := postureWarning(fromImage, r.Profile, ""); w != "" {
 			warnf("%s", w)
 		}
-		s.State.Profile = r.Profile
+		s.State.Profile = proto.SafeText(r.Profile)
 		if err := s.writeState(); err != nil {
 			return proto.Ready{}, err
 		}
@@ -869,8 +869,8 @@ func (s *Sandbox) Resync() error {
 	// A restored machine sends no ready frame, so this round trip — which the
 	// restore already makes, and which is the proof the machine is answering —
 	// is also where the host learns what the guest confines (P5-7).
-	s.State.Profile = resp.Profile
-	s.profileError = resp.ProfileError
+	s.State.Profile = proto.SafeText(resp.Profile)
+	s.profileError = proto.SafeText(resp.ProfileError)
 	return nil
 }
 

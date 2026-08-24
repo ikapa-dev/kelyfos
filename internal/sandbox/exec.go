@@ -18,6 +18,20 @@ type ExecResult struct {
 	Err    *proto.Error
 }
 
+// MaxExecOutput bounds what Exec will hold in memory for one command.
+//
+// Exec buffers, unlike `kelyfos exec`, which streams to a terminal and is
+// bounded by the terminal. Its callers are the two long-lived server doors —
+// `serve-mcp` and the E2B shim — so a guest that streams output for ever grows
+// a host process that is serving other people. The guest chooses how much it
+// sends and the host was choosing to keep all of it.
+//
+// Sixteen MiB because that is already the ceiling downstream: an MCP frame is
+// bounded at proto.MaxMCPLine and the result is base64 inside it, so output
+// past this point could not be delivered anyway. Refusing here makes the limit
+// a stated one with a clear error rather than a frame failure further along.
+const MaxExecOutput = 16 << 20
+
 // Exec runs one command in a sandbox and collects its output.
 //
 // It is the programmatic form of `kelyfos exec`, for callers that need the
@@ -56,6 +70,11 @@ func Exec(udsPath string, argv []string, stdin []byte, timeout time.Duration) (*
 			data, err := base64.StdEncoding.DecodeString(resp.Data)
 			if err != nil {
 				return nil, fmt.Errorf("guest sent invalid base64 on %s: %w", resp.Stream, err)
+			}
+			if len(out.Stdout)+len(out.Stderr)+len(data) > MaxExecOutput {
+				return nil, fmt.Errorf("the command produced more than %d MiB of output, "+
+					"which is more than one result can carry; redirect it to a file in /work "+
+					"and read that instead", MaxExecOutput>>20)
 			}
 			if resp.Stream == proto.StreamStdout {
 				out.Stdout = append(out.Stdout, data...)

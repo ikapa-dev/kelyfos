@@ -54,7 +54,7 @@ func parseOOM(line string) (proto.GuestEvent, bool) {
 		V:      proto.Version,
 		Type:   proto.GuestEventOOM,
 		PID:    pid,
-		Comm:   safeArgLine(m[2]),
+		Comm:   proto.SafeText(m[2]),
 		RSSKiB: rss,
 	}, true
 }

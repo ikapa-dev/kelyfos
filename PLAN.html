@@ -2471,6 +2471,39 @@ after:
         one production extraction, <code>config.parse</code> split from <code>Load</code> &mdash; and the
         project&rsquo;s own AST-reading guard caught it, because key dispatch moved between functions<br>
         gofmt, vet, 14 test packages and <code>make vuln</code> all clean</td></tr>
+        <tr><td class="mono">2026-08-24</td><td class="mono">P6-3</td>
+        <td><b>Two more, from the enumeration that finished after the commit &mdash; and the first is the sharpest
+        thing this task found.</b> The parser inventory P6-3 dispatched returned 54 candidates against the 16 that
+        were built, and reading it rather than filing it turned up two the harnesses had not reached.
+        <b>A guest chooses the string on the boot line that says how it is confined.</b>
+        <code>run</code> prints <code>profile &lt;value&gt;</code> straight from the ready frame, and that value is
+        whatever the guest sent. It is the same class as the three control-character findings above, arriving a
+        fourth time &mdash; but at the worst possible address: an escape sequence in it can rewrite a line that has
+        already been printed, and the line it can rewrite is <i>the one a person reads to learn which walls are
+        around their sandbox</i>. This product's central claim is that a record can never make an unconfined run
+        look confined; a terminal is not the record, but it is where the claim is first read. Sanitised where the
+        value is stored rather than where it is printed, so the record, the warning and the terminal are all
+        covered by one change.
+        <b>And the buffering <code>Exec</code> had no ceiling.</b> It is the form <code>serve-mcp</code> and the
+        shim use &mdash; the two long-lived doors serving other people &mdash; and it appended every output chunk a
+        guest sent, for as long as the guest kept sending. <code>kelyfos exec</code> is unaffected because it
+        streams to a terminal. Bounded at 16 MiB, which is the ceiling an MCP frame already imposes downstream, so
+        the limit is now stated with a fix line instead of arriving as a frame failure further along.
+        <b>The duplication recorded as a debt an hour earlier is discharged in the same commit</b>, because it
+        turned out to be the cause: three copies of the same six-line helper existed by the end of P6-3, which is
+        precisely why the same bug was found three separate times. There is one, <code>proto.SafeText</code>, and
+        the guest-message package is where it belongs.</td>
+        <td class="mono">enumeration: 54 candidate parsers across four lanes, read rather than filed &mdash; the
+        two it caught are the two no harness covered<br>
+        <code>host/run.go:723</code> printed <code>sb.State.Profile</code> raw; now sanitised at
+        <code>internal/sandbox/sandbox.go:562</code> and <code>:872</code>, plus the
+        <code>[profile.not_enforced]</code> reason<br>
+        <code>internal/sandbox/exec.go</code>: <code>MaxExecOutput = 16 &lt;&lt; 20</code>, checked before the
+        append rather than after<br>
+        three copies of the helper collapsed into <code>proto.SafeText</code>; gofmt, vet, 14 packages and all
+        <b>16 fuzz targets</b> clean afterwards<br>
+        <code>ci</code> run 32749092953 green on the commit before this one &mdash; including the new ten-second
+        per-push fuzz pass</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
