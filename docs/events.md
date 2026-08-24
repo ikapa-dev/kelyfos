@@ -298,6 +298,24 @@ A path is a credential on more APIs than is comfortable
 append-only, outlives the sandbox and is meant to be forwardable. What it says
 is which secret, which domain, and why not.
 
+### `secret.scrubbed`
+A response echoed a bound credential back, and the proxy replaced it before the
+guest saw it. Written from P6-5.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `name` | string | The secret's environment-variable name. |
+| `host` | string | The domain whose response carried it back. |
+| `agent` | string | Present inside a team: whose credential it was. |
+
+One event per credential per connection, not one per occurrence: a response that
+quotes a token forty times is one fact.
+
+It is recorded because a proxy that rewrites a byte stream and says nothing is a
+proxy whose record understates what the host did — the same reasoning that made
+`mode` say how much of a connection the proxy could *read* (F-D33). `mode`
+answers "how much could it see"; this answers "did it change anything".
+
 ### `team.message` and `team.refused`
 One inter-agent message, or one the edge list did not permit. Written from E2-1.
 

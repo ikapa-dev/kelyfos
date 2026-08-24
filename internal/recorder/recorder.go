@@ -38,6 +38,7 @@ const (
 	TypeEgressAttempt   = "egress.attempt"
 	TypeSecretUse       = "secret.use"
 	TypeSecretWithheld  = "secret.withheld"
+	TypeSecretScrubbed  = "secret.scrubbed"
 	TypeResourceOOM     = "resource.oom"
 	TypeResourceTimeout = "resource.timeout"
 	TypeResourceSummary = "resource.summary"

@@ -155,6 +155,15 @@ func Types() []EventType {
 					"else), or not_encrypted (a plaintext request, which never carries a credential)"},
 				agentField(),
 			}},
+		{Type: TypeSecretScrubbed, Source: SourceHost,
+			Doc: "a response echoed a bound credential back and the proxy replaced it before the " +
+				"guest saw it. Recorded because a proxy that rewrites a byte stream and says nothing " +
+				"is a proxy whose record understates what the host did",
+			Fields: []Field{
+				{Name: "name", Type: "string", Doc: "the secret's environment-variable name"},
+				{Name: "host", Type: "string", Doc: "the domain whose response carried it back"},
+				agentField(),
+			}},
 		{Type: TypeResourceOOM, Source: SourceGuest,
 			Doc: "the guest's OOM killer ran; the supervisor read it off /dev/kmsg and the host wrote it",
 			Fields: []Field{

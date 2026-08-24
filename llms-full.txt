@@ -539,6 +539,13 @@ compromised can still *use* the credential against the domain it is bound to —
 that is what binding it means — but it cannot read it, keep it, or send it
 anywhere else.
 
+**A credential that comes back is replaced.** From v1.0 the proxy scrubs bound
+values out of responses it can read, so an API that reflects the token — in an
+error, in a header, in a redirect — does not hand it to the agent. It catches an
+*echo* of a value KelyfOS holds; it does not detect credentials in general, and
+it cannot see into a tunnelled or compressed response at all. `docs/networking.md`
+states those limits before it states the capability.
+
 **The binding is a suffix match**, so `--secret T@github.com` attaches the
 credential to `api.github.com` and `raw.githubusercontent.com` too, on any
 request the guest composes to any of them. Bind a credential only to a domain
@@ -1584,6 +1591,28 @@ hoped for.
   carrying an encoded slash or dot, or dot segments, is not measured against the
   scope at all, because the path this proxy would match and the path the server
   routes are then two different strings.
+
+- **A credential that comes back is replaced before the guest sees it**, and
+  what this is *not* matters more than what it is. It is **echo suppression**:
+  it matches the bound values and nothing else. It is not credential detection —
+  pattern-matching a byte stream the agent is about to parse would mean a false
+  positive silently corrupting a tarball or a JSON document, undiagnosable from
+  inside the guest, which D37 declined outright rather than deferred.
+
+  Three limits, first rather than last, because a reader who misses them will
+  assume more than this does. **The tunnelled majority is not covered and never
+  can be** — the proxy relays ciphertext for every domain with no secret bound,
+  so there is nothing to match. **A compressed body is not covered**: the
+  terminated transport deliberately does not decompress, so a client that asked
+  for gzip gets gzip, and gzip of a credential does not contain the credential.
+  **A value under eight bytes is not scrubbed**, because replacing a short
+  string everywhere it appears would corrupt far more than it protects.
+
+  The replacement keeps the byte length exactly. That is not cosmetic: a
+  terminated connection carries many requests, and a body whose written length
+  disagreed with its `Content-Length` would poison every exchange after it. A
+  `secret.scrubbed` event records that bytes were altered, once per credential
+  per connection.
 
 - **Certificate pinning breaks for a secret-bound domain, by construction.**
   This is the cost D6 accepted, and it belongs here as well as in the threat
@@ -2834,6 +2863,24 @@ A path is a credential on more APIs than is comfortable
 (`api.telegram.org/bot<TOKEN>/…` is the plainest example), and this record is
 append-only, outlives the sandbox and is meant to be forwardable. What it says
 is which secret, which domain, and why not.
+
+### `secret.scrubbed`
+A response echoed a bound credential back, and the proxy replaced it before the
+guest saw it. Written from P6-5.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `name` | string | The secret's environment-variable name. |
+| `host` | string | The domain whose response carried it back. |
+| `agent` | string | Present inside a team: whose credential it was. |
+
+One event per credential per connection, not one per occurrence: a response that
+quotes a token forty times is one fact.
+
+It is recorded because a proxy that rewrites a byte stream and says nothing is a
+proxy whose record understates what the host did — the same reasoning that made
+`mode` say how much of a connection the proxy could *read* (F-D33). `mode`
+answers "how much could it see"; this answers "did it change anything".
 
 ### `team.message` and `team.refused`
 One inter-agent message, or one the edge list did not permit. Written from E2-1.
@@ -8766,6 +8813,16 @@ A credential was bound to this domain and deliberately not attached to a request
 | `name` | string | the secret's environment-variable name |
 | `host` | string | the domain the connection was bound to |
 | `reason` | string | why it was withheld: host_mismatch (the request addressed a different host than the connection was opened to), path_not_covered (outside the endpoint the credential is bound to), path_not_literal (a path carrying an encoded slash or dot, or dot segments, which a server may re-segment into somewhere else), or not_encrypted (a plaintext request, which never carries a credential) |
+| `agent` | string | which machine produced it; present inside a team *(in a team)* |
+
+## `secret.scrubbed`
+
+A response echoed a bound credential back and the proxy replaced it before the guest saw it. Recorded because a proxy that rewrites a byte stream and says nothing is a proxy whose record understates what the host did. Written by the **host**.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `name` | string | the secret's environment-variable name |
+| `host` | string | the domain whose response carried it back |
 | `agent` | string | which machine produced it; present inside a team *(in a team)* |
 
 ## `resource.oom`

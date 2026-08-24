@@ -231,6 +231,28 @@ hoped for.
   scope at all, because the path this proxy would match and the path the server
   routes are then two different strings.
 
+- **A credential that comes back is replaced before the guest sees it**, and
+  what this is *not* matters more than what it is. It is **echo suppression**:
+  it matches the bound values and nothing else. It is not credential detection —
+  pattern-matching a byte stream the agent is about to parse would mean a false
+  positive silently corrupting a tarball or a JSON document, undiagnosable from
+  inside the guest, which D37 declined outright rather than deferred.
+
+  Three limits, first rather than last, because a reader who misses them will
+  assume more than this does. **The tunnelled majority is not covered and never
+  can be** — the proxy relays ciphertext for every domain with no secret bound,
+  so there is nothing to match. **A compressed body is not covered**: the
+  terminated transport deliberately does not decompress, so a client that asked
+  for gzip gets gzip, and gzip of a credential does not contain the credential.
+  **A value under eight bytes is not scrubbed**, because replacing a short
+  string everywhere it appears would corrupt far more than it protects.
+
+  The replacement keeps the byte length exactly. That is not cosmetic: a
+  terminated connection carries many requests, and a body whose written length
+  disagreed with its `Content-Length` would poison every exchange after it. A
+  `secret.scrubbed` event records that bytes were altered, once per credential
+  per connection.
+
 - **Certificate pinning breaks for a secret-bound domain, by construction.**
   This is the cost D6 accepted, and it belongs here as well as in the threat
   model. A terminated domain is presented a certificate minted by the run's own

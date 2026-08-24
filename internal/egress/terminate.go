@@ -108,6 +108,7 @@ func (p *Proxy) terminate(client net.Conn, host string, port int, bound []*Secre
 		if attached != nil && p.OnSecret != nil {
 			p.OnSecret(attached.Name, host)
 		}
+		p.scrubResponse(resp, host)
 		// A chunked body reports -1, which is not a byte count. Adding it
 		// walked the receipt backwards; an unknown length contributes nothing
 		// rather than subtracting (F-D33).

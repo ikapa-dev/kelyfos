@@ -147,6 +147,16 @@ A credential was bound to this domain and deliberately not attached to a request
 | `reason` | string | why it was withheld: host_mismatch (the request addressed a different host than the connection was opened to), path_not_covered (outside the endpoint the credential is bound to), path_not_literal (a path carrying an encoded slash or dot, or dot segments, which a server may re-segment into somewhere else), or not_encrypted (a plaintext request, which never carries a credential) |
 | `agent` | string | which machine produced it; present inside a team *(in a team)* |
 
+## `secret.scrubbed`
+
+A response echoed a bound credential back and the proxy replaced it before the guest saw it. Recorded because a proxy that rewrites a byte stream and says nothing is a proxy whose record understates what the host did. Written by the **host**.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `name` | string | the secret's environment-variable name |
+| `host` | string | the domain whose response carried it back |
+| `agent` | string | which machine produced it; present inside a team *(in a team)* |
+
 ## `resource.oom`
 
 The guest's OOM killer ran; the supervisor read it off /dev/kmsg and the host wrote it. Written by the **guest**.

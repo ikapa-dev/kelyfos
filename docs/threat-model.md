@@ -65,6 +65,13 @@ compromised can still *use* the credential against the domain it is bound to —
 that is what binding it means — but it cannot read it, keep it, or send it
 anywhere else.
 
+**A credential that comes back is replaced.** From v1.0 the proxy scrubs bound
+values out of responses it can read, so an API that reflects the token — in an
+error, in a header, in a redirect — does not hand it to the agent. It catches an
+*echo* of a value KelyfOS holds; it does not detect credentials in general, and
+it cannot see into a tunnelled or compressed response at all. `docs/networking.md`
+states those limits before it states the capability.
+
 **The binding is a suffix match**, so `--secret T@github.com` attaches the
 credential to `api.github.com` and `raw.githubusercontent.com` too, on any
 request the guest composes to any of them. Bind a credential only to a domain

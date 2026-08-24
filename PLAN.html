@@ -180,7 +180,7 @@
     <span class="bl-name">Overall</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">P6-4 done &mdash; a credential binds to an endpoint now, and two live defects were closed on the way: a restore recorded no egress at all, and the credential went to whatever host the guest named. Next: <b>P6-5</b>, echo suppression on the paths the proxy can read</b></div>
+  <div class="focusline">Current focus: <b id="focus">P6-5 done &mdash; a credential that comes back is replaced before the guest sees it, with its three limits documented ahead of the capability. Next: <b>P6-6</b>, the session export made verifiable by its reader, and the hash preimage fixed with it</b></div>
 </div>
 
 <!-- ====================================================== 1. END GOAL -->
@@ -821,7 +821,7 @@
         proxy can read. <b>Six</b> secret-parsing sites and <b>five</b> proxy constructions, one of them shared by
         two entry points: all of them, or the feature is the <code>jailed</code> bug again.</span></li>
 
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">P6-5</span><span class="tk"><b>Echo suppression: the bound secret scrubbed out of what
         the proxy can read &mdash; named for what it is rather than for what it sounds like (D37).</b> KelyfOS keeps
         secret values out of the guest by construction, so there has never been anything to redact. The case
@@ -2559,6 +2559,44 @@ after:
         recorded rather than silent<br>
         <code>gofmt</code>, <code>vet</code>, 14 packages, all 16 fuzz targets and <code>make vuln</code> clean;
         the compatibility pin holds, with the three deliberate breaks listed in it</td></tr>
+        <tr><td class="mono">2026-08-24</td><td class="mono">P6-5</td>
+        <td><b>Echo suppression, named for what it is.</b> KelyfOS keeps a credential out of the guest by
+        construction, so there has never been anything to redact; the case construction cannot reach is the value
+        travelling in a direction this product did not send it &mdash; a legitimate, allowlisted, secret-bound call
+        whose <i>response</i> carries the credential back. An API reflecting the header it rejected, an error page
+        quoting the token, a redirect carrying basic credentials. It lands in the guest, in the agent&rsquo;s
+        context, and in everything the agent writes afterwards.
+        <b>What shipped is exact matching on the bound values and nothing else</b>, which is D37&rsquo;s ruling and
+        the reason the feature has this name. General credential detection was declined outright rather than
+        deferred: pattern-matching a byte stream the agent is about to parse means a false positive silently
+        corrupting a tarball or a JSON document, with no symptom pointing back at the proxy.
+        <b>The three limits are documented before the capability</b>, because a reader who misses them assumes more
+        than this does: the tunnelled majority is ciphertext and can never be covered; a compressed body is not
+        covered, because the terminated transport deliberately does not decompress and gzip of a credential does not
+        contain the credential; and a value under eight bytes is not scrubbed, because replacing a short string
+        everywhere would corrupt far more than it protects.
+        <b>The replacement keeps the byte length exactly</b> &mdash; not cosmetic, since a terminated connection
+        carries many requests and a body whose written length disagreed with its <code>Content-Length</code> would
+        poison every exchange after it. And the record says the proxy altered bytes: <code>secret.scrubbed</code>,
+        once per credential per connection, on the same reasoning that made <code>mode</code> say how much of a
+        connection the proxy could read. <code>mode</code> answers what it could see; this answers whether it
+        changed anything.
+        <b>Two things the work itself turned up.</b> The fuzzer refuted the first invariant rather than the code:
+        a value made largely of the filler byte can be re-created by the act of replacing it, so the property is
+        now stated against the input&rsquo;s positions rather than as &ldquo;the value does not appear in the
+        output&rdquo; &mdash; the imprecise statement was hiding the precise one. And the first thing echo
+        suppression caught was <i>this project&rsquo;s own test</i>, whose upstream reflected the credential back as
+        the response body; it observes the header server-side now, which is what it should always have done.</td>
+        <td class="mono">new: <code>internal/egress/scrub.go</code>, <code>secret.scrubbed</code>, wired at every
+        door that builds a proxy<br>
+        the hard case is a value split across reads, and it is tested and fuzzed: a reader handing over three bytes
+        at a time cannot smuggle a credential past the carry-over<br>
+        <code>FuzzScrubPreservesEverythingButTheSecret</code> checks what a byte-stream rewriter has to promise
+        &mdash; the length never changes, every byte is the original or the filler, and every occurrence present in
+        the input is gone from where it was &mdash; clean over 2 minutes after the invariant was corrected<br>
+        end to end: a server echoing the credential in both a header and the body, and the guest receiving neither,
+        with the body length unchanged<br>
+        17 fuzz targets now; gofmt, vet, 14 packages and <code>make vuln</code> clean</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>

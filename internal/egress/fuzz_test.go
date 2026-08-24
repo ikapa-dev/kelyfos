@@ -3,6 +3,7 @@ package egress
 import (
 	"bufio"
 	"bytes"
+	"io"
 	"net/http"
 	"strings"
 	"testing"
@@ -113,4 +114,88 @@ func FuzzParseSecret(f *testing.F) {
 			t.Fatalf("a secret bound to %q does not match its own domain", s.Domain)
 		}
 	})
+}
+
+// FuzzScrubPreservesEverythingButTheSecret is the guarantee a byte-stream
+// rewriter has to make, and the reason it is fuzzed rather than argued.
+//
+// This code sits between an upstream server and an agent, altering bytes the
+// agent is about to parse. The damage a bug does here is not a crash: it is a
+// tarball that will not open or a JSON document that will not parse, with no
+// symptom pointing back at the proxy. So the properties are checked directly —
+// the length never changes, nothing outside a match is touched, and no bound
+// value survives however it is split across reads.
+func FuzzScrubPreservesEverythingButTheSecret(f *testing.F) {
+	f.Add([]byte("nothing interesting here"), "ghp_averyrealtokenvalue", 7)
+	f.Add([]byte("prefix ghp_averyrealtokenvalue suffix"), "ghp_averyrealtokenvalue", 3)
+	f.Add([]byte("ghp_averyrealtokenvalueghp_averyrealtokenvalue"), "ghp_averyrealtokenvalue", 1)
+	f.Add([]byte("aaaaaaaaaaaaaaaa"), "aaaaaaaa", 2)
+	f.Add([]byte(""), "abcdefgh", 1)
+	f.Add([]byte("\x00\xff\x00\xff"), "abcdefgh", 5)
+
+	f.Fuzz(func(t *testing.T, body []byte, value string, chunk int) {
+		if len(value) < minScrub || len(value) > 4096 {
+			t.Skip()
+		}
+		if chunk < 1 || chunk > 64 {
+			t.Skip()
+		}
+		s := newScrubber([]*Secret{{Name: "S", Domain: "h", value: value}}, nil)
+		if s == nil {
+			t.Fatalf("a %d-byte value built no scrubber", len(value))
+		}
+
+		src := io.NopCloser(chunked{bytes.NewReader(body), chunk})
+		out, err := io.ReadAll(s.wrap(src))
+		if err != nil {
+			t.Fatalf("reading a scrubbed stream: %v", err)
+		}
+
+		if len(out) != len(body) {
+			t.Fatalf("length changed from %d to %d; a keep-alive connection desyncs on that", len(body), len(out))
+		}
+		// Nothing outside a replacement may move: every byte is either what it
+		// was, or the filler.
+		for i := range out {
+			if out[i] != body[i] && out[i] != '*' {
+				t.Fatalf("byte %d became %q, which is neither the original %q nor the filler", i, out[i], body[i])
+			}
+		}
+		// Every occurrence that was in the INPUT is gone from where it was.
+		//
+		// Stated against the input's positions rather than as "the value does
+		// not appear in the output", which is what this assertion said first
+		// and which the fuzzer correctly refuted: a value made largely of the
+		// filler byte — it found "*****F*1" — can be re-created by the act of
+		// replacing it, one position to the left of where the scan had reached.
+		// That is an artifact of the filler, not a credential surviving, and no
+		// real credential has the shape. The precise property is the one worth
+		// checking, and the imprecise one was hiding it.
+		v := []byte(value)
+		for i := 0; i+len(v) <= len(body); {
+			if !bytes.Equal(body[i:i+len(v)], v) {
+				i++
+				continue
+			}
+			for k := i; k < i+len(v); k++ {
+				if out[k] != '*' {
+					t.Fatalf("an occurrence at %d survived at chunk size %d: %q", i, chunk, out)
+				}
+			}
+			i += len(v)
+		}
+	})
+}
+
+// chunked hands over at most n bytes per Read, so a value can be split anywhere.
+type chunked struct {
+	r io.Reader
+	n int
+}
+
+func (c chunked) Read(p []byte) (int, error) {
+	if len(p) > c.n {
+		p = p[:c.n]
+	}
+	return c.r.Read(p)
 }

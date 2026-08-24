@@ -10,31 +10,25 @@ Updated 2026-08-24 · synced with origin/main · **v0.9 released** · CI green o
   permanent record rows. A denominator adjusted to flatter the numerator is the same defect as a ticked box.
 
 ## Now
-**P6-4 done**, in four commits, because the enumeration it opened with kept returning things that had to be fixed
-before the feature made sense. **Two live defects closed on the way**, both predating the task:
+**P6-5 done.** Echo suppression — a bound credential that comes *back* in a response is replaced before the guest
+sees it. That is the one case construction cannot reach: KelyfOS keeps the value out of the guest by putting it in
+only on the way out, so a value returning is a direction it never sent.
 
-- **A restored machine recorded no egress at all.** Five proxies exist; four wired their audit hooks by hand and
-  `kelyfos snapshot restore` never grew them — so a restore wrote a chain with a start, a ready and an end and
-  nothing in between. Not a broken-looking chain, a *finished*-looking one. One function now, guarded by an AST
-  test that fails any file building a proxy without calling it.
-- **The credential went to whatever host the guest named.** Go prefers a request's own `Host` header over the
-  URL's, so a guest could open a tunnel to a bound domain, take its certificate, and have the credentialed request
-  processed as a different virtual host on the same edge — with the record naming the tunnel's target.
+It is named for what it is. Exact matching on the bound values, nothing else. D37 declined general credential
+detection outright rather than deferring it, because pattern-matching a byte stream the agent is about to parse
+means a false positive silently corrupting a tarball, undiagnosable from inside the guest.
 
-And **`main` went red**, which is how the scheduled fuzz sweep proved itself on its first outing: three minutes a
-target found a parser bug forty-five seconds hadn't, one layer under P6-3's. Patching shapes didn't converge, so a
-domain must now have the shape of a name.
+**Three limits, documented ahead of the capability**: the tunnelled majority is ciphertext and can never be
+covered; a compressed body is not covered, because the terminated transport deliberately does not decompress; and a
+value under eight bytes is not scrubbed. The replacement is length-preserving, which is not cosmetic — a body whose
+written length disagreed with its `Content-Length` would poison every later exchange on a keep-alive connection.
 
-The feature is smaller than D36 promised, and the difference is **D44** — written before the code, on an
-adversarial review commissioned because P6-14 freezes this grammar. Method scoping cut (the policy file cannot
-carry a comma; `+` is an ordinary path character). Call-binding cut (needs a structured home). The guest's request
-path is never recorded in any form, because a path *is* the credential on several real APIs.
+Two things the work turned up. The **fuzzer refuted my invariant rather than the code** — a value made largely of
+the filler byte can be re-created by the act of replacing it — so the property is now stated against the input's
+positions. And the first thing echo suppression caught was **this project's own test**, whose upstream reflected
+the credential back as the response body.
 
-Shipped: `NAME@host[:scheme][/path]`, a matcher that refuses to compare a path a server could re-segment,
-per-request selection so two credentials on one host are both reachable, and `secret.withheld` — which secret,
-which domain, why not.
-
-**Next: P6-5** — echo suppression on the paths the proxy can read.
+**Next: P6-6** — the session export made verifiable by its reader, carrying the hash-preimage fix P6-4 measured.
 
 ## Blocked / needs John
 - **DCO.** `CONTRIBUTING.md` and the README require a `Signed-off-by`; 0 of the last 50 commits carry one and

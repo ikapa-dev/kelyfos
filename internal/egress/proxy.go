@@ -117,6 +117,11 @@ type Proxy struct {
 	// never a request path, because a path is a credential on more APIs than is
 	// comfortable (docs/events.md §4).
 	OnWithheld func(name, host, reason string)
+	// OnScrubbed says the proxy altered bytes on their way to the guest: a
+	// response echoed a bound credential back and it was replaced. Recorded
+	// because a proxy that rewrites a byte stream and says nothing is a proxy
+	// whose record understates what the host did (P6-5).
+	OnScrubbed func(name, host string)
 	// CA terminates TLS for secret-bound domains. Ephemeral, per run.
 	CA *CA
 	// Upstream is the transport used for terminated requests. Injectable so
@@ -318,6 +323,7 @@ func (p *Proxy) forwardHTTP(client net.Conn, req *http.Request, host string, por
 		return
 	}
 	defer resp.Body.Close()
+	p.scrubResponse(resp, host)
 	// Counted rather than left at zero: this path moved bytes like any other,
 	// and a receipt that reads 0 for a transfer that happened is its own small
 	// lie. ContentLength is -1 for a chunked body, which is not a byte count,

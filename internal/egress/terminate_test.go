@@ -19,13 +19,14 @@ const testToken = "ghp_thisisaverysecrettokenvalue"
 
 // proxyFor starts a proxy in front of an upstream test server, with the given
 // policy, and returns its address plus everything it reported.
-func proxyFor(t *testing.T, upstream *httptest.Server, policy Policy, ca *CA) (string, func() []Attempt, func() []string, func() []string) {
+func proxyFor(t *testing.T, upstream *httptest.Server, policy Policy, ca *CA) (string, func() []Attempt, func() []string, func() []string, func() []string) {
 	t.Helper()
 
 	var mu sync.Mutex
 	var attempts []Attempt
 	var secrets []string
 	var withheld []string
+	var scrubbed []string
 
 	p := &Proxy{
 		Policy: policy,
@@ -42,6 +43,11 @@ func proxyFor(t *testing.T, upstream *httptest.Server, policy Policy, ca *CA) (s
 			mu.Lock()
 			defer mu.Unlock()
 			secrets = append(secrets, name+"@"+host)
+		},
+		OnScrubbed: func(name, host string) {
+			mu.Lock()
+			defer mu.Unlock()
+			scrubbed = append(scrubbed, name+"@"+host)
 		},
 		OnWithheld: func(name, host, reason string) {
 			mu.Lock()
@@ -71,6 +77,11 @@ func proxyFor(t *testing.T, upstream *httptest.Server, policy Policy, ca *CA) (s
 			mu.Lock()
 			defer mu.Unlock()
 			return append([]string(nil), withheld...)
+		},
+		func() []string {
+			mu.Lock()
+			defer mu.Unlock()
+			return append([]string(nil), scrubbed...)
 		}
 }
 
@@ -132,8 +143,14 @@ func hostHeader(connectHost string) string {
 // TestTerminationInjectsTheCredential is the heart of P2-6: the client is never
 // given the secret, and the server receives it anyway.
 func TestTerminationInjectsTheCredential(t *testing.T) {
+	// Observed server-side rather than echoed back in the body, which is how
+	// this test used to read it. P6-5 made that impossible on purpose: a server
+	// that reflects a bound credential now has it scrubbed on the way to the
+	// guest, and the first thing echo suppression caught was this test.
+	var sawAuth string
 	upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, r.Header.Get("Authorization"))
+		sawAuth = r.Header.Get("Authorization")
+		fmt.Fprint(w, "ok")
 	}))
 	defer upstream.Close()
 	host, _, _ := net.SplitHostPort(strings.TrimPrefix(upstream.URL, "https://"))
@@ -145,7 +162,7 @@ func TestTerminationInjectsTheCredential(t *testing.T) {
 	secret := &Secret{Name: "GITHUB_TOKEN", Domain: host, Scheme: "Bearer", value: testToken}
 	policy := Policy{Allow: []string{host}, Ports: []int{upstreamPort(t, upstream)}, Secrets: []*Secret{secret}}
 
-	proxyAddr, attempts, secretUses, _ := proxyFor(t, upstream, policy, ca)
+	proxyAddr, attempts, secretUses, _, _ := proxyFor(t, upstream, policy, ca)
 
 	roots := x509.NewCertPool()
 	if !roots.AppendCertsFromPEM(ca.AnchorPEM()) {
@@ -157,10 +174,9 @@ func TestTerminationInjectsTheCredential(t *testing.T) {
 	if err != nil {
 		t.Fatalf("request through the proxy: %v", err)
 	}
-	body, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
 
-	if got, want := string(body), "Bearer "+testToken; got != want {
+	if got, want := sawAuth, "Bearer "+testToken; got != want {
 		t.Errorf("the upstream server saw Authorization %q, want %q", got, want)
 	}
 
@@ -189,7 +205,7 @@ func TestNoSecretMeansNoTermination(t *testing.T) {
 	host, _, _ := net.SplitHostPort(strings.TrimPrefix(upstream.URL, "https://"))
 
 	policy := Policy{Allow: []string{host}, Ports: []int{upstreamPort(t, upstream)}}
-	proxyAddr, attempts, _, _ := proxyFor(t, upstream, policy, nil)
+	proxyAddr, attempts, _, _, _ := proxyFor(t, upstream, policy, nil)
 
 	// No KelyfOS CA anywhere: the client validates the real server certificate,
 	// which only works because nothing is in the middle.
@@ -304,7 +320,7 @@ func TestTheCredentialIsWithheldWhenTheRequestAddressesAnotherHost(t *testing.T)
 	secret := &Secret{Name: "GITHUB_TOKEN", Domain: host, Scheme: "Bearer", value: testToken}
 	policy := Policy{Allow: []string{host}, Ports: []int{upstreamPort(t, upstream)}, Secrets: []*Secret{secret}}
 
-	proxyAddr, _, secretUses, withheld := proxyFor(t, upstream, policy, ca)
+	proxyAddr, _, secretUses, withheld, _ := proxyFor(t, upstream, policy, ca)
 
 	roots := x509.NewCertPool()
 	if !roots.AppendCertsFromPEM(ca.AnchorPEM()) {
@@ -336,5 +352,56 @@ func TestTheCredentialIsWithheldWhenTheRequestAddressesAnotherHost(t *testing.T)
 	}
 	if !strings.HasSuffix(got[0], ":"+WithheldHostMismatch) {
 		t.Errorf("withheld for %q, want reason %q", got[0], WithheldHostMismatch)
+	}
+}
+
+// A server that hands the credential back gets it replaced before the guest
+// sees it — the one case construction cannot reach, because the value travels
+// in a direction KelyfOS did not put it in (P6-5, D37).
+func TestAnEchoedCredentialNeverReachesTheGuest(t *testing.T) {
+	upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// The plainest echo there is: a server quoting back the credential it
+		// rejected, in a header and in the body.
+		w.Header().Set("X-Echo", r.Header.Get("Authorization"))
+		fmt.Fprintf(w, `{"error":"bad credential %s"}`, testToken)
+	}))
+	defer upstream.Close()
+	host, _, _ := net.SplitHostPort(strings.TrimPrefix(upstream.URL, "https://"))
+
+	ca, err := NewCA()
+	if err != nil {
+		t.Fatal(err)
+	}
+	secret := &Secret{Name: "GITHUB_TOKEN", Domain: host, Scheme: "Bearer", value: testToken}
+	policy := Policy{Allow: []string{host}, Ports: []int{upstreamPort(t, upstream)}, Secrets: []*Secret{secret}}
+
+	proxyAddr, _, _, _, scrubbed := proxyFor(t, upstream, policy, ca)
+
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM(ca.AnchorPEM()) {
+		t.Fatal("the CA anchor is not usable as a trust root")
+	}
+
+	resp, _, err := throughProxy(t, proxyAddr, strings.TrimPrefix(upstream.URL, "https://"), roots)
+	if err != nil {
+		t.Fatalf("request through the proxy: %v", err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+
+	if strings.Contains(string(body), testToken) {
+		t.Errorf("the credential came back to the guest in the body: %s", body)
+	}
+	if strings.Contains(resp.Header.Get("X-Echo"), testToken) {
+		t.Errorf("the credential came back to the guest in a header: %q", resp.Header.Get("X-Echo"))
+	}
+	// The length must not move, or a keep-alive connection desyncs.
+	if want := len(fmt.Sprintf(`{"error":"bad credential %s"}`, testToken)); len(body) != want {
+		t.Errorf("the body length changed from %d to %d", want, len(body))
+	}
+	if got := scrubbed(); len(got) == 0 {
+		t.Error("bytes were altered on the way to the guest and the record does not say so")
+	} else if !strings.HasPrefix(got[0], "GITHUB_TOKEN@") {
+		t.Errorf("the scrub was recorded as %q, want it named by secret", got[0])
 	}
 }
