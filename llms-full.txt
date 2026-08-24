@@ -2640,6 +2640,18 @@ Type-specific fields follow, and are documented per type below. **A reader must
 ignore fields it does not recognise** — adding a field is not a breaking change,
 and `v` is bumped only when the meaning of an existing field changes.
 
+That sentence was **false until v1.0**, and it is worth saying so rather than
+quietly making it true. The chain's digest used to be recomputed by
+re-serialising the *parsed* event, so a reader dropped any field it did not know
+before re-hashing — and a chain written by a newer build came back from
+`kelyfos log --verify` as `event N has been modified`. Tamper detection firing
+on a legitimate record is the loudest wrong answer this product can give, and a
+reader who saw it had every reason to believe their audit trail had been edited.
+The digest is now recomputed from the bytes as written, so an unrecognised field
+survives into the preimage and the sentence above is true. Chains written before
+the fix verify unchanged: the preimage was always this line with the digest
+emptied in place, so nothing about the format moved.
+
 `sandbox` names the **session**, and a team is one session by design (E2-1), so
 inside a team every event carries the team's id there rather than the id of the
 machine it came from. The `agent` field is what says which machine, and inside a

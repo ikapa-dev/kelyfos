@@ -2,6 +2,9 @@ package recorder
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -191,5 +194,57 @@ func TestConcurrentWritersKeepOneChain(t *testing.T) {
 	}
 	if want := writers * each; n != want {
 		t.Errorf("verified %d events, want %d — some appends were lost", n, want)
+	}
+}
+
+// A chain written by a newer build still verifies here.
+//
+// This is the property docs/events.md §3 asserts — "adding a field is not
+// breaking" — and it was false until P6-6. The digest used to be recomputed by
+// re-marshalling the parsed struct, so a field this build does not know about
+// was dropped before the re-hash and the chain came back as `event N has been
+// modified`: tamper detection firing on a legitimate record, which is the
+// loudest false alarm this product can produce. A reader who saw it would have
+// had every reason to believe their audit trail had been edited.
+//
+// The fix recomputes from the bytes as written, so an unknown field survives
+// into the preimage. The simulation is exact: the newer writer's digest is
+// computed over its own line with the hash emptied in place, which is what
+// Append does.
+func TestAChainFromANewerBuildStillVerifies(t *testing.T) {
+	root := t.TempDir()
+	rec, err := Open(root, "newer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := rec.Append(Event{Type: TypeSessionStart}); err != nil {
+		t.Fatal(err)
+	}
+	if err := rec.Close(); err != nil {
+		t.Fatal(err)
+	}
+	blob, err := os.ReadFile(Path(root, "newer"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	line := strings.TrimSpace(string(blob))
+
+	var e Event
+	if err := json.Unmarshal([]byte(line), &e); err != nil {
+		t.Fatal(err)
+	}
+
+	// What a build with one more tail field would have written.
+	withField := strings.TrimSuffix(line, "}") + `,"a_field_this_build_does_not_know":"x"}`
+	pre := strings.Replace(withField, `"hash":"`+e.Hash+`"`, `"hash":""`, 1)
+	sum := sha256.Sum256([]byte(pre))
+	newer := strings.Replace(withField, e.Hash, hex.EncodeToString(sum[:]), 1)
+
+	n, err := Verify(strings.NewReader(newer + "\n"))
+	if err != nil {
+		t.Fatalf("a chain from a newer build was reported as tampered with: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("verified %d events, want 1", n)
 	}
 }

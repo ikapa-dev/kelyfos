@@ -410,10 +410,7 @@ func Verify(r io.Reader) (events int, err error) {
 			return events, fmt.Errorf("event %d does not follow event %d — prev is %q, expected %q",
 				e.Seq, e.Seq-1, short(e.Prev), short(prev))
 		}
-		want, err := hashOf(e)
-		if err != nil {
-			return events, err
-		}
+		want := digestOfLine(raw, e.Hash)
 		if want != e.Hash {
 			return events, fmt.Errorf("event %d has been modified — its contents hash to %s, but it carries %s",
 				e.Seq, short(want), short(e.Hash))
@@ -422,6 +419,34 @@ func Verify(r io.Reader) (events int, err error) {
 		events++
 	}
 	return events, sc.Err()
+}
+
+// digestOfLine recomputes an event's digest from the bytes as written, rather
+// than by re-marshalling the parsed struct.
+//
+// The two agree for every chain ever written — the preimage the writer hashes
+// is its struct with Hash blanked, and `hash` carries no omitempty, so that is
+// byte-for-byte this line with the digest emptied in place. What differs is
+// what happens to a field the reader does not know about. Re-marshalling a
+// parsed struct silently drops it and the digest no longer matches, so an older
+// build reading a newer chain reports "event N has been modified" — tamper
+// detection firing on a legitimate record, which is the loudest false alarm
+// this product can produce. Working from the raw bytes preserves whatever is
+// there.
+//
+// That is what makes docs/events.md's "adding a field is not breaking" true.
+// It was not, and P6-4 measured it before this was written (D44).
+//
+// A line whose digest appears twice, or not where the key is, simply fails —
+// the substitution is anchored on the key, and anything else is a line nobody
+// wrote.
+func digestOfLine(raw []byte, hash string) string {
+	if hash == "" {
+		return ""
+	}
+	pre := bytes.Replace(raw, []byte(`"hash":"`+hash+`"`), []byte(`"hash":""`), 1)
+	sum := sha256.Sum256(pre)
+	return hex.EncodeToString(sum[:])
 }
 
 func short(h string) string {
