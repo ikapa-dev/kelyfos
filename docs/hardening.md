@@ -183,7 +183,19 @@ working, and the acceptance checks them rather than trusting them:
 - `/work` stays writable, because that is the whole point of a workspace;
 - the read-only root stays readable, because that is where the programs are;
 - the supervisor's own vsock channels stay reachable, because that is the
-  entire interface.
+  entire interface. (They are: Landlock at ABI 6 governs the filesystem and TCP
+  bind/connect, and `AF_VSOCK` is outside both — verified in the kernel's own
+  `security/landlock/net.c`, which returns early for any address family that is
+  not `AF_INET`/`AF_INET6`.)
+
+*Written after P5-3: this is a visible change, and it broke something.* Writing
+anywhere outside those trees now fails with `EACCES`, and that includes creating
+a new directory at the root — `mkdir /prepared`, which one of the cookbook
+recipes did. There is no way to permit that and still refuse `/etc`: a Landlock
+rule covers a tree, so granting the root grants everything under it. The recipe
+now prepares in `/tmp`, which is where it belonged, and the release notes say
+plainly that a command writing outside `/work`, `/tmp`, `/run` and `$HOME` is
+refused from v0.9 where it succeeded before.
 
 ### 4.3 Per flavor, and refusing rather than degrading
 
@@ -195,6 +207,35 @@ rather than continuing with the profile silently absent.
 That is the same rule the rest of this product follows and for the same reason:
 a limit that is quietly not applied is worse than no limit, because somebody is
 relying on it.
+
+### 4.4 Written after P5-3: how it is applied, and one thing it also does
+
+Both mechanisms restrict the *calling thread* and are inherited across fork and
+exec, and Go offers no safe hook between the two — after `fork` only
+async-signal-safe work is legal, which rules out the Go runtime. So the
+supervisor re-execs itself: the command becomes `/proc/self/exe --confine
+<flavor> --path <resolved> -- <argv…>`, and that process applies the profile to
+itself and then `execve`s the real program. Nothing of the runtime has to
+survive the restrictions, because they go on immediately before the exec that
+replaces the process. The original `argv` is carried through untouched, which
+matters more than it sounds: BusyBox is one binary that decides what to be from
+`argv[0]`.
+
+It is applied in `reaper.startAndRegister`, the single place every child is
+started, for the reason `requireJail` lives in `sandbox.New` — a confinement
+three call sites have to remember is one that a fourth will not.
+
+**And a consequence worth stating, because it is a protection nobody asked
+for.** Each confined process gets its own Landlock domain, and Landlock's
+`ptrace` hook refuses introspection *between sibling domains*. So two commands
+in the same sandbox cannot read each other's `/proc/<pid>/exe`, or attach to one
+another, even though both run as root and even on `dev`, where the profile
+leaves `ptrace` out of the refusal list. A debugger that *launches* its target
+still works — the child inherits its parent's domain — which is the case that
+matters. Attaching to an unrelated process does not. This was found by an
+acceptance test that killed a plugin by scanning `/proc/*/exe` and stopped being
+able to see it; the test now matches on `cmdline`, which needs no such access.
+Signals themselves are not scoped, so `kill` between siblings still works.
 
 ---
 
@@ -212,7 +253,15 @@ setup step; the trade is priced in D29 and is revisitable.
 
 **The guest kernel.** An agent is still root inside its own guest and can still
 reach the whole syscall surface the seccomp profile permits. Landlock restricts
-the filesystem; it does not make the kernel smaller.
+the filesystem; it does not make the kernel smaller. *After P5-3:* the profile is
+a refusal list, not an allowlist, so the surface it leaves is everything a
+kernel offers root minus twenty-eight names — a real reduction at exactly the
+places that matter (no module loading, no mount, no clock, no keyrings) and not
+a small surface. Landlock also cannot restrict `chdir`, `stat`, `chmod`,
+`chown`, `access` or `fcntl` at all, by its own documentation, and cannot
+restrict a file descriptor that was already open when the profile was applied —
+so what the supervisor hands a child on its stdin and stdout is outside this
+layer by construction.
 
 **The other agents' machines, still not reachable** — that was already true and
 this phase does not improve it. It is listed because a reader deciding whether

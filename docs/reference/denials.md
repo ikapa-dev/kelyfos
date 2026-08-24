@@ -152,6 +152,17 @@ this build runs Firecracker under the jailer, which needs passwordless sudo (sud
 
 Named: `reason`, `sudoers`. The values above are an example.
 
+## `profile.not_enforced`
+
+The guest came up but its supervisor could not apply the per-flavor confinement profile, so nothing it spawned would be confined.
+
+```
+the guest cannot confine what it runs (landlock is not available in this kernel (function not implemented)) [profile.not_enforced]
+    rebuild the image — the guest kernel needs CONFIG_SECURITY_LANDLOCK=y and landlock named in CONFIG_LSM, and an LSM that is built but not named is not enabled
+```
+
+Named: `reason`. The values above are an example.
+
 ## `seccomp.not_in_force`
 
 The VMM came up without the syscall filter Firecracker compiles into its own release binaries, which a KelyfOS run requires rather than hopes for.

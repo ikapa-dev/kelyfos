@@ -349,6 +349,15 @@ func bootArgs(opts Options, pluginsDev string) string {
 		// guest that the guest did not write (E4-6).
 		args = append(args, "kelyfos.plugins="+pluginsDev)
 	}
+	if opts.Flavor != "" {
+		// Which flavor this machine is, and therefore which confinement profile
+		// its supervisor applies to everything it spawns (P5-3). Same channel
+		// as the agent name and the proxy address, for the same reason: the
+		// kernel command line is the one thing inside the guest that the guest
+		// did not write, so a compromised agent cannot ask for a laxer profile
+		// by claiming to be a different image.
+		args = append(args, "kelyfos.flavor="+opts.Flavor)
+	}
 	if agent != "" {
 		// The guest is told which agent it is, rather than asked. Same channel
 		// as the proxy address and the scratch cap, and for the same reason:

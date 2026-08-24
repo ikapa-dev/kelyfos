@@ -173,7 +173,7 @@
     <span class="bl-name">Overall</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">P5-3 &mdash; guest hardening: per-flavor restrictions on what the supervisor grants what it spawns. Landlock needs a guest kernel config change and a rebuild, and needs both halves &mdash; compiled in <i>and</i> named in <code>CONFIG_LSM</code></b></div>
+  <div class="focusline">Current focus: <b id="focus">P5-4 &mdash; the bars re-earned on the bare-KVM reference with the jail and both filters on the boot path, the quickstart figure re-measured with the sudoers step in it, and the README&rsquo;s &ldquo;not hardened yet&rdquo; sentence replaced by one that is also true</b></div>
 </div>
 
 <!-- ====================================================== 1. END GOAL -->
@@ -577,7 +577,7 @@
         working &mdash; but E1&rsquo;s caps have been unusable by default since P5-1, and this phase&rsquo;s own
         acceptance asks that the cgroup a VMM sits in be the one KelyfOS asked for. Lands before P5-4, with the
         check that proves it added to <code>dev/accept-jail.sh</code> rather than left as a claim.</span></li>
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">P5-3</span><span class="tk"><b>Guest hardening: what the supervisor grants what it
         spawns</b> (P4-2). Per-flavor restrictions on every process the supervisor starts &mdash; exec, plugins, the
         shell &mdash; so a compromised agent inside a guest is confined further than the VM boundary alone confines
@@ -1563,6 +1563,33 @@ after:
         <code>--cgroup</code> parameters are specified and <code>--cgroup-version=2</code> is passed, the jailer
         &hellip; will move the process to the specified cgroup&rdquo;, and a parent that does not exist is a silent
         no-op</td></tr>
+        <tr><td class="mono">2026-08-24</td><td class="mono">P5-3</td>
+        <td><b>Per-flavor confinement on everything the supervisor spawns, and the toolbox still
+        works.</b> The guest kernel gained Landlock &mdash; both halves, compiled in <i>and</i> named in
+        <code>CONFIG_LSM</code>, because an LSM that is built and not named answers <code>ENOSYS</code> exactly like
+        one that was never built. Landlock takes the filesystem: read and execute the whole image, write only
+        <code>/work</code>, <code>/tmp</code>, <code>/run</code>, <code>$HOME</code> and seven named device nodes;
+        seccomp refuses twenty-eight syscalls with <code>EPERM</code>, a refusal list rather than an allowlist for
+        the same reason P5-2 refused to write one for the VMM. Both are applied by a re-exec of the supervisor that
+        restricts itself and then <code>execve</code>s the real program, in <code>reaper.startAndRegister</code> &mdash;
+        the one place every child is started, so <code>exec</code>, the plugins and the shell get it without any of
+        the three remembering to ask.</td>
+        <td class="mono">/sys/kernel/security/lsm &rarr; <b>capability,landlock</b> &middot; guest reports
+        <b>landlock abi 6</b><br>
+        dev/accept-profile.sh <b>23/23</b>: a write to /etc, /usr and /lib refused by the kernel, the same write in
+        /work fine; <code>mount</code> and <code>reboot</code> EPERM; a spawned process's own
+        <code>/proc/self/status</code> reports <b>Seccomp: 2, NoNewPrivs: 1</b>, and so does a shell on the pty
+        channel<br>
+        toolbox intact: git commits in /work, python3 runs, <code>mv</code> crosses /tmp&rarr;/work (REFER granted on
+        purpose), busybox still dispatches on argv[0], a missing command is still 127 and not a confinement failure<br>
+        two profile bugs found by running it: git opens /dev/null read-write, which the first profile refused &mdash;
+        fixed by naming seven device nodes rather than granting /dev, so /dev/vda and /dev/vdb stay unwritable;
+        and Landlock refuses ptrace between sibling domains, which broke an E4 check that read another process's
+        /proc/&lt;pid&gt;/exe<br>
+        regression, all green: jail 17/17, seccomp 15/15, profile 23/23, denials 12/12, shell 13/13, runs 18/18,
+        notify 22/22, forward 19/19, e4 22/22, e5 33/33, e1 13/13, the Go suite, and the cookbook<br>
+        two pre-existing failures found by the sweep and fixed: accept-e4 grepped a refusal wording that E5-4
+        changed and nobody re-ran; accept-runs counted a session directory left root-owned by a sudo diagnostic</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
@@ -1808,6 +1835,42 @@ after:
         retrospective justification for a small change.</td>
         <td>Found by P5-2, 2026-08-24. Evidence in the progress row of the same date. The task text is P5-6;
         this phase&rsquo;s acceptance item 2 is what makes it a phase-exit blocker rather than a backlog item.</td></tr>
+        <tr><td class="mono">D31</td><td class="mono">2026-08-24</td>
+        <td><b>The guest profile is a refusal list applied by a re-exec, and the supervisor is not inside it.</b>
+        <i>Three forks, decided together because each answer constrains the next.</i>
+        <i>Allowlist or refusal list.</i> An allowlist is the stronger shape and it is what Firecracker uses for its
+        own VMM &mdash; but Firecracker knows every syscall its own code makes. A KelyfOS guest runs
+        <code>python3</code>, <code>node</code>, <code>git</code> and whatever an agent installs, and an allowlist
+        for that is a research project whose first miss is a crash in somebody&rsquo;s build. P5-2 refused to
+        hand-write an allowlist for somebody else&rsquo;s binary and called it &ldquo;a way to produce a crash that
+        looks like a security feature&rdquo;; the same sentence applies here with more force. <b>Chosen:</b> a
+        refusal list of twenty-eight names, every one of them something no compiler, package manager or test runner
+        calls, refused with <code>EPERM</code> rather than a kill so the program reports the error its libc
+        documents.
+        <i>Where the restrictions are applied.</i> Both mechanisms restrict the calling thread and are inherited
+        across fork and exec, and Go has no safe hook between the two &mdash; after <code>fork</code> only
+        async-signal-safe work is legal. The alternatives were to restrict a locked OS thread inside the supervisor
+        and spawn from it, which leaves a permanently crippled thread in PID 1 and makes the Go runtime&rsquo;s own
+        syscalls a hazard, or to wait for Go 1.28, whose <code>SysProcAttr</code> gains
+        <code>UseLandlock</code>/<code>NoNewPrivs</code> (golang/go#68595, merged for that release) and still has
+        nothing for seccomp. <b>Chosen:</b> a re-exec of the supervisor that restricts itself and then
+        <code>execve</code>s the target. It costs one exec per spawned process, off the boot path, and it is the
+        shape Go 1.28 will let us delete rather than rewrite.
+        <i>Whether the supervisor is confined too.</i> It cannot be: it calls <code>reboot</code> to power the
+        machine off, which is on the refusal list, and it writes <code>/proc/sys</code> during setup. Confining PID 1
+        would mean a profile with holes in it shaped exactly like the supervisor, which is a profile that protects
+        nothing. <b>Chosen:</b> the profile is for what the supervisor spawns, which is what
+        <code>docs/hardening.md</code> §4 says and what the phase promised.
+        <i>And one thing §4.3 asked for that a PID 1 cannot do.</i> It says the supervisor &ldquo;refuses to start&rdquo;
+        when the kernel cannot apply the profile. PID 1 exiting is a kernel panic, which turns a diagnosable
+        condition into an unreadable one. So the refusal is split: the supervisor probes Landlock at boot and reports
+        the failure in its ready frame, the host refuses the machine with
+        <code>[profile.not_enforced]</code> and tears it down, and the confining step refuses every spawn anyway if
+        one somehow got that far. From the outside that is a machine that would not start; from the inside it is a
+        machine that can say why.</td>
+        <td>P5-3, 2026-08-24. Evidence in the progress row of the same date and in
+        <code>dev/accept-profile.sh</code>. <i>Revisit when</i> the project moves to Go 1.28: the re-exec for
+        Landlock becomes three struct fields, and the question is then whether seccomp alone still justifies it.</td></tr>
     <!-- Claude Code: append rows above this line. -->
   </table>
 </section>

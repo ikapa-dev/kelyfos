@@ -34,6 +34,7 @@ Contents, in reading order:
 - `docs/reference/events.md` — every flight-recorder event, with its payload fields
 - `docs/reference/exit-codes.md` — what each status the CLI returns means
 - `docs/reference/denials.md` — every refusal KelyfOS makes, with the fix line each one carries
+- `docs/reference/profiles.md` — per flavor, the trees a spawned process may write and the syscalls it is refused
 
 
 
@@ -4350,7 +4351,19 @@ working, and the acceptance checks them rather than trusting them:
 - `/work` stays writable, because that is the whole point of a workspace;
 - the read-only root stays readable, because that is where the programs are;
 - the supervisor's own vsock channels stay reachable, because that is the
-  entire interface.
+  entire interface. (They are: Landlock at ABI 6 governs the filesystem and TCP
+  bind/connect, and `AF_VSOCK` is outside both — verified in the kernel's own
+  `security/landlock/net.c`, which returns early for any address family that is
+  not `AF_INET`/`AF_INET6`.)
+
+*Written after P5-3: this is a visible change, and it broke something.* Writing
+anywhere outside those trees now fails with `EACCES`, and that includes creating
+a new directory at the root — `mkdir /prepared`, which one of the cookbook
+recipes did. There is no way to permit that and still refuse `/etc`: a Landlock
+rule covers a tree, so granting the root grants everything under it. The recipe
+now prepares in `/tmp`, which is where it belonged, and the release notes say
+plainly that a command writing outside `/work`, `/tmp`, `/run` and `$HOME` is
+refused from v0.9 where it succeeded before.
 
 ### 4.3 Per flavor, and refusing rather than degrading
 
@@ -4362,6 +4375,35 @@ rather than continuing with the profile silently absent.
 That is the same rule the rest of this product follows and for the same reason:
 a limit that is quietly not applied is worse than no limit, because somebody is
 relying on it.
+
+### 4.4 Written after P5-3: how it is applied, and one thing it also does
+
+Both mechanisms restrict the *calling thread* and are inherited across fork and
+exec, and Go offers no safe hook between the two — after `fork` only
+async-signal-safe work is legal, which rules out the Go runtime. So the
+supervisor re-execs itself: the command becomes `/proc/self/exe --confine
+<flavor> --path <resolved> -- <argv…>`, and that process applies the profile to
+itself and then `execve`s the real program. Nothing of the runtime has to
+survive the restrictions, because they go on immediately before the exec that
+replaces the process. The original `argv` is carried through untouched, which
+matters more than it sounds: BusyBox is one binary that decides what to be from
+`argv[0]`.
+
+It is applied in `reaper.startAndRegister`, the single place every child is
+started, for the reason `requireJail` lives in `sandbox.New` — a confinement
+three call sites have to remember is one that a fourth will not.
+
+**And a consequence worth stating, because it is a protection nobody asked
+for.** Each confined process gets its own Landlock domain, and Landlock's
+`ptrace` hook refuses introspection *between sibling domains*. So two commands
+in the same sandbox cannot read each other's `/proc/<pid>/exe`, or attach to one
+another, even though both run as root and even on `dev`, where the profile
+leaves `ptrace` out of the refusal list. A debugger that *launches* its target
+still works — the child inherits its parent's domain — which is the case that
+matters. Attaching to an unrelated process does not. This was found by an
+acceptance test that killed a plugin by scanning `/proc/*/exe` and stopped being
+able to see it; the test now matches on `cmdline`, which needs no such access.
+Signals themselves are not scoped, so `kill` between siblings still works.
 
 ---
 
@@ -4379,7 +4421,15 @@ setup step; the trade is priced in D29 and is revisitable.
 
 **The guest kernel.** An agent is still root inside its own guest and can still
 reach the whole syscall surface the seccomp profile permits. Landlock restricts
-the filesystem; it does not make the kernel smaller.
+the filesystem; it does not make the kernel smaller. *After P5-3:* the profile is
+a refusal list, not an allowlist, so the surface it leaves is everything a
+kernel offers root minus twenty-eight names — a real reduction at exactly the
+places that matter (no module loading, no mount, no clock, no keyrings) and not
+a small surface. Landlock also cannot restrict `chdir`, `stat`, `chmod`,
+`chown`, `access` or `fcntl` at all, by its own documentation, and cannot
+restrict a file descriptor that was already open when the profile was applied —
+so what the supervisor hands a child on its stdin and stdout is outside this
+layer by construction.
 
 **The other agents' machines, still not reachable** — that was already true and
 this phase does not improve it. It is listed because a reader deciding whether
@@ -5016,8 +5066,8 @@ trap 'pkill -f "kelyfos run" 2>/dev/null || true; rm -rf "$work"' EXIT
 # caches. This stands in for whatever your expensive setup is.
 kelyfos run --image dev -- bash -c '
   set -e
-  kelyfos exec "mkdir -p /prepared && echo \"expensive setup output\" > /prepared/marker"
-  kelyfos exec "cat /prepared/marker"
+  kelyfos exec "mkdir -p /tmp/prepared && echo \"expensive setup output\" > /tmp/prepared/marker"
+  kelyfos exec "cat /tmp/prepared/marker"
 
   # Freeze it. A snapshot is the guest'"'"'s memory and device state on disk.
   kelyfos snapshot save --name prepared
@@ -5044,11 +5094,11 @@ echo "== every fork has the prepared state, and diverges from here =="
 n=0
 for id in $ids; do
   n=$((n+1))
-  kelyfos exec --sandbox "$id" 'cat /prepared/marker' >/dev/null
-  kelyfos exec --sandbox "$id" "echo fork-$n > /prepared/who"
+  kelyfos exec --sandbox "$id" 'cat /tmp/prepared/marker' >/dev/null
+  kelyfos exec --sandbox "$id" "echo fork-$n > /tmp/prepared/who"
 done
 for id in $ids; do
-  printf '  %s: %s\n' "$id" "$(kelyfos exec --sandbox "$id" 'cat /prepared/who')"
+  printf '  %s: %s\n' "$id" "$(kelyfos exec --sandbox "$id" 'cat /tmp/prepared/who')"
 done
 
 # Each fork resumes with a corrected clock and fresh entropy. Without that they
@@ -6611,7 +6661,7 @@ hand-written half, and this page says where each is still thin.
 
 | Document | Kind | What it answers |
 | --- | --- | --- |
-| [`reference/`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/reference/README.md) | **generated** | Every command, flag, `kelyfos.toml` key, MCP tool, event type, exit code and refusal, with types and defaults. Extracted from the source; CI fails on drift. |
+| [`reference/`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/reference/README.md) | **generated** | Every command, flag, `kelyfos.toml` key, MCP tool, event type, exit code, refusal and guest confinement profile, with types and defaults. Extracted from the source; CI fails on drift. |
 | [`protocol.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/protocol.md) | mixed | How the host and the guest talk: Firecracker's hybrid vsock, the port map, newline-delimited JSON framing, and every channel's message shape. |
 | [`events.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/events.md) | mixed | What the flight recorder writes: the common fields, the hash chain, every event type with its payload, and why `kelyfos runs` is the record read back rather than a second one. |
 | [`networking.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/networking.md) | mixed | Why a sandbox has no NIC by default, what `--allow` builds, the nftables template, and why the guest has no DNS. |
@@ -8266,6 +8316,17 @@ this build runs Firecracker under the jailer, which needs passwordless sudo (sud
 
 Named: `reason`, `sudoers`. The values above are an example.
 
+## `profile.not_enforced`
+
+The guest came up but its supervisor could not apply the per-flavor confinement profile, so nothing it spawned would be confined.
+
+```
+the guest cannot confine what it runs (landlock is not available in this kernel (function not implemented)) [profile.not_enforced]
+    rebuild the image — the guest kernel needs CONFIG_SECURITY_LANDLOCK=y and landlock named in CONFIG_LSM, and an LSM that is built but not named is not enabled
+```
+
+Named: `reason`. The values above are an example.
+
 ## `seccomp.not_in_force`
 
 The VMM came up without the syscall filter Firecracker compiles into its own release binaries, which a KelyfOS run requires rather than hopes for.
@@ -8342,3 +8403,48 @@ worker-1 may not read plan [team.store]
 ```
 
 Named: `agent`, `key`, `verb`. The values above are an example.
+
+
+---
+title: Guest confinement profiles
+url: https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/reference/profiles.md
+description: per flavor, the trees a spawned process may write and the syscalls it is refused
+---
+
+<!-- Generated by `make docs`. Do not edit: your changes will be overwritten,
+     and CI fails when this file disagrees with the source (F-D4). -->
+# Guest confinement profiles
+
+What the supervisor grants every process it spawns — `exec`, a plugin, and the
+interactive shell alike. It is applied by a re-exec of the supervisor that restricts
+itself and then runs the real program, so the restrictions belong to the child and
+never to the supervisor. [`../hardening.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/hardening.md) §4 says why each
+mechanism is here and what it does not do.
+
+**Landlock** governs the filesystem: the listed trees are writable, everything
+else on the image is readable and executable, and nothing else is writable.
+**seccomp** refuses the listed syscalls with `EPERM` — a refusal list rather than
+an allowlist, because an allowlist for an arbitrary agent command is a crash waiting
+to be mistaken for a security feature.
+
+The policy is the same on every architecture KelyfOS builds for. A name that is
+not a syscall on some architecture — `settimeofday` has none on aarch64, which has
+only `clock_settime` — is absent from that build's filter rather than faked, and
+`kelyfos-supervisor --dump-profile` prints the resolved numbers for the machine it
+runs on.
+
+## `base`
+
+Refuses to run where the Landlock ABI is below **2**.
+
+Writable: `/work`, `/tmp`, `/run`, `/root`
+
+Refused, 28 syscalls: `init_module`, `finit_module`, `delete_module`, `kexec_load`, `kexec_file_load`, `mount`, `umount2`, `pivot_root`, `chroot`, `swapon`, `swapoff`, `reboot`, `clock_settime`, `clock_adjtime`, `adjtimex`, `settimeofday`, `setns`, `unshare`, `add_key`, `request_key`, `keyctl`, `open_by_handle_at`, `bpf`, `perf_event_open`, `acct`, `quotactl`, `syslog`, `ptrace`
+
+## `dev`
+
+Refuses to run where the Landlock ABI is below **2**.
+
+Writable: `/work`, `/tmp`, `/run`, `/root`
+
+Refused, 27 syscalls: `init_module`, `finit_module`, `delete_module`, `kexec_load`, `kexec_file_load`, `mount`, `umount2`, `pivot_root`, `chroot`, `swapon`, `swapoff`, `reboot`, `clock_settime`, `clock_adjtime`, `adjtimex`, `settimeofday`, `setns`, `unshare`, `add_key`, `request_key`, `keyctl`, `open_by_handle_at`, `bpf`, `perf_event_open`, `acct`, `quotactl`, `syslog`

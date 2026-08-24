@@ -140,6 +140,31 @@ CONFIG_EXPERT=y
 # need this.
 # CONFIG_BPF_SYSCALL is not set
 
+# --- Landlock: the filesystem half of the guest profiles (P5-3) ------------
+# Both lines are required and neither is sufficient. The base config compiles
+# Landlock out *and* leaves it out of CONFIG_LSM, and those are two different
+# ways to not have it: an LSM that is built but not named in CONFIG_LSM is never
+# initialised, so it reads as protection in a config file and is none at
+# runtime. That is exactly the half-measure docs/hardening.md §4.1 refuses.
+#
+# CONFIG_LSM is restated in full rather than patched, because it is a string and
+# a string config has no notion of "add one" — the value below is the base's own
+# list with landlock prepended, which is also upstream's default ordering.
+# The two symbols below come from the base and Landlock needs both; they are
+# restated here anyway, for the reason at the top of this file. (Written as
+# settings and not named inside this comment: the fragment merger reads any
+# CONFIG_ token it finds, including one in prose, and reports it as a redefinition.)
+CONFIG_SECURITY=y
+CONFIG_SECURITYFS=y
+CONFIG_SECURITY_LANDLOCK=y
+CONFIG_LSM="landlock,lockdown,yama,loadpin,safesetid,integrity,selinux,smack,tomoyo,apparmor,bpf"
+
+# The syscall half needs nothing added: the base already builds both, and the
+# supervisor's per-flavor filters are classic BPF, which is why CONFIG_BPF_SYSCALL
+# staying off above costs nothing here.
+CONFIG_SECCOMP=y
+CONFIG_SECCOMP_FILTER=y
+
 # No console escape hatch and no profiling in a shipped image.
 #
 # CONFIG_DEBUG_KERNEL and CONFIG_SLUB_DEBUG stay on deliberately. They are menu

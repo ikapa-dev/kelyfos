@@ -45,11 +45,36 @@ var isPID1 = os.Getpid() == 1
 var theTeam *teamClient
 
 func main() {
+	// Before everything, including --dump-tools: this process may not be a
+	// supervisor at all. When the supervisor confines a child it re-execs this
+	// same binary, and that invocation must apply the profile and exec the real
+	// program without touching a single thing PID 1 owns (P5-3, confine.go).
+	if isConfineInvocation(os.Args) {
+		runConfined(os.Args)
+		return // unreachable: runConfined either execs or exits
+	}
+
 	// Before anything else, and deliberately before any mount: the guest's tool
 	// surface, printed as the tools/list result it would advertise. `make docs`
 	// runs this to generate the reference (E3-1), which makes the generated file
 	// the guest's own answer rather than a transcription of it. It runs as an
 	// ordinary process on the host, so it must touch nothing.
+	// The per-flavor confinement profiles, printed the way the supervisor holds
+	// them. `make docs` runs this to generate the reference, which makes the
+	// documented profile the enforced one rather than a description of it
+	// (P5-3, and the same argument as --dump-tools below).
+	if len(os.Args) > 1 && os.Args[1] == "--dump-profile" {
+		flavors := os.Args[2:]
+		if len(flavors) == 0 {
+			flavors = []string{"base", "dev"}
+		}
+		if err := DumpProfile(os.Stdout, flavors); err != nil {
+			fmt.Fprintln(os.Stderr, "kelyfos-supervisor:", err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	if len(os.Args) > 1 && os.Args[1] == "--dump-tools" {
 		if err := dumpTools(os.Stdout); err != nil {
 			fmt.Fprintln(os.Stderr, "kelyfos-supervisor:", err)
@@ -71,6 +96,10 @@ func main() {
 		// before the first tool call could ask for one. What launches them is
 		// E4-7; this is the device and the manifest.
 		thePlugins = mountPlugins()
+		// After the mounts, because the profile names trees that only exist
+		// once they are mounted, and before any channel is served, because
+		// nothing may be spawned unconfined (P5-3).
+		setupProfile()
 	}
 
 	// Egress, if this sandbox has any. Reading it here means every command
@@ -258,14 +287,16 @@ func announceReady(start time.Duration) {
 func pumpReady(conn net.Conn, bootID string, start time.Duration) error {
 	w := proto.NewWriter(conn)
 	if err := w.Write(proto.Ready{
-		V:           proto.Version,
-		Type:        "ready",
-		BootID:      bootID,
-		Arch:        runtime.GOARCH,
-		Kernel:      kernelRelease(),
-		Supervisor:  Version,
-		MonotonicNS: monotonic().Nanoseconds(),
-		Overlay:     overlayActive(),
+		V:            proto.Version,
+		Type:         "ready",
+		BootID:       bootID,
+		Arch:         runtime.GOARCH,
+		Kernel:       kernelRelease(),
+		Supervisor:   Version,
+		MonotonicNS:  monotonic().Nanoseconds(),
+		Overlay:      overlayActive(),
+		Profile:      profileSummary,
+		ProfileError: profileError,
 	}); err != nil {
 		return err
 	}

@@ -102,6 +102,8 @@ func referenceSet() []doc {
 			Summary: "what each status the CLI returns means"},
 		{Path: "docs/reference/denials.md", Title: "Denials", Full: true,
 			Summary: "every refusal KelyfOS makes, with the fix line each one carries"},
+		{Path: "docs/reference/profiles.md", Title: "Guest confinement profiles", Full: true,
+			Summary: "per flavor, the trees a spawned process may write and the syscalls it is refused"},
 	}
 }
 

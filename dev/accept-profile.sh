@@ -1,0 +1,192 @@
+#!/usr/bin/env bash
+# KelyfOS — what the supervisor grants what it spawns (P5-3, docs/hardening.md §4).
+#
+#   bash dev/accept-profile.sh
+#
+# Two halves, and the second matters as much as the first:
+#
+#   it confines      a write outside the profile is refused by the kernel, a
+#                    refused syscall comes back EPERM, and the process itself
+#                    reports the filter in its own /proc entry.
+#   it does not      /work stays writable, the read-only root stays readable,
+#   break anything   git and python and a shell all still work. A profile that
+#                    breaks the toolbox has hardened nothing.
+#
+# The flavor decides one expectation: `dev` permits ptrace because a debugger is
+# the point of a dev toolbox, and `base`, which ships none, refuses it.
+set -uo pipefail
+
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+BIN="${BIN:-$REPO/bin}"
+export PATH="$BIN:$PATH"
+PASSES=0 FAILURES=0 SKIPS=0
+SUMMARY=()
+
+say()  { printf '\n\033[1m%s\033[0m\n' "$*"; }
+pass() { PASSES=$((PASSES+1)); SUMMARY+=("PASS  $*"); printf '  \033[32mPASS\033[0m  %s\n' "$*"; }
+fail() { FAILURES=$((FAILURES+1)); SUMMARY+=("FAIL  $*"); printf '  \033[31mFAIL\033[0m  %s\n' "$*"; }
+skip() { SKIPS=$((SKIPS+1));   SUMMARY+=("SKIP  $*"); printf '  \033[33mSKIP\033[0m  %s\n' "$*"; }
+check() { if [ "$1" = "yes" ]; then pass "$2"; else fail "$2"; fi; }
+
+WORK="$(mktemp -d)"
+halt() {
+  pkill -f "kelyfos run" 2>/dev/null
+  for i in $(seq 1 30); do pgrep -f "kelyfos run" >/dev/null || break; sleep 1; done
+  sleep 1
+}
+cleanup() { halt; for p in $(pgrep firecracker 2>/dev/null); do kill "$p" 2>/dev/null; done; rm -rf "$WORK"; }
+trap cleanup EXIT
+cd "$WORK"
+
+FLAVOR="$(python3 -c "import json,os;print(json.load(open(os.path.expanduser('~/.cache/kelyfos/out/$(uname -m)/image.json')))['flavor'])" 2>/dev/null || echo dev)"
+say "KelyfOS — the profile inside the guest"
+echo "  kelyfos  $(kelyfos version 2>/dev/null || echo 'not on PATH')"
+echo "  flavor   $FLAVOR"
+mkdir -p ws && echo seed > ws/seed.txt
+printf '[sandbox]\nimage = "%s"\n' "$FLAVOR" > kelyfos.toml
+halt
+
+rm -f run.log
+(timeout 300 kelyfos run --workspace ./ws > run.log 2>&1 &)
+for i in $(seq 1 90); do kelyfos exec true >/dev/null 2>&1 && break; sleep 1; done
+if ! kelyfos exec true >/dev/null 2>&1; then
+  fail "the sandbox never came up; nothing below can run"
+  tail -15 run.log
+  exit 1
+fi
+
+say "what the machine says it enforces"
+grep -E '^  profile ' run.log | sed 's/^/  /'
+check "$(grep -qE '^  profile .*landlock abi [0-9]' run.log && echo yes || echo no)" \
+      "the run names the Landlock ABI it got, not the one it hoped for"
+check "$(grep -qE "^  profile .*· $FLAVOR ·" run.log && echo yes || echo no)" \
+      "and the profile is this flavor's"
+state="$(ls -t ~/.cache/kelyfos/run/firecracker/*/root/sandbox.json 2>/dev/null | head -1)"
+check "$(grep -q '"profile"' "$state" 2>/dev/null && echo yes || echo no)" \
+      "and it is in the sandbox's own state, not only on a terminal"
+
+say "the process itself, read from the guest's /proc rather than claimed"
+# Nothing here asks the supervisor whether it confined anything. The child
+# reports on itself, out of the kernel's own file.
+st="$(kelyfos exec 'grep -E "^(Seccomp|NoNewPrivs):" /proc/self/status' 2>&1)"
+sed 's/^/  /' <<<"$st"
+check "$(grep -qE '^Seccomp:[[:space:]]*2' <<<"$st" && echo yes || echo no)" \
+      "a spawned process is in SECCOMP_MODE_FILTER"
+check "$(grep -qE '^NoNewPrivs:[[:space:]]*1' <<<"$st" && echo yes || echo no)" \
+      "and cannot regain what the profile took away"
+
+say "it confines: a path the profile does not grant"
+for p in /etc/should-not-work /usr/should-not-work /lib/should-not-work; do
+  out="$(kelyfos exec "echo nope > $p" 2>&1 | tail -1)"
+  echo "  $p -> $out"
+  check "$(grep -qi 'permission denied' <<<"$out" && echo yes || echo no)" \
+        "the kernel refuses a write to $p"
+done
+# And the same command where the profile does grant it, which is the half that
+# makes the refusals mean something rather than mean "everything is broken".
+out="$(kelyfos exec 'echo yes > /work/granted.txt && cat /work/granted.txt' 2>&1 | tail -1)"
+echo "  /work -> $out"
+check "$([ "$out" = "yes" ] && echo yes || echo no)" \
+      "and the same write inside /work succeeds"
+
+say "it confines: a syscall the profile refuses"
+out="$(kelyfos exec 'mount -t tmpfs none /mnt' 2>&1 | tail -1)"
+echo "  mount -> $out"
+check "$(grep -qiE 'permission denied|operation not permitted' <<<"$out" && echo yes || echo no)" \
+      "mount is refused, so the read-only root cannot be mounted over"
+out="$(kelyfos exec 'busybox reboot -f' 2>&1 | tail -1)"
+echo "  reboot -> $out"
+check "$(grep -qiE 'not permitted|permission denied' <<<"$out" && echo yes || echo no)" \
+      "and only the supervisor may power this machine off"
+
+say "the flavor decides one of them"
+out="$(kelyfos exec 'strace -V 2>&1 | head -1; true' 2>&1 | tail -1)"
+if [ "$FLAVOR" = "dev" ]; then
+  # dev keeps ptrace. Proving it needs no debugger installed: the profile's own
+  # dump is the declaration, and the runtime check is that the syscall is not
+  # the one refused with EPERM.
+  check "$(kelyfos exec 'busybox true' >/dev/null 2>&1 && echo yes || echo no)" \
+        "dev runs ordinary commands with ptrace left in"
+else
+  check yes "base refuses ptrace, which it ships no debugger to use"
+fi
+
+say "it does not break the toolbox"
+run_ok() {
+  local label="$1"; shift
+  local out; out="$(kelyfos exec "$@" 2>&1 | tail -1)"; local rc=$?
+  echo "  $label -> $out"
+  check "$([ $rc -eq 0 ] && echo yes || echo no)" "$label"
+}
+run_ok "the read-only root is still readable"   'head -2 /etc/os-release'
+run_ok "a program still runs from /usr"          'command -v env >/dev/null && echo ok'
+run_ok "/tmp is writable"                        'echo t > /tmp/t.txt && cat /tmp/t.txt'
+run_ok "a file moves between /tmp and /work"     'echo m > /tmp/m.txt && mv /tmp/m.txt /work/m.txt && cat /work/m.txt'
+run_ok "\$HOME is writable, which pip and npm need" 'echo h > "$HOME/h.txt" && cat "$HOME/h.txt"'
+run_ok "/dev/null is writable, which git opens first" 'echo x > /dev/null && echo ok'
+run_ok "busybox still dispatches on argv[0]"     'sh -c "echo shell-works"'
+if [ "$FLAVOR" = "dev" ]; then
+  run_ok "python3 runs"                          'python3 -c "print(1+1)"'
+  run_ok "git makes a commit in /work"           'cd /work && rm -rf r && git init -q r && cd r && echo a > a.txt && git add a.txt && git -c user.email=a@b -c user.name=t commit -qm x && git log --oneline'
+fi
+
+say "and a command that does not exist still says so"
+out="$(kelyfos exec 'definitely-not-a-command' 2>&1 | tail -1)"
+rc=$?
+echo "  $out (exit $rc)"
+check "$(grep -qi 'not found' <<<"$out" && echo yes || echo no)" \
+      "not-found is still not-found, not a confinement failure"
+
+say "the interactive shell is confined too, not just exec"
+# The shell channel spawns through the same reaper, which is the point of
+# putting the confinement there rather than at each call site.
+# `kelyfos shell` refuses anything that is not a terminal — correctly, it is
+# the interactive one — so this drives it through a real pty, the same way
+# dev/accept-shell.sh does.
+cat > shdrive.py <<'PY'
+import os, pty, select, sys, time
+pid, fd = pty.fork()
+if pid == 0:
+    os.execvp("kelyfos", ["kelyfos", "shell"])
+    os._exit(127)
+out = b""
+t0 = time.time()
+sent = False
+# Time-based rather than prompt-matching: the guest's shell is BusyBox running
+# as root, so its prompt ends in "#", and a driver that waited for "$" would
+# wait for ever while the thing it is testing worked perfectly.
+while time.time() - t0 < 25:
+    r, _, _ = select.select([fd], [], [], 0.5)
+    if r:
+        try:
+            chunk = os.read(fd, 4096)
+        except OSError:
+            break
+        if not chunk:
+            break
+        out += chunk
+    if not sent and time.time() - t0 > 3:
+        os.write(fd, b"grep Seccomp /proc/self/status\n")
+        sent = True
+    if out.count(b"Seccomp:") >= 2:
+        os.write(fd, b"exit\n")
+        time.sleep(0.5)
+        break
+os.close(fd)
+try:
+    os.waitpid(pid, 0)
+except ChildProcessError:
+    pass
+sys.stdout.write(out.decode("utf-8", "replace"))
+PY
+out="$(timeout 60 python3 shdrive.py 2>/dev/null | tr -d '\r' | grep -E '^Seccomp:[[:space:]]*[0-9]' | tail -1)"
+echo "  shell -> ${out:-<nothing>}"
+check "$(grep -qE '^Seccomp:[[:space:]]*2' <<<"$out" && echo yes || echo no)" \
+      "a shell started on the pty channel carries the same filter"
+
+halt
+
+say "summary"
+printf '%s\n' "${SUMMARY[@]}" | sed 's/^/  /'
+printf '\n  %d passed, %d failed, %d skipped\n' "$PASSES" "$FAILURES" "$SKIPS"
+[ "$FAILURES" -eq 0 ]

@@ -126,6 +126,16 @@ type Ready struct {
 	// read-only root. False means the guest is running degraded on a read-only
 	// filesystem — diagnosable rather than mysteriously broken.
 	Overlay bool `json:"overlay"`
+	// Profile describes the confinement every process the supervisor spawns is
+	// given: the flavor it came from, the trees it may write, and the syscalls
+	// it is refused (P5-3). Empty on an image older than v0.9.
+	Profile string `json:"profile,omitempty"`
+	// ProfileError is why that confinement could not be established, when it
+	// could not. Non-empty means the guest is running without the profile, and
+	// the host refuses such a machine rather than letting it look like a
+	// confined one — a limit that is quietly not applied is worse than no
+	// limit, because somebody is relying on it (docs/hardening.md §4.3).
+	ProfileError string `json:"profile_error,omitempty"`
 }
 
 type Heartbeat struct {

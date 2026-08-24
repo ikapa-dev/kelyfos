@@ -85,6 +85,11 @@ func run(bin, sup, out, repo string) error {
 			return err
 		}
 		files["tools.md"] = page
+		prof, err := profilesPage(sup)
+		if err != nil {
+			return err
+		}
+		files["profiles.md"] = prof
 	}
 	for name, body := range files {
 		if err := os.WriteFile(filepath.Join(out, name), []byte(body), 0o644); err != nil {
@@ -622,6 +627,91 @@ type toolDump struct {
 	Base      []mcp.Tool `json:"base"`
 	Team      []mcp.Tool `json:"team"`
 	TeamSpawn []mcp.Tool `json:"team_spawn"`
+}
+
+// profilesPage is the guest confinement every flavor applies, asked of the
+// supervisor rather than transcribed from it (P5-3).
+//
+// The syscall numbers are this build's architecture. That is the honest thing to
+// print — a refusal list is numbers by the time the kernel sees it, and the same
+// name is a different number on another architecture — and it is why the page
+// says which architecture it was generated on.
+func profilesPage(sup string) (string, error) {
+	out, err := exec.Command(sup, "--dump-profile", "base", "dev").Output()
+	if err != nil {
+		return "", fmt.Errorf("supervisor --dump-profile: %w", err)
+	}
+
+	type profile struct {
+		name    string
+		arch    string
+		abi     string
+		write   []string
+		refused []string
+	}
+	var profiles []profile
+	var cur *profile
+	for _, line := range strings.Split(string(out), "\n") {
+		f := strings.Fields(line)
+		if len(f) == 0 {
+			continue
+		}
+		switch f[0] {
+		case "flavor":
+			profiles = append(profiles, profile{name: f[1]})
+			cur = &profiles[len(profiles)-1]
+		case "arch":
+			cur.arch = f[1]
+		case "landlock-abi-min":
+			cur.abi = f[1]
+		case "write":
+			cur.write = append(cur.write, f[1])
+		case "refuse":
+			// The name only. A syscall's number is the architecture's, and
+			// `make docs` runs on whichever architecture CI uses, so a page
+			// built from numbers would fail its own diff check on the other
+			// one. The numbers are in `supervisor --dump-profile`, which the
+			// acceptance reads.
+			cur.refused = append(cur.refused, "`"+f[1]+"`")
+		}
+	}
+	if len(profiles) == 0 {
+		return "", fmt.Errorf("supervisor --dump-profile described no flavors")
+	}
+
+	var b strings.Builder
+	b.WriteString(banner)
+	b.WriteString("# Guest confinement profiles\n\n")
+	b.WriteString("What the supervisor grants every process it spawns \u2014 `exec`, a plugin, and the\n" +
+		"interactive shell alike. It is applied by a re-exec of the supervisor that restricts\n" +
+		"itself and then runs the real program, so the restrictions belong to the child and\n" +
+		"never to the supervisor. [`../hardening.md`](../hardening.md) \u00a74 says why each\n" +
+		"mechanism is here and what it does not do.\n\n")
+	b.WriteString("**Landlock** governs the filesystem: the listed trees are writable, everything\n" +
+		"else on the image is readable and executable, and nothing else is writable.\n" +
+		"**seccomp** refuses the listed syscalls with `EPERM` \u2014 a refusal list rather than\n" +
+		"an allowlist, because an allowlist for an arbitrary agent command is a crash waiting\n" +
+		"to be mistaken for a security feature.\n\n")
+	b.WriteString("The policy is the same on every architecture KelyfOS builds for. A name that is\n" +
+		"not a syscall on some architecture \u2014 `settimeofday` has none on aarch64, which has\n" +
+		"only `clock_settime` \u2014 is absent from that build's filter rather than faked, and\n" +
+		"`kelyfos-supervisor --dump-profile` prints the resolved numbers for the machine it\n" +
+		"runs on.\n")
+
+	for _, p := range profiles {
+		fmt.Fprintf(&b, "\n## `%s`\n\n", p.name)
+		fmt.Fprintf(&b, "Refuses to run where the Landlock ABI is below **%s**.\n\n", p.abi)
+		b.WriteString("Writable: ")
+		for i, w := range p.write {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			fmt.Fprintf(&b, "`%s`", w)
+		}
+		b.WriteString("\n\n")
+		fmt.Fprintf(&b, "Refused, %d syscalls: %s\n", len(p.refused), strings.Join(p.refused, ", "))
+	}
+	return b.String(), nil
 }
 
 // hostTools asks `kelyfos serve-mcp` for its own tools/list, over the protocol,

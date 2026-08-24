@@ -34,9 +34,10 @@ Apache-2.0. Single-host developer tool; not hardened yet — the threat model be
 - [Event types](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/reference/events.md): every flight-recorder event, with its payload fields
 - [Exit codes](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/reference/exit-codes.md): what each status the CLI returns means
 - [Denials](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/reference/denials.md): every refusal KelyfOS makes, with the fix line each one carries
+- [Guest confinement profiles](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/reference/profiles.md): per flavor, the trees a spawned process may write and the syscalls it is refused
 
 ## Optional
 
-- [Everything in one file](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/llms-full.txt): every page above concatenated, roughly 102k tokens, for a client that would rather spend context than fetch
+- [Everything in one file](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/llms-full.txt): every page above concatenated, roughly 104k tokens, for a client that would rather spend context than fetch
 - [Build plan and decision log](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/PLAN.html): HTML. Phases 0-4, every decision with its rationale and the command output behind each claim
 - [Feature plan and decision log](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/PLAN-FEATURES.html): HTML. The epics after the build plan, same protocol

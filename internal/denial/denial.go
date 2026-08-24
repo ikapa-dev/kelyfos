@@ -256,6 +256,18 @@ var (
 		},
 	}
 
+	// --- the guest profile: what the supervisor grants what it spawns -----
+
+	ProfileNotEnforced = Denial{
+		ID: "profile.not_enforced",
+		Doc: "the guest came up but its supervisor could not apply the per-flavor confinement " +
+			"profile, so nothing it spawned would be confined",
+		Msg: "the guest cannot confine what it runs (<reason>)",
+		Fix: "rebuild the image — the guest kernel needs CONFIG_SECURITY_LANDLOCK=y and " +
+			"landlock named in CONFIG_LSM, and an LSM that is built but not named is not enabled",
+		Sample: V{"reason": "landlock is not available in this kernel (function not implemented)"},
+	}
+
 	// --- the host syscall filter ------------------------------------------
 
 	SeccompNotInForce = Denial{
@@ -337,6 +349,7 @@ func All() []Denial {
 		EgressHost, EgressPort,
 		ForwardClosed,
 		JailNoSudo,
+		ProfileNotEnforced,
 		SeccompNotInForce,
 		SecretUnallowed,
 		TeamEdge, TeamSpawnBudget, TeamSpawnImage, TeamSpawnNone, TeamStore,

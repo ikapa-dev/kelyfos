@@ -22,6 +22,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/p4r4n0rm4l/KelyfOS/internal/denial"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/proto"
 )
 
@@ -162,6 +163,10 @@ type State struct {
 	// (P5-2, docs/hardening.md §3).
 	Seccomp        string `json:"seccomp,omitempty"`
 	SeccompThreads int    `json:"seccomp_threads,omitempty"`
+	// Profile is the confinement the guest reported applying to everything its
+	// supervisor spawns: the flavor, the writable trees, the refused syscalls
+	// (P5-3). Empty on a machine older than v0.9.
+	Profile string `json:"profile,omitempty"`
 }
 
 // RecordSession is the flight recorder this sandbox's events belong in: the
@@ -532,6 +537,19 @@ func (s *Sandbox) WaitReady(ctx context.Context) (proto.Ready, error) {
 		// (P5-2). confirmSeccomp writes the state itself.
 		if err := s.confirmSeccomp(); err != nil {
 			_ = s.Shutdown(2 * time.Second)
+			return proto.Ready{}, err
+		}
+		// The guest's own report of whether it can confine what it spawns. It
+		// is a claim rather than an observation — the host cannot read the
+		// guest's kernel — so it is the fail-closed switch and not the proof;
+		// the proof is that a write outside the profile is refused, which
+		// dev/accept-profile.sh checks by doing it (P5-3).
+		if r.ProfileError != "" {
+			_ = s.Shutdown(2 * time.Second)
+			return proto.Ready{}, denial.ProfileNotEnforced.Err(denial.V{"reason": r.ProfileError})
+		}
+		s.State.Profile = r.Profile
+		if err := s.writeState(); err != nil {
 			return proto.Ready{}, err
 		}
 		return r, nil

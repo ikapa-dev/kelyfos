@@ -75,6 +75,9 @@ func (r *reaper) drainLocked() {
 func (r *reaper) startAndRegister(cmd *exec.Cmd) (chan syscall.WaitStatus, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	// Every process this supervisor starts passes through here, which is why
+	// the profile is applied here and not at the three call sites (P5-3).
+	confine(cmd)
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}

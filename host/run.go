@@ -716,6 +716,12 @@ status. This is how you hand an agent a sandbox and nothing else:
 		fmt.Printf("  seccomp     %s mode, read from /proc on all %d VMM threads\n",
 			sb.State.Seccomp, sb.State.SeccompThreads)
 	}
+	if sb.State.Profile != "" {
+		// What the guest confines its own processes with. The full list is
+		// docs/reference/profiles.md; this line says which profile is in force
+		// and is short enough to read (P5-3).
+		fmt.Printf("  profile     %s\n", sb.State.Profile)
+	}
 	if notifier.Enabled() {
 		// Which mechanism, out loud. A notification that never arrives is
 		// indistinguishable from one that was never asked for, and the machine

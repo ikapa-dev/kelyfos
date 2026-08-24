@@ -3,15 +3,14 @@
 Updated 2026-08-24 · synced with origin/main · CI green (run 32704409463)
 
 ## Plans
-- PLAN.html — **40/50**. Phase 5 (hardening, v0.9): P5-0, P5-1, P5-2, P5-6 done.
+- PLAN.html — **41/50**. Phase 5 (hardening, v0.9): P5-0, P5-1, P5-2, P5-6, P5-3 done.
 - PLAN-FEATURES.html — **COMPLETE and closed.** 42/42, five epics, v0.4–v0.8 released.
 
 ## Now
-P5-3 — guest hardening: per-flavor seccomp and Landlock on everything the supervisor
-spawns. Landlock needs a guest kernel config change and a full rebuild, and needs both
-halves: `CONFIG_SECURITY_LANDLOCK=y` *and* `landlock` named in `CONFIG_LSM`, because an
-LSM compiled in but not named reads as protection in a config file and is none at
-runtime (docs/hardening.md §4.1).
+P5-4 — the bars re-earned on the bare-KVM reference (D15) with the jail and both filters
+on the boot path; the quickstart ≤5-min figure re-measured *including* the sudoers step;
+the README's "not hardened yet" sentence replaced by one that is also true; and
+docs/threat-model.md brought into line with it rather than softened.
 
 ## This session
 Start-up reconciliation clean at 4c8fa5b. **P5-2 done**: which filter (a test on the argv
@@ -36,6 +35,15 @@ acceptance item 2. Also, on the owner's instruction: PLAN-FEATURES.html's E4 and
 carried stale `data-status` attributes in a closed document; both are `done` now and all
 five epics render green.
 
+**P5-3 done.** The guest kernel gained Landlock (both halves — compiled in *and* named in
+`CONFIG_LSM`; `/sys/kernel/security/lsm` now reports `capability,landlock`). Every process
+the supervisor spawns is confined at `reaper.startAndRegister`: Landlock for the
+filesystem, a 28-name seccomp refusal list, applied by a re-exec that restricts itself and
+then execs the target (D31). accept-profile 23/23; a write to /etc, /usr, /lib refused by
+the kernel and the same write in /work fine; git, python3, `mv` across trees, the pty
+shell and argv[0] dispatch all intact. Full sweep green: 11 suites, the Go suite, 14
+cookbook recipes.
+
 ## Blocked / debts
 - P4-4, P4-5 [BLOCKED] on their own written conditions. `idle_timeout` refused (F-D20;
   F-D22). IMAGE_DIR per-arch not per-flavor: parked.
@@ -50,6 +58,17 @@ five epics render green.
 - `CONTRIBUTING.md` requires a DCO `Signed-off-by` on every commit; commits have not
   carried one for some time. Not fixed here — rewriting history is forbidden and adding it
   now would be inconsistent with the run of commits before it. John's call.
+- **Release-note items P5-4 must state as breaks, not leave to be discovered.** (1) A
+  guest command that writes outside `/work`, `/tmp`, `/run` and `$HOME` is refused from
+  v0.9 where it succeeded before — one cookbook recipe did exactly this and now prepares
+  in `/tmp`. (2) A snapshot taken before v0.9 restores into the guest it captured, which
+  has no profile and no jail-era supervisor; it is not upgraded by being restored.
+  (3) Landlock refuses ptrace between sibling processes, so attaching a debugger to an
+  already-running process fails even on `dev`; launching the target under the debugger
+  works, because the child inherits the domain.
+- Minor, not chased: `kelyfos runs --all` silently skips a session directory it cannot
+  read (one was left root-owned by a `sudo` diagnostic in this session). It counts as
+  missing rather than reporting "1 unreadable".
 - Measurement debt for P5-4: cold boot-to-ready and snapshot restore re-measured on the
   bare-KVM reference with jail and filter on the boot path, and the quickstart ≤5-min
   figure re-measured *including* the sudoers step.

@@ -213,8 +213,8 @@ trap 'pkill -f "kelyfos run" 2>/dev/null || true; rm -rf "$work"' EXIT
 # caches. This stands in for whatever your expensive setup is.
 kelyfos run --image dev -- bash -c '
   set -e
-  kelyfos exec "mkdir -p /prepared && echo \"expensive setup output\" > /prepared/marker"
-  kelyfos exec "cat /prepared/marker"
+  kelyfos exec "mkdir -p /tmp/prepared && echo \"expensive setup output\" > /tmp/prepared/marker"
+  kelyfos exec "cat /tmp/prepared/marker"
 
   # Freeze it. A snapshot is the guest'"'"'s memory and device state on disk.
   kelyfos snapshot save --name prepared
@@ -241,11 +241,11 @@ echo "== every fork has the prepared state, and diverges from here =="
 n=0
 for id in $ids; do
   n=$((n+1))
-  kelyfos exec --sandbox "$id" 'cat /prepared/marker' >/dev/null
-  kelyfos exec --sandbox "$id" "echo fork-$n > /prepared/who"
+  kelyfos exec --sandbox "$id" 'cat /tmp/prepared/marker' >/dev/null
+  kelyfos exec --sandbox "$id" "echo fork-$n > /tmp/prepared/who"
 done
 for id in $ids; do
-  printf '  %s: %s\n' "$id" "$(kelyfos exec --sandbox "$id" 'cat /prepared/who')"
+  printf '  %s: %s\n' "$id" "$(kelyfos exec --sandbox "$id" 'cat /tmp/prepared/who')"
 done
 
 # Each fork resumes with a corrected clock and fresh entropy. Without that they

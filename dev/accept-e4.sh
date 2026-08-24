@@ -172,11 +172,19 @@ facts["list_structured"] = listed["sc"]
 
 # 5. kill the plugin from outside it, the way a plugin really dies.
 #
-# By its executable rather than by its command line: the guest has no pkill, and
-# a /proc scan matching "server.py" would match the shell running the scan, which
-# has the string in its own arguments. Nothing else in this guest is python3.
-kill_it = ('for d in /proc/[0-9]*; do case "$(readlink "$d/exe" 2>/dev/null)" in '
-           '*/python3*) kill -9 "${d#/proc/}" ;; esac; done')
+# By its command line, skipping the scanning shell itself.
+#
+# This used to read $d/exe, which was neater — a /proc scan matching "server.py"
+# also matches the shell running the scan, since the string is in its own
+# arguments. That stopped working at P5-3 and the reason is the feature: every
+# process the supervisor spawns is confined by its own Landlock domain, and
+# Landlock's ptrace hook refuses introspection between sibling domains. Reading
+# another process's exe link needs exactly that access, so it now comes back
+# empty and the scan matched nothing — while `kill` itself still works, because
+# signals between siblings are not scoped. cmdline needs no such access.
+kill_it = ('for d in /proc/[0-9]*; do p="${d#/proc/}"; [ "$p" = "$$" ] && continue; '
+           'case "$(tr \'\\0\' \' \' < "$d/cmdline" 2>/dev/null)" in '
+           '*server.py*) kill -9 "$p" ;; esac; done')
 outer.call("sandbox_exec", {"sandbox": facts["sandbox"], "command": kill_it})
 time.sleep(2)
 after = inner.call("demo_echo", {"text": "anyone"})
@@ -223,7 +231,11 @@ check "$(fact uname | grep -q Linux && echo yes || echo no)" "sandbox_exec retur
 say "2. a domain outside the project toml is refused, and audited"
 echo "     $(fact allow_message | sed -n '1,1p')"
 check "$([ "$(fact allow_refused)" = "true" ] && echo yes || echo no)" "the request was refused"
-check "$(fact allow_message | grep -q 'never add to it' && echo yes || echo no)" "the refusal says the rule"
+# The wording moved to the catalog at E5-4 and this check was not updated with
+# it, so it has been failing since — found by P5-3's regression sweep, which is
+# the first time this suite had been run since. Matching the catalog's own text
+# rather than a paraphrase of it.
+check "$(fact allow_message | grep -q 'may never widen it' && echo yes || echo no)" "the refusal says the rule"
 check "$(grep -q 'client result  sandbox_run refused' server.log && echo yes || echo no)" \
       "the refusal is an mcp.host.* audit event"
 
