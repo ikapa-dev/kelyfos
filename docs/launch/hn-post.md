@@ -5,8 +5,11 @@ ready to paste. It tracks the repo: the numbers below are the ones the CI
 benchmark last published, with the run ids, and they get re-checked before the
 post goes out.
 
-Current as of **v0.6** (documentation an LLM can build from, released
-2026-08-23), plus the hardening batch that followed it.
+Current as of **v0.9** (hardening: the jailer, the VMM's own syscall filter
+proved in force, and per-flavor guest confinement). The numbers below come from
+the CI runs named beside them and were re-measured for this release, because the
+jailer and both filters sit on the boot path and a bar is never assumed across a
+change of security posture.
 
 ---
 
@@ -66,10 +69,10 @@ Current as of **v0.6** (documentation an LLM can build from, released
 > an agent you actually granted a spawn budget. The reasoning about who
 > delegates what stays in your agent framework; this is only the substrate.
 >
-> Boot-to-ready is 90 ms median (p95 95 ms) and snapshot restore 29 ms (p95 35),
+> Boot-to-ready is 135 ms median (p95 149 ms) and snapshot restore 49 ms (p95 51),
 > both x86_64 on a bare-KVM CI runner, 10 runs each — the benchmark is a
 > workflow in the repo, not a number I typed. A five-agent team comes up in
-> 366 ms cold and 215 ms warm on the same runner. `kelyfos fork -n 4` gives you
+> 412 ms with all five cold and 286 ms once a fork template is cached. `kelyfos fork -n 4` gives you
 > four divergent copies of one prepared machine; each gets fresh entropy and a
 > corrected clock on resume, because four VMs restored from one memory image
 > otherwise share a random pool, which is a genuinely bad way to generate a key.
@@ -84,17 +87,42 @@ Current as of **v0.6** (documentation an LLM can build from, released
 > costs scale in opposite directions: my dev box is slow to boot and fast to
 > write, the CI runner is the reverse. The fix was to boot cold by default, cache
 > the template in the background, and fork only when the cache is warm — 366 ms
-> and 215 ms are the two paths after that change. Both runs are in the repo with
+> and 215 ms were the two paths after that change. Both runs are in the repo with
 > their CI ids (32630824099 for the miss, 32632420532 for the re-measure) and the
 > 1098 ms is still in the log where it was written. A benchmark you only publish
 > when it flatters you is marketing.
 >
-> What it is not, yet: the Firecracker jailer and guest seccomp/Landlock
-> profiles are not done. Calling it "hardened" today would be a lie, so the
-> README calls it isolation-first and docs/threat-model.md is explicit about
-> the gaps — including that the host-side supervisor is the largest one, and
-> that a snapshot or a cached fork template is a guest's RAM sitting in a file
-> under your home directory with nothing but file permissions on it.
+> Two of those numbers have moved since, both for reasons worth stating. The
+> build system went to Buildroot's supported LTS line, which only carries kernel
+> headers to 6.12, so the guest kernel went back from 6.18 — costing about a
+> third of the boot time and buying a build system whose maintainers support it
+> until 2028. And the hardening below sits on the boot path: the jailer, reading
+> the VMM's filter out of /proc, and probing the guest's profile cost about 12 ms
+> each way. Both targets — 300 ms cold, 100 ms restore — still hold with room,
+> and the numbers above are the ones measured after those changes rather than the
+> ones from before them.
+>
+> Every release before this one said "not hardened yet", and it was true: the VM
+> boundary was the whole of it. v0.9 adds the two layers that sentence was
+> waiting on. Firecracker runs under the jailer — a chroot holding only that
+> sandbox's files, a dropped uid, its own cgroup — on every entry point or none.
+> Its own seccomp filter is read out of /proc on every one of its threads at
+> boot, and a VMM without one is refused rather than run; I pulled the installed
+> BPF program back out of the kernel with ptrace and decoded it, and what it
+> permits agrees syscall for syscall with the JSON Firecracker publishes, on both
+> architectures. Inside the guest, every process the supervisor spawns is
+> confined by Landlock and a 28-syscall refusal list, declared per flavor.
+>
+> What that is not: an agent is still root inside its own guest, and the profile
+> narrows what root can ask the kernel for without making the kernel smaller. The
+> chroot is not the boundary — the VM is — and the VMM drops to your uid rather
+> than to a dedicated account, so it could still signal your other processes.
+> Side channels and the supply chain are untouched. A snapshot or a cached fork
+> template is still a guest's RAM sitting in a file under your home directory
+> with nothing but file permissions on it, and a snapshot taken before v0.9
+> restores into the guest it captured — which has none of the above, and says so
+> on the terminal. The README carries that list beside the enforced one, and
+> docs/threat-model.md is the long version.
 >
 > The whole thing was built in the open against a plan file that doubles as the
 > status tracker; PLAN.html in the repo has every decision and a progress log
@@ -122,7 +150,7 @@ Current as of **v0.6** (documentation an LLM can build from, released
      decrypted, `plain` for an ordinary HTTP request it necessarily parsed,
      `tunnelled` only for one it relayed unopened — so you can prove which was
      which. docs/networking.md documents the cert-pinning limitation.
-  3. *"90 ms is just Firecracker's number."* → Firecracker's own claim is about
+  3. *"135 ms is just Firecracker's number."* → Firecracker's own claim is about
      the VMM; this is measured to guest-ready over vsock, which includes init,
      mounts, the overlay and the MCP listener binding. The harness is in the repo.
   4. *"Isn't multi-agent just orchestration you said you wouldn't build?"* →

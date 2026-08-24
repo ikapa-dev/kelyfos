@@ -3,18 +3,19 @@
 Updated 2026-08-24 · synced with origin/main · CI green through P5-8 (run 32713825239)
 
 ## Plans
-- PLAN.html — **45/53**. Phase 5 (hardening, v0.9): everything but P5-5 done.
+- PLAN.html — **46/53**. Phase 5 (hardening, v0.9): **all six tasks done**; the exit remains.
 - PLAN-FEATURES.html — **COMPLETE and closed.** 42/42, five epics, v0.4–v0.8 released.
 
 ## Now
-P5-5 — the launch assets, committed and posted nowhere: a ~20-second terminal recording
-at the top of the README, a first-time-visitor pass over its opening screen, and
-docs/launch/hn-post.md refreshed to v0.9 reality. Then the Phase 5 exit: full acceptance,
-tag v0.9, publish the release the way v0.4–v0.8 were published — and, added to the exit
-today, **re-time the quickstart against the actual v0.9 artifacts** before the publish is
-called done, so the README's number is a measurement of the release it ships in. P5-4's
-149 s / ~10 s was measured against the published v0.8. Expected within noise; if it
-drifts, the measured number goes in.
+The Phase 5 exit. Its acceptance list run as written, tag v0.9, publish the release the
+way v0.4–v0.8 were — then acceptance item 8, added today: re-time the quickstart against
+the artifacts that release actually ships, and put the measured number in the README with
+its provenance. P4-4 and P4-5 stay [BLOCKED] on their own written conditions.
+
+**P5-5 done.** The recording is a real session from a committed script — boot, a refused
+egress with its fix line, five agents, the chain verified — 202 KB, 14.3 s, with the cast
+committed beside it. The README's opening screen was cut back to what a stranger needs in
+ten seconds. The HN post is v0.9 reality, still posted nowhere.
 
 **P5-4 done.** Bars re-earned on the bare-KVM reference across the change of posture:
 cold boot 123 → **135 ms**, restore 37 → **49 ms** (about 12 ms each way for the jailer,

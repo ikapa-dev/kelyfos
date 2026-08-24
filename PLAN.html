@@ -173,7 +173,7 @@
     <span class="bl-name">Overall</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">P5-5 &mdash; the launch assets: a ~20-second terminal recording at the top of the README, a first-time-visitor pass over its opening screen, and the HN post refreshed to v0.9 reality. Committed, posted nowhere</b></div>
+  <div class="focusline">Current focus: the <b id="focus">Phase 5 exit &mdash; the acceptance list run as written, tag v0.9, publish the release the way v0.4&ndash;v0.8 were, then re-time the quickstart against the artifacts that release actually ships (acceptance item 8)</b></div>
 </div>
 
 <!-- ====================================================== 1. END GOAL -->
@@ -626,7 +626,7 @@
         sentence is replaced by a true one naming what is enforced and what is not, and
         <code>docs/threat-model.md</code> is updated to match it rather than to soften it. Every acceptance suite in
         <code>dev/</code> re-run green.</span></li>
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">P5-5</span><span class="tk"><b>Launch assets, committed and posted nowhere.</b>
         A ~20-second terminal recording &mdash; boot, a refused egress showing the printed fix line, a five-agent
         <code>team up</code>, a chain <code>--verify</code> &mdash; embedded at the top of the README; a
@@ -1745,6 +1745,40 @@ after:
         number is what goes in.</td>
         <td class="mono">PLAN.html &sect;6 Phase 5, acceptance item 8<br>
         the product owner&rsquo;s instruction of 2026-08-24</td></tr>
+        <tr><td class="mono">2026-08-24</td><td class="mono">P5-4</td>
+        <td><b>Correction to the team figures P5-4 published, caught while refreshing the launch post.</b> The row
+        above quotes <b>737 ms cold / 149 ms forked</b>. Those are real and they are the wrong pair to headline:
+        they come from <code>prove-team.sh</code>, whose team runs under a deliberate <b>200% CPU cap</b> &mdash;
+        five agents sharing two cores, which is why its cold number is slow and its forked number is fast. The
+        figure the README replaced was measured on <code>demo-team.sh</code>&rsquo;s graph, and the comparable pair
+        from the same run is <b>412 ms</b> with all five cold and <b>286 ms</b> with four forked from a cached
+        template. The README now carries those, with the condition named, and says the master boots cold either way
+        because a fork cannot carry a network identity. Two numbers from one run are not interchangeable just
+        because both are true.</td>
+        <td class="mono">caps run 32715397107 &mdash; team.log (prove-team, <code>cpu.max 200000 100000</code>):
+        737 ms / 149 ms &middot; demo.log (demo-team): 412 ms (5 cold) / 286 ms (4 forked, 1 cold)<br>
+        the pre-D28 pair this replaces was 366 ms / 215 ms, measured on demo-team&rsquo;s graph</td></tr>
+        <tr><td class="mono">2026-08-24</td><td class="mono">P5-5</td>
+        <td><b>The launch assets, committed and posted nowhere.</b> The recording is a real session against a real
+        machine, produced by a committed script rather than by hand &mdash; a boot that names its walls, an egress
+        refusal with the line that fixes it, five agents as a graph, and the chain verified &mdash; because an asset
+        nobody can regenerate goes stale silently. It is one pane on purpose: the fix line is printed by
+        <code>run</code> itself, which is where somebody watching a run would see it, and a two-pane demo would have
+        had to fake that. The README&rsquo;s opening screen was cut back to what a stranger needs in ten seconds:
+        the headline numbers, one paragraph on what v0.9 does and does not enforce, and a link to the table &mdash;
+        the benchmark provenance moved to a section of its own rather than sitting between the reader and the
+        quickstart. The HN post is v0.9 reality: new numbers, the hardening paragraph rewritten from
+        &ldquo;not done&rdquo; to what was built and what it still is not, and the old figures left in the story
+        that explains them, in the past tense.</td>
+        <td class="mono">docs/media/demo.gif <b>202 KB, 127 frames, 14.3 s, 88&times;30</b>; docs/media/demo.cast
+        committed beside it, 4.5 KB of reviewable text<br>
+        every beat asserted present in the cast rather than eyeballed: ready in &middot; egress.host &middot;
+        add allow &middot; team up in &middot; chain intact &middot; landlock abi &middot; seccomp filter<br>
+        tools pinned in the script: asciinema 2.4.0 (the distribution&rsquo;s), agg 1.9.0 with the sha256 of the
+        aarch64 binary recorded because upstream publishes none. Both GPL-3.0; they render an asset and are linked
+        into nothing, the relationship this project already has with the GCC that builds its kernel<br>
+        corrected while writing the post: the team figures P5-4 published were <code>prove-team</code>&rsquo;s
+        CPU-capped pair. See the correction row above</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>

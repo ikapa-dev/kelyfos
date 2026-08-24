@@ -57,25 +57,17 @@ edit.
 ![KelyfOS in a terminal](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/media/demo.gif)
 
 > **Status: v0.9, early development, building in the open.** Cold boot-to-ready
-> is **135 ms** median and snapshot restore **49 ms** (10 runs each, x86_64 on a
-> bare-KVM CI runner); five agents come up in **737 ms** cold, or **149 ms**
-> forked from a cached template.
+> **135 ms** median, snapshot restore **49 ms**, five agents up in **412 ms** —
+> x86_64 on a bare-KVM CI runner, ten runs each, by a benchmark workflow in this
+> repository rather than by hand.
 >
-> **What is enforced, and what is not.** The VMM runs inside the jailer — chroot,
-> dropped uid, its own cgroup — with Firecracker's own syscall filter read out of
-> `/proc` on every one of its threads and the run refused if it is missing; inside
-> the guest, every process the supervisor spawns is confined by Landlock and a
-> 28-syscall refusal list. An agent is still root in its own guest, the VM and not
-> the chroot is the boundary, and side channels and the supply chain are
-> untouched. [`docs/threat-model.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/threat-model.md) before trusting it
-> with anything; [`docs/hardening.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/hardening.md) for how each layer was
-> specified before it was built.
->
-> *Boot was 123 ms and restore 37 ms at v0.8. The jailer, the filter check and the
-> guest-profile probe are all on the boot path and cost about 12 ms each way —
-> measured across the change rather than assumed through it. Both targets —
-> ≤ 300 ms cold, ≤ 100 ms restore — still hold with room. The team figures replace
-> a 366 ms number from the pre-D28 kernel and are the first measured on this one.*
+> **v0.9 is the hardening release.** The VMM runs inside the jailer with its own
+> syscall filter proved in force rather than assumed, and everything the guest
+> spawns is confined by Landlock and a syscall refusal list. An agent is still
+> root inside its own guest, and the VM — not the chroot — is still the boundary.
+> [**What is enforced, and what is not**](#security) says which is which, in a
+> table and a longer list; [`docs/threat-model.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/threat-model.md) is the
+> long version, and it is the thing to read before trusting this with anything.
 
 KelyfOS — from κέλυφος (*kélyfos*), "shell": the guest wrapped around the agent.
 
@@ -371,6 +363,24 @@ And the parts that make it a thing you reach for rather than tolerate (v0.8):
 | [`docs/resources.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/resources.md) | resource limits: units, precedence, what enforces what |
 | [`docs/teams.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/teams.md) | agent teams: the schema, the broker, the store, the budget |
 | [`docs/e2b-shim.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/e2b-shim.md) | the E2B compatibility subset |
+
+## The numbers, and where they came from
+
+Every figure above is measured on the bare-KVM reference — a stock
+`ubuntu-latest` GitHub runner with KVM — by `make bench`, which is a workflow in
+this repository. Local numbers on a Mac are 6–8× slower because of nested
+virtualisation and are never the published ones.
+
+Boot was 123 ms and restore 37 ms at v0.8. The jailer, the VMM filter check and
+the guest-profile probe all sit on the boot path and cost about 12 ms each way;
+both were re-measured across that change rather than assumed through it. The
+targets — ≤ 300 ms cold, ≤ 100 ms restore — still hold with room. The team
+figures replace 366 ms and 215 ms from before the guest kernel moved to the
+6.12 LTS line, measured the same way on the same five-agent graph.
+
+The five-agent number is the graph in `dev/demo-team.toml`: 412 ms with all five
+booting cold, 286 ms once a fork template is cached. The master boots cold either
+way, because a fork cannot carry a network identity.
 
 ## Security
 
