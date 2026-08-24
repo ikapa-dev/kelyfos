@@ -173,7 +173,7 @@
     <span class="bl-name">Overall</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">P5-4 &mdash; the bars re-earned on the bare-KVM reference with the jail and both filters on the boot path, the quickstart figure re-measured with the sudoers step in it, and the README&rsquo;s &ldquo;not hardened yet&rdquo; sentence replaced by one that is also true</b></div>
+  <div class="focusline">Current focus: <b id="focus">P5-7 &mdash; a restored machine&rsquo;s confinement in the record and in the terminal. A pre-v0.9 snapshot restores into the guest it captured, and the chain must not let that look like a confined run (D32)</b></div>
 </div>
 
 <!-- ====================================================== 1. END GOAL -->
@@ -586,6 +586,27 @@
         kernel cannot apply them. <code>/work</code> stays writable, the read-only root stays read-only, and the
         supervisor&rsquo;s own vsock channels stay reachable: a profile that breaks the toolbox has hardened
         nothing.</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file &mdash; add the checked attribute in the markup.">
+        <span class="tid">P5-7</span><span class="tk"><b>A restored machine&rsquo;s confinement, in the record and
+        in the terminal.</b> <b class="blocked">[ADDED 2026-08-24, D32.]</b> A snapshot taken before v0.9 restores
+        into the guest it captured, which has no profile &mdash; and the restore path never learns the posture,
+        because a restore gets no ready frame. So the host asks the restored machine over the control channel and
+        <code>session.start</code> carries the answer, on every entry point that opens a chain, so a transcript can
+        never make an unconfined-guest run look confined. Restoring a pre-confinement snapshot warns in the terminal,
+        every time, with the fix that actually fixes it: re-create the snapshot under v0.9.
+        <b>Refusal is deliberately not required</b> &mdash; the host walls are unchanged and guest confinement is
+        depth behind them &mdash; but the record and the warning are, and
+        <code>docs/threat-model.md</code> and the release notes say it in those terms.</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file &mdash; add the checked attribute in the markup.">
+        <span class="tid">P5-8</span><span class="tk"><b>The sibling-ptrace refusal, made legible.</b>
+        <b class="blocked">[ADDED 2026-08-24, D33.]</b> P5-3&rsquo;s per-process Landlock domains refuse
+        <code>ptrace</code> between siblings, so attaching a debugger to an already-running process in a guest fails
+        even on <code>dev</code>, where the profile deliberately leaves <code>ptrace</code> out of the refusal list.
+        Launching a program under a debugger still works, because the child inherits its parent&rsquo;s domain.
+        Shipping that is acceptable only if somebody who hits it can find out why, so this task names it where a
+        person will look, states what still works, and proves both halves in the acceptance rather than asserting
+        them. Whether <code>dev</code> should relax it is decided and logged in D33; <code>base</code> stays strict
+        either way.</span></li>
     <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">P5-4</span><span class="tk"><b>The bars, re-earned, and the sentence replaced.</b>
         The jailer and a seccomp filter sit on the boot path, so cold boot-to-ready and snapshot restore are
@@ -683,6 +704,7 @@ make image         <span class="c"># kernel Image (aarch64) / vmlinux (x86_64) +
     <li><b>5. Log deviations.</b> Any change of approach, library, or scope gets a Decision Log row with rationale <i>before</i> implementation. Non-goals in section 2 are hard boundaries — do not cross them; propose a decision-log entry and stop if a task seems to require it.</li>
     <li><b>6. Append, never rewrite history.</b> Log rows are immutable. Update <code>#meta-updated</code> with today's date on every edit of this file.</li>
     <li><b>7. Blocked?</b> Mark the task with <code>[BLOCKED: reason]</code> appended to its text, log it, and move to the next task. Surface all blockers at the end of the session summary.</li>
+    <li><b>8. Reconcile against CI, not only against the tree.</b> Session start-up reads the latest CI run for <code>origin/main</code> alongside <code>git status</code> and <code>git log</code>. <b>A red <code>main</code> is a blocker and is fixed before any new task is started</b> &mdash; not noted, not carried, fixed. This rule exists because <code>main</code> was red from P5-1 until P5-2 found it three tasks later: the failure was in the job after the one that had always passed, every session read the tree and none read the pipeline, and nothing in these rules required anyone to look. A clean tree is not a green build, and P3-6 asked for a green pipeline on <code>main</code>, not for one that is usually green. (The product owner&rsquo;s ruling of 2026-08-24.)</li>
   </ul>
 </section>
 
@@ -1590,6 +1612,16 @@ after:
         notify 22/22, forward 19/19, e4 22/22, e5 33/33, e1 13/13, the Go suite, and the cookbook<br>
         two pre-existing failures found by the sweep and fixed: accept-e4 grepped a refusal wording that E5-4
         changed and nobody re-ran; accept-runs counted a session directory left root-owned by a sudo diagnostic</td></tr>
+        <tr><td class="mono">2026-08-24</td><td class="mono">&mdash;</td>
+        <td><b>Three rulings folded in: a start-up rule, and two tasks before P5-4.</b> Section 8 gains rule 8
+        &mdash; start-up reconciles against the latest CI run for <code>origin/main</code>, and a red
+        <code>main</code> is fixed before any new task rather than noted; <code>main</code> was red from P5-1 until
+        P5-2 found it three tasks later, and nothing in these rules required anyone to look. P5-7 makes a restored
+        machine&rsquo;s confinement visible in the record and in the terminal without refusing the restore (D32).
+        P5-8 makes the sibling-ptrace refusal legible and settles whether <code>dev</code> relaxes it (D33: it does
+        not, because relaxing it would mean confining PID 1).</td>
+        <td class="mono">PLAN.html &sect;8 rule 8, tasks P5-7 and P5-8, decisions D32 and D33<br>
+        the product owner&rsquo;s ruling of 2026-08-24</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
@@ -1871,6 +1903,63 @@ after:
         <td>P5-3, 2026-08-24. Evidence in the progress row of the same date and in
         <code>dev/accept-profile.sh</code>. <i>Revisit when</i> the project moves to Go 1.28: the re-exec for
         Landlock becomes three struct fields, and the question is then whether seccomp alone still justifies it.</td></tr>
+        <tr><td class="mono">D32</td><td class="mono">2026-08-24</td>
+        <td><b>A snapshot is a time capsule of the authority it was taken with, and the record has to say so &mdash;
+        but it is not refused.</b> (The product owner&rsquo;s ruling of 2026-08-24.)
+        <i>The finding.</i> P5-3 confines every process the supervisor spawns. A snapshot taken before v0.9 restores
+        into the guest it captured, and that guest&rsquo;s supervisor has no profile: restoring it does not upgrade
+        it. P5-3 logged this as a release note. The ruling is that a release note is not sufficient.
+        <i>Why not.</i> This is F-D39&rsquo;s class &mdash; a snapshot carrying authority the current policy would
+        not grant &mdash; meeting P5-1&rsquo;s principle that the record must never overstate the wall that was
+        around a run. <code>jailed: true/false</code> exists so a transcript cannot make an unjailed run look
+        jailed; a restored session that says nothing about guest confinement is the same failure with a different
+        field missing.
+        <i>What is required, and what is not.</i> Required: <code>session.start</code> carries the guest-confinement
+        posture on the restore path, and restoring a pre-confinement snapshot warns in the terminal with an
+        actionable fix. <b>Refusal is explicitly not required</b>, and that is the interesting half of the ruling:
+        the host-side walls &mdash; the jailer, the VMM&rsquo;s own filter, the egress policy, the cgroup &mdash;
+        are unchanged by the age of the snapshot, and guest confinement is depth behind a boundary that still holds.
+        Refusing would make old snapshots unusable to buy nothing the boundary does not already give.
+        <i>Consequence for the phase.</i> P5-7, before P5-4, because P5-4 writes the sentence that has to be true
+        and <code>docs/threat-model.md</code> has to say this in exactly these terms.</td>
+        <td>The product owner&rsquo;s ruling of 2026-08-24, on the release-note item P5-3 raised. F-D39 for the
+        class; P5-1 and D29 for the record principle. <i>Revisit when</i> a snapshot format change makes it cheap to
+        record the guest&rsquo;s posture inside the snapshot itself, which would let a restore know before it
+        boots rather than after.</td></tr>
+        <tr><td class="mono">D33</td><td class="mono">2026-08-24</td>
+        <td><b><code>dev</code> does not relax the sibling-ptrace refusal, and the reason is that relaxing it is not
+        a profile change at all.</b>
+        <i>The question, put by the product owner and left to this seat to decide on cost.</i> P5-3&rsquo;s profiles
+        leave <code>ptrace</code> out of <code>dev</code>&rsquo;s seccomp refusal list on purpose. Landlock then
+        refuses it anyway between siblings, so attaching a debugger to a process already running in the guest fails
+        on both flavors.
+        <i>What relaxing it would cost, which is the whole answer.</i> There is no per-flavor knob for this. A
+        Landlock domain is created by the thread that restricts itself, so two children that each restrict
+        themselves are siblings whatever rules they used, and the hook compares hierarchy rather than content. The
+        only arrangement in which two spawned processes share a domain is one where their common ancestor entered it
+        &mdash; that is, where the supervisor confines itself and every child inherits. D31 ruled that out already
+        and the reasons have not moved: PID 1 calls <code>reboot</code> to power the machine off, which is on the
+        refusal list, and a profile with holes shaped exactly like the supervisor protects nothing. So the choice is
+        not &ldquo;relax ptrace for dev&rdquo; but &ldquo;confine PID 1 to make debuggers attach&rdquo;, days before
+        a release, to buy an operation an agent sandbox rarely wants.
+        <i>Chosen: keep it.</i> <code>dev</code>&rsquo;s seccomp entry is not wasted &mdash; it is exactly what
+        makes <code>gdb ./prog</code> work there and fail on <code>base</code>, because a child inherits its
+        parent&rsquo;s domain and a launched target is not a sibling. What is lost is attach-to-running, and it is
+        lost identically on both flavors.
+        <i>One deviation from the ruling, stated rather than quietly taken.</i> The ruling asks for an E5-4 catalog
+        entry. The catalog cannot hold this one: <code>tools/gendocs</code> fails the build for an entry nothing
+        raises, and there is no site to raise it from &mdash; the refusal is the guest kernel&rsquo;s answer to a
+        syscall KelyfOS never sees, not a decision KelyfOS makes and reports. Putting it in the catalog anyway would
+        mean a documented refusal with no code behind it, which is the exact condition F-D4 built that check to
+        prevent. So it goes where <code>docs/denials.md</code> already keeps this class &mdash; its section on what
+        is deliberately not in the catalog and why &mdash; plus the generated profiles page, with both halves proved
+        in <code>dev/accept-profile.sh</code> rather than asserted. If the owner wants it in the catalog regardless,
+        that is one line to overrule and the raise site is the open question.</td>
+        <td>P5-8. The owner&rsquo;s ruling of 2026-08-24 left this call here and asked for it either way. D31 for
+        why the supervisor is outside its own profile. <i>Revisit when</i> Go 1.28&rsquo;s
+        <code>SysProcAttr.UseLandlock</code> lands and the ruleset is built once in the parent &mdash; the domain
+        shape does not change, so this answer should survive it, and if it does not, this row is wrong and should be
+        replaced rather than reinterpreted.</td></tr>
     <!-- Claude Code: append rows above this line. -->
   </table>
 </section>

@@ -3,14 +3,18 @@
 Updated 2026-08-24 · synced with origin/main · CI green (run 32704409463)
 
 ## Plans
-- PLAN.html — **41/50**. Phase 5 (hardening, v0.9): P5-0, P5-1, P5-2, P5-6, P5-3 done.
+- PLAN.html — **41/52**. Phase 5 (hardening, v0.9): P5-0, P5-1, P5-2, P5-6, P5-3 done.
 - PLAN-FEATURES.html — **COMPLETE and closed.** 42/42, five epics, v0.4–v0.8 released.
 
 ## Now
-P5-4 — the bars re-earned on the bare-KVM reference (D15) with the jail and both filters
-on the boot path; the quickstart ≤5-min figure re-measured *including* the sudoers step;
-the README's "not hardened yet" sentence replaced by one that is also true; and
-docs/threat-model.md brought into line with it rather than softened.
+P5-7 — a restored machine's confinement, in the record and in the terminal (D32). A
+pre-v0.9 snapshot restores into the guest it captured, which has no profile, and the
+restore path never learns the posture because a restore gets no ready frame. The chain
+must not let that look like a confined run. Refusal is deliberately not required.
+Then P5-8 (D33), then P5-4.
+
+**Protocol change, in force now:** PLAN.html §8 gains rule 8 — start-up reconciles against
+the latest CI run for `origin/main`, and a red `main` is fixed before any new task.
 
 ## This session
 Start-up reconciliation clean at 4c8fa5b. **P5-2 done**: which filter (a test on the argv
@@ -58,7 +62,8 @@ cookbook recipes.
 - `CONTRIBUTING.md` requires a DCO `Signed-off-by` on every commit; commits have not
   carried one for some time. Not fixed here — rewriting history is forbidden and adding it
   now would be inconsistent with the run of commits before it. John's call.
-- **Release-note items P5-4 must state as breaks, not leave to be discovered.** (1) A
+- Release-note items. (2) and (3) below are now tasks — P5-7 and P5-8 — rather than notes;
+  (1) stays a release note for P5-4. (1) A
   guest command that writes outside `/work`, `/tmp`, `/run` and `$HOME` is refused from
   v0.9 where it succeeded before — one cookbook recipe did exactly this and now prepares
   in `/tmp`. (2) A snapshot taken before v0.9 restores into the guest it captured, which
