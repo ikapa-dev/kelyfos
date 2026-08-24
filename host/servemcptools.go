@@ -582,16 +582,7 @@ func (b *servedBox) wireAudit() {
 	if b.proxy == nil || b.rec == nil {
 		return
 	}
-	rec := b.rec
-	b.proxy.OnSecret = func(name, host string) {
-		_ = rec.Append(recorder.Event{Type: recorder.TypeSecretUse, Name: name, Host: host})
-	}
-	b.proxy.OnEvent = func(at egress.Attempt) {
-		allowed := at.Allowed
-		_ = rec.Append(recorder.Event{
-			Type: recorder.TypeEgressAttempt, Host: at.Host, Port: at.Port,
-			Allowed: &allowed, Reason: at.Reason, Mode: at.Mode,
-			BytesIn: at.BytesIn, BytesOut: at.BytesOut,
-		})
-	}
+	// nil for the printer: this door has no terminal of the user's to print a
+	// refusal to, so it is recorded and not narrated (docs/networking.md §5).
+	wireProxyAudit(b.proxy, b.rec, "", nil)
 }

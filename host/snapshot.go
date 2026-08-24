@@ -151,6 +151,18 @@ func snapshotRestore(argv []string) error {
 		return err
 	}
 	defer rec.Close()
+	// A restored machine records its egress like any other. It did not until
+	// P6-4 went looking: this is the fifth of five proxies in the product and
+	// the only one whose audit hooks were never wired, so a restore wrote a
+	// chain with a start, a ready and an end and nothing in between — a blocked
+	// attempt left no trace, and a credential spent left no trace.
+	//
+	// Wired here rather than at restoreNetwork because the recorder is keyed on
+	// the sandbox id and that id does not exist until Restore returns. The gap
+	// that leaves is the milliseconds between the proxy binding and this line,
+	// during which the guest has not resumed; `serve-mcp`'s restore has no such
+	// gap because it knows the box id in advance.
+	wireProxyAudit(proxy, rec, "", newBlockedOnce(os.Stderr))
 	_ = rec.Append(recorder.Event{
 		Type: recorder.TypeSessionStart, Image: *flavor, Arch: *arch,
 		Kelyfos: Version, Argv: os.Args, Reason: "restored from " + *name,

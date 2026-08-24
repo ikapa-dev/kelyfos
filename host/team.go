@@ -732,21 +732,7 @@ func bootAgent(ctx context.Context, a plannedAgent, broker *team.Broker, rec *re
 		// One record for the whole team, so an egress attempt and the message
 		// that prompted it sit in the same chain. `agent` is what says which
 		// machine it came from — `sandbox` names the team's session.
-		rig.proxy.OnSecret = func(name, host string) {
-			_ = rec.Append(recorder.Event{Type: recorder.TypeSecretUse,
-				Agent: a.name, Name: name, Host: host})
-		}
-		blocked := newBlockedOnce(os.Stderr)
-		rig.proxy.OnEvent = func(at egress.Attempt) {
-			blocked.say(at)
-			allowed := at.Allowed
-			_ = rec.Append(recorder.Event{
-				Type: recorder.TypeEgressAttempt, Agent: a.name,
-				Host: at.Host, Port: at.Port, Allowed: &allowed,
-				Reason: at.Reason, Mode: at.Mode,
-				BytesIn: at.BytesIn, BytesOut: at.BytesOut,
-			})
-		}
+		wireProxyAudit(rig.proxy, rec, a.name, newBlockedOnce(os.Stderr))
 		go rig.proxy.Serve()
 		opts.Allow = a.allow
 		opts.Net = rig.net

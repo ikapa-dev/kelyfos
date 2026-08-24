@@ -575,26 +575,9 @@ status. This is how you hand an agent a sandbox and nothing else:
 	// Every attempt to leave the sandbox is recorded, allowed or not. The
 	// blocked ones are the interesting ones.
 	if proxy != nil {
-		proxy.OnSecret = func(name, host string) {
-			// Name and destination only. The value is never recorded in any
-			// field, in any form (docs/events.md §4).
-			_ = rec.Append(recorder.Event{Type: recorder.TypeSecretUse, Name: name, Host: host})
-		}
 		blocked := newBlockedOnce(os.Stderr)
 		blocked.notify = notifier
-		proxy.OnEvent = func(a egress.Attempt) {
-			// The person watching the run is the one with the policy file
-			// open, and for CONNECT they are often the only reader who gets
-			// the fix line at all (E5-4).
-			blocked.say(a)
-			allowed := a.Allowed
-			_ = rec.Append(recorder.Event{
-				Type: recorder.TypeEgressAttempt,
-				Host: a.Host, Port: a.Port, Allowed: &allowed,
-				Reason: a.Reason, Mode: a.Mode,
-				BytesIn: a.BytesIn, BytesOut: a.BytesOut,
-			})
-		}
+		wireProxyAudit(proxy, rec, "", blocked)
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

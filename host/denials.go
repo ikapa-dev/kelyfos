@@ -25,6 +25,7 @@ import (
 	"github.com/p4r4n0rm4l/KelyfOS/internal/denial"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/egress"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/notify"
+	"github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
 )
 
 // blockedOnce prints a policy refusal the first time each one happens.
@@ -117,5 +118,50 @@ func finishedBody(reason string, code *int, took time.Duration) string {
 		return fmt.Sprintf("stopped after %s", d)
 	default:
 		return fmt.Sprintf("%s after %s", reason, d)
+	}
+}
+
+// wireProxyAudit connects a proxy to a session's recorder: every attempt to
+// leave, allowed or blocked, and every credential attached — by name and
+// destination, never by value (docs/events.md §4).
+//
+// One function because there are five proxies in this product and this wiring
+// was written out at four of them. The fifth, `kelyfos snapshot restore`, was
+// simply missed: it opens a recorder, writes session.start, session.ready and
+// session.end, and wired neither hook — so a restored machine produced a chain
+// that looked complete and said nothing whatsoever about egress. A blocked
+// attempt left no trace; a credential spent left no trace. Meanwhile the README
+// says "every attempt to leave the sandbox is recorded, allowed or not", and
+// the threat model lists guest→network as active.
+//
+// That is the P5-1 `jailed` shape exactly — a record field set at some of the
+// places that open a chain and not the others — and it was found by doing P6-4's
+// enumeration before writing any of P6-4's feature code, which is the argument
+// for the enumeration.
+//
+// blocked may be nil, for a door with no terminal of the user's to print to.
+func wireProxyAudit(proxy *egress.Proxy, rec *recorder.Recorder, agent string, blocked *blockedOnce) {
+	if proxy == nil || rec == nil {
+		return
+	}
+	proxy.OnSecret = func(name, host string) {
+		_ = rec.Append(recorder.Event{
+			Type: recorder.TypeSecretUse, Agent: agent, Name: name, Host: host,
+		})
+	}
+	proxy.OnEvent = func(a egress.Attempt) {
+		if blocked != nil {
+			// The person watching the run is the one with the policy file open,
+			// and for a refused CONNECT they are often the only reader who gets
+			// the fix line at all (E5-4).
+			blocked.say(a)
+		}
+		allowed := a.Allowed
+		_ = rec.Append(recorder.Event{
+			Type: recorder.TypeEgressAttempt, Agent: agent,
+			Host: a.Host, Port: a.Port, Allowed: &allowed,
+			Reason: a.Reason, Mode: a.Mode,
+			BytesIn: a.BytesIn, BytesOut: a.BytesOut,
+		})
 	}
 }
