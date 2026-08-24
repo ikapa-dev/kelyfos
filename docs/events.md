@@ -622,11 +622,25 @@ what happened.
   receives it, and it costs roughly 4/3 of the record's size on top of the page.
 - `kelyfos verify <report.html>` re-runs the chain over the record a report
   carries, and prints the chain head. It takes a raw `events.jsonl` too, so the
-  sender and the receiver check the same thing with the same command. What it
-  checks is the **record**, not the page's rendering of it: a page whose visible
-  text was edited afterwards still carries an intact record, and
-  `kelyfos verify --replay` prints the record's own account so the two can be
-  compared. `--extract` writes the record back out.
+  sender and the receiver check the same thing with the same command.
+  `--extract` writes the record back out; `--json` puts it on stdout with the
+  verdict on stderr, so a redirect captures the record and nothing else.
+
+  **What it checks, exactly.** The record: every digest, and the ordering.
+  And the three values the page states *about* that record — the chain head, the
+  event count and the session id, each marked in the page so it can be read back
+  and compared. A page that states a head the record does not support is a failed
+  check, not a footnote: the head is the one number a reader is told to compare
+  against a head they were given separately, and a file able to change it quietly
+  would turn that instruction into a trap. A missing marker fails too, because
+  every export writes all three and deleting an `id` is the neatest way to switch
+  a check off.
+
+  **What it does not check** is the page's *rendering* of the events — the
+  timeline, the cards, the lane view. Those are a drawing, the list of things to
+  compare in them has no end, and a partial answer would invite a reader to treat
+  the rest as checked. `kelyfos verify --replay` prints the record's own account
+  instead, so a reader who wants the comparison can make it.
 
   Without KelyfOS at all, the record comes out of a report with two lines of
   shell — the report prints them itself:
@@ -649,10 +663,20 @@ lines in the same chain. The verification says how many agents it covered, so a
 reader can compare it against the team they declared. `--export` additionally
 renders a lane per agent with the message flow drawn between them (E2-7).
 
-Two things the chain does **not** claim, stated because the difference matters
-when this is used as evidence. It proves no line was altered or removed after it
-was written; it does not prove that every agent a policy declared actually wrote
-one. And `--session <agent-id>` redirects to the team's record while that
+Three things the chain does **not** claim, stated because the difference matters
+when this is used as evidence.
+
+It proves no line was altered, and none removed from the beginning or the middle
+— a `seq` that no longer matches its line number is caught, and so is a `prev`
+that no longer matches. **It does not catch a record cut short at its end.**
+Truncation there breaks nothing: the chain simply stops earlier, the last event
+becomes the head, and the result is byte-for-byte what a shorter session would
+have produced. It is indistinguishable from a session that is still running,
+which is a real and ordinary state. The only thing that tells them apart is the
+chain head compared against a head obtained from somewhere else — which is why
+`kelyfos log --export` prints it, and why signing it is P6-7.
+
+It does not prove that every agent a policy declared actually wrote one. And `--session <agent-id>` redirects to the team's record while that
 sandbox still exists — once the team is down the run directory is gone, and the
 team session must be found by id or with `--list`.
 

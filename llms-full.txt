@@ -3206,11 +3206,25 @@ what happened.
   receives it, and it costs roughly 4/3 of the record's size on top of the page.
 - `kelyfos verify <report.html>` re-runs the chain over the record a report
   carries, and prints the chain head. It takes a raw `events.jsonl` too, so the
-  sender and the receiver check the same thing with the same command. What it
-  checks is the **record**, not the page's rendering of it: a page whose visible
-  text was edited afterwards still carries an intact record, and
-  `kelyfos verify --replay` prints the record's own account so the two can be
-  compared. `--extract` writes the record back out.
+  sender and the receiver check the same thing with the same command.
+  `--extract` writes the record back out; `--json` puts it on stdout with the
+  verdict on stderr, so a redirect captures the record and nothing else.
+
+  **What it checks, exactly.** The record: every digest, and the ordering.
+  And the three values the page states *about* that record — the chain head, the
+  event count and the session id, each marked in the page so it can be read back
+  and compared. A page that states a head the record does not support is a failed
+  check, not a footnote: the head is the one number a reader is told to compare
+  against a head they were given separately, and a file able to change it quietly
+  would turn that instruction into a trap. A missing marker fails too, because
+  every export writes all three and deleting an `id` is the neatest way to switch
+  a check off.
+
+  **What it does not check** is the page's *rendering* of the events — the
+  timeline, the cards, the lane view. Those are a drawing, the list of things to
+  compare in them has no end, and a partial answer would invite a reader to treat
+  the rest as checked. `kelyfos verify --replay` prints the record's own account
+  instead, so a reader who wants the comparison can make it.
 
   Without KelyfOS at all, the record comes out of a report with two lines of
   shell — the report prints them itself:
@@ -3233,10 +3247,20 @@ lines in the same chain. The verification says how many agents it covered, so a
 reader can compare it against the team they declared. `--export` additionally
 renders a lane per agent with the message flow drawn between them (E2-7).
 
-Two things the chain does **not** claim, stated because the difference matters
-when this is used as evidence. It proves no line was altered or removed after it
-was written; it does not prove that every agent a policy declared actually wrote
-one. And `--session <agent-id>` redirects to the team's record while that
+Three things the chain does **not** claim, stated because the difference matters
+when this is used as evidence.
+
+It proves no line was altered, and none removed from the beginning or the middle
+— a `seq` that no longer matches its line number is caught, and so is a `prev`
+that no longer matches. **It does not catch a record cut short at its end.**
+Truncation there breaks nothing: the chain simply stops earlier, the last event
+becomes the head, and the result is byte-for-byte what a shorter session would
+have produced. It is indistinguishable from a session that is still running,
+which is a real and ordinary state. The only thing that tells them apart is the
+chain head compared against a head obtained from somewhere else — which is why
+`kelyfos log --export` prints it, and why signing it is P6-7.
+
+It does not prove that every agent a policy declared actually wrote one. And `--session <agent-id>` redirects to the team's record while that
 sandbox still exists — once the team is down the run directory is gone, and the
 team session must be found by id or with `--list`.
 
@@ -5792,7 +5816,7 @@ kelyfos log --verify
 
 ---
 
-## 6. Read the record, prove it has not been edited, and send it to somebody who can check it too
+## 6. Read the record, prove nothing in it was edited, and send it to somebody who can check it too
 
 Every event is written by the host and carries the hash of the one before it. A
 guest that could write its own audit trail could write a flattering one, so it
@@ -5803,6 +5827,11 @@ rewrite it end to end and recompute every hash. What the chain buys is that a
 *selective* edit — deleting one blocked connection, softening one command —
 breaks every hash after it. That is exactly the edit somebody covering their
 tracks wants to make, so the recipe makes it and watches it fail.
+
+One edit it does **not** catch, said here rather than discovered: cutting the
+record short at its *end*. Nothing after the cut exists to break, so a truncated
+chain verifies and reads as a session that is still open. The chain head is what
+distinguishes them, and only when compared against a head from somewhere else.
 
 The export carries the record it was rendered from, so the person you send it to
 does not have to take the page's word for anything: `kelyfos verify` reads the
@@ -5865,15 +5894,28 @@ kelyfos verify --json report.html > piped.jsonl
 cmp piped.jsonl "$HOME/.cache/kelyfos/sessions/$session/events.jsonl"
 echo "and the same through kelyfos verify --json"
 
-# Editing the page and leaving the record alone is the one thing verification
-# cannot catch, so the product says so rather than implying otherwise — and the
-# reader is given a way to see the disagreement for themselves.
+# Editing the page's timeline and leaving the record alone is the one thing
+# verification cannot catch, so the product says so rather than implying
+# otherwise — and the reader is given a way to see the disagreement themselves.
 echo
-echo "== editing the page does not change the record it carries =="
+echo "== editing the page's timeline does not change the record it carries =="
 sed 's/a result/a different result/g' report.html > doctored.html
 kelyfos verify doctored.html
 kelyfos verify --replay doctored.html | grep -q "a result"
 echo "the record still says what it always said"
+
+# The numbers the page states about the record are a different matter: those are
+# checked, because the chain head is the one value a reader is told to compare
+# against a head they were given somewhere else.
+echo
+echo "== but a page that lies about its own chain head is caught =="
+head="$(kelyfos verify report.html | sed -n 's/.*chain head //p')"
+sed "s/$head/$(printf '9%.0s' $(seq 64))/" report.html > lying.html
+if kelyfos verify lying.html; then
+  echo "a page stating the wrong head verified, which it must never do"
+  exit 1
+fi
+echo "refused, as it must be"
 
 # But editing the record inside the page is caught, exactly the way editing the
 # flight recorder is.
@@ -7437,6 +7479,19 @@ The summary prints and sync-back **waits**. Answering yes syncs; answering no
 routes the result to `<dir>.kelyfos-out`, which is P3-10's existing diversion
 mechanism rather than a new one — the host directory is untouched until an
 explicit yes.
+
+**The wait is where your editor lives, so the check happens twice.** The
+fingerprint that decides whether a sync-back would overwrite somebody's edit is
+taken when the image is extracted, and then again immediately before the
+directories are swapped. Only the second one covers the window the review itself
+opens: the sandbox has already stopped, and a person reading a diff for five
+minutes is five minutes in which the directory can change. A yes answered over a
+directory you edited while reading diverts, and says so.
+
+And the copy that is replaced is **kept**, as `<dir>.kelyfos-previous`, until the
+next successful run clears it. One generation deep, not a growing pile — but the
+moment somebody wants it is the moment immediately after a sync-back, which is
+exactly when it used to be deleted.
 
 The answer is a `run.review` event carrying the decision and the counts. A
 declined review is a fact worth keeping: it is the one place the product asks a

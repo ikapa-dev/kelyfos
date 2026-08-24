@@ -55,7 +55,7 @@ record — for that, compare the page against --replay.
 	if err != nil {
 		return fmt.Errorf("cannot read %s: %w", path, err)
 	}
-	chain, kind, err := recordIn(blob)
+	chain, kind, fromReport, err := recordIn(blob)
 	if err != nil {
 		return fmt.Errorf("%s: %w", path, err)
 	}
@@ -104,7 +104,41 @@ record — for that, compare the page against --replay.
 	fmt.Fprintf(out, "%s: chain intact, %d events verified\n", path, n)
 	fmt.Fprintf(out, "  chain head %s\n", head)
 	fmt.Fprintf(out, "  %s\n", kind)
-	fmt.Fprintf(out, "  this checks the record, not how any page rendered it — kelyfos verify --replay %s prints the record's own account\n", path)
+
+	// Whether the record stops where a finished session stops. Stated as an
+	// observation and never as a verdict: a record with no session.end is a
+	// session that is still open just as often as it is one that was cut short,
+	// and the chain cannot tell those apart. Saying which of the two it is would
+	// be a policy, and a policy applied to files exported by older builds is an
+	// accusation of forgery aimed at ordinary records.
+	if !endsCleanly(chain) {
+		fmt.Fprintf(out, "  the record has no session.end: either the session was still open, or it was cut short — the chain cannot tell those apart\n")
+	}
+
+	// Only a report states anything about the record it carries. A raw flight
+	// recorder is the record, says nothing about itself, and is not asked to —
+	// checking it against claims it never made would report three mismatches
+	// for a file that is simply what it is.
+	if !fromReport {
+		fmt.Fprintf(out, "  this checks the record — kelyfos verify --replay %s prints its own account\n", path)
+		if *replay {
+			fmt.Println()
+			return replayRecord(chain, *asJSON)
+		}
+		return nil
+	}
+
+	if bad := report.ClaimsIn(blob).Disagree(head, n, chain); len(bad) > 0 {
+		for _, b := range bad {
+			fmt.Fprintf(out, "  MISMATCH: %s\n", b)
+		}
+		fmt.Fprintf(out, "  the record in this file is intact; what the page says ABOUT it is not what the record says.\n")
+		fmt.Fprintf(out, "  trust the values above, which came from the record, over anything printed on the page.\n")
+		return &exitError{code: 1}
+	}
+
+	fmt.Fprintf(out, "  the values the page prints about this record agree with it\n")
+	fmt.Fprintf(out, "  this checks the record and what the page claims about it, not how the page rendered its events — kelyfos verify --replay %s prints the record's own account\n", path)
 
 	if *replay {
 		if out == os.Stdout {
@@ -115,6 +149,21 @@ record — for that, compare the page against --replay.
 	return nil
 }
 
+// endsCleanly reports whether the last event is a session.end.
+//
+// A cut-short chain verifies: nothing after the cut exists to break, so the
+// truncated record is byte-for-byte what a shorter session would have written.
+// This is the one observable difference between the common truncation and a
+// finished session, and it is offered to a reader as an observation to weigh
+// rather than as a check to pass.
+func endsCleanly(chain []byte) bool {
+	events, err := recorder.Read(bytes.NewReader(chain))
+	if err != nil || len(events) == 0 {
+		return false
+	}
+	return events[len(events)-1].Type == recorder.TypeSessionEnd
+}
+
 // recordIn finds the flight recorder in whatever the reader was sent.
 //
 // Two shapes, told apart by what they are rather than by their file extension:
@@ -122,9 +171,9 @@ record — for that, compare the page against --replay.
 // exported report carries one embedded. Anything else is refused by name — a
 // reader who points this at the wrong file needs to be told that, not told
 // their audit trail failed to verify.
-func recordIn(blob []byte) (chain []byte, kind string, err error) {
+func recordIn(blob []byte) (chain []byte, kind string, fromReport bool, err error) {
 	if bytes.HasPrefix(bytes.TrimLeft(blob, " \t\r\n"), []byte("{")) {
-		return blob, "read from this file, which is a flight recorder itself", nil
+		return blob, "read from this file, which is a flight recorder itself", false, nil
 	}
 	chain, err = report.ExtractChain(blob)
 	switch {
@@ -135,12 +184,12 @@ func recordIn(blob []byte) (chain []byte, kind string, err error) {
 		// carry it under a marker this build does not know, and the honest
 		// answer to both is the same: this build cannot find a record in this
 		// file, rather than this file is bad.
-		return nil, "", errors.New("no KelyfOS record in this file: it is not a flight recorder, and not an" +
+		return nil, "", false, errors.New("no KelyfOS record in this file: it is not a flight recorder, and not an" +
 			" export carrying one. Exports written before v1.0 embed no record; one written by a newer" +
 			" KelyfOS may embed it differently. `kelyfos log --verify` on the machine that ran the session" +
 			" checks the record itself")
 	case err != nil:
-		return nil, "", err
+		return nil, "", false, err
 	}
-	return chain, "read out of the record this report carries", nil
+	return chain, "read out of the record this report carries", true, nil
 }

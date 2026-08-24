@@ -121,7 +121,7 @@ const reportHTML = `<!DOCTYPE html>
 </head><body class="{{if .Lanes}}team{{end}}"><div class="wrap">
 
 <h1>Kelyf<span>OS</span> session report</h1>
-<div class="sub">session {{.SessionID}} · {{.Events}} events · generated {{.Generated}}</div>
+<div class="sub">session <span id="kelyfos-session">{{.SessionID}}</span> · {{.Events}} events · generated {{.Generated}}</div>
 {{if .SelfCheck}}
 <div class="chain bad">The exporter's own check of this record failed — {{.SelfCheck}}.
 That is this file reporting a problem with itself. Check it rather than take its word:
@@ -129,13 +129,14 @@ That is this file reporting a problem with itself. Check it rather than take its
 {{end}}
 <div class="chain">
   <b>This page does not verify itself.</b> It carries the record it was rendered from —
-  {{.Events}} event{{if ne .Events 1}}s{{end}}{{if .ChainHead}}, chain head
-  <code>{{.ChainHead}}</code>{{end}} — so that
+  <code id="kelyfos-events">{{.Events}}</code> event{{if ne .Events 1}}s{{end}}{{if .ChainHead}}, chain head
+  <code id="kelyfos-head">{{.ChainHead}}</code>{{end}} — so that
   somebody else can. <code>kelyfos verify &lt;this file&gt;</code> reads that record out of the
   file and re-runs the chain over it: offline, no key, no network, nothing of ours to trust.
-  <span class="limit">What that checks is the record, not this rendering. The timeline below was
-  drawn from the record by the exporter, and a page whose text was edited afterwards still carries
-  an intact record. <code>kelyfos verify --replay &lt;this file&gt;</code> prints the timeline from
+  <span class="limit">The two numbers above are checked against the record too, so this page
+  cannot quietly disagree with what it carries. <b>The timeline below is not.</b> It was drawn
+  from the record by the exporter, and a page whose text was edited afterwards still carries an
+  intact record. <code>kelyfos verify --replay &lt;this file&gt;</code> prints the timeline from
   the record instead, so the two can be compared.</span>
 </div>
 
@@ -221,10 +222,12 @@ foot of this page — one record for the whole team, not five to correlate.</p>
 Rendered by KelyfOS from the session's flight recorder, which is embedded in this
 file rather than summarised by it. Every command, file write and network attempt
 the host observed is in that record, and the guest cannot write to it.
-Verification checks that no line was altered or removed after it was written. It
-does not check that everything worth recording was recorded, and it is not a
-signature: anyone who can rewrite the whole record can recompute every digest.
-See docs/events.md.
+Verification checks that no line was altered, and none removed from the beginning
+or the middle. <b>A record cut short at its end still verifies</b>, and looks
+exactly like a session that is still open — the chain head is what tells them
+apart, and only against a head from somewhere else. It does not check that
+everything worth recording was recorded, and it is not a signature: anyone who
+can rewrite the whole record can recompute every digest. See docs/events.md.
 </footer>
 </div></body></html>
 `

@@ -180,7 +180,7 @@
     <span class="bl-name">Overall</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">P6-6 done &mdash; the export carries the record it was rendered from and <code>kelyfos verify</code> re-runs the chain over it offline. <b>An external security audit then arrived (D45) and v1.0 is gated on its trust-boundary group</b>: the workspace block device is a guest&rarr;host surface the threat model does not list. Seven tasks inserted before P6-7. <b>P6-21 done</b> &mdash; <code>--review</code> no longer destroys an edit made while somebody was reading it, and the copy it replaces is kept. Next: <b>P6-22</b>, the hostile corpus, before any boundary fix</b></div>
+  <div class="focusline">Current focus: <b id="focus">P6-6 done &mdash; the export carries the record it was rendered from and <code>kelyfos verify</code> re-runs the chain over it offline. <b>An external security audit then arrived (D45) and v1.0 is gated on its trust-boundary group</b>: the workspace block device is a guest&rarr;host surface the threat model does not list. Seven tasks inserted before P6-7. <b>P6-21 done</b> &mdash; <code>--review</code> no longer destroys an edit made while somebody was reading it. <b>P6-6 corrected</b>: its own adversarial review landed late and found a false claim about truncation and an unchecked chain head, both reproduced and both fixed. Next: <b>P6-22</b>, the hostile corpus, before any boundary fix</b></div>
 </div>
 
 <!-- ====================================================== 1. END GOAL -->
@@ -2764,6 +2764,48 @@ after:
         deleted, so the guard did not buy safety by making the feature useless<br>
         <code>gofmt</code>, <code>vet</code>, 14 packages green; <code>docs/qol.md</code> &sect;2.3 documents both
         the second check and the kept copy</td></tr>
+        <tr><td class="mono">2026-08-24</td><td class="mono">P6-6 (cont.)</td>
+        <td><b>Two defects in what P6-6 shipped, one of them a claim it had just finished insisting on.</b>
+        The adversarial review commissioned for P6-6&rsquo;s design finished after the commit landed and found
+        both. They are corrected here rather than folded backwards, because the row above is the record of what
+        was believed at the time and this is the record of what was wrong with it.
+        <b>The false claim.</b> The new footer said verification checks that &ldquo;no line was altered or removed
+        after it was written&rdquo;. Measured: a 72-event chain cut to 40 verifies clean and reports a different
+        head. Removal from the beginning or the middle is caught &mdash; <code>seq</code> stops matching its line
+        number, <code>prev</code> stops matching &mdash; but <b>truncation at the end breaks nothing, because
+        nothing after the cut exists to break</b>. The result is byte-for-byte what a shorter session would have
+        written, and indistinguishable from a session still running. An export is produced by the party being
+        audited and <code>head -n -20</code> is the cheapest edit available to them. The sentence is withdrawn from
+        the page, from <code>docs/events.md</code> &sect;5 and from the cookbook, and replaced with what the code
+        earns. <code>kelyfos verify</code> now also <i>observes</i> whether a record ends with
+        <code>session.end</code> &mdash; an observation and never a verdict, because &ldquo;no end event&rdquo; is
+        an open session as often as a truncated one, and a policy that called it forgery would accuse every report
+        an older build exported.
+        <b>The decline, reversed on the part that mattered.</b> The row above declined cross-checking the numbers
+        the page prints, on the argument that a partly-checked page invites a reader to treat the rest as checked.
+        That argument survives for the timeline and fails for the head. Measured: replace the displayed head with
+        sixty-four nines, leave the island untouched, and <code>kelyfos verify</code> printed
+        <code>chain intact</code>, the <i>true</i> head, and exit 0. <b>The head is the one number this product
+        tells a reader to write down and compare against a head they were given separately</b> &mdash; a file able
+        to change it quietly turns that instruction into a trap, and it is the one edit with a payoff. The head, the
+        event count and the session id are marked in the page, read back, and compared; a mismatch is a failed
+        check with both values printed and exit 1. A <i>missing</i> marker fails too, because every export writes
+        all three and deleting an <code>id</code> is the neatest way to switch a check off. The timeline stays
+        unchecked and the page now says so in those words.</td>
+        <td class="mono">both reproduced here before either was accepted: <code>head -n 40</code> on a real
+        72-event record &rarr; <code>chain intact, 40 events verified</code>, exit 0, a different head; and the
+        all-nines page &rarr; <code>chain intact</code> with the true head and exit 0<br>
+        <code>TestARecordCutShortAtItsEndStillVerifies</code> pins the limit the documents now state, rather than
+        pretending it away<br>
+        <code>TestAPageThatLiesAboutItsRecordIsCaught</code> covers an edited head, an edited count, an edited
+        session and a deleted marker<br>
+        the cookbook recipe now makes the lying page and watches it refused, on a real microVM: <code>MISMATCH: the
+        page says chain head 9999&hellip;; the record says 303c6d1d&hellip;</code><br>
+        a raw <code>events.jsonl</code> is not asked what it claims about itself &mdash; it is the record, it makes
+        no claims, and checking it against three it never made reported three mismatches for a file that was simply
+        what it is. Caught by running it<br>
+        <code>gofmt</code>, <code>vet</code>, 14 packages, <code>make docs</code> clean; the extractor&rsquo;s fuzz
+        target clean over 20s</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>

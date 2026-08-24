@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
+	"strconv"
 	"strings"
 )
 
@@ -81,6 +82,88 @@ func embedChain(raw []byte) template.HTML {
 		b.WriteByte('\n')
 	}
 	return template.HTML(b.String()) //nolint:gosec // base64 only; see the note above
+}
+
+// Claimed is what a page says about the record it carries: the three values a
+// reader would write down or repeat to somebody else.
+//
+// They are read back out and checked against the record because the page is
+// where they can be edited. A reader is told to compare the head against one
+// they were given separately, and a head the file can quietly change is a
+// reader following an instruction into a trap. Checking them is bounded — three
+// values, each a function of the bytes — which is what distinguishes it from
+// checking the rendered timeline, where the list of things to compare has no
+// end and a partial answer would invite a reader to treat the rest as checked.
+type Claimed struct {
+	Head    string
+	Events  string
+	Session string
+}
+
+// ClaimsIn reads the values a page states about its own record.
+//
+// A missing marker is reported as empty rather than skipped silently. Every page
+// this package writes carries all three, so absence is not "an older format" —
+// it is a page somebody edited, and deleting an id to switch off a check is
+// exactly the edit the check exists to catch.
+func ClaimsIn(page []byte) Claimed {
+	return Claimed{
+		Head:    marked(page, "kelyfos-head"),
+		Events:  marked(page, "kelyfos-events"),
+		Session: marked(page, "kelyfos-session"),
+	}
+}
+
+// marked pulls the text out of the one element carrying an id. Two of them is
+// no answer rather than the first answer, for the reason ExtractChain refuses a
+// page with two islands.
+func marked(page []byte, id string) string {
+	for _, tag := range []string{"code", "span"} {
+		open := []byte(`<` + tag + ` id="` + id + `">`)
+		if bytes.Count(page, open) != 1 {
+			continue
+		}
+		rest := page[bytes.Index(page, open)+len(open):]
+		if end := bytes.Index(rest, []byte("</"+tag+">")); end >= 0 {
+			return string(rest[:end])
+		}
+	}
+	return ""
+}
+
+// Disagree lists the values the page states that the record does not support.
+//
+// An absent marker counts as a disagreement rather than as nothing to check.
+// Every page this package writes carries all three, so a missing one is a page
+// that was edited — and switching a check off by deleting an id, leaving the
+// visible number in place, is the neatest version of the edit this exists to
+// catch.
+func (c Claimed) Disagree(head string, events int, chain []byte) []string {
+	var bad []string
+	check := func(what, stated, actual string) {
+		switch {
+		case stated == "":
+			bad = append(bad, fmt.Sprintf("the page states no %s; every KelyfOS export states one", what))
+		case stated != actual:
+			bad = append(bad, fmt.Sprintf("the page says %s %s; the record says %s", what, stated, actual))
+		}
+	}
+	check("chain head", c.Head, head)
+	check("event count", c.Events, strconv.Itoa(events))
+
+	// The session is the record's own `sandbox`, which every event carries and
+	// every digest covers. Taken from the first event: a chain whose events
+	// disagree among themselves about it is a separate question, and one this
+	// verifier does not yet ask.
+	session := ""
+	if i := bytes.Index(chain, []byte(`"sandbox":"`)); i >= 0 {
+		rest := chain[i+len(`"sandbox":"`):]
+		if j := bytes.IndexByte(rest, '"'); j >= 0 {
+			session = string(rest[:j])
+		}
+	}
+	check("session", c.Session, session)
+	return bad
 }
 
 // ExtractChain takes the flight recorder back out of an exported report.

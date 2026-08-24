@@ -396,7 +396,7 @@ kelyfos log --verify
 
 ---
 
-## 6. Read the record, prove it has not been edited, and send it to somebody who can check it too
+## 6. Read the record, prove nothing in it was edited, and send it to somebody who can check it too
 
 Every event is written by the host and carries the hash of the one before it. A
 guest that could write its own audit trail could write a flattering one, so it
@@ -407,6 +407,11 @@ rewrite it end to end and recompute every hash. What the chain buys is that a
 *selective* edit — deleting one blocked connection, softening one command —
 breaks every hash after it. That is exactly the edit somebody covering their
 tracks wants to make, so the recipe makes it and watches it fail.
+
+One edit it does **not** catch, said here rather than discovered: cutting the
+record short at its *end*. Nothing after the cut exists to break, so a truncated
+chain verifies and reads as a session that is still open. The chain head is what
+distinguishes them, and only when compared against a head from somewhere else.
 
 The export carries the record it was rendered from, so the person you send it to
 does not have to take the page's word for anything: `kelyfos verify` reads the
@@ -469,15 +474,28 @@ kelyfos verify --json report.html > piped.jsonl
 cmp piped.jsonl "$HOME/.cache/kelyfos/sessions/$session/events.jsonl"
 echo "and the same through kelyfos verify --json"
 
-# Editing the page and leaving the record alone is the one thing verification
-# cannot catch, so the product says so rather than implying otherwise — and the
-# reader is given a way to see the disagreement for themselves.
+# Editing the page's timeline and leaving the record alone is the one thing
+# verification cannot catch, so the product says so rather than implying
+# otherwise — and the reader is given a way to see the disagreement themselves.
 echo
-echo "== editing the page does not change the record it carries =="
+echo "== editing the page's timeline does not change the record it carries =="
 sed 's/a result/a different result/g' report.html > doctored.html
 kelyfos verify doctored.html
 kelyfos verify --replay doctored.html | grep -q "a result"
 echo "the record still says what it always said"
+
+# The numbers the page states about the record are a different matter: those are
+# checked, because the chain head is the one value a reader is told to compare
+# against a head they were given somewhere else.
+echo
+echo "== but a page that lies about its own chain head is caught =="
+head="$(kelyfos verify report.html | sed -n 's/.*chain head //p')"
+sed "s/$head/$(printf '9%.0s' $(seq 64))/" report.html > lying.html
+if kelyfos verify lying.html; then
+  echo "a page stating the wrong head verified, which it must never do"
+  exit 1
+fi
+echo "refused, as it must be"
 
 # But editing the record inside the page is caught, exactly the way editing the
 # flight recorder is.

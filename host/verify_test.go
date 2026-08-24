@@ -49,12 +49,15 @@ func exportedSession(t *testing.T) (chain []byte, page []byte) {
 // digests are computed over the bytes.
 func TestTheRecordSurvivesTheRoundTripThroughAReport(t *testing.T) {
 	chain, page := exportedSession(t)
-	got, kind, err := recordIn(page)
+	got, kind, fromReport, err := recordIn(page)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !bytes.Equal(got, chain) {
 		t.Error("the record taken out of the report is not the record that went in")
+	}
+	if !fromReport {
+		t.Error("a report was not recognised as one")
 	}
 	if !strings.Contains(kind, "report") {
 		t.Errorf("the provenance line does not say where the record came from: %q", kind)
@@ -69,18 +72,21 @@ func TestTheRecordSurvivesTheRoundTripThroughAReport(t *testing.T) {
 // or the two of them are checking different things with different tools.
 func TestARawRecordIsRecognisedAsItself(t *testing.T) {
 	chain, _ := exportedSession(t)
-	got, kind, err := recordIn(chain)
+	got, kind, fromReport, err := recordIn(chain)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !bytes.Equal(got, chain) {
 		t.Error("a flight recorder was not passed through unchanged")
 	}
+	if fromReport {
+		t.Error("a raw flight recorder was treated as a report making claims about itself")
+	}
 	if !strings.Contains(kind, "flight recorder") {
 		t.Errorf("the provenance line does not say what the file is: %q", kind)
 	}
 	// Leading whitespace is what a file gains when somebody pastes it around.
-	if _, _, err := recordIn(append([]byte("\n  \n"), chain...)); err != nil {
+	if _, _, _, err := recordIn(append([]byte("\n  \n"), chain...)); err != nil {
 		t.Errorf("a record with leading whitespace was not recognised: %v", err)
 	}
 }
@@ -97,7 +103,7 @@ func TestAFileWithNoRecordIsRefusedByName(t *testing.T) {
 		{"an export from before v1.0", "<h1>KelyfOS session report</h1><div class=\"chain ok\">intact</div>"},
 		{"empty", ""},
 	} {
-		_, _, err := recordIn([]byte(tc.blob))
+		_, _, _, err := recordIn([]byte(tc.blob))
 		if err == nil {
 			t.Errorf("%s: a record was found in a file that has none", tc.name)
 			continue
@@ -121,7 +127,7 @@ func TestEditingThePageLeavesTheRecordVerifiableAndDisagreeing(t *testing.T) {
 	if bytes.Equal(page, doctored) {
 		t.Fatal("the test did not manage to edit the page")
 	}
-	chain, _, err := recordIn(doctored)
+	chain, _, _, err := recordIn(doctored)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -140,9 +146,10 @@ func TestEditingThePageLeavesTheRecordVerifiableAndDisagreeing(t *testing.T) {
 	if !bytes.Contains(doctored, []byte("echo ok")) {
 		t.Fatal("the doctored page does not carry the edit this test is about")
 	}
-	if !bytes.Contains(doctored, []byte("checks the record, not this rendering")) &&
-		!bytes.Contains(doctored, []byte("not this rendering")) {
-		t.Error("the page does not warn that verification covers the record rather than the rendering")
+	for _, want := range []string{"The timeline below is not", "from the record by the exporter"} {
+		if !bytes.Contains(doctored, []byte(want)) {
+			t.Errorf("the page does not warn that its timeline is unchecked: missing %q", want)
+		}
 	}
 }
 
@@ -161,7 +168,7 @@ func TestTheHeadIsTheSameEverywhereItIsPrinted(t *testing.T) {
 	if !bytes.Contains(page, []byte(head)) {
 		t.Error("the page does not print the head of the record it carries")
 	}
-	extracted, _, err := recordIn(page)
+	extracted, _, _, err := recordIn(page)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -190,11 +197,95 @@ func TestExportProducesAFileItsOwnVerifierAccepts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, _, err := recordIn(page)
+	got, _, _, err := recordIn(page)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !bytes.Equal(got, chain) {
 		t.Error("the exported file does not carry the record it was made from")
+	}
+}
+
+// A page that lies about the record it carries is caught, which is the whole
+// reason the page marks the values it states.
+//
+// The head is the one number the product tells a reader to write down and
+// compare against a head they were given separately. A file that can quietly
+// change it is a file that turns that instruction into a trap — so of all the
+// numbers on the page, this is the one that cannot be left unchecked.
+func TestAPageThatLiesAboutItsRecordIsCaught(t *testing.T) {
+	chain, page := exportedSession(t)
+	_, head, err := recorder.Verify(bytes.NewReader(chain))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	honest := report.ClaimsIn(page)
+	if bad := honest.Disagree(head, 4, chain); len(bad) > 0 {
+		t.Fatalf("an untouched export disagrees with itself: %v", bad)
+	}
+
+	lie := bytes.Replace(page, []byte(head), bytes.Repeat([]byte("9"), 64), 1)
+	if bytes.Equal(lie, page) {
+		t.Fatal("the test did not manage to edit the stated head")
+	}
+	bad := report.ClaimsIn(lie).Disagree(head, 4, chain)
+	if len(bad) == 0 {
+		t.Error("a page stating a head the record does not support was accepted")
+	}
+
+	// Deleting the marker rather than changing the number is the neater edit,
+	// and it must not be the one that works.
+	stripped := bytes.Replace(page, []byte(` id="kelyfos-head"`), nil, 1)
+	if bad := report.ClaimsIn(stripped).Disagree(head, 4, chain); len(bad) == 0 {
+		t.Error("deleting the marker switched the check off")
+	}
+
+	// The count and the session are checked on the same footing. The edits are
+	// aimed at the marked elements rather than at the first occurrence of the
+	// text: the session id is also in the <title>, and editing that changes
+	// nothing the record can contradict.
+	for _, edit := range [][2]string{
+		{`<code id="kelyfos-events">4</code>`, `<code id="kelyfos-events">400</code>`},
+		{`<span id="kelyfos-session">s1</span>`, `<span id="kelyfos-session">s2</span>`},
+	} {
+		doctored := bytes.Replace(page, []byte(edit[0]), []byte(edit[1]), 1)
+		if bytes.Equal(doctored, page) {
+			t.Fatalf("the page does not mark %q, so this test proves nothing", edit[0])
+		}
+		if bad := report.ClaimsIn(doctored).Disagree(head, 4, chain); len(bad) == 0 {
+			t.Errorf("a page edited %q was accepted", edit[0])
+		}
+	}
+}
+
+// A record cut short at its end verifies, and the product says so rather than
+// implying it caught everything. This pins the behaviour the claim now matches:
+// truncation there breaks nothing, because nothing after the cut exists to
+// break.
+func TestARecordCutShortAtItsEndStillVerifies(t *testing.T) {
+	chain, _ := exportedSession(t)
+	lines := bytes.SplitAfter(chain, []byte("\n"))
+	short := bytes.Join(lines[:2], nil)
+
+	n, head, err := recorder.Verify(bytes.NewReader(short))
+	if err != nil {
+		t.Fatalf("a truncated chain was rejected, so the documented limit is wrong: %v", err)
+	}
+	if n != 2 {
+		t.Errorf("verified %d events, want 2", n)
+	}
+	_, full, _ := recorder.Verify(bytes.NewReader(chain))
+	if head == full {
+		t.Error("truncation did not change the head, so the head cannot distinguish them")
+	}
+
+	// And the observation the reader is given instead: this record does not end
+	// where a finished session ends.
+	if endsCleanly(short) {
+		t.Error("a truncated record was reported as ending cleanly")
+	}
+	if !endsCleanly(chain) {
+		t.Error("a session that ended was not reported as ending cleanly")
 	}
 }
