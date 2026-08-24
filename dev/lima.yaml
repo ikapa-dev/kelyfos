@@ -19,6 +19,19 @@ vmType: "vz"
 # emulated here.
 arch: "aarch64"
 
+# No containerd, no nerdctl. Lima installs both by default, which on a machine
+# that has never run Lima before is a ~500 MB download from GitHub before this
+# VM is usable — for tooling KelyfOS never touches. It runs Firecracker
+# microVMs; there is no container runtime anywhere in the product.
+#
+# Found by the P5 exit's own quickstart measurement, which purged Lima's cache
+# to measure what a first-time visitor pays and then sat for twenty minutes on
+# that download before it stalled. Every quickstart figure published before this
+# was measured with it already cached, and so understated a first run.
+containerd:
+  system: false
+  user: false
+
 images:
 # Pinned release, digest-verified.
 - location: "https://cloud-images.ubuntu.com/releases/noble/release-20260705/ubuntu-24.04-server-cloudimg-arm64.img"
