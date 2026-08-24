@@ -107,9 +107,21 @@ was typed. `kelyfos rerun` needs both, and §11 says what else it needs.
 `jailed` is here rather than on `session.ready` because it is a *choice*, made
 before the machine boots and knowable whether or not it ever does. The guest
 profile is the opposite — an observation of a machine that is answering — so it
-is on `session.ready`. That distinction is the rule for this pair of fields: a
-wall that was chosen is recorded when the chain opens, and a wall that was
-observed is recorded when there was something to observe.
+is on `session.ready`.
+
+**That distinction is the rule for placing any field added to this schema**, not
+just for those two:
+
+> A fact knowable before the machine boots — a choice — may ride the event that
+> opens the chain. A fact that had to be observed rides `session.ready`, because
+> that is the first event that could carry it truthfully.
+
+There is a second reason, and it is the one that decided it. `session.start`
+opens one chain per *command*, and a `team up` of five agents is one chain with
+five machines in it — so an opening event has no place to put five machines'
+postures. `session.ready` is emitted once per machine on every path there is.
+A field describing *a machine* belongs there even when it could technically have
+been known earlier.
 
 ### `session.ready`
 The guest announced itself — or, on a restore, answered.

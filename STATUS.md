@@ -12,6 +12,11 @@ the boot path; the quickstart ≤5-min figure re-measured *including* the sudoer
 README's "not hardened yet" sentence replaced by one that is also true; and
 docs/threat-model.md brought into line with it rather than softened.
 
+Both P5 deviations were endorsed by the owner (2026-08-24) and logged in D32 and D33.
+The `session.ready` placement is now doctrine for any record field added later: a choice
+may ride the opening event, an observation rides ready. The absent catalog entry stands;
+no guest-side refusal mechanism is to be built to create one.
+
 **P5-8 done.** The sibling-ptrace refusal is named in docs/denials.md's own
 what-is-not-in-the-catalog section and in the generated profiles page, with both halves
 proved by a shell: a command can introspect a child it started, and cannot introspect a
