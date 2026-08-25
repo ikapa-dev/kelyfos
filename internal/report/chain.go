@@ -98,6 +98,16 @@ type Claimed struct {
 	Head    string
 	Events  string
 	Session string
+	// Fingerprint is the signing key's digest as the page prints it.
+	//
+	// It is here because P6-19's exam found it was the one trust-bearing value
+	// the page renders and nothing compared: the banner tells a reader the
+	// fingerprint "means something only if you recognise it from somewhere other
+	// than this page" — that is, it is the value the reader is instructed to act
+	// on — and a page whose fingerprint had been swapped for one the reader
+	// trusts still verified clean. Worse, deleting its marker passed where
+	// deleting any of the other three failed closed.
+	Fingerprint string
 }
 
 // ClaimsIn reads the values a page states about its own record.
@@ -108,9 +118,10 @@ type Claimed struct {
 // exactly the edit the check exists to catch.
 func ClaimsIn(page []byte) Claimed {
 	return Claimed{
-		Head:    marked(page, "kelyfos-head"),
-		Events:  marked(page, "kelyfos-events"),
-		Session: marked(page, "kelyfos-session"),
+		Head:        marked(page, "kelyfos-head"),
+		Events:      marked(page, "kelyfos-events"),
+		Session:     marked(page, "kelyfos-session"),
+		Fingerprint: marked(page, "kelyfos-fingerprint"),
 	}
 }
 
@@ -138,7 +149,7 @@ func marked(page []byte, id string) string {
 // that was edited — and switching a check off by deleting an id, leaving the
 // visible number in place, is the neatest version of the edit this exists to
 // catch.
-func (c Claimed) Disagree(head string, events int, chain []byte) []string {
+func (c Claimed) Disagree(head string, events int, chain []byte, fingerprint string) []string {
 	var bad []string
 	check := func(what, stated, actual string) {
 		switch {
@@ -163,6 +174,29 @@ func (c Claimed) Disagree(head string, events int, chain []byte) []string {
 		}
 	}
 	check("session", c.Session, session)
+
+	// The fingerprint, but only when the page carries a signature at all: an
+	// unsigned export prints no fingerprint and must not be told it is missing
+	// one. When there IS a signature, the printed fingerprint has to be the
+	// fingerprint of the key that actually made it — otherwise the page can name
+	// a key the reader trusts while being signed by a key they have never seen,
+	// which is the whole of what this value was for (P6-19).
+	if fingerprint != "" {
+		switch {
+		case c.Fingerprint == "":
+			bad = append(bad, "the page states no signing key fingerprint; every signed KelyfOS export states one")
+		case c.Fingerprint != fingerprint:
+			// Worded apart from the others on purpose: this one does not come
+			// from the record. The record says nothing about who exported it —
+			// the signature does — so "the record says" would be wrong here in
+			// the one place a reader is deciding whom to believe.
+			bad = append(bad, fmt.Sprintf(
+				"the page names signing key fingerprint %s; the signature on it was made by %s",
+				c.Fingerprint, fingerprint))
+		}
+	} else if c.Fingerprint != "" {
+		bad = append(bad, "the page names a signing key fingerprint and carries no signature to match it against")
+	}
 	return bad
 }
 

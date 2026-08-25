@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"crypto/ed25519"
 	"os"
 	"path/filepath"
 	"strings"
@@ -39,6 +40,22 @@ func exportedSession(t *testing.T) (chain []byte, page []byte) {
 	}
 	var buf bytes.Buffer
 	if _, err := report.Render(&buf, "s1", chain); err != nil {
+		t.Fatal(err)
+	}
+	return chain, buf.Bytes()
+}
+
+// The same session, exported with a signature, for the checks that are about
+// who exported a report rather than about what it records.
+func signedExportedSession(t *testing.T) (chain []byte, page []byte) {
+	t.Helper()
+	chain, _ = exportedSession(t)
+	_, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	if _, err := report.RenderSigned(&buf, "s1", chain, priv); err != nil {
 		t.Fatal(err)
 	}
 	return chain, buf.Bytes()
@@ -220,7 +237,7 @@ func TestAPageThatLiesAboutItsRecordIsCaught(t *testing.T) {
 	}
 
 	honest := report.ClaimsIn(page)
-	if bad := honest.Disagree(head, 4, chain); len(bad) > 0 {
+	if bad := honest.Disagree(head, 4, chain, ""); len(bad) > 0 {
 		t.Fatalf("an untouched export disagrees with itself: %v", bad)
 	}
 
@@ -228,7 +245,7 @@ func TestAPageThatLiesAboutItsRecordIsCaught(t *testing.T) {
 	if bytes.Equal(lie, page) {
 		t.Fatal("the test did not manage to edit the stated head")
 	}
-	bad := report.ClaimsIn(lie).Disagree(head, 4, chain)
+	bad := report.ClaimsIn(lie).Disagree(head, 4, chain, "")
 	if len(bad) == 0 {
 		t.Error("a page stating a head the record does not support was accepted")
 	}
@@ -236,7 +253,7 @@ func TestAPageThatLiesAboutItsRecordIsCaught(t *testing.T) {
 	// Deleting the marker rather than changing the number is the neater edit,
 	// and it must not be the one that works.
 	stripped := bytes.Replace(page, []byte(` id="kelyfos-head"`), nil, 1)
-	if bad := report.ClaimsIn(stripped).Disagree(head, 4, chain); len(bad) == 0 {
+	if bad := report.ClaimsIn(stripped).Disagree(head, 4, chain, ""); len(bad) == 0 {
 		t.Error("deleting the marker switched the check off")
 	}
 
@@ -252,7 +269,7 @@ func TestAPageThatLiesAboutItsRecordIsCaught(t *testing.T) {
 		if bytes.Equal(doctored, page) {
 			t.Fatalf("the page does not mark %q, so this test proves nothing", edit[0])
 		}
-		if bad := report.ClaimsIn(doctored).Disagree(head, 4, chain); len(bad) == 0 {
+		if bad := report.ClaimsIn(doctored).Disagree(head, 4, chain, ""); len(bad) == 0 {
 			t.Errorf("a page edited %q was accepted", edit[0])
 		}
 	}
@@ -401,4 +418,55 @@ func read(t *testing.T, path string) string {
 		t.Fatal(err)
 	}
 	return string(b)
+}
+
+// A page cannot name a signing key it was not signed with (P6-19).
+//
+// The exam found this by fuzzing the page's fields one at a time, which is how
+// it should have been found and is not how it should have shipped. The report's
+// banner prints the signing key's fingerprint and tells the reader it "means
+// something only if you recognise the fingerprint from somewhere other than this
+// page" — so it is the one value on the page a reader is instructed to act on.
+// It was the one value nothing compared: swapping it for the fingerprint of a
+// key the reader genuinely trusts left `kelyfos verify` reporting a fully clean
+// result, and deleting its marker altogether passed where deleting any of the
+// other three markers failed closed.
+//
+// What makes it a trust defect rather than a cosmetic one is the pairing: the
+// page prints sha256(key) and `verify` prints the raw key hex, and no document
+// bridges the two — so a reader who wanted to cross-check by hand had no
+// documented way to do it either.
+func TestAPageCannotNameASigningKeyItWasNotSignedWith(t *testing.T) {
+	chain, page := signedExportedSession(t)
+	_, head, err := recorder.Verify(bytes.NewReader(chain))
+	if err != nil {
+		t.Fatal(err)
+	}
+	real := report.SignatureIn(page).Fingerprint()
+	if real == "" {
+		t.Fatal("the fixture is not signed, so this test proves nothing")
+	}
+
+	if bad := report.ClaimsIn(page).Disagree(head, 4, chain, real); len(bad) > 0 {
+		t.Fatalf("an untouched signed export disagrees with itself: %v", bad)
+	}
+
+	// The attack: keep the signature, swap the displayed fingerprint for one the
+	// reader recognises. Nothing about the record changes.
+	trusted := strings.Repeat("ab", 32)
+	forged := bytes.Replace(page, []byte(real), []byte(trusted), 1)
+	if bytes.Equal(forged, page) {
+		t.Fatal("the test did not manage to edit the displayed fingerprint")
+	}
+	if bad := report.ClaimsIn(forged).Disagree(head, 4, chain, real); len(bad) == 0 {
+		t.Error("a page naming a key it was not signed with was accepted — " +
+			"which is the whole of what the fingerprint was for")
+	}
+
+	// And deleting the marker must not be the edit that works, on the same
+	// footing as the other three.
+	stripped := bytes.Replace(page, []byte(` id="kelyfos-fingerprint"`), nil, 1)
+	if bad := report.ClaimsIn(stripped).Disagree(head, 4, chain, real); len(bad) == 0 {
+		t.Error("deleting the fingerprint marker switched the check off")
+	}
 }

@@ -129,7 +129,14 @@ than against the one the file supplied itself.
 		return nil
 	}
 
-	if bad := report.ClaimsIn(blob).Disagree(head, n, chain); len(bad) > 0 {
+	// The fingerprint the page prints has to be the fingerprint of the key that
+	// actually signed it. It is read here, before the claims check, because it is
+	// one of the claims: the banner tells the reader that value means something
+	// only if they recognise it from somewhere other than the page, which makes
+	// it the one number on the page a reader is told to act on — and until P6-19's
+	// exam went looking, it was the one number nothing compared (P6-19).
+	signedBy := report.SignatureIn(blob).Fingerprint()
+	if bad := report.ClaimsIn(blob).Disagree(head, n, chain, signedBy); len(bad) > 0 {
 		for _, b := range bad {
 			fmt.Fprintf(out, "  MISMATCH: %s\n", b)
 		}

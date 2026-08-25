@@ -1200,7 +1200,7 @@
         Deciding it is the point; letting it pass unexamined is what this task exists to prevent. Budgeted as work:
         two manual workflow dispatches, a Linux/KVM host, and hours rather than minutes.</span></li>
 
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">P6-19</span><span class="tk"><b>The docs-only exam, re-run against the v1.0
         artifacts.</b> The E3-5 bar: a fresh session, the installed binaries and the documentation, no source tree,
         no plan files, no git history, no web &mdash; and a task it can only complete if the documentation is true.
@@ -3567,6 +3567,39 @@ after:
         leaving a background child hangs indefinitely; redirected, the same script returns in 0s with rc=1<br>
         an earlier theory of that hang was tested and <i>disproved</i> before it reached the repository &mdash;
         <code>timeout</code> signals the whole process group, so a script that <i>hangs</i> does not show it</td></tr>
+        <tr><td class="mono">2026-08-25</td><td class="mono">P6-19</td>
+        <td><b>The docs-only exam, and the trust defect it found in v1.0&rsquo;s own new work.</b> Three readers,
+        E3-5&rsquo;s bar: the binary built from the commit under test, <code>llms-full.txt</code>, and nothing
+        else &mdash; no source tree, no <code>docs/</code>, no README, no plan files, no git history, no web.
+        Tasks chosen against the surface this phase added rather than repeated for comparability: trust a report
+        somebody sent you (on macOS, with no guest at all), attach a client and prove it works, and upgrade from
+        v0.9. <b>24 findings survived adjudication of 28 reported</b>; the other four were rejected because the
+        documentation does say the thing, which is a finding about <i>findability</i> rather than truth and is
+        recorded as one.
+        <b>The sharpest is a trust defect, and it is P6-7&rsquo;s.</b> The exported report prints the signing
+        key&rsquo;s fingerprint and tells the reader it &ldquo;means something only if you recognise the
+        fingerprint from somewhere other than this page&rdquo; &mdash; which makes it <i>the one value on the
+        page a reader is instructed to act on</i>. It was the one value <code>kelyfos verify</code> did not
+        check. Swapping it for the fingerprint of a key the reader genuinely trusts left verification reporting
+        a fully clean result, and deleting its marker passed where deleting any of the other three failed
+        closed. Compounding it: the page prints <code>sha256(key)</code> and <code>verify</code> prints the raw
+        key hex, with no document bridging the two &mdash; so a reader who wanted to cross-check by hand had no
+        documented way to do that either. <b>Fixed in this commit</b>, with the mismatch worded apart from the
+        others because a fingerprint comes from the <i>signature</i> and not from the record.
+        <b>Two more that let a reader overclaim.</b> The cookbook&rsquo;s own <code>check.py</code> &mdash; the
+        documentation&rsquo;s proof that a client configuration is right &mdash; passes against a
+        <code>serve-mcp</code> running with <b>no policy and no ceiling at all</b>, which is the exact failure
+        F-D44 exists to prevent. And the export&rsquo;s summary card reads &ldquo;0 FILES WRITTEN&rdquo; for a
+        session that demonstrably wrote a file, because a shell redirect inside the guest produces no
+        <code>file.write</code> event &mdash; the card carries no hedge where the footer does.</td>
+        <td class="mono">the transcript is committed whatever it says, per the task:
+        <code>docs/exam/2026-08-25-v1.0.md</code><br>
+        the fingerprint fix is proved against the attack the exam used: a page naming a key it was not signed
+        with, and a page with the marker deleted, both now exit 1 &mdash; and the test was run against the
+        unfixed code first and watched to fail<br>
+        the reader found it by fuzzing the page&rsquo;s fields one at a time, which is how it should have been
+        found and is not how it should have shipped<br>
+        one reader did <b>not</b> finish its task, which is a result rather than a failure of the reader</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
