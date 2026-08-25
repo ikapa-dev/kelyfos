@@ -4739,6 +4739,30 @@ after:
         <td>P6-23, third and final instalment. 12 CONFIRMED, 1 ALREADY-FIXED, 0 disputed by the second reader.
         Severity for v1.0: 10 should-fix, 2 latent-edge (L-4, D-1), and L-2 which blocked and no longer exists.
         The fixes are P6-27, which is where the corrections that reach documents ride the same commits.</td></tr>
+        <tr><td class="mono">D58</td><td class="mono">2026-08-25</td>
+        <td><b>The three Dependabot pull requests are held until v1.0 ships, and the reason is what the release
+        candidate is for.</b> They arrived within minutes of D54&rsquo;s toggle:
+        <code>upload-artifact</code> 4&rarr;7, <code>download-artifact</code> 4&rarr;8,
+        <code>setup-go</code> 5&rarr;7. All three are green on every check this repository runs.
+        <i>Green is not the same as safe here.</i> CI does not run <code>release.yml</code>, and
+        <code>release.yml</code> is the only workflow that uses <code>merge-multiple</code> &mdash; the step that
+        merges two matrix jobs&rsquo; artifacts into one <code>dist/</code> before the sums file is written over
+        it. The input survives in v8, so the interface is compatible; the <i>behaviour</i> around it is not
+        unchanged. v8 stops unzipping by Content-Type rather than always, and makes a digest mismatch a hard
+        error where it used to warn. Both are improvements and neither has ever run on this project&rsquo;s
+        release path.
+        <b>A release candidate exists to prove the exact path the release will take.</b> rc1 and rc2 were built
+        with v4. Merging a major bump of the artifact actions after them would mean tagging v1.0 on a path no
+        candidate has exercised, which is the failure this whole phase is built to prevent &mdash; and it would
+        do it for a Node runtime deprecation warning, not a vulnerability.
+        <i>So: after v1.0, and with an rc of their own.</i> The bumps are wanted; the ordering is the decision.
+        <i>And one thing they settled that was worth knowing.</i> P6-29&rsquo;s DCO gate was expected to block
+        every bot pull request, since a bot cannot certify origin. It does not: Dependabot signs its own commits
+        with a <code>Signed-off-by</code> trailer, so all three pass the gate on their own. That was checked
+        against the real branches rather than assumed &mdash; the assumption was wrong in the safe
+        direction.</td>
+        <td>P6-30. PRs #1, #2, #3. <i>Revisit when</i> v1.0 is tagged: merge them, then cut an rc that runs the
+        release path with the new actions before anything else is tagged.</td></tr>
     <!-- Claude Code: append rows above this line. -->
   </table>
 </section>
