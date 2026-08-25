@@ -45,6 +45,9 @@ kelyfos doctor
 | Flag | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `--arch` | string | the build host's architecture | architecture to check images for |
+| `--recreate` | boolean | — | macOS: delete the Linux layer and provision it again |
+| `--setup` | boolean | — | macOS: provision and start the Linux layer, then check inside it |
+| `--stop` | boolean | — | macOS: stop the Linux layer |
 
 ## kelyfos run
 

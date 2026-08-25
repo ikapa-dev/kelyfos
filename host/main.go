@@ -50,6 +50,13 @@ func main() {
 		fmt.Fprint(os.Stderr, usage)
 		os.Exit(2)
 	}
+	// A command that cannot work on this operating system says so here, once,
+	// rather than in whatever it reaches for first (P6-12).
+	if err := runsHere(os.Args[1]); err != nil {
+		fmt.Fprintf(os.Stderr, "%v\n", err)
+		os.Exit(2)
+	}
+
 	var err error
 	switch os.Args[1] {
 	case "doctor":

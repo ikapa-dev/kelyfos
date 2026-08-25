@@ -215,6 +215,19 @@ release-cli: ## Cross-build static kelyfos binaries for both arches into dist/
 	    -o $(CURDIR)/dist/kelyfos-linux-$$uarch ./host || exit 1; \
 	  echo "built dist/kelyfos-linux-$$uarch"; \
 	done
+	@# macOS, since P6-12 (D35's scoping of P4-7). A smaller program than the
+	@# Linux one and it says so: doctor owns the Lima layer, verify checks a
+	@# report somebody sent you, and everything that needs a guest refuses with
+	@# the way in. Shipping it is what makes `kelyfos doctor --setup` reachable
+	@# by somebody who has not cloned anything.
+	@for a in amd64:x86_64 arm64:aarch64; do \
+	  goarch=$${a%%:*}; uarch=$${a##*:}; \
+	  CGO_ENABLED=0 GOOS=darwin GOARCH=$$goarch go build -trimpath \
+	    -ldflags="-s -w -X main.Version=$(KELYFOS_VERSION) \
+	                -X main.FirecrackerVersion=$(FIRECRACKER_VERSION)" \
+	    -o $(CURDIR)/dist/kelyfos-darwin-$$uarch ./host || exit 1; \
+	  echo "built dist/kelyfos-darwin-$$uarch"; \
+	done
 
 # One SBOM per architecture, covering all three places an image comes from
 # (P6-10).

@@ -180,7 +180,7 @@
     <span class="bl-name">Overall</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">P6-6 done &mdash; the export carries the record it was rendered from and <code>kelyfos verify</code> re-runs the chain over it offline. <b>An external security audit then arrived (D45) and v1.0 is gated on its trust-boundary group</b>: the workspace block device is a guest&rarr;host surface the threat model does not list. Seven tasks inserted before P6-7. <b>P6-21 done</b> &mdash; <code>--review</code> no longer destroys an edit made while somebody was reading it. <b>P6-6 corrected</b>: its own adversarial review landed late and found a false claim about truncation and an unchecked chain head, both reproduced and both fixed. <b>P6-22 done</b> &mdash; nine fixture groups, twenty-one recorded breaks, a ledger that can only shrink, and a CI job that runs the lot. <b>D46</b> triaged seven findings against HEAD and corrected two. <b>P6-24 done &mdash; the v1.0 gate is open.</b> C-1, H-1 and H-2 are closed in two layers, the workspace block device is in the trust-boundary table, and the full acceptance suite passes on the final code. P6-23 stands at 11/23, blocked on the audit text for the rest (D47). <b>P6-25 done</b> &mdash; the blocking set is closed and the hostile ledger is down to one line, which is a recorded decision rather than a defect. <b>P6-26 done. The audit&rsquo;s v1.0-blocking set is closed</b> &mdash; boundary group, clamps and both claims &mdash; and the hostile ledger is one line, which is a recorded decision. P6-23 and P6-27 are blocked on the audit text for the remaining twelve findings (D47). <b>P6-7 done</b> &mdash; signed exports with a key the reader anchors, and a vocabulary rather than a badge. <b>P6-8 done</b> &mdash; the release is a workflow, the sums file is written from scratch and checked both ways, and the flavor is in the cache key. <b>P6-9 done</b> &mdash; and measured: two full builds from nothing produce byte-identical artifacts on this machine, which is more than D38 expected. <b>P6-10 done</b> &mdash; 64 components across three sources, including the one Buildroot has never heard of. <b>P6-11 done</b> &mdash; provenance and SBOM attestations, and the immutable-release claim refused in the same breath. Next: <b>P6-12</b>, the macOS port</b></div>
+  <div class="focusline">Current focus: <b id="focus">P6-6 done &mdash; the export carries the record it was rendered from and <code>kelyfos verify</code> re-runs the chain over it offline. <b>An external security audit then arrived (D45) and v1.0 is gated on its trust-boundary group</b>: the workspace block device is a guest&rarr;host surface the threat model does not list. Seven tasks inserted before P6-7. <b>P6-21 done</b> &mdash; <code>--review</code> no longer destroys an edit made while somebody was reading it. <b>P6-6 corrected</b>: its own adversarial review landed late and found a false claim about truncation and an unchecked chain head, both reproduced and both fixed. <b>P6-22 done</b> &mdash; nine fixture groups, twenty-one recorded breaks, a ledger that can only shrink, and a CI job that runs the lot. <b>D46</b> triaged seven findings against HEAD and corrected two. <b>P6-24 done &mdash; the v1.0 gate is open.</b> C-1, H-1 and H-2 are closed in two layers, the workspace block device is in the trust-boundary table, and the full acceptance suite passes on the final code. P6-23 stands at 11/23, blocked on the audit text for the rest (D47). <b>P6-25 done</b> &mdash; the blocking set is closed and the hostile ledger is down to one line, which is a recorded decision rather than a defect. <b>P6-26 done. The audit&rsquo;s v1.0-blocking set is closed</b> &mdash; boundary group, clamps and both claims &mdash; and the hostile ledger is one line, which is a recorded decision. P6-23 and P6-27 are blocked on the audit text for the remaining twelve findings (D47). <b>P6-7 done</b> &mdash; signed exports with a key the reader anchors, and a vocabulary rather than a badge. <b>P6-8 done</b> &mdash; the release is a workflow, the sums file is written from scratch and checked both ways, and the flavor is in the cache key. <b>P6-9 done</b> &mdash; and measured: two full builds from nothing produce byte-identical artifacts on this machine, which is more than D38 expected. <b>P6-10 done</b> &mdash; 64 components across three sources, including the one Buildroot has never heard of. <b>P6-11 done</b> &mdash; provenance and SBOM attestations, and the immutable-release claim refused in the same breath. <b>P6-12 done</b> &mdash; the CLI runs on macOS, <code>doctor</code> owns the Lima layer, and a report verifies on the machine it was sent to. Next: <b>P6-13</b>, <code>kelyfos connect</code></b></div>
 </div>
 
 <!-- ====================================================== 1. END GOAL -->
@@ -1035,7 +1035,7 @@
         are retired atomically with the mechanism, and the README gains the one command a stranger runs to check
         it.</span></li>
 
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">P6-12</span><span class="tk"><b>macOS: the CLI ports, and <code>doctor</code> owns the
         Linux layer (P4-7, scoped by D35).</b> The owner&rsquo;s ruling is that a macOS user never runs
         <code>limactl</code>, and that is exactly deliverable. Today the CLI does not compile for darwin at all
@@ -3207,6 +3207,47 @@ after:
         them is the release itself, at the phase exit<br>
         <code>P4-3</code> appears in no <code>README.md</code>, <code>docs/</code> or <code>dev/</code> file;
         <code>gofmt</code>, <code>vet</code>, 14 packages, <code>make docs</code> clean</td></tr>
+        <tr><td class="mono">2026-08-25</td><td class="mono">P6-12</td>
+        <td><b>The CLI ports to macOS, and <code>doctor</code> owns the Linux layer.</b>
+        <b>The compile-level delta was seven lines behind two build-tag pairs, exactly as the task predicted</b>
+        &mdash; four <code>SysProcAttr</code> cgroup fields and three termios ioctl constants, which Linux calls
+        <code>TCGETS</code>/<code>TCSETS</code> and darwin calls <code>TIOCGETA</code>/<code>TIOCSETA</code>. Both
+        are now named constants rather than two implementations.
+        <b>The binary is a smaller program and it says so.</b> Every command that needs a guest refuses with the
+        way in rather than letting somebody discover a missing <code>/dev/kvm</code>. What works is
+        <code>doctor</code>, <code>verify</code>, <code>version</code> and <code>help</code> &mdash;
+        <b><code>verify</code> deliberately included</b>, because the machine a report is <i>sent to</i> is often a
+        Mac and checking one needs no guest, no daemon and no network. A signed report verifies natively there,
+        and a page that lies about its own chain head is caught there.
+        <b><code>doctor</code> provisions, starts, stops and reports on the layer</b>, from a configuration
+        embedded in the binary &mdash; because somebody who downloaded a release has no source tree to read a
+        template from. On a Mac the report <i>is</i> the layer&rsquo;s: its state, whether it matches this binary,
+        then the in-VM doctor&rsquo;s own output, which is where the checks that mean anything run. The old shape
+        printed <code>[FAIL] platform</code> and told a Mac user to type <code>limactl</code>; both halves of that
+        are now wrong.
+        <b>Drift detection, and the obvious version of it is a check that can only say yes.</b> Comparing this
+        binary&rsquo;s config against Lima&rsquo;s frozen copy reports drift for <i>every</i> instance including
+        one made a second ago, because Lima normalises a template when it freezes it. So the digest of what an
+        instance was made from is recorded beside it at creation, and a missing marker is reported as its own
+        answer &mdash; &ldquo;made by hand, so what it was made from is unknown&rdquo; is a different thing to tell
+        somebody than &ldquo;made from something else&rdquo;.
+        <b>P4-7&rsquo;s &ldquo;same commands everywhere&rdquo; is withdrawn</b> in the README, in the words the
+        task asked for: it needs a transport across <code>limactl shell</code>, an interrupt does not cross it, and
+        a Ctrl-C would orphan a microVM and silently discard the workspace it was syncing back.</td>
+        <td class="mono">run natively on this Mac, not cross-compiled and hoped for: <code>kelyfos run</code>
+        refuses with the layer instructions and exits 2; <code>doctor</code> reports the real
+        <code>kelyfos-dev</code> instance as running and <b>correctly says it was not created by
+        <code>kelyfos doctor</code></b>, exit 1 &mdash; which is true, it was made by hand months ago<br>
+        a signed report verified on macOS against a key held separately, and a page with an edited chain head
+        refused there, exit 1<br>
+        the same flags on Linux answer with one sentence rather than <code>flag provided but not defined</code>,
+        because a tool whose flags depend on the platform is a tool somebody has to remember two versions of<br>
+        <b>the second copy of the truth is gated rather than hoped against:</b> <code>host/lima.yaml</code> is
+        compiled in and <code>dev/lima.yaml</code> is the one to edit, and a test fails loudly when they disagree
+        and names the command that fixes it &mdash; proved by making them disagree<br>
+        the release ships four CLIs now, two Linux and two darwin<br>
+        <code>gofmt</code>, <code>vet</code>, 14 packages, <code>make docs</code> clean; both platforms
+        build</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>

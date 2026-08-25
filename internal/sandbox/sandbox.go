@@ -482,8 +482,7 @@ func (s *Sandbox) Start(ctx context.Context) error {
 	// through the jailer, which forks: there the cgroup is named with
 	// --parent-cgroup instead (jail.go).
 	if s.opts.CPUSlice.Direct() && !s.State.Jailed {
-		cmd.SysProcAttr.UseCgroupFD = true
-		cmd.SysProcAttr.CgroupFD = s.opts.CPUSlice.FD()
+		placeInCgroup(cmd, s.opts.CPUSlice.FD())
 	}
 	if s.opts.CPUSlice != nil {
 		s.State.CPUQuota = s.opts.CPUSlice.Percent
@@ -960,8 +959,7 @@ func Restore(snapDir string, opts Options) (*Sandbox, time.Duration, error) {
 	// a quota that starts a moment late is not a quota with a hole in it (E1-2)
 	// — except through the jailer, which forks and is told the parent cgroup.
 	if s.opts.CPUSlice.Direct() && !s.State.Jailed {
-		cmd.SysProcAttr.UseCgroupFD = true
-		cmd.SysProcAttr.CgroupFD = s.opts.CPUSlice.FD()
+		placeInCgroup(cmd, s.opts.CPUSlice.FD())
 	}
 	if s.opts.CPUSlice != nil {
 		s.State.CPUQuota = s.opts.CPUSlice.Percent

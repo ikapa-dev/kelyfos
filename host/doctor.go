@@ -79,12 +79,26 @@ type check struct {
 func doctorCmd(argv []string) error {
 	fs := flag.NewFlagSet("kelyfos doctor", flag.ExitOnError)
 	arch := fs.String("arch", sandbox.HostArch(), "architecture to check images for")
+	// The Linux layer, on the platform that needs one (P6-12). On Linux these
+	// are accepted and refused with one sentence, rather than being absent —
+	// a flag that exists on one platform and is an unknown flag on the other
+	// teaches a person that the tool is two tools.
+	setup := fs.Bool("setup", false, "macOS: provision and start the Linux layer, then check inside it")
+	recreate := fs.Bool("recreate", false, "macOS: delete the Linux layer and provision it again")
+	stop := fs.Bool("stop", false, "macOS: stop the Linux layer")
 	fs.Usage = func() {
 		fmt.Fprintln(fs.Output(), "usage: kelyfos doctor\n\nChecks that this machine can run KelyfOS, and says exactly how to fix what cannot.")
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(argv); err != nil {
 		return err
+	}
+
+	if *setup || *recreate || *stop {
+		if err := layerCommand(*setup, *recreate, *stop, *arch); err != nil {
+			return err
+		}
+		return nil
 	}
 
 	host := detectHost()
@@ -94,6 +108,19 @@ func doctorCmd(argv []string) error {
 	// guaranteed to fail and about to offer advice that makes no sense here —
 	// "sudo modprobe kvm_intel" and "sudo apt install" are not things a Mac
 	// user can act on. One correct instruction beats seven wrong ones.
+	// macOS is a supported platform with a layer under it, not a failure, and
+	// since P6-12 this command owns that layer. So the report is the layer's:
+	// what state it is in, whether it matches the configuration this binary
+	// carries, and then the in-VM doctor's own output — which is where the
+	// checks that mean anything actually run (P6-12).
+	//
+	// The old shape printed `[FAIL] platform` and told a Mac user to type
+	// limactl. Both halves of that are now wrong: the platform is fine and the
+	// user does not type limactl.
+	if runtime.GOOS == "darwin" {
+		return layerReport(*arch)
+	}
+
 	if platform := checkPlatform(host); !platform.ok {
 		fmt.Printf("  [FAIL] %-22s %s\n", platform.name, platform.detail)
 		for _, line := range strings.Split(platform.fix, "\n") {
@@ -145,11 +172,14 @@ func doctorCmd(argv []string) error {
 func checkPlatform(host hostKind) check {
 	switch host {
 	case hostMacOS:
+		// The fix names kelyfos rather than limactl, because since P6-12 this
+		// command owns the layer: a macOS user provisioning it by hand would be
+		// making an instance kelyfos cannot then tell them anything about.
 		return check{"platform", false, "macOS — Firecracker only runs on Linux/KVM",
-			"KelyfOS needs a Linux layer. On Apple Silicon (M3 or newer, macOS 15+):\n" +
+			"KelyfOS runs the guest in a Linux layer, and looks after it for you.\n" +
+				"On Apple Silicon (M3 or newer, macOS 15+):\n" +
 				"    brew install lima\n" +
-				"    limactl start --name kelyfos-dev dev/lima.yaml\n" +
-				"    limactl shell kelyfos-dev"}
+				"    kelyfos doctor --setup"}
 	case hostOther:
 		return check{"platform", false, runtime.GOOS + " is not supported",
 			"KelyfOS runs on Linux with KVM. See dev/lima.yaml (macOS) or dev/wsl2.md (Windows)."}

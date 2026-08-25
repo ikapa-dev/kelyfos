@@ -208,7 +208,7 @@ func transcriptPath(tape *os.File) string {
 // dependency, because this is the whole of what such a dependency would do.
 func rawMode(f *os.File) (restore func(), err error) {
 	fd := int(f.Fd())
-	before, err := unix.IoctlGetTermios(fd, unix.TCGETS)
+	before, err := unix.IoctlGetTermios(fd, getTermios)
 	if err != nil {
 		return nil, err
 	}
@@ -223,12 +223,12 @@ func rawMode(f *os.File) (restore func(), err error) {
 	raw.Cflag |= unix.CS8
 	raw.Cc[unix.VMIN] = 1
 	raw.Cc[unix.VTIME] = 0
-	if err := unix.IoctlSetTermios(fd, unix.TCSETS, &raw); err != nil {
+	if err := unix.IoctlSetTermios(fd, setTermios, &raw); err != nil {
 		return nil, err
 	}
 	var once sync.Once
 	return func() {
-		once.Do(func() { _ = unix.IoctlSetTermios(fd, unix.TCSETS, &saved) })
+		once.Do(func() { _ = unix.IoctlSetTermios(fd, setTermios, &saved) })
 	}, nil
 }
 
