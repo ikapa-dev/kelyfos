@@ -1,51 +1,42 @@
 # KelyfOS — session status
 
-Updated 2026-08-24 · synced with origin/main · **v0.9 released** · CI green on main · **Phase 6 open**
+Updated 2026-08-25 · synced with origin/main · **v0.9 released** · CI green on main · **Phase 6 open**
 
 ## Plans
-- PLAN.html — **54/81**. Phases 0–3 and 5 done. **Phase 4 dispositioned and parked** (D35). **Phase 6 open —
+- PLAN.html — **55/81**. Phases 0–3 and 5 done. **Phase 4 dispositioned and parked** (D35). **Phase 6 open —
   "v1.0, the promise", now 28 tasks**: an external security audit arrived mid-phase and added seven (D45).
 - PLAN-FEATURES.html — **COMPLETE and closed.** 42/42, five epics, v0.4–v0.8 released.
 - **The overall bar will not reach 100% and is not meant to.** Seven of the denominator's boxes are Phase 4's
   permanent record rows. A denominator adjusted to flatter the numerator is the same defect as a ticked box.
 
 ## Now
-**An external security audit of `babec8f` arrived** — 23 findings, 1 critical, 6 high, 9 medium, 7 low. D45 is its
-receipt and its plan, and **v1.0 does not tag until its trust-boundary group is closed and proven**: C-1, H-1 and
-H-2 are one defect wearing three hats. The workspace block device is a guest→host surface and §5's trust-boundary
-table does not list it — the table calls guest→host "Firecracker + KVM", which is true of the VM and silent about
-the disk the VM writes and the host then reads with `debugfs`. Seven tasks, P6-21 to P6-27, inserted before P6-7
-because list position is work order.
+**P6-22 done: the hostile corpus is complete.** Nine fixture groups across five packages, twenty-one boundary
+cases recorded broken, and a CI job named for the question it asks. Every case drives the real code with no VM —
+a crafted ext4 image, a Unix socket speaking the vsock handshake, an `httptest` handler, a broker frame decoded
+by the product's own reader. Until this task **`Broker.Serve` had no test behind it at all**, which is the entry
+point an agent reaches.
 
-**P6-21 done (M-3).** `--review` no longer destroys an edit somebody made while they were reading the review.
-`Stage` fingerprinted, a person read the diff for as long as they took, and `Commit` renamed that directory away
-without looking again. It looks again now, and `.kelyfos-previous` is kept until the next successful run rather
-than deleted one statement after the swap that made it worth having.
+**The ledger is the mechanism worth remembering.** The corpus must fail before it passes, but a red `main` until
+P6-24 would make §8 rule 8 stop meaning anything. So `testdata/hostile/known-broken.txt` records the failures and
+the check is symmetric: an unlisted failure is a new break on the commit that caused it, and a listed case that
+starts holding must take its own line off in the commit that fixed it. **It earned itself four times** — it
+refused an over-listing, caught a case keyed by a name containing a NUL, panicked when a fixture that must
+`chdir` moved the ledger out from under itself, and removed `exec/flood-with-bytes` because that one holds.
 
-**P6-6 was corrected twice, by two reviews that found different things.** The design review found a false claim and
-an unchecked value; the diff review found five more, four of them regressions P6-6 itself introduced.
-- **The false claim**: a chain cut short at its *end* still verifies — nothing after the cut exists to break — and
-  the footer said verification proves no line was removed. Withdrawn from the page, `docs/events.md` and the
-  cookbook. `verify` now *observes* whether a record ends with `session.end`, as an observation and never a
-  verdict, because "no end event" is an open session as often as a truncated one.
-- **The unchecked value**: the page could state any chain head at all and `verify` said "chain intact". The head is
-  the one number this product tells a reader to write down and compare against one they were given separately, so
-  a file able to change it quietly turns that instruction into a trap. Head, event count and session id are marked,
-  read back and compared now; a missing marker fails too. The **timeline stays unchecked** and the page says so.
-- **The regressions**: a failed export truncated the report already at that path (25 bytes → 0); the summary
-  printed the verified *prefix* as the event count; an empty record printed a blank head and advertised a check
-  that refused the file; `log --verify` called an empty chain intact against the exit-code table P6-6 had just
-  edited; and a 0-byte recorder was refused as "not a flight recorder".
+**Two fixtures do not test the finding that prompted them**, and say so in their own files. M-9 as worded was
+fixed before the audit was read; what is live is that the ceiling counts *bytes*, so frames carrying none make
+`Exec` never return, and the `timeout` in its signature is a number mailed to the untrusted party rather than a
+deadline on the socket. And building the OpTrust stub found something the audit did not: **a guest's refusal
+reaches the operator's terminal with its control bytes intact** — a guest answering `\x1b[1A\x1b[2K\r` erases
+the line the host just printed about it. `proto.SafeText` exists for exactly this and is not applied there.
 
-**Two lessons worth keeping.** Reviewing the design and reviewing the diff are different jobs — running only the
-first would have shipped four regressions, running only the second would have shipped the false claim. And
-`main` went red once on the way, on the drift gate: P6-21 edited `docs/qol.md` without regenerating
-`llms-full.txt`. §8 rule 9 exists for exactly that and caught it in one commit.
+**Still true from D46, and it contradicts the briefing**: H-6 is *not* partly fixed. `git diff babec8f..HEAD --
+shim/` is five lines of audit wiring. Both halves are live.
 
-**Next: P6-22** — the hostile corpus and its CI job, before any boundary fix, so every finding is a failing test
-before it is a fixed one. The finding under the findings: this project has nineteen fuzz targets and, until P6-6
-put one on a file a stranger sends, every one of them fed a parser a *host-authored* string. None was a guest→host
-path, and the guest is the untrusted party.
+**Next: P6-23** — the remaining sixteen verdicts. Two corrections in the first seven is a rate worth carrying into
+the rest. Then **P6-24**, the gate, which now opens only on green fixtures *and* a full acceptance suite, with the
+documentation corrections riding the same commit and the boot/restore bars re-measured if the extraction path
+moved.
 
 ## Blocked / needs John
 - **DCO.** `CONTRIBUTING.md` and the README require a `Signed-off-by`; 0 of the last 50 commits carry one and
