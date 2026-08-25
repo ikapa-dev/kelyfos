@@ -1,0 +1,54 @@
+name: Something should exist and does not
+description: A capability KelyfOS does not have.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Read this part first — it will save you writing the rest.**
+
+        KelyfOS ships the guest image. These are hard boundaries, not a backlog,
+        and a request that crosses one is declined however good the idea is:
+
+        - **No orchestrator, no control plane, no hosted service, no web
+          dashboard.** Single-host CLI. Monitoring is read-only viewers over the
+          flight recorder. Fleet management is somebody else's product.
+        - **No new kernel.** Stock Linux, custom config only.
+        - **No VMM.** Firecracker. KelyfOS ships what boots inside it.
+        - **No GUI desktop or computer-use layer**, and no Kubernetes
+          integration.
+
+        Every one of those has a funded company doing it, and the guest image is
+        the empty niche. Scope discipline is this project's survival strategy
+        rather than a preference — `PLAN.html` §2 is the full list.
+
+        If what you want is on that list, the useful issue is a different one:
+        *what could KelyfOS expose so that the thing you are building can do it
+        itself?* That question has a good answer often enough to be worth asking.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What you were trying to do
+      description: >-
+        The task, not the feature. A description of the solution hides the
+        problem, and the problem is the part that might already have an answer.
+    validations:
+      required: true
+
+  - type: textarea
+    id: today
+    attributes:
+      label: What you do about it today
+      description: >-
+        Including "nothing, I gave up" — that is a real answer and a useful one.
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: boundaries
+    attributes:
+      label: Scope
+      options:
+        - label: I have read the non-goals above and this does not cross one.
+          required: true

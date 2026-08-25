@@ -86,6 +86,14 @@ limactl shell kelyfos-dev -- make cli
 limactl shell kelyfos-dev -- make image FLAVOR=dev
 ```
 
+`limactl start` here rather than `kelyfos doctor --setup`, which is what the
+README tells a *user*: you are building the binary that `doctor` lives in, so it
+does not exist yet. The cost is that `kelyfos doctor` will later call this
+instance unmanaged — it carries no marker saying which configuration it was made
+from — which is correct and not a problem to fix. `kelyfos doctor --recreate`
+brings it under management if you want that; it stops, deletes and re-provisions
+the VM, so do it before you have anything in there worth keeping.
+
 The CLI has a second target. Since P6-12 `make release-cli` also cross-builds
 `kelyfos-darwin-{x86_64,aarch64}` — a smaller program in which `doctor` owns the
 Lima layer, `verify` checks a report somebody sent you, and every command that
@@ -124,6 +132,15 @@ Keep commits small and reference the task ID they belong to:
 ```
 P1-6: exec over vsock
 ```
+
+**A user-visible change needs a `CHANGELOG.md` entry in the same commit.** That
+file is the source the release notes are cut from rather than a mirror of them
+(D50), and `tools/changelog.py --check` fails CI when a published tag has no
+section. Put the entry under `## Unreleased`; the release workflow takes it from
+there. A change that breaks something also needs a section in
+[`docs/upgrading.md`](docs/upgrading.md) saying what to do about it — a break
+recorded only in a changelog line is a break somebody discovers at the wrong
+time.
 
 ## Reporting a security issue
 

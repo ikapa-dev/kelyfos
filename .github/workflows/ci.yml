@@ -195,6 +195,13 @@ jobs:
       - name: the plan is still coherent
         run: python3 tools/check-plan.py
 
+      # Every published tag has a section in CHANGELOG.md. That file is the
+      # source the release notes are cut from (D50), and this is what stops a tag
+      # being pushed without one — the release workflow would fail at publish
+      # time, which is later and more annoying than failing here.
+      - name: every released tag has its notes
+        run: python3 tools/changelog.py --check
+
       # The generated reference is regenerated from the source and compared. A
       # flag that exists and is not in docs/reference, or one in docs/reference
       # that no longer exists, fails here rather than reaching a reader (F-D4,

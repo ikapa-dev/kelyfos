@@ -1,0 +1,85 @@
+name: Something does not work
+description: A command, a tool, a guest, or a document that disagrees with the code.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Two things make a report actionable here, and neither is severity: **what
+        it did instead of what you expected**, and **how to make it do that
+        again**. Everything below is in service of those two.
+
+        If it is a security finding, close this and read
+        [SECURITY.md](https://github.com/p4r4n0rm4l/KelyfOS/blob/main/SECURITY.md)
+        instead.
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what you expected instead
+      placeholder: |
+        `kelyfos run --workspace . -- echo hi` exits 1 with "no policy at …".
+        I expected it to boot, because kelyfos.toml is in the parent directory.
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: The commands that do it
+      description: >-
+        Exactly what you typed, from a state somebody else can reach. If it needs
+        a `kelyfos.toml`, paste that too — it is the file most bugs here turn out
+        to live in.
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: version
+    attributes:
+      label: kelyfos version
+      description: >-
+        One line, and worth having exactly because it is built from the tag: a
+        report against a commit rather than against a release is a different
+        report. If you built the guest image yourself, its `image.json` names the
+        arch, flavor and the Buildroot and Linux versions it was made from — paste
+        that too.
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: doctor
+    attributes:
+      label: kelyfos doctor
+      description: >-
+        It checks nine things and prints the exact fix for whatever is wrong. If
+        it already told you the answer, say so here and close this — that is the
+        command doing its job, not a bug.
+      render: shell
+
+  - type: dropdown
+    id: host
+    attributes:
+      label: Where it runs
+      options:
+        - Linux with /dev/kvm
+        - macOS, through the Lima layer
+        - WSL2
+        - CI runner
+        - Somewhere else (say where below)
+    validations:
+      required: true
+
+  - type: textarea
+    id: record
+    attributes:
+      label: The session record, if the run produced one
+      description: >-
+        `kelyfos log --verify` says whether it is intact, and `kelyfos log
+        --export` produces a single HTML file carrying the record inside it. It
+        is the most useful thing you can attach, because it says what actually
+        happened rather than what anybody remembers happening. Check it for
+        anything of yours before attaching it — it names commands, paths and
+        hosts, though never a credential's value.

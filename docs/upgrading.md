@@ -1,0 +1,142 @@
+# Upgrading
+
+**Status:** reference. What breaks between versions, and what to do about it.
+
+This page covers the breaks this project has actually shipped and can name from
+the code that implements them. It is deliberately not an archaeology of eleven
+tags: v0.0 through v0.8 shipped no documented breaking change, and inventing a
+list of ones that might have happened would make this page less trustworthy
+rather than more.
+
+From v1.0, [`docs/compatibility.md`](compatibility.md) says what a release is
+allowed to break and how much warning it must give. Everything below predates
+that promise.
+
+---
+
+## 1. The one that matters: a snapshot taken before v0.9
+
+**A snapshot restores the guest it captured.** Restoring one does not upgrade the
+operating system inside it, and no amount of host-side work can confine a
+supervisor that has no such code in it. So a snapshot taken before v0.9 comes
+back as a machine whose guest confines nothing it spawns — the Landlock domains
+and the seccomp refusal list that v0.9 added are inside the guest, and that guest
+is the one from before.
+
+**It is warned about, not refused.** The host walls are properties of the run you
+are starting now, and all of them still apply: the jailer, the VMM's own syscall
+filter, the egress policy, and the cgroup where the policy set a quota. Refusing
+the restore would make every old snapshot unusable to buy nothing.
+
+What you see:
+
+```
+this snapshot predates guest confinement, so the machine restored from it
+confines nothing it spawns.
+    The host walls are unchanged — the jailer, the VMM's own syscall filter, the
+    egress policy still apply, and the cgroup where the policy set a quota. To
+    gain the guest profile as well, re-create the snapshot under this version:
+    boot a fresh machine, prepare it, and `kelyfos snapshot save` over the old
+    name.
+```
+
+**The fix is to re-create the snapshot**, which means booting a fresh machine
+under the current version, preparing it the way the old one was prepared, and
+saving over the old name. There is no in-place upgrade and there cannot be one:
+the thing that needs replacing is the guest's own userland.
+
+**The absence is recorded, not only printed.** `session.ready` carries the guest
+profile, so a run against an unconfined guest is a fact in the flight recorder
+rather than a warning somebody scrolled past. A reader of the record can tell an
+unconfined run from a confined one without having been at the terminal.
+
+### The same absence, from a different cause
+
+A guest **image** older than the CLI booting it produces the same unconfined
+machine, and says so differently because the fix is different:
+
+```
+this guest image predates guest confinement, so nothing this machine spawns
+is confined.
+    ... update the image: `bash dev/fetch-image.sh`, or `make image` to build one.
+```
+
+And a **current** guest whose kernel cannot give it a profile is a third case,
+and the least dangerous of the three: its supervisor comes up without a profile
+and refuses every spawn, so it is a machine that runs nothing rather than one
+that runs things unconfined. That one names the kernel options it needs —
+`CONFIG_SECURITY_LANDLOCK=y`, and `landlock` in `CONFIG_LSM`.
+
+---
+
+## 2. Writes outside `/work`, `/tmp`, `/run` and `$HOME` are refused
+
+Since v0.9. They succeeded before.
+
+This project's own cookbook had a recipe that did exactly this — `mkdir
+/prepared` at the root of the filesystem — and it now prepares in `/tmp`. If an
+agent's setup script writes somewhere outside those four trees, that write is
+where it will fail.
+
+**There is no flag to permit it**, and the reason is structural rather than
+policy: a Landlock rule covers a tree, so a rule permitting `/` grants everything
+under it, including `/etc` and the toolbox the agent was handed. The narrower
+grant that would be needed does not exist in the mechanism.
+
+The writable set also includes `/dev/pts`, `/dev/shm` and seven named device
+nodes. [`docs/reference/profiles.md`](reference/profiles.md) is generated from
+the code that enforces it and is the current list.
+
+---
+
+## 3. Attaching a debugger to a process already running inside a guest
+
+Since v0.9, `ptrace` against a process that is already running fails with
+`Operation not permitted` — on **every** flavor, including `dev`, whose profile
+deliberately leaves `ptrace` out of its seccomp refusal list.
+
+The refusal is Landlock's rather than seccomp's: each confined process gets its
+own Landlock domain, and Landlock refuses `ptrace` between siblings. Taking
+`ptrace` out of the seccomp list does not reach it.
+
+**Launching a program *under* a debugger still works**, because a child inherits
+its parent's domain. So `gdb ./prog` is fine and `gdb -p 1234` is not, which is
+the shape of the workaround: start the thing you want to debug under the debugger
+rather than attaching to it afterwards.
+
+---
+
+## 4. Records written before v1.0
+
+Nothing to do, and this is the point of saying it.
+
+v1.0 changed how a record is **verified** — from the bytes as written rather than
+by re-marshalling the parsed event — so a reader now tolerates a field it has
+never heard of, and every chain KelyfOS has ever written still verifies. The
+field order of the record is frozen from v1.0 and pinned by a test, because
+reordering it would change every digest ever written and report every existing
+chain as modified.
+
+Two things did change in what a record *contains*, and neither breaks a reader
+that follows the rule `docs/events.md` §3 has always stated — ignore what you do
+not recognise:
+
+- **New event types** arrive in minor releases. v1.0 alone added
+  `secret.withheld`, `secret.scrubbed` and a `delete` kind on `team.store`.
+- **Sessions recorded before v0.9 have no egress events at all**, because the
+  proxy did not record them. A record with none is not evidence that a sandbox
+  made no requests; it is evidence that this version did not write them down.
+
+---
+
+## 5. What has never broken
+
+Stated because "nothing changed" is only useful if somebody checked:
+
+- `proto.Version` has been `1` for every release, and `recorder.Version` has been
+  `1` for every release. The wire protocol and the record format have not changed
+  incompatibly since they existed.
+- `kelyfos.toml` has only ever gained keys. Two spellings kept "for
+  compatibility" since v0.4 are still accepted, and
+  [`docs/compatibility.md`](compatibility.md) §4 is where their removal now has to
+  be announced rather than simply happening.

@@ -220,6 +220,19 @@ jobs:
       # Drafted, so the last step before a stranger downloads anything is a
       # person looking at it. A dispatch has nothing to publish against and stops
       # here, having proved the whole path up to this point.
+      # The notes come out of CHANGELOG.md, which is the source rather than a
+      # mirror (D50). A tag with no section there does not get published: the
+      # alternative is a release whose notes are written once, in a web form,
+      # where nothing in this repository can ever check them again.
+      - name: The notes for this tag, from CHANGELOG.md
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF#refs/tags/}"
+          python3 tools/changelog.py "$tag" > /tmp/notes.md
+          echo "--- notes for $tag ---"
+          cat /tmp/notes.md
+
       - name: Draft the release
         if: startsWith(github.ref, 'refs/tags/v')
         env:
@@ -227,12 +240,19 @@ jobs:
         run: |
           set -euo pipefail
           tag="${GITHUB_REF#refs/tags/}"
+          {
+            cat /tmp/notes.md
+            echo
+            echo "---"
+            echo
+            echo "Built by \`.github/workflows/release.yml\` from ${GITHUB_SHA}."
+            echo
+            echo "Both architectures were built from this tag's source in one workflow run."
+            echo "\`SHA256SUMS\` was regenerated from scratch over exactly the files attached here."
+            echo
+            echo "\`dev/fetch-image.sh\` verifies downloads against that file."
+          } > /tmp/body.md
           gh release create "$tag" dist/* \
             --draft \
             --title "$tag" \
-            --notes "Built by .github/workflows/release.yml from ${GITHUB_SHA}.
-
-          Both architectures were built from this tag's source in one workflow run.
-          \`SHA256SUMS\` was regenerated from scratch over exactly the files attached here.
-
-          \`dev/fetch-image.sh\` verifies downloads against that file."
+            --notes-file /tmp/body.md

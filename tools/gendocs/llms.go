@@ -57,6 +57,8 @@ func docSet() []doc {
 			Summary: "what it is, the quickstart, and the shape of a policy file"},
 		{Path: "docs/compatibility.md", Title: "The compatibility promise", Full: true,
 			Summary: "what v1.0 promises will not move, what is explicitly allowed to, and how anything is deprecated before it is removed"},
+		{Path: "docs/upgrading.md", Title: "Upgrading", Full: true,
+			Summary: "what breaks between versions and what to do about it — the pre-v0.9 snapshot, the writable trees, and what has never broken"},
 		{Path: "docs/threat-model.md", Title: "Threat model", Full: true,
 			Summary: "what is defended and what is not — read before trusting it with anything"},
 		{Path: "docs/resources.md", Title: "Resource limits", Full: true,

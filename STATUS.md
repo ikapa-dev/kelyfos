@@ -3,7 +3,7 @@
 Updated 2026-08-25 · synced with origin/main · **v0.9 released** · CI green on main · **Phase 6 open**
 
 ## Plans
-- PLAN.html — **67/82**. Phases 0–3 and 5 done. Phase 4 dispositioned and parked (D35). **Phase 6 open —
+- PLAN.html — **68/82**. Phases 0–3 and 5 done. Phase 4 dispositioned and parked (D35). **Phase 6 open —
   "v1.0, the promise", 29 tasks**: an external security audit arrived mid-phase and added seven (D45), and the documentation audit added one more (D49).
 - PLAN-FEATURES.html — **COMPLETE and closed.** 42/42, five epics, v0.4–v0.8 released.
 - **The overall bar will not reach 100% and is not meant to.** Seven of the denominator's boxes are Phase 4's
@@ -63,8 +63,17 @@ upload the same macOS filenames); **fifteen routed to P6-28** by D49 rather than
 commit. The sharpest: `kelyfos shell` reports `exited 0` when the supervisor died mid-session, contradicting both
 `docs/protocol.md` §5.7 and `proto.ShellExit`'s own doc comment.
 
-**Next: P6-16**, then P6-17. **P6-18 needs the bare-KVM reference (D15)** and **P6-19 needs a fresh session with
-no source tree** — both are environment-bound rather than work-bound.
+**P6-16 done — the documents a 1.0 is expected to have.** `CHANGELOG.md` v0.0 through the unreleased v1.0,
+`docs/upgrading.md`, a CONTRIBUTING refresh, and issue/PR templates.
+
+**The question that task existed to settle is settled (D50): the changelog is the source, not a mirror.** The
+release workflow stopped writing its own notes and now cuts them from the file — and `tools/changelog.py` exits
+non-zero when a tag has no section, so a release with no notes fails instead of publishing. CI runs the same
+check on every commit, which moves the failure from publish time to push time. The eight existing GitHub release
+bodies are not backfilled: they are what was published, and rewriting them would be editing the past.
+
+**Next: P6-17.** **P6-18 needs the bare-KVM reference (D15)** and **P6-19 needs a fresh session with no source
+tree** — both are environment-bound rather than work-bound.
 
 ## Blocked / needs John
 - **The audit's text for M-1, M-4, M-6, M-7, M-8, L-1 through L-7 and D-1.** Twelve findings are known here only
@@ -121,7 +130,7 @@ no source tree** — both are environment-bound rather than work-bound.
   carry no catalog ID.
 - The two MCP argument summarisers are still the same function duplicated in two binaries. The *helper* they shared
   is now one — `proto.SafeText` — but the summarisers themselves are not, and unifying them touches the guest binary.
-- `llms-full.txt` is now **536,974 bytes, ~139,515 tokens** — still gendocs's own character estimate, which is what
+- `llms-full.txt` is now **544,314 bytes, ~141,425 tokens** — still gendocs's own character estimate, which is what
   P6-17's committed measurement command is for.
 - **`docs/media/demo.cast` shows `supervisor 0.2.0-p2`**, a version string P6-1 deleted from the code. The demo
   GIF is the first thing on the README. Fixing it means re-recording on a KVM machine — hand-editing a recording
