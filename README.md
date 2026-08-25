@@ -10,7 +10,7 @@ edit.
 
 ![KelyfOS in a terminal](docs/media/demo.gif)
 
-> **Status: `v1.0-rc1`, building in the open.** Cold boot-to-ready **134 ms**
+> **Status: v1.0, building in the open.** Cold boot-to-ready **134 ms**
 > median, snapshot restore **48 ms**; five agents up in **343–543 ms**. Every
 > figure is measured by a workflow in this repository, and
 > [where they came from](#the-numbers-and-where-they-came-from) says which

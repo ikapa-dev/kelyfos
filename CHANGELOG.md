@@ -15,9 +15,16 @@ reference described in the README and re-measured per release.
 
 ---
 
-## Unreleased — v1.0
+## v1.0 — 2026-08-25
 
-The promise release. Not yet tagged; what follows lands with it.
+The promise release. Everything below is in it.
+
+Built by `.github/workflows/release.yml` from this tag's own commit — the first
+release this project did not assemble by hand. `v1.0-rc1` and `v1.0-rc2` came
+first, deliberately: rc1's build failed at the SBOM attestation, which is a step
+no release had ever run, and rc2 is the one the quickstart numbers above were
+measured against. This tag is byte-identical to rc2 in everything that builds;
+what changed between them is documentation.
 
 ### Added
 - **A compatibility promise** — [`docs/compatibility.md`](docs/compatibility.md):

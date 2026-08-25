@@ -130,7 +130,7 @@
      injected secrets, full audit replay, and millisecond forking.</p>
   <div class="meta">
     owner: <b>John</b> &nbsp;·&nbsp; developer: <b>Claude Code</b> &nbsp;·&nbsp;
-    status: <b class="amber" id="meta-status">Phase 6 open &mdash; <b>v1.0, the promise</b>. Phases 0&ndash;3 and 5 done, v0.9 released; PLAN-FEATURES complete and closed; Phase 4 dispositioned and parked, every row with a verdict (D35). The overall bar will not reach 100% and is not meant to &mdash; seven of its boxes are Phase 4&rsquo;s permanent record rows (D34)</b> &nbsp;·&nbsp;
+    status: <b class="amber" id="meta-status">COMPLETE &mdash; <b>v1.0 tagged</b>. Every phase closed: 0&ndash;3 and 5 shipped, 6 done in full, PLAN-FEATURES complete and closed, Phase 4 dispositioned and parked with every row given a verdict (D35). The bar reads 78/85 and stops there on purpose &mdash; the seven open boxes are Phase 4&rsquo;s permanent record rows (D34), which are a record rather than work.</b> &nbsp;&middot;&nbsp;
     last updated: <b id="meta-updated">2026-08-24</b><br>
     repo file: <b>PLAN.html</b> (commit this document at the repository root — it is the single source of truth)<br>
     <span class="quiet">KelyfOS — from κέλυφος (kélyfos), "shell": the guest OS wrapped around the agent. Formerly working-titled "agos" (D4 → D10).</span>
@@ -180,7 +180,7 @@
     <span class="bl-name">Overall</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">P6-6 done &mdash; the export carries the record it was rendered from and <code>kelyfos verify</code> re-runs the chain over it offline. <b>An external security audit then arrived (D45) and v1.0 is gated on its trust-boundary group</b>: the workspace block device is a guest&rarr;host surface the threat model does not list. Seven tasks inserted before P6-7. <b>P6-21 done</b> &mdash; <code>--review</code> no longer destroys an edit made while somebody was reading it. <b>P6-6 corrected</b>: its own adversarial review landed late and found a false claim about truncation and an unchecked chain head, both reproduced and both fixed. <b>P6-22 done</b> &mdash; nine fixture groups, twenty-one recorded breaks, a ledger that can only shrink, and a CI job that runs the lot. <b>D46</b> triaged seven findings against HEAD and corrected two. <b>P6-24 done &mdash; the v1.0 gate is open.</b> C-1, H-1 and H-2 are closed in two layers, the workspace block device is in the trust-boundary table, and the full acceptance suite passes on the final code. P6-23 stands at 11/23, blocked on the audit text for the rest (D47). <b>P6-25 done</b> &mdash; the blocking set is closed and the hostile ledger is down to one line, which is a recorded decision rather than a defect. <b>P6-26 done. The audit&rsquo;s v1.0-blocking set is closed</b> &mdash; boundary group, clamps and both claims &mdash; and the hostile ledger is one line, which is a recorded decision. P6-23 and P6-27 are blocked on the audit text for the remaining twelve findings (D47). <b>P6-7 done</b> &mdash; signed exports with a key the reader anchors, and a vocabulary rather than a badge. <b>P6-8 done</b> &mdash; the release is a workflow, the sums file is written from scratch and checked both ways, and the flavor is in the cache key. <b>P6-9 done</b> &mdash; and measured: two full builds from nothing produce byte-identical artifacts on this machine, which is more than D38 expected. <b>P6-10 done</b> &mdash; 64 components across three sources, including the one Buildroot has never heard of. <b>P6-11 done</b> &mdash; provenance and SBOM attestations, and the immutable-release claim refused in the same breath. <b>P6-12 done</b> &mdash; the CLI runs on macOS, <code>doctor</code> owns the Lima layer, and a report verifies on the machine it was sent to. <b>P6-13 done</b> &mdash; six client writers, a real handshake behind <code>--check</code>, and the four rulings recorded. <b>P6-14 done</b> &mdash; the promise exists, and the record&rsquo;s field order is pinned by a test rather than by a sentence. <b>P6-15 done</b> &mdash; 174 findings across 21 documents, 157 corrected, and a second pass caught <b>fourteen corrections that were themselves newly false</b>, every one of them a true fix given a false scope. Three of the worst claims were written earlier in this same session. It also found <b>eighteen defects in the code</b>, where E3-0 found four; three are fixed and fifteen are routed to P6-28 (D49). <b>P6-16 done</b> &mdash; a changelog that is the <i>source</i> the release notes are cut from rather than a mirror of them (D50), an upgrade guide centred on the pre-v0.9 snapshot, and templates that lead with the non-goals. <b>P6-17 done</b> &mdash; the generated set is current, and the two commands that print its size now share one constant instead of two that agreed by coincidence. <b>P6-18&rsquo;s bars are re-earned</b> &mdash; 134 ms boot and 48 ms restore on the reference, both targets met, and the five-agent figure is now a <i>range</i> because two runs on one commit gave 343 ms and 543 ms. <b>P6-28 done</b> &mdash; fourteen of D49&rsquo;s fifteen code defects closed, the fifteenth given a decision (D52), and the one hiding behind a CI timeout root-caused: the guest powered off where x86_64 Firecracker only watches the i8042 reset line, so <code>pause</code> could not stop a machine on the commoner architecture. <b>P6-18 done</b> &mdash; bars re-earned, 14 suites at 263 checks, 15 cookbook recipes green on x86_64 in 3m43s where the same run took 96 minutes and reported nothing, and both orphan &sect;1 criteria discharged. Next: <b>P6-19</b>, the docs-only exam</b></div>
+  <div class="focusline">Current focus: <b id="focus">Nothing &mdash; <b>Phase 6 is closed and v1.0 is tagged.</b> The security audit that arrived mid-phase is answered in full: twenty-four findings read against current source, and not one fixed from its description alone. The documentation audit corrected 174 claims across 21 documents and turned up eighteen defects in the code. Two release candidates were cut before the tag, and rc1 earned itself by failing at a step no release had ever run. What remains is not work but a decision: the release is <i>drafted</i>, and publishing it is the owner&rsquo;s &mdash; as is the launch post.</b></div>
 </div>
 
 <!-- ====================================================== 1. END GOAL -->
@@ -954,7 +954,7 @@
         finish. Both before the long tail, because both are the shape this phase exists to remove: a claim the
         code does not keep.</span></li>
 
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">P6-27</span><span class="tk"><b>The long tail, batched, and the documentation table
         corrected as each fix lands.</b> M-1, M-4, M-6, M-7, M-8, every <code>L-*</code> and D-1: fixed in batches
         where they are cheap, parked with a logged reason where sizing says post-1.0. And the overstatements the
@@ -3668,6 +3668,43 @@ after:
         were corrected in the same commit</b> &mdash; README, SECURITY.md, the Makefile,
         <code>dev/fetch-image.sh</code> and hardening.md &mdash; which is the rule P6-24 set: the docs ride the
         commit that makes them wrong</td></tr>
+        <tr><td class="mono">2026-08-25</td><td class="mono">P6-27</td>
+        <td><b>The long tail: twelve confirmed findings fixed, two fixes reverted for being worse than what they
+        fixed, and one defect found that none of the twelve described.</b>
+        <b>What a user gets back.</b> A trust-anchor refusal no longer leaks a running microVM at three sites.
+        <code>Reply</code> claims its correlation tag before sending, so <code>delivered</code> means delivered.
+        A declared agent can no longer be given a name the host would mint, which used to hand a spawned worker
+        that agent&rsquo;s <i>entire edge set</i>. Team workspaces resolve against the policy file like every
+        other policy-relative path. <code>secret.use</code> is recorded when the credential goes on the wire
+        rather than only when the round trip succeeds. The /30 allocator skips the cloud metadata range. And the
+        jail write-back is atomic, rather than unlinking the host&rsquo;s image and rewriting it where an
+        interruption leaves nothing.
+        <b>The one nobody reported.</b> D-1&rsquo;s own work turned up a filesystem-independent sibling:
+        <b>resuming a paused session emptied the person&rsquo;s project directory</b> and printed
+        &ldquo;workspace written back&rdquo;. Not a failed sync &mdash; it extracted nothing, renamed the project
+        away, put an empty directory in its place, and reported success. The agent&rsquo;s work was in neither
+        directory. Restore points a jailed machine&rsquo;s workspace image <i>inside</i> the run directory, ten
+        lines under a comment saying the image must outlive the guest; <code>cleanup()</code> deletes that
+        directory, and <code>resume</code> syncs after <code>Shutdown</code> returns because a defer registered
+        first runs last. Reproduced before it was believed, fixed at the one moment the guest has stopped and the
+        jail still exists, and the sync now refuses when it cannot read its source rather than treating a missing
+        image as an empty workspace.
+        <b>Two fixes reverted, which is the other half of the task.</b> The staging-tree reservation created
+        <code>&lt;dir&gt;.kelyfos-out</code> at Stage time and required it to still be empty at commit &mdash; so
+        anything landing in it during a review, <i>a <code>.DS_Store</code> from opening the folder</i>, turned a
+        benign collision into total session loss with no image to recover from. And a new
+        &ldquo;two agents given the same workspace&rdquo; refusal was scope that had been deliberately declined,
+        masked the older duplicate-name refusal, and contradicted its own fix line. Both were strictly worse than
+        what they closed, and both went back.</td>
+        <td class="mono">three adversarial passes over the fixes, and each one paid for itself: an unbounded
+        <code>json.Marshal</code> that could write a chain line the recorder&rsquo;s own readers can never parse,
+        a budget that cut a real eight-domain allowlist short, setgid stripped from every extracted directory,
+        and guest-controlled escape sequences rendered raw into <code>kelyfos log</code><br>
+        the reverts are the rule every agent in the batch was given, applied to the batch: <b>if it cannot be
+        made safe, put it back</b><br>
+        the two problems the reservation addressed &mdash; staging trees accumulating after a Ctrl-C, and a
+        narrow rename race &mdash; stay open and are written down, because both are visible where what replaced
+        them was silent</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
