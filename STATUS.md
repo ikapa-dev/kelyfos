@@ -3,44 +3,46 @@
 Updated 2026-08-25 · synced with origin/main · **v0.9 released** · CI green on main · **Phase 6 open**
 
 ## Plans
-- PLAN.html — **61/81**. Phases 0–3 and 5 done. **Phase 4 dispositioned and parked** (D35). **Phase 6 open —
+- PLAN.html — **66/81**. Phases 0–3 and 5 done. Phase 4 dispositioned and parked (D35). **Phase 6 open —
   "v1.0, the promise", 28 tasks**: an external security audit arrived mid-phase and added seven (D45).
 - PLAN-FEATURES.html — **COMPLETE and closed.** 42/42, five epics, v0.4–v0.8 released.
 - **The overall bar will not reach 100% and is not meant to.** Seven of the denominator's boxes are Phase 4's
   permanent record rows.
 
 ## Now
-**The audit's v1.0-blocking set is closed.** The boundary group (C-1, H-1, H-2) at P6-24, the exhaustion clamps
-(H-3, H-4, H-5, H-6, M-9) at P6-25, and the two claims the code did not keep (M-2, M-5) at P6-26. The hostile
-ledger is down to **one line**, and that line is a recorded decision rather than a defect: the shim is
-unauthenticated by default on purpose, and a token can now be required.
+**The audit's v1.0-blocking set is closed** — the boundary group (P6-24), the exhaustion clamps (P6-25), and the
+two claims the code did not keep (P6-26). The hostile ledger is **one line**, and that line is a recorded
+decision: the shim is unauthenticated by default on purpose, and a token can now be required.
 
-**The gate opened on evidence, not on ticked boxes.** Every gate-group fixture green *and* the full acceptance
-suite — 13 suites, 239 checks, 0 failed, 14 cookbook recipes — re-run on the final code, as the owner required.
-The documentation corrections rode the commits that made them true.
+**Nine more tasks since, in plan order.** P6-7 signed exports, with a key the reader anchors and a *vocabulary*
+rather than a badge. P6-8 the release built by CI, sums written from scratch and checked both ways. P6-9
+determinism configured and then **measured** — two full builds from nothing produce byte-identical artifacts,
+which is more than D38 expected. P6-10 an SBOM covering the seam Buildroot cannot see. P6-11 provenance
+attestations, with the immutable-release claim refused in the same breath. P6-12 the CLI on macOS, with `doctor`
+owning the Lima layer. P6-13 `kelyfos connect`, six client writers and a real MCP handshake. P6-14 the
+compatibility promise.
 
-**Since then, three more tasks.** P6-7: signed exports with a key the reader anchors — ed25519 from the standard
-library, the user's own key, signing the record rather than the page so a re-export produces the same signature,
-and a *vocabulary* rather than a badge. P6-8: the release is a workflow now, `SHA256SUMS` is written from scratch
-and checked both ways, and the cache key carries the flavor that made every release build run cold. P6-9:
-determinism configured and then **measured** — two full builds from nothing produced byte-identical `Image`,
-`rootfs.ext4` and `image.json`, and the CLI pair is identical from two different source paths. D38 expected "the
-CLI is, the rootfs is not"; on this machine the rootfs is. The scope is in the claim: one machine, one
-architecture, an identical build path, two builds.
-
-**Things this stretch found that nobody was looking for**, all fixed:
-- A **chain with no digests verified** — `"hash":""` on every line, the cheapest forgery there is.
-- **`html/template` escapes `+`**, so the embedded record was silently corrupt for any session whose base64
-  contained one — reintroducing, at the export, the false alarm P6-6's first half removed.
+**Things found by doing rather than by reading**, all fixed:
+- A **chain with no digests verified** — the cheapest forgery there is.
+- **`html/template` escapes `+`**, so the embedded record was silently corrupt for some sessions.
 - A **failed export truncated the report already at that path** to zero bytes.
-- A guest's refusal **wrote on the operator's terminal** with ANSI escapes intact.
+- A guest's refusal **wrote ANSI escapes on the operator's terminal**.
 - An agent name **granted itself a spawn budget** through the kernel command line.
-- Stripping group-write from returning files **rewrote every `0664` file in a umask-002 user's project**, which
-  the acceptance suite caught and no fixture would have.
+- Stripping group-write **rewrote every `0664` file** in a umask-002 user's project — caught by the acceptance
+  suite, which no fixture would have.
+- **`main` went red once**: P6-9 emptied the flavor overlay directories and git does not track empty ones, so a
+  clean checkout had no overlay for rsync. It passed locally. CI's fresh checkout is the whole reason §8 rule 8
+  says to read the pipeline and not only the tree.
+- **The record's field order was frozen ABI that nothing checked** — reordering it would have made every chain
+  KelyfOS has ever written report as modified.
 
-**Two corrections to the briefing**, both reproduced against HEAD rather than read: **H-6 is not partly fixed**
-(`git diff babec8f..HEAD -- shim/` is five lines of audit wiring), and **M-9 as worded was already fixed** before
-the audit was read, while a worse variant of it was live.
+**Live-checking earned its keep twice.** `actions/attest-build-provenance@v1` is two majors and one permission out
+of date; the plan's own wording (`actions/attest`) was right and the obvious guess was not. And the Buildroot
+CycloneDX generator does exist — as `utils/generate-cyclonedx`, invisible to a grep of the Makefile.
+
+**Next: P6-15**, the documentation audit re-run whole, then P6-16 and P6-17. **P6-18 needs the bare-KVM
+reference (D15)** and **P6-19 needs a fresh session with no source tree** — both are environment-bound rather
+than work-bound.
 
 ## Blocked / needs John
 - **The audit's text for M-1, M-4, M-6, M-7, M-8, L-1 through L-7 and D-1.** Twelve findings are known here only
