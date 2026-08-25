@@ -8,12 +8,13 @@
 # measured rather than claimed — see the repro-check workflow and the table in
 # README.md, which says what was measured and on what.
 #
-# SHA256SUMS gives you integrity. Provenance is a separate statement and there is
-# one: `gh attestation verify <file> --repo p4r4n0rm4l/KelyfOS` names the
-# workflow and the commit that built these bytes. This script checks the sums and
-# not the attestation, deliberately — it has to work on a machine with no `gh`,
-# and a download tool that needed a second tool to be trusted would be a worse
-# tool.
+# SHA256SUMS gives you integrity. Provenance is a separate statement: on a
+# release the release workflow builds, `gh attestation verify <file> --repo
+# p4r4n0rm4l/KelyfOS` names the workflow and the commit that built those bytes.
+# No published release carries one yet, because every existing tag predates that
+# workflow. This script checks the sums and not the attestation either way,
+# deliberately — it has to work on a machine with no `gh`, and a download tool
+# that needed a second tool to be trusted would be a worse tool.
 #
 # Usage: dev/fetch-image.sh [ARCH] [TAG]
 set -euo pipefail

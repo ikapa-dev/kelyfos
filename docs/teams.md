@@ -9,7 +9,9 @@ the code is a bug in this file.
 A team is several KelyfOS sandboxes on one host, declared in a file, with the
 paths between them enumerated and enforced. Think *docker-compose for agent
 teams*: you write down who exists and who may talk to whom, and `kelyfos team
-up` boots that graph.
+up` boots that graph. One team runs on a host at a time: while a team is up,
+another `team up` is refused before it plans anything and tells you to stop the
+running one with `kelyfos team down`.
 
 What KelyfOS supplies is the substrate — isolation, enforced edges, a
 permissioned shared store, and one audit record covering the whole team. What it
@@ -56,10 +58,11 @@ to   = "worker-*"               # every worker; master↔worker, bidirectional
 enabled = true
 ```
 
-Five VMs boot. Each has its own kernel, its own memory, its own egress policy
-and its own resource caps. `master` may message any worker and any worker may
-message `master`. No worker may message another worker — not because a rule
-forbids it, but because there is nothing to send it over.
+Four VMs boot — `master`, and the three workers `count` expands into. Each has
+its own kernel, its own memory, its own egress policy and its own resource caps.
+`master` may message any worker and any worker may message `master`. No worker
+may message another worker — not because a rule forbids it, but because there is
+nothing to send it over.
 
 ### 1.1 `[team]`
 
@@ -191,7 +194,10 @@ budget — eight in total, and the eighth is listed only where it would work
 (§3.6, F-D18).
 
 Every argument named `timeout_ms` is an **integer number of milliseconds** and
-defaults to **60000** when it is absent or not positive.
+defaults to **60000** when it is absent or not positive. Fifteen minutes is the
+ceiling: a larger number is clamped to it rather than refused, because an agent
+asking to wait a long time is not misbehaving, and refusing would leave one that
+wanted an hour with nothing instead of fifteen minutes.
 
 ### 3.1 `team_send(to, body)`
 
@@ -199,11 +205,17 @@ Deliver `body` to agent `to`. Returns when the broker has accepted or refused
 it, not when the recipient reads it.
 
 **Delivery is at-most-once.** A message is delivered zero or one times, never
-twice. If the recipient's channel is gone, `team_send` fails with an explicit
-error — the message is not queued for a machine that may never come back, and
-KelyfOS does not become a message broker with durability guarantees it would
-then have to keep. An agent that needs a message to arrive should ask for an
-answer (§3.3) rather than assume.
+twice. Each agent has a 64-slot mailbox on the host, and when it is full
+`team_send` fails with an explicit error rather than growing it — nothing is
+held on disk, nothing is redelivered, and KelyfOS does not become a message
+broker with durability guarantees it would then have to keep. What the broker
+does not check is whether the recipient's machine is still there: a message to
+an agent that crashed or that `max_runtime` stopped goes into the mailbox nobody
+is reading and is recorded `delivered` until the sixty-four slots are full, and
+only then is a sender told `unreachable`. A dead agent's mailbox is never
+drained, so anything it had not read still occupies slots and the number of
+sends that appear to succeed is sixty-four minus those. An agent that needs a message to arrive
+should ask for an answer (§3.3) rather than assume.
 
 **Delivered messages are FIFO per edge.** Two messages from A to B arrive in the
 order A sent them. Nothing is promised about the interleaving of A→B with C→B:
@@ -306,7 +318,7 @@ silent drop:
 | --- | --- |
 | `no_edge` | The topology does not permit this pair. Audited. |
 | `no_such_agent` | The name is not in this team. |
-| `unreachable` | The recipient exists but its channel is gone. |
+| `unreachable` | The recipient's mailbox is full — it exists and is not reading its messages. |
 | `timeout` | An `ask` expired, or a `recv` window closed empty. |
 | `denied` | Store access this agent does not have, a spawn it may not make, a `team_reply` with a `correlate` tag that is missing or not its own, or any call on a team with no store. |
 | `bad_request` | The call itself was malformed — a body that is not valid base64, an unknown operation. |
@@ -465,7 +477,7 @@ whatever any one agent's own ceiling says.
 name = "reviewers"
 
   [team.resources]
-  cpu_quota = "200%"        # two cores' worth, for all five agents together
+  cpu_quota = "200%"        # two cores' worth, for all four agents together
 
 [[team.agent]]
 name = "master"
@@ -632,7 +644,7 @@ rather than five that have to be correlated afterwards.
 | type | meaning |
 | --- | --- |
 | `team.message` | One delivery: from, to, size, body hash, and whether it was an ask, a reply or a send. |
-| `team.refused` | A message the edge list did not permit. Its own type, because it is the interesting one. |
+| `team.refused` | A refused message. Its own type, because it is the interesting one — but it covers three refusals, not one: a message the edge list did not permit (`reason: no_edge`), one addressed to a name that is not in the team (`no_such_agent`), and a `team_reply` nobody was waiting for (`missing_correlation` or `unknown_correlation`). Read the reason before counting edge violations. |
 | `team.store` | A store access: key, agent, read or write, permitted or not. |
 | `team.spawn` | A worker spawned or refused, with the spawner, the worker's name and the reason on a refusal. |
 
@@ -656,7 +668,12 @@ them, so the claim can be checked against the team that was declared:
 ```
 $ kelyfos log --session 269043fa --verify
 session 269043fa: chain intact, 44 events verified across 3 agents (master, worker-1, worker-2)
+  chain head b7b27b5bb9cef3b3f2b89195293d57fd7b09fadb515fa8ec2b94d885dba532ba
 ```
+
+The head is printed under both shapes of the verdict, a team's and a single
+sandbox's, because it is the value a reader compares against a head they were
+given somewhere else.
 
 `kelyfos log --export team.html` renders that same chain as **one lane per
 agent**, in boot order, with a message between two agents drawn as a bar
@@ -665,9 +682,13 @@ back, a refusal is flagged and still drawn, because what was attempted is the
 part worth seeing. Store accesses sit inline in the lane of the agent that made
 them; commands, files, egress attempts, OOM kills and each member's usage
 receipt sit in that member's lane. Events that belong to the team rather than to
-any member span every lane. That export carries the team's record inside it, so
-whoever receives it runs `kelyfos verify team.html` and checks the whole team's
-chain without asking you for anything.
+any member span every lane. One gap, named here rather than left to be
+discovered: a forked member is booted without the guest-event handler a
+cold-booted one gets, so its OOM kills and its plugin calls are in no lane and
+in no chain, and a no-egress `count` group with a cached template is precisely
+what forks (§7). That export carries the team's record inside it, so whoever
+receives it runs `kelyfos verify team.html` and checks the whole team's chain
+without asking you for anything.
 
 While the team is up, `kelyfos log --session <agent's sandbox id>` redirects to
 the team's record and says so. After `team down` the run directories are gone,
@@ -699,8 +720,8 @@ layout, rather than the layout without the information.
 These two facts are orthogonal and are stated together because they look
 contradictory at a glance:
 
-- **Delivery is at-most-once.** A message to a machine that has gone is an error
-  to the sender, not a promise kept later.
+- **Delivery is at-most-once.** A message the broker cannot put in the
+  recipient's mailbox is an error to the sender, not a promise kept later.
 - **The audit log is durable.** Every attempt is recorded, including the ones
   that failed.
 

@@ -3,8 +3,8 @@
 Updated 2026-08-25 · synced with origin/main · **v0.9 released** · CI green on main · **Phase 6 open**
 
 ## Plans
-- PLAN.html — **66/81**. Phases 0–3 and 5 done. Phase 4 dispositioned and parked (D35). **Phase 6 open —
-  "v1.0, the promise", 28 tasks**: an external security audit arrived mid-phase and added seven (D45).
+- PLAN.html — **67/82**. Phases 0–3 and 5 done. Phase 4 dispositioned and parked (D35). **Phase 6 open —
+  "v1.0, the promise", 29 tasks**: an external security audit arrived mid-phase and added seven (D45), and the documentation audit added one more (D49).
 - PLAN-FEATURES.html — **COMPLETE and closed.** 42/42, five epics, v0.4–v0.8 released.
 - **The overall bar will not reach 100% and is not meant to.** Seven of the denominator's boxes are Phase 4's
   permanent record rows.
@@ -40,9 +40,31 @@ compatibility promise.
 of date; the plan's own wording (`actions/attest`) was right and the obvious guess was not. And the Buildroot
 CycloneDX generator does exist — as `utils/generate-cyclonedx`, invisible to a grep of the Makefile.
 
-**Next: P6-15**, the documentation audit re-run whole, then P6-16 and P6-17. **P6-18 needs the bare-KVM
-reference (D15)** and **P6-19 needs a fresh session with no source tree** — both are environment-bound rather
-than work-bound.
+**P6-15 done — the documentation audit, re-run whole.** 21 documents read against the code that implements
+them, 202 candidate findings, 28 refuted by a second pass, **174 confirmed** and 157 corrected. The record is
+`dev/docs-audit-2026-08-25.md`, committed *before* the corrections so what was wrong survives the fixing of it.
+
+**The correction pass needed its own adversary, and that is the finding.** Every corrected document was re-read
+against the source rather than against the brief, and **fourteen corrections were themselves newly false** — each
+one a true fix given a false scope ("the three commands run through sudo" when a fourth is; "delivered sixty-four
+times over" when sixty-four is a capacity, not a count). A vague overclaim replaced by a precise falsehood is
+worse than what it replaced, because a reader acts on the precise one. Two of the fourteen re-introduced the
+attestation claim this same task had just removed from the README; chasing them found a third copy the audit had
+never flagged.
+
+**Three of the worst findings were claims written earlier in this session** — the README's provenance
+attestation, its "built by release.yml" downloads, and "guest-chosen modes do not survive", which stopped being
+true the moment P6-24 narrowed `safeMode` and the sentence was not narrowed with it. Eleven hours from claim to
+contradiction, not a release cycle.
+
+**Eighteen code defects came out of it**, where E3-0 found four. Three fixed here (two stale `reason` lists in
+`internal/recorder/schema.go`, which drive the generated reference, and a release-workflow `rm` that let two jobs
+upload the same macOS filenames); **fifteen routed to P6-28** by D49 rather than folded into a documentation
+commit. The sharpest: `kelyfos shell` reports `exited 0` when the supervisor died mid-session, contradicting both
+`docs/protocol.md` §5.7 and `proto.ShellExit`'s own doc comment.
+
+**Next: P6-16**, then P6-17. **P6-18 needs the bare-KVM reference (D15)** and **P6-19 needs a fresh session with
+no source tree** — both are environment-bound rather than work-bound.
 
 ## Blocked / needs John
 - **The audit's text for M-1, M-4, M-6, M-7, M-8, L-1 through L-7 and D-1.** Twelve findings are known here only
@@ -99,8 +121,12 @@ than work-bound.
   carry no catalog ID.
 - The two MCP argument summarisers are still the same function duplicated in two binaries. The *helper* they shared
   is now one — `proto.SafeText` — but the summarisers themselves are not, and unifying them touches the guest binary.
-- `llms-full.txt` is now **460,521 bytes, ~119,659 tokens** — still gendocs's own character estimate, which is what
+- `llms-full.txt` is now **536,974 bytes, ~139,515 tokens** — still gendocs's own character estimate, which is what
   P6-17's committed measurement command is for.
+- **`docs/media/demo.cast` shows `supervisor 0.2.0-p2`**, a version string P6-1 deleted from the code. The demo
+  GIF is the first thing on the README. Fixing it means re-recording on a KVM machine — hand-editing a recording
+  would turn evidence into a drawing of evidence — so it belongs with P6-18 or P6-20, whichever reaches hardware
+  first.
 
 ## Toolchain
 Buildroot **2025.02.17** · Linux **6.12.105** · Firecracker **v1.16.1** · Go **1.27.0**. MCP revision spoken:

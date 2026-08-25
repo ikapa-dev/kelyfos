@@ -103,8 +103,9 @@ CONFIG_VIRTIO_VSOCKETS_COMMON=y
 # CONFIG_MODULES is not set
 ```
 
-These match Firecracker's own CI guest configuration. `/dev/vsock` must exist in
-the guest; the supervisor uses it implicitly through `AF_VSOCK` sockets.
+These match Firecracker's own CI guest configuration. No device node is needed:
+the guest transport is an `AF_VSOCK` socket with `bind`/`listen` or `connect` on
+it, and nothing in KelyfOS opens `/dev/vsock`.
 
 ### 1.6 Snapshot caveats (forward note for P3-1 / P3-2)
 
@@ -119,7 +120,7 @@ are not rediscovered later:
   costs: *"vsock connections that are open when the snapshot is taken are closed,
   but existing vsock listen sockets in the guest still remain active and can
   accept new connections after resume."* So:
-  - the guest's listeners on `10001`/`10002`/`10003` survive — the supervisor
+  - the guest's listeners on `10001`/`10002`/`10003`/`10004`/`10005` survive — the supervisor
     MUST NOT tear them down and re-bind, and the host reconnects with a fresh
     `CONNECT` per §1.1. This is why the resync RPC (§5.4) can be the first thing
     the host sends on a restored VM;
@@ -170,7 +171,9 @@ treats as privileged for `AF_VSOCK` as it does for TCP.
 
 ## 3. Framing: newline-delimited JSON
 
-Every KelyfOS channel — and MCP itself, see §6 — uses the same framing:
+Every KelyfOS channel — and MCP itself, see §6 — uses the same framing, with two
+exceptions: `shell` (§5.7) is binary-framed, and `forward` (§5.8) is unframed
+after its two handshake lines. Everywhere else:
 
 - one message per line, terminated by a single `\n` (0x0A);
 - the message **MUST NOT** contain a literal newline anywhere, including inside
@@ -178,7 +181,8 @@ Every KelyfOS channel — and MCP itself, see §6 — uses the same framing:
   and therefore fine);
 - UTF-8, no BOM;
 - a `\r` immediately before the `\n` is tolerated on read and never written;
-- empty lines are ignored on read.
+- empty lines are ignored on read, up to 1024 consecutive ones — past that the
+  reader fails the connection rather than spin on a peer that sends nothing else.
 
 **Binary data is base64.** JSON strings cannot carry arbitrary bytes, and command
 output is arbitrary bytes. Every field whose value is raw bytes is base64
@@ -213,7 +217,7 @@ sees a `v` it does not know MUST fail the message rather than guess.
 | `v` | integer | Protocol version. `1` for all of v0.x. |
 | `id` | string | Opaque correlation id, ≤ 64 characters, unique within a connection. Chosen by the initiator; echoed in every message about that request. |
 
-Errors use one shape everywhere:
+Errors use one shape on every channel whose messages carry `v` and `id`:
 
 ```json
 {"v":1,"id":"a1","error":{"kind":"timeout","message":"command exceeded timeout_ms=5000"}}
@@ -221,6 +225,10 @@ Errors use one shape everywhere:
 
 `kind` is one of `bad_request`, `not_found`, `denied`, `timeout`, `killed`,
 `io`, `internal`. `message` is human-readable and never contains a secret value.
+
+The two channels that are not framed this way carry an error as a bare string
+instead: `error` on a `shell` exit frame (§5.7) and on a `forward` reply (§5.8).
+Neither carries a `kind`, so neither can be classified by the kinds above.
 
 ---
 
@@ -247,7 +255,7 @@ Request (host writes one line, then may write nothing else):
 
 | Field | Type | Required | Meaning |
 | --- | --- | --- | --- |
-| `cmd` | array of string | yes | argv. **Not** a shell string: element 0 is the executable, resolved against `PATH`. Wrap in `["/bin/sh","-c", …]` when a shell is genuinely wanted, so that choice is visible in the audit log. |
+| `cmd` | array of string | yes | argv. **Not** a shell string: element 0 is the executable, resolved against the *supervisor's* `PATH` and not the one in `env` — the lookup happens before the child's environment is applied. Wrap in `["/bin/sh","-c", …]` when a shell is genuinely wanted, so that choice is visible in the audit log. |
 | `cwd` | string | no | Working directory. Default `/`. |
 | `env` | object | no | Environment, **replacing** the default set rather than merging — a sandbox that silently inherits environment is how secrets leak. |
 | `stdin` | string | no | base64. Empty or absent means stdin is an immediately-closed pipe, never a terminal. |
@@ -279,12 +287,18 @@ and `stderr` reflects the order the guest read them and nothing stronger.
 
 ### 5.3 `ready` — port 10100, guest → host
 
-The first thing the supervisor does once mounts are up. The host is listening on
-`<run_dir>/v.sock_10100` before the VM starts; the timestamp at which this first
-frame arrives is the definition of **boot-to-ready** measured in P1-7.
+The last thing the supervisor announces, and deliberately so. It comes after the
+mounts, the confinement profile, the egress environment, every plugin and the MCP
+handshake paid with each one, loopback, and the bind of every listener — because
+ready means the machine is usable, and a machine whose `tools/list` is still
+filling in is one an agent cannot tell apart from a machine that never had those
+tools. A sandbox with plugins therefore takes longer to become ready than one
+without. The host is listening on `<run_dir>/v.sock_10100` before the VM starts;
+the timestamp at which this first frame arrives is the definition of
+**boot-to-ready** measured in P1-7.
 
 ```json
-{"v":1,"type":"ready","boot_id":"7f3a…","arch":"arm64","kernel":"6.12.105","supervisor":"0.1.0","monotonic_ns":41233000,"overlay":true}
+{"v":1,"type":"ready","boot_id":"7f3a…","arch":"arm64","kernel":"6.12.105","supervisor":"0.1.0","monotonic_ns":41233000,"overlay":true,"profile":"…"}
 ```
 
 then, every 5 s:
@@ -299,6 +313,12 @@ filesystem: still reachable, still diagnosable, but writes will fail. A host
 that logs this turns a whole class of confusing `EROFS` reports into one obvious
 line at boot.
 
+`profile` names the confinement every process the supervisor spawns is given, and
+is absent on an image older than v0.9, which confines nothing. `profile_error` is
+why that confinement could not be established, when it could not: a non-empty one
+makes the host refuse the machine outright rather than let a sandbox that
+confines nothing look like one that does (P5-3).
+
 `monotonic_ns` is the guest's own `CLOCK_MONOTONIC` at the moment of sending —
 useful for splitting boot time into kernel time and supervisor time. The host
 measures the total itself and never trusts the guest's clock, which before the
@@ -310,13 +330,19 @@ Request/response, correlated by `id`. Introduced with the supervisor in P2-1.
 
 ```json
 {"v":1,"id":"c1","op":"shutdown"}
-{"v":1,"id":"c1","ok":true}
+{"v":1,"id":"c1","ok":true,"profile":"…"}
 ```
+
+Every answer carries `profile` and `profile_error` — the same pair the `ready`
+frame carries — and not just the ones that asked for them: the posture is a
+property of the machine rather than of the question, and the host may reach a
+machine it did not boot. A restored machine sends no ready frame, so the answer
+to `resync` is where the host learns what that machine confines (P5-7).
 
 | `op` | Payload | Effect |
 | --- | --- | --- |
 | `ping` | — | `{"ok":true}`. Liveness without waiting for a heartbeat. |
-| `shutdown` | — | Terminate children, flush, unmount, halt. The host still supervises the Firecracker process and force-kills after a grace period. |
+| `shutdown` | — | `SIGTERM` everything but PID 1, `SIGKILL` what is left after the grace period, flush the filesystems, power off. The host still supervises the Firecracker process and force-kills after a grace period of its own. |
 | `trust` | `ca_pem` | Install the egress CA's trust anchor (P2-6). |
 | `resync` | `realtime_ns`, `entropy` | Post-snapshot-restore fix-up (P3-1). |
 
@@ -408,21 +434,29 @@ connection from another guest, because there is no path for one (`docs/teams.md`
 | `ask` | Deliver a question and wait for its answer, up to `timeout_ms`. |
 | `reply` | Answer a question, carrying back the `correlate` the broker supplied. |
 | `peers` | The agents this one may *initiate* to. |
-| `store_get`, `store_put` | The team store, E2-3. Both carry `key`; `store_put` also carries `body`. |
+| `store_get`, `store_put` | The team store, E2-3. Both carry `key`; `store_put` also carries `body`, and an empty `body` deletes the key rather than writing nothing — recorded as a `delete` and not a `put`. |
 | `spawn` | Ask for a worker within this agent's declared budget, E2-5. Optional `image`. |
 
 Request fields beyond `op`: `to`, `body` (base64), `correlate`, `key`, `image`,
 `timeout_ms`. Response fields beyond `ok`: `from`, `body`, `peers`, `correlate`,
 `agent`, `error`.
 
-`agent` on a response is load-bearing rather than informational. A guest is told
-its own name on the kernel command line, but a fork inherits its template's
-command line and would therefore report the template's name — so the host
-returns the authoritative name alongside `peers` and alongside a `spawn` result,
-and **the guest MUST prefer it** over anything it read from `/proc/cmdline`
-(F-D24). The host never reads a guest's opinion of its own identity off the
-wire: it knows which agent a connection belongs to because it is the side that
-bound the socket.
+`timeout_ms` on `recv` and `ask` is clamped at both ends. Zero, absent or
+negative — which is what an overflowing millisecond count becomes — waits one
+minute rather than not at all, and anything above fifteen minutes waits fifteen.
+Clamped rather than refused: an agent asking to wait a long time is not
+misbehaving, and one that wants longer asks again.
+
+`agent` on a response is load-bearing rather than informational, and it names a
+different agent on each of the two responses that carry it. Alongside `peers` it
+is the asker's own authoritative name: a guest is told its name on the kernel
+command line, but a fork inherits its template's command line and would therefore
+report the template's name — so the host returns the name it holds, and **the
+guest MUST prefer it** over anything it read from `/proc/cmdline` (F-D24). On a
+`spawn` result it is the *newly created worker's* name, which the guest hands
+back to its caller and never adopts as its own. The host never reads a guest's
+opinion of its own identity off the wire: it knows which agent a connection
+belongs to because it is the side that bound the socket.
 
 `correlate` is minted by the broker and echoed by the guest. A guest cannot
 invent one: a reply whose correlation the broker does not recognise, or that
@@ -430,6 +464,10 @@ belongs to a question put to a different agent, is refused. That matters because
 a reply is the one message that crosses without an edge being checked — it
 completes a call the broker is already holding open — so the tag is what stands
 in for the edge.
+
+The store bounds what one team can make the host hold: a key of at most 1 KiB,
+10,000 keys per team, 1 MiB per value and 64 MiB per team. Each is refused with a
+`denied` error the agent sees, rather than quietly swallowed.
 
 A refusal is an `Error` with one of the kinds in §4 plus `no_edge`,
 `no_such_agent` and `unreachable`. There is no silent drop: an agent that may
@@ -463,9 +501,19 @@ Control frames, all of them small and rare:
 
 | Direction | Shape | When |
 | --- | --- | --- |
-| host → guest | `{"op":"open","cwd":…,"cols":…,"rows":…}` | first frame, and the only one that starts anything |
+| host → guest | `{"op":"open","cwd":…,"cols":…,"rows":…,"cmd":…,"args":…}` | first frame, and the only one that starts anything |
 | host → guest | `{"op":"resize","cols":…,"rows":…}` | the host's window changed |
-| guest → host | `{"op":"exit","code":…,"signal":…}` | the shell ended |
+| guest → host | `{"op":"exit","code":…,"signal":…,"error":…}` | the shell ended, or never ran |
+
+`cmd` and `args` on the open name the binary to run. When `cmd` is empty the
+guest runs its own default instead — the first of `/bin/sh`, `/bin/ash`,
+`/bin/bash` that exists — which is what the host asks for when it has no way to
+know what a flavor ships.
+
+`error` on the exit is present only when the shell never ran at all: the guest
+could not allocate a pty, could not open the slave, or could not start the
+command. It is sent with `code: 1`, and the host turns it into the command's
+error rather than reporting it as an exit status.
 
 **A resize is a control frame and not an escape sequence** because of who has to
 be told: `TIOCSWINSZ` on the pty, by the kernel, so that full-screen programs
@@ -479,9 +527,10 @@ decides it is not interactive.
 
 **A closed connection with no exit frame is a supervisor that died**, which is a
 different thing from a shell that ended — the same distinction §5.2 draws for
-`exec`. When the *host* hangs up, the guest sends `SIGHUP` to the shell's
-session: a shell left running on a terminal nobody is reading is a process that
-never ends.
+`exec`. When the *host* hangs up, the guest sends `SIGHUP` to the shell process
+itself: a shell left running on a terminal nobody is reading is a process that
+never ends. The signal goes to that one process and not to its process group, so
+a child the shell left running on that terminal is not hung up with it.
 
 ### 5.8 `forward` — port 10005, host → guest
 
@@ -582,8 +631,9 @@ a message type, an `op`, or a port is not breaking: readers ignore unknown field
 and MUST NOT fail a message for containing one.
 
 Because the supervisor ships inside the image and the CLI ships on the host, the
-two can be different builds. The `ready` frame carries `supervisor`; the host
-logs it with every session and refuses a `v` it does not implement.
+two can be different builds. The `ready` frame carries `supervisor`, and the host
+logs it with every session and records it, so which supervisor answered is on the
+session's record rather than inferred from the CLI's own version.
 
 ---
 
@@ -603,7 +653,7 @@ logs it with every session and refuses a `v` it does not implement.
 | `resync` applied on every snapshot restore; per-fork `vsock_override` | P3-1, P3-2 |
 | Supervisor re-dials `10100`, `10101` and `10102` after a snapshot reset | P3-1, E2-1 |
 | A forward's stream is unframed, and the handshake reader keeps reading it | E5-5 |
-| `team` channel serves §5.6, and the guest prefers the host's `agent` | E2-1, E2-9 |
+| `team` channel serves §5.6, and the guest prefers the host's `agent` on `peers` | E2-1, E2-9 |
 
 ---
 

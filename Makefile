@@ -110,7 +110,7 @@ versions: ## Print the pinned toolchain versions (versions.mk)
 toolchain: linux-only fetch-kernel $(BUILD_DIR)/.config ## Download and prepare the pinned Buildroot tree (long, once per arch)
 	@echo "==> building the $(ARCH) cross toolchain (long; once per architecture)"
 	+$(BR_MAKE) toolchain
-	@echo "==> toolchain ready: $$($(BUILD_DIR)/host/bin/*-linux-*-gcc --version 2>/dev/null | head -1)"
+	@echo "==> toolchain ready: $$($(BUILD_DIR)/host/bin/*-linux-*-gcc --version 2>/dev/null | sed -n '1,1p')"
 
 # Buildroot's own tree, fetched and checksum-verified against versions.mk.
 $(BR_SRC)/Makefile:
@@ -184,9 +184,15 @@ image: linux-only supervisor fetch-kernel $(BUILD_DIR)/.config ## Build the gues
 	@$(CURDIR)/image/write-manifest.sh "$(ARCH)" "$(FLAVOR)" "$(IMAGE_DIR)" "$(KERNEL_ARTIFACT)" "$(BUILDROOT_VERSION)" "$(LINUX_VERSION)"
 
 # Prebuilt guest images from the GitHub release (D20), built from this tree,
-# without the 35-minute build. Checksum-verified for integrity, not provenance:
-# they are not bit-for-bit what `image` makes here, because the build is not
-# reproducible yet (P6-9), and they are not signed (P6-11).
+# without the 35-minute build. This checks SHA256SUMS and nothing else, which is
+# integrity. Whether they are bit-for-bit what `image` makes here is measured
+# rather than claimed — the repro-check workflow builds one commit twice and
+# diffs the result per artifact (P6-9). Provenance is a separate statement, and
+# on a release the release workflow builds there is one: it attests the checksums
+# file, so `gh attestation verify <file> --repo p4r4n0rm4l/KelyfOS` names the
+# workflow and the commit that built those bytes (P6-11). No published release
+# carries one yet — every existing tag predates the workflow — so on what this
+# target downloads today, that command finds nothing.
 fetch-image: ## Download a prebuilt guest image for ARCH instead of building it
 	@$(CURDIR)/dev/fetch-image.sh "$(ARCH)" "$(RELEASE_TAG)"
 

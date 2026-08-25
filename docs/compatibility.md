@@ -8,17 +8,19 @@ not move under them, and that where something *is* allowed to move they were tol
 in advance which. Until this page, the words "semver" and "deprecated" appeared
 nowhere in this repository.
 
-What follows is short because most of the work was already done. Seven surfaces
-already have a machine-readable source of truth and a CI-enforced generated page,
-so this promise **cites** rather than re-lists — and cannot go stale by the
-mechanism that already keeps the reference honest (F-D4).
+What follows is short because most of the work was already done. Six of the seven
+surfaces in §2 already have a machine-readable source of truth and a CI-enforced
+generated page, so this promise **cites** rather than re-lists — and those six
+cannot go stale by the mechanism that already keeps the reference honest (F-D4).
+The seventh, the host↔guest protocol, is pinned by a hand-written specification
+that no drift gate checks.
 
 ---
 
 ## 1. What a version number attaches to
 
-Three independent version constants exist, and their relationship has never been
-stated. It is stated here.
+Three independent version constants describe surfaces somebody builds against,
+and their relationship has never been stated. It is stated here.
 
 | constant | what it versions | moves when |
 | --- | --- | --- |
@@ -32,6 +34,15 @@ product has changed a great deal and those two contracts have not.
 
 `mcp.ProtocolVersion` is a fourth thing and not a version of ours at all: it is
 the MCP revision KelyfOS speaks, which somebody else numbers. §6 covers it.
+
+Other numbers in the tree version something else and are not what the table is
+about: the `schema` field written into a workspace manifest and into an image's
+`image.json`, both `1` and both on disk where a reader finds them — the workspace
+one is checked on read, so a manifest from an older kelyfos is recognised rather
+than misread; the guest supervisor's own `Version`, stamped at build time and
+printed on the boot line, which SECURITY.md asks a reporter to quote alongside
+`kelyfos version`; and the shim's `EnvdVersion`, which is the number the E2B SDK
+gates features on. None of them is a surface §2 pins.
 
 **The release tag is what the rest of this page is about.** When it says "a minor
 release may", it means the number in the git tag.
@@ -52,9 +63,11 @@ release may", it means the number in the git tag.
 
 ## 2. What stabilises
 
-Each of these has a generated page, produced from the code that implements it,
-which CI fails on drift. The promise is that these do not change incompatibly
-outside a major release.
+All but the last have a generated page, produced from the code that implements
+it, which CI fails on drift. The protocol's page is hand-written rather than
+extracted, so no drift gate compares it against `internal/proto`; it is a
+specification, and where the code disagrees with it the code is wrong. The
+promise is that these do not change incompatibly outside a major release.
 
 | surface | the page that pins it | source of truth |
 | --- | --- | --- |
@@ -94,10 +107,15 @@ silently in is worse than one that is openly out.
 - **Client configuration formats.** `kelyfos connect` writes files whose shapes
   belong to Cursor, VS Code, Codex and the rest. **These are external surfaces:
   outside the drift gate, outside this promise, re-verified on their own cadence**
-  — which is why every supported client carries the tool, version and date it was
-  checked against. There is no universal standard coming, and per-client writers
-  are permanent infrastructure rather than a temporary shim (D41).
-- **Anything under `dev/`.** Scripts for people working *on* KelyfOS, not with it.
+  — which is why every supported client carries the tool and the date it was
+  checked against, and three of the six the exact version as well. There is no
+  universal standard coming, and per-client writers are permanent infrastructure
+  rather than a temporary shim (D41).
+- **Anything under `dev/`.** Scripts for people working *on* KelyfOS. Three of
+  them are also run by people working *with* it: `install-firecracker.sh`,
+  `install-kelyfos.sh` and `fetch-image.sh` are the README's install path, and
+  the posture warning on a pre-v0.9 image names `dev/fetch-image.sh` as the fix.
+  They are outside the promise anyway.
 - **Timing figures.** The boot and restore numbers are measurements, not
   contracts. They are re-measured per release and reported as measured.
 

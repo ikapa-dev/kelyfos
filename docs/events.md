@@ -62,9 +62,11 @@ digest matches an empty hash. That was true here until v1.0.
 This makes the log **tamper-evident, not tamper-proof**. Anyone who can write
 the file can rewrite it end to end and recompute every hash. What the chain
 buys is that a *selective* edit — deleting one blocked-egress event, softening
-one command — breaks every hash after it, which is exactly the edit someone
-covering their tracks wants to make. `kelyfos log --verify` reports the first
-sequence number where the chain breaks.
+one command — breaks the chain at the point of the edit, which is exactly the
+edit someone covering their tracks wants to make: a deleted line leaves `seq`
+disagreeing with its line number, and a re-hashed line leaves the next event's
+`prev` disagreeing with it. `kelyfos log --verify` reports the first sequence
+number where the chain breaks.
 
 **A reader can run this themselves, on a file you send them.** `kelyfos log
 --export` embeds the record in the report it writes, so `kelyfos verify
@@ -148,7 +150,8 @@ Opens the file. Records what the sandbox is.
 | `kelyfos` | string | CLI version. |
 | `argv` | array of string | How the sandbox was launched, for reproduction. |
 | `cwd` | string | The directory it was launched from, on `kelyfos run`. |
-| `jailed` | boolean | Whether the VMM ran inside the jailer. Present from v0.9. |
+| `jailed` | boolean | Whether the VMM ran inside the jailer. On `kelyfos run` only — every other entry point carries the posture on `session.ready` instead. Present from v0.9. |
+| `reason` | string | Where the machine came from, when the entry point recorded one — `kelyfos run` and a plain `kelyfos team up` record none. `forked from <snapshot>`, `restored from <name>`, `created through the E2B shim`, or a bare `serve-mcp` for a `kelyfos serve-mcp` process's own session. Raised *through* that server, the value names the session too: `created through serve-mcp session <id>`, `restored from <name> through serve-mcp session <id>`, `forked from <name> through serve-mcp session <id>`, and `raised through serve-mcp session <id>` for a team. The bare `serve-mcp` value is how `kelyfos log --list` and `kelyfos runs` tell a server's session from a machine's. |
 
 `cwd` is there because `argv` alone does not reproduce a run: `--workspace .` is
 relative, and the policy file is found by walking up from wherever the command
@@ -169,9 +172,9 @@ just for those two:
 There is a second reason, and it is the one that decided it. `session.start`
 opens one chain per *command*, and a `team up` of five agents is one chain with
 five machines in it — so an opening event has no place to put five machines'
-postures. `session.ready` is emitted once per machine on every path there is.
-A field describing *a machine* belongs there even when it could technically have
-been known earlier.
+postures. `session.ready` is emitted once per machine. A field describing
+*a machine* belongs there even when it could technically have been known
+earlier.
 
 ### `session.ready`
 The guest announced itself — or, on a restore, answered.
@@ -179,8 +182,10 @@ The guest announced itself — or, on a restore, answered.
 This is where both walls are recorded for *every* machine, and it is the only
 event that can be: `session.start` opens one chain per command, and a `team up`
 of five agents is one chain with five machines in it. `session.ready` is emitted
-once per machine on every path there is — `run`, `fork`, `snapshot restore`,
-`resume`, `team up`, `serve-mcp` and the shim.
+once per machine on `run`, `fork`, `snapshot restore`, `team up`, `serve-mcp`
+and the shim. `kelyfos resume` is the exception: it appends `session.resume` to
+the chain the machine was paused from and no second `session.ready`, so the
+walls in that chain are the ones recorded before the pause.
 
 **An absent `profile` is a fact, not a gap.** A machine restored from a snapshot
 taken before v0.9 has a supervisor with no confinement in it, because restoring
@@ -197,6 +202,7 @@ such a restore is warned about rather than refused (D32).
 | `jailed` | boolean | Whether the VMM ran inside the jailer. Present from v0.9. |
 | `profile` | string | What the guest's supervisor confines everything it spawns with: the flavor, the writable trees, how many syscalls it refuses. **Absent means unconfined.** |
 | `agent` | string | Present inside a team: one of these per member. |
+| `image` | string | Present inside a team: this member's flavor. |
 | `via` | string | Present inside a team: `cold` or `fork` — how this member was started (F-D19). |
 | `overlay` | boolean | Whether the writable overlay came up. |
 
@@ -235,7 +241,12 @@ A chunk of output, in the order it was observed.
 | `agent` | string | Present inside a team: which member produced it. |
 
 ### `command.exit`
-Exactly one per `command.start`.
+One per `command.start`, when the guest returns an exit frame. If the supervisor
+closes the connection without one, or sends a stream name the host does not
+know, `kelyfos exec` reports the error and appends no `command.exit` — whatever
+output had already arrived is still flushed to the chain, so a reader pairing
+the two finds a `command.start` and its output with no exit, and has to handle
+the gap.
 
 | Field | Type | Meaning |
 | --- | --- | --- |
@@ -250,6 +261,14 @@ Exactly one per `command.start`.
 A file was written through a tool. The **content is not recorded** — a flight
 recorder that copies every byte an agent writes is a second copy of the
 workspace, and a much worse place to leave it.
+
+**`write_file` and `upload` are recorded from the request**, before the guest
+has answered, so a write the guest refused — a path outside the profile's
+writable trees, a body over the per-call limit — is written into the chain like
+one that happened, and nothing corrects it afterwards. The `serve-mcp` and
+`shim` doors record after the write succeeded instead: a refused write is not a
+write, and recording one would put a line in the log for a file that does not
+exist.
 
 | Field | Type | Meaning |
 | --- | --- | --- |
@@ -377,8 +396,8 @@ One inter-agent message, or one the edge list did not permit. Written from E2-1.
 | `outcome` | string | `delivered`, `refused`, `unreachable` or `timeout`. |
 | `bytes` | integer | Payload length. |
 | `sha256` | string | Digest of the payload. |
-| `data` | string | The payload itself — **only** when the team enabled capture. |
-| `reason` | string | Why, on a refusal: `no_edge`, `no_such_agent`, `unknown_correlation`, `missing_correlation`, `mailbox_full`. |
+| `data` | string | The payload itself — **only** when the team enabled capture *and* the message was delivered. |
+| `reason` | string | Why: `no_edge`, `no_such_agent`, `unknown_correlation` and `missing_correlation` on a `team.refused`; `mailbox_full` on a `team.message` with `outcome: unreachable`, which is a message the edge list permitted and the recipient was not reading. |
 
 A refusal gets its own type rather than a flag, for the same reason a blocked
 egress attempt does: it is the event someone reading the log is looking for.
@@ -398,9 +417,9 @@ One access to the team store, permitted or not. Written from E2-3.
 | --- | --- | --- |
 | `agent` | string | Who asked. |
 | `peer` | string | The key — the store's equivalent of the other end. |
-| `kind` | string | `get` or `put`. |
+| `kind` | string | `get`, `put` or `delete` — a `put` of an empty value. |
 | `outcome` | string | `delivered` or `refused`. |
-| `reason` | string | `denied`, `no_such_key`, `value_too_large`, `store_full`. |
+| `reason` | string | `denied`, `no_such_key`, `value_too_large`, `key_too_long`, `too_many_keys`, `store_full`. |
 | `bytes` | integer | Size of the value read or written. |
 
 Values are never recorded. The store is shared state, not a second copy of it,
@@ -493,7 +512,7 @@ it is the same shape of fact: something was asked for, and something came back.
 | `call` | string | Correlates the two. |
 | `name` | string | The tool. |
 | `agent` | string | The sandbox the call named, or the one its answer created. Absent when it concerns no single machine. |
-| `args` | string | On `mcp.host.call`: the arguments, with anything carrying content replaced by its size. |
+| `args` | string | On `mcp.host.call`: the arguments, with `content`, `stdin` and `data` replaced by their size. |
 | `outcome` | string | On `mcp.host.result`: `ok` or `error`. |
 | `duration_ms` | integer | On `mcp.host.result`: how long the call took. |
 | `error` | object | On `mcp.host.result`: `kind` and `message`, when the outcome is `error`. |
@@ -506,11 +525,16 @@ that door names the server's session in its own `session.start`, and `serve-mcp`
 prints the id to stderr when it starts, so a reader can go from either end to
 the other.
 
-**The arguments never carry content.** `content` and `stdin` are replaced by
-their size, which is the rule `file.write` follows for the same reason. The
-summariser walks whatever arguments it is given rather than knowing the tools,
-so an argument added later appears without anyone remembering to add it here,
-and one carrying content is withheld even on a tool that does not exist yet.
+**Three argument names are recorded by size rather than by value**, and the
+rest by value. `content`, `stdin` and `data` are replaced by their length when
+the value is a string, which is the rule `file.write` follows for the same
+reason; every other argument is rendered as itself, strings truncated at 120
+bytes. That is deliberate — an argument like `mem` or `image` is the decision
+worth recording, and the three that are withheld are the ones that carry a
+file. The summariser walks whatever
+arguments it is given rather than knowing the tools, so an argument added later
+appears without anyone remembering to add it here, and one carrying content
+under those three names is withheld even on a tool that does not exist yet.
 
 Without this pair the record would say *an agent ran a command in a sandbox* and
 would not say *an agent decided to create a sandbox with these limits* — and the
@@ -526,6 +550,7 @@ An interactive shell was opened in a sandbox, and ended. Written from E5-3.
 | `path` | string | Where the terminal stream is being written, when `--transcript` was given. |
 | `code` | integer | On `shell.end`: the shell's exit status. |
 | `signal` | string | On `shell.end`: the signal that ended it, when it was signalled. |
+| `reason` | string | On `shell.end`: why the shell could not be opened. |
 | `duration_ms` | integer | On `shell.end`: how long it was open. |
 | `agent` | string | Present inside a team: whose sandbox. |
 
@@ -608,7 +633,7 @@ happened and is not trusted to record it.
 | --- | --- | --- |
 | `name` | string | The plugin, as the policy file declared it. Never the name the plugin announces about itself. |
 | `tool` | string | On `plugin.call`: the plugin's own name for the tool, without the prefix. |
-| `args` | string | On `plugin.call`: the arguments, with anything carrying content replaced by its size — the same rule and the same shape as `mcp.host.call`. |
+| `args` | string | On `plugin.call`: the arguments, with `content`, `stdin` and `data` replaced by their size — the same rule and the same shape as `mcp.host.call`. |
 | `outcome` | string | On `plugin.call`: `ok` or `error`. |
 | `duration_ms` | integer | On `plugin.call`: how long the plugin took to answer. |
 | `reason` | string | On `plugin.crash`: what it exited with. |
@@ -628,7 +653,10 @@ what happened.
   plain text and line-oriented on purpose — the greppable sibling of
   `kelyfos watch`, which draws a screen. `kelyfos logs` is the same command
   under the name people type.
-- `kelyfos log --verify` checks the chain and reports the first break.
+- `kelyfos log --verify` checks the chain and reports the first break. On a
+  chain that verifies it prints the chain head — the number a reader quotes to
+  whoever receives the export — and, for a team or a `serve-mcp` session, names
+  the agents or sandboxes it covered.
 - `kelyfos log --list` lists recorded sessions, newest first, marking the ones
   that hold a team (`team of N`) and the ones belonging to a `kelyfos serve-mcp`
   process (`serve-mcp, N sandbox(es)`).
@@ -702,7 +730,7 @@ lines in the same chain. The verification says how many agents it covered, so a
 reader can compare it against the team they declared. `--export` additionally
 renders a lane per agent with the message flow drawn between them (E2-7).
 
-Three things the chain does **not** claim, stated because the difference matters
+Two things the chain does **not** claim, stated because the difference matters
 when this is used as evidence.
 
 It proves no line was altered, and none removed from the beginning or the middle
@@ -711,13 +739,19 @@ that no longer matches. **It does not catch a record cut short at its end.**
 Truncation there breaks nothing: the chain simply stops earlier, the last event
 becomes the head, and the result is byte-for-byte what a shorter session would
 have produced. It is indistinguishable from a session that is still running,
-which is a real and ordinary state. The only thing that tells them apart is the
-chain head compared against a head obtained from somewhere else — which is why
-`kelyfos log --export` prints it, and why signing it is P6-7.
+which is a real and ordinary state. What tells them apart is the chain head
+compared against a head obtained from somewhere else — which is why
+`kelyfos log --export` prints it — or a signature, which covers the chain head
+and a digest of the whole record, so a signed export cut short no longer
+verifies against its own signature. `kelyfos verify` also says when a record has
+no `session.end`, and says it as an observation: the chain cannot tell an open
+session from a truncated one.
 
-It does not prove that every agent a policy declared actually wrote one. And `--session <agent-id>` redirects to the team's record while that
-sandbox still exists — once the team is down the run directory is gone, and the
-team session must be found by id or with `--list`.
+It does not prove that every agent a policy declared actually wrote one.
+
+`--session <agent-id>` redirects to the team's record while that sandbox still
+exists — once the team is down the run directory is gone, and the team session
+must be found by id or with `--list`.
 
 ## 6. The record is also the history
 
@@ -726,7 +760,7 @@ team session must be found by id or with `--list`.
 
 **Neither of them writes anything.** There is no run database, no index file and
 no history log: `runs` reads the session records that were already being
-written, one pass per session, taking only the two events it needs. That is one
+written, one pass per session over the whole of each record. That is one
 decision and it has one reason — a separate index would be a thing to keep in
 step, to migrate, and eventually to find out of date, while the session logs are
 already written, already chained, and already the thing anyone would check. The

@@ -1,8 +1,9 @@
 # The MCP surface
 
-**Status:** normative for `v0.7`. Written at E4-0 before any of it exists; E4-1
-through E4-8 implement it. Where this document and the code disagree during the
-epic, the code is wrong.
+**Status:** normative for `v0.7`. Written at E4-0 as a specification; E4-1
+through E4-8 implement it, and the surface described here is built. Where this
+document and the code disagree, the code is what runs and this document is the
+thing to correct.
 
 KelyfOS already speaks MCP in one place: `kelyfos mcp` bridges a client's
 standard streams to one guest's supervisor, and the agent inside gets six tools
@@ -99,7 +100,7 @@ characters, for the reason in §3.2.
 
 | Parameter | Type | Required | Meaning |
 | --- | --- | --- | --- |
-| `image` | string | no | Image flavor. Defaults to the policy's, and must be one the policy permits. |
+| `image` | string | no | Image flavor. Must be the one the policy declares — every other value is refused, naming that one. A policy that declares no image accepts `base`. |
 | `cpus` | integer | no | Cores. A request above `[resources] cpus` is refused. |
 | `mem` | string | no | Guest RAM, e.g. `"512M"`. A request above `[resources] mem` is refused. |
 | `allow` | string array | no | Egress allowlist. **Must be a subset of the policy's.** An entry the policy does not contain is refused. |
@@ -149,17 +150,28 @@ No parameters → `structuredContent: {sandboxes: [{sandbox, image, allow, creat
 | `argv` | string array | no | Argument vector, executed with no shell. |
 | `cwd` | string | no | Working directory in the guest. |
 | `stdin` | string | no | Text on the command's standard input. |
-| `timeout_ms` | integer | no | Kill it after this long. |
+| `timeout_ms` | integer | no | Kill it after this long. Omitted, the command is killed after 60 s — the guest's own `exec` treats a missing timeout as no limit, and this tool does not. |
 
-One of `command` or `argv` is required. The result mirrors the guest's own
-`exec` tool exactly — text output, then `[exit status N]`, `isError` when the
-status is non-zero, and `structuredContent: {exit_code, stdout, stderr, signal}`
-— because an agent that has used one should not have to learn the other.
+One of `command` or `argv` is required. The result is shaped like the guest's own
+`exec` tool — text output, then `[exit status N]`, `isError` when the status is
+non-zero, and `structuredContent: {exit_code, stdout, stderr}` — because an agent
+that has used one should not have to learn the other. Two differences remain: this
+tool appends `[exit status N]` whatever the status was, where the guest appends it
+only on a non-zero one and answers a silent success with
+`[no output, exit status 0]`; and the guest's `signal` key is not forwarded, so a
+caller reading `structuredContent` alone cannot tell a killed command from one
+that exited.
 
 **`sandbox_read_file`** — `{sandbox, path}` → the contents.
 `structuredContent: {path, bytes, content, encoding}`.
 **`sandbox_write_file`** — `{sandbox, path, content}` → bytes written.
 `structuredContent: {path, bytes, sha256}`.
+
+A write reaches only the trees the confinement profile lets a sandbox write —
+`/work`, `/tmp`, `/run`, `/root`, `/dev/pts`, `/dev/shm` and a named list of
+device nodes — and a path outside them is refused before the size is looked at,
+naming the trees (P6-24). A read is not restricted, because anything
+`sandbox_read_file` can reach a command in the sandbox could read anyway.
 
 **The payload is in `structuredContent`, not only in the text block.** A client
 is entitled to prefer one or the other, and a tool whose whole result lived in
@@ -179,10 +191,17 @@ Both are the supervisor's own RPCs with a sandbox id in front, and that is
 meant literally: the host opens the guest's own MCP channel and calls the tool,
 rather than reimplementing it and growing a second idea of what the limit is.
 The 8 MiB per-call cap the guest tools have therefore applies here too, for the
-same reason and in the same words — and the frame limit on the channel is set
-from it, so the cap is what refuses a large file rather than the transport
-(§4). Measured end to end at 512 KiB, 2 MiB, 4 MiB and 8 MiB; 9 MiB is refused
-by the guest, naming the limit in bytes.
+same reason and in the same words: a file over it is refused by the guest,
+naming the limit in bytes. **Just under the cap the transport gives out first,
+and the guest's refusal is never reached.** The `structuredContent` rule above
+means a read carries the file twice — once in the text block, once as `content`
+— so a frame holding a file at the cap is about 16 MiB before any JSON escaping,
+against a channel limit of exactly 16,777,216 bytes (§4). Plain text fails only
+within a hair of 8 MiB; text whose escaped form is longer — every newline
+becoming two bytes — crosses sooner, which is why the failing size cannot be
+stated as one number. The supervisor's
+writer refuses to send it, the session closes on the send error, and the caller
+sees an unexplained EOF rather than a message naming a limit.
 
 A write is recorded in the sandbox's flight recorder by path, size and digest,
 with `via: serve-mcp` — never by content. A read is not recorded, for the same
@@ -323,10 +342,12 @@ command that exited non-zero, a file that does not exist, a policy refusal. The
 model sees it and adapts.
 
 **A request that could not be attempted at all** is a JSON-RPC error, and that
-is a narrower set than it sounds: only a `params` object that will not parse,
-because then there is no call to answer. An unknown tool and a missing required
-argument come back the way a failed tool does — a result with `isError` set —
-for the same reason: the model is meant to see it and adapt.
+is a narrower set than it sounds: a frame that is not JSON at all, which is
+answered against a null id; a JSON-RPC *method* the server does not have; and a
+`params` object that will not parse, because then there is no call to answer. An
+unknown *tool* and a missing required argument come back the way a failed tool
+does — a result with `isError` set — for the same reason: the model is meant to
+see it and adapt.
 
 A policy refusal is deliberately the first kind. "You asked for four cores and
 this project allows two" is something an agent can act on by asking for two.
@@ -373,7 +394,7 @@ a reader can see it. The file carries the server's record inside it, so
 `kelyfos verify` re-runs that chain wherever the file ends up.
 
 **The record never holds content.** A call's arguments are summarised into one
-line, keys sorted, with anything carrying content — `content`, `stdin` —
+line, keys sorted, with anything carrying content — `content`, `stdin`, `data` —
 replaced by its size:
 
 ```
@@ -417,10 +438,15 @@ anywhere the sandbox can — `/tmp` and the rest of the overlay, bounded by
 `bin/serve` — is resolved against the plugin's own directory. Both examples in
 this document are the first kind. `args` are passed through untouched.
 
-It gets **exactly the environment every other command in the sandbox gets** —
-the same `PATH`, and the same egress proxy variables when the sandbox has
-egress. Not a second environment, and not the supervisor's own: one environment,
-decided in one place.
+It gets **the environment every other command in the sandbox gets, as it stands
+when the plugin is launched** — the same `PATH`, and the same egress proxy
+variables when the sandbox has egress. Not a second environment, and not the
+supervisor's own: one environment, decided in one place. With one gap: plugins
+start before the sandbox reports ready, and the trust-anchor variables —
+`SSL_CERT_FILE`, `CURL_CA_BUNDLE`, `REQUESTS_CA_BUNDLE`, `NODE_EXTRA_CA_CERTS`
+and `GIT_SSL_CAINFO` — are added to that environment only when the host installs
+the CA, which happens after ready. A command run later through `exec` or the
+shell carries them; a plugin does not.
 
 The handshake happens **before the sandbox reports ready**, and the tool list is
 read once there rather than on every call. That costs something and the cost is
@@ -449,9 +475,17 @@ That is not the same as "a plugin cannot reach the network". In a project whose
 policy grants egress, a plugin inherits the proxy variables like everything else
 in the sandbox and can reach exactly the allowlist — no more, and through the
 same audited proxy. [`networking.md`](networking.md) describes what that means
-in practice: the four proxy variables, `NO_PROXY`, and the trust anchor. Where
-the sandbox has no egress, a plugin has none either, and a connection attempt
-fails the way it would for any other process in there.
+in practice: the four proxy variables, `NO_PROXY`, and the trust anchor. A
+plugin inherits the proxy variables and `NO_PROXY` but not the trust-anchor
+variables, for the reason above — its environment is fixed before the CA exists.
+In a project with `[secrets]`, where the proxy mints a CA and terminates TLS for
+the secret-bound domains, a plugin that takes its roots from those variables
+rather than from the system store — Python's `requests`, Node — fails
+certificate verification; one that reads
+`/etc/ssl/certs/ca-certificates.crt` still works, because the anchor is appended
+to that bundle on disk. Where the sandbox has no egress, a plugin has none
+either, and a connection attempt fails the way it would for any other process in
+there.
 
 **A plugin cannot grant itself anything.** It is launched by the supervisor with
 the environment the supervisor decides, from files on a read-only device.
@@ -496,8 +530,9 @@ console saying so, rather than advertised and rejected later by somebody else's
 API. Uppercase is allowed there and not in the plugin name, because the plugin
 name has one more job to do: being unambiguous as a prefix.
 
-A `[[plugin]]` whose name is already taken by another is refused when the file
-is read, naming both lines. And a plugin *tool* whose namespaced name collides
+A `[[plugin]]` whose name is already taken by another is refused when the
+plugins device is packed — as a sandbox is being created, not when the policy is
+loaded — naming both lines. And a plugin *tool* whose namespaced name collides
 with a built-in — a plugin called `read` exporting `file` — is dropped at boot
 with a line saying why, because two entries with one name in `tools/list` is
 worse than one missing tool: dispatch reaches the built-in and the plugin's is
@@ -573,10 +608,6 @@ manifest is the list; the device is storage. That is the same relationship
 `image.json` has to an image directory, and it exists for the same reason D21
 gives: the host should not assert a fact it has not checked.
 
-A flavor may also ship a server built into the image. Both routes launch
-identically — the manifest is what differs, and a built-in server appears in it
-the same way.
-
 ### 3.4 What it costs, and what it is allowed
 
 Every number here exists in the product and none of it was written down until
@@ -584,7 +615,7 @@ the E4 exit exam asked for it.
 
 | | |
 | --- | --- |
-| Time to answer `initialize` | **20 s**, and it is paid before the sandbox reports ready |
+| Time to answer each handshake call | **20 s** for `initialize`, then 20 s again for `tools/list` — both paid before the sandbox reports ready, so a slow plugin can hold the boot for 40 s |
 | Time to answer one tool call | **120 s**, after which the caller gets an error naming the plugin |
 | One message, either direction | **16 MiB**, the MCP channel's frame limit (`docs/protocol.md` §3) |
 | A tool result's size | whatever the plugin returns, inside that frame — the guest tools' 8 MiB per-call cap is theirs, not yours |
@@ -647,9 +678,12 @@ plan's review rounds, and `docs/protocol.md` §6 carries it.
 **Frames are bounded at 16 MiB on this channel**, rather than at the 1 MiB the
 rest of the protocol uses. Nothing here is chunked — a `read_file` result is a
 whole file on one line — and the per-call limit on a file is 8 MiB, so a 1 MiB
-frame would refuse messages the tools above it promise to carry. Sixteen leaves
-room for JSON escaping around eight and still bounds the buffer. Every reader on both
-sides of the channel takes the number from one constant
+frame would refuse messages the tools above it promise to carry. Sixteen was
+chosen to leave room for JSON escaping around eight, and no longer does: since
+the `structuredContent` rule of §2.2 a `read_file` result carries the file twice,
+so a frame holding a file at the cap is over the limit before any escaping, and
+the send fails as an unexplained EOF rather than as a stated limit. Every reader
+on both sides of the channel takes the number from one constant
 (`proto.MaxMCPLine`), because a writer that will send more than the reader
 opposite it accepts is a connection that dies mid-answer — which is what a
 caller sees as an unexplained EOF. `docs/protocol.md` §3 carries it.

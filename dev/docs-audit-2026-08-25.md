@@ -1515,4 +1515,87 @@ The row and §3 both omit signing, which is the only thing on this boundary that
 
 *Proof:* host/log.go:34 and :68 (--sign-key); host/verify.go:29 (--key), :43-46 (the help text) and reportSignature at :146; internal/report/sign.go:23
 
+---
 
+## What reading the documents found in the code
+
+A documentation audit reads a sentence and then reads the code to see whether it
+is true. Sometimes the sentence is true and the code is wrong — E3-0 turned up
+four of those. This one turned up eighteen, listed here because they were found
+by this task and are not fixed by it. Three were fixed in the corrections commit
+(the two stale `reason` lists in `internal/recorder/schema.go`, which drive the
+generated reference and are therefore this task's own business, and the release
+workflow's `rm` that staged two macOS binaries it did not want); the rest are
+code changes with their own blast radius and are routed to P6-28.
+
+**1. Found while auditing `docs/protocol.md`**
+
+host/shell.go:173-174 — pumpShell returns proto.ShellExit{Code: 0} when the connection ends with no exit control frame, so `kelyfos shell` prints 'shell exited 0' and returns success when the supervisor died mid-session. This violates docs/protocol.md §5.7 and the contract stated on proto.ShellExit itself (internal/proto/shell.go:57-59, 'A closed connection with no exit frame is a supervisor that died, which is a different thing from a shell that ended'). host/exec.go:117-121 gets the equivalent case right, returning 'the supervisor closed the connection without an exit frame' rather than inventing a status. The fix belongs in host/shell.go, not in the document.
+
+**2. Found while auditing `docs/events.md`**
+
+host/servemcpaudit.go:69-74 — the content-key size substitution is guarded on `v.(string)`, so a `content`/`stdin`/`data` key whose value is an object or array falls through to compactValue's default branch (:100-106), which json.Marshals it whole with no truncation. summariseArgs runs on the raw arguments of any call including a tool that does not exist, so a client controls both the key's type and its size. supervisor/pluginhost.go:473 has the same guard. The document now says the substitution applies "when the value is a string" rather than claiming arguments never carry content, but the intended rule is the one the code should hold.
+
+**3. Found while auditing `docs/events.md`**
+
+host/mcpobserve.go:113 and :120 — `file.write` for `via: write_file` and `via: upload` is appended from the request, before the guest has answered, and fromGuest (:141) drops results for anything but `exec`, so a write refused by supervisor/tools.go:402 (writableFor) or the per-call size limit stays in the chain as a write that happened, with a path, a size and a digest of content never stored. The other two doors get this right and say why (host/servemcpfiles.go:71-75, shim/shim.go:513-522). The document now records the discrepancy, but the chain is stating a file exists when it does not.
+
+**4. Found while auditing `docs/events.md`**
+
+internal/recorder/schema.go:229 — the `team.store` `reason` list is the same stale four (`denied`, `no_such_key`, `value_too_large`, `store_full`) and omits `key_too_long` (internal/team/store.go:158) and `too_many_keys` (:186), so the generated reference under docs/reference/ is wrong. Out of scope here: schema.go is tools/gendocs's source, not a hand-written document.
+
+**5. Found while auditing `docs/events.md`**
+
+internal/recorder/schema.go:63 — the session.start `reason` field is documented as When: "restore and fork", but host/team.go:222, host/servemcpaudit.go:141 and shim/shim.go:336 also write it, and host/log.go:163 and host/runs.go:236 read the `serve-mcp` value back. Same generated-reference scope note as above.
+
+**6. Found while auditing `docs/events.md`**
+
+host/runs.go:180 — readRun's own comment claims it reads "only the two events that matter, so a long session with a hundred thousand events costs the same as a short one", but it calls recorder.Read (internal/recorder/recorder.go:482-497), which parses every line into a slice, and then walks all of it (:187-211) to collect agent names, the first command.start and the event count. Cost and memory are linear in events. The comment is wrong in the same way the document was.
+
+**7. Found while auditing `docs/mcp-surface.md`**
+
+internal/proto/proto.go:56-57 — the comment 'Sixteen leaves room for JSON escaping around eight, and still bounds it' carries the same arithmetic the document did, and it is wrong for the same reason: supervisor/tools.go:235-240 puts a read_file's contents in both the text block and structuredContent['content'], so a frame holding a file at the 8 MiB cap is over MaxMCPLine before any escaping. Reported, not changed — code is out of scope for this task.
+
+**8. Found while auditing `docs/mcp-surface.md`**
+
+supervisor/mcp.go:60-62 — an over-long response frame makes proto.Writer.Write return ErrLineTooLong, mcpSession.serve returns on the send error and the connection closes, so a caller that reads a file near the 8 MiB cap gets an unexplained EOF instead of a message naming the limit. The document now says this happens; the behaviour itself is a defect.
+
+**9. Found while auditing `docs/hardening.md`**
+
+The SBOM attestation subject glob in .github/workflows/release.yml:200-201 and 207-208 is dist/*aarch64* / dist/*x86_64*, which matches kelyfos-darwin-<arch>. That binary is read by no SBOM (Makefile:251-255 passes -binary only for the supervisor and kelyfos-linux-$(ARCH)), so one shipped artifact per architecture is attested as being described by an SBOM that never read it. Documented in the page rather than fixed — the fix belongs in the workflow.
+
+**10. Found while auditing `docs/hardening.md`**
+
+.github/workflows/repro-check.yml:59,65 compares dist/kelyfos-linux-* only, while Makefile:210-231 builds and the release ships kelyfos-darwin-x86_64 and kelyfos-darwin-aarch64. The two macOS binaries a stranger downloads have never been through the reproducibility check. Documented rather than fixed.
+
+**11. Found while auditing `docs/resources.md`**
+
+host/team.go:645, 811, 887 and host/servemcptools.go:317 pass `scratch` into sandbox.Options with no comparison against that machine's `mem`, while host/run.go:277 and host/shim.go:108 refuse it. Inside a team, or through serve-mcp's sandbox_create, a `scratch` above `mem` is accepted and is inert — the exact outcome the refusal in run.go exists to prevent. The document now records the gap rather than claiming the refusal is universal, but the check is missing from two of the four entry points.
+
+**12. Found while auditing `docs/teams.md`**
+
+host/team.go:884-892 — forkAgent builds sandbox.Options with no OnGuestEvent, while bootAgent installs one (host/team.go:657-674), and internal/sandbox/sandbox.go:443 drops the frame when the handler is nil. A forked member's resource.oom and plugin events therefore never reach the recorder, and forking is reserved for no-egress agents (host/teamplan.go:292-294), so the members that lose their OOM records are exactly the replica workers a `count` group creates. Documented as a gap in §8.1 rather than fixed, per the brief.
+
+**13. Found while auditing `docs/teams.md`**
+
+internal/team/broker.go:376-389 with host/team.go:499-500 — nothing removes a declared agent's mailbox when its VM stops: max_runtime calls crew.remove and rig.stop but never broker.Despawn, and Despawn (internal/team/spawn.go:113-129) is reached only for spawned workers. A team_send to a stopped or crashed declared agent therefore succeeds and is recorded outcome: delivered up to 64 times before the buffer fills. Documented in §3.1 rather than fixed.
+
+**14. Found while auditing `docs/cookbook.md`**
+
+docs/cookbook.md:1478's claim ("Every `head -N` in `dev/` and in the workflows is now `sed -n '1,Np'`") was an intent the code had not honoured: at HEAD, fourteen `head -N` remained under dev/ and in .github/workflows/ci.yml:402, several in the producer|head shape the page warns about (`firecracker --version | head -1`, `strace -V 2>&1 | head -1`, `ls -t … | head -1`, `find ~/.cache/kelyfos/run -mindepth 1 | head -20`). While I was working, something else in this run converted them in the working tree — `grep -rn 'head -' dev/ .github/workflows/` now returns only two `head -c` byte reads from /dev/urandom. I still narrowed the document to the one conversion I can verify at HEAD (dev/install-build-deps.sh:32), since a sweeping claim about every script is the kind that goes stale again.
+
+**15. Found while auditing `docs/networking.md`**
+
+internal/egress/scrub.go:108 — the comment inside scrub() says "Once per credential per connection, not once per occurrence". The `seen` map is created by newScrubber (scrub.go:72) which scrubResponse calls per response (scrub.go:178), and scrubResponse runs inside terminate.go's per-request keep-alive loop (terminate.go:56, :111), so the de-duplication is per response. The comment is wrong in exactly the way the document was; the document is now corrected and the comment is not.
+
+**16. Found while auditing `docs/qol.md`**
+
+internal/sandbox/extract.go:263 safeMode forces u+rw on every file and u+rwx on every directory during extraction. Because internal/sandbox/diff.go:199-203 compares the extracted tree against the manifest, a file the sandbox never touched is reported as a mode change whenever its packed mode lacked those bits (0444 → 0644, a 0555 directory → 0755), and internal/sandbox/workspace.go:259 then renames that tree into place, so the permission on the user's own untouched file is actually changed. This is the same failure the safeMode comment records as fixed for group-write ('a boundary that rewrites the user's files to protect them from the user is not protecting anybody') — the 0o020 case was fixed, the u+rw / u+rwx floor was not. Documented in §2.2 as present behaviour rather than fixed.
+
+**17. Found while auditing `docs/qol.md`**
+
+host/sessions.go:436-442 resume refuses any session whose snapshot has HasNetwork set (internal/sandbox/sandbox.go:791-793, whenever st.TAP != ""), but pause (host/sessions.go:70-196) does not check for this before storing. It writes the whole session and prints 'resume it with: kelyfos resume <name>', so a sandbox with egress can be paused into a store that only `kelyfos snapshot restore` can ever bring back. The cheap fix is for pause to refuse, or to print the snapshot-restore path instead, at the point it already knows st.TAP.
+
+**18. Found while auditing `.github/workflows/release.yml`**
+
+`.github/workflows/release.yml:101` — `rm -f dist/kelyfos-linux-*` is too narrow. `make release-cli` (Makefile:208-234) builds four binaries: kelyfos-linux-{x86_64,aarch64} and kelyfos-darwin-{x86_64,aarch64}. The rm removes only the Linux pair, so both matrix jobs upload dist/kelyfos-darwin-x86_64 and dist/kelyfos-darwin-aarch64 inside their image-<arch> artifacts, and the publish job's download-artifact with merge-multiple: true merges two artifacts carrying the same two filenames. The shipped bytes are correct only because the publish job's own `make release-cli` (release.yml:143-144) rewrites those paths afterwards. Fix is in the code, not the comment: `rm -f dist/kelyfos-linux-* dist/kelyfos-darwin-*` (or `rm -f dist/kelyfos-*`). Not applied — code change, outside this task's scope.

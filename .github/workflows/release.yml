@@ -8,7 +8,7 @@
 # built on top of it.
 #
 # What this workflow is, precisely: both architectures built from this tag's
-# source, both CLIs cross-built, `dist/` staged, `SHA256SUMS` regenerated from
+# source, all four CLIs cross-built, `dist/` staged, `SHA256SUMS` regenerated from
 # scratch over exactly what is there, and a draft release published. It is not a
 # provenance claim by itself. It is the thing that makes one possible.
 #
@@ -97,7 +97,13 @@ jobs:
         run: |
           make release-cli
           make release-sbom ARCH=${{ matrix.arch }} FLAVOR=${{ matrix.flavor }}
-          rm -f dist/kelyfos-linux-*   # the publish job builds the pair it ships
+          # `make release-cli` builds four CLIs — Linux and macOS, each in two
+          # architectures — and this job wants none of them: it built them only so
+          # the SBOM could read a binary's own build information. All four go, so
+          # that both matrix jobs cannot upload the same macOS filenames and leave
+          # a question about which pair the merge kept. The publish job builds the
+          # four it ships, once, over the merged `dist/`.
+          rm -f dist/kelyfos-linux-* dist/kelyfos-darwin-*
 
       - name: Save the Buildroot tree
         if: always() && steps.tree.outputs.cache-hit != 'true'
@@ -136,9 +142,9 @@ jobs:
           merge-multiple: true
 
       # The CLIs are cross-built here rather than in the matrix: they are
-      # cross-compiled anyway, so building them twice would produce the same two
-      # binaries and leave a question about which pair was published.
-      - name: Cross-build both CLIs
+      # cross-compiled anyway, so building them twice would produce the same four
+      # binaries and leave a question about which set was published.
+      - name: Cross-build all four CLIs
         run: make release-cli
 
       # From scratch, over exactly what is staged — which now includes both

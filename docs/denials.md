@@ -8,7 +8,7 @@ flag above a ceiling, to a message along an edge that was never declared. Each
 of those refusals is the product working correctly, and each of them lands on
 somebody who now has to work out what to type instead.
 
-So every refusal KelyfOS makes names its own fix:
+So a catalogued refusal names its own fix:
 
 ```
 $ curl http://api.stripe.com/v1/charges
@@ -62,6 +62,16 @@ a person edits it. This is the same invariant the MCP tool surface is held to
 (F-D5): the ceiling in `kelyfos.toml` is not something the software can talk
 itself past, and a refusal that offered to raise it would be exactly that.
 
+**Some refusals are made outside the catalog and carry no ID and no fix line.**
+The supervisor's own file tools are one: `write_file` refuses a path outside
+`/work`, `/tmp`, `/run`, `/root` and the few device nodes the profile grants,
+because the tools get exactly the reach the confinement profile gives a process
+the supervisor spawns, and PID 1 is not a way around the confinement it
+enforces. Reading a workspace image back is the other: an entry that is neither
+a file, a directory nor a symlink — a socket, a fifo, a device node — refuses
+the whole extraction, and the run prints `kelyfos: workspace sync-back failed:`
+and the reason, with nothing to type.
+
 **A refusal KelyfOS never sees cannot be in a catalog KelyfOS raises from.** The
 catalog is checked in both directions — `make docs` fails the build for an entry
 nothing raises (F-D4) — so an entry with no raise site would be a documented
@@ -107,9 +117,14 @@ at the four moments where a person is wanted back:
 | a review is waiting | `3 added, 1 modified, 0 deleted in project — write them back?` |
 
 `notify-send` on Linux, `osascript` on macOS, and the terminal bell when neither
-is there — which needs nothing installed. The run says which one it found, in
-its own header, because a notification that never arrives is indistinguishable
-from one that was never asked for.
+is there — which needs nothing installed, but does need a terminal: the bell is
+written only when stderr is a character device, so a run whose output is being
+collected gets no control character spliced into it, and no notification either.
+The run says which one it found, in its own header, because a notification that
+never arrives is indistinguishable from one that was never asked for. The header
+names the mechanism rather than the delivery: with neither notifier installed it
+reads `terminal bell only`, and that is still what it says when the bell has
+nowhere to ring.
 
 Three rules, and they are the whole design:
 
@@ -133,7 +148,8 @@ to apply it anyway.
 ## For programs
 
 A catalogued refusal is a `*denial.Refusal`, carrying its ID and the values it
-named. A policy-file or team-plan refusal is an ordinary error and
+named. A refusal made outside the catalog — while reading a policy file or a
+team plan, or in the supervisor's own tools — is an ordinary error and
 `denial.Of` does not recognise it, so a program that branches on IDs should
 treat "no ID" as its own case rather than as "not a refusal":
 
@@ -143,9 +159,12 @@ if r, ok := denial.Of(err); ok && r.ID() == "budget.sandboxes" {
 }
 ```
 
-Team refusals cross the broker as a `team.Error`, whose `Message` is the same
-rendered text — ID, fix line and all — so an agent reading the error it was
-handed has the fix in front of it too.
+A catalogued team refusal crosses the broker as a `team.Error` whose `Message`
+is the same rendered text — ID, fix line and all — so an agent reading the error
+it was handed has the fix in front of it too. Not every `team.Error` is one: the
+broker and the store raise refusals of their own — a team with no store, a team
+that cannot spawn, a store value over its limit — with the same `Kind` of
+`denied` and a bare sentence for a `Message`, no ID and no fix line.
 
 ## Who gets told, when the client will not show it
 
@@ -153,8 +172,10 @@ An egress refusal is written to whatever made the request, and for HTTPS that is
 usually where it stops. A refused `CONNECT` is answered with `403` and a body,
 and curl prints `Received HTTP code 403 from proxy after CONNECT` and throws the
 body away; most other clients do the same. Plain HTTP carries it through
-untouched, because there the refusal *is* the response, and so does a
-secret-bound domain, where the proxy terminates TLS and answers inside it.
+untouched, because there the refusal *is* the response. A secret-bound domain is
+no different from any other: the allowlist and port checks run on the `CONNECT`
+itself, before the proxy decides whether to terminate, so the refusal is the same
+`403` and the TLS session it would have answered inside is never opened.
 
 The other reader is the person watching the run, and they are the one with the
 policy file open. So the first time a domain is refused, the host prints the

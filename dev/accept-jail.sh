@@ -142,7 +142,7 @@ kelyfos snapshot save --name jailtest >/dev/null 2>&1
 halt
 (timeout 200 kelyfos snapshot restore --name jailtest > restore.log 2>&1 &)
 for i in $(seq 1 90); do kelyfos exec true >/dev/null 2>&1 && break; sleep 1; done
-grep -qi 'error\|refused' restore.log && sed 's/^/  /' restore.log | head -3
+grep -qi 'error\|refused' restore.log && sed 's/^/  /' restore.log | sed -n '1,3p'
 marker="$(kelyfos exec 'cat /tmp/marker' 2>&1 | tail -1)"
 echo "  memory:    $marker"
 check "$(grep -q 'survived-the-jail' <<<"$marker" && echo yes || echo no)" \
@@ -167,7 +167,7 @@ boot --cpu-quota 150%
 vmm3="$(pgrep -n firecracker)"
 grep -E '^  cpu |^  cgroup ' run.log | sed 's/^/  /'
 sits="$(awk -F: '$1=="0"{print $3}' "/proc/$vmm3/cgroup" 2>/dev/null)"
-state3="$(ls -t ~/.cache/kelyfos/run/firecracker/*/root/sandbox.json 2>/dev/null | head -1)"
+state3="$(ls -t ~/.cache/kelyfos/run/firecracker/*/root/sandbox.json 2>/dev/null | sed -n '1,1p')"
 asked="$(python3 -c "import json;print(json.load(open('$state3')).get('cgroup_path',''))" 2>/dev/null)"
 echo "  asked for: ${asked:-<none>}"
 echo "  sits in:   ${sits:-<none>}"

@@ -59,9 +59,11 @@ edit.
 ![KelyfOS in a terminal](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/media/demo.gif)
 
 > **Status: v0.9, early development, building in the open.** Cold boot-to-ready
-> **135 ms** median, snapshot restore **49 ms**, five agents up in **412 ms** —
-> x86_64 on a bare-KVM CI runner, ten runs each, by a benchmark workflow in this
-> repository rather than by hand.
+> **135 ms** median, snapshot restore **49 ms** — x86_64 on a bare-KVM CI runner,
+> ten runs each, by [`bench.yml`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/.github/workflows/bench.yml) rather than by
+> hand. **Five agents up in 412 ms** is a different measurement and says so here:
+> one cold run of `dev/demo-team.sh` under
+> [`caps.yml`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/.github/workflows/caps.yml), not a median of ten.
 >
 > **v0.9 is the hardening release.** The VMM runs inside the jailer with its own
 > syscall filter proved in force rather than assumed, and everything the guest
@@ -100,7 +102,7 @@ needed. On Windows, WSL2 — and it is post-1.0, with the compatibility document
 saying so by name.
 
 **On macOS there is a Linux layer, and kelyfos looks after it.** There is a macOS
-build of the CLI, and you never type `limactl`:
+build of the CLI, and you never type `limactl start`:
 
 ```sh
 brew install lima
@@ -109,6 +111,17 @@ kelyfos doctor             # its state, whether it matches this binary, and the
                            # in-VM doctor's own output
 kelyfos doctor --stop
 ```
+
+**The layer needs Apple M3 or newer and macOS 15+**, because it needs nested
+virtualisation from Virtualization.framework; without it `/dev/kvm` never appears
+inside the Lima guest and the instance fails its own probe at start. `doctor`
+says this too, at the point where it stops.
+
+**Getting the macOS binary is a build for now.** `dev/install-kelyfos.sh`
+downloads `kelyfos-linux-<arch>` and is Linux-only; `make release-cli`
+cross-builds the darwin pair into `dist/`, and unlike `make cli` it is not gated
+on Linux. The release workflow stages those binaries alongside the Linux ones, so
+from the first release it builds they are a download instead.
 
 It is a smaller program than the Linux one and it says so. `doctor` owns the
 layer, `verify` checks a report somebody sent you — that one matters, because the
@@ -144,7 +157,9 @@ This step downloads and boots an Ubuntu VM, and is most of that wall clock:
 
 ```sh
 brew install lima
-limactl start --name kelyfos-dev dev/lima.yaml
+kelyfos doctor --setup             # not `limactl start`: an instance made by hand
+                                   # carries no marker, and doctor can then only
+                                   # tell you it does not know what it was made from
 limactl shell kelyfos-dev          # everything below runs in here
 ```
 
@@ -205,12 +220,15 @@ are on Lima, WSL2, bare Linux or macOS.
 
 ### Building it yourself
 
-The downloads above are built from this source at the release tag, by
+Releases are built from this source at the release tag by
 [`.github/workflows/release.yml`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/.github/workflows/release.yml) — both
 architectures in one workflow run, from the tag's own commit, with `SHA256SUMS`
-regenerated from scratch over exactly the files attached. Releases up to and
-including v0.9 were assembled by hand from a laptop, and it showed: v0.9's two
-architectures were built on two different machines, one of them a developer's.
+regenerated from scratch over exactly the files attached. **That workflow is
+newer than every tag that exists.** Releases up to and including v0.9 were
+assembled by hand from a laptop, and it showed: v0.9's two architectures were
+built on two different machines, one of them a developer's. So the downloads
+above are hand-made ones, and the first release the workflow builds is the first
+one this paragraph describes.
 
 **Whether they are bit-for-bit what your own `make image` produces is measured,
 not claimed.** Determinism is configured — `BR2_REPRODUCIBLE`,
@@ -245,9 +263,12 @@ versions. The sandbox reads it and refuses to boot if it does not match what you
 asked for, so `--image dev` can never quietly run something else — the flavor in
 your audit trail is a checked fact, not a label you typed.
 
-**Release artifacts carry a provenance attestation**: a statement, signed by
-GitHub, saying which workflow and which commit produced these exact bytes. One
-command checks it, and it needs nothing from this project:
+**A release the workflow builds carries a provenance attestation**: a statement,
+signed by GitHub, saying which workflow and which commit produced these exact
+bytes. **No published artifact carries one yet**, for the reason above — the
+attestation steps live in the release workflow, and the newest tag predates it.
+On a release it has built, one command checks it, and that command needs nothing
+from this project:
 
 ```sh
 gh attestation verify kelyfos-linux-x86_64 --repo p4r4n0rm4l/KelyfOS
@@ -255,7 +276,7 @@ gh attestation verify kelyfos-linux-x86_64 --repo p4r4n0rm4l/KelyfOS
 
 That is SLSA v1.0 Build Level 2 — a hosted builder attesting to its own output —
 and it verifies offline against a trusted root fetched once. Each architecture's
-SBOM is attested too, against that architecture's artifacts.
+SBOM is attested the same way, against that architecture's artifacts.
 
 **It is not the same claim as GitHub's immutable releases**, and the two must not
 be read as one. Immutability says GitHub received these bytes under this tag and
@@ -306,12 +327,21 @@ absolute path do not belong in a file a Linux contributor also checks out. The
 script picks the right form for the machine it runs on and says what is wrong
 when it cannot.
 
-Writing that file by hand is what `kelyfos connect <client>` is for; until it
-ships, [`docs/integrating.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/integrating.md) has the per-client shapes.
+Writing that file by hand is what `kelyfos connect <client>` is for: it writes
+each client's own file, in that client's own format and location, and `--check`
+then starts the server it just configured and completes a real MCP handshake.
+[`docs/integrating.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/integrating.md) has the per-client shapes.
 
-The agent then sees six tools — `exec`, `read_file`, `write_file`, `list_dir`,
-`upload`, `download` — and nothing else. In a team it sees the team tools too, and a
-`[[plugin]]` adds its own namespaced ones — and nothing else still.
+A client attached to `serve-mcp` that way sees twelve host-side tools — the
+`sandbox_*` family that boots, runs, stops, snapshots and forks machines, plus
+`team_up`, `team_ps` and `team_down`. [`docs/reference/tools.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/reference/tools.md)
+is generated from the servers themselves and lists every one.
+
+**Inside** a sandbox the surface is smaller and different: an agent reached
+through `kelyfos mcp` or `kelyfos run … -- <agent>` sees six tools — `exec`,
+`read_file`, `write_file`, `list_dir`, `upload`, `download` — and nothing else.
+In a team it sees the team tools too, and a `[[plugin]]` adds its own namespaced
+ones — and nothing else still.
 
 ## Policy travels with the project
 
@@ -350,8 +380,10 @@ receipt: a `kelyfos run` session, and every agent in a team, ends with a
 `resource.summary` event recording what it consumed beside what it was allowed,
 measured from counters the kernel keeps about the VMM process. Sandboxes created
 through `serve-mcp`, `fork`, `snapshot restore` and the E2B shim do not carry one
-yet. `kelyfos watch` shows the same figures live. See [`docs/resources.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/resources.md), and
-`bash dev/prove-caps.sh` to watch each cap refuse to budge.
+yet, and neither does a session that ends in a pause: the receipt is taken at
+teardown, a pause is not one, and `resume` does not add it afterwards. `kelyfos
+watch` shows the same figures live. See [`docs/resources.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/resources.md),
+and `bash dev/prove-caps.sh` to watch each cap refuse to budge.
 
 ## Agent teams
 
@@ -439,7 +471,7 @@ And the parts that make it a thing you reach for rather than tolerate (v0.8):
 | [`llms.txt`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/llms.txt) · [`llms-full.txt`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/llms-full.txt) | for machine readers: an index per the llmstxt.org spec, and the whole set in one file, whose current size `llms.txt` states |
 | [`docs/reference/`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/reference/README.md) | every command, flag, toml key, MCP tool, event and exit code — generated from the source |
 | [`PLAN.html`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/PLAN.html) · [`PLAN-FEATURES.html`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/PLAN-FEATURES.html) | the living plan — every decision and the full progress log, phases then epics |
-| [`docs/cookbook.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/cookbook.md) | fourteen recipes that work: run one, allowlist a domain, fork, build a team, point a client at it, write a plugin, verify the log, pause and resume, review a diff, forward a port |
+| [`docs/cookbook.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/cookbook.md) | fifteen recipes that work: run one, allowlist a domain, fork, build a team, point a client at it, write a plugin, verify the log, pause and resume, review a diff, forward a port |
 | [`docs/integrating.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/integrating.md) | building on it: the four ways in, orchestrator patterns, common mistakes |
 | [`docs/mcp-surface.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/mcp-surface.md) | MCP in both directions: `serve-mcp` as a tool for any client, `[[plugin]]` servers inside the guest |
 | [`docs/threat-model.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/threat-model.md) | what is defended, and what is not |
@@ -454,9 +486,13 @@ And the parts that make it a thing you reach for rather than tolerate (v0.8):
 ## The numbers, and where they came from
 
 Every figure above is measured on the bare-KVM reference — a stock
-`ubuntu-latest` GitHub runner with KVM — by `make bench`, which is a workflow in
-this repository. Local numbers on a Mac are 6–8× slower because of nested
-virtualisation and are never the published ones.
+`ubuntu-latest` GitHub runner with KVM — and by a workflow in this repository
+rather than by hand. Two workflows, not one, because they measure different
+things: boot and restore are `kelyfos bench` under
+[`bench.yml`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/.github/workflows/bench.yml), ten runs each; the five-agent figures
+are `dev/demo-team.sh` under [`caps.yml`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/.github/workflows/caps.yml), one run
+each. Local numbers on a Mac are 6–8× slower because of nested virtualisation and
+are never the published ones.
 
 Boot was 123 ms and restore 37 ms at v0.8. The jailer and the guest-profile probe
 sit on the boot path and cost about 12 ms each way; the VMM's filter check is
@@ -477,12 +513,13 @@ relied on the boundary Firecracker gives it and added nothing of its own around
 the VMM process or around what a compromised agent could reach inside its guest.
 Both layers exist now. Here is what that does and does not mean.
 
-One of them was incomplete until v1.0, and the sentence above was true of the
-guest and not of the host. An external audit found that the **workspace block
+One of them was incomplete until this phase, and the sentence above was true of
+the guest and not of the host. An external audit found that the **workspace block
 device** — which the guest writes and the host reads back — let a guest-authored
 directory entry decide where the host wrote, and the trust-boundary table did not
 list that surface at all. It is closed and listed now; the row below is what
-closed it.
+closed it. **It closed on `main` after v0.9 was tagged**, so the release the
+quickstart downloads still extracts a workspace the old way.
 
 **What is enforced.**
 
@@ -491,9 +528,9 @@ closed it.
 | the boundary | a Firecracker microVM: a separate kernel, a hardware boundary. This was always the case and is still the thing that matters most. |
 | around the VMM | the jailer: a chroot holding only this sandbox's files, a dropped uid, `no_new_privs`, only the device nodes it needs, and the run's cgroup when the policy set a quota. Every entry point, or none — `run`, `team up`, `fork`, `snapshot restore`, `serve-mcp` and the shim all go through one refusal. |
 | the VMM's syscalls | Firecracker's own seccomp filter, **read out of `/proc` on every one of its threads** at boot rather than assumed from the absence of a flag. A VMM without it is refused, not run. [`docs/host-seccomp.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/host-seccomp.md) lists every syscall it permits, read back out of the running kernel. |
-| inside the guest | every process the supervisor spawns — `exec`, a plugin, the shell — is confined by Landlock (writes only `/work`, `/tmp`, `/run`, `$HOME`, `/dev/pts` and `/dev/shm`, plus seven named device nodes) and a seccomp refusal list of 28 syscalls. Per flavor; [`docs/reference/profiles.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/reference/profiles.md) is generated from the code that enforces it. |
+| inside the guest | every process the supervisor spawns — `exec`, a plugin, the shell — is confined by Landlock (writes only `/work`, `/tmp`, `/run`, `$HOME`, `/dev/pts` and `/dev/shm`, plus seven named device nodes) and a seccomp refusal list of 28 syscalls. Per flavor; [`docs/reference/profiles.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/reference/profiles.md) is generated from the code that enforces it. **The supervisor is PID 1 and the profile does not confine it**, which is where `write_file` and `upload` could once write anywhere the guest asked, including the block devices the profile withholds; those two are now held to the same three lists the profile is built from. Reads are deliberately not restricted. |
 | the network | no interface at all without `--allow`; then deny-all plus a hostname allowlist, with credentials attached by the host's proxy so the value never exists inside the guest. |
-| the workspace disk | the guest writes that filesystem, so the host reads it back the way it reads anything hostile: every entry validated and the image refused whole if one is a name the host cannot use, and the extraction written through `openat2` with `RESOLVE_BENEATH` and `RESOLVE_NO_SYMLINKS` so a name that got past the check still cannot leave the tree. Guest-chosen modes do not survive onto your filesystem. |
+| the workspace disk | the guest writes that filesystem, so the host reads it back the way it reads anything hostile: every entry validated and the image refused whole if one is a name the host cannot use, and the extraction written through `openat2` with `RESOLVE_BENEATH` and `RESOLVE_NO_SYMLINKS` so a name that got past the check still cannot leave the tree. Setuid, setgid, sticky and world-write do not survive onto your filesystem; the rest of the mode does, including the executable bit, because an agent that built a binary needs it. |
 | the record | hash-chained, written by the host, and it names which walls were around each machine — so a transcript cannot make an unconfined run look like a confined one. |
 
 **What is not.** None of this is a claim to be a multi-tenant sandbox for
@@ -510,8 +547,9 @@ hostile code; it is a single-host developer tool (D1).
 - **Side channels** — timing, cache, speculative execution — are untouched.
   KelyfOS inherits Firecracker's position and adds nothing.
 - **The supply chain is partly answered now, and the parts are different sizes.**
-  Release artifacts carry a build-provenance attestation and an SBOM, and
-  reproducibility is measured per artifact rather than claimed. What is *not*
+  The release workflow attaches a build-provenance attestation and an SBOM to
+  every artifact — on the releases it builds, which does not yet include any that
+  exists — and reproducibility is measured per artifact rather than claimed. What is *not*
   answered is the layer beneath: the Buildroot packages, the compiler and the
   upstream tarballs are taken on trust, verified by checksum against what
   upstream published and no further. A hardened runtime built from an unverified
@@ -532,7 +570,8 @@ and says which findings are in scope and which are documented design decisions.
 
 The guest toolchain — Buildroot, the kernel, Firecracker and Go — is pinned in
 [`versions.mk`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/versions.mk), and Go modules in `go.mod`. The host build packages
-are not pinned, and reproducible builds are still open.
+are not pinned. Reproducibility is no longer open but measured, per artifact and
+with its scope stated — the table under "Building it yourself" is what it says.
 Contributions need a DCO `Signed-off-by` line. The non-goals in `PLAN.html`
 section 2 are hard boundaries — no orchestrator, no control plane, no hosted
 service.
@@ -558,17 +597,19 @@ not move under them, and that where something *is* allowed to move they were tol
 in advance which. Until this page, the words "semver" and "deprecated" appeared
 nowhere in this repository.
 
-What follows is short because most of the work was already done. Seven surfaces
-already have a machine-readable source of truth and a CI-enforced generated page,
-so this promise **cites** rather than re-lists — and cannot go stale by the
-mechanism that already keeps the reference honest (F-D4).
+What follows is short because most of the work was already done. Six of the seven
+surfaces in §2 already have a machine-readable source of truth and a CI-enforced
+generated page, so this promise **cites** rather than re-lists — and those six
+cannot go stale by the mechanism that already keeps the reference honest (F-D4).
+The seventh, the host↔guest protocol, is pinned by a hand-written specification
+that no drift gate checks.
 
 ---
 
 ## 1. What a version number attaches to
 
-Three independent version constants exist, and their relationship has never been
-stated. It is stated here.
+Three independent version constants describe surfaces somebody builds against,
+and their relationship has never been stated. It is stated here.
 
 | constant | what it versions | moves when |
 | --- | --- | --- |
@@ -582,6 +623,15 @@ product has changed a great deal and those two contracts have not.
 
 `mcp.ProtocolVersion` is a fourth thing and not a version of ours at all: it is
 the MCP revision KelyfOS speaks, which somebody else numbers. §6 covers it.
+
+Other numbers in the tree version something else and are not what the table is
+about: the `schema` field written into a workspace manifest and into an image's
+`image.json`, both `1` and both on disk where a reader finds them — the workspace
+one is checked on read, so a manifest from an older kelyfos is recognised rather
+than misread; the guest supervisor's own `Version`, stamped at build time and
+printed on the boot line, which SECURITY.md asks a reporter to quote alongside
+`kelyfos version`; and the shim's `EnvdVersion`, which is the number the E2B SDK
+gates features on. None of them is a surface §2 pins.
 
 **The release tag is what the rest of this page is about.** When it says "a minor
 release may", it means the number in the git tag.
@@ -602,9 +652,11 @@ release may", it means the number in the git tag.
 
 ## 2. What stabilises
 
-Each of these has a generated page, produced from the code that implements it,
-which CI fails on drift. The promise is that these do not change incompatibly
-outside a major release.
+All but the last have a generated page, produced from the code that implements
+it, which CI fails on drift. The protocol's page is hand-written rather than
+extracted, so no drift gate compares it against `internal/proto`; it is a
+specification, and where the code disagrees with it the code is wrong. The
+promise is that these do not change incompatibly outside a major release.
 
 | surface | the page that pins it | source of truth |
 | --- | --- | --- |
@@ -644,10 +696,15 @@ silently in is worse than one that is openly out.
 - **Client configuration formats.** `kelyfos connect` writes files whose shapes
   belong to Cursor, VS Code, Codex and the rest. **These are external surfaces:
   outside the drift gate, outside this promise, re-verified on their own cadence**
-  — which is why every supported client carries the tool, version and date it was
-  checked against. There is no universal standard coming, and per-client writers
-  are permanent infrastructure rather than a temporary shim (D41).
-- **Anything under `dev/`.** Scripts for people working *on* KelyfOS, not with it.
+  — which is why every supported client carries the tool and the date it was
+  checked against, and three of the six the exact version as well. There is no
+  universal standard coming, and per-client writers are permanent infrastructure
+  rather than a temporary shim (D41).
+- **Anything under `dev/`.** Scripts for people working *on* KelyfOS. Three of
+  them are also run by people working *with* it: `install-firecracker.sh`,
+  `install-kelyfos.sh` and `fetch-image.sh` are the README's install path, and
+  the posture warning on a pre-v0.9 image names `dev/fetch-image.sh` as the fix.
+  They are outside the promise anyway.
 - **Timing figures.** The boot and restore numbers are measurements, not
   contracts. They are re-measured per release and reported as measured.
 
@@ -813,9 +870,25 @@ it cannot see into a tunnelled or compressed response at all. `docs/networking.m
 states those limits before it states the capability.
 
 **The binding is a suffix match**, so `--secret T@github.com` attaches the
-credential to `api.github.com` and `raw.githubusercontent.com` too, on any
-request the guest composes to any of them. Bind a credential only to a domain
-whose subdomains you would also hand it to.
+credential to `api.github.com` and to every other subdomain of `github.com`. The
+rule is the label boundary and not the string, so `raw.githubusercontent.com` is
+not one of them — it does not end in `.github.com` — and `--allow github.com`
+does not reach it either. Bind a credential only to a domain whose subdomains
+you would also hand it to.
+
+**A path binds one endpoint instead.** The spec is `NAME@host[:scheme][/path]`,
+and a spec that names a path binds that one host exactly rather than by suffix,
+because naming an endpoint and then expanding to subdomains would contradict
+what the path was written to do. The credential is attached only to a request
+whose path is beneath the prefix and is literal and already in normal form: a
+percent-encoded slash or dot lets a server re-segment a path into somewhere the
+proxy never matched. Two more cases withhold it whatever the scope — a request
+whose `Host` header names something other than the host the guest asked to
+connect to, and every plaintext HTTP request, because the credential is attached
+only on the terminated path. Withholding does not refuse the request: it goes
+without the credential, and a `secret.withheld` event records which one and why,
+so an unauthenticated request is diagnosable rather than a 401 from somewhere
+else.
 
 ### The workspace disk, which this table did not list
 
@@ -849,10 +922,14 @@ wrong:
    `RESOLVE_BENEATH` and `RESOLVE_NO_SYMLINKS`. The kernel is what refuses, not
    this code's arithmetic.
 
-Guest-chosen **modes** do not survive either. The executable bit does, because an
-agent that built a binary needs it; group and world write, setuid, setgid and the
-sticky bit do not, and the workspace root keeps the mode the person's own
-directory had rather than the one the image's root carried.
+Guest-chosen **modes** are filtered too. The executable bit survives, because an
+agent that built a binary needs it; world write, setuid, setgid and the sticky
+bit do not, and the workspace root keeps the mode the person's own directory had
+rather than the one the image's root carried. Group write is deliberately left
+alone: world write is reachable by any account on the host, group write is
+ordinarily the user's own group, and stripping it turned every 0664 file in a
+project the guest never touched into a 0644 one — a boundary that rewrites the
+user's own files to protect them from themselves.
 
 What this does **not** claim: the contents are still whatever the agent wrote.
 The boundary is about where bytes land and what permissions they carry, not
@@ -867,9 +944,29 @@ used to leave open: a report that renders a verdict about itself asks a reader
 to trust the file, and a file is exactly the thing under discussion. What it
 does **not** close is the rendering: verification covers the record the page
 carries, not the page's drawing of it, and `kelyfos verify --replay` exists so
-the two can be compared rather than assumed. A guest that could write its own audit trail could write
-a flattering one, so it cannot write one at all. A small class of events
-*transcribes* something the guest reported — the OOM killer, and a plugin's calls
+the two can be compared rather than assumed.
+
+Two more things it does not close, both named in the code that does the
+checking. Anyone who can write the file can rewrite it end to end and recompute
+every digest, so what the chain catches is the *selective* edit — removing one
+blocked-egress event, softening one command — which is the edit someone covering
+their tracks wants to make. And a chain cut short verifies: nothing after the
+cut exists to break, so a truncated record is byte-for-byte what a shorter
+session would have written. The one observable difference is whether the record
+ends in a `session.end`, and `kelyfos verify` prints its absence as an
+observation rather than a verdict, because a record with no `session.end` is a
+session still open as often as it is one that was cut.
+
+Signing answers both, and only for a reader who already holds the key.
+`kelyfos log --export ... --sign-key` signs an export with an ed25519 key of
+yours, and `kelyfos verify --key` checks the signature against one the reader
+already has rather than against one the file supplied itself. An unsigned report
+still verifies; a signature says who exported the file, not that the record
+inside it is sound.
+
+A guest that could write its own audit trail could write a flattering one, so it
+cannot write one at all. A small class of events *transcribes* something the
+guest reported — the OOM killer, and a plugin's calls
 and crashes (`plugin.call`, `plugin.crash`) — and those are marked `"source": "guest"` in the schema so a reader
 can weigh them differently. The host still writes them; it just did not witness
 them.
@@ -891,8 +988,11 @@ between sandboxes and §2 otherwise reads as forbidding one.
   a routing one.
 - **The team store defaults to shared.** A key that no `[[team.store.key]]` rule
   matches is readable and writable by the whole team. Unwritten policy means
-  shared state; the byte limits (1 MiB a value, 64 MiB a team) are footgun
-  bounds, not security ones. Every access is recorded, permitted or not.
+  shared state; the four limits (1 MiB a value, 1 KiB a key, 10,000 keys and
+  64 MiB a team, with a key weighed against the byte ceiling alongside its
+  value) are footgun bounds, not security ones. Every access is recorded,
+  permitted or not, including the write of an empty value that removes a key —
+  the only way an agent has to make the store smaller.
 - **A spawn budget is a standing authorisation.** An agent granted one can make
   new microVMs while the run lasts, bounded by the count, image whitelist and
   lifetime written down beforehand. No tool can grant or widen a budget, an
@@ -938,8 +1038,11 @@ that enforces it. Writes go to `/work`, `/tmp`, `/run`, `$HOME`, `/dev/pts` and
 `/dev/shm`, plus seven named device nodes, and nowhere else — so an agent can no
 longer edit the toolbox it was handed. `/dev/shm` is worth naming on its own: it
 is a tmpfs the guest kernel sizes at half the machine's RAM, so it is a
-general-purpose writable area, bounded by `mem` rather than by the profile; 28 syscalls are refused with `EPERM`, among them `mount`, `reboot`, the
-clock-setting family, the keyring calls and module loading.
+general-purpose writable area, bounded by `mem` rather than by the profile. The
+seccomp half refuses a list of syscalls with `EPERM` — 28 of them on the `base`
+flavor on x86_64, 27 on `dev`, which keeps `ptrace` out of the list, and one
+fewer again on arm64, which has no `settimeofday` — among them `mount`,
+`reboot`, the clock-setting family, the keyring calls and module loading.
 
 What that leaves:
 
@@ -948,10 +1051,20 @@ What that leaves:
   inside a single-purpose VM buys a boundary weaker than the one already around
   it.
 - **The refusal list is a list, not an allowlist.** The syscall surface it
-  leaves is everything the guest kernel offers root minus 28 names. That is a
-  real reduction at the places that matter and it is not a small surface. An
+  leaves is everything the guest kernel offers root minus those names — 28 of
+  them on `base`, and 27 on `dev`, which keeps `ptrace`. That is a real
+  reduction at the places that matter and it is not a small surface. An
   allowlist for an arbitrary agent command is a crash waiting to be mistaken for
   a security feature.
+- **The supervisor itself is not confined.** Landlock and seccomp are applied by
+  a re-exec'd helper on the way to each spawned program, so PID 1 has the whole
+  guest filesystem in front of it — and the MCP file tools run there rather than
+  in a child. `write_file` is checked against the same three writable lists the
+  profile is built from, so it gets the reach a confined child gets and no more;
+  `read_file` is not checked, because a confined child is granted read beneath
+  `/` anyway. Until that check existed, `write_file` passed the agent's path
+  straight to `os.WriteFile` and reached `/dev/vda` and `/dev/vdb`, the raw
+  disks behind the read-only root and the workspace.
 - **Landlock cannot restrict everything.** By its own documentation it does not
   govern `chdir`, `stat`, `chmod`, `chown`, `access` or `fcntl`, and it cannot
   restrict a file descriptor that was already open when the profile was applied —
@@ -967,9 +1080,14 @@ What that leaves:
 The two sections above describe what stands around Firecracker. Nothing stands
 around the CLI: it runs as you, it is what talks to the jailer through
 `sudo -n`, and a bug in it is a bug with your user account's reach. The sudoers
-grant it asks for is deliberately narrow — one line, the `jailer` binary and
-nothing else, so it is not a general `NOPASSWD` — but the process that invokes
-it is still ordinary code running as you.
+grant the *jailer* asks for is deliberately narrow — one line, the `jailer`
+binary and nothing else, so it is not a general `NOPASSWD` — but the process
+that invokes it is still ordinary code running as you. Egress is the wider case:
+the CLI shells out to `sudo -n ip` and `sudo -n nft`, tests for the privilege
+with `sudo -n true`, and removes a root-owned jail directory with
+`sudo -n rm -rf`, so a machine set up for `--allow` has passwordless sudo in
+general rather than a second narrow line — which is what `kelyfos doctor` tells
+you to arrange.
 
 ### TLS termination is a real trade-off (decision D6)
 For a domain with a secret bound to it, the proxy decrypts. Consequences you are
@@ -1014,19 +1132,25 @@ confidentiality or integrity boundary; they bound consumption and nothing more.
 And nothing protects against a guest wedging its own kernel, which remains its
 own problem and not the host's.
 
-### The shim is an unauthenticated local port
+### The shim is a local port, unauthenticated by default
 `kelyfos shim` serves an E2B-compatible REST subset, by default on
-`127.0.0.1:3000`, and it checks nothing: there is no key, no account and no
-authorisation, because it has none to have. While it is running, **any process
-on that machine that can reach the port can boot microVMs, list them, kill them,
-and read and write arbitrary paths inside a running guest.** That is a local
-privilege surface the rest of the CLI does not have, and `--addr` is the only
+`127.0.0.1:3000`, and by default it checks nothing: no key, no account, no
+authorisation. Setting `KELYFOS_SHIM_TOKEN` makes every route ask for that
+bearer token, compared in constant time, but it is opt-in and unauthenticated
+stays the default. While a shim without one is running, **any process on that
+machine that can reach the port can boot microVMs, list them, kill them, read
+arbitrary paths inside a running guest, and write to any path that guest's
+profile makes writable** — writes go through a command in the guest, so they are
+confined like anything else the supervisor spawns, and reads are not, because a
+confined child is granted read beneath `/`. That is a local privilege surface
+the rest of the CLI does not have, and without the token `--addr` is the only
 thing between it and the network.
 
 The sandboxes it creates are policed like any other: since F-D33 the shim reads
 `kelyfos.toml`, the caps above apply to them, and each one writes its own flight
-recorder. What remains is the port itself, and it is the whole of the exposure —
-run it when you need it and stop it when you do not.
+recorder. One shim holds at most sixteen machines at once, so the port is not a
+way to make an unbounded number of them. What remains is the port itself — run
+it when you need it and stop it when you do not.
 
 ### The supply chain of what you run *inside*
 `--allow github.com` means the agent can fetch and execute whatever is at
@@ -1123,10 +1247,13 @@ What that covers, stated rather than summarised as "the parsers", because the
 useful question is which ones: the framing of every host/guest channel, and the
 decode of each message type the host reads from a guest; the policy parsers —
 `kelyfos.toml`, `--secret`, and the proxy's target parse that every allowlist
-decision keys on; the flight recorder; the argument summarisers on both sides of
-the MCP surface; the shim's shell quoting; and, since v1.0, the extractor that
-takes a record back out of an exported report — the one file in this product
-that arrives from *outside* it, sent by whoever wants you to read it.
+decision keys on; the proxy's response scrubber, which is the one component that
+rewrites bytes the agent is about to parse; the flight recorder; the argument
+summarisers on both sides of the MCP surface; the shim's shell quoting and the
+base64 decoder that turns guest output back into file contents for an SDK
+client; and, since v1.0, the extractor that takes a record back out of an
+exported report — the one file in this product that arrives from *outside* it,
+sent by whoever wants you to read it.
 
 Where a function has a property worth more than "does not crash", the harness
 asserts the property instead — that `Verify` and `Read` agree about a chain,
@@ -1134,11 +1261,11 @@ that a credential matches the domain it was just bound to, that an argument
 carrying content is never written into the record verbatim, that a shell-quoted
 string survives a shell unchanged.
 
-What is **not** fuzzed, and why: the image manifest and the message types above
-the framing are `encoding/json` decoding into typed structs, so a harness there
-measures the standard library; *writing* the exported HTML report goes through
-`html/template`, which escapes by construction — reading one back does not, and
-that half is fuzzed; and the MCP observer's request/response pairing is state
+What is **not** fuzzed, and why: the image manifest is `encoding/json` decoding
+into a typed struct, so a harness there measures the standard library; *writing*
+the exported HTML report goes through `html/template`, which escapes by
+construction — reading one back does not, and that half is fuzzed; and the MCP
+observer's request/response pairing is state
 rather than parsing. These are named so the
 list above reads as a boundary rather than as everything somebody got to.
 
@@ -1147,6 +1274,11 @@ does not simply say the parsers are careful. Two were silent-failure bugs rather
 than crashes — a credential bound to `github.com.` never attached to anything,
 and a `mem` ceiling large enough to overflow became *negative* — and three were
 places where agent-chosen text reached a rendered line of the transcript.
+Running them since has found two more of the silent kind, both from the
+scheduled run rather than from writing a harness: `--secret T@..` normalised to
+a domain no host could ever match, because the host side trims one trailing dot
+from the name it is asked about and the domain kept the other, so `0..` bound
+`0.` and matched nothing a normalised host could ever be.
 
 ## 5. Trust boundaries
 
@@ -1157,11 +1289,11 @@ places where agent-chosen text reached a rendered line of the transcript.
 | guest → credentials | injection at the proxy | active |
 | guest → audit record | host-side, hash-chained | active, including under `kelyfos shim` |
 | guest → host filesystem, via the workspace disk | the image is enumerated and validated before it is read, and extracted through `openat2(RESOLVE_BENEATH\|RESOLVE_NO_SYMLINKS)` | active since v1.0. **This row did not exist until an external audit found what its absence cost** — see below |
-| a report → whoever received it | the record travels in the file; `kelyfos verify` | active since v1.0; covers the record, not the rendering |
+| a report → whoever received it | the record travels in the file; `kelyfos verify`, and `--sign-key` / `--key` when the reader already holds the key | active since v1.0; covers the record, not the rendering, and a chain cut short at its end still verifies |
 | guest → guest (team) | host broker + declared edge list | active |
 | guest → host CPU/RAM/IO | KVM config, cgroup v2, rate limiters | active, and only when configured |
 | host process → host | the jailer | active (P5-1); `--no-jail` turns it off and says so on every run |
-| in-guest process → guest | Landlock + seccomp | active (P5-3); absent on images and snapshots made before v0.9, which is warned about rather than refused |
+| in-guest process → guest | Landlock + seccomp | active (P5-3) for every process the supervisor spawns; the supervisor itself is not confined, and its own file tools are held to the profile's writable lists by an in-process check. Absent on images and snapshots made before v0.9, which is warned about rather than refused |
 
 ## 6. If you are evaluating KelyfOS
 
@@ -1200,8 +1332,11 @@ Two places set limits, and they do not mean the same thing:
 
 | | role |
 | --- | --- |
-| `[resources]` in `kelyfos.toml` | **hard ceilings.** The committed policy of the project. |
+| `[resources]` in `kelyfos.toml` | **hard ceilings, and the value when no flag asks.** The committed policy of the project. |
 | CLI flags | **requests within those ceilings.** |
+
+A ceiling is also the value a run gets when nothing asks for anything: `mem =
+"2G"` with no `--mem` boots a 2 GiB machine rather than the 512 MiB default.
 
 A flag may ask for less than its ceiling. A flag asking for **more** does not
 win and does not get silently clamped — the sandbox refuses to boot, naming
@@ -1296,7 +1431,7 @@ happens at the limit and how hard the limit is.
 | `scratch` | `size=` on the tmpfs backing the overlay upper layer, applied by the guest kernel inside the `mem` cap | `ENOSPC` on writes outside `/work` |
 | `net_mbps_rx` / `net_mbps_tx` | Firecracker token-bucket rate limiter on the network device | throttled |
 | `disk_iops` / `disk_mbps` | Firecracker token-bucket rate limiter on the block devices | throttled |
-| `max_runtime` / `idle_timeout` | host timer in `kelyfos run` | SIGTERM, grace, sync-back, teardown |
+| `max_runtime` / `idle_timeout` | host timer in `kelyfos run` | SIGTERM, grace, teardown, sync-back |
 
 Two of these are absolute because they are hardware: a guest cannot allocate a
 core or a byte of RAM that the VM was not built with. The throttles are soft by
@@ -1318,9 +1453,11 @@ workspace ./project needs an image of 4294967296 bytes, over the 2147483648
 byte ceiling; raise it or exclude what does not need to be in the sandbox
 ```
 
-So a small repository gets a 1 GiB `/work` whatever `disk` says, and `ENOSPC`
-arrives at that 1 GiB rather than at the ceiling. It follows that `disk` does
-nothing at all without a `workspace` — there is no image to size.
+So a small repository gets a 1 GiB `/work` and `ENOSPC` arrives at that 1 GiB
+rather than at the ceiling. The floor is applied before the ceiling is checked,
+so a `disk` below 1 GiB refuses even a small repository rather than shrinking
+the device to fit it. It follows that `disk` does nothing at all without a
+`workspace` — there is no image to size.
 
 `scratch` defaults to 50% of the **guest's** RAM — the Linux tmpfs default,
 relative to `mem`, not to host memory. Stated here because it was previously
@@ -1428,13 +1565,20 @@ directory packed into it and refused if that would exceed `disk`, and is
 completely unaffected; so is `/dev/shm`, which is its own tmpfs with its
 own kernel default of half the RAM.
 
-A `scratch` larger than `mem` is refused at boot rather than accepted:
+A `scratch` larger than `mem` is refused at boot rather than accepted by
+`kelyfos run` and by the E2B shim:
 
 ```
 kelyfos: scratch = 2147483648 bytes at ./kelyfos.toml:2 is larger than the
          512 MiB the machine has
     the scratch tmpfs lives in that memory, so a cap above it can never be reached
 ```
+
+Those are the only two entry points that make the comparison. `kelyfos team up`
+and `serve-mcp`'s `sandbox_run` hand the declared `scratch` to the machine
+without checking it against that machine's `mem`, so inside a team a `scratch`
+above `mem` is accepted and the inert cap this refusal exists to prevent is
+exactly what you get.
 
 **This is the one cap the guest kernel applies rather than the host**, and it is
 worth being exact about what that does and does not mean (F-D13). A tmpfs's size
@@ -1463,9 +1607,12 @@ only side entitled to an opinion about it (F-D2).
 
 When a budget expires the run ends the way a careful `Ctrl-C` would, in this
 order: the trailing command gets `SIGTERM` and five seconds to stop itself, then
-`SIGKILL`; the VM is shut down; the workspace is synced back; the session record
-is closed with `reason: "timeout"`. The audit log gets a `resource.timeout`
-event naming which budget fired, its size and how long the run actually lasted.
+`SIGKILL`; the VM is shut down; the session record is closed with
+`reason: "timeout"`; the workspace is synced back. The record closes before the
+sync-back rather than after it, because the three stages are deferred in the
+opposite order and Go unwinds them last-registered-first. The audit log gets a
+`resource.timeout` event naming which budget fired, its size and how long the
+run actually lasted.
 
 `kelyfos run` exits **124** — `timeout(1)`'s status, for the same meaning, so a
 CI job that already treats 124 as "this took too long" needs no teaching.
@@ -1474,13 +1621,14 @@ The grace period is not politeness. An agent killed outright leaves the
 workspace mid-edit, and the sync-back that follows would carry that state to the
 host as if it were a result.
 
-Inside a `[team]`, `max_runtime` works per agent and `idle_timeout` is
-**refused** — by name and line, at the file, rather than accepted and ignored
-(F-D20). A team is deliberately one session with one flight recorder, so "the
-recorder grew" is a fact about the whole team: a busy master would keep an idle
-worker's clock alive forever and the key would be inert in exactly the case it
-was written for. `max_runtime` needs none of that — an agent's wall clock starts
-when the host boots it, and the host is holding the clock.
+Inside a `[team.agent.resources]` block, `max_runtime` works per agent and
+`idle_timeout` is **refused** — by name and line, at the file, rather than
+accepted and ignored (F-D20). A team is deliberately one session with one flight
+recorder, so "the recorder grew" is a fact about the whole team: a busy master
+would keep an idle worker's clock alive forever and the key would be inert in
+exactly the case it was written for. `max_runtime` needs none of that — an
+agent's wall clock starts when the host boots it, and the host is holding the
+clock.
 
 E2-7 has since given the transcript a per-agent activity signal, which was
 F-D20's stated condition for lifting the refusal — but the refusal still stands,
@@ -1488,6 +1636,11 @@ because the idle watchdog reads a file-size delta with no agent in it, and a
 per-agent watchdog is a new reader of the chain plus a new call site. Lifting it
 is its own task, recorded as F-D22. Until then the key is refused, which is
 still better than accepting one that would never fire.
+
+A `[team.agent.spawn.resources]` budget refuses **both** keys. `idle_timeout`
+goes for F-D20's reason, and `max_runtime` because it is `[team.agent.spawn]`
+`lifetime` under another name — that is the key which bounds how long a spawned
+worker lives, and it is the one that is enforced (F-D33).
 
 ### How the I/O throttles are applied
 
@@ -1500,10 +1653,12 @@ the host device — KelyfOS configures them and builds nothing.
 Three consequences worth knowing before you tune them.
 
 **The disk limits are per device, not a shared budget.** A Firecracker limiter
-belongs to one device, and a sandbox with a workspace has two: the read-only
-root and `/work`. `disk_mbps = 10` therefore means ten megabytes a second on
-each, not five each. The alternative — one budget split between them — is what
-people assume, so it is worth saying that it is not what happens.
+belongs to one device, and every device the sandbox has gets the same limit: the
+read-only root, `/work` when there is a workspace, and the read-only plugins
+device when the policy declares `[[plugin]]` entries. `disk_mbps = 10` therefore
+means ten megabytes a second on each of them, not ten shared out between them.
+The alternative — one budget split across the disks — is what people assume, so
+it is worth saying that it is not what happens.
 
 **A limit is a rate plus an opening burst, and the burst is about two seconds'
 worth.** A token bucket is a size and a refill time, and the rate it enforces is
@@ -1583,7 +1738,7 @@ allow = ["github.com"]
 cpus        = 4          # four cores exist inside the VM
 cpu_quota   = "150%"     # ...but together they burn at most 1.5 cores' worth
 mem         = "2G"
-disk        = "4G"       # /work device size
+disk        = "4G"       # ceiling the packed /work image must come in under
 scratch     = "512M"     # everything written outside /work
 net_mbps_rx = 50
 max_runtime = "30m"
@@ -1654,9 +1809,8 @@ bash dev/prove-caps.sh
 
 Drives CPU, memory, disk, network, scratch and time past their limits with
 `stress-ng` and `dd` inside the guest, and checks from the host that each one
-held — `/proc/<pid>/stat` and the sandbox's own `cpu.stat`, `/proc/<pid>/io`,
-the TAP's byte counters, the flight recorder. It prints what it measured, not
-just whether it liked it.
+held — `/proc/<pid>/stat`, `/proc/<pid>/io`, the TAP's byte counters, the flight
+recorder. It prints what it measured, not just whether it liked it.
 
 Two things it does deliberately. Bandwidth is reported **gross and steady**, and
 asserted on steady: a bucket starts full and a short transfer measures the
@@ -1696,12 +1850,17 @@ P2-6 and the restore path by D22. The threat-model discussion lives in
 
 ## 1. The default is no network
 
-A sandbox with no `--allow` flag has **no network interface at all**. Not a
-firewalled one, not one with an empty allowlist — no NIC. There is nothing to
-misconfigure, and no rule that has to hold for the guarantee to be true.
+A sandbox whose allowlist is empty has **no network interface at all**. Not a
+firewalled one, not one with an allowlist that permits nothing — no NIC. There
+is nothing to misconfigure, and no rule that has to hold for the guarantee to be
+true.
 
-`--allow github.com,pypi.org` is what creates a NIC, and it creates one whose
-only reachable destination is a proxy on the host.
+A non-empty allowlist is what creates a NIC, and it creates one whose only
+reachable destination is a proxy on the host. `--allow github.com,pypi.org`
+writes that list on the command line; the `allow` key under `[sandbox]` in
+`kelyfos.toml` fills it when the flag was not typed, so a sandbox started with
+no `--allow` at all, in a project whose policy file has an `allow` list, does
+get a NIC.
 
 ## 2. Topology
 
@@ -1874,16 +2033,22 @@ hoped for.
 
 ## 6. What the proxy enforces
 
-- `CONNECT host:port` and absolute-URI HTTP requests are accepted only when
-  `host` matches the allowlist. A bare hostname matches itself and its
-  subdomains, so `--allow github.com` also permits `api.github.com`.
+- `CONNECT host:port`, absolute-URI HTTP requests and origin-form ones — a bare
+  `GET /path` with a `Host:` header — are accepted only when `host` matches the
+  allowlist: the target is read from the URL when it carries a host and from
+  `Host:` otherwise, so every shape is decided against the same string. A bare
+  hostname matches itself and its subdomains, so `--allow github.com` also
+  permits `api.github.com`. A leading `*.` is stripped rather than read as a
+  wildcard, so `--allow *.github.com` normalises to `github.com` and permits the
+  apex too; the same normalisation lower-cases the entry and trims trailing
+  dots.
 - Ports are restricted to 80 and 443. No policy key widens that.
 - A refusal is answered with `403` and a body naming the domain and the edit
   that would allow it (`[egress.host]` in [`denials.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/denials.md)). For plain
   HTTP the guest reads it; for a refused `CONNECT` most clients discard the
   body, so the host prints the same refusal once, on its own stderr — `kelyfos
-  run` and `team up` do; `serve-mcp` and the shim record it without printing,
-  because there is no terminal of yours to print to.
+  run`, `team up` and `snapshot restore` do; `serve-mcp` and the shim record it
+  without printing, because there is no terminal of yours to print to.
 - Every attempt is written to the flight recorder as an `egress.attempt` event,
   allowed or blocked, with the reason and the byte counts
   (`docs/events.md` §4).
@@ -1941,7 +2106,9 @@ hoped for.
   terminated connection carries many requests, and a body whose written length
   disagreed with its `Content-Length` would poison every exchange after it. A
   `secret.scrubbed` event records that bytes were altered, once per credential
-  per connection.
+  per *response*, not per connection: the de-duplication is built fresh for each
+  response, so a keep-alive connection whose five responses each echo the same
+  token produces five events.
 
 - **Certificate pinning breaks for a secret-bound domain, by construction.**
   This is the cost D6 accepted, and it belongs here as well as in the threat
@@ -1982,8 +2149,16 @@ nftables rules)
 ```
 
 It fails with that message rather than silently starting a sandbox with no
-network. Running the whole VMM under the jailer, with the network set up before
-privileges are dropped, is P4-1.
+network.
+
+The VMM runs under the jailer unless `--no-jail` is passed, and the jailer needs
+passwordless sudo as well, alongside `ip` and `nft` — and so does the `rm` that
+removes the jail directory afterwards, whose contents the jailer left owned by
+root. The network is already up before the VMM starts: the TAP
+first, then the proxy bound on it, then the nftables table that makes the proxy
+the only reachable destination, and only then a machine that can send a packet.
+Which posture a machine ran under is recorded as `jailed` on the session
+(P5-1, [`docs/hardening.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/hardening.md) §2).
 
 
 ---
@@ -2003,7 +2178,9 @@ the code is a bug in this file.
 A team is several KelyfOS sandboxes on one host, declared in a file, with the
 paths between them enumerated and enforced. Think *docker-compose for agent
 teams*: you write down who exists and who may talk to whom, and `kelyfos team
-up` boots that graph.
+up` boots that graph. One team runs on a host at a time: while a team is up,
+another `team up` is refused before it plans anything and tells you to stop the
+running one with `kelyfos team down`.
 
 What KelyfOS supplies is the substrate — isolation, enforced edges, a
 permissioned shared store, and one audit record covering the whole team. What it
@@ -2050,10 +2227,11 @@ to   = "worker-*"               # every worker; master↔worker, bidirectional
 enabled = true
 ```
 
-Five VMs boot. Each has its own kernel, its own memory, its own egress policy
-and its own resource caps. `master` may message any worker and any worker may
-message `master`. No worker may message another worker — not because a rule
-forbids it, but because there is nothing to send it over.
+Four VMs boot — `master`, and the three workers `count` expands into. Each has
+its own kernel, its own memory, its own egress policy and its own resource caps.
+`master` may message any worker and any worker may message `master`. No worker
+may message another worker — not because a rule forbids it, but because there is
+nothing to send it over.
 
 ### 1.1 `[team]`
 
@@ -2185,7 +2363,10 @@ budget — eight in total, and the eighth is listed only where it would work
 (§3.6, F-D18).
 
 Every argument named `timeout_ms` is an **integer number of milliseconds** and
-defaults to **60000** when it is absent or not positive.
+defaults to **60000** when it is absent or not positive. Fifteen minutes is the
+ceiling: a larger number is clamped to it rather than refused, because an agent
+asking to wait a long time is not misbehaving, and refusing would leave one that
+wanted an hour with nothing instead of fifteen minutes.
 
 ### 3.1 `team_send(to, body)`
 
@@ -2193,11 +2374,17 @@ Deliver `body` to agent `to`. Returns when the broker has accepted or refused
 it, not when the recipient reads it.
 
 **Delivery is at-most-once.** A message is delivered zero or one times, never
-twice. If the recipient's channel is gone, `team_send` fails with an explicit
-error — the message is not queued for a machine that may never come back, and
-KelyfOS does not become a message broker with durability guarantees it would
-then have to keep. An agent that needs a message to arrive should ask for an
-answer (§3.3) rather than assume.
+twice. Each agent has a 64-slot mailbox on the host, and when it is full
+`team_send` fails with an explicit error rather than growing it — nothing is
+held on disk, nothing is redelivered, and KelyfOS does not become a message
+broker with durability guarantees it would then have to keep. What the broker
+does not check is whether the recipient's machine is still there: a message to
+an agent that crashed or that `max_runtime` stopped goes into the mailbox nobody
+is reading and is recorded `delivered` until the sixty-four slots are full, and
+only then is a sender told `unreachable`. A dead agent's mailbox is never
+drained, so anything it had not read still occupies slots and the number of
+sends that appear to succeed is sixty-four minus those. An agent that needs a message to arrive
+should ask for an answer (§3.3) rather than assume.
 
 **Delivered messages are FIFO per edge.** Two messages from A to B arrive in the
 order A sent them. Nothing is promised about the interleaving of A→B with C→B:
@@ -2300,7 +2487,7 @@ silent drop:
 | --- | --- |
 | `no_edge` | The topology does not permit this pair. Audited. |
 | `no_such_agent` | The name is not in this team. |
-| `unreachable` | The recipient exists but its channel is gone. |
+| `unreachable` | The recipient's mailbox is full — it exists and is not reading its messages. |
 | `timeout` | An `ask` expired, or a `recv` window closed empty. |
 | `denied` | Store access this agent does not have, a spawn it may not make, a `team_reply` with a `correlate` tag that is missing or not its own, or any call on a team with no store. |
 | `bad_request` | The call itself was malformed — a body that is not valid base64, an unknown operation. |
@@ -2459,7 +2646,7 @@ whatever any one agent's own ceiling says.
 name = "reviewers"
 
   [team.resources]
-  cpu_quota = "200%"        # two cores' worth, for all five agents together
+  cpu_quota = "200%"        # two cores' worth, for all four agents together
 
 [[team.agent]]
 name = "master"
@@ -2626,7 +2813,7 @@ rather than five that have to be correlated afterwards.
 | type | meaning |
 | --- | --- |
 | `team.message` | One delivery: from, to, size, body hash, and whether it was an ask, a reply or a send. |
-| `team.refused` | A message the edge list did not permit. Its own type, because it is the interesting one. |
+| `team.refused` | A refused message. Its own type, because it is the interesting one — but it covers three refusals, not one: a message the edge list did not permit (`reason: no_edge`), one addressed to a name that is not in the team (`no_such_agent`), and a `team_reply` nobody was waiting for (`missing_correlation` or `unknown_correlation`). Read the reason before counting edge violations. |
 | `team.store` | A store access: key, agent, read or write, permitted or not. |
 | `team.spawn` | A worker spawned or refused, with the spawner, the worker's name and the reason on a refusal. |
 
@@ -2650,7 +2837,12 @@ them, so the claim can be checked against the team that was declared:
 ```
 $ kelyfos log --session 269043fa --verify
 session 269043fa: chain intact, 44 events verified across 3 agents (master, worker-1, worker-2)
+  chain head b7b27b5bb9cef3b3f2b89195293d57fd7b09fadb515fa8ec2b94d885dba532ba
 ```
+
+The head is printed under both shapes of the verdict, a team's and a single
+sandbox's, because it is the value a reader compares against a head they were
+given somewhere else.
 
 `kelyfos log --export team.html` renders that same chain as **one lane per
 agent**, in boot order, with a message between two agents drawn as a bar
@@ -2659,9 +2851,13 @@ back, a refusal is flagged and still drawn, because what was attempted is the
 part worth seeing. Store accesses sit inline in the lane of the agent that made
 them; commands, files, egress attempts, OOM kills and each member's usage
 receipt sit in that member's lane. Events that belong to the team rather than to
-any member span every lane. That export carries the team's record inside it, so
-whoever receives it runs `kelyfos verify team.html` and checks the whole team's
-chain without asking you for anything.
+any member span every lane. One gap, named here rather than left to be
+discovered: a forked member is booted without the guest-event handler a
+cold-booted one gets, so its OOM kills and its plugin calls are in no lane and
+in no chain, and a no-egress `count` group with a cached template is precisely
+what forks (§7). That export carries the team's record inside it, so whoever
+receives it runs `kelyfos verify team.html` and checks the whole team's chain
+without asking you for anything.
 
 While the team is up, `kelyfos log --session <agent's sandbox id>` redirects to
 the team's record and says so. After `team down` the run directories are gone,
@@ -2693,8 +2889,8 @@ layout, rather than the layout without the information.
 These two facts are orthogonal and are stated together because they look
 contradictory at a glance:
 
-- **Delivery is at-most-once.** A message to a machine that has gone is an error
-  to the sender, not a promise kept later.
+- **Delivery is at-most-once.** A message the broker cannot put in the
+  recipient's mailbox is an error to the sender, not a promise kept later.
 - **The audit log is durable.** Every attempt is recorded, including the ones
   that failed.
 
@@ -2744,7 +2940,7 @@ flag above a ceiling, to a message along an edge that was never declared. Each
 of those refusals is the product working correctly, and each of them lands on
 somebody who now has to work out what to type instead.
 
-So every refusal KelyfOS makes names its own fix:
+So a catalogued refusal names its own fix:
 
 ```
 $ curl http://api.stripe.com/v1/charges
@@ -2798,6 +2994,16 @@ a person edits it. This is the same invariant the MCP tool surface is held to
 (F-D5): the ceiling in `kelyfos.toml` is not something the software can talk
 itself past, and a refusal that offered to raise it would be exactly that.
 
+**Some refusals are made outside the catalog and carry no ID and no fix line.**
+The supervisor's own file tools are one: `write_file` refuses a path outside
+`/work`, `/tmp`, `/run`, `/root` and the few device nodes the profile grants,
+because the tools get exactly the reach the confinement profile gives a process
+the supervisor spawns, and PID 1 is not a way around the confinement it
+enforces. Reading a workspace image back is the other: an entry that is neither
+a file, a directory nor a symlink — a socket, a fifo, a device node — refuses
+the whole extraction, and the run prints `kelyfos: workspace sync-back failed:`
+and the reason, with nothing to type.
+
 **A refusal KelyfOS never sees cannot be in a catalog KelyfOS raises from.** The
 catalog is checked in both directions — `make docs` fails the build for an entry
 nothing raises (F-D4) — so an entry with no raise site would be a documented
@@ -2843,9 +3049,14 @@ at the four moments where a person is wanted back:
 | a review is waiting | `3 added, 1 modified, 0 deleted in project — write them back?` |
 
 `notify-send` on Linux, `osascript` on macOS, and the terminal bell when neither
-is there — which needs nothing installed. The run says which one it found, in
-its own header, because a notification that never arrives is indistinguishable
-from one that was never asked for.
+is there — which needs nothing installed, but does need a terminal: the bell is
+written only when stderr is a character device, so a run whose output is being
+collected gets no control character spliced into it, and no notification either.
+The run says which one it found, in its own header, because a notification that
+never arrives is indistinguishable from one that was never asked for. The header
+names the mechanism rather than the delivery: with neither notifier installed it
+reads `terminal bell only`, and that is still what it says when the bell has
+nowhere to ring.
 
 Three rules, and they are the whole design:
 
@@ -2869,7 +3080,8 @@ to apply it anyway.
 ## For programs
 
 A catalogued refusal is a `*denial.Refusal`, carrying its ID and the values it
-named. A policy-file or team-plan refusal is an ordinary error and
+named. A refusal made outside the catalog — while reading a policy file or a
+team plan, or in the supervisor's own tools — is an ordinary error and
 `denial.Of` does not recognise it, so a program that branches on IDs should
 treat "no ID" as its own case rather than as "not a refusal":
 
@@ -2879,9 +3091,12 @@ if r, ok := denial.Of(err); ok && r.ID() == "budget.sandboxes" {
 }
 ```
 
-Team refusals cross the broker as a `team.Error`, whose `Message` is the same
-rendered text — ID, fix line and all — so an agent reading the error it was
-handed has the fix in front of it too.
+A catalogued team refusal crosses the broker as a `team.Error` whose `Message`
+is the same rendered text — ID, fix line and all — so an agent reading the error
+it was handed has the fix in front of it too. Not every `team.Error` is one: the
+broker and the store raise refusals of their own — a team with no store, a team
+that cannot spawn, a store value over its limit — with the same `Kind` of
+`denied` and a bare sentence for a `Message`, no ID and no fix line.
 
 ## Who gets told, when the client will not show it
 
@@ -2889,8 +3104,10 @@ An egress refusal is written to whatever made the request, and for HTTPS that is
 usually where it stops. A refused `CONNECT` is answered with `403` and a body,
 and curl prints `Received HTTP code 403 from proxy after CONNECT` and throws the
 body away; most other clients do the same. Plain HTTP carries it through
-untouched, because there the refusal *is* the response, and so does a
-secret-bound domain, where the proxy terminates TLS and answers inside it.
+untouched, because there the refusal *is* the response. A secret-bound domain is
+no different from any other: the allowlist and port checks run on the `CONNECT`
+itself, before the proxy decides whether to terminate, so the refusal is the same
+`403` and the TLS session it would have answered inside is never opened.
 
 The other reader is the person watching the run, and they are the one with the
 policy file open. So the first time a domain is refused, the host prints the
@@ -2983,9 +3200,11 @@ digest matches an empty hash. That was true here until v1.0.
 This makes the log **tamper-evident, not tamper-proof**. Anyone who can write
 the file can rewrite it end to end and recompute every hash. What the chain
 buys is that a *selective* edit — deleting one blocked-egress event, softening
-one command — breaks every hash after it, which is exactly the edit someone
-covering their tracks wants to make. `kelyfos log --verify` reports the first
-sequence number where the chain breaks.
+one command — breaks the chain at the point of the edit, which is exactly the
+edit someone covering their tracks wants to make: a deleted line leaves `seq`
+disagreeing with its line number, and a re-hashed line leaves the next event's
+`prev` disagreeing with it. `kelyfos log --verify` reports the first sequence
+number where the chain breaks.
 
 **A reader can run this themselves, on a file you send them.** `kelyfos log
 --export` embeds the record in the report it writes, so `kelyfos verify
@@ -3069,7 +3288,8 @@ Opens the file. Records what the sandbox is.
 | `kelyfos` | string | CLI version. |
 | `argv` | array of string | How the sandbox was launched, for reproduction. |
 | `cwd` | string | The directory it was launched from, on `kelyfos run`. |
-| `jailed` | boolean | Whether the VMM ran inside the jailer. Present from v0.9. |
+| `jailed` | boolean | Whether the VMM ran inside the jailer. On `kelyfos run` only — every other entry point carries the posture on `session.ready` instead. Present from v0.9. |
+| `reason` | string | Where the machine came from, when the entry point recorded one — `kelyfos run` and a plain `kelyfos team up` record none. `forked from <snapshot>`, `restored from <name>`, `created through the E2B shim`, or a bare `serve-mcp` for a `kelyfos serve-mcp` process's own session. Raised *through* that server, the value names the session too: `created through serve-mcp session <id>`, `restored from <name> through serve-mcp session <id>`, `forked from <name> through serve-mcp session <id>`, and `raised through serve-mcp session <id>` for a team. The bare `serve-mcp` value is how `kelyfos log --list` and `kelyfos runs` tell a server's session from a machine's. |
 
 `cwd` is there because `argv` alone does not reproduce a run: `--workspace .` is
 relative, and the policy file is found by walking up from wherever the command
@@ -3090,9 +3310,9 @@ just for those two:
 There is a second reason, and it is the one that decided it. `session.start`
 opens one chain per *command*, and a `team up` of five agents is one chain with
 five machines in it — so an opening event has no place to put five machines'
-postures. `session.ready` is emitted once per machine on every path there is.
-A field describing *a machine* belongs there even when it could technically have
-been known earlier.
+postures. `session.ready` is emitted once per machine. A field describing
+*a machine* belongs there even when it could technically have been known
+earlier.
 
 ### `session.ready`
 The guest announced itself — or, on a restore, answered.
@@ -3100,8 +3320,10 @@ The guest announced itself — or, on a restore, answered.
 This is where both walls are recorded for *every* machine, and it is the only
 event that can be: `session.start` opens one chain per command, and a `team up`
 of five agents is one chain with five machines in it. `session.ready` is emitted
-once per machine on every path there is — `run`, `fork`, `snapshot restore`,
-`resume`, `team up`, `serve-mcp` and the shim.
+once per machine on `run`, `fork`, `snapshot restore`, `team up`, `serve-mcp`
+and the shim. `kelyfos resume` is the exception: it appends `session.resume` to
+the chain the machine was paused from and no second `session.ready`, so the
+walls in that chain are the ones recorded before the pause.
 
 **An absent `profile` is a fact, not a gap.** A machine restored from a snapshot
 taken before v0.9 has a supervisor with no confinement in it, because restoring
@@ -3118,6 +3340,7 @@ such a restore is warned about rather than refused (D32).
 | `jailed` | boolean | Whether the VMM ran inside the jailer. Present from v0.9. |
 | `profile` | string | What the guest's supervisor confines everything it spawns with: the flavor, the writable trees, how many syscalls it refuses. **Absent means unconfined.** |
 | `agent` | string | Present inside a team: one of these per member. |
+| `image` | string | Present inside a team: this member's flavor. |
 | `via` | string | Present inside a team: `cold` or `fork` — how this member was started (F-D19). |
 | `overlay` | boolean | Whether the writable overlay came up. |
 
@@ -3156,7 +3379,12 @@ A chunk of output, in the order it was observed.
 | `agent` | string | Present inside a team: which member produced it. |
 
 ### `command.exit`
-Exactly one per `command.start`.
+One per `command.start`, when the guest returns an exit frame. If the supervisor
+closes the connection without one, or sends a stream name the host does not
+know, `kelyfos exec` reports the error and appends no `command.exit` — whatever
+output had already arrived is still flushed to the chain, so a reader pairing
+the two finds a `command.start` and its output with no exit, and has to handle
+the gap.
 
 | Field | Type | Meaning |
 | --- | --- | --- |
@@ -3171,6 +3399,14 @@ Exactly one per `command.start`.
 A file was written through a tool. The **content is not recorded** — a flight
 recorder that copies every byte an agent writes is a second copy of the
 workspace, and a much worse place to leave it.
+
+**`write_file` and `upload` are recorded from the request**, before the guest
+has answered, so a write the guest refused — a path outside the profile's
+writable trees, a body over the per-call limit — is written into the chain like
+one that happened, and nothing corrects it afterwards. The `serve-mcp` and
+`shim` doors record after the write succeeded instead: a refused write is not a
+write, and recording one would put a line in the log for a file that does not
+exist.
 
 | Field | Type | Meaning |
 | --- | --- | --- |
@@ -3298,8 +3534,8 @@ One inter-agent message, or one the edge list did not permit. Written from E2-1.
 | `outcome` | string | `delivered`, `refused`, `unreachable` or `timeout`. |
 | `bytes` | integer | Payload length. |
 | `sha256` | string | Digest of the payload. |
-| `data` | string | The payload itself — **only** when the team enabled capture. |
-| `reason` | string | Why, on a refusal: `no_edge`, `no_such_agent`, `unknown_correlation`, `missing_correlation`, `mailbox_full`. |
+| `data` | string | The payload itself — **only** when the team enabled capture *and* the message was delivered. |
+| `reason` | string | Why: `no_edge`, `no_such_agent`, `unknown_correlation` and `missing_correlation` on a `team.refused`; `mailbox_full` on a `team.message` with `outcome: unreachable`, which is a message the edge list permitted and the recipient was not reading. |
 
 A refusal gets its own type rather than a flag, for the same reason a blocked
 egress attempt does: it is the event someone reading the log is looking for.
@@ -3319,9 +3555,9 @@ One access to the team store, permitted or not. Written from E2-3.
 | --- | --- | --- |
 | `agent` | string | Who asked. |
 | `peer` | string | The key — the store's equivalent of the other end. |
-| `kind` | string | `get` or `put`. |
+| `kind` | string | `get`, `put` or `delete` — a `put` of an empty value. |
 | `outcome` | string | `delivered` or `refused`. |
-| `reason` | string | `denied`, `no_such_key`, `value_too_large`, `store_full`. |
+| `reason` | string | `denied`, `no_such_key`, `value_too_large`, `key_too_long`, `too_many_keys`, `store_full`. |
 | `bytes` | integer | Size of the value read or written. |
 
 Values are never recorded. The store is shared state, not a second copy of it,
@@ -3414,7 +3650,7 @@ it is the same shape of fact: something was asked for, and something came back.
 | `call` | string | Correlates the two. |
 | `name` | string | The tool. |
 | `agent` | string | The sandbox the call named, or the one its answer created. Absent when it concerns no single machine. |
-| `args` | string | On `mcp.host.call`: the arguments, with anything carrying content replaced by its size. |
+| `args` | string | On `mcp.host.call`: the arguments, with `content`, `stdin` and `data` replaced by their size. |
 | `outcome` | string | On `mcp.host.result`: `ok` or `error`. |
 | `duration_ms` | integer | On `mcp.host.result`: how long the call took. |
 | `error` | object | On `mcp.host.result`: `kind` and `message`, when the outcome is `error`. |
@@ -3427,11 +3663,16 @@ that door names the server's session in its own `session.start`, and `serve-mcp`
 prints the id to stderr when it starts, so a reader can go from either end to
 the other.
 
-**The arguments never carry content.** `content` and `stdin` are replaced by
-their size, which is the rule `file.write` follows for the same reason. The
-summariser walks whatever arguments it is given rather than knowing the tools,
-so an argument added later appears without anyone remembering to add it here,
-and one carrying content is withheld even on a tool that does not exist yet.
+**Three argument names are recorded by size rather than by value**, and the
+rest by value. `content`, `stdin` and `data` are replaced by their length when
+the value is a string, which is the rule `file.write` follows for the same
+reason; every other argument is rendered as itself, strings truncated at 120
+bytes. That is deliberate — an argument like `mem` or `image` is the decision
+worth recording, and the three that are withheld are the ones that carry a
+file. The summariser walks whatever
+arguments it is given rather than knowing the tools, so an argument added later
+appears without anyone remembering to add it here, and one carrying content
+under those three names is withheld even on a tool that does not exist yet.
 
 Without this pair the record would say *an agent ran a command in a sandbox* and
 would not say *an agent decided to create a sandbox with these limits* — and the
@@ -3447,6 +3688,7 @@ An interactive shell was opened in a sandbox, and ended. Written from E5-3.
 | `path` | string | Where the terminal stream is being written, when `--transcript` was given. |
 | `code` | integer | On `shell.end`: the shell's exit status. |
 | `signal` | string | On `shell.end`: the signal that ended it, when it was signalled. |
+| `reason` | string | On `shell.end`: why the shell could not be opened. |
 | `duration_ms` | integer | On `shell.end`: how long it was open. |
 | `agent` | string | Present inside a team: whose sandbox. |
 
@@ -3529,7 +3771,7 @@ happened and is not trusted to record it.
 | --- | --- | --- |
 | `name` | string | The plugin, as the policy file declared it. Never the name the plugin announces about itself. |
 | `tool` | string | On `plugin.call`: the plugin's own name for the tool, without the prefix. |
-| `args` | string | On `plugin.call`: the arguments, with anything carrying content replaced by its size — the same rule and the same shape as `mcp.host.call`. |
+| `args` | string | On `plugin.call`: the arguments, with `content`, `stdin` and `data` replaced by their size — the same rule and the same shape as `mcp.host.call`. |
 | `outcome` | string | On `plugin.call`: `ok` or `error`. |
 | `duration_ms` | integer | On `plugin.call`: how long the plugin took to answer. |
 | `reason` | string | On `plugin.crash`: what it exited with. |
@@ -3549,7 +3791,10 @@ what happened.
   plain text and line-oriented on purpose — the greppable sibling of
   `kelyfos watch`, which draws a screen. `kelyfos logs` is the same command
   under the name people type.
-- `kelyfos log --verify` checks the chain and reports the first break.
+- `kelyfos log --verify` checks the chain and reports the first break. On a
+  chain that verifies it prints the chain head — the number a reader quotes to
+  whoever receives the export — and, for a team or a `serve-mcp` session, names
+  the agents or sandboxes it covered.
 - `kelyfos log --list` lists recorded sessions, newest first, marking the ones
   that hold a team (`team of N`) and the ones belonging to a `kelyfos serve-mcp`
   process (`serve-mcp, N sandbox(es)`).
@@ -3623,7 +3868,7 @@ lines in the same chain. The verification says how many agents it covered, so a
 reader can compare it against the team they declared. `--export` additionally
 renders a lane per agent with the message flow drawn between them (E2-7).
 
-Three things the chain does **not** claim, stated because the difference matters
+Two things the chain does **not** claim, stated because the difference matters
 when this is used as evidence.
 
 It proves no line was altered, and none removed from the beginning or the middle
@@ -3632,13 +3877,19 @@ that no longer matches. **It does not catch a record cut short at its end.**
 Truncation there breaks nothing: the chain simply stops earlier, the last event
 becomes the head, and the result is byte-for-byte what a shorter session would
 have produced. It is indistinguishable from a session that is still running,
-which is a real and ordinary state. The only thing that tells them apart is the
-chain head compared against a head obtained from somewhere else — which is why
-`kelyfos log --export` prints it, and why signing it is P6-7.
+which is a real and ordinary state. What tells them apart is the chain head
+compared against a head obtained from somewhere else — which is why
+`kelyfos log --export` prints it — or a signature, which covers the chain head
+and a digest of the whole record, so a signed export cut short no longer
+verifies against its own signature. `kelyfos verify` also says when a record has
+no `session.end`, and says it as an observation: the chain cannot tell an open
+session from a truncated one.
 
-It does not prove that every agent a policy declared actually wrote one. And `--session <agent-id>` redirects to the team's record while that
-sandbox still exists — once the team is down the run directory is gone, and the
-team session must be found by id or with `--list`.
+It does not prove that every agent a policy declared actually wrote one.
+
+`--session <agent-id>` redirects to the team's record while that sandbox still
+exists — once the team is down the run directory is gone, and the team session
+must be found by id or with `--list`.
 
 ## 6. The record is also the history
 
@@ -3647,7 +3898,7 @@ team session must be found by id or with `--list`.
 
 **Neither of them writes anything.** There is no run database, no index file and
 no history log: `runs` reads the session records that were already being
-written, one pass per session, taking only the two events it needs. That is one
+written, one pass per session over the whole of each record. That is one
 decision and it has one reason — a separate index would be a thing to keep in
 step, to migrate, and eventually to find out of date, while the session logs are
 already written, already chained, and already the thing anyone would check. The
@@ -3836,8 +4087,9 @@ CONFIG_VIRTIO_VSOCKETS_COMMON=y
 # CONFIG_MODULES is not set
 ```
 
-These match Firecracker's own CI guest configuration. `/dev/vsock` must exist in
-the guest; the supervisor uses it implicitly through `AF_VSOCK` sockets.
+These match Firecracker's own CI guest configuration. No device node is needed:
+the guest transport is an `AF_VSOCK` socket with `bind`/`listen` or `connect` on
+it, and nothing in KelyfOS opens `/dev/vsock`.
 
 ### 1.6 Snapshot caveats (forward note for P3-1 / P3-2)
 
@@ -3852,7 +4104,7 @@ are not rediscovered later:
   costs: *"vsock connections that are open when the snapshot is taken are closed,
   but existing vsock listen sockets in the guest still remain active and can
   accept new connections after resume."* So:
-  - the guest's listeners on `10001`/`10002`/`10003` survive — the supervisor
+  - the guest's listeners on `10001`/`10002`/`10003`/`10004`/`10005` survive — the supervisor
     MUST NOT tear them down and re-bind, and the host reconnects with a fresh
     `CONNECT` per §1.1. This is why the resync RPC (§5.4) can be the first thing
     the host sends on a restored VM;
@@ -3903,7 +4155,9 @@ treats as privileged for `AF_VSOCK` as it does for TCP.
 
 ## 3. Framing: newline-delimited JSON
 
-Every KelyfOS channel — and MCP itself, see §6 — uses the same framing:
+Every KelyfOS channel — and MCP itself, see §6 — uses the same framing, with two
+exceptions: `shell` (§5.7) is binary-framed, and `forward` (§5.8) is unframed
+after its two handshake lines. Everywhere else:
 
 - one message per line, terminated by a single `\n` (0x0A);
 - the message **MUST NOT** contain a literal newline anywhere, including inside
@@ -3911,7 +4165,8 @@ Every KelyfOS channel — and MCP itself, see §6 — uses the same framing:
   and therefore fine);
 - UTF-8, no BOM;
 - a `\r` immediately before the `\n` is tolerated on read and never written;
-- empty lines are ignored on read.
+- empty lines are ignored on read, up to 1024 consecutive ones — past that the
+  reader fails the connection rather than spin on a peer that sends nothing else.
 
 **Binary data is base64.** JSON strings cannot carry arbitrary bytes, and command
 output is arbitrary bytes. Every field whose value is raw bytes is base64
@@ -3946,7 +4201,7 @@ sees a `v` it does not know MUST fail the message rather than guess.
 | `v` | integer | Protocol version. `1` for all of v0.x. |
 | `id` | string | Opaque correlation id, ≤ 64 characters, unique within a connection. Chosen by the initiator; echoed in every message about that request. |
 
-Errors use one shape everywhere:
+Errors use one shape on every channel whose messages carry `v` and `id`:
 
 ```json
 {"v":1,"id":"a1","error":{"kind":"timeout","message":"command exceeded timeout_ms=5000"}}
@@ -3954,6 +4209,10 @@ Errors use one shape everywhere:
 
 `kind` is one of `bad_request`, `not_found`, `denied`, `timeout`, `killed`,
 `io`, `internal`. `message` is human-readable and never contains a secret value.
+
+The two channels that are not framed this way carry an error as a bare string
+instead: `error` on a `shell` exit frame (§5.7) and on a `forward` reply (§5.8).
+Neither carries a `kind`, so neither can be classified by the kinds above.
 
 ---
 
@@ -3980,7 +4239,7 @@ Request (host writes one line, then may write nothing else):
 
 | Field | Type | Required | Meaning |
 | --- | --- | --- | --- |
-| `cmd` | array of string | yes | argv. **Not** a shell string: element 0 is the executable, resolved against `PATH`. Wrap in `["/bin/sh","-c", …]` when a shell is genuinely wanted, so that choice is visible in the audit log. |
+| `cmd` | array of string | yes | argv. **Not** a shell string: element 0 is the executable, resolved against the *supervisor's* `PATH` and not the one in `env` — the lookup happens before the child's environment is applied. Wrap in `["/bin/sh","-c", …]` when a shell is genuinely wanted, so that choice is visible in the audit log. |
 | `cwd` | string | no | Working directory. Default `/`. |
 | `env` | object | no | Environment, **replacing** the default set rather than merging — a sandbox that silently inherits environment is how secrets leak. |
 | `stdin` | string | no | base64. Empty or absent means stdin is an immediately-closed pipe, never a terminal. |
@@ -4012,12 +4271,18 @@ and `stderr` reflects the order the guest read them and nothing stronger.
 
 ### 5.3 `ready` — port 10100, guest → host
 
-The first thing the supervisor does once mounts are up. The host is listening on
-`<run_dir>/v.sock_10100` before the VM starts; the timestamp at which this first
-frame arrives is the definition of **boot-to-ready** measured in P1-7.
+The last thing the supervisor announces, and deliberately so. It comes after the
+mounts, the confinement profile, the egress environment, every plugin and the MCP
+handshake paid with each one, loopback, and the bind of every listener — because
+ready means the machine is usable, and a machine whose `tools/list` is still
+filling in is one an agent cannot tell apart from a machine that never had those
+tools. A sandbox with plugins therefore takes longer to become ready than one
+without. The host is listening on `<run_dir>/v.sock_10100` before the VM starts;
+the timestamp at which this first frame arrives is the definition of
+**boot-to-ready** measured in P1-7.
 
 ```json
-{"v":1,"type":"ready","boot_id":"7f3a…","arch":"arm64","kernel":"6.12.105","supervisor":"0.1.0","monotonic_ns":41233000,"overlay":true}
+{"v":1,"type":"ready","boot_id":"7f3a…","arch":"arm64","kernel":"6.12.105","supervisor":"0.1.0","monotonic_ns":41233000,"overlay":true,"profile":"…"}
 ```
 
 then, every 5 s:
@@ -4032,6 +4297,12 @@ filesystem: still reachable, still diagnosable, but writes will fail. A host
 that logs this turns a whole class of confusing `EROFS` reports into one obvious
 line at boot.
 
+`profile` names the confinement every process the supervisor spawns is given, and
+is absent on an image older than v0.9, which confines nothing. `profile_error` is
+why that confinement could not be established, when it could not: a non-empty one
+makes the host refuse the machine outright rather than let a sandbox that
+confines nothing look like one that does (P5-3).
+
 `monotonic_ns` is the guest's own `CLOCK_MONOTONIC` at the moment of sending —
 useful for splitting boot time into kernel time and supervisor time. The host
 measures the total itself and never trusts the guest's clock, which before the
@@ -4043,13 +4314,19 @@ Request/response, correlated by `id`. Introduced with the supervisor in P2-1.
 
 ```json
 {"v":1,"id":"c1","op":"shutdown"}
-{"v":1,"id":"c1","ok":true}
+{"v":1,"id":"c1","ok":true,"profile":"…"}
 ```
+
+Every answer carries `profile` and `profile_error` — the same pair the `ready`
+frame carries — and not just the ones that asked for them: the posture is a
+property of the machine rather than of the question, and the host may reach a
+machine it did not boot. A restored machine sends no ready frame, so the answer
+to `resync` is where the host learns what that machine confines (P5-7).
 
 | `op` | Payload | Effect |
 | --- | --- | --- |
 | `ping` | — | `{"ok":true}`. Liveness without waiting for a heartbeat. |
-| `shutdown` | — | Terminate children, flush, unmount, halt. The host still supervises the Firecracker process and force-kills after a grace period. |
+| `shutdown` | — | `SIGTERM` everything but PID 1, `SIGKILL` what is left after the grace period, flush the filesystems, power off. The host still supervises the Firecracker process and force-kills after a grace period of its own. |
 | `trust` | `ca_pem` | Install the egress CA's trust anchor (P2-6). |
 | `resync` | `realtime_ns`, `entropy` | Post-snapshot-restore fix-up (P3-1). |
 
@@ -4141,21 +4418,29 @@ connection from another guest, because there is no path for one (`docs/teams.md`
 | `ask` | Deliver a question and wait for its answer, up to `timeout_ms`. |
 | `reply` | Answer a question, carrying back the `correlate` the broker supplied. |
 | `peers` | The agents this one may *initiate* to. |
-| `store_get`, `store_put` | The team store, E2-3. Both carry `key`; `store_put` also carries `body`. |
+| `store_get`, `store_put` | The team store, E2-3. Both carry `key`; `store_put` also carries `body`, and an empty `body` deletes the key rather than writing nothing — recorded as a `delete` and not a `put`. |
 | `spawn` | Ask for a worker within this agent's declared budget, E2-5. Optional `image`. |
 
 Request fields beyond `op`: `to`, `body` (base64), `correlate`, `key`, `image`,
 `timeout_ms`. Response fields beyond `ok`: `from`, `body`, `peers`, `correlate`,
 `agent`, `error`.
 
-`agent` on a response is load-bearing rather than informational. A guest is told
-its own name on the kernel command line, but a fork inherits its template's
-command line and would therefore report the template's name — so the host
-returns the authoritative name alongside `peers` and alongside a `spawn` result,
-and **the guest MUST prefer it** over anything it read from `/proc/cmdline`
-(F-D24). The host never reads a guest's opinion of its own identity off the
-wire: it knows which agent a connection belongs to because it is the side that
-bound the socket.
+`timeout_ms` on `recv` and `ask` is clamped at both ends. Zero, absent or
+negative — which is what an overflowing millisecond count becomes — waits one
+minute rather than not at all, and anything above fifteen minutes waits fifteen.
+Clamped rather than refused: an agent asking to wait a long time is not
+misbehaving, and one that wants longer asks again.
+
+`agent` on a response is load-bearing rather than informational, and it names a
+different agent on each of the two responses that carry it. Alongside `peers` it
+is the asker's own authoritative name: a guest is told its name on the kernel
+command line, but a fork inherits its template's command line and would therefore
+report the template's name — so the host returns the name it holds, and **the
+guest MUST prefer it** over anything it read from `/proc/cmdline` (F-D24). On a
+`spawn` result it is the *newly created worker's* name, which the guest hands
+back to its caller and never adopts as its own. The host never reads a guest's
+opinion of its own identity off the wire: it knows which agent a connection
+belongs to because it is the side that bound the socket.
 
 `correlate` is minted by the broker and echoed by the guest. A guest cannot
 invent one: a reply whose correlation the broker does not recognise, or that
@@ -4163,6 +4448,10 @@ belongs to a question put to a different agent, is refused. That matters because
 a reply is the one message that crosses without an edge being checked — it
 completes a call the broker is already holding open — so the tag is what stands
 in for the edge.
+
+The store bounds what one team can make the host hold: a key of at most 1 KiB,
+10,000 keys per team, 1 MiB per value and 64 MiB per team. Each is refused with a
+`denied` error the agent sees, rather than quietly swallowed.
 
 A refusal is an `Error` with one of the kinds in §4 plus `no_edge`,
 `no_such_agent` and `unreachable`. There is no silent drop: an agent that may
@@ -4196,9 +4485,19 @@ Control frames, all of them small and rare:
 
 | Direction | Shape | When |
 | --- | --- | --- |
-| host → guest | `{"op":"open","cwd":…,"cols":…,"rows":…}` | first frame, and the only one that starts anything |
+| host → guest | `{"op":"open","cwd":…,"cols":…,"rows":…,"cmd":…,"args":…}` | first frame, and the only one that starts anything |
 | host → guest | `{"op":"resize","cols":…,"rows":…}` | the host's window changed |
-| guest → host | `{"op":"exit","code":…,"signal":…}` | the shell ended |
+| guest → host | `{"op":"exit","code":…,"signal":…,"error":…}` | the shell ended, or never ran |
+
+`cmd` and `args` on the open name the binary to run. When `cmd` is empty the
+guest runs its own default instead — the first of `/bin/sh`, `/bin/ash`,
+`/bin/bash` that exists — which is what the host asks for when it has no way to
+know what a flavor ships.
+
+`error` on the exit is present only when the shell never ran at all: the guest
+could not allocate a pty, could not open the slave, or could not start the
+command. It is sent with `code: 1`, and the host turns it into the command's
+error rather than reporting it as an exit status.
 
 **A resize is a control frame and not an escape sequence** because of who has to
 be told: `TIOCSWINSZ` on the pty, by the kernel, so that full-screen programs
@@ -4212,9 +4511,10 @@ decides it is not interactive.
 
 **A closed connection with no exit frame is a supervisor that died**, which is a
 different thing from a shell that ended — the same distinction §5.2 draws for
-`exec`. When the *host* hangs up, the guest sends `SIGHUP` to the shell's
-session: a shell left running on a terminal nobody is reading is a process that
-never ends.
+`exec`. When the *host* hangs up, the guest sends `SIGHUP` to the shell process
+itself: a shell left running on a terminal nobody is reading is a process that
+never ends. The signal goes to that one process and not to its process group, so
+a child the shell left running on that terminal is not hung up with it.
 
 ### 5.8 `forward` — port 10005, host → guest
 
@@ -4315,8 +4615,9 @@ a message type, an `op`, or a port is not breaking: readers ignore unknown field
 and MUST NOT fail a message for containing one.
 
 Because the supervisor ships inside the image and the CLI ships on the host, the
-two can be different builds. The `ready` frame carries `supervisor`; the host
-logs it with every session and refuses a `v` it does not implement.
+two can be different builds. The `ready` frame carries `supervisor`, and the host
+logs it with every session and records it, so which supervisor answered is on the
+session's record rather than inferred from the CLI's own version.
 
 ---
 
@@ -4336,7 +4637,7 @@ logs it with every session and refuses a `v` it does not implement.
 | `resync` applied on every snapshot restore; per-fork `vsock_override` | P3-1, P3-2 |
 | Supervisor re-dials `10100`, `10101` and `10102` after a snapshot reset | P3-1, E2-1 |
 | A forward's stream is unframed, and the handshake reader keeps reading it | E5-5 |
-| `team` channel serves §5.6, and the guest prefers the host's `agent` | E2-1, E2-9 |
+| `team` channel serves §5.6, and the guest prefers the host's `agent` on `peers` | E2-1, E2-9 |
 
 ---
 
@@ -4363,9 +4664,10 @@ description: MCP in both directions: kelyfos as a tool for any client, and plugi
 
 # The MCP surface
 
-**Status:** normative for `v0.7`. Written at E4-0 before any of it exists; E4-1
-through E4-8 implement it. Where this document and the code disagree during the
-epic, the code is wrong.
+**Status:** normative for `v0.7`. Written at E4-0 as a specification; E4-1
+through E4-8 implement it, and the surface described here is built. Where this
+document and the code disagree, the code is what runs and this document is the
+thing to correct.
 
 KelyfOS already speaks MCP in one place: `kelyfos mcp` bridges a client's
 standard streams to one guest's supervisor, and the agent inside gets six tools
@@ -4462,7 +4764,7 @@ characters, for the reason in §3.2.
 
 | Parameter | Type | Required | Meaning |
 | --- | --- | --- | --- |
-| `image` | string | no | Image flavor. Defaults to the policy's, and must be one the policy permits. |
+| `image` | string | no | Image flavor. Must be the one the policy declares — every other value is refused, naming that one. A policy that declares no image accepts `base`. |
 | `cpus` | integer | no | Cores. A request above `[resources] cpus` is refused. |
 | `mem` | string | no | Guest RAM, e.g. `"512M"`. A request above `[resources] mem` is refused. |
 | `allow` | string array | no | Egress allowlist. **Must be a subset of the policy's.** An entry the policy does not contain is refused. |
@@ -4512,17 +4814,28 @@ No parameters → `structuredContent: {sandboxes: [{sandbox, image, allow, creat
 | `argv` | string array | no | Argument vector, executed with no shell. |
 | `cwd` | string | no | Working directory in the guest. |
 | `stdin` | string | no | Text on the command's standard input. |
-| `timeout_ms` | integer | no | Kill it after this long. |
+| `timeout_ms` | integer | no | Kill it after this long. Omitted, the command is killed after 60 s — the guest's own `exec` treats a missing timeout as no limit, and this tool does not. |
 
-One of `command` or `argv` is required. The result mirrors the guest's own
-`exec` tool exactly — text output, then `[exit status N]`, `isError` when the
-status is non-zero, and `structuredContent: {exit_code, stdout, stderr, signal}`
-— because an agent that has used one should not have to learn the other.
+One of `command` or `argv` is required. The result is shaped like the guest's own
+`exec` tool — text output, then `[exit status N]`, `isError` when the status is
+non-zero, and `structuredContent: {exit_code, stdout, stderr}` — because an agent
+that has used one should not have to learn the other. Two differences remain: this
+tool appends `[exit status N]` whatever the status was, where the guest appends it
+only on a non-zero one and answers a silent success with
+`[no output, exit status 0]`; and the guest's `signal` key is not forwarded, so a
+caller reading `structuredContent` alone cannot tell a killed command from one
+that exited.
 
 **`sandbox_read_file`** — `{sandbox, path}` → the contents.
 `structuredContent: {path, bytes, content, encoding}`.
 **`sandbox_write_file`** — `{sandbox, path, content}` → bytes written.
 `structuredContent: {path, bytes, sha256}`.
+
+A write reaches only the trees the confinement profile lets a sandbox write —
+`/work`, `/tmp`, `/run`, `/root`, `/dev/pts`, `/dev/shm` and a named list of
+device nodes — and a path outside them is refused before the size is looked at,
+naming the trees (P6-24). A read is not restricted, because anything
+`sandbox_read_file` can reach a command in the sandbox could read anyway.
 
 **The payload is in `structuredContent`, not only in the text block.** A client
 is entitled to prefer one or the other, and a tool whose whole result lived in
@@ -4542,10 +4855,17 @@ Both are the supervisor's own RPCs with a sandbox id in front, and that is
 meant literally: the host opens the guest's own MCP channel and calls the tool,
 rather than reimplementing it and growing a second idea of what the limit is.
 The 8 MiB per-call cap the guest tools have therefore applies here too, for the
-same reason and in the same words — and the frame limit on the channel is set
-from it, so the cap is what refuses a large file rather than the transport
-(§4). Measured end to end at 512 KiB, 2 MiB, 4 MiB and 8 MiB; 9 MiB is refused
-by the guest, naming the limit in bytes.
+same reason and in the same words: a file over it is refused by the guest,
+naming the limit in bytes. **Just under the cap the transport gives out first,
+and the guest's refusal is never reached.** The `structuredContent` rule above
+means a read carries the file twice — once in the text block, once as `content`
+— so a frame holding a file at the cap is about 16 MiB before any JSON escaping,
+against a channel limit of exactly 16,777,216 bytes (§4). Plain text fails only
+within a hair of 8 MiB; text whose escaped form is longer — every newline
+becoming two bytes — crosses sooner, which is why the failing size cannot be
+stated as one number. The supervisor's
+writer refuses to send it, the session closes on the send error, and the caller
+sees an unexplained EOF rather than a message naming a limit.
 
 A write is recorded in the sandbox's flight recorder by path, size and digest,
 with `via: serve-mcp` — never by content. A read is not recorded, for the same
@@ -4686,10 +5006,12 @@ command that exited non-zero, a file that does not exist, a policy refusal. The
 model sees it and adapts.
 
 **A request that could not be attempted at all** is a JSON-RPC error, and that
-is a narrower set than it sounds: only a `params` object that will not parse,
-because then there is no call to answer. An unknown tool and a missing required
-argument come back the way a failed tool does — a result with `isError` set —
-for the same reason: the model is meant to see it and adapt.
+is a narrower set than it sounds: a frame that is not JSON at all, which is
+answered against a null id; a JSON-RPC *method* the server does not have; and a
+`params` object that will not parse, because then there is no call to answer. An
+unknown *tool* and a missing required argument come back the way a failed tool
+does — a result with `isError` set — for the same reason: the model is meant to
+see it and adapt.
 
 A policy refusal is deliberately the first kind. "You asked for four cores and
 this project allows two" is something an agent can act on by asking for two.
@@ -4736,7 +5058,7 @@ a reader can see it. The file carries the server's record inside it, so
 `kelyfos verify` re-runs that chain wherever the file ends up.
 
 **The record never holds content.** A call's arguments are summarised into one
-line, keys sorted, with anything carrying content — `content`, `stdin` —
+line, keys sorted, with anything carrying content — `content`, `stdin`, `data` —
 replaced by its size:
 
 ```
@@ -4780,10 +5102,15 @@ anywhere the sandbox can — `/tmp` and the rest of the overlay, bounded by
 `bin/serve` — is resolved against the plugin's own directory. Both examples in
 this document are the first kind. `args` are passed through untouched.
 
-It gets **exactly the environment every other command in the sandbox gets** —
-the same `PATH`, and the same egress proxy variables when the sandbox has
-egress. Not a second environment, and not the supervisor's own: one environment,
-decided in one place.
+It gets **the environment every other command in the sandbox gets, as it stands
+when the plugin is launched** — the same `PATH`, and the same egress proxy
+variables when the sandbox has egress. Not a second environment, and not the
+supervisor's own: one environment, decided in one place. With one gap: plugins
+start before the sandbox reports ready, and the trust-anchor variables —
+`SSL_CERT_FILE`, `CURL_CA_BUNDLE`, `REQUESTS_CA_BUNDLE`, `NODE_EXTRA_CA_CERTS`
+and `GIT_SSL_CAINFO` — are added to that environment only when the host installs
+the CA, which happens after ready. A command run later through `exec` or the
+shell carries them; a plugin does not.
 
 The handshake happens **before the sandbox reports ready**, and the tool list is
 read once there rather than on every call. That costs something and the cost is
@@ -4812,9 +5139,17 @@ That is not the same as "a plugin cannot reach the network". In a project whose
 policy grants egress, a plugin inherits the proxy variables like everything else
 in the sandbox and can reach exactly the allowlist — no more, and through the
 same audited proxy. [`networking.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/networking.md) describes what that means
-in practice: the four proxy variables, `NO_PROXY`, and the trust anchor. Where
-the sandbox has no egress, a plugin has none either, and a connection attempt
-fails the way it would for any other process in there.
+in practice: the four proxy variables, `NO_PROXY`, and the trust anchor. A
+plugin inherits the proxy variables and `NO_PROXY` but not the trust-anchor
+variables, for the reason above — its environment is fixed before the CA exists.
+In a project with `[secrets]`, where the proxy mints a CA and terminates TLS for
+the secret-bound domains, a plugin that takes its roots from those variables
+rather than from the system store — Python's `requests`, Node — fails
+certificate verification; one that reads
+`/etc/ssl/certs/ca-certificates.crt` still works, because the anchor is appended
+to that bundle on disk. Where the sandbox has no egress, a plugin has none
+either, and a connection attempt fails the way it would for any other process in
+there.
 
 **A plugin cannot grant itself anything.** It is launched by the supervisor with
 the environment the supervisor decides, from files on a read-only device.
@@ -4859,8 +5194,9 @@ console saying so, rather than advertised and rejected later by somebody else's
 API. Uppercase is allowed there and not in the plugin name, because the plugin
 name has one more job to do: being unambiguous as a prefix.
 
-A `[[plugin]]` whose name is already taken by another is refused when the file
-is read, naming both lines. And a plugin *tool* whose namespaced name collides
+A `[[plugin]]` whose name is already taken by another is refused when the
+plugins device is packed — as a sandbox is being created, not when the policy is
+loaded — naming both lines. And a plugin *tool* whose namespaced name collides
 with a built-in — a plugin called `read` exporting `file` — is dropped at boot
 with a line saying why, because two entries with one name in `tools/list` is
 worse than one missing tool: dispatch reaches the built-in and the plugin's is
@@ -4936,10 +5272,6 @@ manifest is the list; the device is storage. That is the same relationship
 `image.json` has to an image directory, and it exists for the same reason D21
 gives: the host should not assert a fact it has not checked.
 
-A flavor may also ship a server built into the image. Both routes launch
-identically — the manifest is what differs, and a built-in server appears in it
-the same way.
-
 ### 3.4 What it costs, and what it is allowed
 
 Every number here exists in the product and none of it was written down until
@@ -4947,7 +5279,7 @@ the E4 exit exam asked for it.
 
 | | |
 | --- | --- |
-| Time to answer `initialize` | **20 s**, and it is paid before the sandbox reports ready |
+| Time to answer each handshake call | **20 s** for `initialize`, then 20 s again for `tools/list` — both paid before the sandbox reports ready, so a slow plugin can hold the boot for 40 s |
 | Time to answer one tool call | **120 s**, after which the caller gets an error naming the plugin |
 | One message, either direction | **16 MiB**, the MCP channel's frame limit (`docs/protocol.md` §3) |
 | A tool result's size | whatever the plugin returns, inside that frame — the guest tools' 8 MiB per-call cap is theirs, not yours |
@@ -5010,9 +5342,12 @@ plan's review rounds, and `docs/protocol.md` §6 carries it.
 **Frames are bounded at 16 MiB on this channel**, rather than at the 1 MiB the
 rest of the protocol uses. Nothing here is chunked — a `read_file` result is a
 whole file on one line — and the per-call limit on a file is 8 MiB, so a 1 MiB
-frame would refuse messages the tools above it promise to carry. Sixteen leaves
-room for JSON escaping around eight and still bounds the buffer. Every reader on both
-sides of the channel takes the number from one constant
+frame would refuse messages the tools above it promise to carry. Sixteen was
+chosen to leave room for JSON escaping around eight, and no longer does: since
+the `structuredContent` rule of §2.2 a `read_file` result carries the file twice,
+so a frame holding a file at the cap is over the limit before any escaping, and
+the send fails as an unexplained EOF rather than as a stated limit. Every reader
+on both sides of the channel takes the number from one constant
 (`proto.MaxMCPLine`), because a writer that will send more than the reader
 opposite it accepts is a connection that dies mid-answer — which is what a
 caller sees as an unexplained EOF. `docs/protocol.md` §3 carries it.
@@ -5136,7 +5471,7 @@ What limits it inside:
 
 | | |
 | --- | --- |
-| the root filesystem | read-only, with a tmpfs overlay — writes outside `/work` die with the sandbox |
+| the root filesystem | read-only, with a tmpfs overlay — and since P5-3 a write outside the profile's writable trees is refused with `EACCES` rather than landing in the overlay |
 | `/work` | the only durable thing, and only when a workspace was attached |
 | the network | the proxy or nothing; no NIC at all without `--allow` |
 | memory, cores, disk | the caps in `[resources]`, enforced host-side (E1) |
@@ -5162,7 +5497,9 @@ Firecracker process runs:
   security boundary.
 
 Firecracker's own seccomp filter is on by default in a release binary, which is
-a real protection this project has been getting for free and has never checked.
+a real protection this project got for free and did not check until P5-2. It is
+checked now, on every run and every restore, and a VMM with an unfiltered thread
+is refused rather than reported (§3).
 
 ---
 
@@ -5170,7 +5507,9 @@ a real protection this project has been getting for free and has never checked.
 
 Firecracker ships `jailer`, and KelyfOS already installs it —
 `dev/install-firecracker.sh` puts it beside the VMM and prints its version. It
-has never been used.
+was unused until P5-1; every sandbox goes through it now unless `--no-jail` is
+passed, and `requireJail` refuses to build one on a machine that cannot run
+`sudo -n jailer`, before anything is created.
 
 ### 2.1 What it does, precisely
 
@@ -5184,10 +5523,12 @@ Verified against the jailer documentation for v1.16.1, the version pinned in
 | `--parent-cgroup` | places the process inside an existing cgroup — which is how it composes with the caps KelyfOS already sets |
 | `--netns` | joins a network namespace, if one is given |
 | `--resource-limit` | `fsize` and `no-file` bounds |
-| `--new-pid-ns` | its own PID namespace |
+| `--new-pid-ns` | its own PID namespace — deliberately not passed: it makes the jailer fork and the parent return, so the process KelyfOS waits on would exit the moment the machine started |
 
 Inside the jail it `mknod`s `/dev/kvm` and `/dev/net/tun` and chowns them to the
-target uid. The API socket resolves to `<chroot>/run/firecracker.socket`.
+target uid. KelyfOS passes its own `--api-sock`, so the API socket is
+`<chroot>/fc.sock`, and the host keeps its own absolute path to the same file in
+`State.APIPath`.
 
 ### 2.2 The part that is work rather than a flag
 
@@ -5290,9 +5631,15 @@ recipes did. There is no way to permit that and still refuse `/etc`: a Landlock
 rule covers a tree, so granting the root grants everything under it. The recipe
 now prepares in `/tmp`, which is where it belonged, and the v0.9 release notes
 say plainly that a command writing outside `/work`, `/tmp`, `/run` and `$HOME`
-is refused from v0.9 where it succeeded before. Those notes live only in the
-GitHub release body: this repository has no `CHANGELOG.md` yet, so nothing in
-the tree carries that statement and nothing keeps the two in step. P6-16.
+is refused from v0.9 where it succeeded before. Those four trees are not the
+whole writable set: `/dev/pts` and `/dev/shm` get the same write rights —
+`/dev/shm` is a general-purpose tmpfs and not a device node — and seven device
+nodes (`/dev/null`, `/dev/zero`, `/dev/full`, `/dev/random`, `/dev/urandom`,
+`/dev/tty`, `/dev/ptmx`) may be read, written and truncated, because a profile
+that granted only the four broke `git`, which opens `/dev/null` read-write
+before it does anything else. The release notes live only in the GitHub release
+body: this repository has no `CHANGELOG.md` yet, so nothing in the tree carries
+that statement and nothing keeps the two in step. P6-16.
 
 ### 4.3 Per flavor, and refusing rather than degrading
 
@@ -5352,19 +5699,40 @@ started it rather than to a dedicated account (D29). The chroot takes the host
 filesystem away entirely — verified from the host's own `mountinfo`, not claimed
 — but a uid shared with your shell is a uid that can signal and `ptrace` your
 other processes. A dedicated service account closes that and costs a second
-setup step; the trade is priced in D29 and is revisitable.
+setup step; the trade is priced in D29 and is revisitable. The host's process
+list is still visible too, because KelyfOS does not pass `--new-pid-ns`: it
+makes the jailer fork and the parent return, and supervising the VMM is worth
+more than hiding a process list from a VMM that is already chrooted and
+unprivileged. It is not the only jailer flag left unpassed — `--netns` and
+`--resource-limit` are not used either, and §2.1's table lists what is.
 
 **The guest kernel.** An agent is still root inside its own guest and can still
 reach the whole syscall surface the seccomp profile permits. Landlock restricts
 the filesystem; it does not make the kernel smaller. *After P5-3:* the profile is
 a refusal list, not an allowlist, so the surface it leaves is everything a
-kernel offers root minus twenty-eight names — a real reduction at exactly the
-places that matter (no module loading, no mount, no clock, no keyrings) and not
-a small surface. Landlock also cannot restrict `chdir`, `stat`, `chmod`,
-`chown`, `access` or `fcntl` at all, by its own documentation, and cannot
-restrict a file descriptor that was already open when the profile was applied —
-so what the supervisor hands a child on its stdin and stdout is outside this
-layer by construction.
+kernel offers root minus the names on that list — twenty-eight of them, of which
+`dev`, the flavor a release publishes, takes `ptrace` back out, and aarch64
+drops `settimeofday` because it has no such syscall to refuse. A real reduction
+at exactly the places that matter (no module loading, no mount, no clock, no
+keyrings) and not a small surface. Landlock also cannot restrict `chdir`,
+`stat`, `chmod`, `chown`, `access` or `fcntl` at all, by its own documentation,
+and cannot restrict a file descriptor that was already open when the profile was
+applied — so what the supervisor hands a child on its stdin and stdout is
+outside this layer by construction. `LANDLOCK_ACCESS_FS_IOCTL_DEV` is left out
+of the rights the ruleset handles, which is this project's choice rather than a
+Landlock limitation: handling it without granting it on `/dev` would refuse the
+terminal ioctls every interactive program makes, so ioctls on device nodes are
+not governed at all.
+
+**The supervisor itself.** Both mechanisms are applied by the re-exec'd
+`--confine` helper and nowhere else, so PID 1 is not confined by the profile it
+applies to everything it spawns, and a tool running inside the supervisor has
+the whole filesystem in front of it. `write_file` is checked by hand against the
+same three lists the profile is built from instead (`writableFor`, P6-24), so
+the file tools get the reach a confined child gets and no more. Reads are
+deliberately not restricted at all: the profile grants read beneath `/` to those
+children anyway, so restricting the tool would make it weaker than the thing it
+serves while closing nothing.
 
 **The other agents' machines, still not reachable** — that was already true and
 this phase does not improve it. It is listed because a reader deciding whether
@@ -5396,18 +5764,25 @@ Buildroot's reproducible mode experimental and requires an identical build path;
 the compiler cache has been mixing cached and fresh objects in every build this
 project has ever done; and until v1.0 nobody here had measured it at all.
 
-Measured: the two CLI binaries are identical when built from two *different*
-source paths, and `Image`, `rootfs.ext4` and `image.json` are identical across
-two full aarch64 `dev` builds from nothing on one machine with an identical
-build path. That last is the scope, and the scope is part of the answer — one
-machine, one architecture, two builds. It is not a claim that anybody else's
-machine produces these bytes.
+Measured: the two Linux CLI binaries are identical when built from two
+*different* source paths, and `Image`, `rootfs.ext4` and `image.json` are
+identical across two full aarch64 `dev` builds from nothing on one machine with
+an identical build path. That last is the scope, and the scope is part of the
+answer — one machine, one architecture, two builds. It is not a claim that
+anybody else's machine produces these bytes. Nor is it a claim about all four
+CLI binaries: `make release-cli` also builds `kelyfos-darwin-x86_64` and
+`kelyfos-darwin-aarch64`, which ship in the release, and `repro-check` compares
+`dist/kelyfos-linux-*` only — so those two have never been measured.
 
 **An SBOM ships with every release**, one per architecture, covering all three
 places an image comes from: Buildroot's packages, the guest supervisor, and the
-host CLI. That third-and-second matter more than the count does. The supervisor
-is PID 1 and it is cross-compiled by this project's own toolchain, arriving
-through the rootfs overlay rather than as a Buildroot package — so **Buildroot
+Linux host CLI. The macOS CLI for the same architecture ships in the release and
+is in no SBOM — and the SBOM attestation's subject glob, `dist/*aarch64*` or
+`dist/*x86_64*`, matches it anyway, so one shipped artifact per architecture is
+attested as being described by an SBOM that never read it. That third-and-second
+matter more than the count does. The supervisor is PID 1 and it is
+cross-compiled by this project's own toolchain, arriving through the rootfs
+overlay rather than as a Buildroot package — so **Buildroot
 has never heard of it**, and an inventory from that source alone would omit the
 one component KelyfOS actually wrote. An SBOM that is confidently incomplete is
 the supply-chain form of an audit record that is confidently wrong.
@@ -5764,15 +6139,21 @@ unless the policy grants it, the project's resource caps, and a flight recorder
 of its own.
 
 **The policy file applies here.** The shim reads `kelyfos.toml` the way
-`kelyfos run` does — with one gap, stated here rather than discovered:
+`kelyfos run` does — with four gaps, stated here rather than discovered:
 `cpus`, `mem`, `cpu_quota`, `scratch` and the four I/O rates cap every sandbox
 it creates, and `allow` and `secrets` decide what those sandboxes may reach, but
 the **time budgets `max_runtime` and `idle_timeout` are not applied here**. A
-shim sandbox lives until it is killed or the shim stops. The flags on
-`kelyfos shim` are the operator's, not the client's, and there is no request
-parameter that widens any of it — an SDK client cannot ask for a bigger machine
-or another domain, which is the point of the door being in the wall rather than
-beside it (F-D5, F-D33).
+shim sandbox lives until it is killed or the shim stops. `workspace`,
+`[[plugin]]` and `[[forward]]` are not read here either: a shim sandbox gets no
+workspace device — `/work` is the guest's own and nothing written there comes
+back to the host — no plugin device, so the guest advertises none of the
+project's plugin tools, and no forwarded ports. `serve-mcp` announces its
+workspace gap on startup (F-D49); the shim announces none of the four.
+
+The flags on `kelyfos shim` are the operator's, not the client's, and there is
+no request parameter that widens any of it — an SDK client cannot ask for a
+bigger machine or another domain, which is the point of the door being in the
+wall rather than beside it (F-D5, F-D33).
 
 **Every sandbox gets its own record.** `session.start` when it is created,
 `session.ready` when the guest answers, a `file.write` with `via: shim` for
@@ -5804,12 +6185,12 @@ A caller at the limit deletes one first, which is a request it already has.
 
 | Area | Endpoint | Notes |
 | --- | --- | --- |
-| Create | `POST /sandboxes` | Boots a microVM and waits for it to be ready. |
+| Create | `POST /sandboxes` | Boots a microVM and waits for it to be ready. A `templateID` in the request is echoed back in the response but never honoured — every sandbox runs the image `--image` or the policy set. |
 | List | `GET /sandboxes` | Only sandboxes this shim created. |
 | Kill | `DELETE /sandboxes/{id}` | Stops it and cleans up. |
-| Health | `GET /health` | envd liveness. |
+| Health | `GET /health` | The shim's own liveness: always `204`, with no sandbox consulted, so it answers before any sandbox exists. |
 | Read file | `GET /files?path=…` | Binary-safe. |
-| Write file | `POST /files?path=…` | Multipart or octet-stream, binary-safe. |
+| Write file | `POST /files?path=…` | Multipart or octet-stream, binary-safe. The body is read to a ceiling of 64 MiB and the rest is dropped without an error — a larger upload still answers `200`, and both the guest's file and the `file.write` event describe the first 64 MiB. |
 
 The shim only manages sandboxes it created. It will not adopt one started by
 `kelyfos run` — an SDK call ending someone's interactive session because the
@@ -5858,14 +6239,19 @@ description: complete recipes, each one a script CI runs on a real machine
 Fifteen recipes, each one complete, each one runnable as it stands.
 
 These are not illustrations. `bash dev/cookbook.sh` extracts every script below
-and runs it on a real machine, and CI runs the same thing — so a recipe that
-stops working fails the build rather than failing a stranger who trusted it
-(F-D4, E3-3). What you copy is what was executed.
+and runs it on a real machine. Every commit checks that each recipe still
+extracts and is still valid shell; actually running them needs KVM, Firecracker
+and the `dev` image, so that happens in a workflow of its own — every Tuesday on
+a schedule, and on demand — rather than on every push. A recipe cannot rot for
+longer than seven days without saying so (F-D4, E3-3). What you copy is what was
+executed.
 
 **Before any of them.** You need Linux with `/dev/kvm`, Firecracker, the
 `kelyfos` binary on your `PATH`, and the `dev` image. The
-[quickstart](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/README.md#quickstart) is four commands, and `kelyfos doctor`
-will tell you which of the four you still owe it.
+[quickstart](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/README.md#quickstart) installs all of it, and `kelyfos doctor`
+will tell you which piece you still owe it — every piece except the binary
+itself, which `dev/install-kelyfos.sh` puts in `<repo>/bin/kelyfos` rather than
+anywhere on your `PATH`.
 
 A note that will save you an hour. `kelyfos run`, `kelyfos fork` and
 `kelyfos team up` all **hold their machines for as long as they run**, the way
@@ -6028,10 +6414,12 @@ kelyfos run --image dev --workspace . -- bash -c '
 '
 
 # Worth knowing before it confuses you: the write-back is a swap, not a merge.
-# The old directory is renamed away and the reconstructed one is renamed into
-# place, so a file the agent deleted is really gone — and a shell whose current
-# directory *is* the workspace is now sitting in a directory that no longer
-# exists. Step back into it by name.
+# The old directory is renamed to <dir>.kelyfos-previous and the reconstructed
+# one is renamed into place, so a file the agent deleted is really gone from the
+# workspace — the previous copy keeps it, beside the project, until the next
+# successful run clears it — and a shell whose current directory *is* the
+# workspace is now sitting in a directory that no longer exists. Step back into
+# it by name.
 cd "$project"
 
 echo "== and the host directory has the change =="
@@ -6170,7 +6558,10 @@ count = 2                 # worker-1 and worker-2, neither with any network
 
 [[team.edge]]
 from = "master"
-to   = "worker-*"         # a star: no worker may reach another worker
+to   = "worker-*"         # a star: no worker may reach another worker.
+                          # An edge is bidirectional unless you write
+                          # `bidirectional = false`, so this is master↔worker —
+                          # which is what lets worker-1 ask the master below.
 
 [team.store]
 enabled = true
@@ -6441,8 +6832,11 @@ a published standard rather than one product's internal API.
 
 A shim sandbox is a sandbox like any other: the project's `kelyfos.toml` caps
 it, and it writes its own flight recorder — `kelyfos log --list` will show the
-one this recipe creates. What the shim does not do is authenticate anybody, so
-treat the port the way you would any unauthenticated local API.
+one this recipe creates. By default the shim authenticates nobody, so treat the
+port the way you would any unauthenticated local API. Start it with
+`KELYFOS_SHIM_TOKEN` set and every route requires a matching
+`Authorization: Bearer <token>`, compared in constant time, and answers `401`
+without one.
 
 <!-- recipe: e2b-shim -->
 
@@ -6582,10 +6976,12 @@ that turns out to be wrong is an error rather than a quiet fall back to no wall.
 **Which binary.** `"command": "kelyfos"` is a `PATH` lookup in an environment
 the client chose, and clients do not promise you a login shell's `PATH`. Name
 the binary absolutely for the same reason you name the policy absolutely. This
-matters most on macOS, where there is no `kelyfos` on the host at all — KelyfOS
-needs Linux with `/dev/kvm`, so the binary lives inside the VM and the entry has
-to reach into it. Both shapes are below, and the repository's own `.mcp.json`
-uses [`dev/mcp-server.sh`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/dev/mcp-server.sh), which picks between them.
+matters most on macOS, where the host binary refuses `serve-mcp` — the macOS
+build runs `doctor`, `verify`, `version` and `help`, and nothing that needs a
+guest, because Firecracker needs Linux with `/dev/kvm`. The binary that can
+serve lives inside the Lima VM, so the entry has to reach into it. Both shapes
+are below, and the repository's own `.mcp.json` uses
+[`dev/mcp-server.sh`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/dev/mcp-server.sh), which picks between them.
 
 <!-- recipe: mcp-client-config -->
 
@@ -6611,8 +7007,8 @@ max_sandboxes = 2
 TOML
 
 # The binary, named rather than looked up. On Linux this is wherever you put it;
-# on macOS there is nothing here to name, and the block after this one shows what
-# to write instead.
+# on macOS the binary on the host refuses serve-mcp, and the block after this one
+# shows what to write instead.
 bin="$(command -v kelyfos)"
 
 # Claude Code, project scope. Checked into the repository, where it doubles as
@@ -6802,7 +7198,7 @@ print("removed, and nothing else went with it")
 PY
 
 # For anything the six writers do not cover, the snippet to paste:
-kelyfos connect generic | head -20
+kelyfos connect generic | sed -n '1,20p'
 ```
 
 ---
@@ -7320,18 +7716,18 @@ quietly rots. It also checks that the count in the first sentence of this page
 is the number of recipes on it, because that sentence is exactly the kind of
 thing that goes stale the moment somebody adds one — and did.
 
-One shell detail worth copying rather than rediscovering: these truncate output
-with `sed -n '1,Np'` rather than `head -N`. Under `set -o pipefail`, `head`
-exiting early sends SIGPIPE to whatever is feeding it and fails the whole
-pipeline — so a recipe written with `head` passes while its output is short and
-starts failing, for a reason unrelated to what it teaches, the day it is not.
+One shell detail worth copying rather than rediscovering: wherever the pipeline
+runs on the host, these truncate output with `sed -n '1,Np'` rather than
+`head -N`. Under `set -o pipefail`, `head` exiting early sends SIGPIPE to
+whatever is feeding it and fails the whole pipeline — so a recipe written with
+`head` passes while its output is short and starts failing, for a reason
+unrelated to what it teaches, the day it is not.
 
 It is not a hypothetical. `dev/install-build-deps.sh` ran `make --version |
 head -1` for years and failed a CI build during the v0.8 release with
 `make: write error: stdout` — because `make --version` prints four lines, `head`
 closed the pipe after the first, and the exit status of a dependency install
-became a race. Every `head -N` in `dev/` and in the workflows is now
-`sed -n '1,Np'`.
+became a race. That line is now `make --version | sed -n '1,1p'`.
 
 
 ---
@@ -7360,7 +7756,7 @@ completes a real MCP handshake — because "configured" asserted without evidenc
 is what the command exists to replace.
 
 ```sh
-kelyfos connect --list          # the clients it writes, and the version each was verified against
+kelyfos connect --list          # the clients it writes, and what each was verified against
 kelyfos connect claude-code     # writes .mcp.json in this project
 kelyfos connect vscode --check  # writes .vscode/mcp.json, then proves the server starts
 kelyfos connect generic         # prints the snippet, for anything else
@@ -7379,9 +7775,14 @@ client to one sandbox's guest.
 
 **A client's configuration format is an external surface.** It is outside the
 drift gate and outside the compatibility promise, re-verified on its own cadence,
-which is why every entry carries the tool, the version and the date it was
-checked against. The rest of this page is the hand-written path, which is what
-you need if your client is not one of the six.
+which is why every entry carries the tool it was checked against and the date.
+The rest of this page is the hand-written path, which is what you need if your
+client is not one of the six.
+
+`connect` does not run on macOS. What the binary answers there at all is
+`doctor`, `verify`, `version` and `help`; everything else refuses with
+`kelyfos doctor` as the way in, so a Mac's configuration is the `limactl` form
+in §3, written by hand.
 
 
 ## 1. Four ways in, and how to choose
@@ -7393,16 +7794,19 @@ you need if your client is not one of the six.
 | **The MCP server** | `kelyfos serve-mcp` is KelyfOS itself as an MCP server: sandboxes, files, snapshots, forks and teams as tools | You have a client — Claude Code, VS Code, anything — and want *it* to create and manage the machines. One entry in a config file. |
 | **The E2B shim** | an E2B-compatible REST subset on a local port | You have code already written against the E2B SDK and want it to work against a self-hosted box without a rewrite. |
 
-All four go through the same wall. Each reads the project's `kelyfos.toml`, each
-is capped by its `[resources]`, and each writes a flight recorder — there is no
-entry path that skips the policy, which is the invariant F-D5 states for MCP and
-F-D33 applied to the shim.
+All four go through the same wall. The CLI, `serve-mcp` and the shim each read
+the project's `kelyfos.toml` and are capped by its `[resources]`; the bridge
+reads no policy file of its own, because it attaches to a sandbox already
+running under the policy whichever door booted it applied. All four write a
+flight recorder — there is no entry path that skips the policy, which is the
+invariant F-D5 states for MCP and F-D33 applied to the shim.
 
 They do differ in what they can express. The shim serves a fixed REST subset and
 cannot run commands at all; the bridge gives an agent one guest's full tool
 surface; `serve-mcp` gives a client the host's, including snapshots, forks and
 the declared team; the CLI gives you everything. And the shim authenticates
-nobody, so its port is a local privilege surface the other three do not have.
+nobody unless `KELYFOS_SHIM_TOKEN` is set, so by default its port is a local
+privilege surface the other three do not have.
 
 The two MCP doors point in opposite directions and are easy to confuse. `mcp`
 is *inward*: you have already chosen a sandbox and you are talking to what is
@@ -7422,7 +7826,9 @@ kelyfos run [flags] -- <command>
 
 This boots a sandbox, exports `KELYFOS_SANDBOX` into `<command>`'s environment,
 runs the command **on the host**, then tears the sandbox down and exits with the
-command's own status. Every `kelyfos exec` and `kelyfos mcp` in that command
+command's own status — unless a time budget fired, which makes the status `124`
+whatever the command returned, or something in the guest was OOM-killed, which
+turns a zero into `137`. Every `kelyfos exec` and `kelyfos mcp` in that command
 attaches to that sandbox without being told which one.
 
 It is the shape to build on, for a reason worth stating plainly: the alternative
@@ -7536,8 +7942,10 @@ minimal `PATH`, so a bare `kelyfos` is not found there even when it exists:
 This repository's own [`.mcp.json`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/.mcp.json) runs
 [`dev/mcp-server.sh`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/dev/mcp-server.sh) rather than either of these, because
 a VM name and an absolute path do not belong in a file a Linux contributor also
-checks out; the script chooses the right form for the machine it runs on. Doing
-this by hand is what `kelyfos connect <client>` will replace.
+checks out; the script chooses the right form for the machine it runs on.
+`kelyfos connect <client>` writes the first form and only the first — an
+absolute path to the `kelyfos` binary with `serve-mcp --policy`, never a
+`limactl shell` wrapper — so the Lima shape above stays hand-written.
 
 **If you are writing a client from scratch**, the transport is a subprocess and
 the framing is newline-delimited JSON-RPC — one message per line, no embedded
@@ -7555,9 +7963,14 @@ demonstrated even where an SDK is not:
 } | kelyfos mcp
 ```
 
-The bridge is a byte-level pass-through by design: it does not reframe, buffer
-by message, or parse. Whatever your client sends reaches the guest's MCP server
-unchanged, which is what makes an off-the-shelf client work.
+The bridge does not reframe: whatever your client sends reaches the guest's MCP
+server byte-for-byte, which is what makes an off-the-shelf client work. It does
+read a copy, though — each direction is teed into a line scanner whose output is
+unmarshalled to write flight-recorder events, and that scanner's ceiling is
+16 MiB, so a longer line ends the copy rather than reaching the guest. And when
+the bridge closes with tool calls still outstanding it answers those itself,
+with error results the guest never sent — see
+[common mistakes](#6-common-mistakes).
 
 ---
 
@@ -7589,9 +8002,14 @@ to   = "worker-*"
 enabled = true
 ```
 
-Two rules the generator has to respect, because the parser refuses otherwise:
-an agent's `secrets` must each name a domain that is in *that agent's* `allow`,
-and `count` above 1 cannot be combined with a `workspace`.
+The rules the generator has to respect, because the parser refuses otherwise:
+an agent's `secrets` must each name a domain that is in *that agent's* `allow`;
+`count` above 1 cannot be combined with a `workspace`; two agents cannot resolve
+to the same name, counting the `worker-1` … `worker-N` a `count` expands into;
+and an edge endpoint that matches no agent is an error rather than a no-op.
+Inside `[team.agent.resources]` an `idle_timeout` is refused (F-D20), and inside
+`[team.agent.spawn.resources]` so are `idle_timeout` and `max_runtime` — the
+second is the budget's own `lifetime` under another name.
 
 ### Spawn under a budget, rather than deciding for the agent
 
@@ -7651,8 +8069,13 @@ the useful events are `command.exit` (with `code`), `egress.attempt` (with
 one file covers every agent and the `agent` field says which machine each event
 came from.
 
-`kelyfos log --verify` exits non-zero when the chain is broken. If you are
-storing these records as evidence, that exit status is the check to run.
+`kelyfos log --verify` exits non-zero when the chain is broken — an event
+edited, a line deleted from the middle, a line reordered. What it cannot see is
+a record truncated at the tail: the walk starts at line 1 and follows the links
+forward, and nothing in the file says how many events there should have been. If
+you are storing these records as evidence, the check is the chain head the
+verdict prints, compared against the head you recorded somewhere else; the exit
+status alone does not prove no trailing line was removed.
 
 ---
 
@@ -7666,8 +8089,12 @@ Worth knowing before you design around it.
   exception is a budgeted `team_spawn`, and the worker it creates gets one edge.
 - **No GPU, on this backend, ever.** Firecracker has no device passthrough; it is
   the security posture rather than a missing feature.
-- **No inbound.** Nothing outside can open a connection to a guest. Port
-  forwarding is planned and is not here.
+- **No inbound packets.** Nothing outside opens a connection to a guest across
+  its network interface, and a forward is not an exception: a `-p 8080:80` on
+  `kelyfos run`, or a `[[forward]]` in `kelyfos.toml`, binds a listener on this
+  machine and carries each connection over vsock, so the nftables ruleset is the
+  same with a forward as without one (F-D7). That listener binds `127.0.0.1`
+  unless `--p-bind` says otherwise.
 - **No shared filesystem.** `--workspace` is a copy in and a copy back.
 
 ---
@@ -7694,6 +8121,14 @@ the reconstructed one is renamed into place, so that a file the agent deleted is
 really gone. The consequence is that a process whose current directory *is* the
 workspace ends up in a directory that no longer exists. Step back into it by
 name after the run.
+
+Two more consequences a script will hit. The directory renamed away is kept as
+`<dir>.kelyfos-previous` until the next successful run clears it, so every run
+leaves a sibling directory behind. And the swap is not unconditional: the host
+directory is fingerprinted again just before it happens, and if it changed while
+the sandbox ran the reconstructed tree lands in `<dir>.kelyfos-out` instead,
+with the workspace directory left exactly as it was — so a script that assumes
+the directory was replaced can read pre-run state.
 
 ### `kelyfos exec` with more than one sandbox running
 
@@ -7822,8 +8257,9 @@ this with a trailing `sleep`; the Python SDK does it for you by keeping the
 session open.
 
 The record is not a workaround here either. An ask that goes unanswered is
-written when the host-side timeout fires, which is `timeout_ms` later, not when
-your client gave up.
+written when the host-side timeout fires, which is `timeout_ms` later — or
+fifteen minutes, if you asked for longer than the host will hold a call open —
+not when your client gave up.
 
 ### The error an agent sees is not the reason the record gives
 
@@ -7839,7 +8275,10 @@ detail.
 It does not. An empty window is an **error** of kind `timeout`, not an empty
 result — because a model told "nothing" concludes there is nothing to do, while
 a model told "timeout" knows only that nothing has arrived *yet*. The wait
-argument is `timeout_ms`, an integer of milliseconds, default 60000.
+argument is `timeout_ms`, an integer of milliseconds, default 60000. The host
+clamps it at both ends: anything at or below zero becomes one minute, and
+anything above fifteen minutes becomes fifteen, so an orchestrator that asks for
+an hour waits fifteen.
 
 That timeout writes **no event**. `outcome: timeout` in the record means an ask
 nobody answered; a recv that found nothing is not an outcome, because no message
@@ -7850,9 +8289,11 @@ quiet.
 
 It is not, since F-D33: `kelyfos shim` reads the project's `kelyfos.toml`,
 `[resources]` caps every sandbox it creates, and each one writes its own flight
-recorder. What it does not do is authenticate its caller. If you are embedding
-it, bind it to loopback and treat reaching that port as equivalent to running
-`kelyfos` on the machine.
+recorder. What it does not do by default is authenticate its caller. Set
+`KELYFOS_SHIM_TOKEN` and every route requires that value as
+`Authorization: Bearer <token>` and answers `401` without it; leave it unset and
+the port is unauthenticated, so bind it to loopback and treat reaching it as
+equivalent to running `kelyfos` on the machine.
 
 ### Running commands through the E2B shim
 
@@ -7865,7 +8306,7 @@ different protocol stack from the REST endpoints the shim serves. Use
 
 ## 7. Where to look next
 
-- [`cookbook.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/cookbook.md) — fourteen recipes that run, including the Python
+- [`cookbook.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/cookbook.md) — fifteen recipes that run, including the Python
   client above
 - [`reference/`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/reference/README.md) — every command, flag, key, tool, event and exit
   code, generated from the source
@@ -7929,6 +8370,13 @@ kelyfos sessions rm before-the-migration
 A paused session is a snapshot with everything it needs to become the same
 machine again, under a name a person chose.
 
+**Except a machine that had egress.** `resume` refuses one outright and points at
+`kelyfos snapshot restore -name <name>` instead, for the reason the addressing
+travels with the snapshot at all: the guest's address is inside its memory image
+and something else may hold it now (D22). `pause` does not check for this first —
+it stores the session and prints `resume it with:  kelyfos resume <name>` either
+way — so the refusal is met at the resume.
+
 ### 1.1 The store
 
 ```
@@ -7940,12 +8388,17 @@ machine again, under a name a person chose.
   plugins.ext4       the plugins device, when there was one
   kelyfos.toml       the policy this machine was running under, frozen
   named.json         what the *pause* was: the name, the sandbox and session ids,
-                     when it was paused, and which policy file was frozen
+                     when it was paused, the kelyfos that wrote it, which policy
+                     file was frozen, and the host directory the workspace was
+                     packed from
 ```
 
 The first five are exactly what `snapshot save` already writes, which is the
 point: `pause` is `snapshot save` plus a teardown plus two more files, not a
-second mechanism.
+second mechanism. The host directory is in `named.json` because the pause is the
+last process that knows it and the resume is the one that owes the write-back: a
+session with none recorded brings its workspace back inside the machine and
+writes nothing out.
 
 > **Corrected after the epic (E5 exit exam).** This section originally listed a
 > `session` file holding the flight-recorder id. What shipped keeps that id
@@ -8001,8 +8454,9 @@ for one run, once unexpectedly. The workspace image stays in the store and comes
 back with the machine.
 
 The consequence is worth stating plainly: **a paused session holds your files
-inside it.** `sessions` shows the size so it is visible, and `sessions rm` says
-what it is about to discard.
+inside it.** `sessions` shows the size so it is visible, and `sessions rm` names
+what it removed — the size, and how long ago it was paused — after removing it,
+because it does not ask first.
 
 ### 1.4 Events
 
@@ -8060,8 +8514,16 @@ At shutdown the guest tree is walked again and compared entry by entry:
 > not available for a file that is no longer there — the byte delta is. The same
 > exam found the two minus signs in that column disagreeing, an ASCII hyphen for
 > bytes and U+2212 for lines, and made them one.
+
 Mode changes are `M` with the modes named. A file whose contents are identical
 and whose mode changed is still a change, because it is one.
+
+The mode it names as the new one is the extracted mode, not the guest's: the
+extractor strips world-write and then forces `u+rw` on every file and `u+rwx` on
+every directory. A packed file without those bits therefore comes back as a mode
+change even when the sandbox never touched it — a 0444 file is listed as
+`mode 0444 → 0644`, a 0555 directory as `0555 → 0755` — and because the sync-back
+renames that tree into place, the host file's permission changes with it.
 
 ### 2.3 `--review`
 
@@ -8118,7 +8580,12 @@ Two frame kinds, and the asymmetry is deliberate:
   latency-sensitive, and base64 inside a JSON envelope would cost a third of the
   bandwidth and a copy per keystroke for no benefit. The stream is the payload.
 - **Control** is a JSON frame, for the things that are not the stream: the
-  opening request (which shell, what size, what environment) and window resizes.
+  opening request (which shell, in which directory, at what size), window
+  resizes, and the guest's exit — the code, the signal and any error, which is
+  what ends the host's copying and what `shell.end` is written from. The
+  environment is not one of them: the guest gets the same environment every
+  command in the sandbox gets, plus `TERM=xterm-256color`, and the host has no
+  say in it.
 
 They share a connection by being length-prefixed: one byte of kind, four bytes of
 length, then the payload. That is the whole framing, and it is written down here
@@ -8285,11 +8752,11 @@ hand-written half, and this page says where each is still thin.
 | stuck on something KelyfOS refused | [`denials.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/denials.md), then [`reference/denials.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/reference/denials.md) for the exact one |
 | running something long and walking away | [`denials.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/denials.md) on `--notify`, and [`events.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/events.md) §6 for the history afterwards |
 | keeping an agent off the network | [`networking.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/networking.md) |
-| after something that works, right now | [`cookbook.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/cookbook.md) — fourteen recipes, each one runnable as it stands |
+| after something that works, right now | [`cookbook.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/cookbook.md) — fifteen recipes, each one runnable as it stands |
 | putting KelyfOS inside something else | [`integrating.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/integrating.md) |
 | building KelyfOS into something else | [`protocol.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/protocol.md), then [`e2b-shim.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/e2b-shim.md) |
 | driving KelyfOS from an MCP client | [`mcp-surface.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/mcp-surface.md) — `serve-mcp` and `[[plugin]]`, and [recipe 9](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/cookbook.md) for the configuration |
-| judging whether to trust it | [`threat-model.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/threat-model.md), then [`hardening.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/hardening.md) for what v0.9 is adding |
+| judging whether to trust it | [`threat-model.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/threat-model.md), then [`hardening.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/hardening.md) for what v0.9 added |
 | what the VMM process itself may ask the host kernel for | [`host-seccomp.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/host-seccomp.md) — every syscall the filter permits, read out of a running machine |
 
 ## The map
@@ -8309,15 +8776,15 @@ hand-written half, and this page says where each is still thin.
 | [`hardening.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/hardening.md) | concept | The v0.9 specification, written before the code: what a compromised agent reaches today, what the jailer and the guest profiles take away, and what remains reachable afterwards. |
 | [`host-seccomp.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/host-seccomp.md) | mixed | The syscall filter around the VMM process: which one is in force and why that is settled, how it is proved from the kernel's own copy rather than from the absence of a flag, and every syscall it permits. |
 | [`threat-model.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/threat-model.md) | concept | What KelyfOS defends against and — the longer half — what it does not. |
-| [`cookbook.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/cookbook.md) | recipes | Fourteen complete, copy-pasteable recipes. Every one is a script CI extracts and runs on a real machine. |
+| [`cookbook.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/cookbook.md) | recipes | Fifteen complete, copy-pasteable recipes. Every one is a script CI extracts and runs on a real machine. |
 | [`integrating.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/integrating.md) | mixed | For building on KelyfOS: the four ways in, orchestrator patterns, and a long list of the mistakes people actually make. |
 | [`e2b-shim.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/e2b-shim.md) | mixed | The E2B-compatible REST subset: what it implements, what it does not, and why. |
 | [`../llms.txt`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/llms.txt) | **generated** | The index a machine reads first: every page above as a link with a one-line description, per the llmstxt.org spec. |
 | [`../llms-full.txt`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/llms-full.txt) | **generated** | Every page above concatenated, each with its source URL. Its size is *estimated* by `make docs` and printed in `llms.txt`, rather than repeated here — because a hand-typed count is exactly the kind of number that goes stale quietly, and this one had: it said 101,000 while the generator said 108,000. |
 | [`launch/hn-post.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/launch/hn-post.md) | not documentation | The launch post draft. Unposted, and the maintainer's to send. |
 
-The plan files at the repository root — [`PLAN.html`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/PLAN.html) for phases 0–4
-and [`PLAN-FEATURES.html`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/PLAN-FEATURES.html) for the epics after them — are
+The plan files at the repository root — [`PLAN.html`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/PLAN.html) for phases 0–6
+and [`PLAN-FEATURES.html`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/PLAN-FEATURES.html) for epics E1–E5 — are
 **not** documentation. They are the build record: every task, every decision with
 its rationale, and a progress log with the command output behind each claim. The
 documents above cite them constantly (`D6`, `F-D19`, `E2-1`), and those citations
@@ -8327,8 +8794,10 @@ resolve there. [`STATUS.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfO
 
 **Concept.** Hand-written, and about a design or a trade-off. Nothing in the
 source can confirm or refute it. Kept honest by review, and by the fact that the
-code cites it back: 139 comments across 61 Go files name a document and a section,
-so a section number here is load-bearing rather than decorative.
+code cites it back: 111 comments across 62 Go files name a document and a
+section, so a section number here is load-bearing rather than decorative. That
+count is `grep -rn -E '[a-z-]+\.md §' --include='*.go' .`, given as a rule
+because a hand-typed number on this page has gone stale before.
 
 **Reference.** Statements of fact that also exist in the source — a port number,
 a toml key, a default, an event field, an error string. Every one of these can
@@ -8337,9 +8806,18 @@ write confidently against it. Most of this half now lives in
 [`reference/`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/reference/README.md), generated and CI-checked; what is left in the prose
 below is the part no generator reaches, and it is named per document.
 
-**Mixed.** Every document above except the threat model. The inventory names
-which half of each is reference, so it is clear what a generator will eventually
-own and what will always be someone's prose.
+**Mixed.** Both halves in one document — the label the map gives a document
+that is neither *concept*, *hand*, *recipes*, *generated* nor *not
+documentation*. The inventory names which half of
+each is reference, so it is clear what a generator will eventually own and what
+will always be someone's prose.
+
+**Hand, recipes and not documentation.** The map's three remaining labels.
+*Hand* is [`compatibility.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/compatibility.md), hand-written like a concept
+document but normative rather than explanatory — a promise about what moves, not
+an account of why. *Recipes* is [`cookbook.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/cookbook.md), which is extracted
+scripts with prose around them rather than prose with examples in it. *Not
+documentation* is the launch post, which is neither.
 
 ## The inventory
 
@@ -8349,6 +8827,23 @@ since been corrected, so what remains under *thin* is what is genuinely missing
 rather than wrong — with one exception, called out where it appears:
 `mode: tunnelled` on a plain-HTTP request understates what the proxy read, and
 the documents now say so rather than repeating the claim.
+
+### `compatibility.md` — the promise
+
+*Concept:* what each of the three version constants attaches to and why they are
+not kept in lockstep; why a denial identifier is inside the promise and a guest
+confinement profile is deliberately outside it; why a security fix that must
+narrow a surface is not a patch; and why the MCP revision is somebody else's to
+number.
+*Reference:* none of it — §2 cites the page that pins each surface rather than
+re-listing it, so six of the seven cannot go stale by the mechanism that already
+keeps the reference honest (F-D4). The seventh is the host↔guest protocol, whose
+page is hand-written and checked by no drift gate; the promise says so itself
+rather than letting the citation imply otherwise.
+*Thin:* it is normative from v1.0 and this repository is at v0.9, so nothing in
+it binds yet. §4's deprecation mechanism has not been used: `vcpus`, which
+`kelyfos run` describes as an alias kept so v0.3 command lines keep working, is
+still accepted in silence by both the flag and `kelyfos.toml`.
 
 ### `protocol.md` — the wire
 
@@ -8360,7 +8855,7 @@ error-kind vocabulary, and every channel's field tables.
 *Thin:* the kernel command line (`kelyfos.proxy`, `.workspace`, `.agent`,
 `.spawn`, `.scratch`) is nowhere described as a set; the guest's default
 environment is referred to and never listed; §6 defines MCP framing and not one
-MCP tool; no timeout in the system is written down except the heartbeat.
+MCP tool.
 
 ### `events.md` — the audit record
 
@@ -8397,9 +8892,8 @@ oversubscribe.
 the two proof scripts.
 *Thin:* a `[resources]` ceiling silently doubles as the default — writing
 `cpus = 2` also chooses two — and the document frames the section purely as
-ceilings; `[resources] cpus` is not checked for positivity; the per-agent
-`max_runtime` path in a team behaves differently from the single-run one and only
-the latter is described.
+ceilings; the per-agent `max_runtime` path in a team behaves differently from the
+single-run one and only the latter is described.
 
 ### `denials.md` — why a refusal names its fix
 
@@ -8429,7 +8923,7 @@ neither refusal mentions the other, so a user who follows the first message hits
 the second; `team ps` has no sample output; the store's `not_found` is described as
 "not a refusal" and is recorded as one.
 
-### `cookbook.md` — fourteen things that work
+### `cookbook.md` — fifteen things that work
 
 *Recipes:* one sandbox; an allowlist and an injected credential; a workspace
 round-trip; snapshot and fork; a three-agent team with an ask round-trip and a
@@ -8437,7 +8931,9 @@ refused edge; reading and verifying the record, including watching one altered
 byte break the chain and checking an exported report the way its recipient
 would; driving a sandbox from the E2B SDK; an orchestrator built
 on the official MCP Python SDK; the configuration that points Claude Code and
-VS Code at `serve-mcp`, checked by running exactly what each file names; and the
+VS Code at `serve-mcp`, checked by running exactly what each file names;
+`kelyfos connect` writing that same configuration into the client's own file and
+`--check` proving it by completing a real handshake; and the
 same SDK driving the host rather than a guest, ending in the record the server
 kept of its own calls; and both MCP directions at once, with a plugin written out
 in full, ending in the two transcripts that hold what each side did; pausing a
@@ -8548,18 +9044,19 @@ Commands, flags, toml keys, MCP tools, event types and exit codes were all on
 this list at E3-0 and are now in [`reference/`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/reference/README.md), extracted rather
 than typed. What is still missing is what no generator reaches:
 
-**The wire protocol's remaining corners.** The kernel command line as a set, the
-guest's default environment, and every timeout in the system except the
-heartbeat. `protocol.md` is hand-written and stays that way — it is a
-specification, not a description.
+**The wire protocol's remaining corners.** The kernel command line as a set and
+the guest's default environment. `protocol.md` is hand-written and stays that
+way — it is a specification, not a description.
 
 **Snapshot restore's networking.** How a frozen NIC is re-paired to a fresh TAP
 (D22) is in the code and in no document.
 
-**Environment variables.** `KELYFOS_CACHE` and `KELYFOS_CGROUP_ROOT` are read by
-the CLI and named nowhere. `KELYFOS_SANDBOX` is covered in
-[`integrating.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/integrating.md) and the cookbook, but has no entry in the
-generated reference; E3-4 is its home.
+**Environment variables.** `KELYFOS_CACHE`, `KELYFOS_CGROUP_ROOT` and
+`KELYFOS_CONNECT_HOME` — the last of which relocates where `kelyfos connect`
+writes per-user client configuration, for tests and for anybody generating a
+configuration for a machine that is not this one — are read by the CLI and named
+nowhere. `KELYFOS_SANDBOX` is covered in [`integrating.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/integrating.md) and
+the cookbook, but has no entry in the generated reference; E3-4 is its home.
 
 **A JavaScript client that has been run.** [`integrating.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/integrating.md)
 covers the configuration route and the wire format, and deliberately prints no
@@ -9515,7 +10012,7 @@ Opens the file, and records what the sandbox is. Written by the **host**.
 | `argv` | string array | how the sandbox was launched, for reproduction |
 | `jailed` | boolean | whether the VMM ran inside the jailer — a chroot, a dropped uid, and only the devices it needs *(kelyfos run; every other entry point carries the posture on session.ready instead)* |
 | `cwd` | string | the directory it was launched from, which argv alone does not capture *(kelyfos run)* |
-| `reason` | string | where the machine came from *(restore and fork)* |
+| `reason` | string | where the machine came from *(restore, fork, the E2B shim, a serve-mcp server's own session, and anything raised through that server; kelyfos run and a plain team up record none)* |
 
 ## `session.ready`
 
@@ -9716,9 +10213,9 @@ One store access, permitted or not. Written by the **host**.
 | --- | --- | --- |
 | `agent` | string | the caller |
 | `peer` | string | the key — a store access addresses a key, not an agent |
-| `kind` | string | get or put |
+| `kind` | string | get, put or delete — a delete is a put of nothing, and is its own word because the record has to show the store being made smaller |
 | `outcome` | string | delivered or refused |
-| `reason` | string | denied, no_such_key, value_too_large, store_full *(refused)* |
+| `reason` | string | denied, no_such_key, value_too_large, key_too_long, too_many_keys, store_full *(refused)* |
 | `bytes` | integer | value size |
 
 ## `team.spawn`

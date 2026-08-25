@@ -11,9 +11,11 @@ edit.
 ![KelyfOS in a terminal](docs/media/demo.gif)
 
 > **Status: v0.9, early development, building in the open.** Cold boot-to-ready
-> **135 ms** median, snapshot restore **49 ms**, five agents up in **412 ms** —
-> x86_64 on a bare-KVM CI runner, ten runs each, by a benchmark workflow in this
-> repository rather than by hand.
+> **135 ms** median, snapshot restore **49 ms** — x86_64 on a bare-KVM CI runner,
+> ten runs each, by [`bench.yml`](.github/workflows/bench.yml) rather than by
+> hand. **Five agents up in 412 ms** is a different measurement and says so here:
+> one cold run of `dev/demo-team.sh` under
+> [`caps.yml`](.github/workflows/caps.yml), not a median of ten.
 >
 > **v0.9 is the hardening release.** The VMM runs inside the jailer with its own
 > syscall filter proved in force rather than assumed, and everything the guest
@@ -52,7 +54,7 @@ needed. On Windows, WSL2 — and it is post-1.0, with the compatibility document
 saying so by name.
 
 **On macOS there is a Linux layer, and kelyfos looks after it.** There is a macOS
-build of the CLI, and you never type `limactl`:
+build of the CLI, and you never type `limactl start`:
 
 ```sh
 brew install lima
@@ -61,6 +63,17 @@ kelyfos doctor             # its state, whether it matches this binary, and the
                            # in-VM doctor's own output
 kelyfos doctor --stop
 ```
+
+**The layer needs Apple M3 or newer and macOS 15+**, because it needs nested
+virtualisation from Virtualization.framework; without it `/dev/kvm` never appears
+inside the Lima guest and the instance fails its own probe at start. `doctor`
+says this too, at the point where it stops.
+
+**Getting the macOS binary is a build for now.** `dev/install-kelyfos.sh`
+downloads `kelyfos-linux-<arch>` and is Linux-only; `make release-cli`
+cross-builds the darwin pair into `dist/`, and unlike `make cli` it is not gated
+on Linux. The release workflow stages those binaries alongside the Linux ones, so
+from the first release it builds they are a download instead.
 
 It is a smaller program than the Linux one and it says so. `doctor` owns the
 layer, `verify` checks a report somebody sent you — that one matters, because the
@@ -96,7 +109,9 @@ This step downloads and boots an Ubuntu VM, and is most of that wall clock:
 
 ```sh
 brew install lima
-limactl start --name kelyfos-dev dev/lima.yaml
+kelyfos doctor --setup             # not `limactl start`: an instance made by hand
+                                   # carries no marker, and doctor can then only
+                                   # tell you it does not know what it was made from
 limactl shell kelyfos-dev          # everything below runs in here
 ```
 
@@ -157,12 +172,15 @@ are on Lima, WSL2, bare Linux or macOS.
 
 ### Building it yourself
 
-The downloads above are built from this source at the release tag, by
+Releases are built from this source at the release tag by
 [`.github/workflows/release.yml`](.github/workflows/release.yml) — both
 architectures in one workflow run, from the tag's own commit, with `SHA256SUMS`
-regenerated from scratch over exactly the files attached. Releases up to and
-including v0.9 were assembled by hand from a laptop, and it showed: v0.9's two
-architectures were built on two different machines, one of them a developer's.
+regenerated from scratch over exactly the files attached. **That workflow is
+newer than every tag that exists.** Releases up to and including v0.9 were
+assembled by hand from a laptop, and it showed: v0.9's two architectures were
+built on two different machines, one of them a developer's. So the downloads
+above are hand-made ones, and the first release the workflow builds is the first
+one this paragraph describes.
 
 **Whether they are bit-for-bit what your own `make image` produces is measured,
 not claimed.** Determinism is configured — `BR2_REPRODUCIBLE`,
@@ -197,9 +215,12 @@ versions. The sandbox reads it and refuses to boot if it does not match what you
 asked for, so `--image dev` can never quietly run something else — the flavor in
 your audit trail is a checked fact, not a label you typed.
 
-**Release artifacts carry a provenance attestation**: a statement, signed by
-GitHub, saying which workflow and which commit produced these exact bytes. One
-command checks it, and it needs nothing from this project:
+**A release the workflow builds carries a provenance attestation**: a statement,
+signed by GitHub, saying which workflow and which commit produced these exact
+bytes. **No published artifact carries one yet**, for the reason above — the
+attestation steps live in the release workflow, and the newest tag predates it.
+On a release it has built, one command checks it, and that command needs nothing
+from this project:
 
 ```sh
 gh attestation verify kelyfos-linux-x86_64 --repo p4r4n0rm4l/KelyfOS
@@ -207,7 +228,7 @@ gh attestation verify kelyfos-linux-x86_64 --repo p4r4n0rm4l/KelyfOS
 
 That is SLSA v1.0 Build Level 2 — a hosted builder attesting to its own output —
 and it verifies offline against a trusted root fetched once. Each architecture's
-SBOM is attested too, against that architecture's artifacts.
+SBOM is attested the same way, against that architecture's artifacts.
 
 **It is not the same claim as GitHub's immutable releases**, and the two must not
 be read as one. Immutability says GitHub received these bytes under this tag and
@@ -258,12 +279,21 @@ absolute path do not belong in a file a Linux contributor also checks out. The
 script picks the right form for the machine it runs on and says what is wrong
 when it cannot.
 
-Writing that file by hand is what `kelyfos connect <client>` is for; until it
-ships, [`docs/integrating.md`](docs/integrating.md) has the per-client shapes.
+Writing that file by hand is what `kelyfos connect <client>` is for: it writes
+each client's own file, in that client's own format and location, and `--check`
+then starts the server it just configured and completes a real MCP handshake.
+[`docs/integrating.md`](docs/integrating.md) has the per-client shapes.
 
-The agent then sees six tools — `exec`, `read_file`, `write_file`, `list_dir`,
-`upload`, `download` — and nothing else. In a team it sees the team tools too, and a
-`[[plugin]]` adds its own namespaced ones — and nothing else still.
+A client attached to `serve-mcp` that way sees twelve host-side tools — the
+`sandbox_*` family that boots, runs, stops, snapshots and forks machines, plus
+`team_up`, `team_ps` and `team_down`. [`docs/reference/tools.md`](docs/reference/tools.md)
+is generated from the servers themselves and lists every one.
+
+**Inside** a sandbox the surface is smaller and different: an agent reached
+through `kelyfos mcp` or `kelyfos run … -- <agent>` sees six tools — `exec`,
+`read_file`, `write_file`, `list_dir`, `upload`, `download` — and nothing else.
+In a team it sees the team tools too, and a `[[plugin]]` adds its own namespaced
+ones — and nothing else still.
 
 ## Policy travels with the project
 
@@ -302,8 +332,10 @@ receipt: a `kelyfos run` session, and every agent in a team, ends with a
 `resource.summary` event recording what it consumed beside what it was allowed,
 measured from counters the kernel keeps about the VMM process. Sandboxes created
 through `serve-mcp`, `fork`, `snapshot restore` and the E2B shim do not carry one
-yet. `kelyfos watch` shows the same figures live. See [`docs/resources.md`](docs/resources.md), and
-`bash dev/prove-caps.sh` to watch each cap refuse to budge.
+yet, and neither does a session that ends in a pause: the receipt is taken at
+teardown, a pause is not one, and `resume` does not add it afterwards. `kelyfos
+watch` shows the same figures live. See [`docs/resources.md`](docs/resources.md),
+and `bash dev/prove-caps.sh` to watch each cap refuse to budge.
 
 ## Agent teams
 
@@ -391,7 +423,7 @@ And the parts that make it a thing you reach for rather than tolerate (v0.8):
 | [`llms.txt`](llms.txt) · [`llms-full.txt`](llms-full.txt) | for machine readers: an index per the llmstxt.org spec, and the whole set in one file, whose current size `llms.txt` states |
 | [`docs/reference/`](docs/reference/) | every command, flag, toml key, MCP tool, event and exit code — generated from the source |
 | [`PLAN.html`](PLAN.html) · [`PLAN-FEATURES.html`](PLAN-FEATURES.html) | the living plan — every decision and the full progress log, phases then epics |
-| [`docs/cookbook.md`](docs/cookbook.md) | fourteen recipes that work: run one, allowlist a domain, fork, build a team, point a client at it, write a plugin, verify the log, pause and resume, review a diff, forward a port |
+| [`docs/cookbook.md`](docs/cookbook.md) | fifteen recipes that work: run one, allowlist a domain, fork, build a team, point a client at it, write a plugin, verify the log, pause and resume, review a diff, forward a port |
 | [`docs/integrating.md`](docs/integrating.md) | building on it: the four ways in, orchestrator patterns, common mistakes |
 | [`docs/mcp-surface.md`](docs/mcp-surface.md) | MCP in both directions: `serve-mcp` as a tool for any client, `[[plugin]]` servers inside the guest |
 | [`docs/threat-model.md`](docs/threat-model.md) | what is defended, and what is not |
@@ -406,9 +438,13 @@ And the parts that make it a thing you reach for rather than tolerate (v0.8):
 ## The numbers, and where they came from
 
 Every figure above is measured on the bare-KVM reference — a stock
-`ubuntu-latest` GitHub runner with KVM — by `make bench`, which is a workflow in
-this repository. Local numbers on a Mac are 6–8× slower because of nested
-virtualisation and are never the published ones.
+`ubuntu-latest` GitHub runner with KVM — and by a workflow in this repository
+rather than by hand. Two workflows, not one, because they measure different
+things: boot and restore are `kelyfos bench` under
+[`bench.yml`](.github/workflows/bench.yml), ten runs each; the five-agent figures
+are `dev/demo-team.sh` under [`caps.yml`](.github/workflows/caps.yml), one run
+each. Local numbers on a Mac are 6–8× slower because of nested virtualisation and
+are never the published ones.
 
 Boot was 123 ms and restore 37 ms at v0.8. The jailer and the guest-profile probe
 sit on the boot path and cost about 12 ms each way; the VMM's filter check is
@@ -429,12 +465,13 @@ relied on the boundary Firecracker gives it and added nothing of its own around
 the VMM process or around what a compromised agent could reach inside its guest.
 Both layers exist now. Here is what that does and does not mean.
 
-One of them was incomplete until v1.0, and the sentence above was true of the
-guest and not of the host. An external audit found that the **workspace block
+One of them was incomplete until this phase, and the sentence above was true of
+the guest and not of the host. An external audit found that the **workspace block
 device** — which the guest writes and the host reads back — let a guest-authored
 directory entry decide where the host wrote, and the trust-boundary table did not
 list that surface at all. It is closed and listed now; the row below is what
-closed it.
+closed it. **It closed on `main` after v0.9 was tagged**, so the release the
+quickstart downloads still extracts a workspace the old way.
 
 **What is enforced.**
 
@@ -443,9 +480,9 @@ closed it.
 | the boundary | a Firecracker microVM: a separate kernel, a hardware boundary. This was always the case and is still the thing that matters most. |
 | around the VMM | the jailer: a chroot holding only this sandbox's files, a dropped uid, `no_new_privs`, only the device nodes it needs, and the run's cgroup when the policy set a quota. Every entry point, or none — `run`, `team up`, `fork`, `snapshot restore`, `serve-mcp` and the shim all go through one refusal. |
 | the VMM's syscalls | Firecracker's own seccomp filter, **read out of `/proc` on every one of its threads** at boot rather than assumed from the absence of a flag. A VMM without it is refused, not run. [`docs/host-seccomp.md`](docs/host-seccomp.md) lists every syscall it permits, read back out of the running kernel. |
-| inside the guest | every process the supervisor spawns — `exec`, a plugin, the shell — is confined by Landlock (writes only `/work`, `/tmp`, `/run`, `$HOME`, `/dev/pts` and `/dev/shm`, plus seven named device nodes) and a seccomp refusal list of 28 syscalls. Per flavor; [`docs/reference/profiles.md`](docs/reference/profiles.md) is generated from the code that enforces it. |
+| inside the guest | every process the supervisor spawns — `exec`, a plugin, the shell — is confined by Landlock (writes only `/work`, `/tmp`, `/run`, `$HOME`, `/dev/pts` and `/dev/shm`, plus seven named device nodes) and a seccomp refusal list of 28 syscalls. Per flavor; [`docs/reference/profiles.md`](docs/reference/profiles.md) is generated from the code that enforces it. **The supervisor is PID 1 and the profile does not confine it**, which is where `write_file` and `upload` could once write anywhere the guest asked, including the block devices the profile withholds; those two are now held to the same three lists the profile is built from. Reads are deliberately not restricted. |
 | the network | no interface at all without `--allow`; then deny-all plus a hostname allowlist, with credentials attached by the host's proxy so the value never exists inside the guest. |
-| the workspace disk | the guest writes that filesystem, so the host reads it back the way it reads anything hostile: every entry validated and the image refused whole if one is a name the host cannot use, and the extraction written through `openat2` with `RESOLVE_BENEATH` and `RESOLVE_NO_SYMLINKS` so a name that got past the check still cannot leave the tree. Guest-chosen modes do not survive onto your filesystem. |
+| the workspace disk | the guest writes that filesystem, so the host reads it back the way it reads anything hostile: every entry validated and the image refused whole if one is a name the host cannot use, and the extraction written through `openat2` with `RESOLVE_BENEATH` and `RESOLVE_NO_SYMLINKS` so a name that got past the check still cannot leave the tree. Setuid, setgid, sticky and world-write do not survive onto your filesystem; the rest of the mode does, including the executable bit, because an agent that built a binary needs it. |
 | the record | hash-chained, written by the host, and it names which walls were around each machine — so a transcript cannot make an unconfined run look like a confined one. |
 
 **What is not.** None of this is a claim to be a multi-tenant sandbox for
@@ -462,8 +499,9 @@ hostile code; it is a single-host developer tool (D1).
 - **Side channels** — timing, cache, speculative execution — are untouched.
   KelyfOS inherits Firecracker's position and adds nothing.
 - **The supply chain is partly answered now, and the parts are different sizes.**
-  Release artifacts carry a build-provenance attestation and an SBOM, and
-  reproducibility is measured per artifact rather than claimed. What is *not*
+  The release workflow attaches a build-provenance attestation and an SBOM to
+  every artifact — on the releases it builds, which does not yet include any that
+  exists — and reproducibility is measured per artifact rather than claimed. What is *not*
   answered is the layer beneath: the Buildroot packages, the compiler and the
   upstream tarballs are taken on trust, verified by checksum against what
   upstream published and no further. A hardened runtime built from an unverified
@@ -484,7 +522,8 @@ and says which findings are in scope and which are documented design decisions.
 
 The guest toolchain — Buildroot, the kernel, Firecracker and Go — is pinned in
 [`versions.mk`](versions.mk), and Go modules in `go.mod`. The host build packages
-are not pinned, and reproducible builds are still open.
+are not pinned. Reproducibility is no longer open but measured, per artifact and
+with its scope stated — the table under "Building it yourself" is what it says.
 Contributions need a DCO `Signed-off-by` line. The non-goals in `PLAN.html`
 section 2 are hard boundaries — no orchestrator, no control plane, no hosted
 service.

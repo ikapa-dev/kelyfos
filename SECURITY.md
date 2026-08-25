@@ -62,7 +62,11 @@ and there are no backports: a fix ships in the next release. Nothing older than
 the latest tag receives security fixes.
 
 This is a `v0.x` project moving toward `v1.0`, and the support commitment above
-is deliberately minimal until the compatibility promise exists to say more.
+is deliberately minimal until that release. What the version number will promise
+is written down in [`docs/compatibility.md`](docs/compatibility.md), normative
+from v1.0 — including the clause a reporter wants: **a security fix that must
+narrow a surface is not a patch**. It is an exception to the promise, and its
+release note says so.
 
 ## What is a vulnerability here, and what is not
 
@@ -108,8 +112,11 @@ time, but it will be answered with a link rather than a fix.
   written down.
 - **Anything the policy permits.** A sandbox allowed to reach `api.github.com`
   with a token bound to it can do whatever that token can do. The credential
-  binding is a *suffix* match, so `--secret T@github.com` also covers
-  `api.github.com` — bind narrowly.
+  binding is a *suffix* match by default, so `--secret T@github.com` also covers
+  `api.github.com`. Naming a path — `--secret T@api.github.com/repos/` — turns
+  that off: the credential binds to that one host exactly and is attached only
+  to requests beneath that prefix. Requests outside it still go, without the
+  credential, and the record says why. Bind narrowly.
 - **`--no-jail` turns the jailer off.** It exists for machines that cannot grant
   the jailer passwordless sudo, it prints what is not enforced on every run, and
   it records `jailed: false` in the chain.
@@ -120,11 +127,17 @@ time, but it will be answered with a link rather than a fix.
 - **Side channels** — timing, cache, speculative execution — between guests or
   between a guest and its host. KelyfOS inherits Firecracker's position and adds
   nothing.
-- **The supply chain, for now.** Release artifacts are checksummed but not yet
-  signed or attested, and the build is not yet reproducible. Both are open work
-  rather than an oversight, and both are tracked in
-  [`PLAN.html`](PLAN.html). A report that the artifacts are unsigned tells us
-  something we say ourselves, in four places.
+- **The supply chain beneath the release.** Release artifacts are checksummed,
+  and on a release the release workflow builds they also carry a build-provenance
+  attestation and an SBOM per architecture — which does not yet include any
+  published release, because the newest tag predates that workflow.
+  Reproducibility is measured per artifact by the `repro-check` workflow rather
+  than claimed. What is not answered is the layer under those: signing the
+  images themselves has no task and no date, and the compiler and the upstream
+  tarballs are taken on trust, checked by checksum against what upstream
+  published and no further. A report that the layer beneath Buildroot is
+  unverified tells us something we say ourselves, in the README and in
+  [`docs/hardening.md`](docs/hardening.md) §5.
 - **Anything that requires already having code execution as the invoking user on
   the host.** At that point the sandbox is not the boundary that failed.
 

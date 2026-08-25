@@ -86,15 +86,38 @@ limactl shell kelyfos-dev -- make cli
 limactl shell kelyfos-dev -- make image FLAVOR=dev
 ```
 
+The CLI has a second target. Since P6-12 `make release-cli` also cross-builds
+`kelyfos-darwin-{x86_64,aarch64}` — a smaller program in which `doctor` owns the
+Lima layer, `verify` checks a report somebody sent you, and every command that
+needs a guest refuses with the way in (`host/lima_darwin.go`,
+`host/layer_darwin.go`, `host/platform_other.go`). **No per-commit check
+compiles them**: `go vet ./...` and `go test ./...` build for the host, so a
+change that breaks the macOS files passes every gate a pull request runs. The
+only thing that compiles them is `make release-cli`, and CI reaches it at tag
+time and on `repro-check`'s monthly run — both of which are after the commit
+that broke it. Run it yourself before you push a change to the CLI.
+
 Bare `make` prints the target list and builds nothing — the default goal is
 `help`. The first `make image` on a machine also builds the cross toolchain,
 which takes about thirty-five minutes; after that it is minutes.
 
+`make test` runs `go vet ./...` and `go test ./...`. CI's `checks` job asks for
+more, and `gofmt` is the first of them: a tree that is not gofmt-clean fails
+before anything is vetted. After it come the unit tests, `make fuzz
+FUZZTIME=10s`, the hostile-input corpus with `KELYFOS_HOSTILE=required`,
+`tools/check-plan.py` over `PLAN.html`, `make docs` compared against the
+committed reference, and every cookbook recipe extracted and parsed.
+
 The guest toolchain — Buildroot, the kernel, Firecracker and Go — is pinned in
 [`versions.mk`](versions.mk), and Go modules in `go.mod`. Bumping one means
 changing the version and its checksum in the same commit, with the reason in the
-progress log. What is *not* pinned: the host build packages `apt` installs, and
-the build is not reproducible yet — that work is P6-9.
+progress log — except Firecracker, which is pinned by version alone because its
+release tarballs ship their own `.sha256.txt` and `dev/install-firecracker.sh`
+fetches and checks that at install time. What is *not* pinned: the host build
+packages `apt` installs. Whether a build reproduces byte for byte is measured
+rather than assumed — [`repro-check`](.github/workflows/repro-check.yml) builds
+the same commit twice and diffs the result per artifact, monthly, and what the
+project says about reproducibility is whatever that run last reported.
 
 Keep commits small and reference the task ID they belong to:
 

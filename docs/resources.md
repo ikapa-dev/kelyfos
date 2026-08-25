@@ -12,8 +12,11 @@ Two places set limits, and they do not mean the same thing:
 
 | | role |
 | --- | --- |
-| `[resources]` in `kelyfos.toml` | **hard ceilings.** The committed policy of the project. |
+| `[resources]` in `kelyfos.toml` | **hard ceilings, and the value when no flag asks.** The committed policy of the project. |
 | CLI flags | **requests within those ceilings.** |
+
+A ceiling is also the value a run gets when nothing asks for anything: `mem =
+"2G"` with no `--mem` boots a 2 GiB machine rather than the 512 MiB default.
 
 A flag may ask for less than its ceiling. A flag asking for **more** does not
 win and does not get silently clamped — the sandbox refuses to boot, naming
@@ -108,7 +111,7 @@ happens at the limit and how hard the limit is.
 | `scratch` | `size=` on the tmpfs backing the overlay upper layer, applied by the guest kernel inside the `mem` cap | `ENOSPC` on writes outside `/work` |
 | `net_mbps_rx` / `net_mbps_tx` | Firecracker token-bucket rate limiter on the network device | throttled |
 | `disk_iops` / `disk_mbps` | Firecracker token-bucket rate limiter on the block devices | throttled |
-| `max_runtime` / `idle_timeout` | host timer in `kelyfos run` | SIGTERM, grace, sync-back, teardown |
+| `max_runtime` / `idle_timeout` | host timer in `kelyfos run` | SIGTERM, grace, teardown, sync-back |
 
 Two of these are absolute because they are hardware: a guest cannot allocate a
 core or a byte of RAM that the VM was not built with. The throttles are soft by
@@ -130,9 +133,11 @@ workspace ./project needs an image of 4294967296 bytes, over the 2147483648
 byte ceiling; raise it or exclude what does not need to be in the sandbox
 ```
 
-So a small repository gets a 1 GiB `/work` whatever `disk` says, and `ENOSPC`
-arrives at that 1 GiB rather than at the ceiling. It follows that `disk` does
-nothing at all without a `workspace` — there is no image to size.
+So a small repository gets a 1 GiB `/work` and `ENOSPC` arrives at that 1 GiB
+rather than at the ceiling. The floor is applied before the ceiling is checked,
+so a `disk` below 1 GiB refuses even a small repository rather than shrinking
+the device to fit it. It follows that `disk` does nothing at all without a
+`workspace` — there is no image to size.
 
 `scratch` defaults to 50% of the **guest's** RAM — the Linux tmpfs default,
 relative to `mem`, not to host memory. Stated here because it was previously
@@ -240,13 +245,20 @@ directory packed into it and refused if that would exceed `disk`, and is
 completely unaffected; so is `/dev/shm`, which is its own tmpfs with its
 own kernel default of half the RAM.
 
-A `scratch` larger than `mem` is refused at boot rather than accepted:
+A `scratch` larger than `mem` is refused at boot rather than accepted by
+`kelyfos run` and by the E2B shim:
 
 ```
 kelyfos: scratch = 2147483648 bytes at ./kelyfos.toml:2 is larger than the
          512 MiB the machine has
     the scratch tmpfs lives in that memory, so a cap above it can never be reached
 ```
+
+Those are the only two entry points that make the comparison. `kelyfos team up`
+and `serve-mcp`'s `sandbox_run` hand the declared `scratch` to the machine
+without checking it against that machine's `mem`, so inside a team a `scratch`
+above `mem` is accepted and the inert cap this refusal exists to prevent is
+exactly what you get.
 
 **This is the one cap the guest kernel applies rather than the host**, and it is
 worth being exact about what that does and does not mean (F-D13). A tmpfs's size
@@ -275,9 +287,12 @@ only side entitled to an opinion about it (F-D2).
 
 When a budget expires the run ends the way a careful `Ctrl-C` would, in this
 order: the trailing command gets `SIGTERM` and five seconds to stop itself, then
-`SIGKILL`; the VM is shut down; the workspace is synced back; the session record
-is closed with `reason: "timeout"`. The audit log gets a `resource.timeout`
-event naming which budget fired, its size and how long the run actually lasted.
+`SIGKILL`; the VM is shut down; the session record is closed with
+`reason: "timeout"`; the workspace is synced back. The record closes before the
+sync-back rather than after it, because the three stages are deferred in the
+opposite order and Go unwinds them last-registered-first. The audit log gets a
+`resource.timeout` event naming which budget fired, its size and how long the
+run actually lasted.
 
 `kelyfos run` exits **124** — `timeout(1)`'s status, for the same meaning, so a
 CI job that already treats 124 as "this took too long" needs no teaching.
@@ -286,13 +301,14 @@ The grace period is not politeness. An agent killed outright leaves the
 workspace mid-edit, and the sync-back that follows would carry that state to the
 host as if it were a result.
 
-Inside a `[team]`, `max_runtime` works per agent and `idle_timeout` is
-**refused** — by name and line, at the file, rather than accepted and ignored
-(F-D20). A team is deliberately one session with one flight recorder, so "the
-recorder grew" is a fact about the whole team: a busy master would keep an idle
-worker's clock alive forever and the key would be inert in exactly the case it
-was written for. `max_runtime` needs none of that — an agent's wall clock starts
-when the host boots it, and the host is holding the clock.
+Inside a `[team.agent.resources]` block, `max_runtime` works per agent and
+`idle_timeout` is **refused** — by name and line, at the file, rather than
+accepted and ignored (F-D20). A team is deliberately one session with one flight
+recorder, so "the recorder grew" is a fact about the whole team: a busy master
+would keep an idle worker's clock alive forever and the key would be inert in
+exactly the case it was written for. `max_runtime` needs none of that — an
+agent's wall clock starts when the host boots it, and the host is holding the
+clock.
 
 E2-7 has since given the transcript a per-agent activity signal, which was
 F-D20's stated condition for lifting the refusal — but the refusal still stands,
@@ -300,6 +316,11 @@ because the idle watchdog reads a file-size delta with no agent in it, and a
 per-agent watchdog is a new reader of the chain plus a new call site. Lifting it
 is its own task, recorded as F-D22. Until then the key is refused, which is
 still better than accepting one that would never fire.
+
+A `[team.agent.spawn.resources]` budget refuses **both** keys. `idle_timeout`
+goes for F-D20's reason, and `max_runtime` because it is `[team.agent.spawn]`
+`lifetime` under another name — that is the key which bounds how long a spawned
+worker lives, and it is the one that is enforced (F-D33).
 
 ### How the I/O throttles are applied
 
@@ -312,10 +333,12 @@ the host device — KelyfOS configures them and builds nothing.
 Three consequences worth knowing before you tune them.
 
 **The disk limits are per device, not a shared budget.** A Firecracker limiter
-belongs to one device, and a sandbox with a workspace has two: the read-only
-root and `/work`. `disk_mbps = 10` therefore means ten megabytes a second on
-each, not five each. The alternative — one budget split between them — is what
-people assume, so it is worth saying that it is not what happens.
+belongs to one device, and every device the sandbox has gets the same limit: the
+read-only root, `/work` when there is a workspace, and the read-only plugins
+device when the policy declares `[[plugin]]` entries. `disk_mbps = 10` therefore
+means ten megabytes a second on each of them, not ten shared out between them.
+The alternative — one budget split across the disks — is what people assume, so
+it is worth saying that it is not what happens.
 
 **A limit is a rate plus an opening burst, and the burst is about two seconds'
 worth.** A token bucket is a size and a refill time, and the rate it enforces is
@@ -395,7 +418,7 @@ allow = ["github.com"]
 cpus        = 4          # four cores exist inside the VM
 cpu_quota   = "150%"     # ...but together they burn at most 1.5 cores' worth
 mem         = "2G"
-disk        = "4G"       # /work device size
+disk        = "4G"       # ceiling the packed /work image must come in under
 scratch     = "512M"     # everything written outside /work
 net_mbps_rx = 50
 max_runtime = "30m"
@@ -466,9 +489,8 @@ bash dev/prove-caps.sh
 
 Drives CPU, memory, disk, network, scratch and time past their limits with
 `stress-ng` and `dd` inside the guest, and checks from the host that each one
-held — `/proc/<pid>/stat` and the sandbox's own `cpu.stat`, `/proc/<pid>/io`,
-the TAP's byte counters, the flight recorder. It prints what it measured, not
-just whether it liked it.
+held — `/proc/<pid>/stat`, `/proc/<pid>/io`, the TAP's byte counters, the flight
+recorder. It prints what it measured, not just whether it liked it.
 
 Two things it does deliberately. Bandwidth is reported **gross and steady**, and
 asserted on steady: a bucket starts full and a short transfer measures the

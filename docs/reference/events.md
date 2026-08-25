@@ -34,7 +34,7 @@ Opens the file, and records what the sandbox is. Written by the **host**.
 | `argv` | string array | how the sandbox was launched, for reproduction |
 | `jailed` | boolean | whether the VMM ran inside the jailer — a chroot, a dropped uid, and only the devices it needs *(kelyfos run; every other entry point carries the posture on session.ready instead)* |
 | `cwd` | string | the directory it was launched from, which argv alone does not capture *(kelyfos run)* |
-| `reason` | string | where the machine came from *(restore and fork)* |
+| `reason` | string | where the machine came from *(restore, fork, the E2B shim, a serve-mcp server's own session, and anything raised through that server; kelyfos run and a plain team up record none)* |
 
 ## `session.ready`
 
@@ -235,9 +235,9 @@ One store access, permitted or not. Written by the **host**.
 | --- | --- | --- |
 | `agent` | string | the caller |
 | `peer` | string | the key — a store access addresses a key, not an agent |
-| `kind` | string | get or put |
+| `kind` | string | get, put or delete — a delete is a put of nothing, and is its own word because the record has to show the store being made smaller |
 | `outcome` | string | delivered or refused |
-| `reason` | string | denied, no_such_key, value_too_large, store_full *(refused)* |
+| `reason` | string | denied, no_such_key, value_too_large, key_too_long, too_many_keys, store_full *(refused)* |
 | `bytes` | integer | value size |
 
 ## `team.spawn`

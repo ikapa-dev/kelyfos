@@ -47,6 +47,13 @@ kelyfos sessions rm before-the-migration
 A paused session is a snapshot with everything it needs to become the same
 machine again, under a name a person chose.
 
+**Except a machine that had egress.** `resume` refuses one outright and points at
+`kelyfos snapshot restore -name <name>` instead, for the reason the addressing
+travels with the snapshot at all: the guest's address is inside its memory image
+and something else may hold it now (D22). `pause` does not check for this first —
+it stores the session and prints `resume it with:  kelyfos resume <name>` either
+way — so the refusal is met at the resume.
+
 ### 1.1 The store
 
 ```
@@ -58,12 +65,17 @@ machine again, under a name a person chose.
   plugins.ext4       the plugins device, when there was one
   kelyfos.toml       the policy this machine was running under, frozen
   named.json         what the *pause* was: the name, the sandbox and session ids,
-                     when it was paused, and which policy file was frozen
+                     when it was paused, the kelyfos that wrote it, which policy
+                     file was frozen, and the host directory the workspace was
+                     packed from
 ```
 
 The first five are exactly what `snapshot save` already writes, which is the
 point: `pause` is `snapshot save` plus a teardown plus two more files, not a
-second mechanism.
+second mechanism. The host directory is in `named.json` because the pause is the
+last process that knows it and the resume is the one that owes the write-back: a
+session with none recorded brings its workspace back inside the machine and
+writes nothing out.
 
 > **Corrected after the epic (E5 exit exam).** This section originally listed a
 > `session` file holding the flight-recorder id. What shipped keeps that id
@@ -119,8 +131,9 @@ for one run, once unexpectedly. The workspace image stays in the store and comes
 back with the machine.
 
 The consequence is worth stating plainly: **a paused session holds your files
-inside it.** `sessions` shows the size so it is visible, and `sessions rm` says
-what it is about to discard.
+inside it.** `sessions` shows the size so it is visible, and `sessions rm` names
+what it removed — the size, and how long ago it was paused — after removing it,
+because it does not ask first.
 
 ### 1.4 Events
 
@@ -178,8 +191,16 @@ At shutdown the guest tree is walked again and compared entry by entry:
 > not available for a file that is no longer there — the byte delta is. The same
 > exam found the two minus signs in that column disagreeing, an ASCII hyphen for
 > bytes and U+2212 for lines, and made them one.
+
 Mode changes are `M` with the modes named. A file whose contents are identical
 and whose mode changed is still a change, because it is one.
+
+The mode it names as the new one is the extracted mode, not the guest's: the
+extractor strips world-write and then forces `u+rw` on every file and `u+rwx` on
+every directory. A packed file without those bits therefore comes back as a mode
+change even when the sandbox never touched it — a 0444 file is listed as
+`mode 0444 → 0644`, a 0555 directory as `0555 → 0755` — and because the sync-back
+renames that tree into place, the host file's permission changes with it.
 
 ### 2.3 `--review`
 
@@ -236,7 +257,12 @@ Two frame kinds, and the asymmetry is deliberate:
   latency-sensitive, and base64 inside a JSON envelope would cost a third of the
   bandwidth and a copy per keystroke for no benefit. The stream is the payload.
 - **Control** is a JSON frame, for the things that are not the stream: the
-  opening request (which shell, what size, what environment) and window resizes.
+  opening request (which shell, in which directory, at what size), window
+  resizes, and the guest's exit — the code, the signal and any error, which is
+  what ends the host's copying and what `shell.end` is written from. The
+  environment is not one of them: the guest gets the same environment every
+  command in the sandbox gets, plus `TERM=xterm-256color`, and the host has no
+  say in it.
 
 They share a connection by being length-prefixed: one byte of kind, four bytes of
 length, then the payload. That is the whole framing, and it is written down here

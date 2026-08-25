@@ -20,7 +20,7 @@ RUN_ROOT="${HOME}/.cache/kelyfos/run"
 # lives at <run>/firecracker/<id>/root/sandbox.json rather than <run>/<id>/.
 # Resolve it instead of spelling either layout, so a script that reads it keeps
 # working across the change rather than quietly measuring nothing (P5-6).
-statefile() { ls -t "$RUN_ROOT"/*/"$1"/root/sandbox.json "$RUN_ROOT/$1/sandbox.json" 2>/dev/null | head -1; }
+statefile() { ls -t "$RUN_ROOT"/*/"$1"/root/sandbox.json "$RUN_ROOT/$1/sandbox.json" 2>/dev/null | sed -n '1,1p'; }
 
 WORK="$(mktemp -d)"
 NETHOST="kelyfos-accept.test"

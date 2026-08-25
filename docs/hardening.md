@@ -54,7 +54,7 @@ What limits it inside:
 
 | | |
 | --- | --- |
-| the root filesystem | read-only, with a tmpfs overlay — writes outside `/work` die with the sandbox |
+| the root filesystem | read-only, with a tmpfs overlay — and since P5-3 a write outside the profile's writable trees is refused with `EACCES` rather than landing in the overlay |
 | `/work` | the only durable thing, and only when a workspace was attached |
 | the network | the proxy or nothing; no NIC at all without `--allow` |
 | memory, cores, disk | the caps in `[resources]`, enforced host-side (E1) |
@@ -80,7 +80,9 @@ Firecracker process runs:
   security boundary.
 
 Firecracker's own seccomp filter is on by default in a release binary, which is
-a real protection this project has been getting for free and has never checked.
+a real protection this project got for free and did not check until P5-2. It is
+checked now, on every run and every restore, and a VMM with an unfiltered thread
+is refused rather than reported (§3).
 
 ---
 
@@ -88,7 +90,9 @@ a real protection this project has been getting for free and has never checked.
 
 Firecracker ships `jailer`, and KelyfOS already installs it —
 `dev/install-firecracker.sh` puts it beside the VMM and prints its version. It
-has never been used.
+was unused until P5-1; every sandbox goes through it now unless `--no-jail` is
+passed, and `requireJail` refuses to build one on a machine that cannot run
+`sudo -n jailer`, before anything is created.
 
 ### 2.1 What it does, precisely
 
@@ -102,10 +106,12 @@ Verified against the jailer documentation for v1.16.1, the version pinned in
 | `--parent-cgroup` | places the process inside an existing cgroup — which is how it composes with the caps KelyfOS already sets |
 | `--netns` | joins a network namespace, if one is given |
 | `--resource-limit` | `fsize` and `no-file` bounds |
-| `--new-pid-ns` | its own PID namespace |
+| `--new-pid-ns` | its own PID namespace — deliberately not passed: it makes the jailer fork and the parent return, so the process KelyfOS waits on would exit the moment the machine started |
 
 Inside the jail it `mknod`s `/dev/kvm` and `/dev/net/tun` and chowns them to the
-target uid. The API socket resolves to `<chroot>/run/firecracker.socket`.
+target uid. KelyfOS passes its own `--api-sock`, so the API socket is
+`<chroot>/fc.sock`, and the host keeps its own absolute path to the same file in
+`State.APIPath`.
 
 ### 2.2 The part that is work rather than a flag
 
@@ -208,9 +214,15 @@ recipes did. There is no way to permit that and still refuse `/etc`: a Landlock
 rule covers a tree, so granting the root grants everything under it. The recipe
 now prepares in `/tmp`, which is where it belonged, and the v0.9 release notes
 say plainly that a command writing outside `/work`, `/tmp`, `/run` and `$HOME`
-is refused from v0.9 where it succeeded before. Those notes live only in the
-GitHub release body: this repository has no `CHANGELOG.md` yet, so nothing in
-the tree carries that statement and nothing keeps the two in step. P6-16.
+is refused from v0.9 where it succeeded before. Those four trees are not the
+whole writable set: `/dev/pts` and `/dev/shm` get the same write rights —
+`/dev/shm` is a general-purpose tmpfs and not a device node — and seven device
+nodes (`/dev/null`, `/dev/zero`, `/dev/full`, `/dev/random`, `/dev/urandom`,
+`/dev/tty`, `/dev/ptmx`) may be read, written and truncated, because a profile
+that granted only the four broke `git`, which opens `/dev/null` read-write
+before it does anything else. The release notes live only in the GitHub release
+body: this repository has no `CHANGELOG.md` yet, so nothing in the tree carries
+that statement and nothing keeps the two in step. P6-16.
 
 ### 4.3 Per flavor, and refusing rather than degrading
 
@@ -270,19 +282,40 @@ started it rather than to a dedicated account (D29). The chroot takes the host
 filesystem away entirely — verified from the host's own `mountinfo`, not claimed
 — but a uid shared with your shell is a uid that can signal and `ptrace` your
 other processes. A dedicated service account closes that and costs a second
-setup step; the trade is priced in D29 and is revisitable.
+setup step; the trade is priced in D29 and is revisitable. The host's process
+list is still visible too, because KelyfOS does not pass `--new-pid-ns`: it
+makes the jailer fork and the parent return, and supervising the VMM is worth
+more than hiding a process list from a VMM that is already chrooted and
+unprivileged. It is not the only jailer flag left unpassed — `--netns` and
+`--resource-limit` are not used either, and §2.1's table lists what is.
 
 **The guest kernel.** An agent is still root inside its own guest and can still
 reach the whole syscall surface the seccomp profile permits. Landlock restricts
 the filesystem; it does not make the kernel smaller. *After P5-3:* the profile is
 a refusal list, not an allowlist, so the surface it leaves is everything a
-kernel offers root minus twenty-eight names — a real reduction at exactly the
-places that matter (no module loading, no mount, no clock, no keyrings) and not
-a small surface. Landlock also cannot restrict `chdir`, `stat`, `chmod`,
-`chown`, `access` or `fcntl` at all, by its own documentation, and cannot
-restrict a file descriptor that was already open when the profile was applied —
-so what the supervisor hands a child on its stdin and stdout is outside this
-layer by construction.
+kernel offers root minus the names on that list — twenty-eight of them, of which
+`dev`, the flavor a release publishes, takes `ptrace` back out, and aarch64
+drops `settimeofday` because it has no such syscall to refuse. A real reduction
+at exactly the places that matter (no module loading, no mount, no clock, no
+keyrings) and not a small surface. Landlock also cannot restrict `chdir`,
+`stat`, `chmod`, `chown`, `access` or `fcntl` at all, by its own documentation,
+and cannot restrict a file descriptor that was already open when the profile was
+applied — so what the supervisor hands a child on its stdin and stdout is
+outside this layer by construction. `LANDLOCK_ACCESS_FS_IOCTL_DEV` is left out
+of the rights the ruleset handles, which is this project's choice rather than a
+Landlock limitation: handling it without granting it on `/dev` would refuse the
+terminal ioctls every interactive program makes, so ioctls on device nodes are
+not governed at all.
+
+**The supervisor itself.** Both mechanisms are applied by the re-exec'd
+`--confine` helper and nowhere else, so PID 1 is not confined by the profile it
+applies to everything it spawns, and a tool running inside the supervisor has
+the whole filesystem in front of it. `write_file` is checked by hand against the
+same three lists the profile is built from instead (`writableFor`, P6-24), so
+the file tools get the reach a confined child gets and no more. Reads are
+deliberately not restricted at all: the profile grants read beneath `/` to those
+children anyway, so restricting the tool would make it weaker than the thing it
+serves while closing nothing.
 
 **The other agents' machines, still not reachable** — that was already true and
 this phase does not improve it. It is listed because a reader deciding whether
@@ -314,18 +347,25 @@ Buildroot's reproducible mode experimental and requires an identical build path;
 the compiler cache has been mixing cached and fresh objects in every build this
 project has ever done; and until v1.0 nobody here had measured it at all.
 
-Measured: the two CLI binaries are identical when built from two *different*
-source paths, and `Image`, `rootfs.ext4` and `image.json` are identical across
-two full aarch64 `dev` builds from nothing on one machine with an identical
-build path. That last is the scope, and the scope is part of the answer — one
-machine, one architecture, two builds. It is not a claim that anybody else's
-machine produces these bytes.
+Measured: the two Linux CLI binaries are identical when built from two
+*different* source paths, and `Image`, `rootfs.ext4` and `image.json` are
+identical across two full aarch64 `dev` builds from nothing on one machine with
+an identical build path. That last is the scope, and the scope is part of the
+answer — one machine, one architecture, two builds. It is not a claim that
+anybody else's machine produces these bytes. Nor is it a claim about all four
+CLI binaries: `make release-cli` also builds `kelyfos-darwin-x86_64` and
+`kelyfos-darwin-aarch64`, which ship in the release, and `repro-check` compares
+`dist/kelyfos-linux-*` only — so those two have never been measured.
 
 **An SBOM ships with every release**, one per architecture, covering all three
 places an image comes from: Buildroot's packages, the guest supervisor, and the
-host CLI. That third-and-second matter more than the count does. The supervisor
-is PID 1 and it is cross-compiled by this project's own toolchain, arriving
-through the rootfs overlay rather than as a Buildroot package — so **Buildroot
+Linux host CLI. The macOS CLI for the same architecture ships in the release and
+is in no SBOM — and the SBOM attestation's subject glob, `dist/*aarch64*` or
+`dist/*x86_64*`, matches it anyway, so one shipped artifact per architecture is
+attested as being described by an SBOM that never read it. That third-and-second
+matter more than the count does. The supervisor is PID 1 and it is
+cross-compiled by this project's own toolchain, arriving through the rootfs
+overlay rather than as a Buildroot package — so **Buildroot
 has never heard of it**, and an inventory from that source alone would omit the
 one component KelyfOS actually wrote. An SBOM that is confidently incomplete is
 the supply-chain form of an audit record that is confidently wrong.

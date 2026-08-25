@@ -6,12 +6,17 @@ P2-6 and the restore path by D22. The threat-model discussion lives in
 
 ## 1. The default is no network
 
-A sandbox with no `--allow` flag has **no network interface at all**. Not a
-firewalled one, not one with an empty allowlist — no NIC. There is nothing to
-misconfigure, and no rule that has to hold for the guarantee to be true.
+A sandbox whose allowlist is empty has **no network interface at all**. Not a
+firewalled one, not one with an allowlist that permits nothing — no NIC. There
+is nothing to misconfigure, and no rule that has to hold for the guarantee to be
+true.
 
-`--allow github.com,pypi.org` is what creates a NIC, and it creates one whose
-only reachable destination is a proxy on the host.
+A non-empty allowlist is what creates a NIC, and it creates one whose only
+reachable destination is a proxy on the host. `--allow github.com,pypi.org`
+writes that list on the command line; the `allow` key under `[sandbox]` in
+`kelyfos.toml` fills it when the flag was not typed, so a sandbox started with
+no `--allow` at all, in a project whose policy file has an `allow` list, does
+get a NIC.
 
 ## 2. Topology
 
@@ -184,16 +189,22 @@ hoped for.
 
 ## 6. What the proxy enforces
 
-- `CONNECT host:port` and absolute-URI HTTP requests are accepted only when
-  `host` matches the allowlist. A bare hostname matches itself and its
-  subdomains, so `--allow github.com` also permits `api.github.com`.
+- `CONNECT host:port`, absolute-URI HTTP requests and origin-form ones — a bare
+  `GET /path` with a `Host:` header — are accepted only when `host` matches the
+  allowlist: the target is read from the URL when it carries a host and from
+  `Host:` otherwise, so every shape is decided against the same string. A bare
+  hostname matches itself and its subdomains, so `--allow github.com` also
+  permits `api.github.com`. A leading `*.` is stripped rather than read as a
+  wildcard, so `--allow *.github.com` normalises to `github.com` and permits the
+  apex too; the same normalisation lower-cases the entry and trims trailing
+  dots.
 - Ports are restricted to 80 and 443. No policy key widens that.
 - A refusal is answered with `403` and a body naming the domain and the edit
   that would allow it (`[egress.host]` in [`denials.md`](denials.md)). For plain
   HTTP the guest reads it; for a refused `CONNECT` most clients discard the
   body, so the host prints the same refusal once, on its own stderr — `kelyfos
-  run` and `team up` do; `serve-mcp` and the shim record it without printing,
-  because there is no terminal of yours to print to.
+  run`, `team up` and `snapshot restore` do; `serve-mcp` and the shim record it
+  without printing, because there is no terminal of yours to print to.
 - Every attempt is written to the flight recorder as an `egress.attempt` event,
   allowed or blocked, with the reason and the byte counts
   (`docs/events.md` §4).
@@ -251,7 +262,9 @@ hoped for.
   terminated connection carries many requests, and a body whose written length
   disagreed with its `Content-Length` would poison every exchange after it. A
   `secret.scrubbed` event records that bytes were altered, once per credential
-  per connection.
+  per *response*, not per connection: the de-duplication is built fresh for each
+  response, so a keep-alive connection whose five responses each echo the same
+  token produces five events.
 
 - **Certificate pinning breaks for a secret-bound domain, by construction.**
   This is the cost D6 accepted, and it belongs here as well as in the threat
@@ -292,5 +305,13 @@ nftables rules)
 ```
 
 It fails with that message rather than silently starting a sandbox with no
-network. Running the whole VMM under the jailer, with the network set up before
-privileges are dropped, is P4-1.
+network.
+
+The VMM runs under the jailer unless `--no-jail` is passed, and the jailer needs
+passwordless sudo as well, alongside `ip` and `nft` — and so does the `rm` that
+removes the jail directory afterwards, whose contents the jailer left owned by
+root. The network is already up before the VMM starts: the TAP
+first, then the proxy bound on it, then the nftables table that makes the proxy
+the only reachable destination, and only then a machine that can send a packet.
+Which posture a machine ran under is recorded as `jailed` on the session
+(P5-1, [`docs/hardening.md`](hardening.md) §2).

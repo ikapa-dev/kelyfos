@@ -27,11 +27,11 @@ hand-written half, and this page says where each is still thin.
 | stuck on something KelyfOS refused | [`denials.md`](denials.md), then [`reference/denials.md`](reference/denials.md) for the exact one |
 | running something long and walking away | [`denials.md`](denials.md) on `--notify`, and [`events.md`](events.md) §6 for the history afterwards |
 | keeping an agent off the network | [`networking.md`](networking.md) |
-| after something that works, right now | [`cookbook.md`](cookbook.md) — fourteen recipes, each one runnable as it stands |
+| after something that works, right now | [`cookbook.md`](cookbook.md) — fifteen recipes, each one runnable as it stands |
 | putting KelyfOS inside something else | [`integrating.md`](integrating.md) |
 | building KelyfOS into something else | [`protocol.md`](protocol.md), then [`e2b-shim.md`](e2b-shim.md) |
 | driving KelyfOS from an MCP client | [`mcp-surface.md`](mcp-surface.md) — `serve-mcp` and `[[plugin]]`, and [recipe 9](cookbook.md) for the configuration |
-| judging whether to trust it | [`threat-model.md`](threat-model.md), then [`hardening.md`](hardening.md) for what v0.9 is adding |
+| judging whether to trust it | [`threat-model.md`](threat-model.md), then [`hardening.md`](hardening.md) for what v0.9 added |
 | what the VMM process itself may ask the host kernel for | [`host-seccomp.md`](host-seccomp.md) — every syscall the filter permits, read out of a running machine |
 
 ## The map
@@ -51,15 +51,15 @@ hand-written half, and this page says where each is still thin.
 | [`hardening.md`](hardening.md) | concept | The v0.9 specification, written before the code: what a compromised agent reaches today, what the jailer and the guest profiles take away, and what remains reachable afterwards. |
 | [`host-seccomp.md`](host-seccomp.md) | mixed | The syscall filter around the VMM process: which one is in force and why that is settled, how it is proved from the kernel's own copy rather than from the absence of a flag, and every syscall it permits. |
 | [`threat-model.md`](threat-model.md) | concept | What KelyfOS defends against and — the longer half — what it does not. |
-| [`cookbook.md`](cookbook.md) | recipes | Fourteen complete, copy-pasteable recipes. Every one is a script CI extracts and runs on a real machine. |
+| [`cookbook.md`](cookbook.md) | recipes | Fifteen complete, copy-pasteable recipes. Every one is a script CI extracts and runs on a real machine. |
 | [`integrating.md`](integrating.md) | mixed | For building on KelyfOS: the four ways in, orchestrator patterns, and a long list of the mistakes people actually make. |
 | [`e2b-shim.md`](e2b-shim.md) | mixed | The E2B-compatible REST subset: what it implements, what it does not, and why. |
 | [`../llms.txt`](../llms.txt) | **generated** | The index a machine reads first: every page above as a link with a one-line description, per the llmstxt.org spec. |
 | [`../llms-full.txt`](../llms-full.txt) | **generated** | Every page above concatenated, each with its source URL. Its size is *estimated* by `make docs` and printed in `llms.txt`, rather than repeated here — because a hand-typed count is exactly the kind of number that goes stale quietly, and this one had: it said 101,000 while the generator said 108,000. |
 | [`launch/hn-post.md`](launch/hn-post.md) | not documentation | The launch post draft. Unposted, and the maintainer's to send. |
 
-The plan files at the repository root — [`PLAN.html`](../PLAN.html) for phases 0–4
-and [`PLAN-FEATURES.html`](../PLAN-FEATURES.html) for the epics after them — are
+The plan files at the repository root — [`PLAN.html`](../PLAN.html) for phases 0–6
+and [`PLAN-FEATURES.html`](../PLAN-FEATURES.html) for epics E1–E5 — are
 **not** documentation. They are the build record: every task, every decision with
 its rationale, and a progress log with the command output behind each claim. The
 documents above cite them constantly (`D6`, `F-D19`, `E2-1`), and those citations
@@ -69,8 +69,10 @@ resolve there. [`STATUS.md`](../STATUS.md) is the current position in one page.
 
 **Concept.** Hand-written, and about a design or a trade-off. Nothing in the
 source can confirm or refute it. Kept honest by review, and by the fact that the
-code cites it back: 139 comments across 61 Go files name a document and a section,
-so a section number here is load-bearing rather than decorative.
+code cites it back: 111 comments across 62 Go files name a document and a
+section, so a section number here is load-bearing rather than decorative. That
+count is `grep -rn -E '[a-z-]+\.md §' --include='*.go' .`, given as a rule
+because a hand-typed number on this page has gone stale before.
 
 **Reference.** Statements of fact that also exist in the source — a port number,
 a toml key, a default, an event field, an error string. Every one of these can
@@ -79,9 +81,18 @@ write confidently against it. Most of this half now lives in
 [`reference/`](reference/), generated and CI-checked; what is left in the prose
 below is the part no generator reaches, and it is named per document.
 
-**Mixed.** Every document above except the threat model. The inventory names
-which half of each is reference, so it is clear what a generator will eventually
-own and what will always be someone's prose.
+**Mixed.** Both halves in one document — the label the map gives a document
+that is neither *concept*, *hand*, *recipes*, *generated* nor *not
+documentation*. The inventory names which half of
+each is reference, so it is clear what a generator will eventually own and what
+will always be someone's prose.
+
+**Hand, recipes and not documentation.** The map's three remaining labels.
+*Hand* is [`compatibility.md`](compatibility.md), hand-written like a concept
+document but normative rather than explanatory — a promise about what moves, not
+an account of why. *Recipes* is [`cookbook.md`](cookbook.md), which is extracted
+scripts with prose around them rather than prose with examples in it. *Not
+documentation* is the launch post, which is neither.
 
 ## The inventory
 
@@ -91,6 +102,23 @@ since been corrected, so what remains under *thin* is what is genuinely missing
 rather than wrong — with one exception, called out where it appears:
 `mode: tunnelled` on a plain-HTTP request understates what the proxy read, and
 the documents now say so rather than repeating the claim.
+
+### `compatibility.md` — the promise
+
+*Concept:* what each of the three version constants attaches to and why they are
+not kept in lockstep; why a denial identifier is inside the promise and a guest
+confinement profile is deliberately outside it; why a security fix that must
+narrow a surface is not a patch; and why the MCP revision is somebody else's to
+number.
+*Reference:* none of it — §2 cites the page that pins each surface rather than
+re-listing it, so six of the seven cannot go stale by the mechanism that already
+keeps the reference honest (F-D4). The seventh is the host↔guest protocol, whose
+page is hand-written and checked by no drift gate; the promise says so itself
+rather than letting the citation imply otherwise.
+*Thin:* it is normative from v1.0 and this repository is at v0.9, so nothing in
+it binds yet. §4's deprecation mechanism has not been used: `vcpus`, which
+`kelyfos run` describes as an alias kept so v0.3 command lines keep working, is
+still accepted in silence by both the flag and `kelyfos.toml`.
 
 ### `protocol.md` — the wire
 
@@ -102,7 +130,7 @@ error-kind vocabulary, and every channel's field tables.
 *Thin:* the kernel command line (`kelyfos.proxy`, `.workspace`, `.agent`,
 `.spawn`, `.scratch`) is nowhere described as a set; the guest's default
 environment is referred to and never listed; §6 defines MCP framing and not one
-MCP tool; no timeout in the system is written down except the heartbeat.
+MCP tool.
 
 ### `events.md` — the audit record
 
@@ -139,9 +167,8 @@ oversubscribe.
 the two proof scripts.
 *Thin:* a `[resources]` ceiling silently doubles as the default — writing
 `cpus = 2` also chooses two — and the document frames the section purely as
-ceilings; `[resources] cpus` is not checked for positivity; the per-agent
-`max_runtime` path in a team behaves differently from the single-run one and only
-the latter is described.
+ceilings; the per-agent `max_runtime` path in a team behaves differently from the
+single-run one and only the latter is described.
 
 ### `denials.md` — why a refusal names its fix
 
@@ -171,7 +198,7 @@ neither refusal mentions the other, so a user who follows the first message hits
 the second; `team ps` has no sample output; the store's `not_found` is described as
 "not a refusal" and is recorded as one.
 
-### `cookbook.md` — fourteen things that work
+### `cookbook.md` — fifteen things that work
 
 *Recipes:* one sandbox; an allowlist and an injected credential; a workspace
 round-trip; snapshot and fork; a three-agent team with an ask round-trip and a
@@ -179,7 +206,9 @@ refused edge; reading and verifying the record, including watching one altered
 byte break the chain and checking an exported report the way its recipient
 would; driving a sandbox from the E2B SDK; an orchestrator built
 on the official MCP Python SDK; the configuration that points Claude Code and
-VS Code at `serve-mcp`, checked by running exactly what each file names; and the
+VS Code at `serve-mcp`, checked by running exactly what each file names;
+`kelyfos connect` writing that same configuration into the client's own file and
+`--check` proving it by completing a real handshake; and the
 same SDK driving the host rather than a guest, ending in the record the server
 kept of its own calls; and both MCP directions at once, with a plugin written out
 in full, ending in the two transcripts that hold what each side did; pausing a
@@ -290,18 +319,19 @@ Commands, flags, toml keys, MCP tools, event types and exit codes were all on
 this list at E3-0 and are now in [`reference/`](reference/), extracted rather
 than typed. What is still missing is what no generator reaches:
 
-**The wire protocol's remaining corners.** The kernel command line as a set, the
-guest's default environment, and every timeout in the system except the
-heartbeat. `protocol.md` is hand-written and stays that way — it is a
-specification, not a description.
+**The wire protocol's remaining corners.** The kernel command line as a set and
+the guest's default environment. `protocol.md` is hand-written and stays that
+way — it is a specification, not a description.
 
 **Snapshot restore's networking.** How a frozen NIC is re-paired to a fresh TAP
 (D22) is in the code and in no document.
 
-**Environment variables.** `KELYFOS_CACHE` and `KELYFOS_CGROUP_ROOT` are read by
-the CLI and named nowhere. `KELYFOS_SANDBOX` is covered in
-[`integrating.md`](integrating.md) and the cookbook, but has no entry in the
-generated reference; E3-4 is its home.
+**Environment variables.** `KELYFOS_CACHE`, `KELYFOS_CGROUP_ROOT` and
+`KELYFOS_CONNECT_HOME` — the last of which relocates where `kelyfos connect`
+writes per-user client configuration, for tests and for anybody generating a
+configuration for a machine that is not this one — are read by the CLI and named
+nowhere. `KELYFOS_SANDBOX` is covered in [`integrating.md`](integrating.md) and
+the cookbook, but has no entry in the generated reference; E3-4 is its home.
 
 **A JavaScript client that has been run.** [`integrating.md`](integrating.md)
 covers the configuration route and the wire format, and deliberately prints no

@@ -73,9 +73,25 @@ it cannot see into a tunnelled or compressed response at all. `docs/networking.m
 states those limits before it states the capability.
 
 **The binding is a suffix match**, so `--secret T@github.com` attaches the
-credential to `api.github.com` and `raw.githubusercontent.com` too, on any
-request the guest composes to any of them. Bind a credential only to a domain
-whose subdomains you would also hand it to.
+credential to `api.github.com` and to every other subdomain of `github.com`. The
+rule is the label boundary and not the string, so `raw.githubusercontent.com` is
+not one of them — it does not end in `.github.com` — and `--allow github.com`
+does not reach it either. Bind a credential only to a domain whose subdomains
+you would also hand it to.
+
+**A path binds one endpoint instead.** The spec is `NAME@host[:scheme][/path]`,
+and a spec that names a path binds that one host exactly rather than by suffix,
+because naming an endpoint and then expanding to subdomains would contradict
+what the path was written to do. The credential is attached only to a request
+whose path is beneath the prefix and is literal and already in normal form: a
+percent-encoded slash or dot lets a server re-segment a path into somewhere the
+proxy never matched. Two more cases withhold it whatever the scope — a request
+whose `Host` header names something other than the host the guest asked to
+connect to, and every plaintext HTTP request, because the credential is attached
+only on the terminated path. Withholding does not refuse the request: it goes
+without the credential, and a `secret.withheld` event records which one and why,
+so an unauthenticated request is diagnosable rather than a 401 from somewhere
+else.
 
 ### The workspace disk, which this table did not list
 
@@ -109,10 +125,14 @@ wrong:
    `RESOLVE_BENEATH` and `RESOLVE_NO_SYMLINKS`. The kernel is what refuses, not
    this code's arithmetic.
 
-Guest-chosen **modes** do not survive either. The executable bit does, because an
-agent that built a binary needs it; group and world write, setuid, setgid and the
-sticky bit do not, and the workspace root keeps the mode the person's own
-directory had rather than the one the image's root carried.
+Guest-chosen **modes** are filtered too. The executable bit survives, because an
+agent that built a binary needs it; world write, setuid, setgid and the sticky
+bit do not, and the workspace root keeps the mode the person's own directory had
+rather than the one the image's root carried. Group write is deliberately left
+alone: world write is reachable by any account on the host, group write is
+ordinarily the user's own group, and stripping it turned every 0664 file in a
+project the guest never touched into a 0644 one — a boundary that rewrites the
+user's own files to protect them from themselves.
 
 What this does **not** claim: the contents are still whatever the agent wrote.
 The boundary is about where bytes land and what permissions they carry, not
@@ -127,9 +147,29 @@ used to leave open: a report that renders a verdict about itself asks a reader
 to trust the file, and a file is exactly the thing under discussion. What it
 does **not** close is the rendering: verification covers the record the page
 carries, not the page's drawing of it, and `kelyfos verify --replay` exists so
-the two can be compared rather than assumed. A guest that could write its own audit trail could write
-a flattering one, so it cannot write one at all. A small class of events
-*transcribes* something the guest reported — the OOM killer, and a plugin's calls
+the two can be compared rather than assumed.
+
+Two more things it does not close, both named in the code that does the
+checking. Anyone who can write the file can rewrite it end to end and recompute
+every digest, so what the chain catches is the *selective* edit — removing one
+blocked-egress event, softening one command — which is the edit someone covering
+their tracks wants to make. And a chain cut short verifies: nothing after the
+cut exists to break, so a truncated record is byte-for-byte what a shorter
+session would have written. The one observable difference is whether the record
+ends in a `session.end`, and `kelyfos verify` prints its absence as an
+observation rather than a verdict, because a record with no `session.end` is a
+session still open as often as it is one that was cut.
+
+Signing answers both, and only for a reader who already holds the key.
+`kelyfos log --export ... --sign-key` signs an export with an ed25519 key of
+yours, and `kelyfos verify --key` checks the signature against one the reader
+already has rather than against one the file supplied itself. An unsigned report
+still verifies; a signature says who exported the file, not that the record
+inside it is sound.
+
+A guest that could write its own audit trail could write a flattering one, so it
+cannot write one at all. A small class of events *transcribes* something the
+guest reported — the OOM killer, and a plugin's calls
 and crashes (`plugin.call`, `plugin.crash`) — and those are marked `"source": "guest"` in the schema so a reader
 can weigh them differently. The host still writes them; it just did not witness
 them.
@@ -151,8 +191,11 @@ between sandboxes and §2 otherwise reads as forbidding one.
   a routing one.
 - **The team store defaults to shared.** A key that no `[[team.store.key]]` rule
   matches is readable and writable by the whole team. Unwritten policy means
-  shared state; the byte limits (1 MiB a value, 64 MiB a team) are footgun
-  bounds, not security ones. Every access is recorded, permitted or not.
+  shared state; the four limits (1 MiB a value, 1 KiB a key, 10,000 keys and
+  64 MiB a team, with a key weighed against the byte ceiling alongside its
+  value) are footgun bounds, not security ones. Every access is recorded,
+  permitted or not, including the write of an empty value that removes a key —
+  the only way an agent has to make the store smaller.
 - **A spawn budget is a standing authorisation.** An agent granted one can make
   new microVMs while the run lasts, bounded by the count, image whitelist and
   lifetime written down beforehand. No tool can grant or widen a budget, an
@@ -198,8 +241,11 @@ that enforces it. Writes go to `/work`, `/tmp`, `/run`, `$HOME`, `/dev/pts` and
 `/dev/shm`, plus seven named device nodes, and nowhere else — so an agent can no
 longer edit the toolbox it was handed. `/dev/shm` is worth naming on its own: it
 is a tmpfs the guest kernel sizes at half the machine's RAM, so it is a
-general-purpose writable area, bounded by `mem` rather than by the profile; 28 syscalls are refused with `EPERM`, among them `mount`, `reboot`, the
-clock-setting family, the keyring calls and module loading.
+general-purpose writable area, bounded by `mem` rather than by the profile. The
+seccomp half refuses a list of syscalls with `EPERM` — 28 of them on the `base`
+flavor on x86_64, 27 on `dev`, which keeps `ptrace` out of the list, and one
+fewer again on arm64, which has no `settimeofday` — among them `mount`,
+`reboot`, the clock-setting family, the keyring calls and module loading.
 
 What that leaves:
 
@@ -208,10 +254,20 @@ What that leaves:
   inside a single-purpose VM buys a boundary weaker than the one already around
   it.
 - **The refusal list is a list, not an allowlist.** The syscall surface it
-  leaves is everything the guest kernel offers root minus 28 names. That is a
-  real reduction at the places that matter and it is not a small surface. An
+  leaves is everything the guest kernel offers root minus those names — 28 of
+  them on `base`, and 27 on `dev`, which keeps `ptrace`. That is a real
+  reduction at the places that matter and it is not a small surface. An
   allowlist for an arbitrary agent command is a crash waiting to be mistaken for
   a security feature.
+- **The supervisor itself is not confined.** Landlock and seccomp are applied by
+  a re-exec'd helper on the way to each spawned program, so PID 1 has the whole
+  guest filesystem in front of it — and the MCP file tools run there rather than
+  in a child. `write_file` is checked against the same three writable lists the
+  profile is built from, so it gets the reach a confined child gets and no more;
+  `read_file` is not checked, because a confined child is granted read beneath
+  `/` anyway. Until that check existed, `write_file` passed the agent's path
+  straight to `os.WriteFile` and reached `/dev/vda` and `/dev/vdb`, the raw
+  disks behind the read-only root and the workspace.
 - **Landlock cannot restrict everything.** By its own documentation it does not
   govern `chdir`, `stat`, `chmod`, `chown`, `access` or `fcntl`, and it cannot
   restrict a file descriptor that was already open when the profile was applied —
@@ -227,9 +283,14 @@ What that leaves:
 The two sections above describe what stands around Firecracker. Nothing stands
 around the CLI: it runs as you, it is what talks to the jailer through
 `sudo -n`, and a bug in it is a bug with your user account's reach. The sudoers
-grant it asks for is deliberately narrow — one line, the `jailer` binary and
-nothing else, so it is not a general `NOPASSWD` — but the process that invokes
-it is still ordinary code running as you.
+grant the *jailer* asks for is deliberately narrow — one line, the `jailer`
+binary and nothing else, so it is not a general `NOPASSWD` — but the process
+that invokes it is still ordinary code running as you. Egress is the wider case:
+the CLI shells out to `sudo -n ip` and `sudo -n nft`, tests for the privilege
+with `sudo -n true`, and removes a root-owned jail directory with
+`sudo -n rm -rf`, so a machine set up for `--allow` has passwordless sudo in
+general rather than a second narrow line — which is what `kelyfos doctor` tells
+you to arrange.
 
 ### TLS termination is a real trade-off (decision D6)
 For a domain with a secret bound to it, the proxy decrypts. Consequences you are
@@ -274,19 +335,25 @@ confidentiality or integrity boundary; they bound consumption and nothing more.
 And nothing protects against a guest wedging its own kernel, which remains its
 own problem and not the host's.
 
-### The shim is an unauthenticated local port
+### The shim is a local port, unauthenticated by default
 `kelyfos shim` serves an E2B-compatible REST subset, by default on
-`127.0.0.1:3000`, and it checks nothing: there is no key, no account and no
-authorisation, because it has none to have. While it is running, **any process
-on that machine that can reach the port can boot microVMs, list them, kill them,
-and read and write arbitrary paths inside a running guest.** That is a local
-privilege surface the rest of the CLI does not have, and `--addr` is the only
+`127.0.0.1:3000`, and by default it checks nothing: no key, no account, no
+authorisation. Setting `KELYFOS_SHIM_TOKEN` makes every route ask for that
+bearer token, compared in constant time, but it is opt-in and unauthenticated
+stays the default. While a shim without one is running, **any process on that
+machine that can reach the port can boot microVMs, list them, kill them, read
+arbitrary paths inside a running guest, and write to any path that guest's
+profile makes writable** — writes go through a command in the guest, so they are
+confined like anything else the supervisor spawns, and reads are not, because a
+confined child is granted read beneath `/`. That is a local privilege surface
+the rest of the CLI does not have, and without the token `--addr` is the only
 thing between it and the network.
 
 The sandboxes it creates are policed like any other: since F-D33 the shim reads
 `kelyfos.toml`, the caps above apply to them, and each one writes its own flight
-recorder. What remains is the port itself, and it is the whole of the exposure —
-run it when you need it and stop it when you do not.
+recorder. One shim holds at most sixteen machines at once, so the port is not a
+way to make an unbounded number of them. What remains is the port itself — run
+it when you need it and stop it when you do not.
 
 ### The supply chain of what you run *inside*
 `--allow github.com` means the agent can fetch and execute whatever is at
@@ -383,10 +450,13 @@ What that covers, stated rather than summarised as "the parsers", because the
 useful question is which ones: the framing of every host/guest channel, and the
 decode of each message type the host reads from a guest; the policy parsers —
 `kelyfos.toml`, `--secret`, and the proxy's target parse that every allowlist
-decision keys on; the flight recorder; the argument summarisers on both sides of
-the MCP surface; the shim's shell quoting; and, since v1.0, the extractor that
-takes a record back out of an exported report — the one file in this product
-that arrives from *outside* it, sent by whoever wants you to read it.
+decision keys on; the proxy's response scrubber, which is the one component that
+rewrites bytes the agent is about to parse; the flight recorder; the argument
+summarisers on both sides of the MCP surface; the shim's shell quoting and the
+base64 decoder that turns guest output back into file contents for an SDK
+client; and, since v1.0, the extractor that takes a record back out of an
+exported report — the one file in this product that arrives from *outside* it,
+sent by whoever wants you to read it.
 
 Where a function has a property worth more than "does not crash", the harness
 asserts the property instead — that `Verify` and `Read` agree about a chain,
@@ -394,11 +464,11 @@ that a credential matches the domain it was just bound to, that an argument
 carrying content is never written into the record verbatim, that a shell-quoted
 string survives a shell unchanged.
 
-What is **not** fuzzed, and why: the image manifest and the message types above
-the framing are `encoding/json` decoding into typed structs, so a harness there
-measures the standard library; *writing* the exported HTML report goes through
-`html/template`, which escapes by construction — reading one back does not, and
-that half is fuzzed; and the MCP observer's request/response pairing is state
+What is **not** fuzzed, and why: the image manifest is `encoding/json` decoding
+into a typed struct, so a harness there measures the standard library; *writing*
+the exported HTML report goes through `html/template`, which escapes by
+construction — reading one back does not, and that half is fuzzed; and the MCP
+observer's request/response pairing is state
 rather than parsing. These are named so the
 list above reads as a boundary rather than as everything somebody got to.
 
@@ -407,6 +477,11 @@ does not simply say the parsers are careful. Two were silent-failure bugs rather
 than crashes — a credential bound to `github.com.` never attached to anything,
 and a `mem` ceiling large enough to overflow became *negative* — and three were
 places where agent-chosen text reached a rendered line of the transcript.
+Running them since has found two more of the silent kind, both from the
+scheduled run rather than from writing a harness: `--secret T@..` normalised to
+a domain no host could ever match, because the host side trims one trailing dot
+from the name it is asked about and the domain kept the other, so `0..` bound
+`0.` and matched nothing a normalised host could ever be.
 
 ## 5. Trust boundaries
 
@@ -417,11 +492,11 @@ places where agent-chosen text reached a rendered line of the transcript.
 | guest → credentials | injection at the proxy | active |
 | guest → audit record | host-side, hash-chained | active, including under `kelyfos shim` |
 | guest → host filesystem, via the workspace disk | the image is enumerated and validated before it is read, and extracted through `openat2(RESOLVE_BENEATH\|RESOLVE_NO_SYMLINKS)` | active since v1.0. **This row did not exist until an external audit found what its absence cost** — see below |
-| a report → whoever received it | the record travels in the file; `kelyfos verify` | active since v1.0; covers the record, not the rendering |
+| a report → whoever received it | the record travels in the file; `kelyfos verify`, and `--sign-key` / `--key` when the reader already holds the key | active since v1.0; covers the record, not the rendering, and a chain cut short at its end still verifies |
 | guest → guest (team) | host broker + declared edge list | active |
 | guest → host CPU/RAM/IO | KVM config, cgroup v2, rate limiters | active, and only when configured |
 | host process → host | the jailer | active (P5-1); `--no-jail` turns it off and says so on every run |
-| in-guest process → guest | Landlock + seccomp | active (P5-3); absent on images and snapshots made before v0.9, which is warned about rather than refused |
+| in-guest process → guest | Landlock + seccomp | active (P5-3) for every process the supervisor spawns; the supervisor itself is not confined, and its own file tools are held to the profile's writable lists by an in-process check. Absent on images and snapshots made before v0.9, which is warned about rather than refused |
 
 ## 6. If you are evaluating KelyfOS
 

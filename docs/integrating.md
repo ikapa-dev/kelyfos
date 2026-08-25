@@ -18,7 +18,7 @@ completes a real MCP handshake — because "configured" asserted without evidenc
 is what the command exists to replace.
 
 ```sh
-kelyfos connect --list          # the clients it writes, and the version each was verified against
+kelyfos connect --list          # the clients it writes, and what each was verified against
 kelyfos connect claude-code     # writes .mcp.json in this project
 kelyfos connect vscode --check  # writes .vscode/mcp.json, then proves the server starts
 kelyfos connect generic         # prints the snippet, for anything else
@@ -37,9 +37,14 @@ client to one sandbox's guest.
 
 **A client's configuration format is an external surface.** It is outside the
 drift gate and outside the compatibility promise, re-verified on its own cadence,
-which is why every entry carries the tool, the version and the date it was
-checked against. The rest of this page is the hand-written path, which is what
-you need if your client is not one of the six.
+which is why every entry carries the tool it was checked against and the date.
+The rest of this page is the hand-written path, which is what you need if your
+client is not one of the six.
+
+`connect` does not run on macOS. What the binary answers there at all is
+`doctor`, `verify`, `version` and `help`; everything else refuses with
+`kelyfos doctor` as the way in, so a Mac's configuration is the `limactl` form
+in §3, written by hand.
 
 
 ## 1. Four ways in, and how to choose
@@ -51,16 +56,19 @@ you need if your client is not one of the six.
 | **The MCP server** | `kelyfos serve-mcp` is KelyfOS itself as an MCP server: sandboxes, files, snapshots, forks and teams as tools | You have a client — Claude Code, VS Code, anything — and want *it* to create and manage the machines. One entry in a config file. |
 | **The E2B shim** | an E2B-compatible REST subset on a local port | You have code already written against the E2B SDK and want it to work against a self-hosted box without a rewrite. |
 
-All four go through the same wall. Each reads the project's `kelyfos.toml`, each
-is capped by its `[resources]`, and each writes a flight recorder — there is no
-entry path that skips the policy, which is the invariant F-D5 states for MCP and
-F-D33 applied to the shim.
+All four go through the same wall. The CLI, `serve-mcp` and the shim each read
+the project's `kelyfos.toml` and are capped by its `[resources]`; the bridge
+reads no policy file of its own, because it attaches to a sandbox already
+running under the policy whichever door booted it applied. All four write a
+flight recorder — there is no entry path that skips the policy, which is the
+invariant F-D5 states for MCP and F-D33 applied to the shim.
 
 They do differ in what they can express. The shim serves a fixed REST subset and
 cannot run commands at all; the bridge gives an agent one guest's full tool
 surface; `serve-mcp` gives a client the host's, including snapshots, forks and
 the declared team; the CLI gives you everything. And the shim authenticates
-nobody, so its port is a local privilege surface the other three do not have.
+nobody unless `KELYFOS_SHIM_TOKEN` is set, so by default its port is a local
+privilege surface the other three do not have.
 
 The two MCP doors point in opposite directions and are easy to confuse. `mcp`
 is *inward*: you have already chosen a sandbox and you are talking to what is
@@ -80,7 +88,9 @@ kelyfos run [flags] -- <command>
 
 This boots a sandbox, exports `KELYFOS_SANDBOX` into `<command>`'s environment,
 runs the command **on the host**, then tears the sandbox down and exits with the
-command's own status. Every `kelyfos exec` and `kelyfos mcp` in that command
+command's own status — unless a time budget fired, which makes the status `124`
+whatever the command returned, or something in the guest was OOM-killed, which
+turns a zero into `137`. Every `kelyfos exec` and `kelyfos mcp` in that command
 attaches to that sandbox without being told which one.
 
 It is the shape to build on, for a reason worth stating plainly: the alternative
@@ -194,8 +204,10 @@ minimal `PATH`, so a bare `kelyfos` is not found there even when it exists:
 This repository's own [`.mcp.json`](../.mcp.json) runs
 [`dev/mcp-server.sh`](../dev/mcp-server.sh) rather than either of these, because
 a VM name and an absolute path do not belong in a file a Linux contributor also
-checks out; the script chooses the right form for the machine it runs on. Doing
-this by hand is what `kelyfos connect <client>` will replace.
+checks out; the script chooses the right form for the machine it runs on.
+`kelyfos connect <client>` writes the first form and only the first — an
+absolute path to the `kelyfos` binary with `serve-mcp --policy`, never a
+`limactl shell` wrapper — so the Lima shape above stays hand-written.
 
 **If you are writing a client from scratch**, the transport is a subprocess and
 the framing is newline-delimited JSON-RPC — one message per line, no embedded
@@ -213,9 +225,14 @@ demonstrated even where an SDK is not:
 } | kelyfos mcp
 ```
 
-The bridge is a byte-level pass-through by design: it does not reframe, buffer
-by message, or parse. Whatever your client sends reaches the guest's MCP server
-unchanged, which is what makes an off-the-shelf client work.
+The bridge does not reframe: whatever your client sends reaches the guest's MCP
+server byte-for-byte, which is what makes an off-the-shelf client work. It does
+read a copy, though — each direction is teed into a line scanner whose output is
+unmarshalled to write flight-recorder events, and that scanner's ceiling is
+16 MiB, so a longer line ends the copy rather than reaching the guest. And when
+the bridge closes with tool calls still outstanding it answers those itself,
+with error results the guest never sent — see
+[common mistakes](#6-common-mistakes).
 
 ---
 
@@ -247,9 +264,14 @@ to   = "worker-*"
 enabled = true
 ```
 
-Two rules the generator has to respect, because the parser refuses otherwise:
-an agent's `secrets` must each name a domain that is in *that agent's* `allow`,
-and `count` above 1 cannot be combined with a `workspace`.
+The rules the generator has to respect, because the parser refuses otherwise:
+an agent's `secrets` must each name a domain that is in *that agent's* `allow`;
+`count` above 1 cannot be combined with a `workspace`; two agents cannot resolve
+to the same name, counting the `worker-1` … `worker-N` a `count` expands into;
+and an edge endpoint that matches no agent is an error rather than a no-op.
+Inside `[team.agent.resources]` an `idle_timeout` is refused (F-D20), and inside
+`[team.agent.spawn.resources]` so are `idle_timeout` and `max_runtime` — the
+second is the budget's own `lifetime` under another name.
 
 ### Spawn under a budget, rather than deciding for the agent
 
@@ -309,8 +331,13 @@ the useful events are `command.exit` (with `code`), `egress.attempt` (with
 one file covers every agent and the `agent` field says which machine each event
 came from.
 
-`kelyfos log --verify` exits non-zero when the chain is broken. If you are
-storing these records as evidence, that exit status is the check to run.
+`kelyfos log --verify` exits non-zero when the chain is broken — an event
+edited, a line deleted from the middle, a line reordered. What it cannot see is
+a record truncated at the tail: the walk starts at line 1 and follows the links
+forward, and nothing in the file says how many events there should have been. If
+you are storing these records as evidence, the check is the chain head the
+verdict prints, compared against the head you recorded somewhere else; the exit
+status alone does not prove no trailing line was removed.
 
 ---
 
@@ -324,8 +351,12 @@ Worth knowing before you design around it.
   exception is a budgeted `team_spawn`, and the worker it creates gets one edge.
 - **No GPU, on this backend, ever.** Firecracker has no device passthrough; it is
   the security posture rather than a missing feature.
-- **No inbound.** Nothing outside can open a connection to a guest. Port
-  forwarding is planned and is not here.
+- **No inbound packets.** Nothing outside opens a connection to a guest across
+  its network interface, and a forward is not an exception: a `-p 8080:80` on
+  `kelyfos run`, or a `[[forward]]` in `kelyfos.toml`, binds a listener on this
+  machine and carries each connection over vsock, so the nftables ruleset is the
+  same with a forward as without one (F-D7). That listener binds `127.0.0.1`
+  unless `--p-bind` says otherwise.
 - **No shared filesystem.** `--workspace` is a copy in and a copy back.
 
 ---
@@ -352,6 +383,14 @@ the reconstructed one is renamed into place, so that a file the agent deleted is
 really gone. The consequence is that a process whose current directory *is* the
 workspace ends up in a directory that no longer exists. Step back into it by
 name after the run.
+
+Two more consequences a script will hit. The directory renamed away is kept as
+`<dir>.kelyfos-previous` until the next successful run clears it, so every run
+leaves a sibling directory behind. And the swap is not unconditional: the host
+directory is fingerprinted again just before it happens, and if it changed while
+the sandbox ran the reconstructed tree lands in `<dir>.kelyfos-out` instead,
+with the workspace directory left exactly as it was — so a script that assumes
+the directory was replaced can read pre-run state.
 
 ### `kelyfos exec` with more than one sandbox running
 
@@ -480,8 +519,9 @@ this with a trailing `sleep`; the Python SDK does it for you by keeping the
 session open.
 
 The record is not a workaround here either. An ask that goes unanswered is
-written when the host-side timeout fires, which is `timeout_ms` later, not when
-your client gave up.
+written when the host-side timeout fires, which is `timeout_ms` later — or
+fifteen minutes, if you asked for longer than the host will hold a call open —
+not when your client gave up.
 
 ### The error an agent sees is not the reason the record gives
 
@@ -497,7 +537,10 @@ detail.
 It does not. An empty window is an **error** of kind `timeout`, not an empty
 result — because a model told "nothing" concludes there is nothing to do, while
 a model told "timeout" knows only that nothing has arrived *yet*. The wait
-argument is `timeout_ms`, an integer of milliseconds, default 60000.
+argument is `timeout_ms`, an integer of milliseconds, default 60000. The host
+clamps it at both ends: anything at or below zero becomes one minute, and
+anything above fifteen minutes becomes fifteen, so an orchestrator that asks for
+an hour waits fifteen.
 
 That timeout writes **no event**. `outcome: timeout` in the record means an ask
 nobody answered; a recv that found nothing is not an outcome, because no message
@@ -508,9 +551,11 @@ quiet.
 
 It is not, since F-D33: `kelyfos shim` reads the project's `kelyfos.toml`,
 `[resources]` caps every sandbox it creates, and each one writes its own flight
-recorder. What it does not do is authenticate its caller. If you are embedding
-it, bind it to loopback and treat reaching that port as equivalent to running
-`kelyfos` on the machine.
+recorder. What it does not do by default is authenticate its caller. Set
+`KELYFOS_SHIM_TOKEN` and every route requires that value as
+`Authorization: Bearer <token>` and answers `401` without it; leave it unset and
+the port is unauthenticated, so bind it to loopback and treat reaching it as
+equivalent to running `kelyfos` on the machine.
 
 ### Running commands through the E2B shim
 
@@ -523,7 +568,7 @@ different protocol stack from the REST endpoints the shim serves. Use
 
 ## 7. Where to look next
 
-- [`cookbook.md`](cookbook.md) — fourteen recipes that run, including the Python
+- [`cookbook.md`](cookbook.md) — fifteen recipes that run, including the Python
   client above
 - [`reference/`](reference/) — every command, flag, key, tool, event and exit
   code, generated from the source

@@ -61,7 +61,7 @@ check "$(grep -qE '^  profile .*landlock abi [0-9]' run.log && echo yes || echo 
       "the run names the Landlock ABI it got, not the one it hoped for"
 check "$(grep -qE "^  profile .*· $FLAVOR ·" run.log && echo yes || echo no)" \
       "and the profile is this flavor's"
-state="$(ls -t ~/.cache/kelyfos/run/firecracker/*/root/sandbox.json 2>/dev/null | head -1)"
+state="$(ls -t ~/.cache/kelyfos/run/firecracker/*/root/sandbox.json 2>/dev/null | sed -n '1,1p')"
 check "$(grep -q '"profile"' "$state" 2>/dev/null && echo yes || echo no)" \
       "and it is in the sandbox's own state, not only on a terminal"
 
@@ -100,7 +100,7 @@ check "$(grep -qiE 'not permitted|permission denied' <<<"$out" && echo yes || ec
       "and only the supervisor may power this machine off"
 
 say "the flavor decides one of them"
-out="$(kelyfos exec 'strace -V 2>&1 | head -1; true' 2>&1 | tail -1)"
+out="$(kelyfos exec 'strace -V 2>&1 | sed -n "1,1p"; true' 2>&1 | tail -1)"
 if [ "$FLAVOR" = "dev" ]; then
   # dev keeps ptrace. Proving it needs no debugger installed: the profile's own
   # dump is the declaration, and the runtime check is that the syscall is not
@@ -118,7 +118,7 @@ run_ok() {
   echo "  $label -> $out"
   check "$([ $rc -eq 0 ] && echo yes || echo no)" "$label"
 }
-run_ok "the read-only root is still readable"   'head -2 /etc/os-release'
+run_ok "the read-only root is still readable"   'sed -n "1,2p" /etc/os-release'
 run_ok "a program still runs from /usr"          'command -v env >/dev/null && echo ok'
 run_ok "/tmp is writable"                        'echo t > /tmp/t.txt && cat /tmp/t.txt'
 run_ok "a file moves between /tmp and /work"     'echo m > /tmp/m.txt && mv /tmp/m.txt /work/m.txt && cat /work/m.txt'
@@ -198,7 +198,7 @@ rm -f run2.log
 (timeout 300 kelyfos run > run2.log 2>&1 &)
 for i in $(seq 1 90); do kelyfos exec true >/dev/null 2>&1 && break; sleep 1; done
 kelyfos exec 'echo snapshot-marker > /tmp/marker' >/dev/null 2>&1
-save="$(kelyfos snapshot save --name profiletest 2>&1 | head -2)"
+save="$(kelyfos snapshot save --name profiletest 2>&1 | sed -n '1,2p')"
 sed 's/^/  /' <<<"$save"
 check "$(grep -q 'saved snapshot' <<<"$save" && echo yes || echo no)" \
       "a confined machine snapshots"
@@ -215,7 +215,7 @@ check "$(grep -qE '^Seccomp:[[:space:]]*2' <<<"$st" && echo yes || echo no)"    
 rsession="$(kelyfos log --list | sed -n 1p | awk '{print $1}')"
 halt
 kelyfos log --session "$rsession" --json > rlog.json 2>/dev/null
-grep -o '"profile":"[^"]*"' rlog.json | head -1 | sed 's/^/  /'
+grep -o '"profile":"[^"]*"' rlog.json | sed -n '1,1p' | sed 's/^/  /'
 check "$(grep -q '"profile":"' rlog.json && echo yes || echo no)"       "session.ready in the restored chain carries the profile"
 check "$(grep -q '"jailed":true' rlog.json && echo yes || echo no)"       "and the jail, so the chain names both walls and not one"
 

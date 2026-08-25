@@ -85,7 +85,7 @@ check "$(grep -q -- '--seccomp-filter' <<<"$cmdline" && echo no || echo yes)" \
 check "$(grep -q 'api-sock' <<<"$cmdline" && echo yes || echo no)" \
       "and the command line really was read, not silently empty"
 
-fcver="$(firecracker --version 2>/dev/null | head -1)"
+fcver="$(firecracker --version 2>/dev/null | sed -n '1,1p')"
 echo "  $fcver"
 check "$(grep -q "$(grep -E '^FIRECRACKER_VERSION' "$REPO/versions.mk" | sed 's/.*= *//')" <<<"$fcver" && echo yes || echo no)" \
       "and that binary is the version versions.mk pins"
@@ -106,7 +106,7 @@ say "and the run says so, in the terminal and in its own state"
 grep -E 'seccomp' run.log | sed 's/^/  /'
 check "$(grep -q 'seccomp     filter mode' run.log && echo yes || echo no)" \
       "the run printed the mode it observed"
-state="$(ls -t ~/.cache/kelyfos/run/firecracker/*/root/sandbox.json 2>/dev/null | head -1)"
+state="$(ls -t ~/.cache/kelyfos/run/firecracker/*/root/sandbox.json 2>/dev/null | sed -n '1,1p')"
 echo "  $(grep -o '"seccomp[^,]*' "$state" 2>/dev/null | tr '\n' ' ')"
 check "$(grep -qE '"seccomp": ?"filter"' "$state" 2>/dev/null && echo yes || echo no)" \
       "and wrote it into the sandbox's own state rather than only to a terminal"
@@ -119,7 +119,7 @@ else
   sudo -n "$BIN/seccomp-probe" -pid "$vmm" -format record > got.txt 2>probe.err
   rc=$?
   if [ $rc -ne 0 ]; then
-    fail "the filter could not be read: $(head -2 probe.err)"
+    fail "the filter could not be read: $(sed -n '1,2p' probe.err)"
   else
     grep -E '^filter|instructions|sha256|unlisted-syscall|foreign-arch|allowed |conditional ' got.txt | sed 's/^/  /'
     check "$(grep -q 'unlisted-syscall TRAP' got.txt && echo yes || echo no)" \
@@ -138,7 +138,7 @@ else
       pass "what it permits is exactly what dev/expect/$(basename "$EXPECT") records"
     else
       fail "the filter has changed since it was recorded"
-      head -40 diff.txt | sed 's/^/  /'
+      sed -n '1,40p' diff.txt | sed 's/^/  /'
     fi
   fi
 fi

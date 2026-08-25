@@ -180,7 +180,7 @@
     <span class="bl-name">Overall</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">P6-6 done &mdash; the export carries the record it was rendered from and <code>kelyfos verify</code> re-runs the chain over it offline. <b>An external security audit then arrived (D45) and v1.0 is gated on its trust-boundary group</b>: the workspace block device is a guest&rarr;host surface the threat model does not list. Seven tasks inserted before P6-7. <b>P6-21 done</b> &mdash; <code>--review</code> no longer destroys an edit made while somebody was reading it. <b>P6-6 corrected</b>: its own adversarial review landed late and found a false claim about truncation and an unchecked chain head, both reproduced and both fixed. <b>P6-22 done</b> &mdash; nine fixture groups, twenty-one recorded breaks, a ledger that can only shrink, and a CI job that runs the lot. <b>D46</b> triaged seven findings against HEAD and corrected two. <b>P6-24 done &mdash; the v1.0 gate is open.</b> C-1, H-1 and H-2 are closed in two layers, the workspace block device is in the trust-boundary table, and the full acceptance suite passes on the final code. P6-23 stands at 11/23, blocked on the audit text for the rest (D47). <b>P6-25 done</b> &mdash; the blocking set is closed and the hostile ledger is down to one line, which is a recorded decision rather than a defect. <b>P6-26 done. The audit&rsquo;s v1.0-blocking set is closed</b> &mdash; boundary group, clamps and both claims &mdash; and the hostile ledger is one line, which is a recorded decision. P6-23 and P6-27 are blocked on the audit text for the remaining twelve findings (D47). <b>P6-7 done</b> &mdash; signed exports with a key the reader anchors, and a vocabulary rather than a badge. <b>P6-8 done</b> &mdash; the release is a workflow, the sums file is written from scratch and checked both ways, and the flavor is in the cache key. <b>P6-9 done</b> &mdash; and measured: two full builds from nothing produce byte-identical artifacts on this machine, which is more than D38 expected. <b>P6-10 done</b> &mdash; 64 components across three sources, including the one Buildroot has never heard of. <b>P6-11 done</b> &mdash; provenance and SBOM attestations, and the immutable-release claim refused in the same breath. <b>P6-12 done</b> &mdash; the CLI runs on macOS, <code>doctor</code> owns the Lima layer, and a report verifies on the machine it was sent to. <b>P6-13 done</b> &mdash; six client writers, a real handshake behind <code>--check</code>, and the four rulings recorded. <b>P6-14 done</b> &mdash; the promise exists, and the record&rsquo;s field order is pinned by a test rather than by a sentence. Next: <b>P6-15</b>, the documentation audit</b></div>
+  <div class="focusline">Current focus: <b id="focus">P6-6 done &mdash; the export carries the record it was rendered from and <code>kelyfos verify</code> re-runs the chain over it offline. <b>An external security audit then arrived (D45) and v1.0 is gated on its trust-boundary group</b>: the workspace block device is a guest&rarr;host surface the threat model does not list. Seven tasks inserted before P6-7. <b>P6-21 done</b> &mdash; <code>--review</code> no longer destroys an edit made while somebody was reading it. <b>P6-6 corrected</b>: its own adversarial review landed late and found a false claim about truncation and an unchecked chain head, both reproduced and both fixed. <b>P6-22 done</b> &mdash; nine fixture groups, twenty-one recorded breaks, a ledger that can only shrink, and a CI job that runs the lot. <b>D46</b> triaged seven findings against HEAD and corrected two. <b>P6-24 done &mdash; the v1.0 gate is open.</b> C-1, H-1 and H-2 are closed in two layers, the workspace block device is in the trust-boundary table, and the full acceptance suite passes on the final code. P6-23 stands at 11/23, blocked on the audit text for the rest (D47). <b>P6-25 done</b> &mdash; the blocking set is closed and the hostile ledger is down to one line, which is a recorded decision rather than a defect. <b>P6-26 done. The audit&rsquo;s v1.0-blocking set is closed</b> &mdash; boundary group, clamps and both claims &mdash; and the hostile ledger is one line, which is a recorded decision. P6-23 and P6-27 are blocked on the audit text for the remaining twelve findings (D47). <b>P6-7 done</b> &mdash; signed exports with a key the reader anchors, and a vocabulary rather than a badge. <b>P6-8 done</b> &mdash; the release is a workflow, the sums file is written from scratch and checked both ways, and the flavor is in the cache key. <b>P6-9 done</b> &mdash; and measured: two full builds from nothing produce byte-identical artifacts on this machine, which is more than D38 expected. <b>P6-10 done</b> &mdash; 64 components across three sources, including the one Buildroot has never heard of. <b>P6-11 done</b> &mdash; provenance and SBOM attestations, and the immutable-release claim refused in the same breath. <b>P6-12 done</b> &mdash; the CLI runs on macOS, <code>doctor</code> owns the Lima layer, and a report verifies on the machine it was sent to. <b>P6-13 done</b> &mdash; six client writers, a real handshake behind <code>--check</code>, and the four rulings recorded. <b>P6-14 done</b> &mdash; the promise exists, and the record&rsquo;s field order is pinned by a test rather than by a sentence. <b>P6-15 done</b> &mdash; 174 findings across 21 documents, 157 corrected, and a second pass caught <b>fourteen corrections that were themselves newly false</b>, every one of them a true fix given a false scope. Three of the worst claims were written earlier in this same session. It also found <b>eighteen defects in the code</b>, where E3-0 found four; three are fixed and fifteen are routed to P6-28 (D49). Next: <b>P6-16</b>, the documents a 1.0 is expected to have</b></div>
 </div>
 
 <!-- ====================================================== 1. END GOAL -->
@@ -1112,7 +1112,7 @@
         about an MCP revision that has already moved on without it. Sequenced after every task that changes a
         schema, deliberately.</span></li>
 
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">P6-15</span><span class="tk"><b>The E3-0 pattern, re-run whole.</b> Parallel audits of
         every hand-written document against the code that implements it &mdash; not against the other documents,
         which is the version that reports a tidy directory. E3-0 read seven documents and found roughly forty drifts
@@ -1121,6 +1121,20 @@
         next regeneration and turns the pipeline red; findings against a generated page are routed to the generator
         instead. Findings first, corrections second, in that order and in that many commits, so the record of what
         was found survives the fixing of it.</span></li>
+
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P6-28</span><span class="tk"><b>The fifteen code defects the documentation audit
+        found.</b> Routed out of P6-15 by D49, because a documentation commit that also changes behaviour is a
+        commit nobody can review. Ordered by what a user would notice: <code>kelyfos shell</code> reports
+        <code>exited 0</code> when the supervisor died mid-session, contradicting both
+        <code>docs/protocol.md</code> &sect;5.7 and <code>proto.ShellExit</code>&rsquo;s own doc comment; a
+        <code>file.write</code> event is recorded from the <i>request</i>, so a write the guest refused is in the
+        chain as though it happened; a forked team member emits no <code>resource.oom</code> at all, because
+        <code>forkAgent</code> installs no guest-event handler where <code>bootAgent</code> does; a paused
+        sandbox that had egress can never be resumed, and <code>pause</code> prints the resume command anyway;
+        <code>scratch</code> above <code>mem</code> is refused on two entry points and silently accepted on the
+        other two, where the cap it creates is inert. Each one is a defect the documents were right about, which
+        is the useful half of an audit that reads them against the code.</span></li>
 
     <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">P6-16</span><span class="tk"><b>The documents a 1.0 is expected to have and this one
@@ -3351,6 +3365,41 @@ after:
         refutations were not retained, and the record says so rather than implying 202 were all real<br>
         the attestation claim appears <b>twice</b> (README.md:200 and :465) and its verifier said so: a fix that
         only touches the first leaves the false claim standing at the second</td></tr>
+        <tr><td class="mono">2026-08-25</td><td class="mono">P6-15</td>
+        <td><b>The corrections &mdash; and the second pass that stopped fourteen of them being new defects.</b>
+        157 of the 174 findings corrected across nineteen documents, one writer per document so no two touched the
+        same file. Then every document was re-read by somebody whose instruction was to check the corrections
+        against the <i>source</i>, not against the brief &mdash; and that pass found <b>fourteen sentences that
+        were newly false</b>: a correction that overshoots is not a fix, it is the same defect pointing the other
+        way, and it arrives wearing the authority of having just been checked.
+        <b>The pattern in all fourteen was the same</b> &mdash; a true correction given a false scope. &ldquo;The
+        arguments are recorded by size&rdquo; for three argument names out of all of them. &ldquo;`ip`, `nft` and
+        `jailer` are the three commands KelyfOS runs through sudo&rdquo; when a fourth removes the jail directory.
+        &ldquo;<code>--new-pid-ns</code> is the one jailer flag KelyfOS does not pass&rdquo; when two others are
+        not passed either. &ldquo;Delivered sixty-four times over, and the sixty-fifth is told
+        unreachable&rdquo; when sixty-four is a capacity and a dead agent&rsquo;s unread messages already hold
+        slots. Each replaced a vague overclaim with a precise one, which is worse, because a precise false
+        statement is the kind a reader acts on.
+        <b>Two of the fourteen re-introduced the exact claim this task had just removed from the README</b> &mdash;
+        <code>SECURITY.md</code> and the <code>Makefile</code> both said release artifacts carry a provenance
+        attestation, in a repository whose only tag predates the workflow that would make one. Chasing that pair
+        found a third copy in <code>dev/fetch-image.sh</code> that the audit had not flagged at all.
+        <b>And a claim was made true rather than narrowed.</b> The cookbook said every <code>head -N</code> under
+        <code>dev/</code> and in the workflows was now <code>sed -n '1,Np'</code>; sixteen remained. Two of the
+        sixteen sat inside single-quoted guest commands, where the obvious substitution silently re-groups the
+        quoting &mdash; caught by reading the result rather than by the shell, which parses it either
+        way.</td>
+        <td class="mono">157 corrected, 14 newly-false sentences caught and fixed, 1 finding refused on the
+        grounds that the document was right and the code is wrong<br>
+        <b>18 code defects</b> found by reading documents against code, where E3-0 found four &mdash; three fixed
+        here (two generated-reference <code>reason</code> lists, one release-workflow <code>rm</code>), fifteen
+        routed to P6-28 by D49<br>
+        <code>gofmt</code>, <code>go vet</code>, all 14 packages, <code>tools/check-plan.py</code>, 15 cookbook
+        recipes extracted and parsed, <code>make docs</code> regenerated and committed &mdash; llms-full.txt is
+        now 536,974 bytes<br>
+        <b>not fixed, and not fixable here:</b> <code>docs/media/demo.cast</code> shows
+        <code>supervisor 0.2.0-p2</code>, a version string P6-1 deleted. The fix is to re-record it on a KVM
+        machine; hand-editing a recording would turn evidence into a drawing of evidence</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
@@ -4261,6 +4310,33 @@ after:
         text for M-1, M-4, M-6, M-7, M-8, L-1 through L-7 and D-1. <i>Revisit when</i> it arrives: three of the
         eleven triaged so far did not say what they were reported to say, so the remaining twelve are worth
         reading rather than assuming.</td></tr>
+        <tr><td class="mono">D49</td><td class="mono">2026-08-25</td>
+        <td><b>The documentation audit found eighteen defects in the code, and they are routed rather than
+        folded in.</b> Reading a sentence against the code that implements it answers two questions, not one:
+        whether the sentence is true, and whether the code is. E3-0 turned up four of the second kind; this run
+        turned up eighteen, and three of them are this task&rsquo;s own business rather than a routed finding.
+        <i>Fixed here.</i> Two stale <code>reason</code> lists in
+        <code>internal/recorder/schema.go</code> &mdash; the <code>team.store</code> list was missing
+        <code>key_too_long</code> and <code>too_many_keys</code>, and <code>session.start</code>&rsquo;s said
+        &ldquo;restore and fork&rdquo; when the shim, a <code>serve-mcp</code> server and a team all write it.
+        Those drive the <b>generated</b> reference, and P6-15&rsquo;s own rule is that a finding against a
+        generated page is a finding against its generator. And the release workflow&rsquo;s
+        <code>rm -f dist/kelyfos-linux-*</code>, which left both matrix jobs uploading the same two macOS
+        filenames into a merge that had to pick one; the shipped bytes were right only because the publish job
+        rebuilt them afterwards.
+        <i>Routed to P6-28.</i> The other fifteen are code changes with their own blast radius, and folding them
+        into a documentation commit would make the diff unreviewable and the record dishonest about what was
+        changed and why. The sharpest is <code>host/shell.go</code>: a supervisor that dies mid-session is
+        reported as <code>shell exited 0</code>, which is a success a script will believe &mdash; and
+        <code>docs/protocol.md</code> &sect;5.7 and <code>proto.ShellExit</code>&rsquo;s own doc comment both
+        already say otherwise, so this is the code disagreeing with two of its own specifications rather than an
+        undocumented gap.
+        <i>The ruling that produced them.</i> The audit was told to read documents against <b>code</b> and never
+        against other documents. Every one of these eighteen is a thing the other version of this audit &mdash;
+        the tidy one, where the documents agree with each other &mdash; would have reported as fine.</td>
+        <td>P6-15. The eighteen are in <code>dev/docs-audit-2026-08-25.md</code>, each with the file and line
+        that proves it. <i>Revisit when</i> P6-28 runs: the shell exit-code one is a correctness bug in a
+        shipped command and should be first.</td></tr>
     <!-- Claude Code: append rows above this line. -->
   </table>
 </section>

@@ -399,7 +399,7 @@ jobs:
                     -o -name config.json -o -name 'fc.sock' \) 2>/dev/null)"
           if [ -n "$left" ]; then
             echo "teardown left a sandbox behind:"
-            find ~/.cache/kelyfos/run -mindepth 1 | head -20
+            find ~/.cache/kelyfos/run -mindepth 1 | sed -n '1,20p'
             exit 1
           fi
           echo "smoke test passed"

@@ -3,14 +3,19 @@
 Fifteen recipes, each one complete, each one runnable as it stands.
 
 These are not illustrations. `bash dev/cookbook.sh` extracts every script below
-and runs it on a real machine, and CI runs the same thing — so a recipe that
-stops working fails the build rather than failing a stranger who trusted it
-(F-D4, E3-3). What you copy is what was executed.
+and runs it on a real machine. Every commit checks that each recipe still
+extracts and is still valid shell; actually running them needs KVM, Firecracker
+and the `dev` image, so that happens in a workflow of its own — every Tuesday on
+a schedule, and on demand — rather than on every push. A recipe cannot rot for
+longer than seven days without saying so (F-D4, E3-3). What you copy is what was
+executed.
 
 **Before any of them.** You need Linux with `/dev/kvm`, Firecracker, the
 `kelyfos` binary on your `PATH`, and the `dev` image. The
-[quickstart](../README.md#quickstart) is four commands, and `kelyfos doctor`
-will tell you which of the four you still owe it.
+[quickstart](../README.md#quickstart) installs all of it, and `kelyfos doctor`
+will tell you which piece you still owe it — every piece except the binary
+itself, which `dev/install-kelyfos.sh` puts in `<repo>/bin/kelyfos` rather than
+anywhere on your `PATH`.
 
 A note that will save you an hour. `kelyfos run`, `kelyfos fork` and
 `kelyfos team up` all **hold their machines for as long as they run**, the way
@@ -173,10 +178,12 @@ kelyfos run --image dev --workspace . -- bash -c '
 '
 
 # Worth knowing before it confuses you: the write-back is a swap, not a merge.
-# The old directory is renamed away and the reconstructed one is renamed into
-# place, so a file the agent deleted is really gone — and a shell whose current
-# directory *is* the workspace is now sitting in a directory that no longer
-# exists. Step back into it by name.
+# The old directory is renamed to <dir>.kelyfos-previous and the reconstructed
+# one is renamed into place, so a file the agent deleted is really gone from the
+# workspace — the previous copy keeps it, beside the project, until the next
+# successful run clears it — and a shell whose current directory *is* the
+# workspace is now sitting in a directory that no longer exists. Step back into
+# it by name.
 cd "$project"
 
 echo "== and the host directory has the change =="
@@ -315,7 +322,10 @@ count = 2                 # worker-1 and worker-2, neither with any network
 
 [[team.edge]]
 from = "master"
-to   = "worker-*"         # a star: no worker may reach another worker
+to   = "worker-*"         # a star: no worker may reach another worker.
+                          # An edge is bidirectional unless you write
+                          # `bidirectional = false`, so this is master↔worker —
+                          # which is what lets worker-1 ask the master below.
 
 [team.store]
 enabled = true
@@ -586,8 +596,11 @@ a published standard rather than one product's internal API.
 
 A shim sandbox is a sandbox like any other: the project's `kelyfos.toml` caps
 it, and it writes its own flight recorder — `kelyfos log --list` will show the
-one this recipe creates. What the shim does not do is authenticate anybody, so
-treat the port the way you would any unauthenticated local API.
+one this recipe creates. By default the shim authenticates nobody, so treat the
+port the way you would any unauthenticated local API. Start it with
+`KELYFOS_SHIM_TOKEN` set and every route requires a matching
+`Authorization: Bearer <token>`, compared in constant time, and answers `401`
+without one.
 
 <!-- recipe: e2b-shim -->
 
@@ -727,10 +740,12 @@ that turns out to be wrong is an error rather than a quiet fall back to no wall.
 **Which binary.** `"command": "kelyfos"` is a `PATH` lookup in an environment
 the client chose, and clients do not promise you a login shell's `PATH`. Name
 the binary absolutely for the same reason you name the policy absolutely. This
-matters most on macOS, where there is no `kelyfos` on the host at all — KelyfOS
-needs Linux with `/dev/kvm`, so the binary lives inside the VM and the entry has
-to reach into it. Both shapes are below, and the repository's own `.mcp.json`
-uses [`dev/mcp-server.sh`](../dev/mcp-server.sh), which picks between them.
+matters most on macOS, where the host binary refuses `serve-mcp` — the macOS
+build runs `doctor`, `verify`, `version` and `help`, and nothing that needs a
+guest, because Firecracker needs Linux with `/dev/kvm`. The binary that can
+serve lives inside the Lima VM, so the entry has to reach into it. Both shapes
+are below, and the repository's own `.mcp.json` uses
+[`dev/mcp-server.sh`](../dev/mcp-server.sh), which picks between them.
 
 <!-- recipe: mcp-client-config -->
 
@@ -756,8 +771,8 @@ max_sandboxes = 2
 TOML
 
 # The binary, named rather than looked up. On Linux this is wherever you put it;
-# on macOS there is nothing here to name, and the block after this one shows what
-# to write instead.
+# on macOS the binary on the host refuses serve-mcp, and the block after this one
+# shows what to write instead.
 bin="$(command -v kelyfos)"
 
 # Claude Code, project scope. Checked into the repository, where it doubles as
@@ -947,7 +962,7 @@ print("removed, and nothing else went with it")
 PY
 
 # For anything the six writers do not cover, the snippet to paste:
-kelyfos connect generic | head -20
+kelyfos connect generic | sed -n '1,20p'
 ```
 
 ---
@@ -1465,15 +1480,15 @@ quietly rots. It also checks that the count in the first sentence of this page
 is the number of recipes on it, because that sentence is exactly the kind of
 thing that goes stale the moment somebody adds one — and did.
 
-One shell detail worth copying rather than rediscovering: these truncate output
-with `sed -n '1,Np'` rather than `head -N`. Under `set -o pipefail`, `head`
-exiting early sends SIGPIPE to whatever is feeding it and fails the whole
-pipeline — so a recipe written with `head` passes while its output is short and
-starts failing, for a reason unrelated to what it teaches, the day it is not.
+One shell detail worth copying rather than rediscovering: wherever the pipeline
+runs on the host, these truncate output with `sed -n '1,Np'` rather than
+`head -N`. Under `set -o pipefail`, `head` exiting early sends SIGPIPE to
+whatever is feeding it and fails the whole pipeline — so a recipe written with
+`head` passes while its output is short and starts failing, for a reason
+unrelated to what it teaches, the day it is not.
 
 It is not a hypothetical. `dev/install-build-deps.sh` ran `make --version |
 head -1` for years and failed a CI build during the v0.8 release with
 `make: write error: stdout` — because `make --version` prints four lines, `head`
 closed the pipe after the first, and the exit status of a dependency install
-became a race. Every `head -N` in `dev/` and in the workflows is now
-`sed -n '1,Np'`.
+became a race. That line is now `make --version | sed -n '1,1p'`.
