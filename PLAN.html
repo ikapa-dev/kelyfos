@@ -705,13 +705,13 @@
 
 
 <!-- ====================================================== PHASE 6 -->
-<section class="phase" id="p6" data-phase="6" data-status="active">
+<section class="phase" id="p6" data-phase="6" data-status="done">
   <div class="phase-head">
     <div>
       <div class="kconfig">config KELYFOS_PHASE_6</div>
       <h2>Phase 6 &mdash; v1.0, the promise</h2>
     </div>
-    <span class="badge">ACTIVE</span>
+    <span class="badge">DONE</span>
   </div>
   <p class="goal"><b>Goal:</b> the number 1.0 is a promise made to a stranger &mdash; that the surfaces they build
      against will not move under them, that the bytes they download can be traced back to the source that made them,
@@ -3705,6 +3705,32 @@ after:
         the two problems the reservation addressed &mdash; staging trees accumulating after a Ctrl-C, and a
         narrow rename race &mdash; stay open and are written down, because both are visible where what replaced
         them was silent</td></tr>
+        <tr><td class="mono">2026-08-25</td><td class="mono">NOTE</td>
+        <td><b>A pre-publish audit of the v1.0 tag found this file contradicting itself, and it is the same
+        defect class as the earliest masthead-staleness findings.</b> At the tag, the masthead read
+        <b>COMPLETE</b> while Phase 6&rsquo;s own section badge still said <b>ACTIVE</b>. A closed plan whose
+        section badges say otherwise is exactly the failure this phase spent itself removing from every other
+        document &mdash; in the one file whose credibility is the argument.
+        <b>Two things were wrong, and the second was worse than the reported one.</b> Phase 6&rsquo;s
+        <code>data-status</code> was never moved off <code>active</code> when its last task was ticked. And the
+        dashboard&rsquo;s <b>Overall</b> tag keyed on <code>t===100</code> &mdash; a percentage D34 makes
+        permanently unreachable on purpose, because seven of the denominator&rsquo;s boxes are Phase 4&rsquo;s
+        record rows. So Overall would have read <code>[ACTIVE]</code> forever, no matter how finished the
+        project was. It now reads from whether every phase is closed, while the bar still shows the true
+        fraction: <b>[  OK  ] at 92%</b>, which is the honest pair.
+        <b>What was <i>not</i> changed, and why.</b> Phase 4&rsquo;s badge stays <code>PARKED</code>. It is true,
+        the masthead uses the same word, and &sect;6&rsquo;s own exit note already reconciles them: the dashboard
+        keeps counting all seven rows rather than excluding them, because a denominator adjusted to flatter the
+        numerator is the same defect as a ticked box with unmet conditions. <i>v1.0 does not mean 100%</i>, and
+        the document says so where a reader meets the number.
+        <b>The tag is not re-cut.</b> This is one commit on <code>main</code> before the release is published;
+        <code>v1.0</code> stays where it is, and the artifacts it built are unaffected &mdash; nothing here
+        reaches anything that ships.</td>
+        <td class="mono">verified by executing the dashboard&rsquo;s own logic over the file rather than by
+        reading it: all seven phases render <code>[  OK  ]</code> or <code>[PARKED]</code>, Overall renders
+        <code>[  OK  ]</code> at 92%, and the masthead reads COMPLETE &mdash; consistent<br>
+        the reported count of &ldquo;two active and two parked&rdquo; included the four CSS rules that define
+        those states; the real badges were one wrong and one right</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
@@ -4891,9 +4917,24 @@ after:
   var t=totalAll? Math.round(100*doneAll/totalAll):0;
   document.getElementById('total-bar').style.width=t+'%';
   document.getElementById('total-pct').textContent=t+'%';
+  // Overall reads from the PHASES, not from the percentage.
+  //
+  // The percentage can never reach 100 and is not meant to: seven of the
+  // denominator's boxes are Phase 4's permanent record rows, which are a record
+  // of what was dispositioned rather than work anybody will do (D34). Keying the
+  // tag on `t===100` therefore made it say ACTIVE forever — a plan whose own
+  // dashboard contradicts its masthead, which is the same defect class as a
+  // document that disagrees with the code, in the one file whose credibility is
+  // the whole argument. The bar still shows the true fraction; the tag says
+  // whether every phase is closed.
+  var closed=true;
+  document.querySelectorAll('section.phase').forEach(function(ph){
+    var st=ph.getAttribute('data-status');
+    if(st!=='done' && st!=='parked') closed=false;
+  });
   var ot=document.querySelector('.bl-total .bl-tag');
-  ot.className='bl-tag '+(t===100?'done':(doneAll>0?'active':'todo'));
-  ot.textContent = t===100 ? '[  OK  ]' : (doneAll>0 ? '[ACTIVE]' : '[ TODO ]');
+  ot.className='bl-tag '+(closed?'done':(doneAll>0?'active':'todo'));
+  ot.textContent = closed ? '[  OK  ]' : (doneAll>0 ? '[ACTIVE]' : '[ TODO ]');
 })();
 </script>
 </body>
