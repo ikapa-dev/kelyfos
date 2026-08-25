@@ -11,13 +11,29 @@ set -uo pipefail
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BIN="${BIN:-$REPO/bin}"
 export PATH="$BIN:$PATH"
-PASSES=0 FAILURES=0
+PASSES=0 FAILURES=0 SKIPS=0
 SUMMARY=()
 
 say()  { printf '\n\033[1m%s\033[0m\n' "$*"; }
 pass() { PASSES=$((PASSES+1)); SUMMARY+=("PASS  $*"); printf '  \033[32mPASS\033[0m  %s\n' "$*"; }
 fail() { FAILURES=$((FAILURES+1)); SUMMARY+=("FAIL  $*"); printf '  \033[31mFAIL\033[0m  %s\n' "$*"; }
+skip() { SKIPS=$((SKIPS+1)); SUMMARY+=("SKIP  $*"); printf '  \033[33mSKIP\033[0m  %s\n' "$*"; }
 check() { if [ "$1" = "yes" ]; then pass "$2"; else fail "$2"; fi; }
+
+# The jailer drops the VMM to *the invoking user* (D29) — deliberately, rather
+# than to a dedicated account. So the assertion is "it runs as whoever invoked
+# it", and when that is root there is nothing to drop and nothing to prove. That
+# is a skip with the reason, not a pass and not a failure: run under `sudo`, the
+# old `uid != 0` check reported a FAIL for exactly the behaviour the threat model
+# documents (P6-18).
+droppedTo() {
+  local uid="$1" what="$2"
+  if [ "$(id -u)" = "0" ]; then
+    skip "$what — invoked as root, so the VMM drops to root and there is nothing to drop (D29)"
+    return
+  fi
+  check "$([ "$uid" = "$(id -u)" ] && echo yes || echo no)" "$what"
+}
 
 WORK="$(mktemp -d)"
 halt() {
@@ -65,8 +81,7 @@ check "$(grep -q "run/firecracker/.*/root" <<<"$mroot" && echo yes || echo no)" 
 status="$(cat /proc/$vmm/status 2>/dev/null)"
 uid="$(awk '/^Uid:/{print $2}' <<<"$status")"
 echo "  Uid: $uid (invoking user $(id -u), root would be 0)"
-check "$([ "$uid" != "0" ] && echo yes || echo no)" \
-      "it is not root, though the jailer that made it was"
+droppedTo "$uid" "it runs as the invoking user, though the jailer that made it was root"
 
 nnp="$(awk '/^NoNewPrivs:/{print $2}' <<<"$status")"
 check "$([ "$nnp" = "1" ] && echo yes || echo no)" \
@@ -180,11 +195,12 @@ check "$(grep -q '^150000 ' "/sys/fs/cgroup$sits/cpu.max" 2>/dev/null && echo ye
 mroot3="$(sudo -n awk '$5=="/"{print $4; exit}' "/proc/$vmm3/mountinfo" 2>/dev/null)"
 uid3="$(awk '/^Uid:/{print $2}' "/proc/$vmm3/status" 2>/dev/null)"
 echo "  root: ${mroot3:-<unreadable>} · uid: ${uid3:-?}"
-check "$(grep -q 'run/firecracker/.*/root' <<<"$mroot3" && [ "$uid3" != "0" ] && echo yes || echo no)" \
-      "and a capped machine is still chrooted and still not root"
+check "$(grep -q 'run/firecracker/.*/root' <<<"$mroot3" && echo yes || echo no)" \
+      "and a capped machine is still chrooted"
+droppedTo "${uid3:-?}" "…and still runs as the invoking user"
 halt
 
 say "summary"
 printf '%s\n' "${SUMMARY[@]}" | sed 's/^/  /'
-printf '\n  %d passed, %d failed\n' "$PASSES" "$FAILURES"
+printf '\n  %d passed, %d failed, %d skipped\n' "$PASSES" "$FAILURES" "$SKIPS"
 [ "$FAILURES" -eq 0 ]

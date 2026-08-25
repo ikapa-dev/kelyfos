@@ -229,6 +229,13 @@ func exportSession(id, path, dest, signKey string) error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
+	// os.CreateTemp makes a 0600 file and a rename carries that mode with it, so
+	// without this every exported report is owner-only — which is not what
+	// os.Create did before the export became atomic, and not what a document
+	// written to be handed to somebody should be (P6-18, umask.go).
+	if err := os.Chmod(tmp.Name(), createMode()); err != nil {
+		return err
+	}
 	if err := os.Rename(tmp.Name(), dest); err != nil {
 		return err
 	}
