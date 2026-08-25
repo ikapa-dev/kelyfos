@@ -3,7 +3,7 @@
 Updated 2026-08-25 · synced with origin/main · **v0.9 released** · CI green on main · **Phase 6 open**
 
 ## Plans
-- PLAN.html — **68/82**. Phases 0–3 and 5 done. Phase 4 dispositioned and parked (D35). **Phase 6 open —
+- PLAN.html — **69/82**. Phases 0–3 and 5 done. Phase 4 dispositioned and parked (D35). **Phase 6 open —
   "v1.0, the promise", 29 tasks**: an external security audit arrived mid-phase and added seven (D45), and the documentation audit added one more (D49).
 - PLAN-FEATURES.html — **COMPLETE and closed.** 42/42, five epics, v0.4–v0.8 released.
 - **The overall bar will not reach 100% and is not meant to.** Seven of the denominator's boxes are Phase 4's
@@ -72,8 +72,15 @@ non-zero when a tag has no section, so a release with no notes fails instead of 
 check on every commit, which moves the failure from publish time to push time. The eight existing GitHub release
 bodies are not backfilled: they are what was published, and rewriting them would be editing the past.
 
-**Next: P6-17.** **P6-18 needs the bare-KVM reference (D15)** and **P6-19 needs a fresh session with no source
-tree** — both are environment-bound rather than work-bound.
+**P6-17 done — the generated set, and a defect in this phase's own measurement tool.** The reference,
+`llms.txt` and `llms-full.txt` are current: **544,314 bytes, 141,425 tokens** by `make tokens`, the committed
+invocation. The tool's own comment claimed its divisor was "the same constant `tools/gendocs` prints with, so the
+two cannot disagree" — they were two independent `const charsPerToken = 3.83` in two packages, holding the same
+value by coincidence. There is one now, in `internal/docsize`, with the ratio's provenance beside it and a test
+that fails if it is repinned without re-measuring. The refactor leaves the generated set byte-identical.
+
+**Next: P6-18** — the bars and every suite. **It needs the bare-KVM reference (D15)** and **P6-19 needs a fresh
+session with no source tree** — both are environment-bound rather than work-bound.
 
 ## Blocked / needs John
 - **The audit's text for M-1, M-4, M-6, M-7, M-8, L-1 through L-7 and D-1.** Twelve findings are known here only

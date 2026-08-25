@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/p4r4n0rm4l/KelyfOS/internal/docsize"
 )
 
 // llms.txt and llms-full.txt (E3-2).
@@ -216,33 +218,12 @@ func llmsFull(repo string) (string, error) {
 	return b.String(), nil
 }
 
-// tokenEstimate is a stated approximation, not a measurement, and says so
-// wherever it is printed. A real count is model-specific and no two tokenizers
-// agree, so the honest thing to build in is a ratio with its provenance
-// attached rather than a number pretending to be exact.
-//
-// The ratio is measured rather than guessed: 3.83 characters per token, from
-// encoding this very file with tiktoken's cl100k_base and o200k_base at E3-2,
-// which agreed to within 0.1% (48,285 and 48,244 tokens over 184,998
-// characters). Characters and not bytes, because that is what a tokenizer sees
-// and because this corpus is full of em dashes — counting its bytes would
-// inflate the estimate by the width of its punctuation.
-//
-// Re-measured at the E4 exit, on a corpus that had grown by 61%: 298,395
-// characters, 77,480 tokens (cl100k_base) and 77,447 (o200k_base), which is
-// 3.851 and 3.853 characters per token. The pinned 3.83 is therefore 0.6%
-// low per token and the printed estimate 0.6% high — the safe direction for a
-// reader deciding whether this fits in a context window, and not enough drift
-// to be worth repinning a number whose provenance is its value.
-//
-// The question the number answers is only "does this fit in a context window",
-// and the measured counts with the commands that produced them are in the
-// progress log, where a claim of that kind belongs.
-const charsPerToken = 3.83
+// The token estimate's ratio, and the function that applies it, live in
+// internal/docsize — because `tools/tokens` prints the same number for the same
+// file and the two used to hold separate constants that merely agreed (P6-17).
+const charsPerToken = docsize.CharsPerToken
 
-func tokenEstimate(s string) int {
-	return int(float64(len([]rune(s))) / charsPerToken)
-}
+func tokenEstimate(s string) int { return docsize.Estimate(s) }
 
 // absoluteLinks rewrites a document's relative Markdown links so they still work
 // once the document has been lifted out of the tree it was written in.

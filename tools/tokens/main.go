@@ -31,14 +31,18 @@ import (
 	"strconv"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/p4r4n0rm4l/KelyfOS/internal/docsize"
 )
 
 // charsPerToken is the divisor, named rather than hidden.
 //
-// It is the same constant tools/gendocs prints with, so the two cannot disagree
-// about the same file. Changing it changes an estimate and nothing else, and the
-// output says so.
-const charsPerToken = 3.83
+// It is literally the same constant tools/gendocs prints with — one declaration
+// in internal/docsize, imported by both — so the two cannot disagree about the
+// same file. They used to be two constants holding the same value, which is a
+// different and weaker thing (P6-17). Changing it changes an estimate and
+// nothing else, and the output says so.
+const charsPerToken = docsize.CharsPerToken
 
 func main() {
 	quiet := flag.Bool("quiet", false, "print only the token figure")
