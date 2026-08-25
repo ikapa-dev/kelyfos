@@ -1,6 +1,6 @@
 # KelyfOS cookbook
 
-Fourteen recipes, each one complete, each one runnable as it stands.
+Fifteen recipes, each one complete, each one runnable as it stands.
 
 These are not illustrations. `bash dev/cookbook.sh` extracts every script below
 and runs it on a real machine, and CI runs the same thing — so a recipe that
@@ -858,6 +858,96 @@ echo
 echo "== each configuration file, proved by running exactly what it names =="
 python3 check.py .mcp.json mcpServers
 python3 check.py .vscode/mcp.json servers
+```
+
+---
+
+## 9b. Attach a client with one command
+
+Recipe 9 shows the configuration by hand, which is what a person needs when
+their client is not one of the six this command writes. This is the other way.
+
+`kelyfos connect <client>` writes the client's own file, in its own format and
+its own location. Two things it gets right that a copied snippet gets right by
+luck: the policy path is **absolute**, because a server that has to find its own
+policy can find none and run with no ceiling at all, and the surface is
+`serve-mcp` rather than `mcp` — the first is KelyfOS as a server, the second
+bridges one sandbox's guest.
+
+`--check` then starts the server the file names and completes a real MCP
+handshake, because "configured" asserted without evidence is what this command
+exists to replace.
+
+<!-- recipe: connect-a-client -->
+
+```bash
+set -euo pipefail
+work="$(mktemp -d)"
+cd "$work"
+trap 'rm -rf "$work"' EXIT
+
+# A project with a policy. A server with no ceiling is not worth attaching, and
+# `connect` refuses rather than writing a path to nothing.
+mkdir -p project && cd project
+cat > kelyfos.toml <<'TOML'
+[resources]
+cpus = 2
+mem = "512M"
+TOML
+
+# The clients it knows, each with the version it was verified against.
+kelyfos connect --list
+
+# Write one. The file is the client's own.
+kelyfos connect claude-code
+cat .mcp.json
+
+# Absolute, both of them.
+grep -q "$(pwd)/kelyfos.toml" .mcp.json
+grep -q serve-mcp .mcp.json
+echo "the policy is named absolutely, and the surface is serve-mcp"
+
+# It is a guest in somebody else's file: another server, and a key it has never
+# heard of, both survive.
+python3 - <<'PY'
+import json
+d = json.load(open(".mcp.json"))
+d["mcpServers"]["somebody-elses"] = {"command": "other"}
+d["aKeyWeDoNotKnowAbout"] = True
+json.dump(d, open(".mcp.json", "w"), indent=2)
+PY
+kelyfos connect claude-code >/dev/null
+python3 - <<'PY'
+import json, sys
+d = json.load(open(".mcp.json"))
+assert "somebody-elses" in d["mcpServers"], "another server was dropped"
+assert d.get("aKeyWeDoNotKnowAbout"), "an unrelated key was dropped"
+assert "kelyfos" in d["mcpServers"], "kelyfos is missing"
+print("another server and an unknown key both survived")
+PY
+
+# Idempotent: a second run changes nothing.
+cp .mcp.json first.json
+kelyfos connect claude-code >/dev/null
+cmp first.json .mcp.json
+echo "a second run is byte-identical"
+
+# And the check is a real handshake against the server the file names.
+kelyfos connect claude-code --check 2>&1 | grep -q "speaks MCP"
+echo "the server the configuration names started and spoke MCP"
+
+# --remove takes out exactly one entry.
+kelyfos connect claude-code --remove
+python3 - <<'PY'
+import json
+d = json.load(open(".mcp.json"))
+assert "kelyfos" not in d["mcpServers"], "kelyfos survived --remove"
+assert "somebody-elses" in d["mcpServers"], "--remove took another server with it"
+print("removed, and nothing else went with it")
+PY
+
+# For anything the six writers do not cover, the snippet to paste:
+kelyfos connect generic | head -20
 ```
 
 ---

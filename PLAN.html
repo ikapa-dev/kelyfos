@@ -180,7 +180,7 @@
     <span class="bl-name">Overall</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">P6-6 done &mdash; the export carries the record it was rendered from and <code>kelyfos verify</code> re-runs the chain over it offline. <b>An external security audit then arrived (D45) and v1.0 is gated on its trust-boundary group</b>: the workspace block device is a guest&rarr;host surface the threat model does not list. Seven tasks inserted before P6-7. <b>P6-21 done</b> &mdash; <code>--review</code> no longer destroys an edit made while somebody was reading it. <b>P6-6 corrected</b>: its own adversarial review landed late and found a false claim about truncation and an unchecked chain head, both reproduced and both fixed. <b>P6-22 done</b> &mdash; nine fixture groups, twenty-one recorded breaks, a ledger that can only shrink, and a CI job that runs the lot. <b>D46</b> triaged seven findings against HEAD and corrected two. <b>P6-24 done &mdash; the v1.0 gate is open.</b> C-1, H-1 and H-2 are closed in two layers, the workspace block device is in the trust-boundary table, and the full acceptance suite passes on the final code. P6-23 stands at 11/23, blocked on the audit text for the rest (D47). <b>P6-25 done</b> &mdash; the blocking set is closed and the hostile ledger is down to one line, which is a recorded decision rather than a defect. <b>P6-26 done. The audit&rsquo;s v1.0-blocking set is closed</b> &mdash; boundary group, clamps and both claims &mdash; and the hostile ledger is one line, which is a recorded decision. P6-23 and P6-27 are blocked on the audit text for the remaining twelve findings (D47). <b>P6-7 done</b> &mdash; signed exports with a key the reader anchors, and a vocabulary rather than a badge. <b>P6-8 done</b> &mdash; the release is a workflow, the sums file is written from scratch and checked both ways, and the flavor is in the cache key. <b>P6-9 done</b> &mdash; and measured: two full builds from nothing produce byte-identical artifacts on this machine, which is more than D38 expected. <b>P6-10 done</b> &mdash; 64 components across three sources, including the one Buildroot has never heard of. <b>P6-11 done</b> &mdash; provenance and SBOM attestations, and the immutable-release claim refused in the same breath. <b>P6-12 done</b> &mdash; the CLI runs on macOS, <code>doctor</code> owns the Lima layer, and a report verifies on the machine it was sent to. Next: <b>P6-13</b>, <code>kelyfos connect</code></b></div>
+  <div class="focusline">Current focus: <b id="focus">P6-6 done &mdash; the export carries the record it was rendered from and <code>kelyfos verify</code> re-runs the chain over it offline. <b>An external security audit then arrived (D45) and v1.0 is gated on its trust-boundary group</b>: the workspace block device is a guest&rarr;host surface the threat model does not list. Seven tasks inserted before P6-7. <b>P6-21 done</b> &mdash; <code>--review</code> no longer destroys an edit made while somebody was reading it. <b>P6-6 corrected</b>: its own adversarial review landed late and found a false claim about truncation and an unchecked chain head, both reproduced and both fixed. <b>P6-22 done</b> &mdash; nine fixture groups, twenty-one recorded breaks, a ledger that can only shrink, and a CI job that runs the lot. <b>D46</b> triaged seven findings against HEAD and corrected two. <b>P6-24 done &mdash; the v1.0 gate is open.</b> C-1, H-1 and H-2 are closed in two layers, the workspace block device is in the trust-boundary table, and the full acceptance suite passes on the final code. P6-23 stands at 11/23, blocked on the audit text for the rest (D47). <b>P6-25 done</b> &mdash; the blocking set is closed and the hostile ledger is down to one line, which is a recorded decision rather than a defect. <b>P6-26 done. The audit&rsquo;s v1.0-blocking set is closed</b> &mdash; boundary group, clamps and both claims &mdash; and the hostile ledger is one line, which is a recorded decision. P6-23 and P6-27 are blocked on the audit text for the remaining twelve findings (D47). <b>P6-7 done</b> &mdash; signed exports with a key the reader anchors, and a vocabulary rather than a badge. <b>P6-8 done</b> &mdash; the release is a workflow, the sums file is written from scratch and checked both ways, and the flavor is in the cache key. <b>P6-9 done</b> &mdash; and measured: two full builds from nothing produce byte-identical artifacts on this machine, which is more than D38 expected. <b>P6-10 done</b> &mdash; 64 components across three sources, including the one Buildroot has never heard of. <b>P6-11 done</b> &mdash; provenance and SBOM attestations, and the immutable-release claim refused in the same breath. <b>P6-12 done</b> &mdash; the CLI runs on macOS, <code>doctor</code> owns the Lima layer, and a report verifies on the machine it was sent to. <b>P6-13 done</b> &mdash; six client writers, a real handshake behind <code>--check</code>, and the four rulings recorded. Next: <b>P6-14</b>, the compatibility promise</b></div>
 </div>
 
 <!-- ====================================================== 1. END GOAL -->
@@ -1052,7 +1052,7 @@
         microVM and silently discard the workspace it was syncing back. Windows and WSL2 are post-1.0 and the
         compatibility document says so by name.</span></li>
 
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">P6-13</span><span class="tk"><b><code>kelyfos connect &lt;client&gt;</code> &mdash;
         one-command client setup.</b> <b class="blocked">[ADDED 2026-08-24 &mdash; the product owner, into this
         draft.]</b> Attaching an agent is currently a paragraph of hand-edited JSON per client, and every one of the
@@ -3248,6 +3248,46 @@ after:
         the release ships four CLIs now, two Linux and two darwin<br>
         <code>gofmt</code>, <code>vet</code>, 14 packages, <code>make docs</code> clean; both platforms
         build</td></tr>
+        <tr><td class="mono">2026-08-25</td><td class="mono">P6-13</td>
+        <td><b><code>kelyfos connect &lt;client&gt;</code> &mdash; one command instead of a paragraph of JSON.</b>
+        Six writers, one per client, because D41 proved a shared template is impossible: VS Code&rsquo;s key is
+        <code>servers</code> and not <code>mcpServers</code>, Codex is TOML with <code>mcp_servers</code> in
+        snake_case, and Claude Code&rsquo;s user-scoped file holds a live sign-in session and is never touched.
+        <b>The four rulings the task asked for, made and recorded.</b> <i>A client that is not installed is a plain
+        failure, not a catalog refusal</i> &mdash; the catalog is for what KelyfOS <i>decided</i> to deny, and its
+        IDs are part of the surface P6-14 freezes, so six client-specific IDs would freeze six third-party product
+        names into a stable promise. <i>The policy path is absolute, always</i>, which settles F-D44 against
+        recipe 9: the expansion matrix is asymmetric across all six and half of them would silently attach the
+        wrong policy. <i>A file that already holds other servers keeps them</i>, along with every key this command
+        has never heard of, because a configuration file belongs to the person whose machine it is. <i>The write is
+        redirectable</i> by <code>KELYFOS_CONNECT_HOME</code>, since a test that wrote into a developer&rsquo;s
+        real <code>~/.claude.json</code> is a test nobody dares run.
+        <b><code>--check</code> starts the server the file names and completes a real handshake</b>, and reports
+        what that honestly proves &mdash; this server starts, here, now, and speaks MCP &mdash; as distinct from
+        what it cannot: that the client will find the file, expand the same variables, or speak this era of the
+        protocol. Dual-era from the first line: it probes <code>initialize</code> and treats an error as a live
+        server on a revision that has removed it, which costs one round trip and needs no rewrite when the
+        revision moves.
+        <b>Codex is written by line surgery rather than a TOML round-trip</b>, deliberately: it is the user&rsquo;s
+        whole-product file, it may carry comments, and nothing in the standard library preserves them. Only this
+        project&rsquo;s own table is replaced.
+        <b>And the argument parser is now shared.</b> <code>kelyfos connect cursor --project .</code> printed usage,
+        because Go&rsquo;s flag package stops at the first positional &mdash; the same defect P6-7 found in
+        <code>verify</code>. Fixing it twice would have been two commands that disagree about their own arguments,
+        so it is one function.</td>
+        <td class="mono">every client asserted byte-for-byte rather than parsed: the absolute policy, the absolute
+        binary, <code>serve-mcp</code>, and <b>no <code>trust</code> field anywhere</b> &mdash; which D41 makes
+        binding, because it bypasses every tool-call confirmation and is exactly the field a later &ldquo;make
+        setup smoother&rdquo; change would reach for<br>
+        the shapes that differ, asserted as shapes: VS Code gets <code>servers</code> and <i>not</i>
+        <code>mcpServers</code>, Codex gets snake_case TOML and not JSON<br>
+        merge, idempotence and removal proved on a file holding another server and an unknown key &mdash; the
+        second run is byte-identical, and <code>--remove</code> takes exactly one entry<br>
+        <b>a real handshake against a real server</b>, in cookbook recipe 9b which CI runs: the file is written,
+        the server it names starts, and it answers<br>
+        a test pins that the generic-only clients have no writer, so a later &ldquo;while we are here&rdquo; cannot
+        quietly add one D41 rejected on evidence<br>
+        <code>gofmt</code>, <code>vet</code>, 14 packages, <code>make docs</code> clean; 15 recipes now</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>

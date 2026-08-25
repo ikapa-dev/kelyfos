@@ -362,6 +362,7 @@ machine took.
 | `kelyfos run --workspace ./dir` | your files at `/work`, written back on clean shutdown |
 | `kelyfos log --export report.html` | a self-contained session report, carrying the record it was rendered from |
 | `kelyfos verify report.html` | re-runs the chain over that record: offline, no key, no network |
+| `kelyfos connect <client>` | writes that client's own MCP configuration, and `--check` starts the server it names |
 | `kelyfos watch` | a live view, one lane per agent when it is a team |
 | `kelyfos team up\|ps\|down` | boot a declared team, see it, stop it |
 | `kelyfos serve-mcp` | [KelyfOS as an MCP server](docs/mcp-surface.md): any client gets sandboxes, files, snapshots, forks and teams as tools |

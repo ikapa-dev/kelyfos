@@ -37,6 +37,8 @@ usage:
                                    (kelyfos logs is the same command)
   kelyfos verify <file>            check the record an exported report carries,
                                    offline and with no key
+  kelyfos connect <client>         write a client's own MCP configuration, and
+                                   check it by starting the server it names
   kelyfos watch [flags]            live view of a sandbox (reads the record only)
   kelyfos bench [flags]            measure cold boot-to-ready over several runs
   kelyfos version                  print the version and exit
@@ -95,6 +97,8 @@ func main() {
 		err = logCmd(os.Args[2:])
 	case "verify":
 		err = verifyCmd(os.Args[2:])
+	case "connect":
+		err = connectCmd(os.Args[2:])
 	case "team":
 		err = teamCmd(os.Args[2:])
 	case "watch":

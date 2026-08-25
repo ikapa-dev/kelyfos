@@ -29,6 +29,7 @@ Go's `flag` accepts one dash or two, so `-image` and `--image` are the same flag
 | [`kelyfos rerun`](#kelyfos-rerun) | run a recorded session again, under its own policy |
 | [`kelyfos log`](#kelyfos-log) | replay, follow (-f) or verify a session's record (kelyfos logs is the same command) |
 | [`kelyfos verify`](#kelyfos-verify) | check the record an exported report carries, offline and with no key |
+| [`kelyfos connect`](#kelyfos-connect) | write a client's own MCP configuration, and check it by starting the server it names |
 | [`kelyfos watch`](#kelyfos-watch) | live view of a sandbox (reads the record only) |
 | [`kelyfos bench`](#kelyfos-bench) | measure cold boot-to-ready over several runs |
 | [`kelyfos version`](#kelyfos-version) | print the version and exit |
@@ -342,6 +343,23 @@ kelyfos verify <file>
 | `--json` | boolean | — | print the record's raw events instead of a readable replay (implies --replay) |
 | `--key` | string | — | check the signature against this ed25519 public key (a PEM file, or the key in hex) |
 | `--replay` | boolean | — | print the session from the record it carries, rather than only checking it |
+
+## kelyfos connect
+
+Write a client's own MCP configuration, and check it by starting the server it names.
+
+```
+kelyfos connect <client>
+```
+
+| Flag | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `--bin` | string | this one | the kelyfos binary the client should run |
+| `--check` | boolean | — | spawn the server this configuration names and complete a real MCP handshake |
+| `--list` | boolean | — | list the clients this command knows how to configure |
+| `--policy` | string | the one in the project | the kelyfos.toml to hold the server to |
+| `--project` | string | "." | the project the configuration is written for |
+| `--remove` | boolean | — | take KelyfOS out of this client's configuration |
 
 ## kelyfos watch
 

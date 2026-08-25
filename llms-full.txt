@@ -409,6 +409,7 @@ machine took.
 | `kelyfos run --workspace ./dir` | your files at `/work`, written back on clean shutdown |
 | `kelyfos log --export report.html` | a self-contained session report, carrying the record it was rendered from |
 | `kelyfos verify report.html` | re-runs the chain over that record: offline, no key, no network |
+| `kelyfos connect <client>` | writes that client's own MCP configuration, and `--check` starts the server it names |
 | `kelyfos watch` | a live view, one lane per agent when it is a team |
 | `kelyfos team up\|ps\|down` | boot a declared team, see it, stop it |
 | `kelyfos serve-mcp` | [KelyfOS as an MCP server](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/mcp-surface.md): any client gets sandboxes, files, snapshots, forks and teams as tools |
@@ -5662,7 +5663,7 @@ description: complete recipes, each one a script CI runs on a real machine
 
 # KelyfOS cookbook
 
-Fourteen recipes, each one complete, each one runnable as it stands.
+Fifteen recipes, each one complete, each one runnable as it stands.
 
 These are not illustrations. `bash dev/cookbook.sh` extracts every script below
 and runs it on a real machine, and CI runs the same thing — so a recipe that
@@ -6524,6 +6525,96 @@ python3 check.py .vscode/mcp.json servers
 
 ---
 
+## 9b. Attach a client with one command
+
+Recipe 9 shows the configuration by hand, which is what a person needs when
+their client is not one of the six this command writes. This is the other way.
+
+`kelyfos connect <client>` writes the client's own file, in its own format and
+its own location. Two things it gets right that a copied snippet gets right by
+luck: the policy path is **absolute**, because a server that has to find its own
+policy can find none and run with no ceiling at all, and the surface is
+`serve-mcp` rather than `mcp` — the first is KelyfOS as a server, the second
+bridges one sandbox's guest.
+
+`--check` then starts the server the file names and completes a real MCP
+handshake, because "configured" asserted without evidence is what this command
+exists to replace.
+
+<!-- recipe: connect-a-client -->
+
+```bash
+set -euo pipefail
+work="$(mktemp -d)"
+cd "$work"
+trap 'rm -rf "$work"' EXIT
+
+# A project with a policy. A server with no ceiling is not worth attaching, and
+# `connect` refuses rather than writing a path to nothing.
+mkdir -p project && cd project
+cat > kelyfos.toml <<'TOML'
+[resources]
+cpus = 2
+mem = "512M"
+TOML
+
+# The clients it knows, each with the version it was verified against.
+kelyfos connect --list
+
+# Write one. The file is the client's own.
+kelyfos connect claude-code
+cat .mcp.json
+
+# Absolute, both of them.
+grep -q "$(pwd)/kelyfos.toml" .mcp.json
+grep -q serve-mcp .mcp.json
+echo "the policy is named absolutely, and the surface is serve-mcp"
+
+# It is a guest in somebody else's file: another server, and a key it has never
+# heard of, both survive.
+python3 - <<'PY'
+import json
+d = json.load(open(".mcp.json"))
+d["mcpServers"]["somebody-elses"] = {"command": "other"}
+d["aKeyWeDoNotKnowAbout"] = True
+json.dump(d, open(".mcp.json", "w"), indent=2)
+PY
+kelyfos connect claude-code >/dev/null
+python3 - <<'PY'
+import json, sys
+d = json.load(open(".mcp.json"))
+assert "somebody-elses" in d["mcpServers"], "another server was dropped"
+assert d.get("aKeyWeDoNotKnowAbout"), "an unrelated key was dropped"
+assert "kelyfos" in d["mcpServers"], "kelyfos is missing"
+print("another server and an unknown key both survived")
+PY
+
+# Idempotent: a second run changes nothing.
+cp .mcp.json first.json
+kelyfos connect claude-code >/dev/null
+cmp first.json .mcp.json
+echo "a second run is byte-identical"
+
+# And the check is a real handshake against the server the file names.
+kelyfos connect claude-code --check 2>&1 | grep -q "speaks MCP"
+echo "the server the configuration names started and spoke MCP"
+
+# --remove takes out exactly one entry.
+kelyfos connect claude-code --remove
+python3 - <<'PY'
+import json
+d = json.load(open(".mcp.json"))
+assert "kelyfos" not in d["mcpServers"], "kelyfos survived --remove"
+assert "somebody-elses" in d["mcpServers"], "--remove took another server with it"
+print("removed, and nothing else went with it")
+PY
+
+# For anything the six writers do not cover, the snippet to paste:
+kelyfos connect generic | head -20
+```
+
+---
+
 ## 10. Drive the host from Python, with the official MCP SDK
 
 The outward twin of recipe 8. There the SDK talked to a guest through
@@ -7067,6 +7158,39 @@ Everything here that is code has been executed. Where something has not been,
 this page says so rather than printing it anyway.
 
 ---
+
+
+## One command
+
+`kelyfos connect <client>` writes the client's own configuration, in its own
+format and its own location, and `--check` then starts the server it named and
+completes a real MCP handshake — because "configured" asserted without evidence
+is what the command exists to replace.
+
+```sh
+kelyfos connect --list          # the clients it writes, and the version each was verified against
+kelyfos connect claude-code     # writes .mcp.json in this project
+kelyfos connect vscode --check  # writes .vscode/mcp.json, then proves the server starts
+kelyfos connect generic         # prints the snippet, for anything else
+```
+
+It is idempotent, `--remove` uninstalls, and it is a guest in somebody else's
+file: other servers and keys it has never heard of both survive.
+
+**Two things it gets right that a copied snippet gets right by luck.** The policy
+path is written **absolutely**, because a server that has to find its own policy
+can find none and run with no ceiling at all — and the working-directory and
+variable-expansion rules are asymmetric across every client, so a shared snippet
+would attach the wrong policy for half of them. And the surface is `serve-mcp`
+and not `mcp`: the first is KelyfOS itself as a server, the second bridges a
+client to one sandbox's guest.
+
+**A client's configuration format is an external surface.** It is outside the
+drift gate and outside the compatibility promise, re-verified on its own cadence,
+which is why every entry carries the tool, the version and the date it was
+checked against. The rest of this page is the hand-written path, which is what
+you need if your client is not one of the six.
+
 
 ## 1. Four ways in, and how to choose
 
@@ -8310,6 +8434,7 @@ Go's `flag` accepts one dash or two, so `-image` and `--image` are the same flag
 | [`kelyfos rerun`](#kelyfos-rerun) | run a recorded session again, under its own policy |
 | [`kelyfos log`](#kelyfos-log) | replay, follow (-f) or verify a session's record (kelyfos logs is the same command) |
 | [`kelyfos verify`](#kelyfos-verify) | check the record an exported report carries, offline and with no key |
+| [`kelyfos connect`](#kelyfos-connect) | write a client's own MCP configuration, and check it by starting the server it names |
 | [`kelyfos watch`](#kelyfos-watch) | live view of a sandbox (reads the record only) |
 | [`kelyfos bench`](#kelyfos-bench) | measure cold boot-to-ready over several runs |
 | [`kelyfos version`](#kelyfos-version) | print the version and exit |
@@ -8623,6 +8748,23 @@ kelyfos verify <file>
 | `--json` | boolean | — | print the record's raw events instead of a readable replay (implies --replay) |
 | `--key` | string | — | check the signature against this ed25519 public key (a PEM file, or the key in hex) |
 | `--replay` | boolean | — | print the session from the record it carries, rather than only checking it |
+
+## kelyfos connect
+
+Write a client's own MCP configuration, and check it by starting the server it names.
+
+```
+kelyfos connect <client>
+```
+
+| Flag | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `--bin` | string | this one | the kelyfos binary the client should run |
+| `--check` | boolean | — | spawn the server this configuration names and complete a real MCP handshake |
+| `--list` | boolean | — | list the clients this command knows how to configure |
+| `--policy` | string | the one in the project | the kelyfos.toml to hold the server to |
+| `--project` | string | "." | the project the configuration is written for |
+| `--remove` | boolean | — | take KelyfOS out of this client's configuration |
 
 ## kelyfos watch
 

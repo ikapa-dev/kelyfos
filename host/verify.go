@@ -47,25 +47,11 @@ than against the one the file supplied itself.
 `)
 		fs.PrintDefaults()
 	}
-	// Flags on either side of the path.
-	//
-	// Go's flag package stops at the first thing that is not a flag, so
-	// `kelyfos verify report.html --key k` would put `--key k` in the
-	// positional arguments and print usage — and that is the order somebody
-	// types, because the file is what the command is about. Parsing what is
-	// left after each positional takes both orders without teaching the rest of
-	// the CLI a new convention.
-	var paths []string
-	rest := argv
-	for {
-		if err := fs.Parse(rest); err != nil {
-			return err
-		}
-		if fs.NArg() == 0 {
-			break
-		}
-		paths = append(paths, fs.Arg(0))
-		rest = fs.Args()[1:]
+	// Flags on either side of the path — `kelyfos verify report.html --key k` is
+	// the order a person types (flags.go).
+	paths, err := parseAround(fs, argv)
+	if err != nil {
+		return err
 	}
 	if len(paths) != 1 {
 		fs.Usage()

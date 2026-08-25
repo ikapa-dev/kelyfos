@@ -9,6 +9,39 @@ this page says so rather than printing it anyway.
 
 ---
 
+
+## One command
+
+`kelyfos connect <client>` writes the client's own configuration, in its own
+format and its own location, and `--check` then starts the server it named and
+completes a real MCP handshake — because "configured" asserted without evidence
+is what the command exists to replace.
+
+```sh
+kelyfos connect --list          # the clients it writes, and the version each was verified against
+kelyfos connect claude-code     # writes .mcp.json in this project
+kelyfos connect vscode --check  # writes .vscode/mcp.json, then proves the server starts
+kelyfos connect generic         # prints the snippet, for anything else
+```
+
+It is idempotent, `--remove` uninstalls, and it is a guest in somebody else's
+file: other servers and keys it has never heard of both survive.
+
+**Two things it gets right that a copied snippet gets right by luck.** The policy
+path is written **absolutely**, because a server that has to find its own policy
+can find none and run with no ceiling at all — and the working-directory and
+variable-expansion rules are asymmetric across every client, so a shared snippet
+would attach the wrong policy for half of them. And the surface is `serve-mcp`
+and not `mcp`: the first is KelyfOS itself as a server, the second bridges a
+client to one sandbox's guest.
+
+**A client's configuration format is an external surface.** It is outside the
+drift gate and outside the compatibility promise, re-verified on its own cadence,
+which is why every entry carries the tool, the version and the date it was
+checked against. The rest of this page is the hand-written path, which is what
+you need if your client is not one of the six.
+
+
 ## 1. Four ways in, and how to choose
 
 | | What it is | Choose it when |
