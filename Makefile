@@ -86,7 +86,7 @@ KERNEL_ARTIFACT := vmlinux
 endif
 
 .DEFAULT_GOAL := help
-.PHONY: help versions toolchain kernel supervisor cli image run bench docs cookbook vuln fuzz release-sums release-sbom prove-caps prove-team demo-team accept-e2 clean test test-integration linux-only fetch-kernel
+.PHONY: help versions toolchain kernel supervisor cli image run bench docs cookbook vuln fuzz release-sums release-sbom tokens prove-caps prove-team demo-team accept-e2 clean test test-integration linux-only fetch-kernel
 
 help: ## Show this target list
 	@echo "KelyfOS — targets (ARCH=$(ARCH), FLAVOR=$(FLAVOR))"
@@ -327,6 +327,14 @@ docs: linux-only cli ## Regenerate docs/reference from the source
 	  -supervisor $(OUT_DIR)/kelyfos-supervisor-host \
 	  -out $(CURDIR)/docs/reference \
 	  -repo $(CURDIR)
+
+# The size of the generated set, by a command rather than by a sentence (P6-17).
+#
+# The figure quoted in llms.txt and in progress rows used to come from an
+# invocation recorded only in prose, which is exactly the unrecorded provenance
+# this project refuses everywhere else. This is that invocation, committed.
+tokens: ## Measure llms-full.txt: bytes and characters exactly, tokens estimated
+	@go run $(CURDIR)/tools/tokens $(CURDIR)/llms-full.txt
 
 # Every recipe in docs/cookbook.md, run as written (E3-3). The recipes are the
 # documentation, so this is how a recipe that stopped working gets found by us
