@@ -127,14 +127,12 @@ func snapshotRestore(argv []string) error {
 	if err != nil {
 		return err
 	}
-	// D6 mints a fresh CA every run, so a restored guest is carrying an anchor
-	// for a CA that no longer exists. It has to be replaced before anything in
-	// there tries to reach a secret-bound domain.
-	if ca != nil {
-		if err := sb.InstallTrustAnchor(ca.AnchorPEM()); err != nil {
-			return err
-		}
-	}
+	// Registered the instant there is a machine, before anything that can fail
+	// with it running. It used to sit one block lower, under the trust anchor,
+	// and a guest that refused the anchor therefore returned past a live
+	// Firecracker nobody held: the VMM is started with its own process group and
+	// no Pdeathsig, so it outlived `kelyfos restore` itself, taking the
+	// workspace copy and the run directory with it (finding M-1).
 	defer func() {
 		ws := sb.State.Workspace
 		if err := sb.Shutdown(5 * time.Second); err != nil {
@@ -146,6 +144,14 @@ func snapshotRestore(argv []string) error {
 			_ = os.Remove(ws)
 		}
 	}()
+	// D6 mints a fresh CA every run, so a restored guest is carrying an anchor
+	// for a CA that no longer exists. It has to be replaced before anything in
+	// there tries to reach a secret-bound domain.
+	if ca != nil {
+		if err := sb.InstallTrustAnchor(ca.AnchorPEM()); err != nil {
+			return err
+		}
+	}
 
 	rec, err := recorder.Open(sandbox.Root(), sb.State.ID)
 	if err != nil {

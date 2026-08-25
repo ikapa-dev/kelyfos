@@ -7,8 +7,10 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptrace"
 	"strconv"
 	"strings"
+	"sync/atomic"
 )
 
 // terminate handles a CONNECT to a domain that has a secret bound to it.
@@ -55,6 +57,11 @@ func (p *Proxy) terminate(client net.Conn, host string, port int, bound []*Secre
 	// and each one needs the credential.
 	for {
 		var attached *Secret
+		// sent says the credential reached the socket. Written on the
+		// transport's write goroutine and read on this one — a response can
+		// come back before a request body has finished being written — so it
+		// is atomic rather than a plain flag.
+		var sent atomic.Bool
 		req, err := http.ReadRequest(br)
 		if err != nil {
 			if !errors.Is(err, io.EOF) && in == 0 && out == 0 {
@@ -92,6 +99,19 @@ func (p *Proxy) terminate(client net.Conn, host string, port int, bound []*Secre
 		if secret != nil {
 			req.Header.Set("Authorization", secret.Header())
 			attached = secret
+			// Nothing about a RoundTrip error says whether the request was
+			// written, and the two failures underneath one want opposite
+			// records. A peer that reads the request and then resets the
+			// connection HAS the credential; a dial or handshake that never
+			// completed never sent a byte. Recording neither is how a
+			// credential leaves the machine with nothing written down;
+			// recording both would claim a credential was presented on a
+			// request that never went out. WroteHeaders is the only thing that
+			// separates them: it fires once the Authorization line has been
+			// written to the connection, and nothing calls it on a dial
+			// failure, a DNS failure or a TLS handshake failure.
+			req = req.WithContext(httptrace.WithClientTrace(req.Context(),
+				&httptrace.ClientTrace{WroteHeaders: func() { sent.Store(true) }}))
 		} else if len(bound) > 0 && p.OnWithheld != nil {
 			// Say so. A credential that silently does not attach sends the
 			// request out unauthenticated and the only symptom is a failure
@@ -100,13 +120,18 @@ func (p *Proxy) terminate(client net.Conn, host string, port int, bound []*Secre
 		}
 
 		resp, err := p.upstream().RoundTrip(req)
+		// The event is owed to the credential having left, not to an answer
+		// coming back. Reporting it only on success made the record miss every
+		// credential the peer took and then reset on — a failure ordinary
+		// network flakiness reaches, and one where the reader most needs to
+		// know the token is out there.
+		if attached != nil && p.OnSecret != nil && (err == nil || sent.Load()) {
+			p.OnSecret(attached.Name, host)
+		}
 		if err != nil {
 			writeStatus(inner, http.StatusBadGateway, "kelyfos: "+err.Error())
 			p.report(Attempt{Host: host, Port: port, Reason: ReasonDialFailed})
 			return
-		}
-		if attached != nil && p.OnSecret != nil {
-			p.OnSecret(attached.Name, host)
 		}
 		p.scrubResponse(resp, host)
 		// A chunked body reports -1, which is not a byte count. Adding it

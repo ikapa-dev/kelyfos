@@ -579,6 +579,20 @@ func syncResumedWorkspace(sb *sandbox.Sandbox, hostDir string) {
 	if image == "" {
 		return
 	}
+	// The image has to still be there, and this is not a formality (P6-27).
+	//
+	// When it was not, SyncBack did not fail — it extracted nothing, renamed the
+	// person's project directory away and put an empty one in its place, and
+	// this function printed "workspace written back". A sync-back that cannot
+	// read its source must change nothing at all: the directory on disk is worth
+	// more than the sync, and refusing is the only outcome that keeps it.
+	if info, err := os.Stat(image); err != nil || info.Size() == 0 {
+		fmt.Fprintf(os.Stderr,
+			"kelyfos: the workspace image for this session is not readable (%s), so the host\n"+
+				"    directory was left exactly as it is rather than replaced with an empty one.\n"+
+				"    Nothing was written back and nothing was removed.\n", image)
+		return
+	}
 	defer os.Remove(image)
 	ws := sandbox.AdoptWorkspace(hostDir, image)
 	dest, diverted, err := ws.SyncBack()

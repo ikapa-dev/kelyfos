@@ -66,6 +66,21 @@ func ValidAgentName(name string) error {
 	case len(name) > 64:
 		return fmt.Errorf("the agent name %q is %d characters; 64 is the most an agent may be called",
 			name[:32]+"…", len(name))
+	case strings.Contains(name, "-spawn-"):
+		// `<spawner>-spawn-<n>` is the host's to mint, for a worker an agent asks
+		// for at runtime. A declared agent holding one of those names is not a
+		// duplicate this function's caller can see, because the spawn arrives
+		// later — and when it does it lands *on top* of that agent rather than
+		// beside it (P6-27, finding M-6). The broker refuses the collision too;
+		// this is the half that reaches the person who can still fix it, while
+		// they are looking at the file they wrote the name in.
+		//
+		// The check is on the expanded name rather than the written one on
+		// purpose: `name = "lead-spawn"` with `count = 2` becomes lead-spawn-1,
+		// and it is the expansion that collides.
+		return fmt.Errorf("the agent name %q contains \"-spawn-\". The host mints names of that "+
+			"shape for the workers an agent spawns at runtime, so a declared agent cannot be "+
+			"called one — pick a name that does not read as somebody's spawned worker", name)
 	}
 	for _, r := range name {
 		switch {

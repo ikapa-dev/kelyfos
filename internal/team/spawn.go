@@ -93,6 +93,28 @@ func (b *Broker) Spawn(spawner, image string) (SpawnRequest, error) {
 
 	b.spawnSeq++
 	name := fmt.Sprintf("%s-spawn-%d", spawner, b.spawnSeq)
+	// The minted name has to be free before it is used, because taking one that
+	// is not is not a naming collision — it is a merge. The mailbox below would
+	// replace the sitting agent's, both machines would then race on one channel,
+	// and attach would leave that agent's *whole* edge set in place under the
+	// name and add the spawner's on top — so the worker would inherit every edge
+	// it had, against the "exactly one edge, to its spawner" this one exception
+	// to a fixed topology rests on (docs/teams.md §5). Store access follows the
+	// name too, and the name would appear twice in `team ps`, until the first
+	// despawn removed the edges of both.
+	//
+	// Refused rather than bumped along until a free name turns up, in the shape
+	// P6-24 settled for names generally: a team that reaches this has a config to
+	// fix, and a worker quietly renamed out of the way hides it. The sequence
+	// stays spent, so the agent's next attempt mints a different name and works.
+	if _, taken := b.boxes[name]; taken || b.topo.Exists(name) {
+		b.mu.Unlock()
+		b.record(Event{Type: TypeSpawn, From: spawner, To: name, Kind: KindSpawn,
+			Outcome: OutcomeRefused, Reason: "name_taken"})
+		return SpawnRequest{}, &Error{Kind: "denied",
+			Message: name + " is already an agent in this team, so a spawned worker " +
+				"cannot be called that; rename that agent in the team file"}
+	}
 	b.spawnedBy[spawner] = append(live, name)
 	b.boxes[name] = make(chan Message, mailbox)
 	b.mu.Unlock()
@@ -122,11 +144,22 @@ func (b *Broker) Despawn(name string) {
 			}
 		}
 	}
-	delete(b.boxes, name)
-	b.mu.Unlock()
+	// Nothing is removed until the name is known to belong to a worker somebody
+	// spawned. The delete used to come first, so a despawn of a name this broker
+	// never minted took a declared agent's mailbox with it and then returned
+	// before touching the topology — leaving that agent in the team, with its
+	// edges, and unable to receive: senders would be told it is not reading its
+	// messages, and the agent itself that it is not in this team. No caller
+	// passes such a name today, which is why this was latent; it is the ordering
+	// that keeps it that way if one ever does.
 	if spawner == "" {
+		b.mu.Unlock()
+		b.record(Event{Type: TypeSpawn, To: name, Kind: KindDespawn,
+			Outcome: OutcomeRefused, Reason: "not_a_spawned_worker"})
 		return
 	}
+	delete(b.boxes, name)
+	b.mu.Unlock()
 	b.topo.detach(name)
 	b.record(Event{Type: TypeSpawn, From: spawner, To: name, Kind: KindDespawn,
 		Outcome: OutcomeDelivered})

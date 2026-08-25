@@ -83,7 +83,12 @@ type box struct {
 }
 
 func (b *box) close(reason string) {
-	_ = b.sb.Shutdown(5 * time.Second)
+	// A box can be half-built: boot unwinds through here when it fails, and it
+	// can fail before there is a machine to stop — nil-guarded for the same
+	// reason serve-mcp's servedBox.close is.
+	if b.sb != nil {
+		_ = b.sb.Shutdown(5 * time.Second)
+	}
 	if b.proxy != nil {
 		b.proxy.Close()
 	}
@@ -259,20 +264,16 @@ func (s *Server) boot(parent context.Context) (*box, error) {
 	}
 	b := &box{}
 	ok := false
+	// The one teardown, not a copy of it. This defer used to hand-roll a strict
+	// subset of close() — proxy, network, slice, recorder, and no machine — so a
+	// failure after the VM was running left a microVM nothing could reach: it
+	// never entered s.boxes, so `killSandbox` could not find it and the census
+	// that bounds this shim under-counted it forever. The refusal that reaches
+	// it is the guest's to make (finding M-1): InstallTrustAnchor fails when the
+	// guest answers no.
 	defer func() {
 		if !ok {
-			if b.proxy != nil {
-				b.proxy.Close()
-			}
-			if b.net != nil {
-				b.net.Down()
-			}
-			if b.slice != nil {
-				b.slice.Close()
-			}
-			if b.rec != nil {
-				_ = b.rec.Close()
-			}
+			b.close("error")
 		}
 	}()
 

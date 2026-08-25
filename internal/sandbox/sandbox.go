@@ -386,14 +386,106 @@ func (s *Sandbox) serveTeam() {
 					}
 					return
 				}
+				// Before the broker acts on it, because acting on it is what
+				// makes it unrecoverable: a message the broker accepts is a
+				// message taken off somebody's mailbox when it is read, and if
+				// the frame that would deliver it cannot be written there is
+				// nothing left to deliver (M-8).
+				if refusal := refuseUnanswerable(req); refusal != nil {
+					if err := w.Write(refusal); err != nil {
+						return
+					}
+					continue
+				}
 				resp := s.opts.OnTeamRequest(req)
 				resp.V, resp.ID = proto.Version, req.ID
 				if err := w.Write(resp); err != nil {
-					return
+					if !errors.Is(err, proto.ErrLineTooLong) {
+						return
+					}
+					// An answer too large for the channel is the one send
+					// failure that is not a dead connection: proto.Writer
+					// measures the whole frame before it writes any of it, so
+					// none of the refused answer reached the wire and the
+					// stream is still on a frame boundary. The same recovery
+					// the guest's MCP session already makes (supervisor/mcp.go).
+					//
+					// The check above makes this unreachable for a body an
+					// agent sent, which is the point of keeping it: it is what
+					// stops a field added to the envelope later from quietly
+					// bringing back the destroyed message and the unexplained
+					// EOF, and it still answers for a body that reached the
+					// broker some other way.
+					if err := w.Write(tooLargeToAnswer(req)); err != nil {
+						return
+					}
 				}
 			}
 		}()
 	}
+}
+
+// refuseUnanswerable is the refusal for a team request the host could not
+// answer inside one frame, or nil when there is nothing wrong with it.
+//
+// Both limits are on what the guest chose, and both are refused rather than
+// trimmed: a request answered with a truncated body or under an id that is not
+// the one asked with is a request answered wrongly, and the agent that sent it
+// can act on a size it is told (the shape internal/team already refuses an
+// oversized store value with).
+func refuseUnanswerable(req proto.TeamRequest) *proto.TeamResponse {
+	if len(req.ID) > proto.MaxTeamID {
+		// Answered under the id's first MaxTeamID bytes: it is not the id that
+		// was asked with — nothing here can be — but it is enough of it for the
+		// caller to see which request was refused, and it is bounded.
+		return &proto.TeamResponse{
+			V: proto.Version, ID: req.ID[:proto.MaxTeamID],
+			Error: &proto.Error{Kind: proto.ErrBadRequest, Message: fmt.Sprintf(
+				"a request id may be at most %d bytes; this one is %d",
+				proto.MaxTeamID, len(req.ID))},
+		}
+	}
+	if n := base64Size(req.Body); n > proto.MaxTeamBody {
+		return &proto.TeamResponse{
+			V: proto.Version, ID: req.ID,
+			Error: &proto.Error{Kind: proto.ErrBadRequest, Message: fmt.Sprintf(
+				"a team message may carry at most %d bytes; this one is %d",
+				proto.MaxTeamBody, n)},
+		}
+	}
+	return nil
+}
+
+// tooLargeToAnswer stands in for an answer the channel will not carry. It names
+// the frame limit, because the size of an answer is a reason a caller can act
+// on and a closed connection is not.
+//
+// Everything in it is the host's own text but the id, which the caller needs to
+// know which request was refused and which the check above has already bounded
+// — so this frame is always writable, which a refusal has to be.
+func tooLargeToAnswer(req proto.TeamRequest) proto.TeamResponse {
+	return proto.TeamResponse{
+		V: proto.Version, ID: req.ID,
+		Error: &proto.Error{Kind: proto.ErrInternal, Message: fmt.Sprintf(
+			"the answer to this request does not fit a %d byte frame", proto.MaxLine)},
+	}
+}
+
+// base64Size is how many bytes a base64 string decodes to, worked out from its
+// length rather than by decoding it — the string being measured is up to a
+// megabyte, and this runs before anything has agreed to spend that.
+func base64Size(s string) int {
+	n := base64.StdEncoding.DecodedLen(len(s))
+	switch {
+	case strings.HasSuffix(s, "=="):
+		n -= 2
+	case strings.HasSuffix(s, "="):
+		n--
+	}
+	if n < 0 {
+		return 0
+	}
+	return n
 }
 
 // listenEvents binds the guest's events channel. It has to exist before the VM
@@ -1261,17 +1353,64 @@ func (s *Sandbox) Shutdown(grace time.Duration) error {
 			}
 		}
 	}
-	if s.readyLn != nil {
-		_ = s.readyLn.Close()
+	// The workspace comes out of the jail while there is still a jail to take it
+	// out of, and after the guest has stopped, which is the only moment both are
+	// true. On every ordinary installation the image inside the chroot is the
+	// host's image under a second name — stageJail hard-links it, and the two
+	// live under one cache root — so this costs two stats and does nothing.
+	// Where the link could not be made, they are two files, the guest wrote to
+	// the one inside, and cleanup below is about to delete it: that is the
+	// silent total loss syncJailedWorkspace was written for, and it had no
+	// caller at all (D-1).
+	var syncErr error
+	if s.State.Jailed && s.State.Workspace != "" {
+		syncErr = syncJailedWorkspace(s.State.RunDir, s.State.Workspace)
 	}
-	if s.eventsLn != nil {
-		_ = s.eventsLn.Close()
+
+	// A restored jailed machine's workspace image lives INSIDE the run
+	// directory, and cleanup() below is about to delete it (P6-27).
+	//
+	// Restore has to put it there: the jailed VMM can only open a path inside
+	// its own chroot, and the snapshot names the file it was saved with. But the
+	// caller writes the workspace back to the host AFTER Shutdown returns —
+	// `kelyfos resume` registers that as a defer, and a defer registered first
+	// runs last — so by the time anything reads the image, the directory holding
+	// it is gone. What made this the worst kind of defect rather than a failed
+	// sync is that the sync did not fail: it produced an empty tree, renamed the
+	// person's project directory away, put the empty one in its place, and
+	// printed "workspace written back". The agent's work was in neither, because
+	// `.kelyfos-previous` holds what was there BEFORE the run.
+	//
+	// So the image is lifted somewhere that outlives the jail, at the one moment
+	// both are true — the guest has stopped, and the jail is still here. This is
+	// the same directory and the same name the unjailed restore branch already
+	// uses, and the caller already removes it when the sync is done.
+	if s.State.Jailed && s.State.Workspace != "" && withinDir(s.State.Workspace, s.State.RunDir) {
+		kept := filepath.Join(Root(), "workspaces", s.State.ID+".ext4")
+		if err := os.MkdirAll(filepath.Dir(kept), 0o700); err == nil {
+			moved := os.Rename(s.State.Workspace, kept)
+			if moved != nil {
+				// A rename across devices fails; the copy is the fallback, and
+				// it is the same fallback stageJail makes for the same reason.
+				moved = copyFile(s.State.Workspace, kept)
+			}
+			if moved == nil {
+				s.State.Workspace = kept
+			} else if syncErr == nil {
+				syncErr = fmt.Errorf("lift the workspace out of the jail: %w", moved)
+			}
+		}
 	}
-	if s.teamLn != nil {
-		_ = s.teamLn.Close()
-	}
+	s.closeListeners()
 	s.opts.Net.Down()
 	s.cleanup()
+	if syncErr != nil {
+		// Reported rather than swallowed. Every other error here is a machine
+		// that was already stopping; this one is an agent's work not making it
+		// back out, and a teardown that returns nil anyway is exactly how it
+		// would go unnoticed.
+		return fmt.Errorf("write the workspace back out of the jail: %w", syncErr)
+	}
 	if s.waitErr != nil {
 		// A VM killed on purpose is not a failure worth reporting upward.
 		var ee *exec.ExitError
@@ -1392,7 +1531,36 @@ func (s *Sandbox) signalVMM(sig syscall.Signal) {
 	}
 }
 
+// closeListeners closes the three sockets the guest dials in on, and the accept
+// loops sitting on them return as a consequence.
+//
+// Called from cleanup rather than only from Shutdown, because Shutdown is not
+// the only way a sandbox ends. New and Restore both bind these before there is a
+// VMM to talk to, and both call cleanup on every failure after that point —
+// which removed the run directory, unlinking the socket names without closing a
+// single descriptor. A machine that failed to start therefore left up to three
+// bound sockets and three goroutines blocked in Accept, held alive for the life
+// of the process by the closure over s. On `kelyfos run` that process exits a
+// moment later and nobody notices; inside `serve-mcp` or a team host it does
+// not, and every failed boot cost three more (L-7).
+//
+// Safe to call more than once, which it is: Close on an already-closed listener
+// returns an error nobody needs, and Shutdown calls this itself before cleanup
+// so that the sockets go before the network they are reachable over.
+func (s *Sandbox) closeListeners() {
+	if s.readyLn != nil {
+		_ = s.readyLn.Close()
+	}
+	if s.eventsLn != nil {
+		_ = s.eventsLn.Close()
+	}
+	if s.teamLn != nil {
+		_ = s.teamLn.Close()
+	}
+}
+
 func (s *Sandbox) cleanup() {
+	s.closeListeners()
 	if s.State.RunDir == "" {
 		return
 	}
@@ -1560,4 +1728,16 @@ func newID() (string, error) {
 		return "", fmt.Errorf("generate sandbox id: %w", err)
 	}
 	return hex.EncodeToString(b[:]), nil
+}
+
+// withinDir reports whether path is inside dir.
+//
+// Lexical rather than a stat, because it is asked about a path that is about to
+// be deleted and the answer must not depend on the file still being there.
+func withinDir(path, dir string) bool {
+	if dir == "" {
+		return false
+	}
+	p, d := filepath.Clean(path), filepath.Clean(dir)
+	return p != d && strings.HasPrefix(p, d+string(os.PathSeparator))
 }

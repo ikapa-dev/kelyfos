@@ -611,6 +611,22 @@ type agentRig struct {
 	// two paths to be visible rather than inferred, so it travels into
 	// team.json, into `team ps`, and into the transcript.
 	via string
+
+	// stop can be reached from two directions at once, so it is allowed to
+	// happen exactly once. A max_runtime timer and a spawn lifetime each stop
+	// their own member from a goroutine nobody waits for, and teardown stops
+	// everything the roster still holds; the two are serialised by nothing, and
+	// a timer already past its select does not see the team's context close.
+	// Both call this. Doing it twice would shut one machine down twice, put two
+	// resource receipts for one agent in the team's chain, and — the part that
+	// costs the user something — run two sync-backs over one host directory,
+	// where the second's removal of the .kelyfos-previous backup deletes the
+	// project directory the first had just renamed into it (finding M-4).
+	//
+	// teamRig, the team-level object, has had exactly this guard since it was
+	// written; the per-member object was never given it.
+	once    sync.Once
+	stopErr error
 }
 
 // stop unwinds one member in the reverse of the order it was built. The machine
@@ -622,42 +638,46 @@ type agentRig struct {
 // process's stdout is the protocol and a stray line of prose corrupts it. That
 // is not a hypothetical: it is what the first live run of team_down did (E4-3).
 func (r *agentRig) stop(timeout time.Duration, out io.Writer) error {
-	// The receipt is taken immediately before the shutdown, because every
-	// counter it reads belongs to a process that is about to stop existing
-	// (E1-7). In a team there is one per agent, in the team's chain, named by
-	// the agent it is about.
-	if u, err := r.sb.State.Sample(); err == nil {
-		_ = r.rec.Append(recorder.Event{
-			Type: recorder.TypeResourceSummary, Agent: r.name,
-			CPUSeconds: u.CPUSeconds, PeakRSSKiB: u.PeakRSSKiB,
-			NetInBytes: u.NetInBytes, NetOutBytes: u.NetOutBytes,
-			DiskReadBytes: u.DiskReadBytes, DiskWriteBytes: u.DiskWriteBytes,
-			MemMiB: r.sb.State.MemMiB, VcpuCount: r.sb.State.VcpuCount,
-			CPUQuota: r.sb.State.CPUQuota,
-		})
-	}
-	err := r.sb.Shutdown(timeout)
-	if r.proxy != nil {
-		r.proxy.Close()
-	}
-	if r.net != nil {
-		r.net.Down()
-	}
-	r.slice.Close()
-	if r.ws != nil {
-		dest, diverted, syncErr := r.ws.SyncBack()
-		switch {
-		case syncErr != nil:
-			fmt.Fprintf(os.Stderr, "kelyfos: %s: workspace sync-back failed: %v\n", r.name, syncErr)
-		case diverted:
-			fmt.Fprintf(out, "  %-12s host directory changed while the team ran; results written to %s\n",
-				r.name, dest)
-		default:
-			fmt.Fprintf(out, "  %-12s workspace written back to %s\n", r.name, dest)
+	// Once, whoever gets here first; a second caller waits for the first and is
+	// told what it found rather than being told nothing went wrong.
+	r.once.Do(func() {
+		// The receipt is taken immediately before the shutdown, because every
+		// counter it reads belongs to a process that is about to stop existing
+		// (E1-7). In a team there is one per agent, in the team's chain, named
+		// by the agent it is about.
+		if u, err := r.sb.State.Sample(); err == nil {
+			_ = r.rec.Append(recorder.Event{
+				Type: recorder.TypeResourceSummary, Agent: r.name,
+				CPUSeconds: u.CPUSeconds, PeakRSSKiB: u.PeakRSSKiB,
+				NetInBytes: u.NetInBytes, NetOutBytes: u.NetOutBytes,
+				DiskReadBytes: u.DiskReadBytes, DiskWriteBytes: u.DiskWriteBytes,
+				MemMiB: r.sb.State.MemMiB, VcpuCount: r.sb.State.VcpuCount,
+				CPUQuota: r.sb.State.CPUQuota,
+			})
 		}
-		_ = os.Remove(r.ws.ImagePath)
-	}
-	return err
+		r.stopErr = r.sb.Shutdown(timeout)
+		if r.proxy != nil {
+			r.proxy.Close()
+		}
+		if r.net != nil {
+			r.net.Down()
+		}
+		r.slice.Close()
+		if r.ws != nil {
+			dest, diverted, syncErr := r.ws.SyncBack()
+			switch {
+			case syncErr != nil:
+				fmt.Fprintf(os.Stderr, "kelyfos: %s: workspace sync-back failed: %v\n", r.name, syncErr)
+			case diverted:
+				fmt.Fprintf(out, "  %-12s host directory changed while the team ran; results written to %s\n",
+					r.name, dest)
+			default:
+				fmt.Fprintf(out, "  %-12s workspace written back to %s\n", r.name, dest)
+			}
+			_ = os.Remove(r.ws.ImagePath)
+		}
+	})
+	return r.stopErr
 }
 
 // memberOptions is everything about a team member's machine that is the same
@@ -732,6 +752,21 @@ func bootAgent(ctx context.Context, a plannedAgent, broker *team.Broker, rec *re
 	defer func() {
 		if ok {
 			return
+		}
+		// The machine first, then the plumbing it was using — the reverse of
+		// the order this function builds them, and the order rig.stop uses.
+		//
+		// It was missing here, and bootAgent is the one caller of sandbox.New
+		// whose failure the process survives: OnSpawn hands this error back to
+		// the broker and the team keeps running, so a Start that failed left a
+		// jail directory, three unix listeners and their accept goroutines
+		// behind for the life of the host, once per failed spawn (finding L-7).
+		//
+		// This is deliberately not rig.stop: a member that never became ready
+		// has no resource receipt worth appending to the team's chain and no
+		// workspace worth syncing back — its image is discarded below instead.
+		if rig.sb != nil {
+			_ = rig.sb.Shutdown(5 * time.Second)
 		}
 		if rig.proxy != nil {
 			rig.proxy.Close()

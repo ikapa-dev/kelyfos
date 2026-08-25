@@ -82,6 +82,51 @@ const (
 // the reader opposite it will refuse (docs/protocol.md §3).
 const MaxMCPLine = 16 << 20
 
+// MaxTeamBody and MaxTeamID are what make a team message that fits on the way
+// in still fit on the way out.
+//
+// MaxLine bounds a frame, and until now it was the only thing bounding either
+// direction of the team channel — which is not one budget on one set of bytes,
+// because the frame that delivers a message is not the frame that sent it. A
+// delivered `recv` carries `from` where the `ask` carried `to`, plus `ok`, plus
+// the `correlate` tag a reply has to quote back. The delivery frame is
+// therefore tens of bytes larger than the frame that fitted, and by exactly how
+// many depends on the two agents' names and on the ids the two guests chose —
+// so it cannot be written down as a constant, and a limit that has to be
+// recomputed per message is a limit nobody can state.
+//
+// A band of payload sizes was the result: sizes an agent could send, that the
+// broker accepted and recorded as delivered, and that could then never be
+// written to the agent they were addressed to. Broker.Recv takes the message
+// off the mailbox before the frame is built, so the failed write destroyed it,
+// and the write failure was read as a dead connection and closed the channel.
+// The recipient got an unexplained EOF for a message it never saw (M-8).
+//
+// So the payload is bounded below the frame, with the envelope's worst case
+// reserved rather than estimated: every field a body-carrying answer can also
+// carry, the JSON around them, and the delimiting newline. A kilobyte is far
+// more than that costs — roughly sixty bytes of punctuation, a name of at most
+// 64 (internal/team ValidAgentName), a tag, and an id — and it stays true when
+// an id arrives as control characters, which encoding/json escapes to six bytes
+// each. proto_test.go builds that worst case and writes it rather than
+// multiplying it out here.
+//
+// The exec path has had this invariant from the beginning: MaxChunk is the same
+// idea one channel over, and it is checked the same way.
+const (
+	// MaxTeamBody is the largest payload one team message may carry, counted
+	// before base64, so that the answer delivering it always fits MaxLine.
+	MaxTeamBody = (MaxLine - maxTeamEnvelope) / 4 * 3
+	// MaxTeamID bounds the request id the host echoes onto its answer. A guest
+	// picks its own ids, and an echoed id is part of the frame the answer has
+	// to fit in, so an unbounded one would leave the bound above unprovable.
+	MaxTeamID = 128
+
+	// maxTeamEnvelope is what is reserved for everything on a team frame that
+	// is not the body.
+	maxTeamEnvelope = 1 << 10
+)
+
 // ErrLineTooLong is returned when a peer sends a frame beyond MaxLine.
 var ErrLineTooLong = errors.New("proto: frame exceeds maximum line length")
 

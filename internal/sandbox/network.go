@@ -51,9 +51,12 @@ func newNetwork(sandboxID, user string) (*Network, error) {
 
 	var lastErr error
 	for attempt := 0; attempt < 32; attempt++ {
-		idx := (base + uint16(attempt)) % 16384
-		hostIP := net.IPv4(169, 254, byte(idx>>6), byte((idx&63)*4+1))
-		guestIP := net.IPv4(169, 254, byte(idx>>6), byte((idx&63)*4+2))
+		hostIP, guestIP, ok := deriveAddrs((base + uint16(attempt)) % 16384)
+		if !ok {
+			// A reserved range. Advancing `attempt` is the whole remedy: the
+			// next index is an ordinary /30 and costs one of the 32 tries.
+			continue
+		}
 
 		n := &Network{
 			TAP: tap, HostIP: hostIP, GuestIP: guestIP,
@@ -69,6 +72,52 @@ func newNetwork(sandboxID, user string) (*Network, error) {
 		return n, nil
 	}
 	return nil, fmt.Errorf("could not bring up a TAP for sandbox %s: %w", sandboxID, lastErr)
+}
+
+// metadataIP is the cloud instance metadata address — AWS, GCP, Azure and every
+// hypervisor that copied them.
+var metadataIP = net.IPv4(169, 254, 169, 254)
+
+// deriveAddrs turns one attempt index into the host and guest halves of a /30,
+// and reports whether that index may be handed to a sandbox at all.
+//
+// Exactly one of the 16,384 indices may not: idx 10879 is 169.254.169.252/30,
+// which contains the cloud metadata address, and it arrives for one sandbox id
+// in 16,384 rather than never. `ip addr add` installs a connected route for the
+// whole /30, so the address is claimed for the life of the sandbox and nothing
+// fails at setup time to say so.
+//
+// The damage is not usually the host's metadata, which is the intuitive
+// casualty. Stock cloud images carry a /32 route for 169.254.169.254 (AWS and
+// Azure via DHCP, GCP via a gateway route); a /32 beats a /30 on longest-prefix
+// match, so the host keeps its IMDS and the SANDBOX is what breaks: the proxy's
+// replies to guest 169.254.169.254 leave by the physical NIC instead of the TAP,
+// the guest's handshake to the proxy never completes, and egress hangs with no
+// error anywhere — while stray packets addressed to the metadata IP go out on
+// the wire, since the nft table filters input and forward but never output. On a
+// host that reaches IMDS through a broader route (169.254.0.0/16 scope link, or
+// the default route) the host's metadata is what goes instead. Either way the
+// symptom is a hang, which is the hardest kind of failure to attribute.
+//
+// docs/networking.md §2 says of the link-local range that "nothing routes and no
+// site allocates" — true of the /16 as a whole and false of this one address.
+func deriveAddrs(idx uint16) (hostIP, guestIP net.IP, ok bool) {
+	hostIP = net.IPv4(169, 254, byte(idx>>6), byte((idx&63)*4+1))
+	guestIP = net.IPv4(169, 254, byte(idx>>6), byte((idx&63)*4+2))
+	if sameSlash30(hostIP, metadataIP) {
+		return nil, nil, false
+	}
+	return hostIP, guestIP, true
+}
+
+// sameSlash30 reports whether two addresses fall in the same /30 — the first
+// three octets equal, and the fourth equal once the two host bits are masked off.
+func sameSlash30(a, b net.IP) bool {
+	x, y := a.To4(), b.To4()
+	if x == nil || y == nil {
+		return false
+	}
+	return x[0] == y[0] && x[1] == y[1] && x[2] == y[2] && x[3]&0xfc == y[3]&0xfc
 }
 
 // newNetworkAt re-creates a TAP using addressing a snapshot recorded, instead

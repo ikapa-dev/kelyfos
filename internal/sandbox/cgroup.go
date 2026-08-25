@@ -49,12 +49,14 @@ type Slice struct {
 	mode   mode
 	dir    *os.File
 
-	// Where this slice is expected to live, when it lives under a team's.
-	// parent is the absolute directory on the direct path; sliceUnit is the
-	// systemd unit name on the other. Confirm checks the process landed there,
-	// which matters most for a child with no quota of its own: without a
-	// placement check there would be nothing left to verify, and Close would
-	// then be holding a path nobody proved was ours.
+	// Where this slice expects its process to land. parent is the absolute
+	// directory on the direct path — its own directory for a single run, the
+	// team's for one member of a team — and sliceUnit is the systemd unit name
+	// on the other. Confirm checks the process landed there, which matters most
+	// for a child with no quota of its own: without a placement check there
+	// would be nothing left to verify, and Close would then be holding a path
+	// nobody proved was ours. Both are empty only for a plain systemd scope,
+	// whose placement is the user manager's to choose and not ours to assert.
 	parent    string
 	sliceUnit string
 }
@@ -261,13 +263,37 @@ func NewCPUSlice(id string, percent int) (*Slice, error) {
 		return sl, nil
 	}
 
-	sl.Path = filepath.Join(root, sl.name)
-	if err := os.Mkdir(sl.Path, 0o755); err != nil && !os.IsExist(err) {
-		return nil, fmt.Errorf("create cgroup %s: %w", sl.Path, err)
+	if err := sl.prepareDirect(root); err != nil {
+		return nil, err
 	}
-	if err := os.WriteFile(filepath.Join(sl.Path, "cpu.max"), []byte(cpuMaxLine(percent)), 0o644); err != nil {
+	return sl, nil
+}
+
+// prepareDirect creates and configures one sandbox's cgroup under root.
+//
+// Split out of NewCPUSlice because everything it does is a mkdir, a write and
+// an open — no cgroupfs is needed to exercise it, which is what lets the
+// expectation it records be checked on any machine.
+func (sl *Slice) prepareDirect(root string) error {
+	sl.Path = filepath.Join(root, sl.name)
+	// A single run knows exactly where its VMM belongs — this directory, which
+	// CgroupFD puts it in at clone time and which the jailer is handed as
+	// --parent-cgroup — so it says so, and Confirm has something to check.
+	// Without it the placement check was a no-op on the one path that never has
+	// a team above it, leaving cpu.max as the whole of the verification: a value
+	// another cgroup can happen to agree with.
+	//
+	// The expectation is the slice itself and not root: underParent accepts the
+	// directory or anything below it, which still tolerates a jailer that nests
+	// the VMM one level down, whereas naming root would accept any sibling
+	// under it and check very little.
+	sl.parent = sl.Path
+	if err := os.Mkdir(sl.Path, 0o755); err != nil && !os.IsExist(err) {
+		return fmt.Errorf("create cgroup %s: %w", sl.Path, err)
+	}
+	if err := os.WriteFile(filepath.Join(sl.Path, "cpu.max"), []byte(cpuMaxLine(sl.Percent)), 0o644); err != nil {
 		_ = os.Remove(sl.Path)
-		return nil, fmt.Errorf("write cpu.max in %s: %w", sl.Path, err)
+		return fmt.Errorf("write cpu.max in %s: %w", sl.Path, err)
 	}
 	// The directory handle places the child in this cgroup at clone time.
 	// Adding the pid afterwards would leave a window in which the process runs
@@ -275,10 +301,10 @@ func NewCPUSlice(id string, percent int) (*Slice, error) {
 	dir, err := os.Open(sl.Path)
 	if err != nil {
 		_ = os.Remove(sl.Path)
-		return nil, err
+		return err
 	}
 	sl.dir = dir
-	return sl, nil
+	return nil
 }
 
 // cpuMaxLine is the whole percentage-to-kernel translation, in one place so the
@@ -355,13 +381,22 @@ func (s *Slice) confirmOnce(pid int) error {
 	if path == "" {
 		return fmt.Errorf("confirm cpu quota: pid %d has no cgroup v2 entry", pid)
 	}
-	// Checked before Path is adopted, not after: Close removes whatever Path
-	// holds, and a process that landed somewhere unexpected would otherwise
-	// hand teardown a directory belonging to somebody else.
+	return s.confirmAt(path)
+}
+
+// confirmAt checks the cgroup a process actually landed in. A separate method
+// because what it needs is a directory rather than a /proc entry, so it can be
+// tested against an ordinary one.
+//
+// Path is adopted at the end and not before: Close removes whatever Path holds,
+// so adopting a landing that then fails verification hands teardown a directory
+// belonging to somebody else and leaves the slice we really made behind.
+// Refusing the run is not enough on its own — the deferred Close still runs
+// afterwards, and Path is what it reads.
+func (s *Slice) confirmAt(path string) error {
 	if err := underParent(path, s.parent, s.sliceUnit); err != nil {
 		return err
 	}
-	s.Path = path
 	if s.Percent > 0 {
 		got, err := os.ReadFile(filepath.Join(path, "cpu.max"))
 		if err != nil {
@@ -382,6 +417,7 @@ func (s *Slice) confirmOnce(pid int) error {
 				path, strings.TrimSpace(string(got)), want)
 		}
 	}
+	s.Path = path
 	return nil
 }
 
@@ -389,15 +425,16 @@ func (s *Slice) confirmOnce(pid int) error {
 // it to be. A free function so it can be tested without a cgroupfs.
 //
 // The two paths need different questions asked. On the direct path the slice
-// directory *is* the target, so the landing place must be it or below it. Under
-// systemd the process lands in a scope directory systemd made inside the slice,
-// so the question is about the parent of where it landed.
+// directory *is* the target — its own for a single run, the team's for a member
+// of one — so the landing place must be it or below it. Under systemd the
+// process lands in a scope directory systemd made inside the slice, so the
+// question is about the parent of where it landed.
 func underParent(landed, parentDir, sliceUnit string) error {
 	switch {
 	case parentDir != "":
 		if landed != parentDir && !strings.HasPrefix(landed, parentDir+"/") {
 			return fmt.Errorf("cpu quota not applied: the process landed in %s, "+
-				"which is not inside this team's slice %s", landed, parentDir)
+				"which is not inside the slice %s it was meant to run in", landed, parentDir)
 		}
 	case sliceUnit != "":
 		if got := filepath.Base(filepath.Dir(landed)); got != sliceUnit {

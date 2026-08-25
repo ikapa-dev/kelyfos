@@ -346,20 +346,17 @@ func (s *hostServer) boot(opts sandbox.Options) (*servedBox, error) {
 	opts.ID = id
 	b := &servedBox{image: opts.Flavor, allow: opts.Allow, created: time.Now()}
 	ok := false
+	// The one teardown, not a copy of it. This defer used to hand-roll a strict
+	// subset of close() — proxy, network, slice, recorder, and no machine, no
+	// plugin image — so a failure after the VM was running left a microVM behind
+	// that never reached s.boxes: nothing could stop it and the census that
+	// bounds this door under-counted it forever. The refusal that reaches it is
+	// the guest's to make (finding M-1): InstallTrustAnchor fails when the guest
+	// answers no. sandbox_restore already unwinds through close() and this is
+	// the same shape.
 	defer func() {
 		if !ok {
-			if b.proxy != nil {
-				b.proxy.Close()
-			}
-			if b.net != nil {
-				b.net.Down()
-			}
-			if b.slice != nil {
-				b.slice.Close()
-			}
-			if b.rec != nil {
-				_ = b.rec.Close()
-			}
+			b.close("error")
 		}
 	}()
 

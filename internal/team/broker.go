@@ -287,6 +287,33 @@ func (b *Broker) Ask(from, to string, body []byte, timeout time.Duration) ([]byt
 	case answer := <-a.reply:
 		return answer, nil
 	case <-time.After(timeout):
+		// The question is taken out of the table before the timeout is recorded,
+		// not after (P6-27, finding M-7). b.record is a hash-chain append: it takes
+		// the recorder's exclusive lock and writes to disk, and every microsecond
+		// of that used to be a window in which a reply could still find the tag
+		// outstanding, be told OK, and be written to the chain as delivered while
+		// this call was on its way back with a timeout — one exchange, two lines
+		// that contradict each other.
+		//
+		// Taking it under the lock is also what settles the rest of that race with
+		// Reply, which claims the same entry and makes its send while holding the
+		// same lock. So if the entry has already gone, the answer is in the buffer
+		// and it arrived: this call has one and returns it, rather than a timeout
+		// the record would disagree with. Which of the two got the lock is what
+		// decided the question, which is the only ordering either side can agree
+		// on. The deferred delete above stays, for the path where the answer came
+		// back in time.
+		b.mu.Lock()
+		_, outstanding := b.pending[tag]
+		delete(b.pending, tag)
+		b.mu.Unlock()
+		if !outstanding {
+			select {
+			case answer := <-a.reply:
+				return answer, nil
+			default:
+			}
+		}
 		b.record(Event{Type: TypeMessage, From: to, To: from, Kind: KindReply,
 			Outcome: OutcomeTimeout})
 		return nil, &Error{Kind: "timeout",
@@ -296,35 +323,70 @@ func (b *Broker) Ask(from, to string, body []byte, timeout time.Duration) ([]byt
 
 // Reply answers a question by its tag.
 func (b *Broker) Reply(from, tag string, body []byte) error {
-	b.mu.Lock()
-	a, ok := b.pending[tag]
-	b.mu.Unlock()
-	// An unrecognised tag is refused rather than ignored. It is the one path by
-	// which a guest could otherwise reach an agent it has no edge to — answer a
-	// question nobody asked it — so it is checked, and checked against the
-	// agent the question actually went to.
-	//
-	// A *missing* tag is a different mistake and gets a different answer. It is
-	// what an agent produces when it calls the tool with the wrong argument
-	// name, and telling it "no question is outstanding with that correlation"
-	// sends it looking for a question that expired rather than at the call it
-	// got wrong. The transcript says which, too.
+	// A *missing* tag is a different mistake from an unrecognised one and gets a
+	// different answer. It is what an agent produces when it calls the tool with
+	// the wrong argument name, and telling it "no question is outstanding with
+	// that correlation" sends it looking for a question that expired rather than
+	// at the call it got wrong. The transcript says which, too.
 	if tag == "" {
 		b.record(Event{Type: TypeRefused, From: from, Kind: KindReply,
 			Reason: "missing_correlation", Outcome: OutcomeRefused})
 		return &Error{Kind: "denied", Message: "team_reply needs the `correlate` tag " +
 			"that came back from team_recv; none was given"}
 	}
-	if !ok || a.to != from {
+
+	// An unrecognised tag is refused rather than ignored. It is the one path by
+	// which a guest could otherwise reach an agent it has no edge to — answer a
+	// question nobody asked it — so it is checked, and checked against the agent
+	// the question actually went to.
+	//
+	// Found, checked and *claimed* in one critical section (P6-27, finding M-7).
+	// The tag used to be looked up here and removed only by Ask's deferred
+	// delete, so a question could be answered more than once: the sandbox accepts
+	// each guest team channel on its own goroutine, two replies carrying one
+	// correlate could both find it outstanding, and both were told OK and written
+	// to the chain as delivered for one answer the asker actually received. A
+	// reader of that chain saw two delivered replies with different digests and
+	// no way to tell which body the asker acted on. The second is now what it
+	// always was — a reply to a question that is no longer outstanding.
+	b.mu.Lock()
+	a, outstanding := b.pending[tag]
+	if !outstanding || a.to != from {
+		b.mu.Unlock()
 		b.record(Event{Type: TypeRefused, From: from, Kind: KindReply,
 			Reason: "unknown_correlation", Outcome: OutcomeRefused})
 		return &Error{Kind: "denied", Message: "no question is outstanding with that correlation"}
 	}
-	b.record(b.describe(from, a.from, body, KindReply, OutcomeDelivered, ""))
+	delete(b.pending, tag)
+	// The send is made while the claim is still held, which is what lets Ask's
+	// timeout branch settle the question by taking the entry instead: whichever
+	// side reached this lock first is the one that happened. It cannot block —
+	// the channel has room for one answer and the claim above means one send can
+	// ever reach it — and the record stays outside the lock, because an append is
+	// disk I/O and the broker does not hold a mutex across one.
+	sent := false
 	select {
 	case a.reply <- body:
+		sent = true
 	default:
 	}
+	b.mu.Unlock()
+
+	if !sent {
+		// Unreachable while the claim above holds, and kept anyway: a broker that
+		// dropped an answer and told the replying agent it had landed is the
+		// defect this whole path exists to have stopped doing, so if the claim is
+		// ever loosened the next person finds it in the record rather than in a
+		// silent nil. describe keeps the payload out of the chain on this arm too.
+		//
+		// Same reason and same wording as deliver's full-mailbox arm, rather than a
+		// vocabulary of its own: it is the same fact — the channel would not take
+		// the message — and docs/teams.md §3.8 is the list of refusals an agent has
+		// to be able to act on, not a place to add a kind nobody can reach.
+		b.record(b.describe(from, a.from, body, KindReply, OutcomeUnreachable, "mailbox_full"))
+		return &Error{Kind: "unreachable", Message: a.from + " is not reading its messages"}
+	}
+	b.record(b.describe(from, a.from, body, KindReply, OutcomeDelivered, ""))
 	return nil
 }
 

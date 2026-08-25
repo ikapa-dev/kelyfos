@@ -2,6 +2,7 @@ package proto
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
@@ -157,5 +158,60 @@ func TestARefusedFrameLeavesTheStreamOnAFrameBoundary(t *testing.T) {
 	}
 	if got["error"] != refusal["error"] {
 		t.Fatalf("the reader did not get the refusal whole: %+v", got)
+	}
+}
+
+// The team channel's version of TestChunkFitsInFrame, and the reason it builds
+// a frame rather than multiplying one out: on this channel the answer is not
+// the request, so "it fitted on the way in" proves nothing about the way out.
+//
+// This is the largest answer the host can be asked to write — a body at
+// MaxTeamBody, an id at MaxTeamID and every byte of it a control character,
+// which encoding/json escapes to six, the longest name an agent may have
+// (internal/team ValidAgentName), and a correlate tag. It has to fit MaxLine,
+// or there are messages a broker accepts, records as delivered, and can then
+// never write to the agent they were addressed to (M-8).
+func TestTheLargestTeamAnswerStillFitsAFrame(t *testing.T) {
+	worst := TeamResponse{
+		V:         Version,
+		ID:        strings.Repeat("\x01", MaxTeamID),
+		OK:        true,
+		From:      strings.Repeat("a", 64),
+		Body:      base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{0xff}, MaxTeamBody)),
+		Correlate: strings.Repeat("f", 64),
+	}
+	var buf bytes.Buffer
+	if err := NewWriter(&buf).Write(worst); err != nil {
+		t.Fatalf("the largest team answer does not fit a %d byte frame: %v", MaxLine, err)
+	}
+	if buf.Len() > MaxLine {
+		t.Fatalf("the frame is %d bytes, over the %d byte limit", buf.Len(), MaxLine)
+	}
+}
+
+// Why MaxTeamBody is below MaxLine at all, stated as the measurement it came
+// from: the frame that delivers a message is larger than the frame that sent
+// it, by a margin that depends on the two agents' names, the two ids, and the
+// correlate tag — so it cannot be written down as one number, and a payload
+// sized against the sending frame is not safe against the delivering one.
+func TestADeliveredTeamMessageIsALargerFrameThanTheOneThatSentIt(t *testing.T) {
+	body := base64.StdEncoding.EncodeToString(bytes.Repeat([]byte("x"), 1024))
+
+	var asked bytes.Buffer
+	if err := NewWriter(&asked).Write(TeamRequest{
+		V: Version, ID: "17", Op: OpTeamAsk, To: "bob", Body: body, TimeoutMS: 30000,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var delivered bytes.Buffer
+	if err := NewWriter(&delivered).Write(TeamResponse{
+		V: Version, ID: "17", OK: true, From: "alice", Body: body,
+		Correlate: "0123456789abcdef",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if delivered.Len() <= asked.Len() {
+		t.Fatalf("the delivering frame is %d bytes and the sending frame %d; if that is now the "+
+			"other way round, MaxTeamBody's derivation needs rereading", delivered.Len(), asked.Len())
 	}
 }

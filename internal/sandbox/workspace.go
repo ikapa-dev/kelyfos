@@ -108,7 +108,8 @@ func AdoptWorkspace(hostDir, imagePath string) *Workspace {
 // SyncBack writes the workspace image back over the host directory.
 //
 // If the host directory changed since the image was packed, it refuses and
-// writes to "<dir>.kelyfos-out" instead. Overwriting an edit someone made in
+// writes beside it instead — "<dir>.kelyfos-out", or the first name after it
+// that no earlier run's results are in. Overwriting an edit someone made in
 // their editor would be the single most destructive thing this tool could do,
 // and it would do it silently. "Since it was packed" rather than "while the
 // sandbox was running" because Commit checks again at the last moment: with
@@ -142,7 +143,7 @@ func (w *Workspace) Stage() (*Staged, error) {
 	}
 	s := &Staged{w: w, dest: w.HostDir}
 	if now != w.fingerprint {
-		s.dest = w.HostDir + ".kelyfos-out"
+		s.dest = divertedDest(w.HostDir)
 		s.diverted = true
 	}
 
@@ -157,9 +158,8 @@ func (w *Workspace) Stage() (*Staged, error) {
 	// The dump has to land in an empty directory, and it is created before the
 	// root is opened rather than by the root, because the root has to exist to
 	// be opened.
-	s.tree = w.HostDir + ".kelyfos-sync"
-	_ = removeTree(s.tree)
-	if err := os.MkdirAll(s.tree, 0o755); err != nil {
+	s.tree, err = stagingTree(w.HostDir)
+	if err != nil {
 		return nil, err
 	}
 
@@ -205,7 +205,6 @@ func (s *Staged) Changes() ([]Change, error) {
 // whatever the fingerprint said. It is what a declined review does: the host
 // directory is untouched until somebody says yes, and the work is still there.
 func (s *Staged) Divert() (string, error) {
-	s.dest = s.w.HostDir + ".kelyfos-out"
 	s.diverted = true
 	dest, _, err := s.Commit()
 	return dest, err
@@ -232,50 +231,163 @@ func (s *Staged) Commit() (dest string, diverted bool, err error) {
 		// treats an unreadable directory as fatal; by here the work exists and
 		// the honest move is to proceed as Stage's own answer said.
 		if now, ferr := Fingerprint(w.HostDir); ferr == nil && now != w.fingerprint {
-			s.dest = w.HostDir + ".kelyfos-out"
 			s.diverted = true
 		}
+	}
+	if s.diverted {
+		// The name is settled here, at the last moment, for the same reason the
+		// fingerprint is taken again here: Stage chose while the review was
+		// still ahead of it, and what is beside the directory can have changed
+		// since. Choosing again costs nothing — a name that is still free is
+		// still the first free one — so this is the path the review reported
+		// unless something else has taken it in the meantime.
+		s.dest = divertedDest(w.HostDir)
 	}
 	dest, diverted = s.dest, s.diverted
 
 	// Swap rather than merge: the image is the authoritative post-run state, so
 	// a file the agent deleted should be gone rather than resurrected. The old
 	// copy is kept until the new one is in place.
+	//
+	// Only on the path that actually replaces something. A diverted commit
+	// writes to a name of its own beside the project and takes nothing away, so
+	// there is nothing here to rotate — and this ran regardless, which made the
+	// run that deliberately left the project alone the run that deleted the
+	// recoverable copy of it an earlier run had left behind (L-6). Declining a
+	// review is the one answer that promises to touch nothing.
 	old := w.HostDir + ".kelyfos-previous"
-	_ = removeTree(old)
-	if _, err := os.Stat(dest); err == nil {
-		if err := os.Rename(dest, old); err != nil {
-			return "", diverted, err
+	if !diverted {
+		_ = removeTree(old)
+		if _, err := os.Stat(dest); err == nil {
+			if err := os.Rename(dest, old); err != nil {
+				return "", diverted, err
+			}
+		}
+		// The tree takes the mode of the directory it replaces. Without this the
+		// workspace root ends up with whatever this package created it as, which
+		// is not what the person had, and before P6-24 it was whatever mode the
+		// image's own root carried — a permission on somebody's project
+		// directory chosen by the guest (H-2).
+		//
+		// The whole mode, not Perm(): this is the *person's own* previous
+		// directory being copied forward, not anything the guest chose, and a
+		// shared-group checkout keeps its root setgid on purpose. Perm() alone
+		// dropped that, so files the person created in their project root
+		// afterwards landed in the wrong group — silently, because scanTree
+		// records Perm() and nothing would ever report it. (The guest's setuid
+		// and setgid are refused elsewhere, in safeMode; the distinction is
+		// whose mode it is.)
+		//
+		// Nothing to copy forward on the diverted path: there is no directory
+		// being replaced, and the tree keeps the mode stagingTree gave it —
+		// which is the mode this package has always created it with.
+		if prev, err := os.Stat(old); err == nil {
+			keep := prev.Mode() & (os.ModeSetuid | os.ModeSetgid | os.ModeSticky)
+			_ = os.Chmod(tmp, prev.Mode().Perm()|keep)
 		}
 	}
-	// The tree takes the mode of the directory it replaces. Without this the
-	// workspace root ends up with whatever this package created it as, which is
-	// not what the person had, and before P6-24 it was whatever mode the image's
-	// own root carried — a permission on somebody's project directory chosen by
-	// the guest (H-2).
-	//
-	// The whole mode, not Perm(): this is the *person's own* previous directory
-	// being copied forward, not anything the guest chose, and a shared-group
-	// checkout keeps its root setgid on purpose. Perm() alone dropped that, so
-	// files the person created in their project root afterwards landed in the
-	// wrong group — silently, because scanTree records Perm() and nothing would
-	// ever report it. (The guest's setuid and setgid are refused elsewhere, in
-	// safeMode; the distinction is whose mode it is.)
-	if prev, err := os.Stat(old); err == nil {
-		keep := prev.Mode() & (os.ModeSetuid | os.ModeSetgid | os.ModeSticky)
-		_ = os.Chmod(tmp, prev.Mode().Perm()|keep)
-	}
 	if err := os.Rename(tmp, dest); err != nil {
-		_ = os.Rename(old, dest) // put it back rather than leave nothing
+		if !diverted {
+			// Put it back rather than leave nothing. Only where this moved it:
+			// on the diverted path nothing was renamed away, and `old` is an
+			// earlier run's backup — the person's own project — which this
+			// would otherwise move to a name they were told holds sandbox
+			// output.
+			_ = os.Rename(old, dest)
+		}
 		return "", diverted, err
 	}
-	// The previous copy stays, until the next successful run clears it on the
-	// line above. It used to be deleted here, one statement after the swap that
-	// made it worth having — a backup removed at the moment it becomes useful
-	// is not a backup, and the person who wants it is the person who has just
-	// watched a run overwrite something.
+	// The previous copy stays, until the next run that replaces the directory
+	// clears it on the line above. It used to be deleted here, one statement
+	// after the swap that made it worth having — a backup removed at the moment
+	// it becomes useful is not a backup, and the person who wants it is the
+	// person who has just watched a run overwrite something.
 	s.tree = "" // moved into place; there is nothing left to discard
 	return dest, diverted, nil
+}
+
+// stagingTree makes the directory an extraction dumps into, and gives it a name
+// nothing else is using.
+//
+// Beside the host directory rather than in the system temp directory, because
+// Commit finishes by renaming this tree into place and a rename cannot cross
+// filesystems — /tmp very often is a different one, and a workspace that would
+// only sync back on machines whose /tmp happens to be on the same disk is worse
+// than one that never did.
+//
+// The name used to be one fixed `<dir>.kelyfos-sync`, cleared with a removeTree
+// at the top of every Stage. Two sync-backs of one workspace therefore shared a
+// directory — a team agent's max_runtime timer firing while a teardown is
+// already stopping the same rig, or a second `kelyfos diff` against a workspace
+// one is already staging — and the later one's removal unlinked the tree the
+// earlier one was still extracting through an open root fd. What came out was a
+// merged or half-written tree, and Commit would then put that over somebody's
+// project (M-4).
+//
+// A fresh name per extraction is also why nothing here clears anything: the
+// price is that a kelyfos killed mid-extraction leaves its staging tree beside
+// the project instead of having it swept up by the next run, and that is the
+// right trade — litter somebody can delete, rather than a live extraction
+// deleted by a run that had no idea it was there.
+//
+// os.Mkdir at 0o755 rather than os.MkdirTemp, which hardcodes 0700. On the
+// diverted path this directory is not scratch: it is renamed into place as the
+// results directory the person is handed, so it has to be created the way
+// os.MkdirAll(…, 0o755) created it before — mode from the caller, narrowed by
+// their umask. Reaching for a temp-file constructor and inheriting a mode chosen
+// for temp files is exactly how P6-18's exported reports became owner-only.
+func stagingTree(hostDir string) (string, error) {
+	// Bounded, because a loop that cannot end is not a better answer to a
+	// directory this cannot create than an error is.
+	for attempt := 0; attempt < 64; attempt++ {
+		id, err := newID()
+		if err != nil {
+			return "", err
+		}
+		dir := hostDir + ".kelyfos-sync-" + id
+		err = os.Mkdir(dir, 0o755)
+		if err == nil {
+			return dir, nil
+		}
+		if !os.IsExist(err) {
+			return "", err
+		}
+	}
+	return "", fmt.Errorf("stage the workspace: no free staging directory beside %s", hostDir)
+}
+
+// divertedDest names the place a commit writes when it is not writing over the
+// host directory: `<dir>.kelyfos-out`, then `<dir>.kelyfos-out.2`, and so on,
+// the first one nothing is using.
+//
+// The first diversion still lands on `<dir>.kelyfos-out`. That is the name the
+// documentation gives, the name the recipes grep, and the name somebody who has
+// used this tool before will look for.
+//
+// It is the *second* one that was the bug. A fixed name is a name the next
+// diverted run takes as well, and Commit rotates whatever is already at the
+// destination into `<dir>.kelyfos-previous` — so three `run --review`s answered
+// with n printed one path three times, and the third quietly deleted the first
+// run's whole session on its way past. Nothing else keeps a copy: the workspace
+// image is removed on the declined path too. Worse, the run that had it for one
+// generation kept it under the one name whose documented meaning is the person's
+// own previous project directory, which is where they would least look for
+// sandbox output and most reasonably delete it unread (L-6).
+func divertedDest(hostDir string) string {
+	base := hostDir + ".kelyfos-out"
+	for n := 1; n < 1000; n++ {
+		dest := base
+		if n > 1 {
+			dest = fmt.Sprintf("%s.%d", base, n)
+		}
+		if _, err := os.Lstat(dest); os.IsNotExist(err) {
+			return dest
+		}
+	}
+	// A thousand of these beside one project is not a situation to fail a
+	// sync-back over: refusing to write a session's work anywhere because the
+	// tidy names are used up would be the worse answer.
+	return fmt.Sprintf("%s.%d", base, time.Now().UnixNano())
 }
 
 // removeTree deletes a tree this package is finished with, including the
@@ -285,14 +397,16 @@ func (s *Staged) Commit() (dest string, diverted bool, err error) {
 // unlinking a child needs write on the parent — and a workspace legitimately
 // contains such directories: a vendored tree checked in at 0555 is an ordinary
 // thing to have, and since the extraction stopped forcing u+rwx onto every
-// directory it comes back the way it was packed. Left alone that fails
-// silently, and the failure is not silent for long: a `<dir>.kelyfos-sync` that
-// could not be cleared is a stale tree the next extraction writes into, so a
-// later run inherits files from an earlier one.
+// directory it comes back the way it was packed. Left alone that fails silently,
+// and what it leaves is a staging tree sitting beside somebody's project that
+// nothing will ever come back for — each extraction has a name of its own now,
+// so no later run sweeps up what an earlier one could not remove. Before they
+// did, this was worse than litter: the next extraction wrote into the tree that
+// had been left, and a run inherited files from the one before it.
 //
 // The unlocking is a retry rather than a first move, so nothing is touched in
 // the ordinary case, and it is deliberately narrow. Of the two names this is
-// ever pointed at, `<dir>.kelyfos-sync` is one kelyfos made, but
+// ever pointed at, `<dir>.kelyfos-sync-*` is one kelyfos made, but
 // `<dir>.kelyfos-previous` is **a directory kelyfos only renamed**: Commit moves
 // whatever it is about to replace there — the person's own project, in the
 // default flow — and leaves it as the recoverable copy of what a run overwrote.

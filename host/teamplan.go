@@ -2,10 +2,11 @@ package main
 
 import (
 	"fmt"
-	"github.com/p4r4n0rm4l/KelyfOS/internal/egress"
+	"path/filepath"
 	"sort"
 
 	"github.com/p4r4n0rm4l/KelyfOS/internal/config"
+	"github.com/p4r4n0rm4l/KelyfOS/internal/egress"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/team"
 )
 
@@ -78,6 +79,24 @@ func planTeam(cfg *config.Config) (*teamPlan, error) {
 		if err := checkAgentPolicy(cfg.Path, a); err != nil {
 			return nil, err
 		}
+		// Relative to the policy file, not the working directory: the file
+		// describes its own project, wherever it is invoked from. The same rule
+		// `kelyfos run` applies to [sandbox] workspace and packPlugins applies
+		// to a plugin directory — this call site was written without it and was
+		// the only workspace path in the product still resolved against the
+		// process (finding L-5).
+		//
+		// Both doors reach it and both are wrong in the same way. `team up`
+		// walks up for its policy the way git does, so running it from a
+		// subdirectory found the project's file and then packed the
+		// subdirectory's `data`; serve-mcp is launched by a client from a
+		// directory nobody chose, which is why --policy exists at all. Resolved
+		// here rather than in bootAgent because this is the choke point: the
+		// plan is what every consumer reads.
+		ws := a.Workspace
+		if ws != "" && !filepath.IsAbs(ws) {
+			ws = filepath.Join(filepath.Dir(cfg.Path), ws)
+		}
 		for _, name := range expandCount(a.Name, a.Count) {
 			if seen[name] {
 				return nil, fmt.Errorf("%s:%d: two agents are both called %q", cfg.Path, a.Line, name)
@@ -85,7 +104,7 @@ func planTeam(cfg *config.Config) (*teamPlan, error) {
 			seen[name] = true
 			plan.agents = append(plan.agents, plannedAgent{
 				name: name, image: a.Image, res: a.Resources, spawn: a.Spawn,
-				allow: a.Allow, secrets: a.Secrets, workspace: a.Workspace})
+				allow: a.Allow, secrets: a.Secrets, workspace: ws})
 		}
 	}
 

@@ -31,7 +31,9 @@ func staged(t *testing.T, contents map[string]string) *Staged {
 	}
 	w := &Workspace{HostDir: host, ImagePath: filepath.Join(root, "ws.ext4"), fingerprint: fp}
 
-	// What Stage would have extracted: the tree as the sandbox left it.
+	// What Stage would have extracted: the tree as the sandbox left it. The name
+	// is this test's own — Stage picks a fresh one for every extraction — and
+	// nothing in Commit cares what the tree is called.
 	tree := host + ".kelyfos-sync"
 	if err := os.MkdirAll(tree, 0o755); err != nil {
 		t.Fatal(err)
@@ -263,9 +265,11 @@ func TestASecondRunOverAProjectWithAReadOnlyDirectoryStillCommits(t *testing.T) 
 }
 
 // Discarding an extraction that carries a read-only directory has to actually
-// remove it. A `<dir>.kelyfos-sync` left behind is not litter: Stage clears that
-// name and then extracts into it, so a tree it could not clear is one the next
-// run inherits files from.
+// remove it. Every extraction now stages under a name of its own, so nothing
+// comes back for one that was left: a tree Discard could not clear sits beside
+// somebody's project until they delete it by hand. (While the name was fixed it
+// was worse than that — Stage cleared it and extracted into it, so a tree that
+// could not be cleared was one the next run inherited files from.)
 func TestADiscardedExtractionWithAReadOnlyDirectoryIsReallyGone(t *testing.T) {
 	root := t.TempDir()
 	clearable(t, root)
@@ -419,5 +423,192 @@ func TestARemovalThatUnlocksADirectoryPutsItsSetgidBack(t *testing.T) {
 		t.Errorf("the backup directory lost its setgid bit: %v.\n"+
 			"Restoring Mode().Perm() clears setuid, setgid and sticky, and nothing "+
 			"in the product reports it because scanTree only records Perm().", info.Mode())
+	}
+}
+
+// divertedRun does what a declined `run --review` does: put the extracted tree
+// beside the host directory rather than over it, and hand back where it went.
+//
+// The staging tree is built by hand and named for the run, so what these tests
+// assert is where a diversion *lands* — not what Stage happens to call the
+// directory it extracted into.
+func divertedRun(t *testing.T, host, marker string) string {
+	t.Helper()
+	fp, err := Fingerprint(host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := &Workspace{HostDir: host, ImagePath: filepath.Join(filepath.Dir(host), "ws.ext4"), fingerprint: fp}
+	tree := host + ".staging-" + marker
+	if err := os.MkdirAll(tree, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tree, "result.txt"), []byte(marker), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s := &Staged{w: w, tree: tree, dest: host}
+	where, err := s.Divert()
+	if err != nil {
+		t.Fatalf("the results of %s could not be put beside the workspace: %v", marker, err)
+	}
+	return where
+}
+
+// L-6. A declined review must not be the thing that destroys an earlier
+// declined review's work.
+//
+// The diverted destination used to be one fixed `<dir>.kelyfos-out`, so three
+// runs of `run --review` answered with n printed the same path three times: the
+// second run renamed the first's results to `<dir>.kelyfos-previous` and the
+// third deleted them. Nothing else keeps a copy — the workspace image is removed
+// on the declined path too — so a whole session was gone, from a name whose
+// documented meaning is the person's own previous project directory.
+func TestADeclinedRunDoesNotWriteOverAnEarlierDeclinedRunsResults(t *testing.T) {
+	root := t.TempDir()
+	host := filepath.Join(root, "work")
+	if err := os.MkdirAll(host, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(host, "notes.md"), []byte("mine"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	first := divertedRun(t, host, "one")
+	second := divertedRun(t, host, "two")
+	third := divertedRun(t, host, "three")
+
+	if first == second || second == third || first == third {
+		t.Errorf("three declined runs were told their results were in the same place:\n  %s\n  %s\n  %s",
+			first, second, third)
+	}
+	for _, run := range []struct{ where, want string }{{first, "one"}, {second, "two"}, {third, "three"}} {
+		got, err := os.ReadFile(filepath.Join(run.where, "result.txt"))
+		if err != nil {
+			t.Errorf("the results of run %q are not where the run said they were (%s): %v",
+				run.want, run.where, err)
+			continue
+		}
+		if string(got) != run.want {
+			t.Errorf("%s holds the results of run %q, not run %q", run.where, got, run.want)
+		}
+	}
+	if got := read(t, filepath.Join(host, "notes.md")); got != "mine" {
+		t.Errorf("a declined run touched the host directory: %q", got)
+	}
+}
+
+// L-6. And a run that deliberately left the project alone must not delete the
+// recoverable copy of it that an earlier run left behind.
+//
+// `<dir>.kelyfos-previous` is the person's own directory, kept by the run that
+// replaced it. Commit cleared it before every swap — including the swaps that
+// are not swaps at all, because a diverted commit replaces nothing. So declining
+// a review, the one answer that promises to touch nothing, destroyed the backup
+// P6-21 exists to keep.
+func TestADeclinedRunDoesNotDeleteTheBackupOfAnEarlierRun(t *testing.T) {
+	s := staged(t, map[string]string{"notes.md": "the version being replaced"})
+	host := s.w.HostDir
+	if _, _, err := s.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	prev := host + ".kelyfos-previous"
+	if got := read(t, filepath.Join(prev, "notes.md")); got != "the version being replaced" {
+		t.Fatalf("the clean run left no usable backup to begin with: %q", got)
+	}
+
+	where := divertedRun(t, host, "declined")
+
+	if _, err := os.Stat(prev); err != nil {
+		t.Fatalf("the declined run deleted the backup of the run before it: %v", err)
+	}
+	if got := read(t, filepath.Join(prev, "notes.md")); got != "the version being replaced" {
+		t.Errorf("the backup is no longer what was replaced: %q", got)
+	}
+	if _, err := os.Stat(filepath.Join(where, "result.txt")); err != nil {
+		t.Errorf("the declined run's own results are not at %s: %v", where, err)
+	}
+}
+
+// M-4. Two sync-backs of one workspace must not be handed the same staging tree.
+//
+// Stage used to extract into one fixed `<dir>.kelyfos-sync`, clearing it first.
+// A team agent whose max_runtime timer fires while a teardown is already
+// stopping the same rig, or a second `kelyfos diff` against a workspace another
+// is already staging, then had two extractions in one directory — and the later
+// one's removal unlinked the tree the earlier one was still writing into through
+// an open root fd. What survived was a merged or half-written tree, which Commit
+// would then put over somebody's project.
+//
+// Stage itself needs debugfs to reach this, which is not on every machine these
+// tests run on; the naming is the part that decides it and the part asserted
+// here.
+func TestTwoExtractionsOfOneWorkspaceGetStagingTreesOfTheirOwn(t *testing.T) {
+	root := t.TempDir()
+	host := filepath.Join(root, "work")
+	if err := os.MkdirAll(host, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	first, err := stagingTree(host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The first extraction is under way: files in the tree, an open fd on it.
+	if err := os.WriteFile(filepath.Join(first, "half-extracted"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	second, err := stagingTree(host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second == first {
+		t.Fatalf("both extractions were sent to %s", first)
+	}
+	if _, err := os.Stat(filepath.Join(first, "half-extracted")); err != nil {
+		t.Errorf("staging the second extraction destroyed the tree the first was "+
+			"still filling: %v", err)
+	}
+	if _, err := os.Stat(second); err != nil {
+		t.Errorf("the second extraction has nowhere to go: %v", err)
+	}
+}
+
+// And a staging tree is created with the mode os.MkdirAll(…, 0o755) gave it.
+//
+// This is not housekeeping. On the diverted path the staging tree is not scratch
+// at all: Commit renames it into place as `<dir>.kelyfos-out`, the directory the
+// person is handed their session's work in. Reaching for os.MkdirTemp here would
+// hand them 0700 — a temp-file default, chosen for a different purpose, on their
+// own results — which is P6-18's exported reports going owner-only because
+// os.CreateTemp makes 0600 files.
+func TestAStagingTreeIsMadeWithTheModeItAlwaysWasMadeWith(t *testing.T) {
+	root := t.TempDir()
+	host := filepath.Join(root, "work")
+	if err := os.MkdirAll(host, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// The comparison is made rather than hardcoded, because the answer is
+	// 0755 narrowed by whatever umask the person running this chose.
+	reference := filepath.Join(root, "reference")
+	if err := os.MkdirAll(reference, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	want, err := os.Lstat(reference)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tree, err := stagingTree(host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.Lstat(tree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Mode() != want.Mode() {
+		t.Errorf("a staging tree is created %v; os.MkdirAll(…, 0o755) makes %v here, "+
+			"and on the diverted path this directory is the person's results", got.Mode(), want.Mode())
 	}
 }

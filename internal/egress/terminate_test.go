@@ -405,3 +405,119 @@ func TestAnEchoedCredentialNeverReachesTheGuest(t *testing.T) {
 		t.Errorf("the scrub was recorded as %q, want it named by secret", got[0])
 	}
 }
+
+// A peer that reads the request and then resets the connection already has the
+// credential — only the answer is missing. secret.use used to be written after
+// the round trip returned, so that request produced no record at all and
+// nothing on the machine said the token had left it (L-1).
+//
+// The event's own documented meaning is attachment, not delivery, so the
+// silence was a contradiction of the schema as well as a gap in the record.
+func TestACredentialThePeerTookIsRecordedWhenTheConnectionIsReset(t *testing.T) {
+	var mu sync.Mutex
+	var sawAuth string
+	upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		sawAuth = r.Header.Get("Authorization")
+		mu.Unlock()
+		// The handler runs only once the request has been read, so whatever it
+		// saw is provably on the wire. Reset instead of answering: SO_LINGER 0
+		// turns Close into an RST rather than a FIN, which is what a peer under
+		// load does to a connection it is not going to serve.
+		conn, _, err := w.(http.Hijacker).Hijack()
+		if err != nil {
+			return
+		}
+		if tc, ok := conn.(*tls.Conn); ok {
+			if raw, ok := tc.NetConn().(*net.TCPConn); ok {
+				_ = raw.SetLinger(0)
+			}
+		}
+		conn.Close()
+	}))
+	defer upstream.Close()
+	host, _, _ := net.SplitHostPort(strings.TrimPrefix(upstream.URL, "https://"))
+
+	ca, err := NewCA()
+	if err != nil {
+		t.Fatal(err)
+	}
+	secret := &Secret{Name: "GITHUB_TOKEN", Domain: host, Scheme: "Bearer", value: testToken}
+	policy := Policy{Allow: []string{host}, Ports: []int{upstreamPort(t, upstream)}, Secrets: []*Secret{secret}}
+
+	proxyAddr, attempts, secretUses, _, _ := proxyFor(t, upstream, policy, ca)
+
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM(ca.AnchorPEM()) {
+		t.Fatal("the CA anchor is not usable as a trust root")
+	}
+
+	resp, _, err := throughProxy(t, proxyAddr, strings.TrimPrefix(upstream.URL, "https://"), roots)
+	if err != nil {
+		t.Fatalf("request through the proxy: %v", err)
+	}
+	resp.Body.Close()
+
+	// The failure is only interesting if the credential really did leave. If
+	// the peer never saw it this test is proving nothing.
+	mu.Lock()
+	got := sawAuth
+	mu.Unlock()
+	if want := "Bearer " + testToken; got != want {
+		t.Fatalf("the peer saw Authorization %q, want %q — the reset came too early to test anything", got, want)
+	}
+
+	// The upstream failure is reported after the credential is, so waiting for
+	// it means a missing secret.use is a real absence rather than a race.
+	waitForAttempt(t, attempts, func(a Attempt) bool { return a.Reason == ReasonDialFailed })
+
+	uses := secretUses()
+	if len(uses) == 0 {
+		t.Fatal("the credential reached the peer and the record does not mention it")
+	}
+	if uses[0] != "GITHUB_TOKEN@"+host {
+		t.Errorf("secret use recorded as %q, want %q", uses[0], "GITHUB_TOKEN@"+host)
+	}
+}
+
+// The other half of the same branch, and the reason the fix cannot simply
+// report on every round-trip error: when the connection is never established
+// no byte of the credential leaves, and a record claiming otherwise would say
+// a token was presented to a host that never heard from us.
+func TestNoCredentialIsRecordedWhenTheRequestNeverLeftTheHost(t *testing.T) {
+	upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("the upstream was supposed to be gone before anything dialled it")
+	}))
+	host, _, _ := net.SplitHostPort(strings.TrimPrefix(upstream.URL, "https://"))
+
+	ca, err := NewCA()
+	if err != nil {
+		t.Fatal(err)
+	}
+	secret := &Secret{Name: "GITHUB_TOKEN", Domain: host, Scheme: "Bearer", value: testToken}
+	policy := Policy{Allow: []string{host}, Ports: []int{upstreamPort(t, upstream)}, Secrets: []*Secret{secret}}
+
+	proxyAddr, attempts, secretUses, _, _ := proxyFor(t, upstream, policy, ca)
+
+	// Take the port away now that the proxy holds a transport pointed at it.
+	// The policy still names the host, so the CONNECT and the inner handshake
+	// both succeed and the failure lands exactly where it is wanted: on the
+	// upstream dial, before a request has been written.
+	upstream.Close()
+
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM(ca.AnchorPEM()) {
+		t.Fatal("the CA anchor is not usable as a trust root")
+	}
+
+	resp, _, err := throughProxy(t, proxyAddr, host+":"+fmt.Sprint(upstreamPort(t, upstream)), roots)
+	if err != nil {
+		t.Fatalf("request through the proxy: %v", err)
+	}
+	resp.Body.Close()
+
+	waitForAttempt(t, attempts, func(a Attempt) bool { return a.Reason == ReasonDialFailed })
+	if uses := secretUses(); len(uses) != 0 {
+		t.Errorf("secret.use was recorded for a request that never went out: %v", uses)
+	}
+}

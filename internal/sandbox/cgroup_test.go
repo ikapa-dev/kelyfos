@@ -172,3 +172,108 @@ func TestPlacementIsCheckedWhenThereIsNoQuota(t *testing.T) {
 		}
 	}
 }
+
+// A single run has no team above it, and for that reason nothing used to check
+// where its VMM actually landed: parent went unset, so the placement check
+// returned nil without asking anything and cpu.max was the whole of the
+// verification. cpu.max is a value some other cgroup can happen to share, and
+// Close removes whatever Path holds, so agreeing on a number is not the same as
+// having landed in our slice.
+func TestASingleRunKnowsWhereItsProcessMustLand(t *testing.T) {
+	root := t.TempDir()
+	sl := &Slice{Percent: 150, name: "kelyfos-abc", mode: modeDirect}
+	if err := sl.prepareDirect(root); err != nil {
+		t.Fatalf("prepare the slice: %v", err)
+	}
+	defer sl.Close()
+	own := sl.Path
+
+	// The caller's own cgroup on a host where the placement was a silent no-op:
+	// the VMM never moved, and this one happens to carry the same cap.
+	elsewhere := t.TempDir()
+	if err := os.WriteFile(filepath.Join(elsewhere, "cpu.max"), []byte(cpuMaxLine(150)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := sl.confirmAt(elsewhere); err == nil {
+		t.Error("a VMM that never reached the slice was confirmed, because another cgroup's cpu.max matched")
+	}
+	if sl.Path != own {
+		t.Errorf("Path moved to %s, which Close would then remove, leaking %s", sl.Path, own)
+	}
+
+	// A jailer that nests the VMM one level below the slice is still inside it,
+	// so the check has to tolerate that as well as the exact landing.
+	nested := filepath.Join(own, "firecracker")
+	if err := os.Mkdir(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(nested, "cpu.max"), []byte(cpuMaxLine(150)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := sl.confirmAt(nested); err != nil {
+		t.Errorf("a VMM nested inside our own slice was rejected: %v", err)
+	}
+	if err := sl.confirmAt(own); err != nil {
+		t.Errorf("the slice this run made for itself was rejected: %v", err)
+	}
+}
+
+// Refusing the run is not the whole of the protection. Path used to be adopted
+// before the cpu.max comparison, so a confirm that then failed handed the
+// deferred Close a directory the VMM had strayed into and left the slice we
+// really made behind. The team path sets parent, and was no better off: the
+// stray only has to be somewhere inside the team's slice.
+func TestAFailedConfirmDoesNotAdoptWhereTheProcessLanded(t *testing.T) {
+	team := t.TempDir()
+	dir := func(name string, cpuMax, weight string) string {
+		p := filepath.Join(team, name)
+		if err := os.Mkdir(p, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(p, "cpu.max"), []byte(cpuMax), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(p, "cpu.weight"), []byte(weight), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	own := dir("kelyfos-a", cpuMaxLine(150), cpuWeightLine(DefaultCPUWeight))
+	member := func() *Slice {
+		return &Slice{Percent: 150, Weight: DefaultCPUWeight, name: "kelyfos-a",
+			mode: modeDirect, parent: team, Path: own}
+	}
+
+	// Inside the team's slice, so the placement check is content — but a cgroup
+	// nobody wrote our cap into, which reads back as the kernel's default.
+	strayed := dir("strayed", "max 100000", cpuWeightLine(DefaultCPUWeight))
+	s := member()
+	if err := s.confirmAt(strayed); err == nil {
+		t.Error("a cgroup carrying no cap at all was confirmed as the quota")
+	}
+	if s.Path != own {
+		t.Errorf("a failed confirm left Path at %s, so Close removes that and leaks %s", s.Path, own)
+	}
+
+	// The weight is compared after the quota, so it is the second chance to
+	// adopt something unverified.
+	odd := dir("odd-weight", cpuMaxLine(150), "1")
+	s = member()
+	if err := s.confirmAt(odd); err == nil {
+		t.Error("a cgroup carrying somebody else's weight was confirmed")
+	}
+	if s.Path != own {
+		t.Errorf("a failed weight check left Path at %s, want %s", s.Path, own)
+	}
+
+	// And when every check passes the landing is recorded, which is how the
+	// systemd path learns the directory systemd chose for the scope.
+	good := dir("kelyfos-a.scope", cpuMaxLine(150), cpuWeightLine(DefaultCPUWeight))
+	s = member()
+	if err := s.confirmAt(good); err != nil {
+		t.Fatalf("a correct placement was rejected: %v", err)
+	}
+	if s.Path != good {
+		t.Errorf("a confirmed placement was not recorded: Path is %s, want %s", s.Path, good)
+	}
+}

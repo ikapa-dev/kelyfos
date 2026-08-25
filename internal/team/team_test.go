@@ -167,7 +167,9 @@ func TestAskAndReplyOverAUnidirectionalEdge(t *testing.T) {
 	if b.topo.Allows("answerer", "asker") {
 		t.Fatal("the fixture is wrong: this edge is not one-way")
 	}
+	replied := make(chan struct{})
 	go func() {
+		defer close(replied)
 		m, err := b.Recv("answerer", 2*time.Second)
 		if err != nil {
 			return
@@ -181,6 +183,13 @@ func TestAskAndReplyOverAUnidirectionalEdge(t *testing.T) {
 	if string(answer) != "42" {
 		t.Errorf("answer = %q", answer)
 	}
+	// Wait for the answering side to be done before counting, rather than for a
+	// particular order. Since P6-27 the reply is recorded *after* its send, so
+	// that the record can say what actually happened to it (finding M-7) — which
+	// means the asker can be back with its answer while the answerer has not
+	// written anything yet. Reply records before it returns, so this is the
+	// point at which both sides have had their say.
+	<-replied
 	// One ask and one reply, in either order.
 	//
 	// The order used to be asserted and it is not the broker's to promise. The
@@ -193,12 +202,16 @@ func TestAskAndReplyOverAUnidirectionalEdge(t *testing.T) {
 	//
 	// It failed on CI once before this was written, with the reply first. A test
 	// that is usually green is the thing §8 rule 8 exists to be suspicious of.
+	// Counted from one snapshot. Three separate reads of a collector two
+	// goroutines are filling can disagree with each other, and a failure that
+	// prints a third list is a failure nobody can read.
+	events := c.all()
 	kinds := map[string]int{}
-	for _, e := range c.all() {
+	for _, e := range events {
 		kinds[e.Kind]++
 	}
-	if len(c.all()) != 2 || kinds[KindAsk] != 1 || kinds[KindReply] != 1 {
-		t.Errorf("events = %+v, want one ask and one reply", c.all())
+	if len(events) != 2 || kinds[KindAsk] != 1 || kinds[KindReply] != 1 {
+		t.Errorf("events = %+v, want one ask and one reply", events)
 	}
 }
 
@@ -519,5 +532,257 @@ func TestSpawnedWorkersCannotSpawn(t *testing.T) {
 	}
 	if _, err := b.Spawn(req.Name, "dev"); err == nil {
 		t.Error("a spawned worker inherited the right to spawn")
+	}
+}
+
+// A question is answered once, and the record says so once (P6-27, finding M-7).
+//
+// The tag used to be looked up and left in the table, removed only when Ask's
+// deferred delete ran. Two guests can be inside Reply at the same moment — the
+// sandbox accepts each team channel on its own goroutine — so both could find
+// one correlate outstanding, both were told OK, and both were written to the
+// chain as delivered for one answer the asker actually received. With
+// record_payloads on, the answer that went nowhere was written to the chain in
+// full, which is the rule P6-25 landed for H-5 broken from the other end.
+//
+// The outstanding question is installed by hand rather than caught mid-flight
+// inside a real Ask. What is under test is what happens *while* a question is
+// outstanding, and a fixture that raced Ask's return to stay inside that window
+// would be a test of the scheduler.
+func TestOneQuestionTakesOneAnswer(t *testing.T) {
+	var c collector
+	b := New(star(t), true, c.record) // capture on, so a dropped body would show
+
+	a := &ask{from: "master", to: "worker-1", reply: make(chan []byte, 1)}
+	b.mu.Lock()
+	b.pending["a-tag"] = a
+	b.mu.Unlock()
+
+	if err := b.Reply("worker-1", "a-tag", []byte("42")); err != nil {
+		t.Fatalf("the first answer was refused: %v", err)
+	}
+	if err := b.Reply("worker-1", "a-tag", []byte("43")); err == nil {
+		t.Error("a second answer to one question was accepted")
+	}
+	if got := string(<-a.reply); got != "42" {
+		t.Errorf("the asker was given %q rather than the answer that was accepted", got)
+	}
+
+	delivered, refused := 0, 0
+	for _, e := range c.all() {
+		if e.Kind != KindReply {
+			continue
+		}
+		switch e.Outcome {
+		case OutcomeDelivered:
+			delivered++
+		case OutcomeRefused:
+			refused++
+		}
+		if e.Body == "43" {
+			t.Errorf("the dropped answer's payload was written to the chain: %+v", e)
+		}
+	}
+	if delivered != 1 || refused != 1 {
+		t.Errorf("events = %+v, want one delivered reply and one refusal", c.all())
+	}
+}
+
+// And an answer that arrives while the asker is giving up is not recorded as
+// delivered (P6-27, finding M-7).
+//
+// The window used to be the whole of the timeout record — a hash-chain append,
+// which takes the recorder's exclusive lock and writes to disk — because the tag
+// was not removed until the deferred delete ran after it. A reply landing in
+// there was told OK and written down as delivered while the ask was on its way
+// back with a timeout: one exchange, two lines that contradict each other.
+//
+// The fixture holds the record open rather than trying to hit the window by
+// timing, because holding it open is what the recorder does anyway.
+func TestAnAnswerArrivingDuringATimeoutIsNotRecordedDelivered(t *testing.T) {
+	var c collector
+	var once sync.Once
+	recording := make(chan struct{})
+	release := make(chan struct{})
+	b := New(star(t), false, func(e Event) {
+		if e.Outcome == OutcomeTimeout {
+			once.Do(func() { close(recording) })
+			<-release
+		}
+		c.record(e)
+	})
+
+	asked := make(chan error, 1)
+	go func() {
+		_, err := b.Ask("master", "worker-1", []byte("how many?"), 150*time.Millisecond)
+		asked <- err
+	}()
+	m, err := b.Recv("worker-1", 5*time.Second)
+	if err != nil {
+		t.Fatalf("the question never arrived: %v", err)
+	}
+
+	<-recording // the ask has given up and is inside the append
+	replyErr := b.Reply("worker-1", m.Correlate, []byte("42"))
+	close(release)
+
+	if err := <-asked; err == nil {
+		t.Fatal("the fixture is wrong: this ask was supposed to time out")
+	}
+	if replyErr == nil {
+		t.Error("an answer to a question that had already timed out was accepted")
+	}
+	for _, e := range c.all() {
+		if e.Kind == KindReply && e.Outcome == OutcomeDelivered {
+			t.Errorf("the chain says a timed-out question was answered: %+v", e)
+		}
+	}
+}
+
+// A spawned worker never lands on a name the team is already using (P6-27,
+// finding M-6).
+//
+// The mint was a plain map assignment with nothing checking the name was free,
+// and attach appends without checking either — so a collision was not two agents
+// with one name, it was a merge: one mailbox for two machines, and the sitting
+// agent's whole edge set inherited by the worker under that name, against the
+// one edge to its spawner that docs/teams.md §5 promises.
+func TestASpawnNeverLandsOnANameTheTeamIsUsing(t *testing.T) {
+	var c collector
+	b := New(teamOfThree(t), false, c.record)
+	b.GrantSpawn("master", Budget{Max: 2, Images: []string{"dev"}})
+
+	// The name the next spawn will mint, put into the team by hand. Nothing in
+	// a team file can arrange this any more — ValidAgentName refuses a declared
+	// `-spawn-` name — and that is the point of the second guard: it has to hold
+	// if the minting scheme ever changes, not only while the scheme is safe.
+	const sitting = "master-spawn-1"
+	b.topo.attach(sitting, "worker-1")
+	b.mu.Lock()
+	b.boxes[sitting] = make(chan Message, mailbox)
+	b.mu.Unlock()
+	if err := b.Send("worker-1", sitting, []byte("sitting here")); err != nil {
+		t.Fatalf("the fixture is wrong: %v", err)
+	}
+
+	if _, err := b.Spawn("master", "dev"); err == nil {
+		t.Fatal("a spawned worker was given a name another agent already had")
+	}
+
+	// The sitting agent kept its mailbox, with what was in it.
+	m, err := b.Recv(sitting, time.Second)
+	if err != nil || string(m.Body) != "sitting here" {
+		t.Errorf("its mailbox did not survive the spawn: %+v %v", m, err)
+	}
+	// It kept its own edge and was given none of the spawner's.
+	if !b.topo.Allows("worker-1", sitting) || !b.topo.Allows(sitting, "worker-1") {
+		t.Error("the sitting agent lost the edge it was declared with")
+	}
+	if b.topo.Allows("master", sitting) || b.topo.Allows(sitting, "master") {
+		t.Error("the refused spawn attached its spawner's edge anyway")
+	}
+	// And it is in the team once, not twice — `team ps` reads this list.
+	seen := 0
+	for _, name := range b.topo.Agents() {
+		if name == sitting {
+			seen++
+		}
+	}
+	if seen != 1 {
+		t.Errorf("%s appears %d times in the team", sitting, seen)
+	}
+	// The refusal is audited, like every other spawn refusal, and no place in
+	// the budget was spent.
+	found := false
+	for _, e := range c.all() {
+		if e.Kind == KindSpawn && e.Reason == "name_taken" && e.Outcome == OutcomeRefused {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("the refused spawn left no trace in the record: %+v", c.all())
+	}
+	if got := b.Spawned("master"); len(got) != 0 {
+		t.Errorf("the refused spawn spent a place in the budget: %v", got)
+	}
+
+	// The sequence stays spent rather than being wound back, so the agent's next
+	// attempt mints a different name and works.
+	req, err := b.Spawn("master", "dev")
+	if err != nil {
+		t.Fatalf("the spawn after the refusal was refused too: %v", err)
+	}
+	if req.Name == sitting {
+		t.Errorf("the next spawn minted the taken name again")
+	}
+}
+
+// A declared agent cannot be called what the host calls a spawned worker
+// (P6-27, finding M-6).
+//
+// `<spawner>-spawn-<n>` is minted at runtime, after the topology is built, so a
+// declared agent holding one of those names is not a duplicate NewTopology can
+// see: the collision arrives later, when the spawn lands on top of it. Refused
+// where the person can still do something about it — in the file they wrote the
+// name in — in the shape P6-24 settled for names generally.
+func TestADeclaredAgentCannotTakeASpawnedWorkersName(t *testing.T) {
+	// The last of these is the count-expanded route: `name = "master-spawn"`
+	// with `count = 2` becomes master-spawn-1 before NewTopology sees it, so the
+	// check has to catch the expansion rather than the written name.
+	for _, name := range []string{"master-spawn-1", "a-spawn-2", "lead-spawn-1"} {
+		if err := ValidAgentName(name); err == nil {
+			t.Errorf("the agent name %q was accepted", name)
+		}
+		if _, err := NewTopology([]string{"master", name}, nil); err == nil {
+			t.Errorf("a topology accepted the agent name %q", name)
+		}
+	}
+	// Names that merely mention spawning are not the host's to reserve. A rule
+	// that took those would have made the check the problem.
+	for _, name := range []string{"spawner", "master-spawn", "spawn-1", "respawn", "spawn"} {
+		if err := ValidAgentName(name); err != nil {
+			t.Errorf("the ordinary agent name %q was refused: %v", name, err)
+		}
+	}
+}
+
+// Despawn removes nothing until it knows the name belongs to a worker somebody
+// spawned (P6-27, finding M-6).
+//
+// The mailbox delete used to come before the ownership check, so a despawn of a
+// name this broker never minted took a declared agent's mailbox with it and then
+// returned before touching the topology — leaving that agent in the team, with
+// its edges, and unable to receive. Senders would be told it is not reading its
+// messages; the agent itself would be told it is not in this team. No caller
+// passes such a name today, which is the only reason this was latent.
+func TestDespawningANameNobodySpawnedTakesNothingWithIt(t *testing.T) {
+	var c collector
+	b := New(teamOfThree(t), false, c.record)
+
+	b.Despawn("worker-1")
+
+	if err := b.Send("master", "worker-1", []byte("still there?")); err != nil {
+		t.Fatalf("a declared agent lost its mailbox to a despawn of its name: %v", err)
+	}
+	m, err := b.Recv("worker-1", time.Second)
+	if err != nil || string(m.Body) != "still there?" {
+		t.Errorf("recv = %+v %v", m, err)
+	}
+	if !b.topo.Exists("worker-1") || !b.topo.Allows("master", "worker-1") {
+		t.Error("the declared agent lost its place in the topology")
+	}
+
+	found := false
+	for _, e := range c.all() {
+		if e.Kind != KindDespawn {
+			continue
+		}
+		found = true
+		if e.Outcome != OutcomeRefused || e.Reason != "not_a_spawned_worker" {
+			t.Errorf("the despawn was recorded as %+v", e)
+		}
+	}
+	if !found {
+		t.Errorf("a despawn of a name nobody spawned left no trace: %+v", c.all())
 	}
 }

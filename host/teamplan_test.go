@@ -162,6 +162,38 @@ func TestPerAgentPolicyReachesThePlan(t *testing.T) {
 	}
 }
 
+// A relative workspace is relative to the policy file, not to whatever
+// directory the command was run from.
+//
+// It is the rule everything else in the product already follows — `kelyfos
+// run` resolves [sandbox] workspace this way and packPlugins resolves a plugin
+// directory this way, both with the same one-line comment — and this call site
+// was written without it. Both doors reach it and both are wrong in the same
+// way: `team up` looks for its policy by walking up the way git does, so
+// running it from a subdirectory finds the project's file and then packs the
+// subdirectory's copy of the name; serve-mcp is launched by a client in a
+// directory nobody chose, which is the reason --policy exists at all.
+//
+// The failure is not the missing directory — that one refuses mid-raise and is
+// merely confusing. It is the directory that does exist under the wrong parent:
+// it is packed into the agent's /work, its fingerprint therefore still matches
+// at teardown, and the sync-back writes the guest's tree over it (finding L-5).
+func TestATeamAgentsWorkspaceIsRelativeToThePolicyFile(t *testing.T) {
+	plan, err := planTeam(&config.Config{Path: "/proj/kelyfos.toml", Image: "dev",
+		Team: &config.Team{
+			Name:   "t",
+			Agents: []config.TeamAgent{{Name: "master", Count: 1, Workspace: "data"}},
+		}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := plan.agents[0].workspace; got != "/proj/data" {
+		t.Errorf("a workspace of %q under /proj/kelyfos.toml planned as %q; it has to be resolved "+
+			"against the file that declared it, or the agent is handed whatever directory of that "+
+			"name happens to sit under the process's own", "data", got)
+	}
+}
+
 // A credential bound to a domain the agent may not reach can never be spent.
 // That is a policy mistake, so it is refused at the file rather than discovered
 // as a connection that is simply never allowed.
