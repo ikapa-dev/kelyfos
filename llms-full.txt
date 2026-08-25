@@ -59,23 +59,22 @@ edit.
 
 ![KelyfOS in a terminal](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/media/demo.gif)
 
-> **Status: v0.9, early development, building in the open.** Cold boot-to-ready
-> **134 ms** median (p95 143), snapshot restore **48 ms** (p95 53) — x86_64 on a
-> bare-KVM CI runner, ten runs each, by
-> [`bench.yml`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/.github/workflows/bench.yml) rather than by hand. **Five agents
-> come up in 343–543 ms cold and 285–384 ms once a fork template is cached** —
-> a range and not a number, because that measurement is one run of
-> `dev/demo-team.sh` under [`caps.yml`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/.github/workflows/caps.yml) rather than a
-> median of ten, and the cold path varies by more than half its own value between
-> runs on a shared machine.
+> **Status: `v1.0-rc1`, building in the open.** Cold boot-to-ready **134 ms**
+> median, snapshot restore **48 ms**; five agents up in **343–543 ms**. Every
+> figure is measured by a workflow in this repository, and
+> [where they came from](#the-numbers-and-where-they-came-from) says which
+> workflow, how many runs, and why the third one is a range rather than a number.
 >
-> **v0.9 is the hardening release.** The VMM runs inside the jailer with its own
-> syscall filter proved in force rather than assumed, and everything the guest
-> spawns is confined by Landlock and a syscall refusal list. An agent is still
-> root inside its own guest, and the VM — not the chroot — is still the boundary.
-> [**What is enforced, and what is not**](#security) says which is which, in a
-> table and a longer list; [`docs/threat-model.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/threat-model.md) is the
-> long version, and it is the thing to read before trusting this with anything.
+> **What v1.0 promises:** [`docs/compatibility.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/compatibility.md) names
+> the surfaces that will not move under you — and, the half that matters more,
+> the ones that deliberately may. The release is built by CI from the tag's own
+> commit. An exported session report verifies offline, on a machine with no
+> sandbox and no guest.
+>
+> **An agent is still root inside its own guest, and the VM — not the chroot — is
+> the boundary.** [**What is enforced, and what is not**](#security) is a table
+> and a longer list; [`docs/threat-model.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/threat-model.md) is the long
+> version, and it is the thing to read before trusting this with anything.
 
 KelyfOS — from κέλυφος (*kélyfos*), "shell": the guest wrapped around the agent.
 
@@ -7483,8 +7482,18 @@ p.wait(timeout=30)
 print("   server %s %s, protocol %s, %d tools"
       % (init["serverInfo"]["name"], init["serverInfo"]["version"],
          init["protocolVersion"], len(tools)))
-assert "kelyfos.toml" in init["instructions"], "the agent is not told where the wall is"
+# Both assertions have to distinguish "a policy is in force" from "there is no
+# policy at all", and the obvious spellings do not. The no-policy instructions
+# also mention kelyfos.toml — they say none was found — so testing for that
+# string passes against a server with no ceiling whatsoever, which is the one
+# thing this check exists to catch (F-D44).
+assert "No kelyfos.toml was found" not in init["instructions"], \
+    "this server started outside the project and has NO ceiling at all"
+assert "No tool here can change it" in init["instructions"], \
+    "the agent is not told the wall is fixed"
 assert refused["isError"], "a request above the ceiling was granted"
+assert "ceiling" in refused["content"][0]["text"], \
+    "the request failed, but not because a ceiling refused it"
 print("   refused:", refused["content"][0]["text"].splitlines()[0])
 CHECK
 

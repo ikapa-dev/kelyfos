@@ -864,8 +864,18 @@ p.wait(timeout=30)
 print("   server %s %s, protocol %s, %d tools"
       % (init["serverInfo"]["name"], init["serverInfo"]["version"],
          init["protocolVersion"], len(tools)))
-assert "kelyfos.toml" in init["instructions"], "the agent is not told where the wall is"
+# Both assertions have to distinguish "a policy is in force" from "there is no
+# policy at all", and the obvious spellings do not. The no-policy instructions
+# also mention kelyfos.toml — they say none was found — so testing for that
+# string passes against a server with no ceiling whatsoever, which is the one
+# thing this check exists to catch (F-D44).
+assert "No kelyfos.toml was found" not in init["instructions"], \
+    "this server started outside the project and has NO ceiling at all"
+assert "No tool here can change it" in init["instructions"], \
+    "the agent is not told the wall is fixed"
 assert refused["isError"], "a request above the ceiling was granted"
+assert "ceiling" in refused["content"][0]["text"], \
+    "the request failed, but not because a ceiling refused it"
 print("   refused:", refused["content"][0]["text"].splitlines()[0])
 CHECK
 

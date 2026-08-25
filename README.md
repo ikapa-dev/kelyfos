@@ -10,23 +10,22 @@ edit.
 
 ![KelyfOS in a terminal](docs/media/demo.gif)
 
-> **Status: v0.9, early development, building in the open.** Cold boot-to-ready
-> **134 ms** median (p95 143), snapshot restore **48 ms** (p95 53) — x86_64 on a
-> bare-KVM CI runner, ten runs each, by
-> [`bench.yml`](.github/workflows/bench.yml) rather than by hand. **Five agents
-> come up in 343–543 ms cold and 285–384 ms once a fork template is cached** —
-> a range and not a number, because that measurement is one run of
-> `dev/demo-team.sh` under [`caps.yml`](.github/workflows/caps.yml) rather than a
-> median of ten, and the cold path varies by more than half its own value between
-> runs on a shared machine.
+> **Status: `v1.0-rc1`, building in the open.** Cold boot-to-ready **134 ms**
+> median, snapshot restore **48 ms**; five agents up in **343–543 ms**. Every
+> figure is measured by a workflow in this repository, and
+> [where they came from](#the-numbers-and-where-they-came-from) says which
+> workflow, how many runs, and why the third one is a range rather than a number.
 >
-> **v0.9 is the hardening release.** The VMM runs inside the jailer with its own
-> syscall filter proved in force rather than assumed, and everything the guest
-> spawns is confined by Landlock and a syscall refusal list. An agent is still
-> root inside its own guest, and the VM — not the chroot — is still the boundary.
-> [**What is enforced, and what is not**](#security) says which is which, in a
-> table and a longer list; [`docs/threat-model.md`](docs/threat-model.md) is the
-> long version, and it is the thing to read before trusting this with anything.
+> **What v1.0 promises:** [`docs/compatibility.md`](docs/compatibility.md) names
+> the surfaces that will not move under you — and, the half that matters more,
+> the ones that deliberately may. The release is built by CI from the tag's own
+> commit. An exported session report verifies offline, on a machine with no
+> sandbox and no guest.
+>
+> **An agent is still root inside its own guest, and the VM — not the chroot — is
+> the boundary.** [**What is enforced, and what is not**](#security) is a table
+> and a longer list; [`docs/threat-model.md`](docs/threat-model.md) is the long
+> version, and it is the thing to read before trusting this with anything.
 
 KelyfOS — from κέλυφος (*kélyfos*), "shell": the guest wrapped around the agent.
 

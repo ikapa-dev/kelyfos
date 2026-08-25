@@ -8,6 +8,7 @@ const reportHTML = `<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>KelyfOS session {{.SessionID}}</title>
 <style>
+.cards .l .qual{opacity:.62;font-weight:400}
   :root{
     --bg:#10161d; --panel:#161e28; --line:#26313f; --text:#c9d4de; --muted:#71818f;
     --amber:#f0a63c; --ok:#58c470; --warn:#d96a5f;
@@ -149,7 +150,7 @@ That is this file reporting a problem with itself. Check it rather than take its
 <div class="cards">
   <div class="card"><div class="n">{{.Summary.Commands}}</div><div class="l">commands</div></div>
   <div class="card"><div class="n{{if .Summary.Failed}} warn{{end}}">{{.Summary.Failed}}</div><div class="l">failed</div></div>
-  <div class="card"><div class="n">{{.Summary.FilesWritten}}</div><div class="l">files written</div></div>
+  <div class="card" title="Only writes the host saw: write_file, upload, and the file doors of serve-mcp and the shim. A shell redirect inside the guest is not one of them, so this can read 0 for a session that wrote a file."><div class="n">{{.Summary.FilesWritten}}</div><div class="l">files written <span class="qual">through a tool</span></div></div>
   <div class="card"><div class="n ok">{{.Summary.EgressOK}}</div><div class="l">egress allowed</div></div>
   <div class="card"><div class="n{{if .Summary.EgressBlock}} warn{{end}}">{{.Summary.EgressBlock}}</div><div class="l">egress blocked</div></div>
   <div class="card"><div class="n{{if .Summary.OOMKills}} warn{{end}}">{{.Summary.OOMKills}}</div><div class="l">OOM kills</div></div>
