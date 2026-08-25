@@ -894,7 +894,7 @@
         fed a parser a <i>host-authored</i> string. None of them was a guest&rarr;host path, and the guest is the
         untrusted party.</span></li>
 
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">P6-23</span><span class="tk"><b>Every finding triaged against HEAD, with a verdict, in
         the decision log.</b> Not against <code>babec8f</code>, which is what the audit read: the tree has moved
         and H-6 is already partly fixed. Four verdicts and no fifth:
@@ -4633,6 +4633,45 @@ after:
         <i>The convention is the one this project already uses</i>: a claim it intends to earn is written down
         as false until it is true, rather than removed until it is convenient.</td>
         <td>Owner ruling, 2026-08-25. P6-29 carries the work.</td></tr>
+        <tr><td class="mono">D57</td><td class="mono">2026-08-25</td>
+        <td><b>The remaining thirteen findings triaged against HEAD: twelve confirmed, one already fixed, and
+        the audit inaccurate about something in <i>all thirteen</i>.</b> The owner supplied the text on
+        2026-08-25 and the triage was run the way D46 and D47 were: read the named line in current source,
+        confirm the mechanism rather than the neighbourhood, then have somebody else re-read the verdict. No
+        verdict was disputed.
+        <b>The pattern is the one that made reading them worth insisting on.</b> Every defect but one is real,
+        and every report is wrong about some part of it &mdash; usually the part a fix would be built on.
+        <i>M-1</i> says <code>host/team.go</code> is &ldquo;the one site that does it right&rdquo;; there are
+        five sites and three are correct, and the right oracle is <code>servemcpstate</code>&rsquo;s
+        <code>b.close()</code> rather than team&rsquo;s inline call &mdash; both leaking sites already own a
+        correct <code>close()</code> and hand-roll a subset of it instead.
+        <i>M-4</i>&rsquo;s race is real but far narrower than stated, because both timers call
+        <code>crew.remove</code> <i>before</i> <code>rig.stop</code> &mdash; and the consequence it omits is
+        worse than the one it names: the collision can delete the person&rsquo;s actual project directory rather
+        than a staging tree.
+        <i>M-6</i> joins two independent defects as cause and effect; the mailbox wipe it leads with is not
+        reachable at HEAD, while the collision it undersells hands a spawned worker the declared
+        agent&rsquo;s <b>entire edge set</b>, contradicting the one-edge guarantee in
+        <code>docs/teams.md</code> &sect;5.
+        <i>L-3</i> names the wrong casualty: on stock cloud images a /32 host route wins on longest prefix, so
+        the host&rsquo;s metadata keeps working and the <b>sandbox</b> is what breaks.
+        <i>L-6</i> is off by one against HEAD, because P6-21&rsquo;s &ldquo;keep
+        <code>.kelyfos-previous</code>&rdquo; changed the arithmetic without closing the hole &mdash; the
+        <i>third</i> diverted run destroys the first&rsquo;s output, not the second.
+        <i>L-4</i>&rsquo;s proposed fix would leave a second instance of the same bug untouched, because the
+        path is adopted <i>before</i> it is verified.
+        <i>D-1</i> is accurate in every claim and wrong about scope: a worse, filesystem-independent variant is
+        live, because a jailed restore points the workspace into the run directory.
+        <b>L-2 is already fixed</b>, by C-1&rsquo;s rewrite in P6-24 &mdash; and its proposed fix would not have
+        worked, since one request per line was already the shape and <code>debugfs</code>&rsquo;s parser splits
+        on whitespace regardless. It was a v1.0 blocker and it closed as a side effect of the boundary work.
+        <b>What this settles about the audit as a whole.</b> Across all twenty-four findings now read, the score
+        is the same: the defects are worth having and the descriptions are not load-bearing. Reading each one
+        against current source before touching anything was the right rule, and it is the reason nothing was
+        fixed here from a description alone.</td>
+        <td>P6-23, third and final instalment. 12 CONFIRMED, 1 ALREADY-FIXED, 0 disputed by the second reader.
+        Severity for v1.0: 10 should-fix, 2 latent-edge (L-4, D-1), and L-2 which blocked and no longer exists.
+        The fixes are P6-27, which is where the corrections that reach documents ride the same commits.</td></tr>
     <!-- Claude Code: append rows above this line. -->
   </table>
 </section>
