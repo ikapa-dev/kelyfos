@@ -3324,6 +3324,33 @@ after:
         itself every documentation page while missing the one that says what the version means<br>
         <code>gofmt</code>, <code>vet</code>, 14 packages, <code>make docs</code> clean; llms-full.txt is now
         498,747 bytes, about 129,599 tokens by gendocs&rsquo;s own character estimate</td></tr>
+        <tr><td class="mono">2026-08-25</td><td class="mono">P6-15</td>
+        <td><b>The E3-0 pattern re-run whole &mdash; the findings half.</b> Every hand-written document read
+        against <b>the code that implements it</b>, which is the only version of this audit worth running: read
+        against each other, the documents agree, because agreeing with each other is not what they drifted from.
+        The generated set is excluded by name &mdash; a hand edit there is reverted by the next <code>make
+        docs</code> and turns the pipeline red, so a finding against a generated page is a finding against its
+        generator. <b>21 documents, 202 candidates, and then a second pass whose instruction was to refute:</b>
+        quote the line, read the code, report the candidate as unreal if the document was right.
+        <b>174 survived and 28 were refuted</b> &mdash; a 14% false-positive rate on the first pass, which is the
+        entire argument for the second one. 44 <code>FALSE</code>, 41 <code>STALE</code>, 54
+        <code>IMPRECISE</code>, 35 <code>MISSING</code>. The record is
+        <code>dev/docs-audit-2026-08-25.md</code>, under <code>dev/</code> rather than <code>docs/</code>
+        deliberately: it is a dated artefact of one audit, not a page anybody maintains, and the
+        <code>docs/*.md</code> gate would otherwise pull it into <code>llms-full.txt</code>.
+        <b>The three worst are mine, from this session.</b> The README says release artifacts carry a provenance
+        attestation and gives the command to check it &mdash; no released artifact carries one, because the
+        workflow that makes them postdates the only tag. It says the downloads are built by that workflow &mdash;
+        they are v0.9, which predates it. And it says guest-chosen modes do not survive onto your filesystem, which
+        stopped being true the moment P6-24 narrowed <code>safeMode</code> to the world-write bit and the sentence
+        was not narrowed with it. Writing the claim and then weakening the code under it is precisely the drift
+        this task exists to catch, and it took eleven hours rather than a release cycle.</td>
+        <td class="mono">the corrections are the next commit, not this one, so that what was wrong survives the
+        fixing of it &mdash; E3-0&rsquo;s shape, restated in the task<br>
+        each finding carries the sentence, what the code does instead, and a file:line that proves it; the
+        refutations were not retained, and the record says so rather than implying 202 were all real<br>
+        the attestation claim appears <b>twice</b> (README.md:200 and :465) and its verifier said so: a fix that
+        only touches the first leaves the false claim standing at the second</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
