@@ -38,6 +38,7 @@ hand-written half, and this page says where each is still thin.
 
 | Document | Kind | What it answers |
 | --- | --- | --- |
+| [`compatibility.md`](compatibility.md) | hand | **The promise that makes this a 1.0**: which surfaces do not move, which are explicitly allowed to, what a major, minor and patch mean here and what they attach to, and how something is deprecated before it is removed. |
 | [`reference/`](reference/) | **generated** | Every command, flag, `kelyfos.toml` key, MCP tool, event type, exit code, refusal and guest confinement profile, with types and defaults. Extracted from the source; CI fails on drift. |
 | [`protocol.md`](protocol.md) | mixed | How the host and the guest talk: Firecracker's hybrid vsock, the port map, newline-delimited JSON framing, and every channel's message shape. |
 | [`events.md`](events.md) | mixed | What the flight recorder writes: the common fields, the hash chain, every event type with its payload, how an exported report carries its own record so its reader can re-run the chain, and why `kelyfos runs` is the record read back rather than a second one. |

@@ -11,6 +11,7 @@ Apache-2.0. Single-host developer tool, not a multi-tenant sandbox for hostile c
 ## Docs
 
 - [KelyfOS](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/README.md): what it is, the quickstart, and the shape of a policy file
+- [The compatibility promise](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/compatibility.md): what v1.0 promises will not move, what is explicitly allowed to, and how anything is deprecated before it is removed
 - [Threat model](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/threat-model.md): what is defended and what is not — read before trusting it with anything
 - [Resource limits](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/resources.md): how much machine an agent gets: units, precedence, and what enforces each cap
 - [Egress](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/networking.md): why a sandbox has no NIC by default, what --allow builds, and why there is no DNS
@@ -39,6 +40,6 @@ Apache-2.0. Single-host developer tool, not a multi-tenant sandbox for hostile c
 
 ## Optional
 
-- [Everything in one file](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/llms-full.txt): every page above concatenated, roughly 127k tokens, for a client that would rather spend context than fetch
+- [Everything in one file](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/llms-full.txt): every page above concatenated, roughly 130k tokens, for a client that would rather spend context than fetch
 - [Build plan and decision log](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/PLAN.html): HTML. Every phase and every decision with its rationale, and the command output behind each claim
 - [Feature plan and decision log](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/PLAN-FEATURES.html): HTML. The epics after the build plan, same protocol

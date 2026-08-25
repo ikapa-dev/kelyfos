@@ -55,6 +55,8 @@ func docSet() []doc {
 	return []doc{
 		{Path: "README.md", Title: "KelyfOS", Full: true,
 			Summary: "what it is, the quickstart, and the shape of a policy file"},
+		{Path: "docs/compatibility.md", Title: "The compatibility promise", Full: true,
+			Summary: "what v1.0 promises will not move, what is explicitly allowed to, and how anything is deprecated before it is removed"},
 		{Path: "docs/threat-model.md", Title: "Threat model", Full: true,
 			Summary: "what is defended and what is not — read before trusting it with anything"},
 		{Path: "docs/resources.md", Title: "Resource limits", Full: true,

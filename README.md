@@ -396,6 +396,7 @@ And the parts that make it a thing you reach for rather than tolerate (v0.8):
 | [`docs/mcp-surface.md`](docs/mcp-surface.md) | MCP in both directions: `serve-mcp` as a tool for any client, `[[plugin]]` servers inside the guest |
 | [`docs/threat-model.md`](docs/threat-model.md) | what is defended, and what is not |
 | [`docs/protocol.md`](docs/protocol.md) | the host/guest wire protocol |
+| [`docs/compatibility.md`](docs/compatibility.md) | what v1.0 promises will not move, and what is allowed to |
 | [`docs/events.md`](docs/events.md) | the audit event schema |
 | [`docs/networking.md`](docs/networking.md) | egress design and the nftables rules |
 | [`docs/resources.md`](docs/resources.md) | resource limits: units, precedence, what enforces what |

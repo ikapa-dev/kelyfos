@@ -180,7 +180,7 @@
     <span class="bl-name">Overall</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">P6-6 done &mdash; the export carries the record it was rendered from and <code>kelyfos verify</code> re-runs the chain over it offline. <b>An external security audit then arrived (D45) and v1.0 is gated on its trust-boundary group</b>: the workspace block device is a guest&rarr;host surface the threat model does not list. Seven tasks inserted before P6-7. <b>P6-21 done</b> &mdash; <code>--review</code> no longer destroys an edit made while somebody was reading it. <b>P6-6 corrected</b>: its own adversarial review landed late and found a false claim about truncation and an unchecked chain head, both reproduced and both fixed. <b>P6-22 done</b> &mdash; nine fixture groups, twenty-one recorded breaks, a ledger that can only shrink, and a CI job that runs the lot. <b>D46</b> triaged seven findings against HEAD and corrected two. <b>P6-24 done &mdash; the v1.0 gate is open.</b> C-1, H-1 and H-2 are closed in two layers, the workspace block device is in the trust-boundary table, and the full acceptance suite passes on the final code. P6-23 stands at 11/23, blocked on the audit text for the rest (D47). <b>P6-25 done</b> &mdash; the blocking set is closed and the hostile ledger is down to one line, which is a recorded decision rather than a defect. <b>P6-26 done. The audit&rsquo;s v1.0-blocking set is closed</b> &mdash; boundary group, clamps and both claims &mdash; and the hostile ledger is one line, which is a recorded decision. P6-23 and P6-27 are blocked on the audit text for the remaining twelve findings (D47). <b>P6-7 done</b> &mdash; signed exports with a key the reader anchors, and a vocabulary rather than a badge. <b>P6-8 done</b> &mdash; the release is a workflow, the sums file is written from scratch and checked both ways, and the flavor is in the cache key. <b>P6-9 done</b> &mdash; and measured: two full builds from nothing produce byte-identical artifacts on this machine, which is more than D38 expected. <b>P6-10 done</b> &mdash; 64 components across three sources, including the one Buildroot has never heard of. <b>P6-11 done</b> &mdash; provenance and SBOM attestations, and the immutable-release claim refused in the same breath. <b>P6-12 done</b> &mdash; the CLI runs on macOS, <code>doctor</code> owns the Lima layer, and a report verifies on the machine it was sent to. <b>P6-13 done</b> &mdash; six client writers, a real handshake behind <code>--check</code>, and the four rulings recorded. Next: <b>P6-14</b>, the compatibility promise</b></div>
+  <div class="focusline">Current focus: <b id="focus">P6-6 done &mdash; the export carries the record it was rendered from and <code>kelyfos verify</code> re-runs the chain over it offline. <b>An external security audit then arrived (D45) and v1.0 is gated on its trust-boundary group</b>: the workspace block device is a guest&rarr;host surface the threat model does not list. Seven tasks inserted before P6-7. <b>P6-21 done</b> &mdash; <code>--review</code> no longer destroys an edit made while somebody was reading it. <b>P6-6 corrected</b>: its own adversarial review landed late and found a false claim about truncation and an unchecked chain head, both reproduced and both fixed. <b>P6-22 done</b> &mdash; nine fixture groups, twenty-one recorded breaks, a ledger that can only shrink, and a CI job that runs the lot. <b>D46</b> triaged seven findings against HEAD and corrected two. <b>P6-24 done &mdash; the v1.0 gate is open.</b> C-1, H-1 and H-2 are closed in two layers, the workspace block device is in the trust-boundary table, and the full acceptance suite passes on the final code. P6-23 stands at 11/23, blocked on the audit text for the rest (D47). <b>P6-25 done</b> &mdash; the blocking set is closed and the hostile ledger is down to one line, which is a recorded decision rather than a defect. <b>P6-26 done. The audit&rsquo;s v1.0-blocking set is closed</b> &mdash; boundary group, clamps and both claims &mdash; and the hostile ledger is one line, which is a recorded decision. P6-23 and P6-27 are blocked on the audit text for the remaining twelve findings (D47). <b>P6-7 done</b> &mdash; signed exports with a key the reader anchors, and a vocabulary rather than a badge. <b>P6-8 done</b> &mdash; the release is a workflow, the sums file is written from scratch and checked both ways, and the flavor is in the cache key. <b>P6-9 done</b> &mdash; and measured: two full builds from nothing produce byte-identical artifacts on this machine, which is more than D38 expected. <b>P6-10 done</b> &mdash; 64 components across three sources, including the one Buildroot has never heard of. <b>P6-11 done</b> &mdash; provenance and SBOM attestations, and the immutable-release claim refused in the same breath. <b>P6-12 done</b> &mdash; the CLI runs on macOS, <code>doctor</code> owns the Lima layer, and a report verifies on the machine it was sent to. <b>P6-13 done</b> &mdash; six client writers, a real handshake behind <code>--check</code>, and the four rulings recorded. <b>P6-14 done</b> &mdash; the promise exists, and the record&rsquo;s field order is pinned by a test rather than by a sentence. Next: <b>P6-15</b>, the documentation audit</b></div>
 </div>
 
 <!-- ====================================================== 1. END GOAL -->
@@ -1091,7 +1091,7 @@
         redirectable by one environment variable and there is not a single <code>t.Setenv("HOME")</code> in the
         tree, so an override is a design requirement rather than a convenience.</span></li>
 
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">P6-14</span><span class="tk"><b>The compatibility promise &mdash; the document that
         makes this a 1.0.</b> The words &ldquo;semver&rdquo; and &ldquo;deprecated&rdquo; appear nowhere in this
         repository. What does exist is unusually good raw material: seven surfaces already have a machine-readable
@@ -3288,6 +3288,42 @@ after:
         a test pins that the generic-only clients have no writer, so a later &ldquo;while we are here&rdquo; cannot
         quietly add one D41 rejected on evidence<br>
         <code>gofmt</code>, <code>vet</code>, 14 packages, <code>make docs</code> clean; 15 recipes now</td></tr>
+        <tr><td class="mono">2026-08-25</td><td class="mono">P6-14</td>
+        <td><b>The compatibility promise &mdash; the document that makes the number mean something.</b>
+        <code>docs/compatibility.md</code>. It is short because most of the work was already done: seven surfaces
+        have a machine-readable source and a CI-enforced generated page, so the promise <b>cites</b> rather than
+        re-lists and cannot go stale by the mechanism that already keeps the reference honest.
+        <b>What a version attaches to, stated for the first time.</b> Three independent version constants exist and
+        their relationship had never been written down. They are <b>not</b> in lockstep and never have been:
+        every release has shipped <code>proto.Version = 1</code> and <code>recorder.Version = 1</code>, and that is
+        correct &mdash; the product changed a great deal and those two contracts did not.
+        <b>What does not stabilise is said as loudly as what does.</b> Guest confinement profiles may narrow in a
+        minor release, because a profile that could not be tightened without a major release is a profile nobody
+        tightens. The E2B subset tracks somebody else&rsquo;s API. And D41&rsquo;s required clause: <b>client
+        configuration formats are external surfaces</b>, outside the drift gate and outside this promise,
+        re-verified on their own cadence.
+        <b>A deprecation mechanism, where there was none</b> &mdash; announced, then warned <i>on stderr</i>
+        (a warning on stdout corrupts a pipeline, which is the deprecation causing the outage it was meant to
+        avoid), then removed in a major release, with a minimum of one minor release and thirty days. Security is
+        the stated exception and says so rather than calling itself a patch.
+        <b>The three questions, settled.</b> A new event <i>type</i> does not break a consumer, and one that breaks
+        is wrong &mdash; &sect;3 has always said to ignore the unrecognised. The MCP revision is not ours to
+        promise: KelyfOS speaks one it has implemented and says which, rather than claiming the latest.
+        <b>And the record&rsquo;s field order is frozen ABI, which nothing checked.</b> A digest is computed over
+        the struct in declaration order, so reordering the fields changes <i>every digest KelyfOS has ever
+        written</i> &mdash; every chain retroactively unverifiable, which is tamper detection firing on legitimate
+        records. <code>TestTheEventFieldOrderIsFrozen</code> now pins all 62 fields and fails with an explanation
+        rather than a diff.</td>
+        <td class="mono">the field-order test proved against a real reorder: swapping <code>path</code> and
+        <code>sha256</code> reports <code>the record&rsquo;s field order changed at position 28</code>, and the
+        message says what it costs rather than only what differs<br>
+        it distinguishes the safe case from the fatal one in its own failure text: a field added <b>at the end</b>
+        is safe and stays safe, because P6-6 made verification work from the bytes as written<br>
+        <b>a gate caught the document itself:</b> <code>TestEveryDocumentUnderDocsIsInTheLLMsSet</code> failed
+        because <code>compatibility.md</code> was not in the generated set &mdash; llms-full.txt would have called
+        itself every documentation page while missing the one that says what the version means<br>
+        <code>gofmt</code>, <code>vet</code>, 14 packages, <code>make docs</code> clean; llms-full.txt is now
+        498,747 bytes, about 129,599 tokens by gendocs&rsquo;s own character estimate</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
