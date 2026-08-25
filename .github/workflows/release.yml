@@ -31,6 +31,17 @@ on:
 
 permissions:
   contents: write
+  # What actions/attest needs to have a hosted platform sign a statement about
+  # this run: an OIDC token to prove which workflow is asking, the right to write
+  # the attestation, and the right to record it against the artifact (P6-11).
+  #
+  # Read off the action's own documentation rather than remembered. The obvious
+  # guess — actions/attest-build-provenance@v1 with two permissions — is two
+  # majors and one permission out of date: that action is a wrapper as of v4 and
+  # its own README says new implementations should use actions/attest.
+  id-token: write
+  attestations: write
+  artifact-metadata: write
 
 concurrency:
   group: release-${{ github.ref }}
@@ -155,6 +166,47 @@ jobs:
           [ "$missing" = 0 ] || exit 1
           sha256sum -c SHA256SUMS
           echo "SHA256SUMS covers $(wc -l < SHA256SUMS) artifacts, and every one of them is here"
+
+      # Provenance: a hosted platform signing a statement about which workflow,
+      # from which commit, produced these bytes. That is SLSA v1.0 Build Level 2
+      # and it verifies offline against a trusted root fetched once (P6-11, D39).
+      #
+      # Over the checksums file KelyfOS already produces, in the format it
+      # already produces it — one attestation covering every asset rather than
+      # one per file, which is the shape actions/attest is built for and the
+      # shape a stranger checks in a single command.
+      #
+      # **This is not the same claim as GitHub's immutable-release attestation**,
+      # which carries no builder identity at all and asserts only that GitHub
+      # received these bytes under this tag. That one is a separate owner
+      # setting, worth having, and the two must never be described with one
+      # sentence (D39).
+      - name: Attest the artifacts
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/attest@v4
+        with:
+          subject-checksums: dist/SHA256SUMS
+
+      # A second and third attestation, over the SBOMs — one per architecture,
+      # because there is one SBOM per architecture and an attestation that
+      # pointed at both sets of artifacts would be claiming that either SBOM
+      # describes either image.
+      #
+      # "These are the bytes this workflow built" and "this is what is in them"
+      # are two statements, and a reader may want either without the other.
+      - name: Attest the aarch64 SBOM
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/attest@v4
+        with:
+          subject-path: "dist/*aarch64*"
+          sbom-path: dist/sbom-aarch64.cdx.json
+
+      - name: Attest the x86_64 SBOM
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/attest@v4
+        with:
+          subject-path: "dist/*x86_64*"
+          sbom-path: dist/sbom-x86_64.cdx.json
 
       - name: What is being published
         run: ls -la dist/

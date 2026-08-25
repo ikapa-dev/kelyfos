@@ -2,11 +2,18 @@
 # Download a prebuilt KelyfOS guest image from a GitHub release (D20).
 #
 # The artifacts are built from this source at the release tag, and save you the
-# ~35 minutes of compiling a toolchain, a kernel and a userland. They are not
-# bit-for-bit what `make image` produces on your machine: the build is not
-# reproducible yet (P6-9). SHA256SUMS gives you integrity, not provenance —
-# nothing here is signed yet, that is P6-11. If you need to know who built the
-# bytes, build them yourself.
+# ~35 minutes of compiling a toolchain, a kernel and a userland.
+#
+# Whether they are bit-for-bit what `make image` produces on your machine is
+# measured rather than claimed — see the repro-check workflow and the table in
+# README.md, which says what was measured and on what.
+#
+# SHA256SUMS gives you integrity. Provenance is a separate statement and there is
+# one: `gh attestation verify <file> --repo p4r4n0rm4l/KelyfOS` names the
+# workflow and the commit that built these bytes. This script checks the sums and
+# not the attestation, deliberately — it has to work on a machine with no `gh`,
+# and a download tool that needed a second tool to be trusted would be a worse
+# tool.
 #
 # Usage: dev/fetch-image.sh [ARCH] [TAG]
 set -euo pipefail

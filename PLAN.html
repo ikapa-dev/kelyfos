@@ -180,7 +180,7 @@
     <span class="bl-name">Overall</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">P6-6 done &mdash; the export carries the record it was rendered from and <code>kelyfos verify</code> re-runs the chain over it offline. <b>An external security audit then arrived (D45) and v1.0 is gated on its trust-boundary group</b>: the workspace block device is a guest&rarr;host surface the threat model does not list. Seven tasks inserted before P6-7. <b>P6-21 done</b> &mdash; <code>--review</code> no longer destroys an edit made while somebody was reading it. <b>P6-6 corrected</b>: its own adversarial review landed late and found a false claim about truncation and an unchecked chain head, both reproduced and both fixed. <b>P6-22 done</b> &mdash; nine fixture groups, twenty-one recorded breaks, a ledger that can only shrink, and a CI job that runs the lot. <b>D46</b> triaged seven findings against HEAD and corrected two. <b>P6-24 done &mdash; the v1.0 gate is open.</b> C-1, H-1 and H-2 are closed in two layers, the workspace block device is in the trust-boundary table, and the full acceptance suite passes on the final code. P6-23 stands at 11/23, blocked on the audit text for the rest (D47). <b>P6-25 done</b> &mdash; the blocking set is closed and the hostile ledger is down to one line, which is a recorded decision rather than a defect. <b>P6-26 done. The audit&rsquo;s v1.0-blocking set is closed</b> &mdash; boundary group, clamps and both claims &mdash; and the hostile ledger is one line, which is a recorded decision. P6-23 and P6-27 are blocked on the audit text for the remaining twelve findings (D47). <b>P6-7 done</b> &mdash; signed exports with a key the reader anchors, and a vocabulary rather than a badge. <b>P6-8 done</b> &mdash; the release is a workflow, the sums file is written from scratch and checked both ways, and the flavor is in the cache key. <b>P6-9 done</b> &mdash; and measured: two full builds from nothing produce byte-identical artifacts on this machine, which is more than D38 expected. <b>P6-10 done</b> &mdash; 64 components across three sources, including the one Buildroot has never heard of. Next: <b>P6-11</b>, attested release artifacts</b></div>
+  <div class="focusline">Current focus: <b id="focus">P6-6 done &mdash; the export carries the record it was rendered from and <code>kelyfos verify</code> re-runs the chain over it offline. <b>An external security audit then arrived (D45) and v1.0 is gated on its trust-boundary group</b>: the workspace block device is a guest&rarr;host surface the threat model does not list. Seven tasks inserted before P6-7. <b>P6-21 done</b> &mdash; <code>--review</code> no longer destroys an edit made while somebody was reading it. <b>P6-6 corrected</b>: its own adversarial review landed late and found a false claim about truncation and an unchecked chain head, both reproduced and both fixed. <b>P6-22 done</b> &mdash; nine fixture groups, twenty-one recorded breaks, a ledger that can only shrink, and a CI job that runs the lot. <b>D46</b> triaged seven findings against HEAD and corrected two. <b>P6-24 done &mdash; the v1.0 gate is open.</b> C-1, H-1 and H-2 are closed in two layers, the workspace block device is in the trust-boundary table, and the full acceptance suite passes on the final code. P6-23 stands at 11/23, blocked on the audit text for the rest (D47). <b>P6-25 done</b> &mdash; the blocking set is closed and the hostile ledger is down to one line, which is a recorded decision rather than a defect. <b>P6-26 done. The audit&rsquo;s v1.0-blocking set is closed</b> &mdash; boundary group, clamps and both claims &mdash; and the hostile ledger is one line, which is a recorded decision. P6-23 and P6-27 are blocked on the audit text for the remaining twelve findings (D47). <b>P6-7 done</b> &mdash; signed exports with a key the reader anchors, and a vocabulary rather than a badge. <b>P6-8 done</b> &mdash; the release is a workflow, the sums file is written from scratch and checked both ways, and the flavor is in the cache key. <b>P6-9 done</b> &mdash; and measured: two full builds from nothing produce byte-identical artifacts on this machine, which is more than D38 expected. <b>P6-10 done</b> &mdash; 64 components across three sources, including the one Buildroot has never heard of. <b>P6-11 done</b> &mdash; provenance and SBOM attestations, and the immutable-release claim refused in the same breath. Next: <b>P6-12</b>, the macOS port</b></div>
 </div>
 
 <!-- ====================================================== 1. END GOAL -->
@@ -1022,7 +1022,7 @@
         information rather than transcribing it, and publish it as a release asset covered by
         <code>SHA256SUMS</code>.</span></li>
 
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">P6-11</span><span class="tk"><b>Attested release artifacts, and exactly one claim made
         about them (D39).</b> With the build in a workflow, <code>actions/attest</code> takes the checksums file
         KelyfOS already produces, in the format it already produces it, and creates one provenance attestation
@@ -3173,6 +3173,40 @@ after:
         the comment says why<br>
         <code>gofmt</code>, <code>vet</code>, 14 packages, <code>make docs</code> clean; the release workflow
         parses and builds the SBOM in the image job, because the Buildroot tree only exists on that runner</td></tr>
+        <tr><td class="mono">2026-08-25</td><td class="mono">P6-11</td>
+        <td><b>Attested release artifacts, and exactly one claim made about them.</b>
+        <code>actions/attest</code> over the checksums file KelyfOS already produces, in the format it already
+        produces it &mdash; one attestation covering every asset, plus one per architecture over that
+        architecture&rsquo;s SBOM. Two SBOM attestations rather than one, because an attestation pointing at both
+        sets of artifacts would be claiming that either SBOM describes either image.
+        <b>The claim is stated and its neighbour is refused in the same breath</b> (D39). Provenance says which
+        workflow, from which commit, produced these bytes: SLSA v1.0 Build Level 2, a hosted builder attesting to
+        its own output, verified offline against a root fetched once. GitHub&rsquo;s immutable-release setting says
+        GitHub received these bytes under this tag and <b>carries no builder identity at all</b>. A release can
+        have either without the other, and the two never share a sentence in any document here.
+        <b>The four places saying &ldquo;not yet signed &mdash; that is P4-3&rdquo; are retired with the
+        mechanism</b>, not before it, and <code>P4-3</code> now appears in no document. The README gains the one
+        command a stranger runs.
+        <b>Live-checked before it was written, and the check earned its keep.</b> The obvious version of this
+        &mdash; <code>actions/attest-build-provenance@v1</code>, two permissions &mdash; is <b>two majors and one
+        permission wrong</b>: that action is a wrapper as of v4 and its own README says new implementations should
+        use <code>actions/attest</code>, which is what the task said in the first place. The third permission,
+        <code>artifact-metadata: write</code>, is not in the example this project would have copied.
+        <b>Two sentences written during this task were themselves wrong and were caught before the commit:</b>
+        <code>dev/fetch-image.sh</code> was left saying the build is not reproducible, which P6-9 measured
+        otherwise, and a replacement paragraph reached for <code>P4-3</code> again &mdash; a dead id, to describe
+        work that has no task and no date. Both say the true thing now.</td>
+        <td class="mono">the action&rsquo;s interface read from its own documentation:
+        <code>actions/attest@v4</code>, <code>subject-checksums</code> (16 MB cap),
+        <code>sbom-path</code> accepting &ldquo;SPDX or CycloneDX&rdquo; &mdash; which is what P6-10 emits &mdash;
+        and <code>id-token</code>, <code>attestations</code>, <code>artifact-metadata</code><br>
+        the workflow parses and the publish job&rsquo;s steps are in the order the claim needs: sums, then the
+        consistency check, then attestation, then the draft<br>
+        <b>the attestations themselves are unrun</b>, and cannot be run without cutting a tag &mdash; the steps are
+        gated on <code>refs/tags/v*</code> deliberately, so a dispatch rehearses everything up to them. Proving
+        them is the release itself, at the phase exit<br>
+        <code>P4-3</code> appears in no <code>README.md</code>, <code>docs/</code> or <code>dev/</code> file;
+        <code>gofmt</code>, <code>vet</code>, 14 packages, <code>make docs</code> clean</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>

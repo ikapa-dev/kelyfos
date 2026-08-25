@@ -176,8 +176,23 @@ versions. The sandbox reads it and refuses to boot if it does not match what you
 asked for, so `--image dev` can never quietly run something else — the flavor in
 your audit trail is a checked fact, not a label you typed.
 
-Release artifacts are checksummed but **not yet signed** — that is P4-3. If you
-need to know who built the bytes, build them yourself.
+**Release artifacts carry a provenance attestation**: a statement, signed by
+GitHub, saying which workflow and which commit produced these exact bytes. One
+command checks it, and it needs nothing from this project:
+
+```sh
+gh attestation verify kelyfos-linux-x86_64 --repo p4r4n0rm4l/KelyfOS
+```
+
+That is SLSA v1.0 Build Level 2 — a hosted builder attesting to its own output —
+and it verifies offline against a trusted root fetched once. Each architecture's
+SBOM is attested too, against that architecture's artifacts.
+
+**It is not the same claim as GitHub's immutable releases**, and the two must not
+be read as one. Immutability says GitHub received these bytes under this tag and
+nobody has replaced them since; it carries **no builder identity at all**.
+Provenance says which workflow built them. A release can have either without the
+other.
 
 ## Attaching an agent
 
@@ -423,9 +438,14 @@ hostile code; it is a single-host developer tool (D1).
   A service account closes that and costs a setup step.
 - **Side channels** — timing, cache, speculative execution — are untouched.
   KelyfOS inherits Firecracker's position and adds nothing.
-- **The supply chain** is untouched: reproducible builds, signed images and an
-  SBOM are P4-3 and are not done. A hardened runtime built from an unverified
-  toolchain is a locked door in a wall nobody measured.
+- **The supply chain is partly answered now, and the parts are different sizes.**
+  Release artifacts carry a build-provenance attestation and an SBOM, and
+  reproducibility is measured per artifact rather than claimed. What is *not*
+  answered is the layer beneath: the Buildroot packages, the compiler and the
+  upstream tarballs are taken on trust, verified by checksum against what
+  upstream published and no further. A hardened runtime built from an unverified
+  toolchain is still a locked door in a wall nobody measured; the door is now
+  documented down to its hinges, and the wall is not.
 - **Anything your policy permits.** A sandbox allowed to reach `api.github.com`
   with a token bound to it can do whatever that token can do.
 

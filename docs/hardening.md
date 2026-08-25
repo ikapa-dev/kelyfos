@@ -338,9 +338,23 @@ printed from the document that was produced rather than transcribed into a
 release note, because a total written down by hand is a total that is right
 once. It is covered by `SHA256SUMS` rather than published beside it.
 
-**The supply chain.** Signed images are P4-3
-and are not in this phase. A hardened runtime built from an unverified toolchain
-is a locked door in a wall nobody measured.
+**Release artifacts are attested.** `actions/attest` has GitHub sign a statement
+naming the workflow and the commit that produced the checksums file — one
+attestation covering every asset — and a second and third over each
+architecture's SBOM. `gh attestation verify <file> --repo p4r4n0rm4l/KelyfOS`
+checks it, offline, against a root fetched once. That is SLSA v1.0 Build
+Level 2, and it means what it says and no more: a hosted builder attesting to
+its own output. It is **not** the immutable-release setting, which asserts that
+GitHub received these bytes under this tag and carries no builder identity at
+all; the two are separate things and never share a sentence.
+
+**The supply chain, beneath the release.** Signing the *images themselves* — as
+opposed to attesting the release artifacts, which is done — has no task and no
+date, and neither does verifying the layer under Buildroot: the compiler and the
+upstream tarballs are taken on trust, checked by checksum against what upstream
+published and no further. A hardened runtime built from an unverified toolchain
+is still a locked door in a wall nobody measured. The door is now documented down
+to its hinges; the wall is not.
 
 ---
 
