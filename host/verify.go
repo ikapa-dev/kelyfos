@@ -26,6 +26,7 @@ func verifyCmd(argv []string) error {
 		replay = fs.Bool("replay", false, "print the session from the record it carries, rather than only checking it")
 		asJSON = fs.Bool("json", false, "print the record's raw events instead of a readable replay (implies --replay)")
 		toFile = fs.String("extract", "", "write the record it carries to this path (- for stdout)")
+		anchor = fs.String("key", "", "check the signature against this ed25519 public key (a PEM file, or the key in hex)")
 	)
 	fs.Usage = func() {
 		fmt.Fprint(fs.Output(), `usage: kelyfos verify <report.html|events.jsonl>
@@ -39,17 +40,38 @@ report someone sent you as well as on a raw flight recorder. What it checks is
 the record. It does not check that the page's timeline was drawn from that
 record — for that, compare the page against --replay.
 
+A signed report says who exported it, and that is worth exactly what knowing the
+key is worth: --key checks the signature against one you already hold, rather
+than against the one the file supplied itself.
+
 `)
 		fs.PrintDefaults()
 	}
-	if err := fs.Parse(argv); err != nil {
-		return err
+	// Flags on either side of the path.
+	//
+	// Go's flag package stops at the first thing that is not a flag, so
+	// `kelyfos verify report.html --key k` would put `--key k` in the
+	// positional arguments and print usage — and that is the order somebody
+	// types, because the file is what the command is about. Parsing what is
+	// left after each positional takes both orders without teaching the rest of
+	// the CLI a new convention.
+	var paths []string
+	rest := argv
+	for {
+		if err := fs.Parse(rest); err != nil {
+			return err
+		}
+		if fs.NArg() == 0 {
+			break
+		}
+		paths = append(paths, fs.Arg(0))
+		rest = fs.Args()[1:]
 	}
-	if fs.NArg() != 1 {
+	if len(paths) != 1 {
 		fs.Usage()
 		return &exitError{code: 2}
 	}
-	path := fs.Arg(0)
+	path := paths[0]
 
 	blob, err := os.ReadFile(path)
 	if err != nil {
@@ -131,6 +153,9 @@ record — for that, compare the page against --replay.
 	}
 
 	fmt.Fprintf(out, "  the values the page prints about this record agree with it\n")
+	if err := reportSignature(out, blob, chain, head, *anchor); err != nil {
+		return err
+	}
 	fmt.Fprintf(out, "  this checks the record and what the page claims about it, not how the page rendered its events — kelyfos verify --replay %s prints the record's own account\n", path)
 
 	if *replay {
@@ -174,6 +199,55 @@ func verifiedChain(blob []byte) (events int, head string, err error) {
 		return 0, "", errors.New("the record is empty — there is nothing here to verify")
 	}
 	return n, h, nil
+}
+
+// reportSignature says who signed a report, in a vocabulary rather than a
+// verdict (P6-7).
+//
+// Four things can be true and they are reported as four things: the chain is
+// intact or broken, and the report is unsigned, signed by a key the reader named,
+// or signed by a key only the file knows about. The last is the one that has to
+// be said carefully. A signature whose key came out of the same file proves that
+// whoever made the file had *a* key — which is nothing, unless the reader
+// recognises it. Saying "signed" and stopping there is how a signature becomes
+// the badge P6-6 removed.
+func reportSignature(out *os.File, page, chain []byte, head, anchorArg string) error {
+	sig := report.SignatureIn(page)
+	if sig.Sig == "" {
+		fmt.Fprintf(out, "  this report is not signed, which is not a fault: an unsigned report verifies,"+
+			" and the chain proves what it proves either way\n")
+		if anchorArg != "" {
+			fmt.Fprintf(out, "  MISMATCH: you named a key, and there is no signature here to check against it\n")
+			return &exitError{code: 1}
+		}
+		return nil
+	}
+
+	pub, err := sig.Check(chain, head)
+	if err != nil {
+		fmt.Fprintf(out, "  MISMATCH: %v\n", err)
+		fmt.Fprintf(out, "  the record itself is intact; what fails is the claim about who exported it\n")
+		return &exitError{code: 1}
+	}
+
+	if anchorArg == "" {
+		fmt.Fprintf(out, "  signed by %s\n", report.PublicKeyHex(pub))
+		fmt.Fprintf(out, "  that key came out of this same file, so it says only that whoever made this file"+
+			" had a key. It is worth something once you recognise it: --key checks against one you already hold\n")
+		return nil
+	}
+
+	want, err := report.LoadAnchorKey(anchorArg)
+	if err != nil {
+		return err
+	}
+	if report.PublicKeyHex(want) != report.PublicKeyHex(pub) {
+		fmt.Fprintf(out, "  MISMATCH: signed by %s, and you named %s\n",
+			report.PublicKeyHex(pub), report.PublicKeyHex(want))
+		return &exitError{code: 1}
+	}
+	fmt.Fprintf(out, "  signed by the key you named (%s)\n", report.PublicKeyHex(pub))
+	return nil
 }
 
 // recordIn finds the flight recorder in whatever the reader was sent.

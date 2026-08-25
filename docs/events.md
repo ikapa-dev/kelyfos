@@ -71,8 +71,27 @@ sequence number where the chain breaks.
 <report.html>` re-runs the chain over the record the page carries — offline,
 with no key, no network and no trust root. §5 has the shape of it. Signing,
 which turns "this record is internally consistent" into "and it was exported by
-the holder of this key", is P6-7 and is deliberately separate: the chain is
-worth checking whether or not anybody signed it.
+the holder of this key", is `kelyfos log --export --sign-key <key>`.
+
+**The key is yours.** An ed25519 private key in PEM PKCS#8 — what
+`openssl genpkey -algorithm ed25519` writes — because a signature is worth
+exactly what knowing the key is worth, and a key this product minted for the
+occasion would be worth nothing. A per-run ephemeral key was considered and
+refused: it proves one process made both halves, which the chain already proves,
+and a page saying "signed" beside a key nobody has ever seen invites a reader to
+stop asking.
+
+**What is signed is the record, not the page** — the chain head and a digest of
+the embedded events. The page carries a generation timestamp, so signing it
+would make two honest exports of one session disagree; signing the evidence means
+a re-export produces the same signature.
+
+**An unsigned report still verifies.** `kelyfos verify` reports a vocabulary
+rather than a verdict: the chain intact or broken, crossed with unsigned, signed
+by a key you named, or signed by a key only the file knows about. That last one
+is stated carefully, because a signature whose key came out of the same file
+proves only that whoever made the file had *a* key. `--key` checks it against one
+you already hold, which is the only version of the question worth asking.
 
 ## 3. Common fields
 

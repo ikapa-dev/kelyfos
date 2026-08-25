@@ -497,6 +497,38 @@ if kelyfos verify lying.html; then
 fi
 echo "refused, as it must be"
 
+# And a report can say who exported it. The key is yours — this product does not
+# mint one, because a signature is worth exactly what knowing the key is worth.
+if command -v openssl >/dev/null; then
+  echo
+  echo "== signed by a key you hold =="
+  openssl genpkey -algorithm ed25519 -out signing.key 2>/dev/null
+  openssl pkey -in signing.key -pubout -out signing.pub 2>/dev/null
+  kelyfos log --export signed.html --sign-key signing.key
+
+  # Checked against the key the reader already has, which is the only version of
+  # the question worth asking: the key inside the file proves only that whoever
+  # made the file had one.
+  kelyfos verify signed.html --key signing.pub | grep -q "signed by the key you named"
+  echo "the signature checks against the key held separately"
+
+  # A different key is a mismatch, not a footnote.
+  openssl genpkey -algorithm ed25519 -out other.key 2>/dev/null
+  openssl pkey -in other.key -pubout -out other.pub 2>/dev/null
+  if kelyfos verify signed.html --key other.pub; then
+    echo "a report verified against a key that did not sign it"
+    exit 1
+  fi
+  echo "and refuses a key that did not sign it"
+
+  # An unsigned report is still a report: the signature is optional by
+  # construction and never becomes required by accident.
+  kelyfos verify report.html | grep -q "not signed, which is not a fault"
+  echo "an unsigned report still verifies"
+else
+  echo "(openssl absent; skipping the signing half)"
+fi
+
 # But editing the record inside the page is caught, exactly the way editing the
 # flight recorder is.
 echo

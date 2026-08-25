@@ -2738,8 +2738,27 @@ sequence number where the chain breaks.
 <report.html>` re-runs the chain over the record the page carries — offline,
 with no key, no network and no trust root. §5 has the shape of it. Signing,
 which turns "this record is internally consistent" into "and it was exported by
-the holder of this key", is P6-7 and is deliberately separate: the chain is
-worth checking whether or not anybody signed it.
+the holder of this key", is `kelyfos log --export --sign-key <key>`.
+
+**The key is yours.** An ed25519 private key in PEM PKCS#8 — what
+`openssl genpkey -algorithm ed25519` writes — because a signature is worth
+exactly what knowing the key is worth, and a key this product minted for the
+occasion would be worth nothing. A per-run ephemeral key was considered and
+refused: it proves one process made both halves, which the chain already proves,
+and a page saying "signed" beside a key nobody has ever seen invites a reader to
+stop asking.
+
+**What is signed is the record, not the page** — the chain head and a digest of
+the embedded events. The page carries a generation timestamp, so signing it
+would make two honest exports of one session disagree; signing the evidence means
+a re-export produces the same signature.
+
+**An unsigned report still verifies.** `kelyfos verify` reports a vocabulary
+rather than a verdict: the chain intact or broken, crossed with unsigned, signed
+by a key you named, or signed by a key only the file knows about. That last one
+is stated carefully, because a signature whose key came out of the same file
+proves only that whoever made the file had *a* key. `--key` checks it against one
+you already hold, which is the only version of the question worth asking.
 
 ## 3. Common fields
 
@@ -6032,6 +6051,38 @@ if kelyfos verify lying.html; then
 fi
 echo "refused, as it must be"
 
+# And a report can say who exported it. The key is yours — this product does not
+# mint one, because a signature is worth exactly what knowing the key is worth.
+if command -v openssl >/dev/null; then
+  echo
+  echo "== signed by a key you hold =="
+  openssl genpkey -algorithm ed25519 -out signing.key 2>/dev/null
+  openssl pkey -in signing.key -pubout -out signing.pub 2>/dev/null
+  kelyfos log --export signed.html --sign-key signing.key
+
+  # Checked against the key the reader already has, which is the only version of
+  # the question worth asking: the key inside the file proves only that whoever
+  # made the file had one.
+  kelyfos verify signed.html --key signing.pub | grep -q "signed by the key you named"
+  echo "the signature checks against the key held separately"
+
+  # A different key is a mismatch, not a footnote.
+  openssl genpkey -algorithm ed25519 -out other.key 2>/dev/null
+  openssl pkey -in other.key -pubout -out other.pub 2>/dev/null
+  if kelyfos verify signed.html --key other.pub; then
+    echo "a report verified against a key that did not sign it"
+    exit 1
+  fi
+  echo "and refuses a key that did not sign it"
+
+  # An unsigned report is still a report: the signature is optional by
+  # construction and never becomes required by accident.
+  kelyfos verify report.html | grep -q "not signed, which is not a fault"
+  echo "an unsigned report still verifies"
+else
+  echo "(openssl absent; skipping the signing half)"
+fi
+
 # But editing the record inside the page is caught, exactly the way editing the
 # flight recorder is.
 echo
@@ -8444,6 +8495,7 @@ kelyfos log [flags]
 | `--json` | boolean | — | print the raw events instead of a readable replay |
 | `--list` | boolean | — | list recorded sessions |
 | `--session` | string | the most recent | session id |
+| `--sign-key` | string | — | sign the exported report with this ed25519 private key (PEM PKCS#8) |
 | `--verify` | boolean | — | check the hash chain and report the first break |
 
 ## kelyfos verify
@@ -8458,6 +8510,7 @@ kelyfos verify <file>
 | --- | --- | --- | --- |
 | `--extract` | string | — | write the record it carries to this path (- for stdout) |
 | `--json` | boolean | — | print the record's raw events instead of a readable replay (implies --replay) |
+| `--key` | string | — | check the signature against this ed25519 public key (a PEM file, or the key in hex) |
 | `--replay` | boolean | — | print the session from the record it carries, rather than only checking it |
 
 ## kelyfos watch

@@ -32,6 +32,7 @@ const reportHTML = `<!DOCTYPE html>
          border:1px solid var(--line);font:13px/1.65 var(--mono);max-width:840px}
   .chain code{color:var(--amber);word-break:break-all}
   .chain .limit{display:block;margin-top:8px;color:var(--muted)}
+  .chain .signed{display:block;margin-top:8px}
   .chain.bad{background:rgba(217,106,95,.12);color:var(--warn);border-color:rgba(217,106,95,.45)}
   .chain.bad code{color:var(--warn)}
   /* The island. Closed by default because it is evidence rather than reading,
@@ -133,6 +134,11 @@ That is this file reporting a problem with itself. Check it rather than take its
   <code id="kelyfos-head">{{.ChainHead}}</code>{{end}} — so that
   somebody else can. <code>kelyfos verify &lt;this file&gt;</code> reads that record out of the
   file and re-runs the chain over it: offline, no key, no network, nothing of ours to trust.
+  {{if .Signed.Sig}}<span class="signed">Signed by the key whose fingerprint is
+  <code id="kelyfos-fingerprint">{{.Fingerprint}}</code>. <b>That is a fact about this file, not a
+  recommendation.</b> It says the holder of that key exported this record — and it is worth exactly what
+  knowing the key is worth, so it means something only if you recognise the fingerprint from somewhere
+  other than this page.</span>{{end}}
   <span class="limit">The two numbers above are checked against the record too, so this page
   cannot quietly disagree with what it carries. <b>The timeline below is not.</b> It was drawn
   from the record by the exporter, and a page whose text was edited afterwards still carries an
@@ -216,6 +222,10 @@ foot of this page — one record for the whole team, not five to correlate.</p>
 <pre class="howto">sed -n '/&lt;pre id="kelyfos-chain"&gt;/,/&lt;\/pre&gt;/p' FILE | sed '1d;$d' | base64 -d &gt; events.jsonl</pre>
 <pre id="kelyfos-chain">
 {{.Chain}}</pre>
+{{if .Signed.Sig}}<p>Signed with ed25519 over the chain head and a digest of the record above — not over this
+page, so re-exporting the same session produces the same signature.</p>
+<pre class="howto">signature <code id="kelyfos-signature">{{.Signed.Sig}}</code>
+key       <code id="kelyfos-signing-key">{{.Signed.Key}}</code></pre>{{end}}
 </details>
 
 <footer>

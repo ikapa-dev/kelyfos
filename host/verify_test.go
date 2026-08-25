@@ -189,7 +189,7 @@ func TestExportProducesAFileItsOwnVerifierAccepts(t *testing.T) {
 		t.Fatal(err)
 	}
 	dest := filepath.Join(root, "report.html")
-	if err := exportSession("s1", src, dest); err != nil {
+	if err := exportSession("s1", src, dest, ""); err != nil {
 		t.Fatal(err)
 	}
 	page, err := os.ReadFile(dest)
@@ -344,7 +344,7 @@ func TestAFailedExportDoesNotDestroyWhatWasAlreadyThere(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := exportSession("s1", src, dest); err == nil {
+	if err := exportSession("s1", src, dest, ""); err == nil {
 		t.Fatal("an unparseable record exported without complaint")
 	}
 	if got := read(t, dest); got != previous {
@@ -382,7 +382,7 @@ func TestTheExportsCountIsThePagesCount(t *testing.T) {
 		t.Fatal(err)
 	}
 	dest := filepath.Join(root, "report.html")
-	if err := exportSession("s1", src, dest); err != nil {
+	if err := exportSession("s1", src, dest, ""); err != nil {
 		t.Fatal(err)
 	}
 	page, err := os.ReadFile(dest)

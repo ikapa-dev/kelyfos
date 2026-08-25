@@ -322,6 +322,7 @@ kelyfos log [flags]
 | `--json` | boolean | — | print the raw events instead of a readable replay |
 | `--list` | boolean | — | list recorded sessions |
 | `--session` | string | the most recent | session id |
+| `--sign-key` | string | — | sign the exported report with this ed25519 private key (PEM PKCS#8) |
 | `--verify` | boolean | — | check the hash chain and report the first break |
 
 ## kelyfos verify
@@ -336,6 +337,7 @@ kelyfos verify <file>
 | --- | --- | --- | --- |
 | `--extract` | string | — | write the record it carries to this path (- for stdout) |
 | `--json` | boolean | — | print the record's raw events instead of a readable replay (implies --replay) |
+| `--key` | string | — | check the signature against this ed25519 public key (a PEM file, or the key in hex) |
 | `--replay` | boolean | — | print the session from the record it carries, rather than only checking it |
 
 ## kelyfos watch

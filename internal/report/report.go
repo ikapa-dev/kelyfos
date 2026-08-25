@@ -9,6 +9,7 @@ package report
 
 import (
 	"bytes"
+	"crypto/ed25519"
 	"encoding/base64"
 	"fmt"
 	"html/template"
@@ -41,8 +42,14 @@ type View struct {
 	// worth reading, and dropping the failure to avoid the appearance of a
 	// verdict would be hiding the one sentence a reader needs.
 	SelfCheck string
-	Summary   Summary
-	Rows      []Row
+	// Signed is what the page says about who exported it, empty when nobody
+	// signed. An unsigned report is an ordinary report: the signature is
+	// optional by construction, and the page never renders "unsigned" as a
+	// finding (P6-7).
+	Signed      Signature
+	Fingerprint string
+	Summary     Summary
+	Rows        []Row
 	// Lanes is the team view: one column per agent, in boot order. Empty for a
 	// session with one machine in it, and the whole lane section then does not
 	// render at all (E2-7).
@@ -137,7 +144,17 @@ type Row struct {
 //
 // It returns the number of events it rendered, so the caller's summary and the
 // page cannot disagree about what is in the file they describe.
+// Render writes an unsigned report. Most callers want this.
 func Render(w io.Writer, sessionID string, chain []byte) (events int, err error) {
+	return RenderSigned(w, sessionID, chain, nil)
+}
+
+// RenderSigned writes a report, signed when a key is given (P6-7).
+//
+// The key is the caller's, never one this package makes: a signature by a key
+// nobody has seen proves that one process made both halves, which the chain
+// already proves, and it invites a reader to stop asking.
+func RenderSigned(w io.Writer, sessionID string, chain []byte, key ed25519.PrivateKey) (events int, err error) {
 	parsed, err := recorder.Read(bytes.NewReader(chain))
 	if err != nil {
 		return 0, err
@@ -153,6 +170,19 @@ func Render(w io.Writer, sessionID string, chain []byte) (events int, err error)
 	}
 	if verifyErr != nil {
 		v.SelfCheck = verifyErr.Error()
+	}
+	if key != nil {
+		// A broken chain has no head, and signing one would put a signature
+		// over an empty string — a statement about nothing that still reads as
+		// a statement.
+		if verifyErr != nil {
+			return 0, fmt.Errorf("this record does not verify, so there is nothing worth signing: %w", verifyErr)
+		}
+		sig, err := SignChain(chain, head, key)
+		if err != nil {
+			return 0, err
+		}
+		v.Signed, v.Fingerprint = sig, sig.Fingerprint()
 	}
 
 	seenSecret := map[string]bool{}

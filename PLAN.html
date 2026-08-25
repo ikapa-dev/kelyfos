@@ -180,7 +180,7 @@
     <span class="bl-name">Overall</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">P6-6 done &mdash; the export carries the record it was rendered from and <code>kelyfos verify</code> re-runs the chain over it offline. <b>An external security audit then arrived (D45) and v1.0 is gated on its trust-boundary group</b>: the workspace block device is a guest&rarr;host surface the threat model does not list. Seven tasks inserted before P6-7. <b>P6-21 done</b> &mdash; <code>--review</code> no longer destroys an edit made while somebody was reading it. <b>P6-6 corrected</b>: its own adversarial review landed late and found a false claim about truncation and an unchecked chain head, both reproduced and both fixed. <b>P6-22 done</b> &mdash; nine fixture groups, twenty-one recorded breaks, a ledger that can only shrink, and a CI job that runs the lot. <b>D46</b> triaged seven findings against HEAD and corrected two. <b>P6-24 done &mdash; the v1.0 gate is open.</b> C-1, H-1 and H-2 are closed in two layers, the workspace block device is in the trust-boundary table, and the full acceptance suite passes on the final code. P6-23 stands at 11/23, blocked on the audit text for the rest (D47). <b>P6-25 done</b> &mdash; the blocking set is closed and the hostile ledger is down to one line, which is a recorded decision rather than a defect. <b>P6-26 done. The audit&rsquo;s v1.0-blocking set is closed</b> &mdash; boundary group, clamps and both claims &mdash; and the hostile ledger is one line, which is a recorded decision. P6-23 and P6-27 are blocked on the audit text for the remaining twelve findings (D47). Next: <b>P6-7</b>, signed exports</b></div>
+  <div class="focusline">Current focus: <b id="focus">P6-6 done &mdash; the export carries the record it was rendered from and <code>kelyfos verify</code> re-runs the chain over it offline. <b>An external security audit then arrived (D45) and v1.0 is gated on its trust-boundary group</b>: the workspace block device is a guest&rarr;host surface the threat model does not list. Seven tasks inserted before P6-7. <b>P6-21 done</b> &mdash; <code>--review</code> no longer destroys an edit made while somebody was reading it. <b>P6-6 corrected</b>: its own adversarial review landed late and found a false claim about truncation and an unchecked chain head, both reproduced and both fixed. <b>P6-22 done</b> &mdash; nine fixture groups, twenty-one recorded breaks, a ledger that can only shrink, and a CI job that runs the lot. <b>D46</b> triaged seven findings against HEAD and corrected two. <b>P6-24 done &mdash; the v1.0 gate is open.</b> C-1, H-1 and H-2 are closed in two layers, the workspace block device is in the trust-boundary table, and the full acceptance suite passes on the final code. P6-23 stands at 11/23, blocked on the audit text for the rest (D47). <b>P6-25 done</b> &mdash; the blocking set is closed and the hostile ledger is down to one line, which is a recorded decision rather than a defect. <b>P6-26 done. The audit&rsquo;s v1.0-blocking set is closed</b> &mdash; boundary group, clamps and both claims &mdash; and the hostile ledger is one line, which is a recorded decision. P6-23 and P6-27 are blocked on the audit text for the remaining twelve findings (D47). <b>P6-7 done</b> &mdash; signed exports with a key the reader anchors, and a vocabulary rather than a badge. Next: <b>P6-8</b>, the release built by CI</b></div>
 </div>
 
 <!-- ====================================================== 1. END GOAL -->
@@ -972,7 +972,7 @@
         report&rsquo;s own list names that these fixes did not already reach. Neither can be worked from an
         identifier, and guessing at a plausible defect to match one is the failure D47 refused.</span></li>
 
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">P6-7</span><span class="tk"><b>Signed exports &mdash; with a key the reader can
         anchor, or the word withdrawn.</b> P4-3 asks for <code>kelyfos log --export --sign</code> verified offline
         by <code>kelyfos verify</code>. The only shape that gives a reader something the hash chain has not already
@@ -3035,6 +3035,42 @@ after:
         <code>gofmt</code>, <code>vet</code>, 14 packages, <code>make docs</code> clean;
         <code>docs/resources.md</code> and <code>docs/teams.md</code> state both rules where the person who meets
         them will be reading</td></tr>
+        <tr><td class="mono">2026-08-25</td><td class="mono">P6-7</td>
+        <td><b>Signed exports, with a key the reader can anchor &mdash; a promotion of something that already
+        worked rather than a substitute for it.</b> <code>kelyfos log --export --sign-key &lt;key&gt;</code>,
+        ed25519 from the standard library, no new dependency. The key is <b>the user&rsquo;s</b>: PEM PKCS#8, which
+        is what <code>openssl genpkey -algorithm ed25519</code> writes, so a person needs no tool this project
+        ships to make a key whose whole value is that it is theirs and not ours. A per-run ephemeral key is
+        refused rather than offered, exactly as the task said: it proves one process made both halves, which the
+        chain already proves.
+        <b>What is signed is the record and not the page.</b> The chain head and a digest of the embedded events
+        &mdash; the page carries a generation timestamp, so signing it would make two honest exports of one
+        session disagree, and a reader comparing them would be looking at a difference that means nothing. A
+        re-export produces the same signature, which is tested.
+        <b>The verifier reports a vocabulary rather than a verdict.</b> The chain intact or broken, crossed with
+        unsigned, signed by a key you named, or signed by a key only the file knows about. That last is the one
+        stated carefully, and it is where a signature would otherwise become the badge P6-6 removed: a signature
+        whose key came out of the same file proves only that whoever made the file had <i>a</i> key.
+        <code>--key</code> checks against one the reader already holds, which is the only version of the question
+        worth asking, and the page says so about itself in those words.
+        <b>An unsigned report is an ordinary report.</b> The signature is optional by construction: an unsigned
+        page carries no signature markup, and <code>verify</code> says so as a fact rather than a fault
+        &mdash; &ldquo;an unsigned report verifies, and the chain proves what it proves either way&rdquo;. A
+        record that does not verify is not signed at all, because a signature over a broken chain would be a
+        statement about nothing that still reads as a statement.</td>
+        <td class="mono">five behaviours checked end to end on a real microVM, in cookbook recipe 6: signed,
+        checked against the key held separately, refused against a key that did not sign it, an edited signature
+        caught, and an unsigned report still verifying<br>
+        exit codes verified separately from the prose, because the first reading of them was a pipeline reporting
+        <code>tail</code>&rsquo;s status: right key 0, wrong key 1, key named with nothing signed 1, edited
+        signature 1, edited record 1<br>
+        <code>TestASignatureSurvivesReExport</code> is the property that decided what gets signed;
+        <code>TestASignatureIsAboutThisRecordAndThisKey</code> checks a different record, a different head and a
+        forged key claiming the same signature<br>
+        <b>a usability defect found by using it:</b> <code>kelyfos verify report.html --key k</code> printed
+        usage, because Go&rsquo;s flag package stops at the first positional &mdash; and that is the order a person
+        types, since the file is what the command is about. Flags are taken on either side of the path now<br>
+        <code>gofmt</code>, <code>vet</code>, 14 packages, the hostile corpus, <code>make docs</code> clean</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>

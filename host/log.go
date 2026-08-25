@@ -3,10 +3,15 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
+	"github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
+	"github.com/p4r4n0rm4l/KelyfOS/internal/report"
+	"github.com/p4r4n0rm4l/KelyfOS/internal/sandbox"
 	"io"
 	"os"
 	"path/filepath"
@@ -14,10 +19,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
-	"github.com/p4r4n0rm4l/KelyfOS/internal/report"
-	"github.com/p4r4n0rm4l/KelyfOS/internal/sandbox"
 )
 
 func logCmd(argv []string) error {
@@ -30,6 +31,7 @@ func logCmd(argv []string) error {
 		asJSON      = fs.Bool("json", false, "print the raw events instead of a readable replay")
 		list        = fs.Bool("list", false, "list recorded sessions")
 		export      = fs.String("export", "", "write a self-contained HTML report to this path")
+		signKey     = fs.String("sign-key", "", "sign the exported report with this ed25519 private key (PEM PKCS#8)")
 	)
 	fs.Usage = func() {
 		fmt.Fprint(fs.Output(), `usage: kelyfos log [flags]
@@ -60,7 +62,10 @@ docs/events.md.
 	path := recorder.Path(sandbox.Root(), sessionID)
 
 	if *export != "" {
-		return exportSession(sessionID, path, *export)
+		return exportSession(sessionID, path, *export, *signKey)
+	}
+	if *signKey != "" {
+		return errors.New("--sign-key signs an export; give --export a path as well")
 	}
 	if *verify {
 		return verifySession(sessionID, path)
@@ -191,10 +196,16 @@ func listSessions() error {
 // record inside it now: the page a reader sees and the record they can check
 // are made from one blob by one call, so an export whose timeline and evidence
 // disagree cannot be produced (P6-6).
-func exportSession(id, path, dest string) error {
+func exportSession(id, path, dest, signKey string) error {
 	blob, err := os.ReadFile(path)
 	if err != nil {
 		return fmt.Errorf("no flight recorder for session %s: %w", id, err)
+	}
+	var key ed25519.PrivateKey
+	if signKey != "" {
+		if key, err = report.LoadSigningKey(signKey); err != nil {
+			return err
+		}
 	}
 
 	// Rendered beside the destination and moved into place, never written
@@ -211,7 +222,7 @@ func exportSession(id, path, dest string) error {
 		tmp.Close()
 		_ = os.Remove(tmp.Name()) // a no-op once the rename has happened
 	}()
-	n, err := report.Render(tmp, id, blob)
+	n, err := report.RenderSigned(tmp, id, blob, key)
 	if err != nil {
 		return err
 	}
@@ -243,6 +254,12 @@ func exportSession(id, path, dest string) error {
 	// most an unsigned export can offer — and P6-7 is what removes the "out of
 	// band" from that sentence.
 	fmt.Printf("  chain head %s\n", head)
+	if key != nil {
+		pub := report.PublicKeyHex(key.Public())
+		fmt.Printf("  signed by %s\n", pub)
+		fmt.Printf("  a reader learns nothing from that unless they already have it; send it to them" +
+			" some other way than in this file\n")
+	}
 	fmt.Printf("  anyone can check it: kelyfos verify %s\n", dest)
 	return nil
 }
