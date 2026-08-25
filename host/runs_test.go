@@ -1,11 +1,15 @@
 package main
 
 import (
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
 )
 
 func sample() []runRow {
@@ -134,5 +138,66 @@ func TestReadRunOfAnEmptyFile(t *testing.T) {
 	}
 	if _, ok := readRun(path, "deadbeef"); ok {
 		t.Error("an empty record produced a row")
+	}
+}
+
+// A row is a fact about a whole session file, not about the top of one. How a
+// run ended arrives in session.end, which is the last line a session ever
+// writes, so a reader that stopped as soon as it had the session.start would
+// print a finished run as still open and every duration as a dash. readRuns
+// says the listing costs an event and not a session; this is what makes that
+// true, and it is here to fail if anyone ever tries to make it cheaper.
+func TestARowNeedsTheEndOfTheFileAndNotOnlyTheStart(t *testing.T) {
+	code := 3
+	events := []recorder.Event{{
+		Seq: 1, TS: "2026-08-23T18:40:37.903Z", Type: recorder.TypeSessionStart,
+		Image: "dev", Arch: "arm64", Cwd: "/work",
+		Argv: []string{"/opt/build/bin/kelyfos", "run", "--", "make", "test"},
+	}}
+	for len(events) < 500 {
+		events = append(events, recorder.Event{
+			Seq: len(events) + 1, TS: "2026-08-23T18:40:38.000Z",
+			Type: recorder.TypeCommandOutput, Stream: "stdout",
+			Data: fmt.Sprintf("line %d\n", len(events)),
+		})
+	}
+	events = append(events, recorder.Event{
+		Seq: len(events) + 1, TS: "2026-08-23T18:41:07.903Z",
+		Type: recorder.TypeSessionEnd, Reason: "command_exited",
+		DurationMS: 30000, Code: &code,
+	})
+
+	var buf strings.Builder
+	for _, ev := range events {
+		blob, err := json.Marshal(ev)
+		if err != nil {
+			t.Fatal(err)
+		}
+		buf.Write(blob)
+		buf.WriteByte('\n')
+	}
+	path := filepath.Join(t.TempDir(), "events.jsonl")
+	if err := os.WriteFile(path, []byte(buf.String()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	row, ok := readRun(path, "7f3c1a2b")
+	if !ok {
+		t.Fatal("a complete record did not produce a row")
+	}
+	if row.Command != "kelyfos run -- make test" {
+		t.Errorf("command is %q", row.Command)
+	}
+	if row.Exit == nil || *row.Exit != code {
+		t.Errorf("the exit status from the last line was not read: %v", row.Exit)
+	}
+	if row.Reason != "command_exited" {
+		t.Errorf("reason is %q", row.Reason)
+	}
+	if row.Duration != 30*time.Second {
+		t.Errorf("duration is %s", row.Duration)
+	}
+	if row.Events != len(events) {
+		t.Errorf("counted %d of %d events", row.Events, len(events))
 	}
 }

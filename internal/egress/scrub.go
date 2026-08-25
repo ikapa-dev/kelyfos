@@ -105,8 +105,14 @@ func (s *scrubber) scrub(b []byte) bool {
 			}
 			i = at + len(p.v)
 			changed = true
-			// Once per credential per connection, not once per occurrence: a
-			// response that echoes a token forty times is one fact.
+			// Once per credential per *response*, not once per occurrence: a
+			// response that echoes a token forty times is one fact. The scope
+			// is the response and not the connection because scrubResponse
+			// builds a fresh scrubber — and so a fresh seen map — for every
+			// response it handles, and a terminated connection handles many.
+			// A keep-alive connection whose five responses each echo the same
+			// token therefore reports five times, which is the honest count:
+			// each one is a separate echo, not a repeat of the first.
 			if s.hit != nil && !s.seen[p.name] {
 				s.seen[p.name] = true
 				s.hit(p.name)

@@ -3,6 +3,7 @@ package egress
 import (
 	"bytes"
 	"io"
+	"net/http"
 	"strings"
 	"testing"
 )
@@ -33,7 +34,7 @@ func TestAnEchoedCredentialIsReplaced(t *testing.T) {
 		t.Errorf("the credential is still there: %s", body)
 	}
 	if *hits != 1 {
-		t.Errorf("the record was told %d times, want exactly once per connection", *hits)
+		t.Errorf("the record was told %d times, want exactly once per response", *hits)
 	}
 }
 
@@ -108,5 +109,49 @@ func TestNoSecretsMeansNoScrubber(t *testing.T) {
 	}
 	if string(body) != "untouched" {
 		t.Error("a nil scrubber altered bytes")
+	}
+}
+
+// The scope of the de-duplication is one response, not one connection, and the
+// difference is visible from outside: scrubResponse builds a scrubber — and so
+// a seen map — per response, while a terminated keep-alive connection carries
+// many responses through that same call. Anyone reading secret.scrubbed events
+// as a per-connection count would under-read what actually came back.
+func TestEachResponseThatEchoesACredentialIsReportedOnce(t *testing.T) {
+	const token = "ghp_averyrealtokenvalue"
+	p := &Proxy{Policy: Policy{Secrets: []*Secret{
+		{Name: "GITHUB_TOKEN", Domain: "api.example.com", Scheme: "Bearer", value: token},
+	}}}
+	var scrubbed []string
+	p.OnScrubbed = func(name, host string) { scrubbed = append(scrubbed, name+"@"+host) }
+
+	// Within one response, forty echoes are one fact.
+	echo := func() {
+		t.Helper()
+		resp := &http.Response{
+			Header: http.Header{},
+			Body:   io.NopCloser(strings.NewReader(strings.Repeat(token+" ", 40))),
+		}
+		p.scrubResponse(resp, "api.example.com")
+		out, err := io.ReadAll(resp.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(out), token) {
+			t.Fatalf("a credential survived the scrub: %q", out)
+		}
+	}
+
+	echo()
+	if len(scrubbed) != 1 {
+		t.Fatalf("one response echoing the token forty times was recorded %d times, want once: %v", len(scrubbed), scrubbed)
+	}
+
+	// The next response on the same connection goes through the same call, and
+	// it is a second echo rather than a repeat of the first — so it is said
+	// again.
+	echo()
+	if len(scrubbed) != 2 {
+		t.Errorf("a second response echoing the same credential was recorded %d times in total, want twice: %v", len(scrubbed), scrubbed)
 	}
 }

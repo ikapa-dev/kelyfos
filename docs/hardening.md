@@ -354,16 +354,27 @@ an identical build path. That last is the scope, and the scope is part of the
 answer — one machine, one architecture, two builds. It is not a claim that
 anybody else's machine produces these bytes. Nor is it a claim about all four
 CLI binaries: `make release-cli` also builds `kelyfos-darwin-x86_64` and
-`kelyfos-darwin-aarch64`, which ship in the release, and `repro-check` compares
-`dist/kelyfos-linux-*` only — so those two have never been measured.
+`kelyfos-darwin-aarch64`, which ship in the release, and `repro-check` used to
+compare `dist/kelyfos-linux-*` only. The workflow now builds and compares
+`dist/kelyfos-*` — every binary the release ships — across the two source paths,
+and `TestEveryReleasedCLIBinaryIsMeasuredForReproducibility` in `tools/sbom`
+fails if a released binary ever falls outside those globs again. **The two macOS
+binaries are inside the check and have not been measured**: widening a check is
+not a result, and no run has reported on them. Until one does, what is measured
+is what this paragraph opens with: the Linux pair, and nothing either way about
+the macOS pair.
 
-**An SBOM ships with every release**, one per architecture, covering all three
-places an image comes from: Buildroot's packages, the guest supervisor, and the
-Linux host CLI. The macOS CLI for the same architecture ships in the release and
-is in no SBOM — and the SBOM attestation's subject glob, `dist/*aarch64*` or
-`dist/*x86_64*`, matches it anyway, so one shipped artifact per architecture is
-attested as being described by an SBOM that never read it. That third-and-second
-matter more than the count does. The supervisor is PID 1 and it is
+**An SBOM ships with every release**, one per architecture, covering all four
+places the shipped bytes come from: Buildroot's packages, the guest supervisor,
+the Linux host CLI, and the macOS CLI for that same architecture. `release-sbom`
+reads all three of those binaries' own build information, so every CLI the SBOM
+attestation's subject glob sweeps up — `dist/*aarch64*` or `dist/*x86_64*` — is
+one the SBOM opened. Before v1.0 the macOS CLI was in no SBOM while that glob
+matched it anyway, so one shipped artifact per architecture was attested as
+being described by an SBOM that never read it, and
+`TestEverySBOMSubjectIsABinaryTheSBOMRead` in `tools/sbom` is what notices if
+the glob and what the SBOM reads drift apart again. The three that are not
+Buildroot's matter more than the count does. The supervisor is PID 1 and it is
 cross-compiled by this project's own toolchain, arriving through the rootfs
 overlay rather than as a Buildroot package — so **Buildroot
 has never heard of it**, and an inventory from that source alone would omit the

@@ -52,17 +52,25 @@ jobs:
       # A different source path on the second build, deliberately. -trimpath is
       # what is supposed to make that irrelevant, and a check that used the same
       # path both times would not be checking it.
+      #
+      # All four binaries, not the Linux pair. `make release-cli` builds four —
+      # Linux and macOS, each in two architectures — and the release ships all
+      # four, so measuring half of them left the two a macOS user actually
+      # downloads outside the only check this project makes about them, while
+      # the table in the README reported on that check by name. The scope of a
+      # measurement is part of its result, and a scope narrower than the shipped
+      # set is the kind of gap a reader would never think to ask about.
       - name: Build twice, from two different paths
         run: |
           set -euo pipefail
           make release-cli
-          mkdir -p /tmp/first && cp dist/kelyfos-linux-* /tmp/first/
+          mkdir -p /tmp/first && cp dist/kelyfos-* /tmp/first/
           rm -rf dist
           cp -r "$GITHUB_WORKSPACE" /tmp/elsewhere
           cd /tmp/elsewhere && make release-cli
           cd /tmp
           fail=0
-          for f in first/kelyfos-linux-*; do
+          for f in first/kelyfos-*; do
             name="$(basename "$f")"
             if cmp -s "$f" "/tmp/elsewhere/dist/$name"; then
               echo "REPRODUCIBLE  $name  $(sha256sum "$f" | cut -d' ' -f1)"

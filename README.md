@@ -192,18 +192,24 @@ not claimed.** Determinism is configured — `BR2_REPRODUCIBLE`,
 [`repro-check`](.github/workflows/repro-check.yml) builds the same commit twice
 and diffs the result, per artifact.
 
-What it has measured so far, and the scope is part of the result:
+What it has reported so far, and what it covers but has not reported on yet —
+the scope is part of the result:
 
 | artifact | result | how |
 | --- | --- | --- |
 | `kelyfos-linux-{aarch64,x86_64}` | **identical** | built twice from two *different* source paths |
+| `kelyfos-darwin-{aarch64,x86_64}` | **not measured yet** | inside the check, built and compared the same way; no run has reported on them |
 | `Image`, `rootfs.ext4`, `image.json` (aarch64/dev) | **identical** | two full builds from nothing, same machine, same build path |
 
 The image half is a stronger result than expected and a narrower one than
 "reproducible builds": one machine, one architecture, an identical build path —
 which is what Buildroot's own reproducible mode requires — and two builds rather
-than many. x86_64 has not been measured. The workflow is what keeps the answer
-current, and whatever it last said is what this page says. Building it yourself takes about thirty-five
+than many. x86_64 has not been measured. The macOS row is exactly what it says:
+`repro-check` compares every binary `make release-cli` produces, so those two
+are no longer outside the only check this project makes about them — but being
+inside a check is not a measurement, and this table reports runs rather than
+coverage. The workflow is what keeps the answer current, and whatever it last
+said is what this page says. Building it yourself takes about thirty-five
 minutes, because it compiles a cross toolchain, a kernel and a userland:
 
 ```sh

@@ -262,12 +262,13 @@ A file was written through a tool. The **content is not recorded** — a flight
 recorder that copies every byte an agent writes is a second copy of the
 workspace, and a much worse place to leave it.
 
-**`write_file` and `upload` are recorded from the request**, before the guest
-has answered, so a write the guest refused — a path outside the profile's
-writable trees, a body over the per-call limit — is written into the chain like
-one that happened, and nothing corrects it afterwards. The `serve-mcp` and
-`shim` doors record after the write succeeded instead: a refused write is not a
-write, and recording one would put a line in the log for a file that does not
+**`write_file` and `upload` are recorded after the guest has answered**, on
+every door. They used to be recorded from the *request*, so a write the guest
+refused — a path outside the profile's writable trees, a body over the per-call
+limit — went into the chain looking like one that happened, with a path, a size
+and a digest of content that was never stored. The `serve-mcp` and `shim` doors
+always got this right and `kelyfos mcp` now matches them: a refused write is not
+a write, and recording one would put a line in the log for a file that does not
 exist.
 
 | Field | Type | Meaning |
@@ -377,8 +378,13 @@ guest saw it. Written from P6-5.
 | `host` | string | The domain whose response carried it back. |
 | `agent` | string | Present inside a team: whose credential it was. |
 
-One event per credential per connection, not one per occurrence: a response that
-quotes a token forty times is one fact.
+One event per credential per *response*, not one per occurrence: a response that
+quotes a token forty times is one fact. The scope is the response and not the
+connection because the de-duplication is built fresh for every response the
+proxy handles, and a terminated connection handles many — so a keep-alive
+connection whose five responses each echo the same token produces five events,
+which is the honest count: each one is a separate echo, not a repeat of the
+first.
 
 It is recorded because a proxy that rewrites a byte stream and says nothing is a
 proxy whose record understates what the host did — the same reasoning that made
@@ -526,10 +532,17 @@ prints the id to stderr when it starts, so a reader can go from either end to
 the other.
 
 **Three argument names are recorded by size rather than by value**, and the
-rest by value. `content`, `stdin` and `data` are replaced by their length when
-the value is a string, which is the rule `file.write` follows for the same
-reason; every other argument is rendered as itself, strings truncated at 120
-bytes. That is deliberate — an argument like `mem` or `image` is the decision
+rest by value. `content`, `stdin` and `data` are replaced by their length
+**whatever shape they arrive in** — a string, an object, an array, a number —
+which is the rule `file.write` follows for the same reason. Measuring only
+strings was a hole rather than a policy: the same content wrapped in an object
+fell through and was written whole.
+
+Every other argument is rendered as itself, with three bounds that exist so no
+one call can make a record line its own readers cannot parse: a string is cut at
+120 bytes, an array's whole rendering at 1 KiB — generous because the egress
+allowlist arrives as an array and is recorded nowhere else — and the joined line
+at 4 KiB. That is deliberate: an argument like `mem` or `image` is the decision
 worth recording, and the three that are withheld are the ones that carry a
 file. The summariser walks whatever
 arguments it is given rather than knowing the tools, so an argument added later

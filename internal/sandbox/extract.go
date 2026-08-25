@@ -244,9 +244,11 @@ func validName(dir, name string) error {
 //
 // Three things never survive: setuid, setgid and the sticky bit, because
 // os.FileMode.Perm() is the only thing consulted, and **world-write**, which is
-// the one permission that hands a file to every account on the machine. The
-// owner always keeps access to their own files, so an image that came back mode
-// 0 cannot leave somebody with a directory they can no longer open.
+// the one permission that hands a file to every account on the machine. That is
+// the rule docs/threat-model.md states, and it is about the mode *the guest
+// chose*: a bit the host's own filesystem put on a directory this extraction
+// created is not the guest's and is not this function's to drop — see
+// extractImage's last loop, which puts it back.
 //
 // Group-write is deliberately left alone, and the first version of this function
 // did strip it. That was wrong in a way worth recording, because the acceptance
@@ -260,12 +262,44 @@ func validName(dir, name string) error {
 // The line is drawn where the danger is. World-write is reachable by any account
 // on the host; group-write is ordinarily the user's own group, and it is a
 // permission they already chose for themselves.
+//
+// **Owner-write used to be forced on, and that was the same defect one bit
+// over.** This function returned p|0o600 for a file and p|0o700 for a directory,
+// so a 0444 file came back 0644 and a 0555 directory came back 0755 — the
+// comparison in diff.go then reported `mode 0444 → 0644` against a file the
+// sandbox had never opened, and the sync-back renamed that tree into place, so
+// the permission on somebody's own untouched file changed on their disk. A
+// project with a generated file made deliberately unwritable, or a vendored tree
+// checked in read-only, is an ordinary project. The bits are still forced while
+// the extraction is running — see extractMode — because a file has to be written
+// and a directory has to be written into; what changed is that they come back
+// off when there is nothing left to write.
+//
+// What is still floored is owner-*read*, and owner-execute on a directory,
+// because the host has to be able to read back what it just extracted: the
+// comparison digests every file and walks every directory, and a guest that
+// wrote a mode-0 file could otherwise stop `kelyfos diff` working at all. That
+// floor cannot rewrite anything the person owns, and the reason is worth stating
+// rather than trusting: packing writes the manifest by walking the tree and
+// digesting every file, so an entry that came from the host already had u+r — or
+// u+rx — or it could not have been packed in the first place. The floor only
+// ever reaches a mode the guest invented.
 func safeMode(m os.FileMode, dir bool) os.FileMode {
 	p := m.Perm() &^ 0o002
 	if dir {
-		return p | 0o700
+		return p | 0o500
 	}
-	return p | 0o600
+	return p | 0o400
+}
+
+// extractMode is what an entry is created with while the extraction is still
+// running: what it will end up as, plus the owner bits the host needs to finish
+// writing it. safeMode goes back on once there is nothing left to write.
+func extractMode(m os.FileMode, dir bool) os.FileMode {
+	if dir {
+		return safeMode(m, true) | 0o700
+	}
+	return safeMode(m, false) | 0o600
 }
 
 // validLink refuses a symlink target the guest should not be able to plant.
@@ -311,7 +345,7 @@ func extractImage(imagePath string, entries []imageEntry, root *os.Root) error {
 		if e.kind != kindDir {
 			continue
 		}
-		if err := root.Mkdir(e.path, safeMode(e.mode, true)); err != nil && !os.IsExist(err) {
+		if err := root.Mkdir(e.path, extractMode(e.mode, true)); err != nil && !os.IsExist(err) {
 			return fmt.Errorf("create %s in the workspace: %w", e.path, err)
 		}
 	}
@@ -339,6 +373,42 @@ func extractImage(imagePath string, entries []imageEntry, root *os.Root) error {
 			if err := root.Symlink(target, e.path); err != nil && !os.IsExist(err) {
 				return fmt.Errorf("create the symlink %s: %w", e.path, err)
 			}
+		}
+	}
+
+	// The directories' own modes go on last, and deepest first. Until every
+	// entry inside a directory has been written the host needs to be able to
+	// write into it, which is why it was created with the owner bits forced —
+	// but a directory the person packed read-only has to come back read-only,
+	// or the sync-back changes a permission on their disk that nothing touched.
+	// sorted is shallowest-first, so walking it backwards is deepest-first.
+	//
+	// What the directory already carries is kept, and that is not a softening of
+	// the rule above. chmod(2) sets the whole mode word, so a mode built from
+	// Perm() clears S_ISGID — and setgid is exactly what a directory here is
+	// likely to have arrived with, because the standard way a team keeps a
+	// checkout group-owned is chmod g+s on the directory above it, and on Linux
+	// the kernel then gives that bit to every directory created underneath. The
+	// extraction tree is created beside the host directory, so under that same
+	// parent, and Commit renames the tree into the project's place. Stripping it
+	// there is silent twice over: diff.go's scanTree records Mode().Perm(), so
+	// no comparison can report it, and what the person eventually sees is new
+	// files landing in the wrong group. The bits put back can only be the host's
+	// own — nothing this package
+	// creates a directory with carries them, since safeMode and extractMode
+	// consult Perm() and the guest's setgid is a low bit of e.mode that Perm()
+	// drops before mkdir ever sees it.
+	for i := len(sorted) - 1; i >= 0; i-- {
+		e := sorted[i]
+		if e.kind != kindDir {
+			continue
+		}
+		mode := safeMode(e.mode, true)
+		if info, err := root.Lstat(e.path); err == nil {
+			mode |= info.Mode() & (os.ModeSetuid | os.ModeSetgid | os.ModeSticky)
+		}
+		if err := root.Chmod(e.path, mode); err != nil {
+			return fmt.Errorf("set the mode of %s in the workspace: %w", e.path, err)
 		}
 	}
 	return nil
@@ -411,7 +481,7 @@ func copyThrough(root *os.Root, e imageEntry, from string) error {
 	}
 	defer src.Close()
 
-	dst, err := root.OpenFile(e.path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, safeMode(e.mode, false))
+	dst, err := root.OpenFile(e.path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, extractMode(e.mode, false))
 	if err != nil {
 		return fmt.Errorf("write %s into the workspace: %w", e.path, err)
 	}
@@ -423,7 +493,9 @@ func copyThrough(root *os.Root, e imageEntry, from string) error {
 		return err
 	}
 	// O_CREATE's mode is masked by umask, and the executable bit is the half of
-	// the guest's intent worth keeping.
+	// the guest's intent worth keeping. What goes on here is the final mode
+	// rather than the one the write needed: the copy is finished, so owner-write
+	// is no longer anybody's business but the person whose file this becomes.
 	return root.Chmod(e.path, safeMode(e.mode, false))
 }
 

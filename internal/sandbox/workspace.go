@@ -158,7 +158,7 @@ func (w *Workspace) Stage() (*Staged, error) {
 	// root is opened rather than by the root, because the root has to exist to
 	// be opened.
 	s.tree = w.HostDir + ".kelyfos-sync"
-	_ = os.RemoveAll(s.tree)
+	_ = removeTree(s.tree)
 	if err := os.MkdirAll(s.tree, 0o755); err != nil {
 		return nil, err
 	}
@@ -170,12 +170,12 @@ func (w *Workspace) Stage() (*Staged, error) {
 	// RESOLVE_NO_SYMLINKS underneath.
 	root, err := os.OpenRoot(s.tree)
 	if err != nil {
-		_ = os.RemoveAll(s.tree)
+		_ = removeTree(s.tree)
 		return nil, err
 	}
 	defer root.Close()
 	if err := extractImage(w.ImagePath, entries, root); err != nil {
-		_ = os.RemoveAll(s.tree)
+		_ = removeTree(s.tree)
 		return nil, err
 	}
 	return s, nil
@@ -212,7 +212,7 @@ func (s *Staged) Divert() (string, error) {
 }
 
 // Discard throws the extraction away without putting it anywhere.
-func (s *Staged) Discard() { _ = os.RemoveAll(s.tree) }
+func (s *Staged) Discard() { _ = removeTree(s.tree) }
 
 // Commit puts the extracted tree where it belongs.
 //
@@ -242,7 +242,7 @@ func (s *Staged) Commit() (dest string, diverted bool, err error) {
 	// a file the agent deleted should be gone rather than resurrected. The old
 	// copy is kept until the new one is in place.
 	old := w.HostDir + ".kelyfos-previous"
-	_ = os.RemoveAll(old)
+	_ = removeTree(old)
 	if _, err := os.Stat(dest); err == nil {
 		if err := os.Rename(dest, old); err != nil {
 			return "", diverted, err
@@ -253,8 +253,17 @@ func (s *Staged) Commit() (dest string, diverted bool, err error) {
 	// not what the person had, and before P6-24 it was whatever mode the image's
 	// own root carried — a permission on somebody's project directory chosen by
 	// the guest (H-2).
+	//
+	// The whole mode, not Perm(): this is the *person's own* previous directory
+	// being copied forward, not anything the guest chose, and a shared-group
+	// checkout keeps its root setgid on purpose. Perm() alone dropped that, so
+	// files the person created in their project root afterwards landed in the
+	// wrong group — silently, because scanTree records Perm() and nothing would
+	// ever report it. (The guest's setuid and setgid are refused elsewhere, in
+	// safeMode; the distinction is whose mode it is.)
 	if prev, err := os.Stat(old); err == nil {
-		_ = os.Chmod(tmp, prev.Mode().Perm())
+		keep := prev.Mode() & (os.ModeSetuid | os.ModeSetgid | os.ModeSticky)
+		_ = os.Chmod(tmp, prev.Mode().Perm()|keep)
 	}
 	if err := os.Rename(tmp, dest); err != nil {
 		_ = os.Rename(old, dest) // put it back rather than leave nothing
@@ -267,6 +276,99 @@ func (s *Staged) Commit() (dest string, diverted bool, err error) {
 	// watched a run overwrite something.
 	s.tree = "" // moved into place; there is nothing left to discard
 	return dest, diverted, nil
+}
+
+// removeTree deletes a tree this package is finished with, including the
+// read-only ones.
+//
+// os.RemoveAll cannot empty a directory that lacks owner-write, because
+// unlinking a child needs write on the parent — and a workspace legitimately
+// contains such directories: a vendored tree checked in at 0555 is an ordinary
+// thing to have, and since the extraction stopped forcing u+rwx onto every
+// directory it comes back the way it was packed. Left alone that fails
+// silently, and the failure is not silent for long: a `<dir>.kelyfos-sync` that
+// could not be cleared is a stale tree the next extraction writes into, so a
+// later run inherits files from an earlier one.
+//
+// The unlocking is a retry rather than a first move, so nothing is touched in
+// the ordinary case, and it is deliberately narrow. Of the two names this is
+// ever pointed at, `<dir>.kelyfos-sync` is one kelyfos made, but
+// `<dir>.kelyfos-previous` is **a directory kelyfos only renamed**: Commit moves
+// whatever it is about to replace there — the person's own project, in the
+// default flow — and leaves it as the recoverable copy of what a run overwrote.
+//
+// The first version of this walked the whole tree and chmodded every directory
+// to 0700 — not only the ones that had refused an unlink, and dropping the
+// group and other bits off the rest. Against a tree with a subdirectory the
+// user cannot unlink at all (a root-owned node_modules a container left behind
+// is the ordinary case) the removal then failed anyway, and what stayed on disk
+// was the backup with its modes rewritten. So the rule here is: a directory is
+// opened up only when its own mode is what stands in the way, and if it is
+// still there when the removal is over, its mode goes back.
+func removeTree(dir string) error {
+	if err := os.RemoveAll(dir); err == nil {
+		return nil
+	}
+	return removeUnlocking(dir)
+}
+
+// removeUnlocking removes one entry, unlocking a directory only where the
+// directory's own mode is what refuses, and putting that mode back — including
+// its setuid, setgid and sticky bits — if the directory survives the attempt
+// anyway.
+//
+// It is a recursion rather than a walk because the decision is per directory
+// and has to be undone per directory: a walk can see the modes but not which of
+// them mattered.
+func removeUnlocking(path string) error {
+	err := os.Remove(path)
+	if err == nil || os.IsNotExist(err) {
+		return nil
+	}
+	info, statErr := os.Lstat(path)
+	if statErr != nil || !info.IsDir() {
+		// Not a directory, so its own mode is not what refused — unlinking a
+		// file needs write on its *parent*, and the parent is the frame above
+		// this one, which has already made that decision for itself.
+		return err
+	}
+
+	// u+rwx is what emptying a directory takes: read to list it, write and
+	// execute to unlink what is inside. A directory that already has all three
+	// is left exactly as it is, and nothing is lost by that: either it refused
+	// nothing, or what refused was ownership rather than mode — the root-owned
+	// node_modules a container left behind — and a chmod this user is not
+	// allowed to make would have been refused too.
+	// Perm() drops setuid, setgid and sticky, and chmod(2) takes the mode it is
+	// given — so restoring Perm() alone silently clears them. One of the trees
+	// this walks is `<dir>.kelyfos-previous`, the person's own previous project
+	// directory kept as a recoverable backup, and a shared-group checkout keeps
+	// its directories setgid on purpose. Stripping that is invisible: diff.go's
+	// scanTree records Mode().Perm(), so nothing would ever report it, and the
+	// person finds later that new files land in the wrong group. Carried
+	// explicitly here for the same reason extractImage carries it (P6-28).
+	special := info.Mode() & (os.ModeSetuid | os.ModeSetgid | os.ModeSticky)
+	perm := info.Mode().Perm()
+	unlocked := false
+	if perm&0o700 != 0o700 && os.Chmod(path, (perm|0o700)|special) == nil {
+		unlocked = true
+	}
+	if entries, readErr := os.ReadDir(path); readErr == nil {
+		for _, child := range entries {
+			// Lstat above and os.Remove here, so a symlink to a directory is
+			// unlinked rather than descended into.
+			_ = removeUnlocking(filepath.Join(path, child.Name()))
+		}
+	}
+	if err = os.Remove(path); err == nil {
+		return nil
+	}
+	if unlocked {
+		// Still on disk, so the mode this changed is a mode somebody is left
+		// looking at — put back the whole mode, not only its permission bits.
+		_ = os.Chmod(path, perm|special)
+	}
+	return err
 }
 
 // Fingerprint summarises a directory tree: every path with its size and

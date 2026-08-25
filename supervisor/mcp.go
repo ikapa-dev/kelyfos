@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"sync"
@@ -58,10 +59,114 @@ func (s *mcpSession) serve(conn net.Conn) {
 		}
 		if resp := s.dispatch(&req); resp != nil {
 			if err := s.send(resp); err != nil {
-				return
+				if !errors.Is(err, proto.ErrLineTooLong) {
+					return
+				}
+				// An answer too large for the channel is the one send failure
+				// that is not a dead connection. proto.Writer checks the
+				// length before it writes anything, so none of the oversized
+				// frame reached the wire and the stream is still sitting on a
+				// frame boundary — a refusal can be written in its place.
+				//
+				// Closing here is what made a read_file near the 8 MiB
+				// per-call cap arrive as an unexplained EOF: the file is under
+				// the limit the tool names, the frame is over the limit the
+				// channel has, and the caller was told neither. Everything
+				// else in this project refuses with a reason, and the size of
+				// an answer is a reason a caller can act on.
+				if err := s.send(tooLongToSend(&req, resp)); err != nil {
+					return
+				}
 			}
 		}
 	}
+}
+
+// tooLongToSend is the bounded refusal that stands in for an answer the channel
+// will not carry.
+//
+// For a tools/call it is a tool error rather than a JSON-RPC error, because
+// that is where the spec draws the line: a JSON-RPC error means the request was
+// malformed, and this request was not — the tool ran, and what it produced is
+// too big to send back. It is also the shape the neighbouring refusal already
+// has. A file over the 8 MiB per-call limit comes back from readCapped as
+// mcp.Errorf naming the limit in bytes (supervisor/tools.go), and a file under
+// that limit whose frame is over this one should not reach the caller as
+// something else entirely.
+//
+// The message carries both numbers because neither alone explains it: since the
+// structuredContent rule of E4-8 a read_file result carries the file twice, so
+// a file comfortably inside the tool's own cap can still marshal to more than a
+// frame, and a caller told only "too long" has no way to know by how much. It
+// names a way to get the bytes anyway, because read_file has no offset argument
+// and exec does have head -c: a refusal that leaves the caller with nothing to
+// try next teaches a model to stop asking rather than to ask differently.
+func tooLongToSend(req *mcp.Request, resp *mcp.Response) *mcp.Response {
+	size := encodedSize(resp)
+
+	// Nothing peer-controlled goes into either message. The id has to be echoed
+	// back — JSON-RPC has no other way to say which request this answers — and
+	// an id so large that even the refusal will not fit is the one case where
+	// this connection still closes without a word. A peer that sends one has
+	// broken the framing on purpose.
+	if req.Method == "tools/call" {
+		return mcp.NewResponse(req.ID, mcp.Errorf(
+			"the result of this call is %d bytes, over the %d byte frame limit on the MCP "+
+				"channel, so it cannot be sent whole. A read_file result carries the file twice "+
+				"— once as text and once as `content` — so a file well inside the 8 MiB per-call "+
+				"limit can still land over this, and a command's output is not capped at all. "+
+				"Ask for less of it: `head -c`, `tail -c` or `dd` through `exec` returns a large "+
+				"result in pieces.",
+			size, proto.MaxMCPLine))
+	}
+	return mcp.NewError(req.ID, mcp.CodeInternalError, fmt.Sprintf(
+		"the answer to this request is %d bytes, over the %d byte frame limit on the MCP channel",
+		size, proto.MaxMCPLine))
+}
+
+// encodedSize is the length of the frame the writer refused, delimiting newline
+// included, measured without holding a second copy of it.
+//
+// The number cannot come from the refusal: proto.ErrLineTooLong is a bare
+// sentinel value and the writer that knows the length is in another package
+// (internal/proto/proto.go). Marshalling the response a second time and taking
+// len() of the result is the obvious way to get it and the wrong one, because
+// json.Marshal returns a freshly allocated []byte on every call: measuring a
+// 16 MiB answer that way allocated at least another 16 MiB, every time, in a
+// guest whose whole machine is 512 MiB by default and smaller than that in a
+// team ([resources] mem, internal/config/schema.go), and where an
+// out-of-memory kill of this process takes the sandbox with it. The cost is no
+// longer paid once per session either — this refusal leaves the connection
+// open, so a caller may ask for the same oversized result in a loop.
+//
+// An encoder writing into a counter produces the same bytes and keeps none of
+// them, and its scratch buffer comes from encoding/json's own pool and goes
+// straight back, so repeated measurements reuse one buffer instead of
+// allocating a copy per call. On the pinned toolchain (go 1.27.0) the second
+// json.Marshal allocated 16 MiB or more for a 16 MiB answer on every call,
+// against nothing at all for the counted encode once the pool is warm.
+//
+// It counts what the writer counts. Encoder.Encode appends the delimiting
+// newline that Writer.Write adds to its own length check, and escapes exactly
+// what json.Marshal escapes, the <, > and & included — so this is that
+// len(b)+1 to the byte, not an estimate of it.
+//
+// The encode error is dropped because there is none to have: Writer.Write
+// returns a marshal failure as itself and only reaches the length check after
+// marshalling succeeded, so an answer that came back ErrLineTooLong has already
+// been through encoding/json without complaint, a moment ago.
+func encodedSize(resp *mcp.Response) int {
+	var n byteCounter
+	_ = json.NewEncoder(&n).Encode(resp)
+	return int(n)
+}
+
+// byteCounter is an io.Writer that keeps the length and throws the bytes away.
+type byteCounter int
+
+func (c *byteCounter) Write(p []byte) (int, error) {
+	*c += byteCounter(len(p))
+	return len(p), nil
 }
 
 // dispatch returns the response to send, or nil for a notification — JSON-RPC

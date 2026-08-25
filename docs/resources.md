@@ -245,8 +245,9 @@ directory packed into it and refused if that would exceed `disk`, and is
 completely unaffected; so is `/dev/shm`, which is its own tmpfs with its
 own kernel default of half the RAM.
 
-A `scratch` larger than `mem` is refused at boot rather than accepted by
-`kelyfos run` and by the E2B shim:
+A `scratch` larger than `mem` is refused before anything boots, at every door
+that takes a declared `scratch` and starts a machine with it — `kelyfos run`,
+the E2B shim, `kelyfos team up` and `serve-mcp`'s `sandbox_run`:
 
 ```
 kelyfos: scratch = 2147483648 bytes at ./kelyfos.toml:2 is larger than the
@@ -254,11 +255,19 @@ kelyfos: scratch = 2147483648 bytes at ./kelyfos.toml:2 is larger than the
     the scratch tmpfs lives in that memory, so a cap above it can never be reached
 ```
 
-Those are the only two entry points that make the comparison. `kelyfos team up`
-and `serve-mcp`'s `sandbox_run` hand the declared `scratch` to the machine
-without checking it against that machine's `mem`, so inside a team a `scratch`
-above `mem` is accepted and the inert cap this refusal exists to prevent is
-exactly what you get.
+A team is checked over its whole plan before its first member boots — every
+agent's own `scratch`, and the `scratch` in any spawn budget an agent carries,
+because a budget whose cap can never be reached is worse for being discovered at
+the moment some agent decides to spawn a worker. An agent that declared no `mem`
+is compared against the 512 MiB it will actually be given rather than against
+the zero that means "the file said nothing".
+
+`serve-mcp`'s `sandbox_run` compares against the machine *that call* will get
+rather than against the project's `mem`, which is the door where this is easiest
+to reach: a call may ask for less memory than the project declared, so a
+`scratch` that fits the project's own `mem` can still be a cap that does nothing
+for one sandbox. That refusal names the file and the line the `scratch` came
+from, as the command line's does; a team's names the agent whose cap it is.
 
 **This is the one cap the guest kernel applies rather than the host**, and it is
 worth being exact about what that does and does not mean (F-D13). A tmpfs's size

@@ -235,8 +235,8 @@ release-cli: ## Cross-build static kelyfos binaries for both arches into dist/
 	  echo "built dist/kelyfos-darwin-$$uarch"; \
 	done
 
-# One SBOM per architecture, covering all three places an image comes from
-# (P6-10).
+# One SBOM per architecture, covering every artifact the release ships for it
+# (P6-10): Buildroot's packages, the guest supervisor, and both host CLIs.
 #
 # Buildroot knows about its own packages and nothing else. The guest supervisor
 # is cross-compiled by this project's toolchain and arrives through the rootfs
@@ -244,10 +244,21 @@ release-cli: ## Cross-build static kelyfos binaries for both arches into dist/
 # actually wrote — and an SBOM that is confidently incomplete is the
 # supply-chain form of an audit record that is confidently wrong.
 #
+# The macOS CLI is read for a different reason, and it is not a formality. The
+# release attests this document against `dist/*$(ARCH)*`, and that glob matches
+# `kelyfos-darwin-$(ARCH)` as surely as it matches the Linux one. While this
+# target read only the Linux binary, the release said an SBOM described a
+# shipped artifact it had never opened — a claim about bytes a stranger
+# downloads that nothing here had checked. Today it adds no components, because
+# the macOS build of ./host resolves the same modules the Linux build does; what
+# it adds is the checking. A dependency that arrives on darwin only now lands in
+# the document, instead of quietly turning the attestation into a false
+# statement that no one would be told about.
+#
 # `make show-info` is filtered from the first `{` because make prefixes its own
 # chatter and the generator parses the whole stream as JSON. Found by running
 # it.
-release-sbom: ## Merge Buildroot + both Go binaries into dist/sbom-$(ARCH).cdx.json
+release-sbom: ## Merge Buildroot + every released Go binary into dist/sbom-$(ARCH).cdx.json
 	@mkdir -p $(CURDIR)/dist
 	@$(MAKE) -s --no-print-directory -C $(BR_SRC) O=$(BUILD_DIR) \
 	  BR2_EXTERNAL=$(BR_EXTERNAL) show-info 2>/dev/null \
@@ -258,6 +269,7 @@ release-sbom: ## Merge Buildroot + both Go binaries into dist/sbom-$(ARCH).cdx.j
 	  -buildroot $(BUILD_DIR)/sbom-buildroot.json \
 	  -binary $(GUEST_OVERLAY)/sbin/kelyfos-supervisor \
 	  -binary $(CURDIR)/dist/kelyfos-linux-$(ARCH) \
+	  -binary $(CURDIR)/dist/kelyfos-darwin-$(ARCH) \
 	  -out $(CURDIR)/dist/sbom-$(ARCH).cdx.json
 
 # The sums file, written from scratch over whatever is in dist/ (P6-8).

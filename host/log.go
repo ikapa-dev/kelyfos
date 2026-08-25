@@ -9,6 +9,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/p4r4n0rm4l/KelyfOS/internal/proto"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/report"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/sandbox"
@@ -448,7 +449,28 @@ func printEvent(line []byte, asJSON bool) {
 		if e.Code != nil {
 			code = *e.Code
 		}
-		fmt.Printf("%s  %sshell closed   exit %d after %d ms\n", ts, who, code, e.DurationMS)
+		// Two endings write this event and only the reason tells them apart. A
+		// shell that exited says so through its exit frame; a connection that
+		// stopped without one, or an exit frame the host could not read, is
+		// recorded as code 1 with a reason saying which (shell.go). A line
+		// carrying the code alone showed a dead supervisor and a command that
+		// genuinely failed as the same thing. The signal is here for the same
+		// reason: 137 on its own does not say killed.
+		how := ""
+		if e.Signal != "" {
+			how = " on " + e.Signal
+		}
+		why := ""
+		if e.Reason != "" {
+			// A shell.end reason can be the guest's own `error` field, which is
+			// a guest's choice of bytes going straight to a terminal. An escape
+			// sequence here rewrites lines of the replay that have already been
+			// printed — a compromised guest editing the audit view as it is
+			// read. proto.SafeText exists for exactly this and its own comment
+			// names this case (P6-28).
+			why = "  · " + proto.SafeText(e.Reason)
+		}
+		fmt.Printf("%s  %sshell closed   exit %d%s after %d ms%s\n", ts, who, code, how, e.DurationMS, why)
 	case recorder.TypeForwardAccept:
 		outcome := "carried"
 		if e.Reason != "" {

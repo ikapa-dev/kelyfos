@@ -315,6 +315,19 @@ func (s *hostServer) resolve(a *runArgs) (sandbox.Options, error) {
 	}
 
 	opts.ScratchBytes = cfg.ResScratchByte
+	// A scratch cap larger than the machine's RAM is not a generous limit, it is
+	// no limit: the tmpfs it sizes lives in that same RAM and can never reach
+	// it. `kelyfos run` refuses it before booting and so does this door, because
+	// this is the door where it is easiest to reach — the project writes one
+	// `scratch` for a machine of the project's `mem`, and a call is allowed to
+	// ask for less memory than that. The result was a sandbox whose declared
+	// cap did nothing, which is the worst outcome available (docs/resources.md).
+	if opts.ScratchBytes > 0 && opts.ScratchBytes > int64(opts.MemMiB)<<20 {
+		line, _ := cfg.Ceiling("scratch")
+		return opts, fmt.Errorf("scratch = %d bytes at %s:%d is larger than the %d MiB this sandbox has\n"+
+			"    the scratch tmpfs lives in that memory, so a cap above it can never be reached",
+			opts.ScratchBytes, cfg.Path, line, opts.MemMiB)
+	}
 	opts.IO = sandbox.IOLimits{
 		NetMbpsRx: cfg.ResNetMbpsRx, NetMbpsTx: cfg.ResNetMbpsTx,
 		DiskIOPS: cfg.ResDiskIOPS, DiskMbps: cfg.ResDiskMbps,

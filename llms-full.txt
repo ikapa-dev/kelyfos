@@ -241,18 +241,24 @@ not claimed.** Determinism is configured — `BR2_REPRODUCIBLE`,
 [`repro-check`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/.github/workflows/repro-check.yml) builds the same commit twice
 and diffs the result, per artifact.
 
-What it has measured so far, and the scope is part of the result:
+What it has reported so far, and what it covers but has not reported on yet —
+the scope is part of the result:
 
 | artifact | result | how |
 | --- | --- | --- |
 | `kelyfos-linux-{aarch64,x86_64}` | **identical** | built twice from two *different* source paths |
+| `kelyfos-darwin-{aarch64,x86_64}` | **not measured yet** | inside the check, built and compared the same way; no run has reported on them |
 | `Image`, `rootfs.ext4`, `image.json` (aarch64/dev) | **identical** | two full builds from nothing, same machine, same build path |
 
 The image half is a stronger result than expected and a narrower one than
 "reproducible builds": one machine, one architecture, an identical build path —
 which is what Buildroot's own reproducible mode requires — and two builds rather
-than many. x86_64 has not been measured. The workflow is what keeps the answer
-current, and whatever it last said is what this page says. Building it yourself takes about thirty-five
+than many. x86_64 has not been measured. The macOS row is exactly what it says:
+`repro-check` compares every binary `make release-cli` produces, so those two
+are no longer outside the only check this project makes about them — but being
+inside a check is not a measurement, and this table reports runs rather than
+coverage. The workflow is what keeps the answer current, and whatever it last
+said is what this page says. Building it yourself takes about thirty-five
 minutes, because it compiles a cross toolchain, a kernel and a userland:
 
 ```sh
@@ -1731,8 +1737,9 @@ directory packed into it and refused if that would exceed `disk`, and is
 completely unaffected; so is `/dev/shm`, which is its own tmpfs with its
 own kernel default of half the RAM.
 
-A `scratch` larger than `mem` is refused at boot rather than accepted by
-`kelyfos run` and by the E2B shim:
+A `scratch` larger than `mem` is refused before anything boots, at every door
+that takes a declared `scratch` and starts a machine with it — `kelyfos run`,
+the E2B shim, `kelyfos team up` and `serve-mcp`'s `sandbox_run`:
 
 ```
 kelyfos: scratch = 2147483648 bytes at ./kelyfos.toml:2 is larger than the
@@ -1740,11 +1747,19 @@ kelyfos: scratch = 2147483648 bytes at ./kelyfos.toml:2 is larger than the
     the scratch tmpfs lives in that memory, so a cap above it can never be reached
 ```
 
-Those are the only two entry points that make the comparison. `kelyfos team up`
-and `serve-mcp`'s `sandbox_run` hand the declared `scratch` to the machine
-without checking it against that machine's `mem`, so inside a team a `scratch`
-above `mem` is accepted and the inert cap this refusal exists to prevent is
-exactly what you get.
+A team is checked over its whole plan before its first member boots — every
+agent's own `scratch`, and the `scratch` in any spawn budget an agent carries,
+because a budget whose cap can never be reached is worse for being discovered at
+the moment some agent decides to spawn a worker. An agent that declared no `mem`
+is compared against the 512 MiB it will actually be given rather than against
+the zero that means "the file said nothing".
+
+`serve-mcp`'s `sandbox_run` compares against the machine *that call* will get
+rather than against the project's `mem`, which is the door where this is easiest
+to reach: a call may ask for less memory than the project declared, so a
+`scratch` that fits the project's own `mem` can still be a cap that does nothing
+for one sandbox. That refusal names the file and the line the `scratch` came
+from, as the command line's does; a team's names the agent whose cap it is.
 
 **This is the one cap the guest kernel applies rather than the host**, and it is
 worth being exact about what that does and does not mean (F-D13). A tmpfs's size
@@ -3017,12 +3032,14 @@ back, a refusal is flagged and still drawn, because what was attempted is the
 part worth seeing. Store accesses sit inline in the lane of the agent that made
 them; commands, files, egress attempts, OOM kills and each member's usage
 receipt sit in that member's lane. Events that belong to the team rather than to
-any member span every lane. One gap, named here rather than left to be
-discovered: a forked member is booted without the guest-event handler a
-cold-booted one gets, so its OOM kills and its plugin calls are in no lane and
-in no chain, and a no-egress `count` group with a cached template is precisely
-what forks (§7). That export carries the team's record inside it, so whoever
-receives it runs `kelyfos verify team.html` and checks the whole team's chain
+any member span every lane. A forked member's lane is as complete as a
+cold-booted one's: both machines get their options from one function in the
+host, so a fork carries the same guest-event handler and its OOM kills and its
+plugin calls reach the same chain. Before v1.0 the fork path built its options
+without that handler and the host dropped what those machines reported, which
+put the replicas of a no-egress `count` group — precisely what forks (§7) — in
+no lane and in no chain. That export carries the team's record inside it, so
+whoever receives it runs `kelyfos verify team.html` and checks the whole team's chain
 without asking you for anything.
 
 While the team is up, `kelyfos log --session <agent's sandbox id>` redirects to
@@ -3566,12 +3583,13 @@ A file was written through a tool. The **content is not recorded** — a flight
 recorder that copies every byte an agent writes is a second copy of the
 workspace, and a much worse place to leave it.
 
-**`write_file` and `upload` are recorded from the request**, before the guest
-has answered, so a write the guest refused — a path outside the profile's
-writable trees, a body over the per-call limit — is written into the chain like
-one that happened, and nothing corrects it afterwards. The `serve-mcp` and
-`shim` doors record after the write succeeded instead: a refused write is not a
-write, and recording one would put a line in the log for a file that does not
+**`write_file` and `upload` are recorded after the guest has answered**, on
+every door. They used to be recorded from the *request*, so a write the guest
+refused — a path outside the profile's writable trees, a body over the per-call
+limit — went into the chain looking like one that happened, with a path, a size
+and a digest of content that was never stored. The `serve-mcp` and `shim` doors
+always got this right and `kelyfos mcp` now matches them: a refused write is not
+a write, and recording one would put a line in the log for a file that does not
 exist.
 
 | Field | Type | Meaning |
@@ -3681,8 +3699,13 @@ guest saw it. Written from P6-5.
 | `host` | string | The domain whose response carried it back. |
 | `agent` | string | Present inside a team: whose credential it was. |
 
-One event per credential per connection, not one per occurrence: a response that
-quotes a token forty times is one fact.
+One event per credential per *response*, not one per occurrence: a response that
+quotes a token forty times is one fact. The scope is the response and not the
+connection because the de-duplication is built fresh for every response the
+proxy handles, and a terminated connection handles many — so a keep-alive
+connection whose five responses each echo the same token produces five events,
+which is the honest count: each one is a separate echo, not a repeat of the
+first.
 
 It is recorded because a proxy that rewrites a byte stream and says nothing is a
 proxy whose record understates what the host did — the same reasoning that made
@@ -3830,10 +3853,17 @@ prints the id to stderr when it starts, so a reader can go from either end to
 the other.
 
 **Three argument names are recorded by size rather than by value**, and the
-rest by value. `content`, `stdin` and `data` are replaced by their length when
-the value is a string, which is the rule `file.write` follows for the same
-reason; every other argument is rendered as itself, strings truncated at 120
-bytes. That is deliberate — an argument like `mem` or `image` is the decision
+rest by value. `content`, `stdin` and `data` are replaced by their length
+**whatever shape they arrive in** — a string, an object, an array, a number —
+which is the rule `file.write` follows for the same reason. Measuring only
+strings was a hole rather than a policy: the same content wrapped in an object
+fell through and was written whole.
+
+Every other argument is rendered as itself, with three bounds that exist so no
+one call can make a record line its own readers cannot parse: a string is cut at
+120 bytes, an array's whole rendering at 1 KiB — generous because the egress
+allowlist arrives as an array and is recorded nowhere else — and the joined line
+at 4 KiB. That is deliberate: an argument like `mem` or `image` is the decision
 worth recording, and the three that are withheld are the ones that carry a
 file. The summariser walks whatever
 arguments it is given rather than knowing the tools, so an argument added later
@@ -4346,10 +4376,19 @@ than **64 KiB** of pre-encoded bytes.
 The MCP channel (port 10002) is the exception, and its limit is **16 MiB**.
 Nothing on that channel is chunked — a `read_file` result is a whole file on one
 line — and the per-call limit on a file is 8 MiB, so a 1 MiB frame would refuse
-messages the tools above it promise to carry. Sixteen leaves room for JSON
-escaping around eight and still bounds the buffer. Both directions and every
-reader on the channel use the same number (`proto.MaxMCPLine`), so a message one
-side will send is a message the other side will accept.
+messages the tools above it promise to carry. Sixteen was chosen to leave room
+for JSON escaping around eight, and that arithmetic no longer holds: a
+`read_file` result carries the file twice, once in the text block and once as
+`content` (docs/mcp-surface.md §2.2), so a file at the 8 MiB cap is 16,777,216
+bytes of payload — this limit exactly — before the JSON around it and before a
+single escape. The number stays where it is, because it is what bounds an
+untrusted far side; what the guest's server does with an answer that will not
+fit is send a refusal naming the size and this limit in its place, rather than
+close the connection on the send error (docs/mcp-surface.md §2.2). Nothing of
+the oversized frame is written, so the stream is still on a frame boundary and
+the session carries on. Both directions and every reader on the channel use the
+same number (`proto.MaxMCPLine`), so a message one side will send is a message
+the other side will accept.
 
 **Unknown fields are ignored.** Every message carries `"v": 1`; a reader that
 sees a `v` it does not know MUST fail the message rather than guess.
@@ -5029,9 +5068,14 @@ means a read carries the file twice — once in the text block, once as `content
 against a channel limit of exactly 16,777,216 bytes (§4). Plain text fails only
 within a hair of 8 MiB; text whose escaped form is longer — every newline
 becoming two bytes — crosses sooner, which is why the failing size cannot be
-stated as one number. The supervisor's
-writer refuses to send it, the session closes on the send error, and the caller
-sees an unexplained EOF rather than a message naming a limit.
+stated as one number. What comes back when it does fail is a tool error naming
+both numbers — how many bytes the answer came to, and the frame limit it is
+over — and pointing at `head -c`, `tail -c` or `dd` through `exec` as the way to
+get a large file in pieces, since `read_file` has no offset argument. The
+supervisor's writer checks the length before it writes anything, so none of the
+oversized frame reaches the wire and the session is still there for the next
+call. `sandbox_read_file` hands that refusal back as it stands, the way it hands
+back every other result the guest's tool produced.
 
 A write is recorded in the sandbox's flight recorder by path, size and digest,
 with `via: serve-mcp` — never by content. A read is not recorded, for the same
@@ -5511,12 +5555,13 @@ whole file on one line — and the per-call limit on a file is 8 MiB, so a 1 MiB
 frame would refuse messages the tools above it promise to carry. Sixteen was
 chosen to leave room for JSON escaping around eight, and no longer does: since
 the `structuredContent` rule of §2.2 a `read_file` result carries the file twice,
-so a frame holding a file at the cap is over the limit before any escaping, and
-the send fails as an unexplained EOF rather than as a stated limit. Every reader
-on both sides of the channel takes the number from one constant
-(`proto.MaxMCPLine`), because a writer that will send more than the reader
-opposite it accepts is a connection that dies mid-answer — which is what a
-caller sees as an unexplained EOF. `docs/protocol.md` §3 carries it.
+so a file at the cap fills the frame with payload alone and the JSON around it
+puts the answer over. What that produces is a refusal rather than a broken
+connection — a tool error naming the size and the limit, with the session still
+open behind it (§2.2). Every reader on both sides of the channel takes the
+number from one constant (`proto.MaxMCPLine`), because a writer that will send
+more than the reader opposite it accepts is a connection that dies mid-answer.
+`docs/protocol.md` §3 carries it.
 
 **`serve-mcp` implements revision 2025-11-25**, the same revision the guest's
 server advertises, so the product speaks one revision in both directions.
@@ -5937,16 +5982,27 @@ an identical build path. That last is the scope, and the scope is part of the
 answer — one machine, one architecture, two builds. It is not a claim that
 anybody else's machine produces these bytes. Nor is it a claim about all four
 CLI binaries: `make release-cli` also builds `kelyfos-darwin-x86_64` and
-`kelyfos-darwin-aarch64`, which ship in the release, and `repro-check` compares
-`dist/kelyfos-linux-*` only — so those two have never been measured.
+`kelyfos-darwin-aarch64`, which ship in the release, and `repro-check` used to
+compare `dist/kelyfos-linux-*` only. The workflow now builds and compares
+`dist/kelyfos-*` — every binary the release ships — across the two source paths,
+and `TestEveryReleasedCLIBinaryIsMeasuredForReproducibility` in `tools/sbom`
+fails if a released binary ever falls outside those globs again. **The two macOS
+binaries are inside the check and have not been measured**: widening a check is
+not a result, and no run has reported on them. Until one does, what is measured
+is what this paragraph opens with: the Linux pair, and nothing either way about
+the macOS pair.
 
-**An SBOM ships with every release**, one per architecture, covering all three
-places an image comes from: Buildroot's packages, the guest supervisor, and the
-Linux host CLI. The macOS CLI for the same architecture ships in the release and
-is in no SBOM — and the SBOM attestation's subject glob, `dist/*aarch64*` or
-`dist/*x86_64*`, matches it anyway, so one shipped artifact per architecture is
-attested as being described by an SBOM that never read it. That third-and-second
-matter more than the count does. The supervisor is PID 1 and it is
+**An SBOM ships with every release**, one per architecture, covering all four
+places the shipped bytes come from: Buildroot's packages, the guest supervisor,
+the Linux host CLI, and the macOS CLI for that same architecture. `release-sbom`
+reads all three of those binaries' own build information, so every CLI the SBOM
+attestation's subject glob sweeps up — `dist/*aarch64*` or `dist/*x86_64*` — is
+one the SBOM opened. Before v1.0 the macOS CLI was in no SBOM while that glob
+matched it anyway, so one shipped artifact per architecture was attested as
+being described by an SBOM that never read it, and
+`TestEverySBOMSubjectIsABinaryTheSBOMRead` in `tools/sbom` is what notices if
+the glob and what the SBOM reads drift apart again. The three that are not
+Buildroot's matter more than the count does. The supervisor is PID 1 and it is
 cross-compiled by this project's own toolchain, arriving through the rootfs
 overlay rather than as a Buildroot package — so **Buildroot
 has never heard of it**, and an inventory from that source alone would omit the

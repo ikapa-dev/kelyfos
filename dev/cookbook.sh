@@ -68,22 +68,30 @@ for script in "$WORK"/recipes/*.sh; do
   rm -rf "${HOME:?}/.cache/kelyfos/run"/*
 
   start=$(date +%s)
-  # Into a file rather than through a pipe, and the reason is diagnostic
-  # (P6-18).
+  # Into a file rather than through a pipe, and that is the whole fix (P6-18).
   #
-  # `pause-and-resume` stalled twice in a row on the x86_64 runner: 96 minutes
-  # of a 180-minute job, and the log's last line was `recipe: pause-and-resume`
-  # with no verdict after it. The 600-second cap did not produce one. **Why it
-  # did not is still open** — the obvious theory, that a backgrounded
-  # `kelyfos run &` holds the pipe open so `sed` never sees EOF, was tested on
-  # Linux and is wrong: coreutils `timeout` puts the child in its own process
-  # group and signals the group, so the orphan dies with the script.
+  # `timeout N bash "$script" | sed ...` does not bound a recipe, and the way it
+  # fails is worse than not bounding it. Several recipes background a long-lived
+  # process — `kelyfos run &` is the shape — and a backgrounded child inherits
+  # the write end of that pipe. When the script then exits *quickly* (under
+  # `set -e`, a failed command is enough), `timeout` never fires, bash is gone,
+  # and the orphan still holds the pipe open. `sed` blocks on a read that will
+  # never see EOF, and the pipeline hangs for as long as the job is allowed to
+  # live.
   #
-  # What this change buys is the thing that was missing while that question is
-  # answered: a verdict. Output goes to a file, `timeout`'s own exit status is
-  # read directly rather than through a pipeline, and 124 is reported as
-  # TIMED OUT with the recipe's name — so the next occurrence says which recipe
-  # and that it hung, in the log, at the moment it happens.
+  # Measured, because the obvious theory was tested wrong once: a script that
+  # *hangs* does not show this — `timeout` puts the child in its own process
+  # group and signals the group, so the orphan dies with it. It is the script
+  # that *fails fast* while leaving a child that hangs the reader. Both shapes
+  # were run on Linux: piped, an orphan plus an immediate `false` hangs
+  # indefinitely; redirected, the same script returns in 0s with rc=1.
+  #
+  # That is exactly what happened here. `pause-and-resume` fails on x86_64 in
+  # 23 seconds with exit 1 — and through a pipe that 23-second failure became
+  # 96 minutes of a 180-minute job whose log's last line was
+  # `recipe: pause-and-resume` with no verdict after it. A file has no reader to
+  # block: `timeout`'s own status is read directly, and 124 is reported as
+  # TIMED OUT with the recipe's name.
   out="$WORK/$name.out"
   timeout --kill-after=30 "${RECIPE_TIMEOUT:-600}" bash "$script" >"$out" 2>&1
   rc=$?

@@ -106,13 +106,38 @@ func halt(grace time.Duration) {
 
 	unix.Sync()
 
-	// Firecracker has no firmware to hand control back to, so this is the end
-	// of the machine either way: on success the VM exits, and if the reboot
-	// call somehow returns, falling through would make PID 1 exit — a kernel
-	// panic, which is a far worse way to end a session.
-	if err := unix.Reboot(unix.LINUX_REBOOT_CMD_POWER_OFF); err != nil {
-		logf("power off failed (%v), halting", err)
-		_ = unix.Reboot(unix.LINUX_REBOOT_CMD_HALT)
+	// RESTART rather than POWER_OFF, and on x86_64 that is the difference
+	// between the VMM exiting and not (P6-18).
+	//
+	// Firecracker has no firmware to hand control back to, so "reboot" and
+	// "power off" are the same act here: the end of the machine. But they are
+	// not the same to the VMM. Firecracker does not virtualise power
+	// management on x86_64 — there is no ACPI — so a guest `poweroff` stops the
+	// guest and leaves the Firecracker process running with nothing inside it.
+	// What it does emulate is the i8042 controller, and a reset on that line is
+	// what it takes as "this machine is finished". That is why `reboot=k` is on
+	// the kernel command line (config.go): it tells Linux to reset through the
+	// keyboard controller, which is the one signal Firecracker is listening for.
+	// On aarch64 either call works, because KVM emulates PSCI and tells the VMM
+	// about the power-state change, which is why this went unnoticed — the
+	// development machines are arm64.
+	//
+	// Found by `kelyfos pause` failing on an x86_64 runner with "guest
+	// acknowledged shutdown but the microVM is still running": the guest had
+	// powered itself off exactly as asked, and the VM it was inside had no way
+	// to know.
+	//
+	// POWER_OFF is kept as the fallback rather than dropped, because it is the
+	// correct call on any platform that does virtualise power management, and
+	// HALT after it — if the reboot call somehow returns, falling through would
+	// make PID 1 exit, which is a kernel panic and a far worse way to end a
+	// session.
+	if err := unix.Reboot(unix.LINUX_REBOOT_CMD_RESTART); err != nil {
+		logf("restart failed (%v), powering off", err)
+		if err := unix.Reboot(unix.LINUX_REBOOT_CMD_POWER_OFF); err != nil {
+			logf("power off failed (%v), halting", err)
+			_ = unix.Reboot(unix.LINUX_REBOOT_CMD_HALT)
+		}
 	}
 	select {}
 }

@@ -37,6 +37,18 @@ type pendingCall struct {
 	tool string
 	call string
 	args map[string]any
+	// write is the file.write this call will produce *if the guest accepts it*,
+	// and nil for a tool that writes nothing. It is built from the request,
+	// because that is where the content is, and held until the answer comes
+	// back, because that is when we learn whether the write happened at all.
+	//
+	// The guest refuses writes: a path outside the profile's writable trees
+	// (supervisor's writableFor) and a body over the per-call limit both come
+	// back as errors. A refused write is not a write, and a record of one is a
+	// claim about a file that does not exist — the worst thing this chain can
+	// say. The other two doors already record after the fact for exactly this
+	// reason (host/servemcpfiles.go, shim/shim.go).
+	write *recorder.Event
 }
 
 func newObserver(rec *recorder.Recorder, agent string) *observer {
@@ -80,7 +92,8 @@ func tee(r io.Reader, sink func([]byte)) io.Reader {
 	return pr
 }
 
-// fromClient records tool calls as they are requested.
+// fromClient records tool calls as they are requested: a command starts here,
+// and a write is only prepared here, to be recorded when the guest answers.
 func (o *observer) fromClient(line []byte) {
 	var req mcp.Request
 	if err := json.Unmarshal(line, &req); err != nil || req.Method != "tools/call" {
@@ -97,33 +110,48 @@ func (o *observer) fromClient(line []byte) {
 	call := "m" + strings.Trim(id, `"`)
 
 	o.mu.Lock()
-	o.calls[id] = &pendingCall{tool: p.Name, call: call, args: args}
+	o.calls[id] = &pendingCall{tool: p.Name, call: call, args: args, write: o.writeEvent(p.Name, args)}
 	o.mu.Unlock()
 
-	switch p.Name {
-	case "exec":
+	// A command is recorded the moment it is asked for, because a command that
+	// was started is a fact whatever it does next, and command.exit says how it
+	// ended. A write has no second event to correct it, so it waits for the
+	// answer (see pendingCall.write).
+	if p.Name == "exec" {
 		_ = o.rec.Append(recorder.Event{
 			Type: recorder.TypeCommandStart, Call: call,
 			Cmd: execArgv(args), Cwd: str(args["cwd"]), Via: "mcp", Agent: o.agent,
 		})
-	case "write_file":
-		content := str(args["content"])
-		sum := sha256.Sum256([]byte(content))
-		_ = o.rec.Append(recorder.Event{
-			Type: recorder.TypeFileWrite, Path: str(args["path"]),
-			Bytes: len(content), SHA256: hex.EncodeToString(sum[:]), Via: "write_file", Agent: o.agent,
-		})
-	case "upload":
-		raw, _ := base64.StdEncoding.DecodeString(str(args["data"]))
-		sum := sha256.Sum256(raw)
-		_ = o.rec.Append(recorder.Event{
-			Type: recorder.TypeFileWrite, Path: str(args["path"]),
-			Bytes: len(raw), SHA256: hex.EncodeToString(sum[:]), Via: "upload", Agent: o.agent,
-		})
 	}
 }
 
-// fromGuest records results as they come back.
+// writeEvent builds the file.write a write_file or upload call would produce,
+// or nil for any other tool. Recorded by path, size and digest, never by
+// content (docs/events.md §4).
+func (o *observer) writeEvent(tool string, args map[string]any) *recorder.Event {
+	var data []byte
+	switch tool {
+	case "write_file":
+		data = []byte(str(args["content"]))
+	case "upload":
+		// A body that is not valid base64 is refused by the guest, so this
+		// event is never appended; what it must not do is invent a size for
+		// bytes nobody could decode.
+		data, _ = base64.StdEncoding.DecodeString(str(args["data"]))
+	default:
+		return nil
+	}
+	sum := sha256.Sum256(data)
+	// The tool's name is the door's name: `write_file` and `upload` are the two
+	// `via` values docs/events.md lists for a guest MCP tool.
+	return &recorder.Event{
+		Type: recorder.TypeFileWrite, Path: str(args["path"]), Bytes: len(data),
+		SHA256: hex.EncodeToString(sum[:]), Via: tool, Agent: o.agent,
+	}
+}
+
+// fromGuest records results as they come back: how a command ended, and the
+// writes the guest actually accepted.
 func (o *observer) fromGuest(line []byte) {
 	var resp struct {
 		ID     json.RawMessage `json:"id"`
@@ -138,12 +166,24 @@ func (o *observer) fromGuest(line []byte) {
 		delete(o.calls, string(resp.ID))
 	}
 	o.mu.Unlock()
-	if !ok || pc.tool != "exec" {
+	if !ok {
 		return
 	}
 
 	var out mcp.CallToolResult
 	if err := json.Unmarshal(resp.Result, &out); err != nil {
+		// An answer nobody can read is not an answer that the write landed. A
+		// call the guest never answered at all keeps its pending write for the
+		// same reason: it is dropped, not appended.
+		return
+	}
+	if pc.write != nil {
+		if !out.IsError {
+			_ = o.rec.Append(*pc.write)
+		}
+		return
+	}
+	if pc.tool != "exec" {
 		return
 	}
 	code := 0

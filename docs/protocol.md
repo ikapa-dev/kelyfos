@@ -196,10 +196,19 @@ than **64 KiB** of pre-encoded bytes.
 The MCP channel (port 10002) is the exception, and its limit is **16 MiB**.
 Nothing on that channel is chunked — a `read_file` result is a whole file on one
 line — and the per-call limit on a file is 8 MiB, so a 1 MiB frame would refuse
-messages the tools above it promise to carry. Sixteen leaves room for JSON
-escaping around eight and still bounds the buffer. Both directions and every
-reader on the channel use the same number (`proto.MaxMCPLine`), so a message one
-side will send is a message the other side will accept.
+messages the tools above it promise to carry. Sixteen was chosen to leave room
+for JSON escaping around eight, and that arithmetic no longer holds: a
+`read_file` result carries the file twice, once in the text block and once as
+`content` (docs/mcp-surface.md §2.2), so a file at the 8 MiB cap is 16,777,216
+bytes of payload — this limit exactly — before the JSON around it and before a
+single escape. The number stays where it is, because it is what bounds an
+untrusted far side; what the guest's server does with an answer that will not
+fit is send a refusal naming the size and this limit in its place, rather than
+close the connection on the send error (docs/mcp-surface.md §2.2). Nothing of
+the oversized frame is written, so the stream is still on a frame boundary and
+the session carries on. Both directions and every reader on the channel use the
+same number (`proto.MaxMCPLine`), so a message one side will send is a message
+the other side will accept.
 
 **Unknown fields are ignored.** Every message carries `"v": 1`; a reader that
 sees a `v` it does not know MUST fail the message rather than guess.

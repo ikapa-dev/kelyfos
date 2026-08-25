@@ -125,7 +125,9 @@ honest thing the risky thing.
 }
 
 // pumpShell copies both directions until the guest sends its exit frame or the
-// connection ends.
+// connection ends. Those two are not the same ending: a shell that ended says
+// so, and a connection that simply stops is a supervisor that died with the
+// terminal still open.
 func pumpShell(conn io.ReadWriter, tape *os.File) proto.ShellExit {
 	var wmu sync.Mutex
 	send := func(kind byte, b []byte) error {
@@ -171,7 +173,12 @@ func pumpShell(conn io.ReadWriter, tape *os.File) proto.ShellExit {
 		kind, payload, err := proto.ReadShellFrame(conn)
 		if err != nil {
 			if errors.Is(err, io.EOF) {
-				return proto.ShellExit{Code: 0}
+				// §5.7: the shell's end is an exit frame. A closed connection
+				// without one is a supervisor that died, and reporting it as
+				// "exited 0" would tell a script wrapping this command that the
+				// session was fine — the same reasoning exec follows in §5.2.
+				return proto.ShellExit{Code: 1,
+					Error: "the supervisor closed the connection without an exit frame"}
 			}
 			return proto.ShellExit{Code: 1, Error: err.Error()}
 		}
@@ -186,8 +193,30 @@ func pumpShell(conn io.ReadWriter, tape *os.File) proto.ShellExit {
 			if json.Unmarshal(payload, &op) != nil || op.Op != "exit" {
 				continue
 			}
+			// The check above reads one string, so a frame that says "exit" and
+			// then carries a code of the wrong shape reaches here with nothing
+			// else decoded. Returning that zero value would report Code 0 and
+			// no error — the same invented success the EOF branch above
+			// refuses, and the one a compromised guest would choose. A last
+			// word this host cannot read ends the shell the way a dead
+			// supervisor does: code 1, with a reason saying which happened.
 			var exit proto.ShellExit
-			_ = json.Unmarshal(payload, &exit)
+			if err := json.Unmarshal(payload, &exit); err != nil {
+				// The error text is not repeated into the record. Go puts the
+				// offending literal inside an UnmarshalTypeError — for a numeric
+				// field that is the raw number, so a frame carrying 200,000
+				// digits produces a 200,000-byte error string, and this reason
+				// is written into the signed chain and printed to a terminal.
+				// The guest chose those bytes; it does not get to choose how
+				// many of them the host keeps, and SafeText is what this project
+				// already uses for a string a guest picked.
+				return proto.ShellExit{Code: 1,
+					Error: "the guest sent an exit frame this host cannot read: " +
+						proto.SafeText(clip(err.Error(), 200))}
+			}
+			// The guest picked this string too, and it is bound for the record
+			// and for a terminal.
+			exit.Error = proto.SafeText(clip(exit.Error, 2048))
 			return exit
 		}
 	}
@@ -241,4 +270,17 @@ func terminalSize(f *os.File) (cols, rows uint16) {
 		return 80, 24
 	}
 	return ws.Col, ws.Row
+}
+
+// clip bounds a string the guest chose before it reaches the record.
+//
+// recorder.Append has no size limit of its own, and a chain line over 8 MiB is
+// one the recorder's own readers cannot parse again — so an unbounded guest
+// string in a reason field is a way to make a session unreadable. The limit is
+// generous enough that a real message survives whole (P6-28).
+func clip(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	return s[:max] + "…"
 }

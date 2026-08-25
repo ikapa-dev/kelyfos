@@ -1,12 +1,14 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/p4r4n0rm4l/KelyfOS/internal/config"
+	"github.com/p4r4n0rm4l/KelyfOS/internal/sandbox"
 )
 
 func policyFrom(t *testing.T, body string) *config.Config {
@@ -102,5 +104,70 @@ func TestASessionNameCannotWalkOut(t *testing.T) {
 		if err := validSessionName(good); err != nil {
 			t.Errorf("%q is a reasonable name and was refused: %v", good, err)
 		}
+	}
+}
+
+// runningSandbox writes the state file `kelyfos pause` reads, under a cache
+// root belonging to this test alone. Nothing boots and nothing needs to: the
+// refusal below happens before the snapshot is taken, which is the point of
+// making it there.
+func runningSandbox(t *testing.T, st sandbox.State) {
+	t.Helper()
+	dir := sandbox.RunDirOf(st.ID)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	blob, err := json.Marshal(st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "sandbox.json"), blob, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// The two ends of a pause have to agree about what can come back. `resume`
+// refuses a session whose snapshot recorded a NIC, and the snapshot layer
+// records one for every machine that had a TAP — so a pause that does not ask
+// the same question stops the machine, writes the whole session, and prints a
+// resume command guaranteed to refuse. There is no second way in either:
+// `snapshot restore` reads snapshots/<name>, and what a pause writes is
+// named/<name>.
+func TestAPauseRefusesTheMachineNoResumeCouldOpen(t *testing.T) {
+	t.Setenv("KELYFOS_CACHE", t.TempDir())
+	runningSandbox(t, sandbox.State{ID: "sb-egress", PID: os.Getpid(), Arch: "aarch64",
+		Flavor: "dev", TAP: "kf0", Allow: []string{"example.com"}})
+
+	err := pauseCmd([]string{"--sandbox", "sb-egress", "--as", "before-the-migration"})
+	if err == nil {
+		t.Fatal("a sandbox with egress was paused into a session nothing can bring back")
+	}
+	// What was in force, what state the machine is in, and the way that does
+	// work — a refusal naming none of the three is a dead end with prose.
+	for _, want := range []string{"example.com", "still running",
+		"kelyfos snapshot save", "kelyfos snapshot restore", "before-the-migration"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not mention %q:\n%v", want, err)
+		}
+	}
+	if strings.Contains(err.Error(), "kelyfos resume before-the-migration") {
+		t.Errorf("the refusal offers the one command that cannot work:\n%v", err)
+	}
+	// Refused before anything moved: no session on disk, and no marker telling
+	// the run that owns this machine to skip its sync-back for ever.
+	if _, err := os.Stat(namedDir("before-the-migration")); !os.IsNotExist(err) {
+		t.Errorf("the refused pause left a stored session behind at %s", namedDir("before-the-migration"))
+	}
+	if _, err := os.Stat(filepath.Join(sandbox.RunDirOf("sb-egress"), "paused")); !os.IsNotExist(err) {
+		t.Error("the refused pause left the pause marker down, so the machine's own run would skip its sync-back")
+	}
+
+	// A machine with no NIC is the machine pause is for, and gets past this to
+	// the snapshot it cannot take without a live VMM — which is a different
+	// refusal, and proves this one did not fire.
+	runningSandbox(t, sandbox.State{ID: "sb-quiet", PID: os.Getpid(), Arch: "aarch64", Flavor: "dev"})
+	err = pauseCmd([]string{"--sandbox", "sb-quiet", "--as", "t1"})
+	if err == nil || strings.Contains(err.Error(), "egress") {
+		t.Errorf("a sandbox with no network was refused a pause: %v", err)
 	}
 }

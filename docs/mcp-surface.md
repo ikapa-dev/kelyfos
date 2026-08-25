@@ -199,9 +199,14 @@ means a read carries the file twice — once in the text block, once as `content
 against a channel limit of exactly 16,777,216 bytes (§4). Plain text fails only
 within a hair of 8 MiB; text whose escaped form is longer — every newline
 becoming two bytes — crosses sooner, which is why the failing size cannot be
-stated as one number. The supervisor's
-writer refuses to send it, the session closes on the send error, and the caller
-sees an unexplained EOF rather than a message naming a limit.
+stated as one number. What comes back when it does fail is a tool error naming
+both numbers — how many bytes the answer came to, and the frame limit it is
+over — and pointing at `head -c`, `tail -c` or `dd` through `exec` as the way to
+get a large file in pieces, since `read_file` has no offset argument. The
+supervisor's writer checks the length before it writes anything, so none of the
+oversized frame reaches the wire and the session is still there for the next
+call. `sandbox_read_file` hands that refusal back as it stands, the way it hands
+back every other result the guest's tool produced.
 
 A write is recorded in the sandbox's flight recorder by path, size and digest,
 with `via: serve-mcp` — never by content. A read is not recorded, for the same
@@ -681,12 +686,13 @@ whole file on one line — and the per-call limit on a file is 8 MiB, so a 1 MiB
 frame would refuse messages the tools above it promise to carry. Sixteen was
 chosen to leave room for JSON escaping around eight, and no longer does: since
 the `structuredContent` rule of §2.2 a `read_file` result carries the file twice,
-so a frame holding a file at the cap is over the limit before any escaping, and
-the send fails as an unexplained EOF rather than as a stated limit. Every reader
-on both sides of the channel takes the number from one constant
-(`proto.MaxMCPLine`), because a writer that will send more than the reader
-opposite it accepts is a connection that dies mid-answer — which is what a
-caller sees as an unexplained EOF. `docs/protocol.md` §3 carries it.
+so a file at the cap fills the frame with payload alone and the JSON around it
+puts the answer over. What that produces is a refusal rather than a broken
+connection — a tool error naming the size and the limit, with the session still
+open behind it (§2.2). Every reader on both sides of the channel takes the
+number from one constant (`proto.MaxMCPLine`), because a writer that will send
+more than the reader opposite it accepts is a connection that dies mid-answer.
+`docs/protocol.md` §3 carries it.
 
 **`serve-mcp` implements revision 2025-11-25**, the same revision the guest's
 server advertises, so the product speaks one revision in both directions.

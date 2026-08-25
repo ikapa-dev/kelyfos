@@ -115,6 +115,11 @@ the session finally ends.
 	if err != nil {
 		return err
 	}
+	// Before anything is written and before the machine is asked to stop,
+	// because this is the one thing a pause can learn too late to act on.
+	if err := refuseEgressPause(st, *name); err != nil {
+		return err
+	}
 	dir := namedDir(*name)
 	if _, err := os.Stat(namedMeta(dir)); err == nil {
 		return fmt.Errorf("a session called %q is already stored (%s). Remove it with "+
@@ -198,6 +203,43 @@ the session finally ends.
 		return fmt.Errorf("the session is stored at %s, but the sandbox did not stop: %w", dir, err)
 	}
 	return nil
+}
+
+// refuseEgressPause is the check pause owes the resume, made at the only moment
+// it is still free to make: `resume` refuses every session whose snapshot has a
+// NIC recorded, and the snapshot layer records one for every machine that had a
+// TAP — so the machines this refuses are exactly the machines a pause could
+// store and nothing could ever bring back.
+//
+// Met at the resume instead, it is met too late in both directions. The machine
+// is already stopped, and the session it left behind is not something `snapshot
+// restore` can open either: that command reads snapshots/<name> and a paused
+// session lives in named/<name>. A refusal costs the user a pause they can take
+// another way; the alternative costs them the machine.
+//
+// What it points at is the path that does work for egress, and it works because
+// the snapshot carries the allowlist and the addressing with it: `snapshot save`
+// freezes the machine without stopping it, and `snapshot restore` builds a
+// network for the guest to come back into (D22).
+func refuseEgressPause(st *sandbox.State, name string) error {
+	if st.TAP == "" {
+		return nil
+	}
+	// A TAP exists only where an allowlist did, so the empty case is a machine
+	// whose state file predates one being recorded rather than a machine with a
+	// NIC and no rules.
+	allowed := "none recorded"
+	if len(st.Allow) > 0 {
+		allowed = strings.Join(st.Allow, ", ")
+	}
+	return fmt.Errorf("sandbox %s has egress (allowed: %s), and a paused session with a NIC is "+
+		"one `kelyfos resume` refuses: the guest's address is inside its memory image and "+
+		"something else may hold it by the time it comes back (D22).\n"+
+		"    Nothing was stored and the sandbox is still running. Freeze it this way instead, "+
+		"which restores into a network of its own:\n"+
+		"      kelyfos snapshot save    -name %s   (the sandbox keeps running)\n"+
+		"      kelyfos snapshot restore -name %s",
+		st.ID, allowed, name, name)
 }
 
 // --- kelyfos sessions --------------------------------------------------------

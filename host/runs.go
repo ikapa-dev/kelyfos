@@ -147,9 +147,23 @@ func or(s, fallback string) string {
 	return s
 }
 
-// readRuns builds the index. One pass per session file, reading only the two
-// events that matter, so a long session with a hundred thousand events costs
-// the same as a short one.
+// readRuns builds the index. One pass per session file, and that pass parses
+// every event in the file: a listing costs what this machine has recorded, not
+// what it is about to print — `-n 20` trims the rows once they have all been
+// built.
+//
+// That is not an oversight and there is no early stop to be had, which is worth
+// saying plainly because this comment once claimed the opposite. A row's exit
+// status, reason and duration come from session.end — by construction the last
+// event a session ever writes — and its event count and its team size are facts
+// about the whole file, so no prefix of a record is enough to fill a row in.
+//
+// Memory is the one part that could be smaller: recorder.Read materialises a
+// session's events rather than handing them over one at a time, so the peak is
+// the longest single session. That is bounded per file and never the whole
+// directory, and shaving it would mean a second copy of the recorder's parsing
+// rules living up here to drift out of step with the first — a worse trade than
+// the allocation.
 func readRuns() ([]runRow, error) {
 	dir := recorder.SessionsDir(sandbox.Root())
 	entries, err := os.ReadDir(dir)

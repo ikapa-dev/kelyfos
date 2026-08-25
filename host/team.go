@@ -173,6 +173,58 @@ const (
 	ownerServeMCP = "serve-mcp"
 )
 
+// defaultAgentMemMiB is the RAM a member gets when its block names none. It is
+// the same number sandbox.New falls back to, restated here because the check
+// below has to compare a scratch cap against the machine that will exist rather
+// than against the zero that means "the file said nothing" — comparing against
+// that zero would refuse every scratch written by an agent with no `mem`.
+const defaultAgentMemMiB = 512
+
+// checkTeamScratch refuses a team in which any member's scratch cap is larger
+// than the RAM the tmpfs it sizes has to live in.
+//
+// `kelyfos run` and the E2B shim have always made this comparison before they
+// boot anything, and a team was the door that let an inert limit through: the
+// cap was accepted, handed to the machine, and could never be reached, which is
+// the outcome the refusal exists to prevent. A limits file whose limit does
+// nothing is worse than one with no limit in it, because the file says the
+// agent is bounded and nothing bounds it (docs/resources.md).
+//
+// It runs over the plan rather than at each boot so that the whole team is
+// refused before a single machine starts — the same reason a bad `-p` is
+// refused at the command line rather than after something is already running. A
+// spawn budget is checked with the agent that carries it for the same reason:
+// the budget is in the file, the file is being read now, and discovering it at
+// the moment an agent spawns a worker is discovering it too late.
+func checkTeamScratch(plan *teamPlan) error {
+	for _, a := range plan.agents {
+		if err := scratchWithinMem("agent "+a.name, a.res); err != nil {
+			return err
+		}
+		if a.spawn != nil {
+			if err := scratchWithinMem("the spawn budget of "+a.name, a.spawn.Resources); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// scratchWithinMem is the comparison itself, kept apart from the walk so the
+// rule can be checked without a team to run it against.
+func scratchWithinMem(who string, res config.AgentResources) error {
+	mem := res.MemMiB
+	if mem <= 0 {
+		mem = defaultAgentMemMiB
+	}
+	if res.ScratchByte <= 0 || res.ScratchByte <= int64(mem)<<20 {
+		return nil
+	}
+	return fmt.Errorf("scratch = %d bytes for %s is larger than the %d MiB that machine has\n"+
+		"    the scratch tmpfs lives in that memory, so a cap above it can never be reached",
+		res.ScratchByte, who, mem)
+}
+
 func raiseTeam(parent context.Context, opt teamOptions) (*teamRig, error) {
 	cfg, arch, timeout, out := opt.cfg, opt.arch, opt.timeout, opt.out
 	if cfg == nil || cfg.Team == nil {
@@ -184,6 +236,9 @@ func raiseTeam(parent context.Context, opt teamOptions) (*teamRig, error) {
 
 	plan, err := planTeam(cfg)
 	if err != nil {
+		return nil, err
+	}
+	if err := checkTeamScratch(plan); err != nil {
 		return nil, err
 	}
 	fmt.Fprintf(out, "team %s: %d agents, %d edges\n", plan.name, len(plan.agents), len(plan.edgeText))
@@ -605,6 +660,60 @@ func (r *agentRig) stop(timeout time.Duration, out io.Writer) error {
 	return err
 }
 
+// memberOptions is everything about a team member's machine that is the same
+// whether that machine cold-boots or is forked from a template: who it is,
+// whose record it writes into, what it may ask the broker, and the handler that
+// carries what its guest reports into that record.
+//
+// It is one function rather than a literal at each boot site because a forked
+// member quietly lost the last of those. bootAgent installed a guest-event
+// handler, forkAgent built its options without one, and the sandbox drops the
+// frame when the handler is nil — so a fork's OOM kills and plugin calls
+// reached nobody. Forking is reserved for agents with no egress, which makes
+// the members that lost them exactly the replica workers a `count` group
+// creates: the ones most likely to hit a memory cap and the ones whose absence
+// from the transcript is hardest to notice. A member is a member however its
+// machine started, and the way to keep that true is to build it once.
+func memberOptions(a plannedAgent, id, arch string, broker *team.Broker,
+	rec *recorder.Recorder) sandbox.Options {
+
+	return sandbox.Options{
+		ID: id, Arch: arch, Flavor: a.image, Agent: a.name, MaySpawn: a.spawn != nil,
+		// Everything this machine does is recorded in the team's chain, not its
+		// own — including the commands `kelyfos exec` runs against it, which is
+		// a different process and would otherwise open a different file (E2-7).
+		Session:   rec.Session(),
+		VcpuCount: a.res.CPUs, MemMiB: a.res.MemMiB, ScratchBytes: a.res.ScratchByte,
+		Quiet: true,
+		// The agent name comes from here and not from the frame the guest
+		// sends: a guest that could name itself could name someone else.
+		OnTeamRequest: func(req proto.TeamRequest) proto.TeamResponse {
+			return broker.Serve(a.name, req)
+		},
+		// An OOM kill inside a team member is the RAM cap being reached by one
+		// machine, and without this it would be the one thing that happened in
+		// the team nobody could see afterwards (E1-4).
+		OnGuestEvent: func(ev proto.GuestEvent) {
+			switch ev.Type {
+			case proto.GuestEventOOM:
+				_ = rec.Append(recorder.Event{
+					Type: recorder.TypeResourceOOM, Source: recorder.SourceGuest, Agent: a.name,
+					PID: ev.PID, Comm: ev.Comm, RSSKiB: ev.RSSKiB, MemMiB: a.res.MemMiB,
+				})
+				fmt.Fprintf(os.Stderr,
+					"\nkelyfos: %s ran out of memory and killed %s (pid %d, %s resident of a %d MiB machine)\n",
+					a.name, ev.Comm, ev.PID, report.HumanKiB(ev.RSSKiB), a.res.MemMiB)
+			case proto.GuestEventPluginCall, proto.GuestEventPluginCrash:
+				// Carries the agent, so a team's one transcript says which
+				// member's plugin did what (E2-7).
+				e := pluginEvent(ev)
+				e.Agent = a.name
+				_ = rec.Append(e)
+			}
+		},
+	}
+}
+
 // bootAgent brings up one member of a team: its own network, its own caps, its
 // own workspace, and a team channel wired to the shared broker.
 //
@@ -636,43 +745,13 @@ func bootAgent(ctx context.Context, a plannedAgent, broker *team.Broker, rec *re
 		}
 	}()
 
-	opts := sandbox.Options{
-		ID: id, Arch: arch, Flavor: a.image, Agent: a.name, MaySpawn: a.spawn != nil,
-		// Everything this machine does is recorded in the team's chain, not its
-		// own — including the commands `kelyfos exec` runs against it, which is
-		// a different process and would otherwise open a different file (E2-7).
-		Session:   rec.Session(),
-		VcpuCount: a.res.CPUs, MemMiB: a.res.MemMiB, ScratchBytes: a.res.ScratchByte,
-		IO: sandbox.IOLimits{NetMbpsRx: a.res.NetMbpsRx, NetMbpsTx: a.res.NetMbpsTx,
-			DiskIOPS: a.res.DiskIOPS, DiskMbps: a.res.DiskMbps},
-		Quiet: true,
-		// The agent name comes from here and not from the frame the guest
-		// sends: a guest that could name itself could name someone else.
-		OnTeamRequest: func(req proto.TeamRequest) proto.TeamResponse {
-			return broker.Serve(a.name, req)
-		},
-		// An OOM kill inside a team member is the RAM cap being reached by one
-		// machine, and without this it would be the one thing that happened in
-		// the team nobody could see afterwards (E1-4).
-		OnGuestEvent: func(ev proto.GuestEvent) {
-			switch ev.Type {
-			case proto.GuestEventOOM:
-				_ = rec.Append(recorder.Event{
-					Type: recorder.TypeResourceOOM, Source: recorder.SourceGuest, Agent: a.name,
-					PID: ev.PID, Comm: ev.Comm, RSSKiB: ev.RSSKiB, MemMiB: a.res.MemMiB,
-				})
-				fmt.Fprintf(os.Stderr,
-					"\nkelyfos: %s ran out of memory and killed %s (pid %d, %s resident of a %d MiB machine)\n",
-					a.name, ev.Comm, ev.PID, report.HumanKiB(ev.RSSKiB), a.res.MemMiB)
-			case proto.GuestEventPluginCall, proto.GuestEventPluginCrash:
-				// Carries the agent, so a team's one transcript says which
-				// member's plugin did what (E2-7).
-				e := pluginEvent(ev)
-				e.Agent = a.name
-				_ = rec.Append(e)
-			}
-		},
-	}
+	opts := memberOptions(a, id, arch, broker, rec)
+	// The I/O rates are the one thing a cold boot supplies that a fork does not:
+	// they are Firecracker rate limiters on the devices this machine is about to
+	// be given, and a restored machine already carries the ones its template was
+	// booted with.
+	opts.IO = sandbox.IOLimits{NetMbpsRx: a.res.NetMbpsRx, NetMbpsTx: a.res.NetMbpsTx,
+		DiskIOPS: a.res.DiskIOPS, DiskMbps: a.res.DiskMbps}
 
 	// The CPU quota is a host-side cap on the VMM process, exactly as a single
 	// run applies it (E1-2, F-D11) — but inside the team's slice, so the two
@@ -881,15 +960,11 @@ func forkAgent(ctx context.Context, a plannedAgent, snapDir string, broker *team
 			rig.slice.Close()
 		}
 	}()
-	opts := sandbox.Options{
-		ID: id, Arch: arch, Flavor: a.image, Agent: a.name, Session: rec.Session(),
-		MaySpawn:  a.spawn != nil,
-		VcpuCount: a.res.CPUs, MemMiB: a.res.MemMiB, ScratchBytes: a.res.ScratchByte,
-		Quiet: true,
-		OnTeamRequest: func(req proto.TeamRequest) proto.TeamResponse {
-			return broker.Serve(a.name, req)
-		},
-	}
+	// The same options a cold-booted member gets, including the guest-event
+	// handler: a restored machine binds its events channel exactly as a fresh
+	// one does, so a fork whose handler was missing was a machine reporting its
+	// OOM kills to a host that threw them away.
+	opts := memberOptions(a, id, arch, broker, rec)
 	// Inside the team's slice, exactly as a cold-booted agent is. A fork that
 	// created its own top-level cgroup would be capped individually and bounded
 	// by nothing — the collective cap would hold a tree with nobody in it, and

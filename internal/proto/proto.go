@@ -53,12 +53,33 @@ const (
 // frame there would refuse messages the tools above it promise to carry, and
 // the promise or the limit would have to be the thing that gives.
 //
-// Sixteen leaves room for JSON escaping around eight, and still bounds it,
-// because this channel crosses the wall and the far side is not trusted to be
-// reasonable about how much it sends. Every MCP reader and writer on both sides
-// uses this one constant, so there is one answer to "how big can a message be"
-// rather than one per file, and no writer can send what the reader opposite it
-// will refuse (docs/protocol.md §3).
+// Sixteen was chosen to leave room for JSON escaping around eight, and that
+// arithmetic no longer holds. Since the structuredContent rule of E4-8, a
+// read_file result carries the file twice: once in the text block and once as
+// `content`, because a client is entitled to prefer either (supervisor/tools.go).
+// A file at the 8 MiB cap is therefore 16,777,216 bytes of payload — this
+// constant exactly — before the JSON around it and before a single escape. The
+// size that first fails cannot be written down as one number, because it
+// depends on what escaping that particular text costs: a newline is two bytes
+// escaped, and a control character — or a <, > or &, which encoding/json
+// escapes too — is six.
+//
+// That is answered where the frame is written rather than by raising this
+// number, because the number is what bounds an untrusted far side: this channel
+// crosses the wall, and the far side is not trusted to be reasonable about how
+// much it sends. The guest's MCP session treats ErrLineTooLong as the one send
+// failure that is not a dead connection — Write below marshals and measures
+// before it writes anything, so none of the refused frame reached the wire and
+// the stream is still on a frame boundary — and answers the same request in its
+// place with a bounded refusal naming the size of the answer and this limit: a
+// tool error for a tools/call, a JSON-RPC error for anything else
+// (supervisor/mcp.go). What the caller does not get is the guest naming its own
+// 8 MiB per-call limit, which a file at or under the cap never reaches.
+//
+// What does still hold is the part framing depends on: every MCP reader and
+// writer on both sides uses this one constant, so there is one answer to "how
+// big can a message be" rather than one per file, and no writer can send what
+// the reader opposite it will refuse (docs/protocol.md §3).
 const MaxMCPLine = 16 << 20
 
 // ErrLineTooLong is returned when a peer sends a frame beyond MaxLine.

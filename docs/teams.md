@@ -682,12 +682,14 @@ back, a refusal is flagged and still drawn, because what was attempted is the
 part worth seeing. Store accesses sit inline in the lane of the agent that made
 them; commands, files, egress attempts, OOM kills and each member's usage
 receipt sit in that member's lane. Events that belong to the team rather than to
-any member span every lane. One gap, named here rather than left to be
-discovered: a forked member is booted without the guest-event handler a
-cold-booted one gets, so its OOM kills and its plugin calls are in no lane and
-in no chain, and a no-egress `count` group with a cached template is precisely
-what forks (§7). That export carries the team's record inside it, so whoever
-receives it runs `kelyfos verify team.html` and checks the whole team's chain
+any member span every lane. A forked member's lane is as complete as a
+cold-booted one's: both machines get their options from one function in the
+host, so a fork carries the same guest-event handler and its OOM kills and its
+plugin calls reach the same chain. Before v1.0 the fork path built its options
+without that handler and the host dropped what those machines reported, which
+put the replicas of a no-egress `count` group — precisely what forks (§7) — in
+no lane and in no chain. That export carries the team's record inside it, so
+whoever receives it runs `kelyfos verify team.html` and checks the whole team's chain
 without asking you for anything.
 
 While the team is up, `kelyfos log --session <agent's sandbox id>` redirects to
