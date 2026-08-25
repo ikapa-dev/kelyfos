@@ -77,6 +77,17 @@ jobs:
       - name: Stage the artifacts
         run: make release-artifacts ARCH=${{ matrix.arch }} FLAVOR=${{ matrix.flavor }}
 
+      # Here rather than in the publish job, because the SBOM's largest half
+      # comes from the Buildroot tree and that tree only exists on this runner.
+      # The CLI for this architecture is built first for the same reason: the
+      # merge reads the binary's own build information rather than go.mod, which
+      # is the difference between what was built and what was declared.
+      - name: The SBOM for this architecture
+        run: |
+          make release-cli
+          make release-sbom ARCH=${{ matrix.arch }} FLAVOR=${{ matrix.flavor }}
+          rm -f dist/kelyfos-linux-*   # the publish job builds the pair it ships
+
       - name: Save the Buildroot tree
         if: always() && steps.tree.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
@@ -119,8 +130,9 @@ jobs:
       - name: Cross-build both CLIs
         run: make release-cli
 
-      # From scratch, over exactly what is staged. Both targets above used to
-      # append to this file and nothing truncated it (P6-8).
+      # From scratch, over exactly what is staged — which now includes both
+      # SBOMs, so they are covered by the file a stranger verifies against
+      # rather than published beside it (P6-10).
       - name: Write SHA256SUMS
         run: make release-sums
 

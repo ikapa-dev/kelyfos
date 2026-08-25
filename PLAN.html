@@ -180,7 +180,7 @@
     <span class="bl-name">Overall</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">P6-6 done &mdash; the export carries the record it was rendered from and <code>kelyfos verify</code> re-runs the chain over it offline. <b>An external security audit then arrived (D45) and v1.0 is gated on its trust-boundary group</b>: the workspace block device is a guest&rarr;host surface the threat model does not list. Seven tasks inserted before P6-7. <b>P6-21 done</b> &mdash; <code>--review</code> no longer destroys an edit made while somebody was reading it. <b>P6-6 corrected</b>: its own adversarial review landed late and found a false claim about truncation and an unchecked chain head, both reproduced and both fixed. <b>P6-22 done</b> &mdash; nine fixture groups, twenty-one recorded breaks, a ledger that can only shrink, and a CI job that runs the lot. <b>D46</b> triaged seven findings against HEAD and corrected two. <b>P6-24 done &mdash; the v1.0 gate is open.</b> C-1, H-1 and H-2 are closed in two layers, the workspace block device is in the trust-boundary table, and the full acceptance suite passes on the final code. P6-23 stands at 11/23, blocked on the audit text for the rest (D47). <b>P6-25 done</b> &mdash; the blocking set is closed and the hostile ledger is down to one line, which is a recorded decision rather than a defect. <b>P6-26 done. The audit&rsquo;s v1.0-blocking set is closed</b> &mdash; boundary group, clamps and both claims &mdash; and the hostile ledger is one line, which is a recorded decision. P6-23 and P6-27 are blocked on the audit text for the remaining twelve findings (D47). <b>P6-7 done</b> &mdash; signed exports with a key the reader anchors, and a vocabulary rather than a badge. <b>P6-8 done</b> &mdash; the release is a workflow, the sums file is written from scratch and checked both ways, and the flavor is in the cache key. <b>P6-9 done</b> &mdash; and measured: two full builds from nothing produce byte-identical artifacts on this machine, which is more than D38 expected. Next: <b>P6-10</b>, the SBOM</b></div>
+  <div class="focusline">Current focus: <b id="focus">P6-6 done &mdash; the export carries the record it was rendered from and <code>kelyfos verify</code> re-runs the chain over it offline. <b>An external security audit then arrived (D45) and v1.0 is gated on its trust-boundary group</b>: the workspace block device is a guest&rarr;host surface the threat model does not list. Seven tasks inserted before P6-7. <b>P6-21 done</b> &mdash; <code>--review</code> no longer destroys an edit made while somebody was reading it. <b>P6-6 corrected</b>: its own adversarial review landed late and found a false claim about truncation and an unchecked chain head, both reproduced and both fixed. <b>P6-22 done</b> &mdash; nine fixture groups, twenty-one recorded breaks, a ledger that can only shrink, and a CI job that runs the lot. <b>D46</b> triaged seven findings against HEAD and corrected two. <b>P6-24 done &mdash; the v1.0 gate is open.</b> C-1, H-1 and H-2 are closed in two layers, the workspace block device is in the trust-boundary table, and the full acceptance suite passes on the final code. P6-23 stands at 11/23, blocked on the audit text for the rest (D47). <b>P6-25 done</b> &mdash; the blocking set is closed and the hostile ledger is down to one line, which is a recorded decision rather than a defect. <b>P6-26 done. The audit&rsquo;s v1.0-blocking set is closed</b> &mdash; boundary group, clamps and both claims &mdash; and the hostile ledger is one line, which is a recorded decision. P6-23 and P6-27 are blocked on the audit text for the remaining twelve findings (D47). <b>P6-7 done</b> &mdash; signed exports with a key the reader anchors, and a vocabulary rather than a badge. <b>P6-8 done</b> &mdash; the release is a workflow, the sums file is written from scratch and checked both ways, and the flavor is in the cache key. <b>P6-9 done</b> &mdash; and measured: two full builds from nothing produce byte-identical artifacts on this machine, which is more than D38 expected. <b>P6-10 done</b> &mdash; 64 components across three sources, including the one Buildroot has never heard of. Next: <b>P6-11</b>, attested release artifacts</b></div>
 </div>
 
 <!-- ====================================================== 1. END GOAL -->
@@ -1011,7 +1011,7 @@
         &ldquo;the CLI is, the rootfs is not, here is the run that shows it&rdquo; is worth more than one that says
         &ldquo;reproducible&rdquo;</b>, and it is the only one this project is entitled to.</span></li>
 
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">P6-10</span><span class="tk"><b>An SBOM per release, covering the whole image rather
         than the convenient half.</b> The pinned Buildroot already ships a CycloneDX generator, and the stripped CLI
         still carries complete Go module build information, so both halves have tooling. The gap is the seam: the
@@ -3142,6 +3142,37 @@ after:
         <code>PRETTY_NAME="KelyfOS (dev)"</code>, <code>VERSION="v0.9-33-g5d623a4-dirty"</code><br>
         <code>gofmt</code>, <code>vet</code>, 14 packages, <code>make docs</code> clean; both new workflows
         parse</td></tr>
+        <tr><td class="mono">2026-08-25</td><td class="mono">P6-10</td>
+        <td><b>An SBOM per architecture, covering the seam rather than the convenient half.</b> Three sources
+        merged: Buildroot&rsquo;s packages, the guest supervisor and the host CLI. The seam is the whole point
+        &mdash; the supervisor is PID 1, cross-compiled by this project&rsquo;s own toolchain and arriving through
+        the rootfs overlay rather than as a Buildroot package, so <b>Buildroot has never heard of it</b> and a
+        Buildroot-only inventory would omit the one component KelyfOS actually wrote.
+        <b>The Go halves are read from the binaries, not from <code>go.mod</code>.</b>
+        <code>debug/buildinfo</code> survives the <code>-s -w</code> these binaries are stripped with &mdash; those
+        flags drop symbols and DWARF, not build information &mdash; so the dependency list is the linker&rsquo;s
+        answer rather than the manifest&rsquo;s, which is the difference between what was built and what was
+        declared. The toolchain is a component too: a guest userland whose compiler is missing from the inventory
+        has a hole exactly where a supply-chain question gets asked.
+        <b>The count is emitted from the document rather than transcribed</b>, as the task asked, because a total
+        written into a release note by hand is a total that is right once. And it is <b>covered by
+        <code>SHA256SUMS</code></b> rather than published beside it, which P6-8&rsquo;s from-scratch regeneration
+        makes automatic.
+        <b>The premise was checked before it was built on.</b> The task says the pinned Buildroot ships a CycloneDX
+        generator; grepping its Makefile finds nothing, because it is <code>utils/generate-cyclonedx</code>,
+        invoked as <code>make show-info | utils/generate-cyclonedx</code> and documented only in the manual. It is
+        there. The premise was right and the way to find it was not the obvious one.</td>
+        <td class="mono">run end to end on aarch64: <b>49 Buildroot components + 3 from the supervisor + 19 from
+        the CLI, deduplicated to 64</b>, with <code>busybox</code>, <code>linux</code>,
+        <code>KelyfOS/supervisor</code> and <code>KelyfOS/host</code> all present &mdash; asserted by name rather
+        than counted<br>
+        <code>make release-sums</code> then lists <code>sbom-aarch64.cdx.json</code> beside the binaries, so the
+        file a stranger verifies against covers it<br>
+        one defect found by running it: <code>make show-info</code> prefixes its own directory chatter, and the
+        generator parses the whole stream as JSON &mdash; the target filters from the first <code>{</code>, and
+        the comment says why<br>
+        <code>gofmt</code>, <code>vet</code>, 14 packages, <code>make docs</code> clean; the release workflow
+        parses and builds the SBOM in the image job, because the Buildroot tree only exists on that runner</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>

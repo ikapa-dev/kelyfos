@@ -86,7 +86,7 @@ KERNEL_ARTIFACT := vmlinux
 endif
 
 .DEFAULT_GOAL := help
-.PHONY: help versions toolchain kernel supervisor cli image run bench docs cookbook vuln fuzz release-sums prove-caps prove-team demo-team accept-e2 clean test test-integration linux-only fetch-kernel
+.PHONY: help versions toolchain kernel supervisor cli image run bench docs cookbook vuln fuzz release-sums release-sbom prove-caps prove-team demo-team accept-e2 clean test test-integration linux-only fetch-kernel
 
 help: ## Show this target list
 	@echo "KelyfOS — targets (ARCH=$(ARCH), FLAVOR=$(FLAVOR))"
@@ -215,6 +215,31 @@ release-cli: ## Cross-build static kelyfos binaries for both arches into dist/
 	    -o $(CURDIR)/dist/kelyfos-linux-$$uarch ./host || exit 1; \
 	  echo "built dist/kelyfos-linux-$$uarch"; \
 	done
+
+# One SBOM per architecture, covering all three places an image comes from
+# (P6-10).
+#
+# Buildroot knows about its own packages and nothing else. The guest supervisor
+# is cross-compiled by this project's toolchain and arrives through the rootfs
+# overlay, so a Buildroot-only inventory omits the one component KelyfOS
+# actually wrote — and an SBOM that is confidently incomplete is the
+# supply-chain form of an audit record that is confidently wrong.
+#
+# `make show-info` is filtered from the first `{` because make prefixes its own
+# chatter and the generator parses the whole stream as JSON. Found by running
+# it.
+release-sbom: ## Merge Buildroot + both Go binaries into dist/sbom-$(ARCH).cdx.json
+	@mkdir -p $(CURDIR)/dist
+	@$(MAKE) -s --no-print-directory -C $(BR_SRC) O=$(BUILD_DIR) \
+	  BR2_EXTERNAL=$(BR_EXTERNAL) show-info 2>/dev/null \
+	  | sed -n '/^{/,$$p' > $(BUILD_DIR)/show-info.json
+	@python3 $(BR_SRC)/utils/generate-cyclonedx \
+	  < $(BUILD_DIR)/show-info.json > $(BUILD_DIR)/sbom-buildroot.json
+	@go run $(CURDIR)/tools/sbom -arch $(ARCH) -version $(KELYFOS_VERSION) \
+	  -buildroot $(BUILD_DIR)/sbom-buildroot.json \
+	  -binary $(GUEST_OVERLAY)/sbin/kelyfos-supervisor \
+	  -binary $(CURDIR)/dist/kelyfos-linux-$(ARCH) \
+	  -out $(CURDIR)/dist/sbom-$(ARCH).cdx.json
 
 # The sums file, written from scratch over whatever is in dist/ (P6-8).
 #

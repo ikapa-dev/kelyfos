@@ -5169,7 +5169,24 @@ build path. That last is the scope, and the scope is part of the answer — one
 machine, one architecture, two builds. It is not a claim that anybody else's
 machine produces these bytes.
 
-**The supply chain.** Signed images and an SBOM are P4-3
+**An SBOM ships with every release**, one per architecture, covering all three
+places an image comes from: Buildroot's packages, the guest supervisor, and the
+host CLI. That third-and-second matter more than the count does. The supervisor
+is PID 1 and it is cross-compiled by this project's own toolchain, arriving
+through the rootfs overlay rather than as a Buildroot package — so **Buildroot
+has never heard of it**, and an inventory from that source alone would omit the
+one component KelyfOS actually wrote. An SBOM that is confidently incomplete is
+the supply-chain form of an audit record that is confidently wrong.
+
+The Go halves are read with `debug/buildinfo`, which survives the `-s -w` these
+binaries are stripped with: those flags drop symbols and DWARF, not the build
+information. So the dependency list is the linker's answer rather than
+`go.mod`'s — what was built, not what was declared. The component count is
+printed from the document that was produced rather than transcribed into a
+release note, because a total written down by hand is a total that is right
+once. It is covered by `SHA256SUMS` rather than published beside it.
+
+**The supply chain.** Signed images are P4-3
 and are not in this phase. A hardened runtime built from an unverified toolchain
 is a locked door in a wall nobody measured.
 
