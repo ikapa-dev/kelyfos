@@ -180,7 +180,7 @@
     <span class="bl-name">Overall</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">P6-6 done &mdash; the export carries the record it was rendered from and <code>kelyfos verify</code> re-runs the chain over it offline. <b>An external security audit then arrived (D45) and v1.0 is gated on its trust-boundary group</b>: the workspace block device is a guest&rarr;host surface the threat model does not list. Seven tasks inserted before P6-7. <b>P6-21 done</b> &mdash; <code>--review</code> no longer destroys an edit made while somebody was reading it. <b>P6-6 corrected</b>: its own adversarial review landed late and found a false claim about truncation and an unchecked chain head, both reproduced and both fixed. <b>P6-22 done</b> &mdash; nine fixture groups, twenty-one recorded breaks, a ledger that can only shrink, and a CI job that runs the lot. <b>D46</b> triaged seven findings against HEAD and corrected two. <b>P6-24 done &mdash; the v1.0 gate is open.</b> C-1, H-1 and H-2 are closed in two layers, the workspace block device is in the trust-boundary table, and the full acceptance suite passes on the final code. P6-23 stands at 11/23, blocked on the audit text for the rest (D47). <b>P6-25 done</b> &mdash; the blocking set is closed and the hostile ledger is down to one line, which is a recorded decision rather than a defect. <b>P6-26 done.</b> Next: <b>P6-27</b>, the long tail &mdash; most of which is blocked on the audit text (D47)</b></div>
+  <div class="focusline">Current focus: <b id="focus">P6-6 done &mdash; the export carries the record it was rendered from and <code>kelyfos verify</code> re-runs the chain over it offline. <b>An external security audit then arrived (D45) and v1.0 is gated on its trust-boundary group</b>: the workspace block device is a guest&rarr;host surface the threat model does not list. Seven tasks inserted before P6-7. <b>P6-21 done</b> &mdash; <code>--review</code> no longer destroys an edit made while somebody was reading it. <b>P6-6 corrected</b>: its own adversarial review landed late and found a false claim about truncation and an unchecked chain head, both reproduced and both fixed. <b>P6-22 done</b> &mdash; nine fixture groups, twenty-one recorded breaks, a ledger that can only shrink, and a CI job that runs the lot. <b>D46</b> triaged seven findings against HEAD and corrected two. <b>P6-24 done &mdash; the v1.0 gate is open.</b> C-1, H-1 and H-2 are closed in two layers, the workspace block device is in the trust-boundary table, and the full acceptance suite passes on the final code. P6-23 stands at 11/23, blocked on the audit text for the rest (D47). <b>P6-25 done</b> &mdash; the blocking set is closed and the hostile ledger is down to one line, which is a recorded decision rather than a defect. <b>P6-26 done. The audit&rsquo;s v1.0-blocking set is closed</b> &mdash; boundary group, clamps and both claims &mdash; and the hostile ledger is one line, which is a recorded decision. P6-23 and P6-27 are blocked on the audit text for the remaining twelve findings (D47). Next: <b>P6-7</b>, signed exports</b></div>
 </div>
 
 <!-- ====================================================== 1. END GOAL -->
@@ -961,7 +961,16 @@
         report lists are corrected in P6-1&rsquo;s spirit &mdash; <b>including the README&rsquo;s &ldquo;Both
         layers exist now&rdquo;, which is untrue of the host-side workspace path until C-1 is closed</b>. Each
         correction lands with the fix underneath it and not before it, because a document that claims a fix which
-        is not in yet is the exact defect P6-1 spent a commit removing.</span></li>
+        is not in yet is the exact defect P6-1 spent a commit removing.
+        <b class="blocked">[BLOCKED 2026-08-25 &mdash; needs John: the same audit text P6-23 is waiting on.]</b>
+        <b>The half that could be done is done</b>, because it was tied to fixes that landed: every documentation
+        correction rode the commit that made it true &mdash; the README&rsquo;s &ldquo;Both layers exist now&rdquo;
+        and the trust-boundary table with P6-24, <code>docs/teams.md</code>&rsquo;s store bounds and
+        <code>docs/e2b-shim.md</code>&rsquo;s token and ceiling with P6-25, <code>docs/resources.md</code> on
+        <code>fork</code> and agent names with P6-26. What remains is M-1, M-4, M-6, M-7, M-8, every
+        <code>L-*</code> and D-1, which are known here only as identifiers, plus whatever overstatements the
+        report&rsquo;s own list names that these fixes did not already reach. Neither can be worked from an
+        identifier, and guessing at a plausible defect to match one is the failure D47 refused.</span></li>
 
     <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">P6-7</span><span class="tk"><b>Signed exports &mdash; with a key the reader can
