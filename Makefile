@@ -78,7 +78,7 @@ KERNEL_ARTIFACT := vmlinux
 endif
 
 .DEFAULT_GOAL := help
-.PHONY: help versions toolchain kernel supervisor cli image run bench docs cookbook vuln fuzz prove-caps prove-team demo-team accept-e2 clean test test-integration linux-only fetch-kernel
+.PHONY: help versions toolchain kernel supervisor cli image run bench docs cookbook vuln fuzz release-sums prove-caps prove-team demo-team accept-e2 clean test test-integration linux-only fetch-kernel
 
 help: ## Show this target list
 	@echo "KelyfOS — targets (ARCH=$(ARCH), FLAVOR=$(FLAVOR))"
@@ -182,7 +182,6 @@ release-artifacts: ## Stage $(IMAGE_DIR) artifacts + SHA256SUMS into dist/
 	@gzip -9 -c $(IMAGE_DIR)/$(KERNEL_ARTIFACT) > $(CURDIR)/dist/$(KERNEL_ARTIFACT)-$(ARCH).gz
 	@gzip -9 -c $(IMAGE_DIR)/rootfs.ext4        > $(CURDIR)/dist/rootfs-$(ARCH).ext4.gz
 	@cp -f $(IMAGE_DIR)/image.json $(CURDIR)/dist/image-$(ARCH).json
-	@cd $(CURDIR)/dist && sha256sum $(KERNEL_ARTIFACT)-$(ARCH).gz rootfs-$(ARCH).ext4.gz image-$(ARCH).json >> SHA256SUMS
 	@cd $(CURDIR)/dist && ls -la $(KERNEL_ARTIFACT)-$(ARCH).gz rootfs-$(ARCH).ext4.gz
 
 # Static CLI binaries for the release (D20). CGO is already off, so these run
@@ -196,9 +195,26 @@ release-cli: ## Cross-build static kelyfos binaries for both arches into dist/
 	    -ldflags="-s -w -X main.Version=$(KELYFOS_VERSION) \
 	                -X main.FirecrackerVersion=$(FIRECRACKER_VERSION)" \
 	    -o $(CURDIR)/dist/kelyfos-linux-$$uarch ./host || exit 1; \
-	  ( cd $(CURDIR)/dist && sha256sum kelyfos-linux-$$uarch >> SHA256SUMS ); \
 	  echo "built dist/kelyfos-linux-$$uarch"; \
 	done
+
+# The sums file, written from scratch over whatever is in dist/ (P6-8).
+#
+# It used to be appended to by both targets above and truncated by nothing, so a
+# second run of either doubled its entries and a release cut twice carried a file
+# that listed every artifact more than once. Nothing verified it against the
+# directory it described, so a stale line — an artifact renamed, an architecture
+# dropped — survived every release after the one that produced it.
+#
+# Computed here instead, once, at the end, over exactly what is there. `sort`
+# because a sums file whose order depends on the order two targets happened to
+# run in is a file that differs between two identical releases.
+release-sums: ## Write dist/SHA256SUMS from scratch over everything staged
+	@cd $(CURDIR)/dist && rm -f SHA256SUMS && \
+	  find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%P\n' | sort | \
+	  xargs sha256sum > SHA256SUMS
+	@echo "dist/SHA256SUMS covers $$(wc -l < $(CURDIR)/dist/SHA256SUMS) artifacts:"
+	@cat $(CURDIR)/dist/SHA256SUMS
 
 cli: linux-only ## Build the kelyfos host CLI into bin/
 	@mkdir -p $(OUT_DIR)

@@ -136,12 +136,17 @@ are on Lima, WSL2, bare Linux or macOS.
 
 ### Building it yourself
 
-The downloads above are built from this source at the release tag. They are
-**not** bit-for-bit what your own `make image` produces: the build is not
-reproducible yet, the two architectures of v0.9 were built on two different
-machines, and CI's per-commit build is the `base` flavor while the download is
-`dev`. Making that claim true is measured rather than asserted — see
-[`PLAN.html`](PLAN.html) P6-9. Building it yourself takes about thirty-five
+The downloads above are built from this source at the release tag, by
+[`.github/workflows/release.yml`](.github/workflows/release.yml) — both
+architectures in one workflow run, from the tag's own commit, with `SHA256SUMS`
+regenerated from scratch over exactly the files attached. Releases up to and
+including v0.9 were assembled by hand from a laptop, and it showed: v0.9's two
+architectures were built on two different machines, one of them a developer's.
+
+They are still **not** bit-for-bit what your own `make image` produces: the build
+is not reproducible yet, and that claim is measured rather than asserted — see
+[`PLAN.html`](PLAN.html) P6-9. Being built by CI is what makes the question worth
+asking; it is not the answer to it. Building it yourself takes about thirty-five
 minutes, because it compiles a cross toolchain, a kernel and a userland:
 
 ```sh

@@ -180,7 +180,7 @@
     <span class="bl-name">Overall</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">P6-6 done &mdash; the export carries the record it was rendered from and <code>kelyfos verify</code> re-runs the chain over it offline. <b>An external security audit then arrived (D45) and v1.0 is gated on its trust-boundary group</b>: the workspace block device is a guest&rarr;host surface the threat model does not list. Seven tasks inserted before P6-7. <b>P6-21 done</b> &mdash; <code>--review</code> no longer destroys an edit made while somebody was reading it. <b>P6-6 corrected</b>: its own adversarial review landed late and found a false claim about truncation and an unchecked chain head, both reproduced and both fixed. <b>P6-22 done</b> &mdash; nine fixture groups, twenty-one recorded breaks, a ledger that can only shrink, and a CI job that runs the lot. <b>D46</b> triaged seven findings against HEAD and corrected two. <b>P6-24 done &mdash; the v1.0 gate is open.</b> C-1, H-1 and H-2 are closed in two layers, the workspace block device is in the trust-boundary table, and the full acceptance suite passes on the final code. P6-23 stands at 11/23, blocked on the audit text for the rest (D47). <b>P6-25 done</b> &mdash; the blocking set is closed and the hostile ledger is down to one line, which is a recorded decision rather than a defect. <b>P6-26 done. The audit&rsquo;s v1.0-blocking set is closed</b> &mdash; boundary group, clamps and both claims &mdash; and the hostile ledger is one line, which is a recorded decision. P6-23 and P6-27 are blocked on the audit text for the remaining twelve findings (D47). <b>P6-7 done</b> &mdash; signed exports with a key the reader anchors, and a vocabulary rather than a badge. Next: <b>P6-8</b>, the release built by CI</b></div>
+  <div class="focusline">Current focus: <b id="focus">P6-6 done &mdash; the export carries the record it was rendered from and <code>kelyfos verify</code> re-runs the chain over it offline. <b>An external security audit then arrived (D45) and v1.0 is gated on its trust-boundary group</b>: the workspace block device is a guest&rarr;host surface the threat model does not list. Seven tasks inserted before P6-7. <b>P6-21 done</b> &mdash; <code>--review</code> no longer destroys an edit made while somebody was reading it. <b>P6-6 corrected</b>: its own adversarial review landed late and found a false claim about truncation and an unchecked chain head, both reproduced and both fixed. <b>P6-22 done</b> &mdash; nine fixture groups, twenty-one recorded breaks, a ledger that can only shrink, and a CI job that runs the lot. <b>D46</b> triaged seven findings against HEAD and corrected two. <b>P6-24 done &mdash; the v1.0 gate is open.</b> C-1, H-1 and H-2 are closed in two layers, the workspace block device is in the trust-boundary table, and the full acceptance suite passes on the final code. P6-23 stands at 11/23, blocked on the audit text for the rest (D47). <b>P6-25 done</b> &mdash; the blocking set is closed and the hostile ledger is down to one line, which is a recorded decision rather than a defect. <b>P6-26 done. The audit&rsquo;s v1.0-blocking set is closed</b> &mdash; boundary group, clamps and both claims &mdash; and the hostile ledger is one line, which is a recorded decision. P6-23 and P6-27 are blocked on the audit text for the remaining twelve findings (D47). <b>P6-7 done</b> &mdash; signed exports with a key the reader anchors, and a vocabulary rather than a badge. <b>P6-8 done</b> &mdash; the release is a workflow, the sums file is written from scratch and checked both ways, and the flavor is in the cache key. Next: <b>P6-9</b>, determinism configured and reproducibility measured</b></div>
 </div>
 
 <!-- ====================================================== 1. END GOAL -->
@@ -985,7 +985,7 @@
         plus a digest of the embedded events, so a re-export of the same session does not change the
         signature.</span></li>
 
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">P6-8</span><span class="tk"><b>The release, built and published by CI rather than by a
         laptop.</b> There is no release workflow. Every release this project has cut was assembled by hand, and the
         v0.9 artifacts prove it: the two architectures were built on two different machines, one of them the
@@ -3071,6 +3071,41 @@ after:
         usage, because Go&rsquo;s flag package stops at the first positional &mdash; and that is the order a person
         types, since the file is what the command is about. Flags are taken on either side of the path now<br>
         <code>gofmt</code>, <code>vet</code>, 14 packages, the hostile corpus, <code>make docs</code> clean</td></tr>
+        <tr><td class="mono">2026-08-25</td><td class="mono">P6-8</td>
+        <td><b>The release is built by CI, and the two cheap fixes it needed rode with it.</b>
+        <code>.github/workflows/release.yml</code>: both architectures built from the tag&rsquo;s own commit in one
+        run, both CLIs cross-built, <code>dist/</code> staged, sums regenerated, a release drafted. Nothing above
+        the weakest provenance claim was reachable while a laptop was assembling this &mdash; an attestation over
+        bytes a laptop produced attests to the laptop &mdash; which is why the task comes before P6-11 rather than
+        with it.
+        <b>Drafted, never published outright.</b> The last step before a stranger downloads anything is a person
+        looking at it, and a workflow that published on a tag would take that person out of a loop they are the
+        point of.
+        <b><code>SHA256SUMS</code> was appended to by two targets and truncated by nothing.</b> A release cut twice
+        carried a file listing every artifact more than once, and nothing checked the file against the directory it
+        described, so a stale line outlived the release that produced it. There is a <code>release-sums</code>
+        target now: written from scratch, over exactly what is staged, sorted so two identical releases produce an
+        identical file. And the workflow <b>checks it both ways</b> &mdash; every listed file present, every present
+        file listed &mdash; because the two halves come from different jobs and a sums file that disagrees with its
+        own directory cannot be used for the one thing it exists for.
+        <b>The cache key hardcoded the <code>base</code> flavor while the build directory is per-flavor</b>, so
+        every release-flavor build ran cold at about forty minutes. The key and the path carry the flavor now, in
+        CI as well as here.
+        <b>What this is not</b> is a provenance claim. It is the thing that makes one possible, and P6-11 is where
+        the claim gets made. The README says that in those words rather than letting &ldquo;built by CI&rdquo; do
+        work it cannot do.</td>
+        <td class="mono">both workflow files parse as YAML; the release job graph is <code>images</code> &rarr;
+        <code>publish</code><br>
+        <code>make release-sums</code> run twice on a staged directory produces the same two lines rather than
+        four &mdash; which is the defect, in one command<br>
+        the consistency check exercised against both failures it exists for: an artifact present and unlisted, and
+        an artifact listed and absent. Both refused<br>
+        <b><code>workflow_dispatch</code> so the whole path can be rehearsed without cutting a tag</b> — it builds,
+        stages, checks and stops, because a dispatch has no tag to publish against and inventing one would make
+        the rehearsal a different thing from the performance. <b>The dispatch has not been run: it needs two
+        180-minute image builds on a runner, and P6-18 is where that time is budgeted.</b> What is verified here is
+        everything that does not need one<br>
+        <code>gofmt</code>, <code>vet</code>, 14 packages, <code>make docs</code> clean</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>

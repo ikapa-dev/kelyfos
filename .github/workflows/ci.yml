@@ -264,9 +264,9 @@ jobs:
         if: github.event_name != 'schedule'
         uses: actions/cache/restore@v4
         with:
-          path: ~/.cache/kelyfos/build/${{ matrix.arch }}-base
-          key: kelyfos-tree-${{ matrix.arch }}-${{ hashFiles('versions.mk', 'image/buildroot/configs/*', 'image/buildroot/kernel/*') }}
-          restore-keys: kelyfos-tree-${{ matrix.arch }}-
+          path: ~/.cache/kelyfos/build/${{ matrix.arch }}-${{ matrix.flavor || 'base' }}
+          key: kelyfos-tree-${{ matrix.arch }}-${{ matrix.flavor || 'base' }}-${{ hashFiles('versions.mk', 'image/buildroot/configs/*', 'image/buildroot/kernel/*') }}
+          restore-keys: kelyfos-tree-${{ matrix.arch }}-${{ matrix.flavor || 'base' }}-
 
       # Deliberately no restore-keys: Buildroot's own documentation makes
       # purging the compiler cache the user's job when the compiler changes, and
@@ -291,7 +291,7 @@ jobs:
       - name: Compiler cache statistics
         if: always()
         run: |
-          ccache=~/.cache/kelyfos/build/${{ matrix.arch }}-base/host/bin/ccache
+          ccache=~/.cache/kelyfos/build/${{ matrix.arch }}-${{ matrix.flavor || 'base' }}/host/bin/ccache
           if [ -x "$ccache" ]; then
             "$ccache" --show-stats --verbose || "$ccache" -s
           else
@@ -305,7 +305,7 @@ jobs:
         if: always() && github.event_name != 'schedule' && steps.tree.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
-          path: ~/.cache/kelyfos/build/${{ matrix.arch }}-base
+          path: ~/.cache/kelyfos/build/${{ matrix.arch }}-${{ matrix.flavor || 'base' }}
           key: ${{ steps.tree.outputs.cache-primary-key }}
 
       - name: Save the downloads
