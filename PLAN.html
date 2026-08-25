@@ -1136,6 +1136,35 @@
         other two, where the cap it creates is inert. Each one is a defect the documents were right about, which
         is the useful half of an audit that reads them against the code.</span></li>
 
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P6-29</span><span class="tk"><b>The DCO, gated where it can be true.</b> D56.
+        <code>CONTRIBUTING.md</code> has required a <code>Signed-off-by</code> since v0.1 and not one commit in
+        this repository carries one, which makes the requirement a claim the project fails on every push. History
+        cannot be rewritten and rewriting it would be worse than the gap. So: a CI check that requires the
+        trailer on <b>new</b> commits, and one honest line in <code>CONTRIBUTING.md</code> saying pre-v1.0
+        history predates enforcement &mdash; the &ldquo;false until true&rdquo; convention this project already
+        uses for a claim it intends to earn rather than one it quietly drops. The check has to pass on a merge
+        commit and on this repository&rsquo;s own history without failing every existing branch, which is the
+        part worth designing rather than copying.</span></li>
+
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P6-30</span><span class="tk"><b>Dependabot security updates, and what a bot-authored
+        pull request costs.</b> D54. Enabled by the owner as its own consent rather than folded into P6-2,
+        because it does not report &mdash; it <i>opens pull requests</i>, which is a different thing to agree to
+        in a repository whose CI boots microVMs. The task is the part around the toggle: what a Dependabot PR is
+        allowed to touch, whether it may run the KVM workflows (it must not &mdash; those are dispatch-only for a
+        reason and a bot branch is not a reason to change that), and the line in <code>SECURITY.md</code> that
+        stops being false once alerts are on.</span></li>
+
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P6-31</span><span class="tk"><b>The macOS binary a stranger downloads, and what
+        Gatekeeper does to it.</b> D55. v1.0 ships the darwin pair raw, unsigned and unnotarized, because there
+        is no Apple identity today &mdash; so the honest thing is not to ship it quietly and let the first
+        macOS user meet <i>&ldquo;cannot be opened because the developer cannot be verified&rdquo;</i> with no
+        warning. The documentation states the quarantine plainly, gives the clearing step, and says why it is
+        that way rather than implying the binary is broken. Signing and notarization are logged as post-1.0 with
+        the condition that unblocks them, per D55.</span></li>
+
     <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">P6-16</span><span class="tk"><b>The documents a 1.0 is expected to have and this one
         does not.</b> A <code>CHANGELOG.md</code> aggregated from every release&rsquo;s notes, v0.0 through v1.0
@@ -4552,6 +4581,58 @@ after:
         <code>internal/team/spawn.go</code>&rsquo;s <code>Despawn</code>, <code>broker.deliver</code>.
         <i>Revisit when</i> a team gains any notion of a member being down &mdash; the fix costs nothing once
         that exists, and cannot be made honestly before it.</td></tr>
+        <tr><td class="mono">D53</td><td class="mono">2026-08-25</td>
+        <td><b>Immutable releases: ON, and it still never shares a sentence with provenance.</b> The owner
+        enabled it. It locks published assets and protects tags, which is a commitment rather than a toggle, and
+        that is the point: a stranger who downloads a v1.0 artifact can know GitHub received those bytes under
+        that tag and nobody has replaced them since.
+        <b>What it does not say, and what D39 forbids implying.</b> Immutability carries <i>no builder identity
+        at all</i>. It does not say which workflow built the bytes, or from which commit, or that anything built
+        them rather than a laptop. Build provenance is the separate statement <code>actions/attest</code> makes,
+        and the two must never appear in one sentence &mdash; a reader who merges them concludes that
+        &ldquo;immutable&rdquo; means &ldquo;traceable to source&rdquo;, which is exactly false. Every document
+        that mentions either keeps them in separate paragraphs with their own verbs.</td>
+        <td>Owner action, 2026-08-25. The wording rule is D39&rsquo;s and is unchanged; this decision records
+        that the setting is now on so the documents may stop saying &ldquo;not enabled&rdquo;.</td></tr>
+        <tr><td class="mono">D54</td><td class="mono">2026-08-25</td>
+        <td><b>Dependabot security updates: ON, as its own consent.</b> Deliberately not folded into P6-2 when
+        the rest of the supply-chain work was done. The distinction is that Dependabot does not <i>report</i> a
+        vulnerability &mdash; it <b>opens a pull request</b>, authored by a bot, against a repository whose
+        workflows boot microVMs. Agreeing to be told about a vulnerable dependency and agreeing to receive
+        machine-authored branches are different agreements, and this project takes the second one explicitly.
+        <i>What follows from it</i> is P6-30: a bot branch must not reach the KVM workflows. Those are
+        <code>workflow_dispatch</code> and <code>schedule</code> only, which is what keeps untrusted branches off
+        a runner that boots VMs, and a Dependabot PR is not a reason to widen that.</td>
+        <td>Owner action, 2026-08-25. P6-30 carries the work.</td></tr>
+        <tr><td class="mono">D55</td><td class="mono">2026-08-25</td>
+        <td><b>macOS ships raw and unsigned for v1.0, and says so where somebody will hit it.</b> There is no
+        Apple Developer identity for this project today, so the darwin binaries in a release are unsigned and
+        unnotarized. Gatekeeper quarantines a binary downloaded from a browser and refuses to run it, with a
+        message &mdash; <i>&ldquo;cannot be opened because the developer cannot be verified&rdquo;</i> &mdash;
+        that reads like a broken download rather than a missing signature.
+        <i>The ruling is to ship it anyway and document it plainly</i>, because the alternatives are worse: not
+        shipping a macOS binary makes <code>kelyfos verify</code> unreachable on the machine reports are most
+        often sent to, and shipping it silently spends a first-time user&rsquo;s goodwill on a dialog nobody
+        warned them about. The documentation states the quarantine, gives the clearing step, and says the cause
+        is an absent signing identity rather than a damaged file.
+        <i>Post-1.0, with the condition named:</i> signing and notarization become a task the moment an Apple
+        identity exists. That is the blocker, and it is an account and a fee rather than engineering.</td>
+        <td>Owner ruling, 2026-08-25. P6-31 carries the documentation. <i>Revisit when</i> an Apple Developer
+        identity exists.</td></tr>
+        <tr><td class="mono">D56</td><td class="mono">2026-08-25</td>
+        <td><b>The DCO is gated on new commits, and the gap in the history is stated rather than papered
+        over.</b> <code>CONTRIBUTING.md</code> has required a <code>Signed-off-by</code> line since v0.1, and
+        <b>zero of this repository&rsquo;s commits carry one</b>. Three options existed: sign from here on and
+        say nothing, rewrite history, or amend the document to drop the requirement.
+        <i>The ruling takes the first and refuses the silence.</i> A CI check requires the trailer on new
+        commits, and <code>CONTRIBUTING.md</code> gains one line saying pre-v1.0 history predates enforcement.
+        Rewriting history was refused because it invalidates every existing clone and every commit hash this
+        plan cites; dropping the requirement was refused because the DCO is the mechanism that keeps provenance
+        auditable without a CLA (D5), and a project that abandons it the first time it is inconvenient has
+        chosen the wrong one.
+        <i>The convention is the one this project already uses</i>: a claim it intends to earn is written down
+        as false until it is true, rather than removed until it is convenient.</td>
+        <td>Owner ruling, 2026-08-25. P6-29 carries the work.</td></tr>
     <!-- Claude Code: append rows above this line. -->
   </table>
 </section>

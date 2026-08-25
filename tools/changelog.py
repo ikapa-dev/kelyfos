@@ -33,7 +33,32 @@ def sections(text):
     return out
 
 
+# A release candidate carries the notes of the version it is a candidate FOR.
+#
+# `v1.0-rc1` is not a separate release with separate news; it is v1.0, offered
+# early so the numbers in the README can be measured against the artifacts that
+# will ship. Giving it its own CHANGELOG section would put a second copy of
+# v1.0's notes in the file, and a second copy of the truth that nothing keeps
+# honest is the failure D50 exists to prevent. So the suffix is stripped and the
+# base version's section is used, and the workflow says out loud that it did
+# that rather than doing it silently.
+RC = re.compile(r"-(rc|alpha|beta|pre)\.?\d*$", re.IGNORECASE)
+
+
 def find(text, tag):
+    if find_exact(text, tag) == (None, None):
+        base = RC.sub("", tag)
+        if base != tag:
+            heading, body = find_exact(text, base)
+            if heading is not None:
+                print(f"# notes for {tag} taken from {base}'s section: a candidate "
+                      f"carries the notes of the release it is a candidate for",
+                      file=sys.stderr)
+                return heading, body
+    return find_exact(text, tag)
+
+
+def find_exact(text, tag):
     for heading, body in sections(text):
         # `## v0.9 — the headline` and `## v0.9 — 2026-08-24` both match v0.9;
         # `## Unreleased — v1.0` matches v1.0, so the section being written is

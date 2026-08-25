@@ -3,8 +3,8 @@
 Updated 2026-08-25 · synced with origin/main · **v0.9 released** · CI green on main · **Phase 6 open**
 
 ## Plans
-- PLAN.html — **71/82**. Phases 0–3 and 5 done. Phase 4 dispositioned and parked (D35). **Phase 6 open —
-  "v1.0, the promise", 29 tasks**: an external security audit arrived mid-phase and added seven (D45), and the documentation audit added one more (D49).
+- PLAN.html — **71/85**. Phases 0–3 and 5 done. Phase 4 dispositioned and parked (D35). **Phase 6 open —
+  "v1.0, the promise", 32 tasks**: an external security audit arrived mid-phase and added seven (D45), and the documentation audit added one more (D49).
 - PLAN-FEATURES.html — **COMPLETE and closed.** 42/42, five epics, v0.4–v0.8 released.
 - **The overall bar will not reach 100% and is not meant to.** Seven of the denominator's boxes are Phase 4's
   permanent record rows.
@@ -116,18 +116,21 @@ It is the only substantial task left that does not need John.
   blocking set is among them — those are triaged whole (D46, D47). Three of the eleven findings that *were*
   triaged did not say what they were reported to say, so the remaining twelve are worth reading rather than
   assuming.
-- **DCO.** `CONTRIBUTING.md` and the README require a `Signed-off-by`; 0 of the last 50 commits carry one and
-  history cannot be rewritten. Sign from here on, gate only new commits, or amend the document. John's call.
-- **Enable private vulnerability reporting** — Settings → Security, or
-  `PUT /repos/p4r4n0rm4l/KelyfOS/private-vulnerability-reporting`. Reads `{"enabled":false}` today. One toggle,
-  reversible, locks nothing. `SECURITY.md` names it as the channel and stays true until it is on, but the button
-  a reporter needs is not there yet. **This is the highest-value single action on the list.**
-- **Immutable releases** — worth having, but it locks published assets and protects tags, so it is a commitment.
-  Note it attests *publication*, never build provenance; the two must never share a sentence (D39).
-- **Dependabot security updates** are disabled. Noted rather than folded into P6-2: it opens pull requests rather
-  than reporting, which is a different kind of thing to consent to.
-- **macOS distribution**: raw download (Gatekeeper quarantines it) or a package manager — and whether a signing
-  identity exists.
+- **All owner actions are settled as of 2026-08-25.** Nothing on this list blocks the phase any more; what is
+  left is the work each ruling created.
+  - **Private vulnerability reporting: ENABLED.** `SECURITY.md`'s workaround paragraph is retired rather than
+    deleted, so a reporter following the old advice learns it was superseded.
+  - **Immutable releases: ON** (D53). D39's rule is unchanged: it attests *publication*, never build
+    provenance, and the two never share a sentence.
+  - **Dependabot security updates: ON** (D54), as its own consent — it opens bot-authored pull requests rather
+    than reporting, which is a different agreement. **P6-30** carries the work, and the rule that matters is
+    that a bot branch must not reach the KVM workflows.
+  - **DCO: gate new commits** (D56). History is not rewritten and the requirement is not dropped;
+    `CONTRIBUTING.md` gains one line saying pre-v1.0 history predates enforcement. **P6-29** carries it.
+  - **macOS: ship raw for v1.0** (D55). No Apple identity today, so the darwin binaries are unsigned and
+    Gatekeeper quarantines them; the documentation states that and the clearing step plainly rather than
+    letting a first-time user meet the dialog unwarned. **P6-31** carries it. Signing and notarization are
+    post-1.0 the moment an identity exists.
 - P4-4, P4-5 **[BLOCKED]**, re-verified 2026-08-24: 0 stars, 0 forks, 0 issues, discussions off. Now dated rather
   than eternal — revisit 30 days after the v1.0 launch, since this phase's own exit is the act most likely to
   change those facts.

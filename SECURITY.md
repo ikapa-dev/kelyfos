@@ -18,13 +18,14 @@ only the maintainer can see:
 
 <https://github.com/p4r4n0rm4l/KelyfOS/security/advisories/new>
 
-> **If that button is not there, the channel has not been enabled yet.** It is a
-> single repository setting and it is the maintainer's to turn on. Until it is,
-> open a public issue containing **only** the sentence *"I have a security
-> report and need a private channel"* — no details, no reproducer, no version.
-> That is a coordination request, not a disclosure, and it is the least-bad
-> option while there is no private door. Do not put the finding in a public
-> issue.
+The channel is **on**. It was not when this file was first written, and the
+paragraph that stood here said so — that if the button was missing the setting
+had not been turned on yet, and that a reporter should open a public issue
+containing only the sentence *"I have a security report and need a private
+channel"* and nothing else. That workaround is no longer needed and is recorded
+here rather than deleted, because a reporter who read the old advice and is
+following it should know it has been superseded rather than wonder whether they
+are on the wrong page.
 
 There is no published email address, deliberately: an address in a public file
 is a permanent spam target and this project would rather point at a channel
