@@ -146,11 +146,17 @@ func (w *Workspace) Stage() (*Staged, error) {
 		s.diverted = true
 	}
 
-	// The dump has to land in an empty directory. debugfs rdump refuses to
-	// descend into a subdirectory that already exists — it reports "File exists
-	// while making directory" and carries on, which quietly leaves every nested
-	// file at its pre-run contents while the top-level ones look updated. That
-	// failure is worse than an error because it looks like success.
+	// Everything in the image was chosen by the guest, so it is read before it
+	// is written: enumerated, validated entry by entry, and refused whole if any
+	// entry is one the host cannot safely use (P6-24, extract.go).
+	entries, err := listImage(w.ImagePath)
+	if err != nil {
+		return nil, err
+	}
+
+	// The dump has to land in an empty directory, and it is created before the
+	// root is opened rather than by the root, because the root has to exist to
+	// be opened.
 	s.tree = w.HostDir + ".kelyfos-sync"
 	_ = os.RemoveAll(s.tree)
 	if err := os.MkdirAll(s.tree, 0o755); err != nil {
@@ -158,16 +164,20 @@ func (w *Workspace) Stage() (*Staged, error) {
 	}
 
 	// debugfs reads the image without mounting it, so the write-back needs no
-	// privileges. It does complain about being unable to restore ownership,
-	// which is expected and harmless: files written by root in the guest come
-	// back owned by whoever is running kelyfos.
-	cmd := exec.Command("debugfs", "-R", "rdump / "+s.tree, w.ImagePath)
-	if out, err := cmd.CombinedOutput(); err != nil {
+	// privileges. What it no longer does is choose where anything lands: it
+	// dumps into staging files this package names, and every guest-chosen name
+	// is used through the root below, which is openat2 with RESOLVE_BENEATH and
+	// RESOLVE_NO_SYMLINKS underneath.
+	root, err := os.OpenRoot(s.tree)
+	if err != nil {
 		_ = os.RemoveAll(s.tree)
-		return nil, fmt.Errorf("read the workspace image: %w: %s", err, strings.TrimSpace(string(out)))
+		return nil, err
 	}
-	// lost+found is an ext4 artefact, not the user's content.
-	_ = os.RemoveAll(filepath.Join(s.tree, "lost+found"))
+	defer root.Close()
+	if err := extractImage(w.ImagePath, entries, root); err != nil {
+		_ = os.RemoveAll(s.tree)
+		return nil, err
+	}
 	return s, nil
 }
 
@@ -237,6 +247,14 @@ func (s *Staged) Commit() (dest string, diverted bool, err error) {
 		if err := os.Rename(dest, old); err != nil {
 			return "", diverted, err
 		}
+	}
+	// The tree takes the mode of the directory it replaces. Without this the
+	// workspace root ends up with whatever this package created it as, which is
+	// not what the person had, and before P6-24 it was whatever mode the image's
+	// own root carried — a permission on somebody's project directory chosen by
+	// the guest (H-2).
+	if prev, err := os.Stat(old); err == nil {
+		_ = os.Chmod(tmp, prev.Mode().Perm())
 	}
 	if err := os.Rename(tmp, dest); err != nil {
 		_ = os.Rename(old, dest) // put it back rather than leave nothing

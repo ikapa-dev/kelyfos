@@ -122,11 +122,18 @@ func escapees(t *testing.T, root, allowedUnder string) []string {
 	return out
 }
 
-// H-2. Modes the guest chose must not become modes on the host's filesystem.
+// H-2. The dangerous half of a mode the guest chose must not reach the host.
 //
-// debugfs restores what the image says, so a guest that marks a file 0777 —
-// or, worse, setuid — hands the host a file with those bits on. The host is not
+// debugfs restores what the image says, so a guest that marks a file 0777 — or,
+// worse, setuid — hands the host a file with those bits on. The host is not
 // obliged to take permission advice from the thing it is sandboxing.
+//
+// The bits this asserts on are world-write and the special three, and not
+// group-write, which the fix originally stripped too. That was caught by the
+// acceptance suite rather than here: a user whose umask is 002 has a project of
+// 0664 files, and stripping the bit rewrote every one of them on the way back.
+// The fixture was widened to match a rule that was wrong, and narrowing it is
+// part of the same correction.
 func TestGuestChosenModesDoNotSurviveOntoTheHost(t *testing.T) {
 	needsImageTools(t)
 
@@ -157,8 +164,8 @@ func TestGuestChosenModesDoNotSurviveOntoTheHost(t *testing.T) {
 			if got&os.ModeSetuid != 0 {
 				problem = fmt.Sprintf("a setuid bit the guest chose survived onto the host: %v", got)
 			}
-			if got.Perm()&0o022 != 0 {
-				problem = fmt.Sprintf("the guest made a host file group- or world-writable: %v", got.Perm())
+			if got.Perm()&0o002 != 0 {
+				problem = fmt.Sprintf("the guest made a host file world-writable: %v", got.Perm())
 			}
 			hostile.Holds(t, "modes/"+mode.String(), problem)
 		})

@@ -371,6 +371,13 @@ relied on the boundary Firecracker gives it and added nothing of its own around
 the VMM process or around what a compromised agent could reach inside its guest.
 Both layers exist now. Here is what that does and does not mean.
 
+One of them was incomplete until v1.0, and the sentence above was true of the
+guest and not of the host. An external audit found that the **workspace block
+device** — which the guest writes and the host reads back — let a guest-authored
+directory entry decide where the host wrote, and the trust-boundary table did not
+list that surface at all. It is closed and listed now; the row below is what
+closed it.
+
 **What is enforced.**
 
 | | |
@@ -380,6 +387,7 @@ Both layers exist now. Here is what that does and does not mean.
 | the VMM's syscalls | Firecracker's own seccomp filter, **read out of `/proc` on every one of its threads** at boot rather than assumed from the absence of a flag. A VMM without it is refused, not run. [`docs/host-seccomp.md`](docs/host-seccomp.md) lists every syscall it permits, read back out of the running kernel. |
 | inside the guest | every process the supervisor spawns — `exec`, a plugin, the shell — is confined by Landlock (writes only `/work`, `/tmp`, `/run`, `$HOME`, `/dev/pts` and `/dev/shm`, plus seven named device nodes) and a seccomp refusal list of 28 syscalls. Per flavor; [`docs/reference/profiles.md`](docs/reference/profiles.md) is generated from the code that enforces it. |
 | the network | no interface at all without `--allow`; then deny-all plus a hostname allowlist, with credentials attached by the host's proxy so the value never exists inside the guest. |
+| the workspace disk | the guest writes that filesystem, so the host reads it back the way it reads anything hostile: every entry validated and the image refused whole if one is a name the host cannot use, and the extraction written through `openat2` with `RESOLVE_BENEATH` and `RESOLVE_NO_SYMLINKS` so a name that got past the check still cannot leave the tree. Guest-chosen modes do not survive onto your filesystem. |
 | the record | hash-chained, written by the host, and it names which walls were around each machine — so a transcript cannot make an unconfined run look like a confined one. |
 
 **What is not.** None of this is a claim to be a multi-tenant sandbox for

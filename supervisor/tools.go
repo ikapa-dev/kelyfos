@@ -396,6 +396,12 @@ func readCapped(path string) ([]byte, *mcp.CallToolResult) {
 }
 
 func writeFile(path string, data []byte, mode os.FileMode) *mcp.CallToolResult {
+	// Before the size check, because "where" is a question about whether this
+	// call should happen at all and "how big" is a question about this call
+	// (P6-24, writable.go).
+	if err := writableFor(path); err != nil {
+		return mcp.Errorf("%v", err)
+	}
 	if len(data) > maxToolBytes {
 		return mcp.Errorf("content is %d bytes, over the %d byte per-call limit", len(data), maxToolBytes)
 	}

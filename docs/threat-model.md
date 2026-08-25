@@ -77,6 +77,47 @@ credential to `api.github.com` and `raw.githubusercontent.com` too, on any
 request the guest composes to any of them. Bind a credential only to a domain
 whose subdomains you would also hand it to.
 
+### The workspace disk, which this table did not list
+
+A workspace is not a mount. Firecracker has no shared filesystem, so the host
+packs the directory into an ext4 image, attaches it as a second virtio-blk disk,
+and reads it back when the sandbox stops. **The guest writes that filesystem.**
+Every name in it, every mode, every symlink target is chosen by the untrusted
+side, and the host then walks it on the host's own filesystem as the invoking
+user.
+
+That was a guest→host path with no row in this table, and the row's absence was
+not cosmetic. The write-back ran `debugfs -R "rdump / <tree>"`, and `rdump` joins
+the names it finds to the destination — so an entry named `../../pwn.` put the
+guest's bytes two directories above the tree. Outside the workspace, outside the
+run directory, anywhere the user running `kelyfos` could write. An external audit
+of 2026-08-24 found it and it was reproduced here with the exact command.
+
+Two layers close it, and the second exists because the first will one day be
+wrong:
+
+1. **The image is validated before it is read.** Every entry is enumerated and
+   checked, and an entry the host cannot safely use makes the whole image
+   refused, by name — refused rather than repaired, because a name that has to
+   be repaired was built to be repaired and the repair is a guess about intent.
+   A separator, a NUL, a control character, `.`, `..`, anything that is not a
+   file, a directory or a symlink, and a symlink whose target is absolute or
+   climbs out.
+2. **The extraction cannot leave the tree even if it is.** `debugfs` no longer
+   chooses a destination: it dumps into staging files the host names, and every
+   guest-chosen name is used through an `os.Root`, which is `openat2` with
+   `RESOLVE_BENEATH` and `RESOLVE_NO_SYMLINKS`. The kernel is what refuses, not
+   this code's arithmetic.
+
+Guest-chosen **modes** do not survive either. The executable bit does, because an
+agent that built a binary needs it; group and world write, setuid, setgid and the
+sticky bit do not, and the workspace root keeps the mode the person's own
+directory had rather than the one the image's root carried.
+
+What this does **not** claim: the contents are still whatever the agent wrote.
+The boundary is about where bytes land and what permissions they carry, not
+about whether the work is any good — reviewing that is what `--review` is for.
+
 ### Tampering with the record
 Every event is written by the **host**, never the guest, and each carries the
 previous event's hash. Since v1.0 the exported report carries that record inside
@@ -375,6 +416,7 @@ places where agent-chosen text reached a rendered line of the transcript.
 | guest → network | no NIC, or TAP + nftables + proxy | active |
 | guest → credentials | injection at the proxy | active |
 | guest → audit record | host-side, hash-chained | active, including under `kelyfos shim` |
+| guest → host filesystem, via the workspace disk | the image is enumerated and validated before it is read, and extracted through `openat2(RESOLVE_BENEATH\|RESOLVE_NO_SYMLINKS)` | active since v1.0. **This row did not exist until an external audit found what its absence cost** — see below |
 | a report → whoever received it | the record travels in the file; `kelyfos verify` | active since v1.0; covers the record, not the rendering |
 | guest → guest (team) | host broker + declared edge list | active |
 | guest → host CPU/RAM/IO | KVM config, cgroup v2, rate limiters | active, and only when configured |

@@ -17,14 +17,6 @@
 # every one of them is fixed by P6-24. When this file has only comments left,
 # the trust-boundary group is closed.
 
-dirent/climbs-out                 C-1 · `../../pwn.` — a guest-authored entry leaves the extraction tree entirely
-modes/-rwxrwxrwx                  H-2 · the guest's 0777 becomes 0777 on the host's filesystem
-modes/-rw-rw-rw-                  H-2 · the guest's 0666 becomes 0666 on the host's filesystem
-workspace-root-mode               H-2 · the swap gives the workspace root whatever mode the image's root carried
-write-file/relative-escape        H-1 · `../escape` — a relative path leaves the working directory unexamined
-write-file/absolute-outside       H-1 · an absolute path anywhere on the host filesystem is written
-write-file/block-device           H-1 · /dev/vda and /dev/vdb reach open(2); a confined child cannot write them
-read-file/outside                 H-1 · any file the supervisor can read is readable, and PID 1 is unconfined
 exec/flood-empty-frames           M-9 · frames carrying no bytes never advance the ceiling, so the loop never ends
 exec/flood-unknown-stream         M-9 · the stream switch has no default; an unknown name is skipped forever
 exec/flood-blank-lines            M-9 · proto.Reader.Read skips blank lines without bound, inside one call

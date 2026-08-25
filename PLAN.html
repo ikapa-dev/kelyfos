@@ -180,7 +180,7 @@
     <span class="bl-name">Overall</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">P6-6 done &mdash; the export carries the record it was rendered from and <code>kelyfos verify</code> re-runs the chain over it offline. <b>An external security audit then arrived (D45) and v1.0 is gated on its trust-boundary group</b>: the workspace block device is a guest&rarr;host surface the threat model does not list. Seven tasks inserted before P6-7. <b>P6-21 done</b> &mdash; <code>--review</code> no longer destroys an edit made while somebody was reading it. <b>P6-6 corrected</b>: its own adversarial review landed late and found a false claim about truncation and an unchecked chain head, both reproduced and both fixed. <b>P6-22 done</b> &mdash; nine fixture groups, twenty-one recorded breaks, a ledger that can only shrink, and a CI job that runs the lot. <b>D46</b> triaged seven findings against HEAD and corrected two. <b>P6-23 at 11/23 and blocked</b> on the audit text for the rest (D47). Next: <b>P6-24</b> &mdash; the gate</b></div>
+  <div class="focusline">Current focus: <b id="focus">P6-6 done &mdash; the export carries the record it was rendered from and <code>kelyfos verify</code> re-runs the chain over it offline. <b>An external security audit then arrived (D45) and v1.0 is gated on its trust-boundary group</b>: the workspace block device is a guest&rarr;host surface the threat model does not list. Seven tasks inserted before P6-7. <b>P6-21 done</b> &mdash; <code>--review</code> no longer destroys an edit made while somebody was reading it. <b>P6-6 corrected</b>: its own adversarial review landed late and found a false claim about truncation and an unchecked chain head, both reproduced and both fixed. <b>P6-22 done</b> &mdash; nine fixture groups, twenty-one recorded breaks, a ledger that can only shrink, and a CI job that runs the lot. <b>D46</b> triaged seven findings against HEAD and corrected two. <b>P6-24 done &mdash; the v1.0 gate is open.</b> C-1, H-1 and H-2 are closed in two layers, the workspace block device is in the trust-boundary table, and the full acceptance suite passes on the final code. P6-23 stands at 11/23, blocked on the audit text for the rest (D47). Next: <b>P6-25</b>, the exhaustion clamps</b></div>
 </div>
 
 <!-- ====================================================== 1. END GOAL -->
@@ -908,7 +908,7 @@
         identifiers, and a finding that cannot be read cannot be triaged &mdash; inventing a plausible defect to
         match an identifier would break the one rule this task exists to enforce.</span></li>
 
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">P6-24</span><span class="tk"><b>The trust boundary the threat model does not have: the
         workspace block device. C-1, H-1, H-2 &mdash; and this is the v1.0 gate.</b> The guest writes an ext4 image
         the host then extracts with <code>debugfs rdump</code>, and a dirent the guest authored decides where the
@@ -2893,6 +2893,54 @@ after:
         <code>with 64 sandboxes already registered, POST /sandboxes answered 500 &hellip; it went on to build one
         rather than refusing on a count</code><br>
         <code>gofmt</code>, <code>vet</code>, 14 packages, <code>make docs</code> clean</td></tr>
+        <tr><td class="mono">2026-08-25</td><td class="mono">P6-24</td>
+        <td><b>The trust boundary the threat model did not have is closed, and the table has the row now.</b>
+        C-1, H-1 and H-2 &mdash; the v1.0 gate. A workspace is not a mount: the host packs a directory into an
+        ext4 image, the guest writes that filesystem, and the host walks it back on its own disk as the invoking
+        user. Every name, every mode and every symlink target in it is chosen by the untrusted side, and
+        <code>debugfs -R "rdump / &lt;tree&gt;"</code> joined those names to the destination &mdash; so an entry
+        called <code>../../pwn.</code> put the guest&rsquo;s bytes two directories above the tree.
+        <b>Two layers, and the second exists because the first will one day be wrong.</b> The image is enumerated
+        and validated before anything is written, and refused <i>whole</i> and by name if one entry is
+        unusable &mdash; refused rather than repaired, because a name that has to be repaired was built to be
+        repaired and the repair is a guess about intent. Then the extraction writes through an
+        <code>os.Root</code>: <code>openat2</code> with <code>RESOLVE_BENEATH</code> and
+        <code>RESOLVE_NO_SYMLINKS</code>, from the standard library, no new dependency. <b><code>debugfs</code>
+        never chooses a destination again</b> &mdash; it dumps into staging files this package numbers, and every
+        guest-chosen name is used only through the root, so the kernel is what refuses rather than this
+        code&rsquo;s arithmetic.
+        <b>H-1 is the same principle at the other end.</b> The supervisor is PID 1 and is not confined by the
+        profile it applies to what it spawns, so <code>write_file</code> handed an agent <code>/dev/vda</code> and
+        <code>/dev/vdb</code> &mdash; which <code>profile.go</code>&rsquo;s own comment says it withholds, three
+        lines above the list it is explaining. The tools now get exactly the reach the profile gives a confined
+        child, so PID 1 stops being the way around the confinement it enforces. <b>Reads are deliberately not
+        confined</b>, and the fixture that said they should be was withdrawn: the profile grants read beneath
+        <code>/</code> to every confined child, so restricting reads would make the tool weaker than the thing it
+        serves while closing nothing, and would break reading <code>/etc/os-release</code>.
+        <b>The mode rule was wrong first, and the acceptance suite is what said so.</b> Stripping group-write
+        turned every <code>0664</code> file in a umask-002 user&rsquo;s project into <code>0644</code>, so
+        <code>--review</code> reported files the sandbox had never touched as modified and a sync-back quietly
+        rewrote somebody&rsquo;s own permissions. A boundary that rewrites the user&rsquo;s files to protect them
+        from the user is protecting nobody. World-write never survives, and neither do setuid, setgid or sticky;
+        group-write is a permission the person already chose.</td>
+        <td class="mono">the ledger is the evidence and it shrank from 21 lines to 13: every case for C-1, H-1 and
+        H-2 came off, each in this commit, which is what the symmetric check demands<br>
+        <b>the full acceptance suite, re-run on the final code</b> &mdash; 13 suites, <b>239 checks, 0 failed</b>, and all 14 cookbook recipes. <code>accept-e5</code> is the one that failed first and it is 33/33 now<br>
+        <code>TestRoundTripKeepsARealProject</code> is the other half and the half a boundary fix most easily
+        loses: nested directories, a dotfile directory, a name with spaces, a name that is not ASCII, a script
+        that stays executable, a <code>0664</code> file that stays <code>0664</code>, and symlinks of both shapes
+        &mdash; fast (in-inode) and slow (in a data block), which debugfs reports two different ways<br>
+        <b>measured, on 2000 files in 101 directories:</b> <code>rdump</code> 0.01 s, the validated path 0.075 s
+        &mdash; enumeration is 0.006 s of it and the rest is the per-file copy through the root. Seven times the
+        old cost and 75 ms in absolute terms<br>
+        <b>the boot and restore bars are untouched by construction, not by assumption:</b>
+        <code>sandbox.New</code> contains no reference to <code>listImage</code>, <code>extractImage</code> or
+        <code>Stage</code> &mdash; every caller is at teardown (<code>run.go:419</code>,
+        <code>review.go:52</code>, <code>sessions.go:542</code>, <code>team.go:593</code>). Re-earning the bars
+        themselves on the bare-KVM reference is P6-18&rsquo;s and needs that machine<br>
+        the documentation rode this commit and not an earlier one: the trust-boundary table has the workspace
+        device as a first-class guest&rarr;host path, and the README&rsquo;s &ldquo;Both layers exist now&rdquo;
+        says which layer was incomplete until v1.0 and what closed it</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>

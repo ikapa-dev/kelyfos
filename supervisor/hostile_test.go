@@ -54,25 +54,21 @@ func hostileTempCwd(t *testing.T) string {
 
 // H-1. A path the agent chose reaches the host filesystem unexamined.
 func TestHostileWriteFileCannotLeaveTheSandboxsWork(t *testing.T) {
-	cases := []struct {
+	hostileTempCwd(t)
+
+	// The paths are chosen against the *guest's* filesystem, which is what
+	// these tools address. /tmp is not among them and would have been the easy
+	// mistake: it is one of the four trees a sandbox may write, so a fixture
+	// pointing at a temporary directory would be asserting that a legitimate
+	// write is refused.
+	for _, tc := range []struct {
 		key, path, why string
 	}{
 		{"write-file/relative-escape", "../escape",
-			"a relative path climbing out of the working directory"},
-		{"write-file/absolute-outside", "", // filled in below: a real path outside
-			"an absolute path to somewhere the agent has no business"},
-	}
-
-	root := hostileTempCwd(t)
-	// The second case needs a real location outside the working directory, and
-	// a canary there so the test can tell "refused" from "wrote somewhere else".
-	outside := filepath.Join(root, "outside.conf")
-	if err := os.WriteFile(outside, []byte("the sandbox's own configuration\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	cases[1].path = outside
-
-	for _, tc := range cases {
+			"a relative path, which lands wherever the supervisor happens to be standing"},
+		{"write-file/absolute-outside", "/etc/kelyfos-hostile-probe",
+			"an absolute path outside every tree a sandbox may write"},
+	} {
 		t.Run(tc.key, func(t *testing.T) {
 			arg, err := json.Marshal(map[string]string{"path": tc.path, "content": "owned by the guest\n"})
 			if err != nil {
@@ -135,26 +131,40 @@ func TestHostileWriteFileRefusesTheBlockDevicesBeforeOpening(t *testing.T) {
 	}
 }
 
-// H-1. Reading is the same absence, and it reaches further than the disks.
-func TestHostileReadFileCannotReachTheWholeFilesystem(t *testing.T) {
+// Reading is deliberately NOT confined, and this is the guard that says so.
+//
+// The corpus first carried a case asserting that read_file could not reach
+// outside a tree. That was wrong, and it was wrong in the way this project
+// treats as worse than a missing test: it asserted a boundary the product never
+// claimed. The profile grants read beneath / to every confined child —
+// allowBeneath(rules, "/", readRights) — so anything read_file reaches, a
+// spawned process reaches too, and restricting it would make the tool weaker
+// than the thing it serves while closing nothing.
+//
+// What is left is a guard in the other direction: reads keep working. Somebody
+// tightening write_file could easily tighten read_file beside it and break
+// reading /etc/os-release and /proc, which is how an agent learns what machine
+// it is on.
+func TestReadingIsNotConfinedAndMustKeepWorking(t *testing.T) {
 	root := hostileTempCwd(t)
-	secret := filepath.Join(root, "not-for-the-guest")
-	const contents = "a host secret the sandbox was never given\n"
-	if err := os.WriteFile(secret, []byte(contents), 0o600); err != nil {
+	readable := filepath.Join(root, "outside-every-writable-tree")
+	const contents = "the guest may read this\n"
+	if err := os.WriteFile(readable, []byte(contents), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
-	arg, err := json.Marshal(map[string]string{"path": secret})
+	arg, err := json.Marshal(map[string]string{"path": readable})
 	if err != nil {
 		t.Fatal(err)
 	}
 	res := toolReadFile(json.RawMessage(arg))
-
-	problem := ""
-	if res != nil && !res.IsError && mentions(resultText(res), "a host secret") {
-		problem = fmt.Sprintf("read_file returned the contents of %s", secret)
+	if res != nil && res.IsError {
+		t.Errorf("read_file was confined to the writable trees; the profile does not confine reads, "+
+			"and this breaks reading /etc/os-release and /proc: %s", resultText(res))
 	}
-	hostile.Holds(t, "read-file/outside", problem)
+	if !mentions(resultText(res), "the guest may read this") {
+		t.Errorf("read_file did not return the file's contents: %s", resultText(res))
+	}
 }
 
 func resultText(res any) string {
