@@ -175,3 +175,43 @@ func TestEveryReleasedCLIBinaryIsMeasuredForReproducibility(t *testing.T) {
 		}
 	}
 }
+
+// The three fields actions/attest tests for, and the property a random one would
+// have broken (P6-20).
+//
+// `actions/attest` decides a document is CycloneDX by checking bomFormat,
+// serialNumber and specVersion, and refuses the whole SBOM with "Unsupported
+// SBOM format" if any is absent. Buildroot's generator emits no serial number,
+// so every SBOM this project produced was rejected at the attestation step —
+// and nothing found out until v1.0-rc1, because no release had ever run the
+// workflow that attests them.
+//
+// The second assertion is the one worth keeping: the serial has to be derived
+// from the content rather than generated, or two builds of one commit stop
+// producing byte-identical artifacts and P6-9's measurement quietly stops
+// meaning anything.
+func TestTheSerialNumberIsPresentAndDerivedRatherThanRandom(t *testing.T) {
+	components := []component{
+		{Type: "library", Name: "zlib", Version: "1.3.1"},
+		{Type: "library", Name: "busybox", Version: "1.36.1"},
+	}
+
+	got := serialFor(components)
+	if got == "" {
+		t.Fatal("no serial number: actions/attest refuses the document without one")
+	}
+	if !strings.HasPrefix(got, "urn:uuid:") {
+		t.Errorf("serial %q is not a URN UUID, which is the field's grammar", got)
+	}
+	// Same content, same serial — the whole point.
+	if again := serialFor(components); again != got {
+		t.Errorf("two calls over the same components gave different serials:\n  %s\n  %s\n"+
+			"A serial that changes per run breaks the byte-identical build P6-9 measured.", got, again)
+	}
+	// Different content, different serial — otherwise it is not identifying anything.
+	changed := append([]component{}, components...)
+	changed[0].Version = "1.3.2"
+	if serialFor(changed) == got {
+		t.Error("changing a component's version did not change the serial")
+	}
+}

@@ -28,6 +28,7 @@
 package main
 
 import (
+	"crypto/sha256"
 	"debug/buildinfo"
 	"encoding/json"
 	"flag"
@@ -41,11 +42,45 @@ import (
 // Only the fields that are used are named: a struct that mirrored the whole
 // specification would be a second specification to keep correct.
 type doc struct {
-	BOMFormat   string          `json:"bomFormat"`
-	SpecVersion string          `json:"specVersion"`
-	Version     int             `json:"version"`
-	Metadata    json.RawMessage `json:"metadata,omitempty"`
-	Components  []component     `json:"components"`
+	BOMFormat   string `json:"bomFormat"`
+	SpecVersion string `json:"specVersion"`
+	// SerialNumber is required, and finding that out cost a release candidate.
+	//
+	// `actions/attest` decides an SBOM is CycloneDX by testing three fields —
+	// bomFormat, serialNumber and specVersion — and refuses the whole document
+	// with "Unsupported SBOM format" if any is missing. Buildroot's generator
+	// emits no serial number, so every SBOM this project produced was rejected
+	// at the attestation step. Nothing caught it before v1.0-rc1 because no
+	// release had ever run the workflow: the SBOM was generated, checksummed and
+	// published, and only the attestation of it failed (P6-20).
+	SerialNumber string          `json:"serialNumber"`
+	Version      int             `json:"version"`
+	Metadata     json.RawMessage `json:"metadata,omitempty"`
+	Components   []component     `json:"components"`
+}
+
+// serialFor derives the document's serial number from the document itself.
+//
+// A CycloneDX serial number is a URN UUID identifying this exact BOM, and the
+// obvious implementation is a random one per run. That would be wrong here for a
+// reason this project has already measured: two builds of one commit produce
+// byte-identical artifacts (P6-9), and a random field would break that quietly —
+// the SBOM would differ every time and repro-check would report a difference
+// that means nothing. So it is a digest of the content instead: same components,
+// same serial, and a change to any of them changes it.
+//
+// Formatted as a v4-shaped UUID because the field's grammar demands one, with
+// the version and variant nibbles set as the RFC requires. It is not random and
+// does not pretend to be — the bytes underneath are SHA-256 of the components.
+func serialFor(components []component) string {
+	h := sha256.New()
+	for _, c := range components {
+		fmt.Fprintf(h, "%s\x00%s\x00%s\x00%s\n", c.Type, c.Name, c.Version, c.PURL)
+	}
+	b := h.Sum(nil)[:16]
+	b[6] = (b[6] & 0x0f) | 0x40 // version
+	b[8] = (b[8] & 0x3f) | 0x80 // variant
+	return fmt.Sprintf("urn:uuid:%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
 }
 
 type component struct {
@@ -106,6 +141,8 @@ func main() {
 		}
 		return merged.Components[i].Version < merged.Components[j].Version
 	})
+
+	merged.SerialNumber = serialFor(merged.Components)
 
 	body, err := json.MarshalIndent(merged, "", "  ")
 	if err != nil {
