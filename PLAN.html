@@ -1208,7 +1208,7 @@
         and the transcript is committed whatever it says. The task is chosen against the surface this phase added,
         which is what E4 and E5 both did, rather than repeated for comparability.</span></li>
 
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">P6-20</span><span class="tk"><b>The quickstart re-timed against the actual v1.0
         release, the README&rsquo;s first screen, and the post.</b> P5&rsquo;s eighth acceptance item is now doctrine:
         the number the README prints is measured against the release it ships in, not the one before it, and a
@@ -3634,6 +3634,40 @@ after:
         <b>this row&rsquo;s own commit is the first in the repository to carry a sign-off</b>, which is what
         gating new commits means in practice<br>
         both YAML files parse; <code>make docs</code> clean</td></tr>
+        <tr><td class="mono">2026-08-25</td><td class="mono">P6-20</td>
+        <td><b>The quickstart timed against the release it ships in, the first screen rewritten for a stranger,
+        and the post brought to v1.0 &mdash; and the release candidate earned itself on its first run.</b>
+        <b>rc1 failed.</b> Both guest images built, both CLIs cross-built, <code>SHA256SUMS</code> written and
+        checked both ways, the artifacts attested &mdash; and then <i>Attest the aarch64 SBOM</i> refused every
+        document this project has ever produced: <code>actions/attest</code> decides a file is CycloneDX by
+        testing <code>bomFormat</code> <b>and <code>serialNumber</code></b> and <code>specVersion</code>, and
+        Buildroot&rsquo;s generator emits no serial number. The obvious suspect was the spec version and it was
+        the wrong one; the answer was three lines of <code>src/sbom.ts</code>. Nothing had ever caught it because
+        no release had ever run this workflow &mdash; the SBOM was generated, merged, checksummed and published
+        every time, and only the step that attests it failed. <b>The serial is derived from the components
+        rather than generated</b>, because a random UUID per run is the obvious implementation and would have
+        broken P6-9&rsquo;s measurement in silence: two builds of one commit are byte-identical, and an SBOM
+        that differs every time makes <code>repro-check</code> report a difference that means nothing.
+        <b>rc2 is green</b>, twelve assets, drafted rather than published.
+        <b>The quickstart, measured against rc2 rather than against the release before it.</b> KelyfOS&rsquo;s
+        own part is about two seconds &mdash; installing the CLI from the release and verifying its checksum
+        46 ms, unpacking the guest image 552 ms, <code>doctor</code> 9 ms, and the first
+        <code>run</code>&nbsp;&rarr;&nbsp;<code>exec</code> 1.0 s, of which 861 ms is the machine booting. The
+        download is quoted <i>separately</i>: 117 MB and 102 s here for both architectures, about half that for
+        one. Folding them into a total would flatter the project on a fast link and make it look broken on a
+        slow one, and they scale with different things.
+        <b>And the first screen is a stranger&rsquo;s ten seconds again.</b> The numbers lead, the methodology
+        moves to the section that already explains it in full, and the middle paragraph says what v1.0 promises
+        instead of what v0.9 hardened.</td>
+        <td class="mono">rc2 release run green: both image jobs, stage and publish, 12 assets, draft<br>
+        the release binary reports its own tag &mdash; <code>kelyfos v1.0-rc2</code> &mdash; installed from the
+        release and checksum-verified<br>
+        the SBOM fix proved both ways before pushing: the three fields <code>actions/attest</code> tests for are
+        present, and two consecutive generations are byte-identical<br>
+        <b>five documents that said &ldquo;no published artifact carries an attestation&rdquo; are now false and
+        were corrected in the same commit</b> &mdash; README, SECURITY.md, the Makefile,
+        <code>dev/fetch-image.sh</code> and hardening.md &mdash; which is the rule P6-24 set: the docs ride the
+        commit that makes them wrong</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>

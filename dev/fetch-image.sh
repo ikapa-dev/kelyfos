@@ -11,8 +11,8 @@
 # SHA256SUMS gives you integrity. Provenance is a separate statement: on a
 # release the release workflow builds, `gh attestation verify <file> --repo
 # p4r4n0rm4l/KelyfOS` names the workflow and the commit that built those bytes.
-# No published release carries one yet, because every existing tag predates that
-# workflow. This script checks the sums and not the attestation either way,
+# Releases from v1.0-rc2 onward carry one; the hand-assembled tags before it do
+# not. This script checks the sums and not the attestation either way,
 # deliberately — it has to work on a machine with no `gh`, and a download tool
 # that needed a second tool to be trusted would be a worse tool.
 #

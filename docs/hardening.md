@@ -390,7 +390,8 @@ release note, because a total written down by hand is a total that is right
 once. It is covered by `SHA256SUMS` rather than published beside it.
 
 **Release artifacts the workflow builds are attested — which does not yet
-include a published one**, because every existing tag predates the workflow.
+include a *published* one: the workflow drafts, and publishing is a person's
+decision. `v1.0-rc2` is the first release it built, and it carries them.
 `actions/attest` has GitHub sign a statement naming the workflow and the commit
 that produced the checksums file — one attestation covering every asset — and a
 second and third over each architecture's SBOM. `gh attestation verify <file> --repo p4r4n0rm4l/KelyfOS`

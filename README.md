@@ -110,11 +110,21 @@ VM mounts, and `limactl shell` keeps your working directory, so the commands
 below just work.
 
 Measured end to end — `git clone` to the first `kelyfos exec` output —
-**against the v0.9 release**, which is what the commands below actually download.
+**against `v1.0-rc2`**, the artifacts this release actually ships, because a
+number measured against the release before it is a number about something else.
 
-**KelyfOS's own part is 10 seconds**: firecracker, the CLI, the guest image, the
-sudoers grant and `doctor` together 9 s, then the first `kelyfos exec` 1 s. On a
-Linux/KVM box that is the whole of it.
+**KelyfOS's own part is about 2 seconds, and the download is the rest.** Split
+that way because they scale with different things. Installing the CLI from the
+release and verifying its checksum was 46 ms, unpacking the guest image 552 ms,
+`kelyfos doctor` 9 ms, and the first `kelyfos run` through to `exec` output
+1.0 s — of which 861 ms was the machine booting. Nothing there depends on your
+connection.
+
+**The download does.** The whole release is 117 MB across both architectures and
+took 102 s here; a quickstart needs roughly half of that, being one architecture.
+That number is your network and GitHub's, not ours, and it is quoted separately
+rather than folded into a total that would flatter us on a fast link and look
+broken on a slow one.
 
 On macOS you also pay for the Linux layer, and that part is Lima's rather than
 ours: **28 s** when it already has the Ubuntu image, **138 s** when it has to
@@ -192,12 +202,16 @@ are on Lima, WSL2, bare Linux or macOS.
 Releases are built from this source at the release tag by
 [`.github/workflows/release.yml`](.github/workflows/release.yml) — both
 architectures in one workflow run, from the tag's own commit, with `SHA256SUMS`
-regenerated from scratch over exactly the files attached. **That workflow is
-newer than every tag that exists.** Releases up to and including v0.9 were
-assembled by hand from a laptop, and it showed: v0.9's two architectures were
-built on two different machines, one of them a developer's. So the downloads
-above are hand-made ones, and the first release the workflow builds is the first
-one this paragraph describes.
+regenerated from scratch over exactly the files attached. **`v1.0-rc2` is the
+first release it built**, and it earned itself on the first attempt: rc1's build
+failed at the SBOM attestation, because `actions/attest` decides a document is
+CycloneDX by looking for a `serialNumber` and Buildroot's generator emits none —
+so every SBOM this project had ever produced would have been refused. The step
+had never run before, because no release had ever been built by a workflow.
+
+Releases up to and including v0.9 were assembled by hand from a laptop, and it
+showed: v0.9's two architectures were built on two different machines, one of
+them a developer's.
 
 **Whether they are bit-for-bit what your own `make image` produces is measured,
 not claimed.** Determinism is configured — `BR2_REPRODUCIBLE`,
@@ -240,10 +254,11 @@ your audit trail is a checked fact, not a label you typed.
 
 **A release the workflow builds carries a provenance attestation**: a statement,
 signed by GitHub, saying which workflow and which commit produced these exact
-bytes. **No published artifact carries one yet**, for the reason above — the
-attestation steps live in the release workflow, and the newest tag predates it.
-On a release it has built, one command checks it, and that command needs nothing
-from this project:
+bytes. `v1.0-rc2` has one, and every release from here does. **It is still a
+draft rather than a published release**, so a stranger cannot download it yet —
+publishing is a person's decision, deliberately, and the workflow drafts so that
+the last step before anybody downloads anything is somebody looking at it. One
+command checks the attestation, and it needs nothing from this project:
 
 ```sh
 gh attestation verify kelyfos-linux-x86_64 --repo p4r4n0rm4l/KelyfOS
@@ -535,8 +550,8 @@ hostile code; it is a single-host developer tool (D1).
   KelyfOS inherits Firecracker's position and adds nothing.
 - **The supply chain is partly answered now, and the parts are different sizes.**
   The release workflow attaches a build-provenance attestation and an SBOM to
-  every artifact — on the releases it builds, which does not yet include any that
-  exists — and reproducibility is measured per artifact rather than claimed. What is *not*
+  every artifact, and from `v1.0-rc2` it has actually done so; reproducibility is
+  measured per artifact rather than claimed. What is *not*
   answered is the layer beneath: the Buildroot packages, the compiler and the
   upstream tarballs are taken on trust, verified by checksum against what
   upstream published and no further. A hardened runtime built from an unverified

@@ -129,9 +129,10 @@ time, but it will be answered with a link rather than a fix.
   between a guest and its host. KelyfOS inherits Firecracker's position and adds
   nothing.
 - **The supply chain beneath the release.** Release artifacts are checksummed,
-  and on a release the release workflow builds they also carry a build-provenance
-  attestation and an SBOM per architecture — which does not yet include any
-  published release, because the newest tag predates that workflow.
+  and a release the workflow builds also carries a build-provenance attestation
+  and an SBOM per architecture — true from `v1.0-rc2`, which is the first release
+  that workflow built. No release is *published* yet: the workflow drafts, and
+  publishing is a person's decision.
   Reproducibility is measured per artifact by the `repro-check` workflow rather
   than claimed. What is not answered is the layer under those: signing the
   images themselves has no task and no date, and the compiler and the upstream

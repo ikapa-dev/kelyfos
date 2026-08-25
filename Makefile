@@ -191,8 +191,9 @@ image: linux-only supervisor fetch-kernel $(BUILD_DIR)/.config ## Build the gues
 # on a release the release workflow builds there is one: it attests the checksums
 # file, so `gh attestation verify <file> --repo p4r4n0rm4l/KelyfOS` names the
 # workflow and the commit that built those bytes (P6-11). No published release
-# carries one yet — every existing tag predates the workflow — so on what this
-# target downloads today, that command finds nothing.
+# carries one from v1.0-rc2 onward, which is the first release that workflow
+# built. Older tags were assembled by hand and have none, so on what this target
+# downloads for those, that command finds nothing.
 fetch-image: ## Download a prebuilt guest image for ARCH instead of building it
 	@$(CURDIR)/dev/fetch-image.sh "$(ARCH)" "$(RELEASE_TAG)"
 
