@@ -1,0 +1,50 @@
+# Dependabot, scoped on purpose (P6-30, D54).
+#
+# The owner enabled security updates as its own consent rather than as part of
+# the supply-chain work, because Dependabot does not *report* a vulnerability —
+# it opens a pull request, authored by a bot, against a repository whose
+# workflows boot microVMs. Agreeing to be told and agreeing to receive
+# machine-authored branches are different agreements.
+#
+# What follows from that is scope. Two ecosystems, both of which this repository
+# actually consumes and neither of which can reach a guest:
+#
+#   gomod           the host CLI's own dependencies, in go.mod
+#   github-actions  the actions the workflows pin, which is the supply chain
+#                   most likely to be attacked and least likely to be noticed
+#
+# **What is deliberately NOT here.** The guest toolchain — Buildroot, the Linux
+# kernel, Firecracker, Go itself — is pinned in versions.mk with checksums and is
+# not a package manager's business (CONTRIBUTING.md says bumping one is a commit
+# with the reason in the progress log). A bot cannot know that a kernel bump
+# needs an image rebuild, a boot measurement and a re-run of the acceptance
+# suites, and a PR that changes versions.mk would look like every other PR while
+# being none of them.
+#
+# **And what a bot branch may not reach.** The workflows that boot microVMs —
+# bench, caps, cookbook, repro-check — are `workflow_dispatch` and `schedule`
+# only. That is what keeps any untrusted branch, bot-authored or forked, off a
+# runner that starts VMs, and a Dependabot PR is not a reason to widen it. The
+# per-commit checks a bot PR does run are the cheap ones: gofmt, vet, the unit
+# tests, the drift gate.
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: tuesday
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "deps"
+    labels: ["dependencies"]
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: tuesday
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "deps(actions)"
+    labels: ["dependencies"]

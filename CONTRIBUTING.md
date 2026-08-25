@@ -29,6 +29,17 @@ Signed-off-by: Jane Developer <jane@example.com>
 `git commit -s` adds it for you. To fix the last commit: `git commit --amend -s`.
 For a whole branch: `git rebase --signoff main`.
 
+**This was required before it was enforced, and no commit before v1.0 carries
+one.** That is stated here rather than quietly repaired, because the two honest
+alternatives are worse: rewriting the history would invalidate every existing
+clone and every commit hash `PLAN.html` cites, and dropping the requirement
+would abandon the mechanism that keeps provenance auditable without asking
+anybody to sign a CLA (D5). So enforcement starts where it can be true — CI
+checks the commits a push or a pull request *adds*, from v1.0 onward, and the
+gap behind it is a fact about this project rather than a thing to discover
+(D56). Merge commits are exempt: a merge carries no new work, and GitHub's own
+merge commits cannot be signed by a contributor.
+
 The sign-off is your statement that you have the right to submit the work under
 the project's license. It is a lightweight alternative to a Contributor License
 Agreement — no paperwork, no account to create — and it keeps the provenance of

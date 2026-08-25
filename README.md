@@ -78,6 +78,21 @@ cross-builds the darwin pair into `dist/`, and unlike `make cli` it is not gated
 on Linux. The release workflow stages those binaries alongside the Linux ones, so
 from the first release it builds they are a download instead.
 
+**The macOS binaries are unsigned, and Gatekeeper will say so.** There is no
+Apple Developer identity for this project, so a `kelyfos` downloaded through a
+browser is quarantined and refused with *"cannot be opened because the developer
+cannot be verified"* — which reads like a corrupt download and is not one. It is
+the absence of a signature, nothing else. Clear the quarantine attribute if you
+want to run it:
+
+```sh
+xattr -d com.apple.quarantine ./kelyfos     # only after you have checked SHA256SUMS
+```
+
+Check the checksum first, because that sentence is asking you to override the
+one thing macOS does on your behalf. Signing and notarization are post-1.0 and
+wait on an identity rather than on engineering (D55).
+
 It is a smaller program than the Linux one and it says so. `doctor` owns the
 layer, `verify` checks a report somebody sent you — that one matters, because the
 machine a report is sent to is often a Mac and checking it needs no guest — and

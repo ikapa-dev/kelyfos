@@ -190,6 +190,11 @@ Named rather than left to be discovered:
 
 - **Windows and WSL2 are post-1.0.** WSL2 is documented as a way to run the Linux
   layer; it is not covered by anything here.
+- **The macOS binaries are unsigned and unnotarized**, so Gatekeeper quarantines
+  one downloaded through a browser. That is a property of this release rather
+  than a promise: signing arrives when an Apple identity does, and it is an
+  account and a fee rather than engineering (D55). The README gives the clearing
+  step, next to the reminder to check `SHA256SUMS` first.
 - **macOS is supported for what it does**: `doctor`, `verify`, `version` and
   `help`. The rest of the CLI needs Linux, refuses on macOS with the way in, and
   "the same commands everywhere" is explicitly not promised — it needs a

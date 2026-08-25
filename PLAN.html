@@ -1136,7 +1136,7 @@
         other two, where the cap it creates is inert. Each one is a defect the documents were right about, which
         is the useful half of an audit that reads them against the code.</span></li>
 
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">P6-29</span><span class="tk"><b>The DCO, gated where it can be true.</b> D56.
         <code>CONTRIBUTING.md</code> has required a <code>Signed-off-by</code> since v0.1 and not one commit in
         this repository carries one, which makes the requirement a claim the project fails on every push. History
@@ -1147,7 +1147,7 @@
         commit and on this repository&rsquo;s own history without failing every existing branch, which is the
         part worth designing rather than copying.</span></li>
 
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">P6-30</span><span class="tk"><b>Dependabot security updates, and what a bot-authored
         pull request costs.</b> D54. Enabled by the owner as its own consent rather than folded into P6-2,
         because it does not report &mdash; it <i>opens pull requests</i>, which is a different thing to agree to
@@ -1156,7 +1156,7 @@
         reason and a bot branch is not a reason to change that), and the line in <code>SECURITY.md</code> that
         stops being false once alerts are on.</span></li>
 
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">P6-31</span><span class="tk"><b>The macOS binary a stranger downloads, and what
         Gatekeeper does to it.</b> D55. v1.0 ships the darwin pair raw, unsigned and unnotarized, because there
         is no Apple identity today &mdash; so the honest thing is not to ship it quietly and let the first
@@ -3600,6 +3600,40 @@ after:
         the reader found it by fuzzing the page&rsquo;s fields one at a time, which is how it should have been
         found and is not how it should have shipped<br>
         one reader did <b>not</b> finish its task, which is a result rather than a failure of the reader</td></tr>
+        <tr><td class="mono">2026-08-25</td><td class="mono">P6-29 / P6-30 / P6-31</td>
+        <td><b>The three tasks the owner&rsquo;s rulings created, done together because each is small and none
+        is independent of the release.</b>
+        <b>P6-29 &mdash; the DCO is gated where it can be true.</b> <code>tools/check-dco.sh</code> checks the
+        commits a push or a pull request <i>adds</i>, not the history: the requirement has stood since v0.1 and
+        no commit before v1.0 carries a sign-off, so a check over <code>git log</code> would fail on every
+        branch forever and be switched off within a day &mdash; and rewriting that history would invalidate
+        every clone and every commit hash this file cites. Merge commits are exempt, because a merge carries no
+        new work and GitHub&rsquo;s own merge commits cannot be signed by a contributor. A base that is absent
+        or all-zero &mdash; a branch&rsquo;s first push, a scheduled run, a force-push &mdash; says so and
+        passes rather than inventing a range. <code>CONTRIBUTING.md</code> states the gap in as many words,
+        which is the &ldquo;false until true&rdquo; convention the owner asked for.
+        <b>P6-30 &mdash; Dependabot scoped rather than merely enabled.</b> Two ecosystems, both consumed by this
+        repository and neither able to reach a guest: <code>gomod</code>, and <code>github-actions</code>, which
+        is the supply chain most likely to be attacked and least likely to be noticed. <b>Deliberately absent:
+        the guest toolchain.</b> Buildroot, the kernel, Firecracker and Go are pinned with checksums in
+        <code>versions.mk</code>, and a bot cannot know that a kernel bump needs an image rebuild, a boot
+        measurement and a re-run of the acceptance suites &mdash; a PR doing that would look like every other PR
+        while being none of them. And the rule D54 exists for is unchanged: the workflows that boot microVMs are
+        dispatch-and-schedule only, which is what keeps <i>any</i> untrusted branch off a runner that starts
+        VMs, and a bot-authored one is not a reason to widen it.
+        <b>P6-31 &mdash; Gatekeeper, documented where somebody meets it.</b> The darwin binaries are unsigned,
+        so a download through a browser is refused with <i>&ldquo;cannot be opened because the developer cannot
+        be verified&rdquo;</i> &mdash; which reads like a corrupt download and is not one. The README says that,
+        gives the clearing step, and puts the reminder to check <code>SHA256SUMS</code> first in the same breath,
+        because that step asks a person to override the one thing macOS does on their behalf. Named in
+        <code>compatibility.md</code> &sect;7 too, where the promise&rsquo;s limits live.</td>
+        <td class="mono">the gate proved three ways in a throwaway repository: a signed commit passes, an
+        unsigned one exits 1 with the fix lines, and a merge commit is exempt<br>
+        proved against this repository&rsquo;s own history too, which is the case it must not fail on by
+        accident: <code>tools/check-dco.sh HEAD~2 HEAD</code> names both commits and exits 1<br>
+        <b>this row&rsquo;s own commit is the first in the repository to carry a sign-off</b>, which is what
+        gating new commits means in practice<br>
+        both YAML files parse; <code>make docs</code> clean</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>

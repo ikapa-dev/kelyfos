@@ -202,6 +202,30 @@ jobs:
       - name: every released tag has its notes
         run: python3 tools/changelog.py --check
 
+      # The DCO, on the commits this event actually adds (D56, P6-29).
+      #
+      # A range rather than the history: CONTRIBUTING.md has required a sign-off
+      # since v0.1 and no commit before v1.0 carries one, so a check over
+      # `git log` would fail on every branch forever and be switched off within
+      # a day. Rewriting that history would invalidate every clone and every
+      # commit hash PLAN.html cites. Enforcement therefore starts where it can be
+      # true, and CONTRIBUTING.md says that in as many words.
+      - name: new commits carry a DCO sign-off
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            base='${{ github.event.pull_request.base.sha }}'
+            head='${{ github.event.pull_request.head.sha }}'
+          else
+            base='${{ github.event.before }}'
+            head='${{ github.sha }}'
+          fi
+          # A branch's first push, a scheduled run, or a force-push gives a base
+          # that is absent or all-zero; the script says so and passes rather than
+          # inventing a range.
+          case "$base" in ''|0000000*) echo "no comparable base for this event"; exit 0;; esac
+          bash tools/check-dco.sh "$base" "$head"
+
       # The generated reference is regenerated from the source and compared. A
       # flag that exists and is not in docs/reference, or one in docs/reference
       # that no longer exists, fails here rather than reaching a reader (F-D4,
