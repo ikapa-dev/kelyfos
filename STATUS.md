@@ -124,9 +124,11 @@ session with no source tree** — both are environment-bound rather than work-bo
   toml array parser splits on the comma before parsing quotes. Same cause as the cut method syntax.
 - `kelyfos snapshot restore` never reads `kelyfos.toml` at all — no ceilings, no allow, no secrets from the file.
   Defensible, undocumented, and a question P6-14's promise has to answer.
-- The five-agent pair is **412 ms cold / 286 ms forked** on `demo-team`'s graph, not `prove-team`'s CPU-capped
-  737/149; and the macOS quickstart is not one number — **10 s is KelyfOS's own part**, the Linux layer was 28 s
-  warm and 138 s cold and that part is Lima's.
+- The five-agent pair is a **range, not a number**: re-measured twice on one commit it gave **343 ms and 543 ms
+  cold, 285 ms and 384 ms forked** on `demo-team`'s graph (the old published 412/286 sits inside that spread), and
+  `prove-team`'s CPU-capped run gave 831–923 ms cold. One cold sample on a shared CI machine varies by 58% of its
+  own value, so the README prints the range. And the macOS quickstart is not one number — **10 s is KelyfOS's own
+  part**, the Linux layer was 28 s warm and 138 s cold and that part is Lima's.
 - `kelyfos runs --all` counts an unreadable session directory as missing rather than reporting it.
 - On x86_64 the VMM carries a fifth KVM-created task; the filter check requires it to report filter mode.
 - The E2B SDK smoke test (§1 criterion 5) was run once by hand in August: no suite, no CI job, no HTTP test. P6-18.

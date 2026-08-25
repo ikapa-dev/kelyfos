@@ -60,11 +60,14 @@ edit.
 ![KelyfOS in a terminal](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/media/demo.gif)
 
 > **Status: v0.9, early development, building in the open.** Cold boot-to-ready
-> **135 ms** median, snapshot restore **49 ms** — x86_64 on a bare-KVM CI runner,
-> ten runs each, by [`bench.yml`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/.github/workflows/bench.yml) rather than by
-> hand. **Five agents up in 412 ms** is a different measurement and says so here:
-> one cold run of `dev/demo-team.sh` under
-> [`caps.yml`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/.github/workflows/caps.yml), not a median of ten.
+> **134 ms** median (p95 143), snapshot restore **48 ms** (p95 53) — x86_64 on a
+> bare-KVM CI runner, ten runs each, by
+> [`bench.yml`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/.github/workflows/bench.yml) rather than by hand. **Five agents
+> come up in 343–543 ms cold and 285–384 ms once a fork template is cached** —
+> a range and not a number, because that measurement is one run of
+> `dev/demo-team.sh` under [`caps.yml`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/.github/workflows/caps.yml) rather than a
+> median of ten, and the cold path varies by more than half its own value between
+> runs on a shared machine.
 >
 > **v0.9 is the hardening release.** The VMM runs inside the jailer with its own
 > syscall filter proved in force rather than assumed, and everything the guest
@@ -438,7 +441,7 @@ machine took.
 
 | | |
 | --- | --- |
-| `kelyfos snapshot save\|restore` | freeze a prepared machine, bring it back in ~49 ms |
+| `kelyfos snapshot save\|restore` | freeze a prepared machine, bring it back in ~48 ms |
 | `kelyfos fork -n 4` | four divergent copies of one snapshot, sharing its memory image |
 | `kelyfos run --workspace ./dir` | your files at `/work`, written back on clean shutdown |
 | `kelyfos log --export report.html` | a self-contained session report, carrying the record it was rendered from |
@@ -492,21 +495,32 @@ Every figure above is measured on the bare-KVM reference — a stock
 rather than by hand. Two workflows, not one, because they measure different
 things: boot and restore are `kelyfos bench` under
 [`bench.yml`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/.github/workflows/bench.yml), ten runs each; the five-agent figures
-are `dev/demo-team.sh` under [`caps.yml`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/.github/workflows/caps.yml), one run
-each. Local numbers on a Mac are 6–8× slower because of nested virtualisation and
-are never the published ones.
+are `dev/demo-team.sh` under [`caps.yml`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/.github/workflows/caps.yml), **one run
+each**. Local numbers on a Mac are 6–8× slower because of nested virtualisation
+and are never the published ones.
+
+**Ten runs and one run are different kinds of number, so they are printed
+differently.** Boot and restore are medians over ten samples and are steady:
+`130, 130, 134, 135, 140, 134, 141, 133, 132, 143` for boot. The five-agent
+figure is a single sample, and re-measuring it twice on the same commit gave
+343 ms and 543 ms cold — a spread of 58% — against 285 ms and 384 ms forked.
+That is a property of one cold sample on a machine shared with the rest of
+GitHub, not of KelyfOS, and it is the reason a range is printed where a single
+number would read as more precise than the measurement is.
 
 Boot was 123 ms and restore 37 ms at v0.8. The jailer and the guest-profile probe
 sit on the boot path and cost about 12 ms each way; the VMM's filter check is
 read after boot-to-ready has been taken and is not in the number. Both were
 re-measured across that change rather than assumed through it. The
-targets — ≤ 300 ms cold, ≤ 100 ms restore — still hold with room. The team
-figures replace 366 ms and 215 ms from before the guest kernel moved to the
-6.12 LTS line, measured the same way on the same five-agent graph.
+targets — ≤ 300 ms cold, ≤ 100 ms restore — still hold with room, and **v1.0
+re-measured them across everything this phase put on the boot path**: 134 ms and
+48 ms, against 135 ms and 49 ms at v0.9. The workspace extraction was rewritten
+in this phase and cost nothing that ten runs can see.
 
-The five-agent number is the graph in `dev/demo-team.toml`: 412 ms with all five
-booting cold, 286 ms once a fork template is cached. The master boots cold either
-way, because a fork cannot carry a network identity.
+The five-agent figures are the graph in `dev/demo-team.toml`, with the master
+booting cold either way because a fork cannot carry a network identity. They
+replace 366 ms and 215 ms from before the guest kernel moved to the 6.12 LTS
+line, measured the same way on the same graph.
 
 ## Security
 
