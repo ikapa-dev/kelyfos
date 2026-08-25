@@ -193,7 +193,7 @@ connection: an unbounded line buffer is a memory-exhaustion bug waiting for the
 first `cat /dev/urandom`. Writers therefore chunk: no single frame carries more
 than **64 KiB** of pre-encoded bytes.
 
-The MCP channel (port 10002) is the exception, and its limit is **16 MiB**.
+The MCP channel (port 10002) is one exception, and its limit is **16 MiB**.
 Nothing on that channel is chunked — a `read_file` result is a whole file on one
 line — and the per-call limit on a file is 8 MiB, so a 1 MiB frame would refuse
 messages the tools above it promise to carry. Sixteen was chosen to leave room
@@ -209,6 +209,24 @@ the oversized frame is written, so the stream is still on a frame boundary and
 the session carries on. Both directions and every reader on the channel use the
 same number (`proto.MaxMCPLine`), so a message one side will send is a message
 the other side will accept.
+
+The team channel (port 10102) is the other exception, and it goes the other
+way. Its frame limit is the 1 MiB above, but nothing on it is chunked either —
+a `send` carries its whole body on one line — so the bound is put *below* the
+frame rather than the frame raised above it. A team message carries at most
+**785,664 bytes** of payload before base64 (`proto.MaxTeamBody`), and the
+request id the host echoes onto its answer at most **128 bytes**
+(`proto.MaxTeamID`); §4 asks an initiator for an id of no more than 64
+characters, and 128 bytes is what this channel can enforce on a peer that
+ignores that. Both are refused with `bad_request` naming the size and the
+limit, before the broker acts on the request.
+
+The payload has to be the smaller number because the frame that delivers a
+message is not the frame that sent it: a delivery carries `from` where the
+request carried `to`, plus the `correlate` tag a reply has to quote back, so it
+is tens of bytes larger than the frame that fitted. Reserving that envelope —
+a kilobyte, against a measured worst case of 983 bytes — is what stops the broker accepting a
+message it can then never write out (§5.6).
 
 **Unknown fields are ignored.** Every message carries `"v": 1`; a reader that
 sees a `v` it does not know MUST fail the message rather than guess.
@@ -478,9 +496,22 @@ The store bounds what one team can make the host hold: a key of at most 1 KiB,
 10,000 keys per team, 1 MiB per value and 64 MiB per team. Each is refused with a
 `denied` error the agent sees, rather than quietly swallowed.
 
+The value limit an agent can actually reach is the smaller of two. A `store_put`
+carries its value in `body`, so the channel's 785,664-byte payload bound (§3)
+refuses an oversized value with `bad_request`, naming that limit, before the
+store's 1 MiB `denied` is ever reached. The store still enforces its own
+megabyte — it is the component that owns the byte budget, and the two limits
+are checked in different places for different reasons — but the channel is the
+only route a guest has to it, so `bad_request` at 785,664 bytes is the refusal
+an agent sees.
+
 A refusal is an `Error` with one of the kinds in §4 plus `no_edge`,
 `no_such_agent` and `unreachable`. There is no silent drop: an agent that may
-not send something is told so, and told why.
+not send something is told so, and told why. An answer the host cannot fit in
+a frame is refused the same way, with `internal` naming the frame limit — the
+rule the MCP channel already follows (§3), arrived at here for the same reason.
+Nothing of the oversized frame is written, so the stream is still on a frame
+boundary and the connection carries on rather than closing under the caller.
 
 ---
 

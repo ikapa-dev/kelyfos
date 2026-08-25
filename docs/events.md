@@ -311,13 +311,20 @@ proxy that forwards it. Three values rather than two, so that a reader looking
 for what the proxy saw cannot be misled by a word (`docs/networking.md` §6).
 
 ### `secret.use`
-A credential was attached to a request. Written from P2-6.
+A credential was attached to a request **and left the machine**. Written from
+P2-6.
 
 | Field | Type | Meaning |
 | --- | --- | --- |
 | `name` | string | Secret name, e.g. `GITHUB_TOKEN`. |
-| `host` | string | Where it was sent. |
+| `host` | string | Where it was sent — the domain the connection was opened and verified against, which is also the one the credential is bound to. |
 | `agent` | string | Present inside a team: whose credential it was. |
+
+The event is owed to the credential having left, not to an answer coming back.
+A peer that reads the request and then resets the connection **has** the token,
+so that is written down; a dial, DNS or TLS failure that never put a byte on the
+wire is not. What separates them is whether the `Authorization` line was written
+to the connection, which is a thing the proxy can observe rather than infer.
 
 **The value is never recorded, in any field, in any form** — not truncated, not
 hashed. A hash of a short credential is a credential. The whole point of
@@ -437,11 +444,11 @@ refused. Written from E2-5.
 
 | Field | Type | Meaning |
 | --- | --- | --- |
-| `agent` | string | The spawner — the agent that asked. |
-| `peer` | string | The worker's name, `<spawner>-spawn-N`. Absent on a refusal, because there is no worker. |
+| `agent` | string | The spawner — the agent that asked. Absent on a `not_a_spawned_worker` despawn, because no agent asked for it. |
+| `peer` | string | The worker's name, `<spawner>-spawn-N`. Absent on a refusal the host never got as far as naming — `no_spawn_budget`, `budget_exhausted`, `image_not_permitted` — and present on the two that are *about* a name, `name_taken` and `not_a_spawned_worker`. |
 | `kind` | string | `spawn` or `despawn`. |
 | `outcome` | string | `delivered` or `refused`. |
-| `reason` | string | `no_spawn_budget`, `budget_exhausted`, `image_not_permitted`. |
+| `reason` | string | On a refused `spawn`: `no_spawn_budget`, `budget_exhausted`, `image_not_permitted`, `name_taken`. On a refused `despawn`: `not_a_spawned_worker`. |
 
 A `despawn` is written when the worker's lifetime expires or the team comes
 down, so the log says how long every machine in the team existed rather than

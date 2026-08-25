@@ -105,11 +105,30 @@ const MaxMCPLine = 16 << 20
 // So the payload is bounded below the frame, with the envelope's worst case
 // reserved rather than estimated: every field a body-carrying answer can also
 // carry, the JSON around them, and the delimiting newline. A kilobyte is far
-// more than that costs — roughly sixty bytes of punctuation, a name of at most
-// 64 (internal/team ValidAgentName), a tag, and an id — and it stays true when
-// an id arrives as control characters, which encoding/json escapes to six bytes
-// each. proto_test.go builds that worst case and writes it rather than
-// multiplying it out here.
+// more than that costs — roughly sixty bytes of punctuation, an agent's name, a
+// tag, and an id — and it stays true when an id arrives as control characters,
+// which encoding/json escapes to six bytes each. proto_test.go builds that
+// worst case and writes it rather than multiplying it out here.
+//
+// The name is the one part of that this package cannot bound itself, and the
+// number to reserve against is not internal/team ValidAgentName's 64. That rule
+// is applied to the names a person declares (NewTopology), and a worker an
+// agent spawns is not declared: the broker mints it as `<spawner>-spawn-<n>`
+// and attaches it to the topology without passing it back through the check
+// (internal/team spawn.go), so a declared agent already at 64 bytes has workers
+// whose names are longer than any name that check would accept — and `recv`
+// delivers them to it as `from`, on a frame that carries a body. The suffix
+// cannot nest, because a spawn budget is granted only to the agents in the team
+// file (host/team.go) and a worker therefore has none of its own. The longest
+// name that can reach this envelope is 64 + "-spawn-" + the digits of an int:
+// 90 bytes, and that is the name proto_test.go builds its worst case with.
+//
+// Measured, that answer's envelope is 983 bytes, so the reservation still holds
+// with room to spare — but the reservation is what the test pins rather than
+// the arithmetic. It measures the envelope of the largest answer against this
+// constant, so a field added here, or a name longer than the spawn path can
+// mint today, fails there instead of in a message that was accepted, recorded
+// as delivered, and then could not be written.
 //
 // The exec path has had this invariant from the beginning: MaxChunk is the same
 // idea one channel over, and it is checked the same way.

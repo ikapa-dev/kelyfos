@@ -35,12 +35,28 @@ get a NIC.
 
 Point-to-point /30 per sandbox, carved out of **169.254.0.0/16** — link-local
 space (RFC 3927), which nothing routes and no site allocates, so a sandbox
-cannot collide with the host's real networks. The /30 index is derived from the
-sandbox id rather than handed out by a counter, so two `kelyfos run` invocations
-cannot race for a range; a collision retries with the next index. The host takes
-the first usable address and the guest the second, and the proxy's port is
-kernel-assigned rather than fixed, which is why every example here writes it as
-a placeholder.
+cannot collide with the host's real networks.
+
+**One address in that range is the exception, and it is reserved.**
+`169.254.169.254` is the cloud instance metadata address — AWS, GCP, Azure and
+every hypervisor that copied them — so it is routed on exactly the machines
+KelyfOS is most likely to run on. The /30 that contains it,
+`169.254.169.252/30`, is therefore never handed to a sandbox. Left in, it would
+have arrived for one sandbox id in 16,384: `ip addr add` installs a connected
+route for the whole /30, and on a host carrying the usual /32 route for the
+metadata address the longest prefix wins, so the *sandbox* is what breaks —
+the proxy's replies leave by the physical NIC instead of the TAP, and egress
+hangs with no error anywhere. On a host that reaches its metadata through a
+broader route, the host's own metadata is what goes instead. Either way the
+symptom is a hang, which is the hardest kind of failure to attribute.
+
+The /30 index is derived from the sandbox id rather than handed out by a
+counter, so two `kelyfos run` invocations cannot race for a range; a collision
+retries with the next index, and so does the reserved index above — advancing
+costs one of the thirty-two tries and the next index is an ordinary /30. The
+host takes the first usable address and the guest the second, and the proxy's
+port is kernel-assigned rather than fixed, which is why every example here
+writes it as a placeholder.
 
 **No NAT and no IP forwarding**, and neither is missing by accident — nothing
 needs them. The proxy binds directly on the host's TAP address, so guest traffic

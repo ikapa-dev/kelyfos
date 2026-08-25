@@ -207,7 +207,13 @@ func Schema() []Key {
 		Key{Section: "team.agent", Name: "image", Type: TypeString, Default: "the file's image, else \"base\"", Sample: `"dev"`,
 			Doc: "image flavor for this agent"},
 		Key{Section: "team.agent", Name: "workspace", Type: TypeString, Default: "no /work device", Sample: `"./ws"`,
-			Doc: "host directory for this agent alone; refused when count is above 1"},
+			// Same resolution rule as the top-level workspace, and it has to be
+			// said in both rows: a reader comparing them reads a difference in
+			// wording as a difference in behaviour, and this was the last
+			// workspace path in the product still resolved against the process's
+			// own directory until L-5 moved it onto the file.
+			Doc: "host directory for this agent alone, resolved against this file; refused when " +
+				"count is above 1, and when a second agent names the same directory"},
 		Key{Section: "team.agent", Name: "count", Type: TypeInt, Default: "1", Sample: "4",
 			Doc: "how many of this agent; above 1 they are named name-1 … name-N"},
 		Key{Section: "team.agent", Name: "allow", Type: TypeStrings, Default: "no network interface at all", Sample: `["example.com"]`,

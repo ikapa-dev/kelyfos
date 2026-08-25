@@ -11,6 +11,7 @@ package team
 import (
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -66,21 +67,6 @@ func ValidAgentName(name string) error {
 	case len(name) > 64:
 		return fmt.Errorf("the agent name %q is %d characters; 64 is the most an agent may be called",
 			name[:32]+"…", len(name))
-	case strings.Contains(name, "-spawn-"):
-		// `<spawner>-spawn-<n>` is the host's to mint, for a worker an agent asks
-		// for at runtime. A declared agent holding one of those names is not a
-		// duplicate this function's caller can see, because the spawn arrives
-		// later — and when it does it lands *on top* of that agent rather than
-		// beside it (P6-27, finding M-6). The broker refuses the collision too;
-		// this is the half that reaches the person who can still fix it, while
-		// they are looking at the file they wrote the name in.
-		//
-		// The check is on the expanded name rather than the written one on
-		// purpose: `name = "lead-spawn"` with `count = 2` becomes lead-spawn-1,
-		// and it is the expansion that collides.
-		return fmt.Errorf("the agent name %q contains \"-spawn-\". The host mints names of that "+
-			"shape for the workers an agent spawns at runtime, so a declared agent cannot be "+
-			"called one — pick a name that does not read as somebody's spawned worker", name)
 	}
 	for _, r := range name {
 		switch {
@@ -105,6 +91,35 @@ func NewTopology(agents []string, edges []Edge) (*Topology, error) {
 			return nil, fmt.Errorf("two agents are both called %q", a)
 		}
 		known[a] = true
+	}
+	// A declared agent may not hold the name the host would mint for a worker
+	// spawned by another agent *in this team* (P6-27, finding M-6).
+	//
+	// Such a name is not a duplicate the loop above can see, because the spawn
+	// arrives later — and when it does it would land *on top* of the declared
+	// agent rather than beside it. Spawn refuses that collision, which is what
+	// actually closes the hole; this is the half that reaches the person who can
+	// still fix it, in the file they wrote the name in, instead of leaving them
+	// a spawn that is refused at runtime for a reason they cannot see.
+	//
+	// It runs as a second pass because it needs the whole team: the spawner may
+	// be declared after its would-be worker. And it sees expanded names rather
+	// than written ones, which is what makes it enough — `name = "master-spawn"`
+	// with `count = 2` becomes master-spawn-1 before this is called, and it is
+	// the expansion that collides, not the name somebody typed.
+	//
+	// Deliberately no wider than that. Every collidable name is <spawner> +
+	// "-spawn-" + a sequence number, so a name whose prefix is nobody in this
+	// team can never be minted: `ci-spawn-runner`, `build-spawn-service` and
+	// `no-spawn-zone` are ordinary names, and a rule that refused them would
+	// have broken team files that were legal, for no collision anybody could
+	// have had.
+	for _, a := range agents {
+		if spawner, ok := mintedSpawnName(a, known); ok {
+			return nil, fmt.Errorf("the agent %q is named what the host would call a worker spawned "+
+				"by %q, which is also in this team — that spawn would arrive later and land on top of "+
+				"this agent, so rename one of the two", a, spawner)
+		}
 	}
 	t := &Topology{agents: append([]string(nil), agents...), allowed: map[string]map[string]bool{}}
 	sort.Strings(t.agents)
@@ -134,6 +149,34 @@ func NewTopology(agents []string, edges []Edge) (*Topology, error) {
 		}
 	}
 	return t, nil
+}
+
+// mintedSpawnName reports whether name is one Spawn could ever mint for an
+// agent in known — that is, `<spawner>-spawn-<n>` in the exact shape spawn.go
+// writes it — and names the spawner if so.
+//
+// Only the last "-spawn-" can be the minted one: everything after it has to be
+// the sequence number, and "-spawn-" is not a number, so an earlier occurrence
+// always leaves letters in the tail.
+//
+// The tail is matched against exactly what spawn.go writes rather than against
+// "some digits": the sequence is incremented before it is used, so it starts at
+// 1, and %d writes 7 and never 007. `master-spawn-007` is a name no spawn can
+// land on, however readily strconv reads its tail as a number.
+func mintedSpawnName(name string, known map[string]bool) (string, bool) {
+	i := strings.LastIndex(name, "-spawn-")
+	if i < 0 {
+		return "", false
+	}
+	spawner, seq := name[:i], name[i+len("-spawn-"):]
+	if !known[spawner] {
+		return "", false
+	}
+	n, err := strconv.Atoi(seq)
+	if err != nil || n < 1 || strconv.Itoa(n) != seq {
+		return "", false
+	}
+	return spawner, true
 }
 
 func (t *Topology) permit(from, to string) {

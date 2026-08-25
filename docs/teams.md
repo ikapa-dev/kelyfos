@@ -106,8 +106,13 @@ silently dropped:
   runtime condition.
 - `workspace` packs that host directory as this agent's `/work` before it boots,
   and `kelyfos team down` writes it back — every agent's own, in the reverse of
-  the order they started. One directory behind a `count` group is refused: two
-  machines writing one directory back is a race whose loser's work disappears.
+  the order they started. A relative path is resolved against **the policy
+  file's own directory**, not the working directory, so the same file describes
+  the same project whether `team up` is run from a subdirectory or `serve-mcp`
+  is launched by a client from a directory nobody chose. That is the rule
+  `[sandbox] workspace` and a `[[plugin]]` directory already follow. One
+  directory behind a `count` group is refused: two machines writing one
+  directory back is a race whose loser's work disappears.
 - `[team.agent.resources]` applies per agent exactly as `[resources]` applies to
   a run, including `cpu_quota`, which puts that agent's Firecracker process in
   its own cgroup v2 slice. One exception, written down rather than left to be
@@ -199,6 +204,20 @@ ceiling: a larger number is clamped to it rather than refused, because an agent
 asking to wait a long time is not misbehaving, and refusing would leave one that
 wanted an hour with nothing instead of fifteen minutes.
 
+**A message body is at most 785,664 bytes.** That covers `team_send`,
+`team_ask` and `team_reply`, and the value of a `team_store_put`, because all
+four travel the same field on the same channel; a larger one is refused with
+`bad_request` naming the size and the limit, before the broker has taken
+anything on. The number is not round because it is not a policy: it is what is
+left of the channel's 1 MiB frame once room is reserved for the envelope of the
+frame that *delivers* the message, which carries the sender's name and a reply's
+`correlate` tag where the call carried the addressee and is therefore larger
+than the call that fitted. Bounding the payload below the frame is what stops
+the broker accepting a message it could then never write out. The channel bounds
+its own request ids at 128 bytes for the same reason; the supervisor mints
+those, so an agent using the tools above never chooses one.
+`docs/protocol.md` §3 has the arithmetic.
+
 ### 3.1 `team_send(to, body)`
 
 Deliver `body` to agent `to`. Returns when the broker has accepted or refused
@@ -248,6 +267,13 @@ On the receiving side a question arrives as an ordinary MCP tool event, so
 answering it is natural for a model: it sees a question and a reply tool. The
 argument is called `correlate`, and it is the value `team_recv` returned in its
 `correlate` field — one name for one thing, on both sides.
+
+**A question takes exactly one answer.** The broker claims the correlation in
+the same step that accepts a reply, so a second `team_reply` carrying that tag
+is a reply to a question no longer outstanding and is refused exactly like a tag
+nobody ever issued: `denied` to the agent, `reason: unknown_correlation` in the
+record. The asker receives one body, and the transcript holds one delivered
+reply rather than two a reader would have to choose between.
 
 **A reply needs no edge of its own.** It travels the return path of the ask that
 provoked it, which the broker is already holding open. This matters for
@@ -320,17 +346,19 @@ silent drop:
 | `no_such_agent` | The name is not in this team. |
 | `unreachable` | The recipient's mailbox is full — it exists and is not reading its messages. |
 | `timeout` | An `ask` expired, or a `recv` window closed empty. |
-| `denied` | Store access this agent does not have, a spawn it may not make, a `team_reply` with a `correlate` tag that is missing or not its own, or any call on a team with no store. |
-| `bad_request` | The call itself was malformed — a body that is not valid base64, an unknown operation. |
+| `denied` | Store access this agent does not have, a spawn it may not make, a `team_reply` whose `correlate` tag is missing, is not its own, or names a question that has already been answered, or any call on a team with no store. |
+| `bad_request` | The call itself was malformed — a body that is not valid base64, an unknown operation, or a body past the 785,664-byte limit in §3. |
 | `internal` | The host failed at something it had already permitted. |
 
 **The kind an agent receives and the reason the record carries are two different
 vocabularies, deliberately.** An agent branches on a small set it can act on; the
 transcript records the specific thing that happened. A `team_reply` with a tag
 nobody is waiting for returns `denied` to the agent and is recorded with
-`reason: unknown_correlation`; one with no tag at all returns `denied` and is
-recorded `missing_correlation`. If you are writing an orchestrator, branch on the
-kind and read the record for the detail.
+`reason: unknown_correlation` — including a second reply to a question that
+has already been answered, which is a tag nobody is waiting for any more; one
+with no tag at all returns `denied` and is recorded `missing_correlation`. If
+you are writing an orchestrator, branch on the kind and read the record for the
+detail.
 
 ---
 
@@ -369,6 +397,14 @@ at most 1 MiB, a key at most 1 KiB, a team's store at most 64 MiB, and at most
 an unbounded amount of data on the team's behalf, and a team that hits a limit
 gets an error rather than a host that has quietly swallowed a gigabyte.
 
+The value ceiling an agent actually meets is a smaller one, and it is not the
+store's. A `team_store_put` carries its value over the team channel, whose
+payload bound is 785,664 bytes (§3), so a larger value is refused there —
+with `bad_request` naming that limit — before the store's megabyte is reached.
+The store still enforces its own, because it is the component that owns the byte
+budget the other three limits are drawn against; but the channel is the only
+route a guest has to it, so 785,664 is the number to write a client against.
+
 The last two arrived at v1.0, and their absence is worth naming rather than
 quietly fixing: the byte ceiling weighed **values only**. A key cost nothing
 against it, so ten thousand one-byte keys were ten kilobytes by that arithmetic
@@ -391,6 +427,23 @@ space would end that — an agent called `worker init=/bin/sh` put a second `ini
 on the line, and one with a tab in it granted itself a spawn budget the host
 never gave. Refused when the file is read, with the character named, rather than
 repaired: a name that has to be repaired was written to be repaired.
+
+**A name may not be one the host would mint for a spawned worker**, which is
+`<spawner>-spawn-<n>` where `<spawner>` is another agent in the same team and
+`<n>` is a plain number (§5). A declared agent holding such a name is not a
+duplicate anything can see while the file is being read, because the spawn
+arrives later — and when it does it lands *on top* of that agent rather than
+beside it. Refused at the file, in the same shape as the character rule above,
+and checked after `count` has expanded the name.
+
+The rule is that narrow on purpose. `ci-spawn-runner`, `build-spawn-service` and
+`no-spawn-zone` contain the same three words and can never collide with anything
+the host mints, so they are legal — a check that refused every name containing
+`-spawn-` would break a committed file to close a hole that shape cannot reach.
+And `lead-spawn` with `count = 2` is legal for the same reason: it expands to
+`lead-spawn-1`, whose prefix `lead-spawn` is not a declared agent, so nothing
+will ever mint that name. What is refused is `lead-spawn-1` *beside* a spawning
+`lead`.
 
 **Absence is not a refusal.** Reading a key that was never written is
 `not_found`; reading one you may not read is `denied`. An agent that cannot tell
@@ -458,7 +511,14 @@ lifetime   = "10m"
 The decision *to* spawn stays agent-side; KelyfOS enforces only what the user
 pre-authorised. A spawn beyond the budget is refused and audited, as is a spawn
 by an agent with no `team.spawn` at all — the host decides, so a refusal always
-reaches the log even when the asking agent was never shown the tool.
+reaches the log even when the asking agent was never shown the tool. So is a
+spawn whose minted `<spawner>-spawn-N` is already an agent in this team, audited
+with `reason: name_taken`: taking a name that is not free would not be a naming
+collision but a merge, putting the worker on top of the sitting agent and
+leaving it that agent's whole edge set instead of the one edge a spawned worker
+has. The sequence number is spent either way, so the asking agent's next attempt
+mints a different name and works. The name rule in §4 is the half of this that
+reaches the person while they are still looking at the file.
 
 `lifetime` is enforced by the host, not asked of the worker: when it expires the
 worker is shut down, a `despawn` is recorded, and its place in the budget comes
@@ -644,7 +704,7 @@ rather than five that have to be correlated afterwards.
 | type | meaning |
 | --- | --- |
 | `team.message` | One delivery: from, to, size, body hash, and whether it was an ask, a reply or a send. |
-| `team.refused` | A refused message. Its own type, because it is the interesting one — but it covers three refusals, not one: a message the edge list did not permit (`reason: no_edge`), one addressed to a name that is not in the team (`no_such_agent`), and a `team_reply` nobody was waiting for (`missing_correlation` or `unknown_correlation`). Read the reason before counting edge violations. |
+| `team.refused` | A refused message. Its own type, because it is the interesting one — but it covers three refusals, not one: a message the edge list did not permit (`reason: no_edge`), one addressed to a name that is not in the team (`no_such_agent`), and a `team_reply` nobody was waiting for (`missing_correlation` or `unknown_correlation`) — which covers a second reply to a question that has already been answered, since a question takes exactly one. Read the reason before counting edge violations. |
 | `team.store` | A store access: key, agent, read or write, permitted or not. |
 | `team.spawn` | A worker spawned or refused, with the spawner, the worker's name and the reason on a refusal. |
 

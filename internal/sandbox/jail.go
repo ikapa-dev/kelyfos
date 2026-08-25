@@ -256,6 +256,12 @@ func linkInto(src, dest string) error {
 	} else if !isCrossDevice(err) {
 		return fmt.Errorf("link %s into the jail: %w", src, err)
 	}
+	return copyOnto(src, dest)
+}
+
+// copyOnto is the cross-device half both link-or-copy paths here share, with
+// the source's permissions, because the destination is being created.
+func copyOnto(src, dest string) error {
 	in, err := os.Open(src)
 	if err != nil {
 		return err
@@ -274,6 +280,46 @@ func linkInto(src, dest string) error {
 		return err
 	}
 	return out.Close()
+}
+
+// writeBackImage puts src at dest the other way round from linkInto: the
+// destination is never removed, it is replaced.
+//
+// linkInto is right for staging into a jail nobody has looked in yet — the
+// destination is a name this package made moments ago, and losing it costs
+// nothing. It is wrong for the direction this function serves, where the
+// destination is the person's own workspace image. Remove-then-copy means that
+// between the remove and the last byte there is no image at all, and after an
+// interruption in the middle of it there is a partial one under the name they
+// trust: a write-back that can destroy what it is rescuing. Measured, the
+// failure did not even need an interruption — a copy that could not be finished
+// left an empty file where the image had been.
+//
+// So the new content is built beside the destination and renamed onto it, which
+// is atomic within a filesystem and is the shape every other write-back here
+// uses (stageFile, and the tree swap in workspace.go). Beside it rather than in
+// a temporary directory for that reason: rename is atomic only within one
+// filesystem, and the case this exists for is the one where the two ends are on
+// different ones.
+func writeBackImage(src, dest string) error {
+	tmp := dest + ".kelyfos-writeback"
+	if err := os.Remove(tmp); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	// Removed on every path that does not reach the rename, so a write-back
+	// that fails leaves the destination alone *and* leaves nothing beside it.
+	// Once the rename has taken the name away this finds nothing, which is the
+	// same no-op stageFile's deferred remove makes.
+	defer os.Remove(tmp)
+	if err := os.Link(src, tmp); err != nil {
+		if !isCrossDevice(err) {
+			return fmt.Errorf("link %s out of the jail: %w", src, err)
+		}
+		if err := copyOnto(src, tmp); err != nil {
+			return err
+		}
+	}
+	return os.Rename(tmp, dest)
 }
 
 func isCrossDevice(err error) bool {
@@ -318,6 +364,9 @@ func stageJail(runDir string, opts Options, kernel, rootfs string, cfg Firecrack
 // installation. The copy path exists for the case where it is not, and doing
 // nothing there would silently lose an agent's work at teardown, which is the
 // one failure this product must not have.
+//
+// Through writeBackImage rather than linkInto: the destination here is the
+// host's image, not a name inside a jail, and it is only ever replaced whole.
 func syncJailedWorkspace(runDir, hostImage string) error {
 	inside := filepath.Join(runDir, defaultJailNames().Workspace)
 	si, err := os.Stat(inside)
@@ -328,5 +377,5 @@ func syncJailedWorkspace(runDir, hostImage string) error {
 	if err == nil && os.SameFile(si, hi) {
 		return nil // the same file by two names: the link did its job
 	}
-	return linkInto(inside, hostImage)
+	return writeBackImage(inside, hostImage)
 }

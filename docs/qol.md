@@ -207,7 +207,10 @@ renames that tree into place, the host file's permission changes with it.
 The summary prints and sync-back **waits**. Answering yes syncs; answering no
 routes the result to `<dir>.kelyfos-out`, which is P3-10's existing diversion
 mechanism rather than a new one — the host directory is untouched until an
-explicit yes.
+explicit yes. That name is the *first* free one rather than a fixed one: a
+second decline against the same workspace writes `<dir>.kelyfos-out.2`, a third
+`.3`. A fixed name would have made each declined run overwrite the results of
+the one before it, which is the opposite of what declining asks for.
 
 **The wait is where your editor lives, so the check happens twice.** The
 fingerprint that decides whether a sync-back would overwrite somebody's edit is
@@ -218,9 +221,12 @@ minutes is five minutes in which the directory can change. A yes answered over a
 directory you edited while reading diverts, and says so.
 
 And the copy that is replaced is **kept**, as `<dir>.kelyfos-previous`, until the
-next successful run clears it. One generation deep, not a growing pile — but the
-moment somebody wants it is the moment immediately after a sync-back, which is
-exactly when it used to be deleted.
+next run that *replaces the directory* clears it. One generation deep, not a
+growing pile — but the moment somebody wants it is the moment immediately
+after a sync-back, which is exactly when it used to be deleted. A run that
+replaces nothing clears nothing: a declined or diverted run writes beside the
+project and leaves `<dir>.kelyfos-previous` exactly as it found it, so
+answering no cannot throw away the recoverable copy an earlier run left.
 
 The answer is a `run.review` event carrying the decision and the counts. A
 declined review is a fact worth keeping: it is the one place the product asks a

@@ -1672,6 +1672,15 @@ set, and how KelyfOS gets one depends on the machine:
 Either way the percentage is translated in the CLI, and the resulting `cpu.max`
 is **read back and checked** after launch. If the quota did not land, the
 sandbox refuses to start rather than running unlimited while claiming a cap.
+Two things are checked, and in that order: *where the process landed*, and only
+then what the cgroup it landed in says. The placement half needs somewhere the
+run was meant to be, and on the direct path it now has one for a plain
+`kelyfos run --cpu-quota` as well as for a team member — a single run knows
+exactly which directory its VMM belongs in, so it names that directory and the
+check has something to compare against. Reading `cpu.max` alone would accept
+any cgroup that happened to agree with the number. Under a systemd scope the
+expectation is a team's slice unit, so a plain run there is still verified by
+`cpu.max` alone.
 If neither path is available, `--cpu-quota` fails with the reason.
 
 Since v0.9 the VMM runs inside Firecracker's jailer by default, and the jailer
@@ -1683,12 +1692,13 @@ composes with the jail differently, and both were wrong for one release (P5-6):
 - **the direct path** hands the jailer `--parent-cgroup <slice>` and, with it,
   `--cgroup-version 2`. That second flag is not decoration: the jailer's own
   default is version 1, and naming a parent without the version makes it a
-  silent no-op — the VMM stays where it started and the read-back is the only
-  thing that notices.
+  silent no-op — the VMM stays where it started, and what notices is the
+  placement check: the refusal names the cgroup the VMM actually landed in and
+  the slice it was meant to run in, rather than a `cpu.max` that did not match.
 
 The read-back is what makes either safe to rely on. It asks
 `/proc/<pid>/cgroup` where the VMM actually is, not where it was meant to go,
-which is why a jailer that quietly placed nothing produced a refused run rather
+which is why a jailer that quietly placed nothing produces a refused run rather
 than an uncapped one.
 
 ### When the RAM cap is reached
@@ -2060,12 +2070,28 @@ get a NIC.
 
 Point-to-point /30 per sandbox, carved out of **169.254.0.0/16** — link-local
 space (RFC 3927), which nothing routes and no site allocates, so a sandbox
-cannot collide with the host's real networks. The /30 index is derived from the
-sandbox id rather than handed out by a counter, so two `kelyfos run` invocations
-cannot race for a range; a collision retries with the next index. The host takes
-the first usable address and the guest the second, and the proxy's port is
-kernel-assigned rather than fixed, which is why every example here writes it as
-a placeholder.
+cannot collide with the host's real networks.
+
+**One address in that range is the exception, and it is reserved.**
+`169.254.169.254` is the cloud instance metadata address — AWS, GCP, Azure and
+every hypervisor that copied them — so it is routed on exactly the machines
+KelyfOS is most likely to run on. The /30 that contains it,
+`169.254.169.252/30`, is therefore never handed to a sandbox. Left in, it would
+have arrived for one sandbox id in 16,384: `ip addr add` installs a connected
+route for the whole /30, and on a host carrying the usual /32 route for the
+metadata address the longest prefix wins, so the *sandbox* is what breaks —
+the proxy's replies leave by the physical NIC instead of the TAP, and egress
+hangs with no error anywhere. On a host that reaches its metadata through a
+broader route, the host's own metadata is what goes instead. Either way the
+symptom is a hang, which is the hardest kind of failure to attribute.
+
+The /30 index is derived from the sandbox id rather than handed out by a
+counter, so two `kelyfos run` invocations cannot race for a range; a collision
+retries with the next index, and so does the reserved index above — advancing
+costs one of the thirty-two tries and the next index is an ordinary /30. The
+host takes the first usable address and the guest the second, and the proxy's
+port is kernel-assigned rather than fixed, which is why every example here
+writes it as a placeholder.
 
 **No NAT and no IP forwarding**, and neither is missing by accident — nothing
 needs them. The proxy binds directly on the host's TAP address, so guest traffic
@@ -2456,8 +2482,13 @@ silently dropped:
   runtime condition.
 - `workspace` packs that host directory as this agent's `/work` before it boots,
   and `kelyfos team down` writes it back — every agent's own, in the reverse of
-  the order they started. One directory behind a `count` group is refused: two
-  machines writing one directory back is a race whose loser's work disappears.
+  the order they started. A relative path is resolved against **the policy
+  file's own directory**, not the working directory, so the same file describes
+  the same project whether `team up` is run from a subdirectory or `serve-mcp`
+  is launched by a client from a directory nobody chose. That is the rule
+  `[sandbox] workspace` and a `[[plugin]]` directory already follow. One
+  directory behind a `count` group is refused: two machines writing one
+  directory back is a race whose loser's work disappears.
 - `[team.agent.resources]` applies per agent exactly as `[resources]` applies to
   a run, including `cpu_quota`, which puts that agent's Firecracker process in
   its own cgroup v2 slice. One exception, written down rather than left to be
@@ -2549,6 +2580,20 @@ ceiling: a larger number is clamped to it rather than refused, because an agent
 asking to wait a long time is not misbehaving, and refusing would leave one that
 wanted an hour with nothing instead of fifteen minutes.
 
+**A message body is at most 785,664 bytes.** That covers `team_send`,
+`team_ask` and `team_reply`, and the value of a `team_store_put`, because all
+four travel the same field on the same channel; a larger one is refused with
+`bad_request` naming the size and the limit, before the broker has taken
+anything on. The number is not round because it is not a policy: it is what is
+left of the channel's 1 MiB frame once room is reserved for the envelope of the
+frame that *delivers* the message, which carries the sender's name and a reply's
+`correlate` tag where the call carried the addressee and is therefore larger
+than the call that fitted. Bounding the payload below the frame is what stops
+the broker accepting a message it could then never write out. The channel bounds
+its own request ids at 128 bytes for the same reason; the supervisor mints
+those, so an agent using the tools above never chooses one.
+`docs/protocol.md` §3 has the arithmetic.
+
 ### 3.1 `team_send(to, body)`
 
 Deliver `body` to agent `to`. Returns when the broker has accepted or refused
@@ -2598,6 +2643,13 @@ On the receiving side a question arrives as an ordinary MCP tool event, so
 answering it is natural for a model: it sees a question and a reply tool. The
 argument is called `correlate`, and it is the value `team_recv` returned in its
 `correlate` field — one name for one thing, on both sides.
+
+**A question takes exactly one answer.** The broker claims the correlation in
+the same step that accepts a reply, so a second `team_reply` carrying that tag
+is a reply to a question no longer outstanding and is refused exactly like a tag
+nobody ever issued: `denied` to the agent, `reason: unknown_correlation` in the
+record. The asker receives one body, and the transcript holds one delivered
+reply rather than two a reader would have to choose between.
 
 **A reply needs no edge of its own.** It travels the return path of the ask that
 provoked it, which the broker is already holding open. This matters for
@@ -2670,17 +2722,19 @@ silent drop:
 | `no_such_agent` | The name is not in this team. |
 | `unreachable` | The recipient's mailbox is full — it exists and is not reading its messages. |
 | `timeout` | An `ask` expired, or a `recv` window closed empty. |
-| `denied` | Store access this agent does not have, a spawn it may not make, a `team_reply` with a `correlate` tag that is missing or not its own, or any call on a team with no store. |
-| `bad_request` | The call itself was malformed — a body that is not valid base64, an unknown operation. |
+| `denied` | Store access this agent does not have, a spawn it may not make, a `team_reply` whose `correlate` tag is missing, is not its own, or names a question that has already been answered, or any call on a team with no store. |
+| `bad_request` | The call itself was malformed — a body that is not valid base64, an unknown operation, or a body past the 785,664-byte limit in §3. |
 | `internal` | The host failed at something it had already permitted. |
 
 **The kind an agent receives and the reason the record carries are two different
 vocabularies, deliberately.** An agent branches on a small set it can act on; the
 transcript records the specific thing that happened. A `team_reply` with a tag
 nobody is waiting for returns `denied` to the agent and is recorded with
-`reason: unknown_correlation`; one with no tag at all returns `denied` and is
-recorded `missing_correlation`. If you are writing an orchestrator, branch on the
-kind and read the record for the detail.
+`reason: unknown_correlation` — including a second reply to a question that
+has already been answered, which is a tag nobody is waiting for any more; one
+with no tag at all returns `denied` and is recorded `missing_correlation`. If
+you are writing an orchestrator, branch on the kind and read the record for the
+detail.
 
 ---
 
@@ -2719,6 +2773,14 @@ at most 1 MiB, a key at most 1 KiB, a team's store at most 64 MiB, and at most
 an unbounded amount of data on the team's behalf, and a team that hits a limit
 gets an error rather than a host that has quietly swallowed a gigabyte.
 
+The value ceiling an agent actually meets is a smaller one, and it is not the
+store's. A `team_store_put` carries its value over the team channel, whose
+payload bound is 785,664 bytes (§3), so a larger value is refused there —
+with `bad_request` naming that limit — before the store's megabyte is reached.
+The store still enforces its own, because it is the component that owns the byte
+budget the other three limits are drawn against; but the channel is the only
+route a guest has to it, so 785,664 is the number to write a client against.
+
 The last two arrived at v1.0, and their absence is worth naming rather than
 quietly fixing: the byte ceiling weighed **values only**. A key cost nothing
 against it, so ten thousand one-byte keys were ten kilobytes by that arithmetic
@@ -2741,6 +2803,23 @@ space would end that — an agent called `worker init=/bin/sh` put a second `ini
 on the line, and one with a tab in it granted itself a spawn budget the host
 never gave. Refused when the file is read, with the character named, rather than
 repaired: a name that has to be repaired was written to be repaired.
+
+**A name may not be one the host would mint for a spawned worker**, which is
+`<spawner>-spawn-<n>` where `<spawner>` is another agent in the same team and
+`<n>` is a plain number (§5). A declared agent holding such a name is not a
+duplicate anything can see while the file is being read, because the spawn
+arrives later — and when it does it lands *on top* of that agent rather than
+beside it. Refused at the file, in the same shape as the character rule above,
+and checked after `count` has expanded the name.
+
+The rule is that narrow on purpose. `ci-spawn-runner`, `build-spawn-service` and
+`no-spawn-zone` contain the same three words and can never collide with anything
+the host mints, so they are legal — a check that refused every name containing
+`-spawn-` would break a committed file to close a hole that shape cannot reach.
+And `lead-spawn` with `count = 2` is legal for the same reason: it expands to
+`lead-spawn-1`, whose prefix `lead-spawn` is not a declared agent, so nothing
+will ever mint that name. What is refused is `lead-spawn-1` *beside* a spawning
+`lead`.
 
 **Absence is not a refusal.** Reading a key that was never written is
 `not_found`; reading one you may not read is `denied`. An agent that cannot tell
@@ -2808,7 +2887,14 @@ lifetime   = "10m"
 The decision *to* spawn stays agent-side; KelyfOS enforces only what the user
 pre-authorised. A spawn beyond the budget is refused and audited, as is a spawn
 by an agent with no `team.spawn` at all — the host decides, so a refusal always
-reaches the log even when the asking agent was never shown the tool.
+reaches the log even when the asking agent was never shown the tool. So is a
+spawn whose minted `<spawner>-spawn-N` is already an agent in this team, audited
+with `reason: name_taken`: taking a name that is not free would not be a naming
+collision but a merge, putting the worker on top of the sitting agent and
+leaving it that agent's whole edge set instead of the one edge a spawned worker
+has. The sequence number is spent either way, so the asking agent's next attempt
+mints a different name and works. The name rule in §4 is the half of this that
+reaches the person while they are still looking at the file.
 
 `lifetime` is enforced by the host, not asked of the worker: when it expires the
 worker is shut down, a `despawn` is recorded, and its place in the budget comes
@@ -2994,7 +3080,7 @@ rather than five that have to be correlated afterwards.
 | type | meaning |
 | --- | --- |
 | `team.message` | One delivery: from, to, size, body hash, and whether it was an ask, a reply or a send. |
-| `team.refused` | A refused message. Its own type, because it is the interesting one — but it covers three refusals, not one: a message the edge list did not permit (`reason: no_edge`), one addressed to a name that is not in the team (`no_such_agent`), and a `team_reply` nobody was waiting for (`missing_correlation` or `unknown_correlation`). Read the reason before counting edge violations. |
+| `team.refused` | A refused message. Its own type, because it is the interesting one — but it covers three refusals, not one: a message the edge list did not permit (`reason: no_edge`), one addressed to a name that is not in the team (`no_such_agent`), and a `team_reply` nobody was waiting for (`missing_correlation` or `unknown_correlation`) — which covers a second reply to a question that has already been answered, since a question takes exactly one. Read the reason before counting edge violations. |
 | `team.store` | A store access: key, agent, read or write, permitted or not. |
 | `team.spawn` | A worker spawned or refused, with the spawner, the worker's name and the reason on a refusal. |
 
@@ -3632,13 +3718,20 @@ proxy that forwards it. Three values rather than two, so that a reader looking
 for what the proxy saw cannot be misled by a word (`docs/networking.md` §6).
 
 ### `secret.use`
-A credential was attached to a request. Written from P2-6.
+A credential was attached to a request **and left the machine**. Written from
+P2-6.
 
 | Field | Type | Meaning |
 | --- | --- | --- |
 | `name` | string | Secret name, e.g. `GITHUB_TOKEN`. |
-| `host` | string | Where it was sent. |
+| `host` | string | Where it was sent — the domain the connection was opened and verified against, which is also the one the credential is bound to. |
 | `agent` | string | Present inside a team: whose credential it was. |
+
+The event is owed to the credential having left, not to an answer coming back.
+A peer that reads the request and then resets the connection **has** the token,
+so that is written down; a dial, DNS or TLS failure that never put a byte on the
+wire is not. What separates them is whether the `Authorization` line was written
+to the connection, which is a thing the proxy can observe rather than infer.
 
 **The value is never recorded, in any field, in any form** — not truncated, not
 hashed. A hash of a short credential is a credential. The whole point of
@@ -3758,11 +3851,11 @@ refused. Written from E2-5.
 
 | Field | Type | Meaning |
 | --- | --- | --- |
-| `agent` | string | The spawner — the agent that asked. |
-| `peer` | string | The worker's name, `<spawner>-spawn-N`. Absent on a refusal, because there is no worker. |
+| `agent` | string | The spawner — the agent that asked. Absent on a `not_a_spawned_worker` despawn, because no agent asked for it. |
+| `peer` | string | The worker's name, `<spawner>-spawn-N`. Absent on a refusal the host never got as far as naming — `no_spawn_budget`, `budget_exhausted`, `image_not_permitted` — and present on the two that are *about* a name, `name_taken` and `not_a_spawned_worker`. |
 | `kind` | string | `spawn` or `despawn`. |
 | `outcome` | string | `delivered` or `refused`. |
-| `reason` | string | `no_spawn_budget`, `budget_exhausted`, `image_not_permitted`. |
+| `reason` | string | On a refused `spawn`: `no_spawn_budget`, `budget_exhausted`, `image_not_permitted`, `name_taken`. On a refused `despawn`: `not_a_spawned_worker`. |
 
 A `despawn` is written when the worker's lifetime expires or the team comes
 down, so the log says how long every machine in the team existed rather than
@@ -4373,7 +4466,7 @@ connection: an unbounded line buffer is a memory-exhaustion bug waiting for the
 first `cat /dev/urandom`. Writers therefore chunk: no single frame carries more
 than **64 KiB** of pre-encoded bytes.
 
-The MCP channel (port 10002) is the exception, and its limit is **16 MiB**.
+The MCP channel (port 10002) is one exception, and its limit is **16 MiB**.
 Nothing on that channel is chunked — a `read_file` result is a whole file on one
 line — and the per-call limit on a file is 8 MiB, so a 1 MiB frame would refuse
 messages the tools above it promise to carry. Sixteen was chosen to leave room
@@ -4389,6 +4482,24 @@ the oversized frame is written, so the stream is still on a frame boundary and
 the session carries on. Both directions and every reader on the channel use the
 same number (`proto.MaxMCPLine`), so a message one side will send is a message
 the other side will accept.
+
+The team channel (port 10102) is the other exception, and it goes the other
+way. Its frame limit is the 1 MiB above, but nothing on it is chunked either —
+a `send` carries its whole body on one line — so the bound is put *below* the
+frame rather than the frame raised above it. A team message carries at most
+**785,664 bytes** of payload before base64 (`proto.MaxTeamBody`), and the
+request id the host echoes onto its answer at most **128 bytes**
+(`proto.MaxTeamID`); §4 asks an initiator for an id of no more than 64
+characters, and 128 bytes is what this channel can enforce on a peer that
+ignores that. Both are refused with `bad_request` naming the size and the
+limit, before the broker acts on the request.
+
+The payload has to be the smaller number because the frame that delivers a
+message is not the frame that sent it: a delivery carries `from` where the
+request carried `to`, plus the `correlate` tag a reply has to quote back, so it
+is tens of bytes larger than the frame that fitted. Reserving that envelope —
+a kilobyte, against a measured worst case of 983 bytes — is what stops the broker accepting a
+message it can then never write out (§5.6).
 
 **Unknown fields are ignored.** Every message carries `"v": 1`; a reader that
 sees a `v` it does not know MUST fail the message rather than guess.
@@ -4658,9 +4769,22 @@ The store bounds what one team can make the host hold: a key of at most 1 KiB,
 10,000 keys per team, 1 MiB per value and 64 MiB per team. Each is refused with a
 `denied` error the agent sees, rather than quietly swallowed.
 
+The value limit an agent can actually reach is the smaller of two. A `store_put`
+carries its value in `body`, so the channel's 785,664-byte payload bound (§3)
+refuses an oversized value with `bad_request`, naming that limit, before the
+store's 1 MiB `denied` is ever reached. The store still enforces its own
+megabyte — it is the component that owns the byte budget, and the two limits
+are checked in different places for different reasons — but the channel is the
+only route a guest has to it, so `bad_request` at 785,664 bytes is the refusal
+an agent sees.
+
 A refusal is an `Error` with one of the kinds in §4 plus `no_edge`,
 `no_such_agent` and `unreachable`. There is no silent drop: an agent that may
-not send something is told so, and told why.
+not send something is told so, and told why. An answer the host cannot fit in
+a frame is refused the same way, with `internal` naming the frame limit — the
+rule the MCP channel already follows (§3), arrived at here for the same reason.
+Nothing of the oversized frame is written, so the stream is still on a frame
+boundary and the connection carries on rather than closing under the caller.
 
 ---
 
@@ -6656,9 +6780,9 @@ kelyfos run --image dev --workspace . -- bash -c '
 # The old directory is renamed to <dir>.kelyfos-previous and the reconstructed
 # one is renamed into place, so a file the agent deleted is really gone from the
 # workspace — the previous copy keeps it, beside the project, until the next
-# successful run clears it — and a shell whose current directory *is* the
-# workspace is now sitting in a directory that no longer exists. Step back into
-# it by name.
+# run that replaces the directory clears it — and a shell whose current
+# directory *is* the workspace is now sitting in a directory that no longer
+# exists. Step back into it by name.
 cd "$project"
 
 echo "== and the host directory has the change =="
@@ -8769,7 +8893,10 @@ renames that tree into place, the host file's permission changes with it.
 The summary prints and sync-back **waits**. Answering yes syncs; answering no
 routes the result to `<dir>.kelyfos-out`, which is P3-10's existing diversion
 mechanism rather than a new one — the host directory is untouched until an
-explicit yes.
+explicit yes. That name is the *first* free one rather than a fixed one: a
+second decline against the same workspace writes `<dir>.kelyfos-out.2`, a third
+`.3`. A fixed name would have made each declined run overwrite the results of
+the one before it, which is the opposite of what declining asks for.
 
 **The wait is where your editor lives, so the check happens twice.** The
 fingerprint that decides whether a sync-back would overwrite somebody's edit is
@@ -8780,9 +8907,12 @@ minutes is five minutes in which the directory can change. A yes answered over a
 directory you edited while reading diverts, and says so.
 
 And the copy that is replaced is **kept**, as `<dir>.kelyfos-previous`, until the
-next successful run clears it. One generation deep, not a growing pile — but the
-moment somebody wants it is the moment immediately after a sync-back, which is
-exactly when it used to be deleted.
+next run that *replaces the directory* clears it. One generation deep, not a
+growing pile — but the moment somebody wants it is the moment immediately
+after a sync-back, which is exactly when it used to be deleted. A run that
+replaces nothing clears nothing: a declined or diverted run writes beside the
+project and leaves `<dir>.kelyfos-previous` exactly as it found it, so
+answering no cannot throw away the recoverable copy an earlier run left.
 
 The answer is a `run.review` event carrying the decision and the counts. A
 declined review is a fact worth keeping: it is the one place the product asks a
@@ -9839,7 +9969,7 @@ One agent, or count of them.
 | --- | --- | --- | --- |
 | `name` | string | — | the agent's name; required, and how every other agent addresses it |
 | `image` | string | the file's image, else "base" | image flavor for this agent |
-| `workspace` | string | no /work device | host directory for this agent alone; refused when count is above 1 |
+| `workspace` | string | no /work device | host directory for this agent alone, resolved against this file; refused when count is above 1, and when a second agent names the same directory |
 | `count` | integer | 1 | how many of this agent; above 1 they are named name-1 … name-N |
 | `allow` | string array | no network interface at all | this agent's own egress allowlist; there is deliberately no team-wide one |
 | `secrets` | string array | none | this agent's secrets; each domain must appear in this agent's allow |
@@ -10345,7 +10475,7 @@ One outbound connection attempt, permitted or not. Written by the **host**.
 
 ## `secret.use`
 
-A bound credential was attached to a request — by name, never by value. Written by the **host**.
+A bound credential was attached to a request and left the machine — by name, never by value. Written by the **host**.
 
 | Field | Type | Meaning |
 | --- | --- | --- |
@@ -10467,7 +10597,7 @@ A worker created or retired at runtime, or a request that the budget refused. Wr
 | `peer` | string | the worker's name |
 | `kind` | string | spawn or despawn |
 | `outcome` | string | delivered or refused |
-| `reason` | string | no_spawn_budget, budget_exhausted, image_not_permitted *(refused)* |
+| `reason` | string | on a refused spawn: no_spawn_budget, budget_exhausted, image_not_permitted, name_taken; on a refused despawn: not_a_spawned_worker *(refused)* |
 
 ## `session.pause`
 

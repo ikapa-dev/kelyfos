@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"math"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -167,19 +169,48 @@ func TestARefusedFrameLeavesTheStreamOnAFrameBoundary(t *testing.T) {
 //
 // This is the largest answer the host can be asked to write — a body at
 // MaxTeamBody, an id at MaxTeamID and every byte of it a control character,
-// which encoding/json escapes to six, the longest name an agent may have
-// (internal/team ValidAgentName), and a correlate tag. It has to fit MaxLine,
-// or there are messages a broker accepts, records as delivered, and can then
-// never write to the agent they were addressed to (M-8).
+// which encoding/json escapes to six, the longest name an agent can have, and a
+// correlate tag. It has to fit MaxLine, or there are messages a broker accepts,
+// records as delivered, and can then never write to the agent they were
+// addressed to (M-8).
+//
+// The longest name is not ValidAgentName's 64. That is the limit on a *declared*
+// name; the broker mints a spawned worker's as `<spawner>-spawn-<n>` without
+// passing it back through the check (internal/team spawn.go), and `recv`
+// delivers a message from that worker with the minted name as `from`. So the
+// worst case is built the way the host builds it, from a spawner already at the
+// limit — and the test measures the envelope against what maxTeamEnvelope
+// reserves, rather than only asking whether this one frame fits, because the
+// reservation is the thing MaxTeamBody is derived from.
 func TestTheLargestTeamAnswerStillFitsAFrame(t *testing.T) {
+	// b.spawnSeq is an int, so its decimal form is at most the digits of
+	// MaxInt64; nothing bounds how many workers one agent spawns over a run.
+	worker := strings.Repeat("a", 64) + "-spawn-" + strconv.FormatInt(math.MaxInt64, 10)
+	body := base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{0xff}, MaxTeamBody))
 	worst := TeamResponse{
 		V:         Version,
 		ID:        strings.Repeat("\x01", MaxTeamID),
 		OK:        true,
-		From:      strings.Repeat("a", 64),
-		Body:      base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{0xff}, MaxTeamBody)),
+		From:      worker,
+		Body:      body,
 		Correlate: strings.Repeat("f", 64),
 	}
+	// Everything on the frame that is not the body: what maxTeamEnvelope claims
+	// to cover, and what MaxTeamBody is derived from. Measured through
+	// encoding/json rather than taken from the frame below, so that it is still
+	// a number when the frame limit has already refused to write the answer —
+	// an envelope over its reservation is the diagnosis, and a frame that does
+	// not fit is only the symptom. A field added to TeamResponse, or a name
+	// longer than the spawn path can mint today, lands here.
+	blob, err := json.Marshal(worst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if envelope := len(blob) + 1 - len(body); envelope > maxTeamEnvelope { // +1: the delimiter
+		t.Fatalf("the envelope of the largest answer is %d bytes against a reservation of %d, "+
+			"so MaxTeamBody is no longer derived from anything true", envelope, maxTeamEnvelope)
+	}
+
 	var buf bytes.Buffer
 	if err := NewWriter(&buf).Write(worst); err != nil {
 		t.Fatalf("the largest team answer does not fit a %d byte frame: %v", MaxLine, err)

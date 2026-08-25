@@ -168,3 +168,60 @@ func TestAHardLinkedWorkspaceIsLeftExactlyAsItIs(t *testing.T) {
 		t.Fatalf("the host image reads %q", got)
 	}
 }
+
+// The other direction of the same worry as D-1, and the one D-1 introduced: a
+// write-back is a rescue, and a rescue that can destroy what it is rescuing is
+// the same lost work wearing the other hat.
+//
+// The write-back used to reuse linkInto, which removes the destination and then
+// links or copies onto the name. That is right for staging into a jail and
+// wrong for the host's own image: on the cross-device path the second half is a
+// copy, so between the remove and the last byte the person has no image, and an
+// interruption in the middle leaves a partial one under the name they trust.
+//
+// An interruption is what a test cannot stage. What it can stage is the same
+// window entered from the other side — a write-back that gets as far as the
+// copy and then cannot finish — and a directory is the source that does that
+// wherever this runs, because both refusals are the kernel's rather than any
+// filesystem's: link(2) refuses a directory with EPERM, which is the branch a
+// cross-device stage takes, and the read that follows fails with EISDIR.
+// Measured against the old code this left an empty file where the image had
+// been, which is the loss with none of the drama of a power cut.
+func TestAWriteBackThatCannotFinishLeavesTheHostImageWhereItWas(t *testing.T) {
+	hostDir := t.TempDir()
+	hostImage := filepath.Join(hostDir, "abc123.ext4")
+	if err := os.WriteFile(hostImage, []byte("what the host packed"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runDir := filepath.Join(t.TempDir(), "firecracker", "abc123", "root")
+	inside := filepath.Join(runDir, defaultJailNames().Workspace)
+	if err := os.MkdirAll(inside, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := syncJailedWorkspace(runDir, hostImage); err == nil {
+		t.Fatal("a write-back that could not read its source reported success")
+	}
+
+	got, err := os.ReadFile(hostImage)
+	if err != nil {
+		t.Fatalf("the failed write-back took the host's image with it: %v", err)
+	}
+	if string(got) != "what the host packed" {
+		t.Fatalf("the host image was replaced by what the failed write-back got as far as: %q", got)
+	}
+	// And nothing left beside it. A temporary that outlives the attempt is a
+	// second copy of somebody's workspace sitting in their directory under a
+	// name nothing will ever pick up again.
+	ents, err := os.ReadDir(hostDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ents) != 1 || ents[0].Name() != filepath.Base(hostImage) {
+		names := make([]string, len(ents))
+		for i, e := range ents {
+			names[i] = e.Name()
+		}
+		t.Fatalf("the failed write-back left something beside the image: %v", names)
+	}
+}

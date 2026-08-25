@@ -181,9 +181,9 @@ kelyfos run --image dev --workspace . -- bash -c '
 # The old directory is renamed to <dir>.kelyfos-previous and the reconstructed
 # one is renamed into place, so a file the agent deleted is really gone from the
 # workspace — the previous copy keeps it, beside the project, until the next
-# successful run clears it — and a shell whose current directory *is* the
-# workspace is now sitting in a directory that no longer exists. Step back into
-# it by name.
+# run that replaces the directory clears it — and a shell whose current
+# directory *is* the workspace is now sitting in a directory that no longer
+# exists. Step back into it by name.
 cd "$project"
 
 echo "== and the host directory has the change =="

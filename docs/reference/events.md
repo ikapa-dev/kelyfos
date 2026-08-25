@@ -128,7 +128,7 @@ One outbound connection attempt, permitted or not. Written by the **host**.
 
 ## `secret.use`
 
-A bound credential was attached to a request — by name, never by value. Written by the **host**.
+A bound credential was attached to a request and left the machine — by name, never by value. Written by the **host**.
 
 | Field | Type | Meaning |
 | --- | --- | --- |
@@ -250,7 +250,7 @@ A worker created or retired at runtime, or a request that the budget refused. Wr
 | `peer` | string | the worker's name |
 | `kind` | string | spawn or despawn |
 | `outcome` | string | delivered or refused |
-| `reason` | string | no_spawn_budget, budget_exhausted, image_not_permitted *(refused)* |
+| `reason` | string | on a refused spawn: no_spawn_budget, budget_exhausted, image_not_permitted, name_taken; on a refused despawn: not_a_spawned_worker *(refused)* |
 
 ## `session.pause`
 

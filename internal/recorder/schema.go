@@ -134,7 +134,7 @@ func Types() []EventType {
 				agentField(),
 			}},
 		{Type: TypeSecretUse, Source: SourceHost,
-			Doc: "a bound credential was attached to a request — by name, never by value",
+			Doc: "a bound credential was attached to a request and left the machine — by name, never by value",
 			Fields: []Field{
 				{Name: "name", Type: "string", Doc: "the secret's environment-variable name"},
 				{Name: "host", Type: "string", Doc: "the domain it was attached for"},
@@ -236,7 +236,7 @@ func Types() []EventType {
 				{Name: "peer", Type: "string", Doc: "the worker's name"},
 				{Name: "kind", Type: "string", Doc: "spawn or despawn"},
 				{Name: "outcome", Type: "string", Doc: "delivered or refused"},
-				{Name: "reason", Type: "string", Doc: "no_spawn_budget, budget_exhausted, image_not_permitted", When: "refused"},
+				{Name: "reason", Type: "string", Doc: "on a refused spawn: no_spawn_budget, budget_exhausted, image_not_permitted, name_taken; on a refused despawn: not_a_spawned_worker", When: "refused"},
 			}},
 		{Type: TypeSessionPause, Source: SourceHost,
 			Doc: "the machine was frozen under a name and stopped. The chain is not closed by it: " +

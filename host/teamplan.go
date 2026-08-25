@@ -248,9 +248,18 @@ func checkAgentPolicy(path string, a config.TeamAgent) error {
 		}
 	}
 
-	// Two machines writing one host directory back is not a workspace, it is a
-	// race whose loser's work disappears. Refuse the declaration rather than
-	// discover it at sync-back.
+	// Two machines writing one host directory back is not a workspace.
+	//
+	// The loser is not silently lost — Commit re-fingerprints immediately before
+	// the rename and diverts on a mismatch (P6-21), so the second writer's work
+	// lands beside the directory rather than on top of it. But a `count` group
+	// whose members all divert is a group where the declaration promised
+	// something the run cannot give, and finding that out at sync-back is
+	// finding it out after the work. Refuse the declaration instead.
+	//
+	// This refusal covers one directory behind a `count` group. Two *distinct*
+	// agents naming the same directory, or one naming a parent of another's, is
+	// not refused here — see docs/teams.md §4.
 	if a.Workspace != "" && a.Count > 1 {
 		return fmt.Errorf("%s: agent %q has count = %d and one workspace directory (%s)\n"+
 			"    give each replica its own agent block, or drop the workspace",

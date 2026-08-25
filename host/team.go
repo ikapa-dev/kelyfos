@@ -762,9 +762,21 @@ func bootAgent(ctx context.Context, a plannedAgent, broker *team.Broker, rec *re
 		// jail directory, three unix listeners and their accept goroutines
 		// behind for the life of the host, once per failed spawn (finding L-7).
 		//
-		// This is deliberately not rig.stop: a member that never became ready
-		// has no resource receipt worth appending to the team's chain and no
-		// workspace worth syncing back — its image is discarded below instead.
+		// This is deliberately not rig.stop — but not because the member never
+		// got as far as running. This defer covers every failure return below
+		// it, and the last of them is reached with a machine that is up:
+		// an agent that has both a workspace and a secret arrives at
+		// InstallTrustAnchor with a guest that has already answered WaitReady
+		// and a packed /work attached to it, and the refusal there lands here.
+		//
+		// The reason is what rig.stop would do with such a member. It writes a
+		// resource receipt into the team's chain for one the roster never held,
+		// and it syncs the workspace back — which, over a host directory nothing
+		// has touched since it was packed, means renaming the user's project to
+		// .kelyfos-previous, on top of whatever recoverable copy an earlier run
+		// left under that name, to put the disk of a machine whose boot is being
+		// declared failed in its place. A boot that failed should leave the
+		// directory exactly as it found it, so the image is discarded below.
 		if rig.sb != nil {
 			_ = rig.sb.Shutdown(5 * time.Second)
 		}

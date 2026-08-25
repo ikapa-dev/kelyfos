@@ -180,6 +180,15 @@ set, and how KelyfOS gets one depends on the machine:
 Either way the percentage is translated in the CLI, and the resulting `cpu.max`
 is **read back and checked** after launch. If the quota did not land, the
 sandbox refuses to start rather than running unlimited while claiming a cap.
+Two things are checked, and in that order: *where the process landed*, and only
+then what the cgroup it landed in says. The placement half needs somewhere the
+run was meant to be, and on the direct path it now has one for a plain
+`kelyfos run --cpu-quota` as well as for a team member — a single run knows
+exactly which directory its VMM belongs in, so it names that directory and the
+check has something to compare against. Reading `cpu.max` alone would accept
+any cgroup that happened to agree with the number. Under a systemd scope the
+expectation is a team's slice unit, so a plain run there is still verified by
+`cpu.max` alone.
 If neither path is available, `--cpu-quota` fails with the reason.
 
 Since v0.9 the VMM runs inside Firecracker's jailer by default, and the jailer
@@ -191,12 +200,13 @@ composes with the jail differently, and both were wrong for one release (P5-6):
 - **the direct path** hands the jailer `--parent-cgroup <slice>` and, with it,
   `--cgroup-version 2`. That second flag is not decoration: the jailer's own
   default is version 1, and naming a parent without the version makes it a
-  silent no-op — the VMM stays where it started and the read-back is the only
-  thing that notices.
+  silent no-op — the VMM stays where it started, and what notices is the
+  placement check: the refusal names the cgroup the VMM actually landed in and
+  the slice it was meant to run in, rather than a `cpu.max` that did not match.
 
 The read-back is what makes either safe to rely on. It asks
 `/proc/<pid>/cgroup` where the VMM actually is, not where it was meant to go,
-which is why a jailer that quietly placed nothing produced a refused run rather
+which is why a jailer that quietly placed nothing produces a refused run rather
 than an uncapped one.
 
 ### When the RAM cap is reached

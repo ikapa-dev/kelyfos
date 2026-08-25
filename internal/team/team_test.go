@@ -652,10 +652,11 @@ func TestASpawnNeverLandsOnANameTheTeamIsUsing(t *testing.T) {
 	b := New(teamOfThree(t), false, c.record)
 	b.GrantSpawn("master", Budget{Max: 2, Images: []string{"dev"}})
 
-	// The name the next spawn will mint, put into the team by hand. Nothing in
-	// a team file can arrange this any more — ValidAgentName refuses a declared
-	// `-spawn-` name — and that is the point of the second guard: it has to hold
-	// if the minting scheme ever changes, not only while the scheme is safe.
+	// The name the next spawn will mint, put into the team by hand. A team file
+	// cannot arrange this — NewTopology refuses a declared name a teammate's
+	// spawn could mint — but this is the guard that closes the hole rather than
+	// warns about it: it is what holds for a name that arrives any other way,
+	// and what would still hold if the minting scheme changed.
 	const sitting = "master-spawn-1"
 	b.topo.attach(sitting, "worker-1")
 	b.mu.Lock()
@@ -717,31 +718,69 @@ func TestASpawnNeverLandsOnANameTheTeamIsUsing(t *testing.T) {
 	}
 }
 
-// A declared agent cannot be called what the host calls a spawned worker
-// (P6-27, finding M-6).
+// A declared agent cannot be called what the host would call a worker spawned
+// by another agent in the same team (P6-27, finding M-6).
 //
 // `<spawner>-spawn-<n>` is minted at runtime, after the topology is built, so a
-// declared agent holding one of those names is not a duplicate NewTopology can
-// see: the collision arrives later, when the spawn lands on top of it. Refused
-// where the person can still do something about it — in the file they wrote the
-// name in — in the shape P6-24 settled for names generally.
+// declared agent holding one of those names is not a duplicate the first pass
+// can see: the collision arrives later, when the spawn lands on top of it. Spawn
+// refuses that collision — the test above is what proves the hole is closed —
+// and this check is the half that reaches the person while they are looking at
+// the file they wrote the name in, in the shape P6-24 settled for names.
 func TestADeclaredAgentCannotTakeASpawnedWorkersName(t *testing.T) {
-	// The last of these is the count-expanded route: `name = "master-spawn"`
-	// with `count = 2` becomes master-spawn-1 before NewTopology sees it, so the
-	// check has to catch the expansion rather than the written name.
-	for _, name := range []string{"master-spawn-1", "a-spawn-2", "lead-spawn-1"} {
-		if err := ValidAgentName(name); err == nil {
-			t.Errorf("the agent name %q was accepted", name)
-		}
-		if _, err := NewTopology([]string{"master", name}, nil); err == nil {
-			t.Errorf("a topology accepted the agent name %q", name)
+	// These are expanded names, because that is what the check has to catch:
+	// `name = "master-spawn"` with `count = 2` becomes master-spawn-1 before
+	// NewTopology ever sees the written name.
+	//
+	// The second is a number that is not the next one — spawnSeq is
+	// broker-global, so master's first spawn is master-spawn-2 as readily as
+	// master-spawn-1, and every number is somebody's. The third declares the
+	// spawner *after* its would-be worker, which is why the check cannot run one
+	// name at a time.
+	for _, team := range [][]string{
+		{"master", "master-spawn-1"},
+		{"master", "master-spawn-2"},
+		{"master-spawn-1", "master"},
+	} {
+		if _, err := NewTopology(team, nil); err == nil {
+			t.Errorf("a topology accepted the team %v", team)
 		}
 	}
-	// Names that merely mention spawning are not the host's to reserve. A rule
-	// that took those would have made the check the problem.
-	for _, name := range []string{"spawner", "master-spawn", "spawn-1", "respawn", "spawn"} {
+}
+
+// And a name is refused only in the shape that can actually collide (P6-27,
+// finding M-6, narrowed).
+//
+// The first cut of that check refused every name containing "-spawn-", which
+// took `ci-spawn-runner` and `no-spawn-zone` with it: names that were legal
+// before it landed, in team files that would have stopped loading on upgrade,
+// for a collision none of them could ever have had. Every name the host mints is
+// its spawner's, plus "-spawn-", plus the sequence number — so a name whose
+// prefix is nobody in this team, or whose tail is not a number this broker
+// counts to, is somebody's ordinary name and stays one.
+func TestANameThatCannotBeMintedIsAnOrdinaryName(t *testing.T) {
+	for _, name := range []string{
+		"ci-spawn-runner", // the tail is not a sequence number
+		"build-spawn-service",
+		"no-spawn-zone",
+		"lead-spawn-1", // shaped like a mint, but nothing here is called `lead`
+		"master-spawn", // the prefix of a mint, which is not a mint
+		"spawner", "spawn-1", "respawn", "spawn",
+	} {
 		if err := ValidAgentName(name); err != nil {
 			t.Errorf("the ordinary agent name %q was refused: %v", name, err)
+		}
+		if _, err := NewTopology([]string{"master", name}, nil); err != nil {
+			t.Errorf("a topology refused the ordinary agent name %q: %v", name, err)
+		}
+	}
+
+	// Even with the prefix declared, only the decimal Spawn writes is a mint:
+	// the sequence starts at 1 and fmt's %d writes 7, never 007, so these are
+	// names no spawn can land on however readily strconv reads them as numbers.
+	for _, name := range []string{"master-spawn-007", "master-spawn-0", "master-spawn-"} {
+		if _, err := NewTopology([]string{"master", name}, nil); err != nil {
+			t.Errorf("a topology refused %q, which no spawn can mint: %v", name, err)
 		}
 	}
 }
