@@ -197,7 +197,7 @@
     <li><code>kelyfos run --image dev --workspace . --allow github.com --secret GITHUB_TOKEN@github.com -- &lt;agent cmd&gt;</code> works as advertised: the agent operates only through MCP tools on your project files, egress outside the allowlist fails, and the secret value never exists inside the guest.</li>
     <li>Boot-to-ready ≤ 300 ms cold, ≤ 100 ms from snapshot; <code>kelyfos fork -n 4</code> yields four divergent copies of a prepared environment.</li>
     <li>Every session produces a complete, tamper-evident (hash-chained) audit log — live (<code>kelyfos log --follow</code>, <code>kelyfos watch</code>) and exportable as a standalone, verifiable HTML session report.</li>
-    <li>An E2B-compatible API shim passes an SDK smoke test, so existing code can point at a self-hosted kelyfos box.</li>
+    <li>An E2B-compatible API shim serves the documented REST subset, proved by an acceptance suite that drives it over HTTP against real microVMs, so existing code can point at a self-hosted kelyfos box. <b>Re-worded at P6-18 (D51)</b> from &ldquo;passes an SDK smoke test&rdquo;: the SDK is somebody else&rsquo;s product on somebody else&rsquo;s cadence &mdash; five releases in three days &mdash; and a pinned suite would prove compatibility with a superseded version while an unpinned one would let a third party turn this project&rsquo;s main red. The SDK path is documented and re-verified per release rather than pinned.</li>
     <li>Published as open source with a README, quickstart, and demo; John uses it for his own Claude Code runs (dogfooding).</li>
   </ul>
   <p class="quiet">Strategic intent: reputation, learning, and consulting leads first. The one
@@ -4420,6 +4420,35 @@ after:
         because one produced the other.</td>
         <td>P6-16. <code>tools/changelog.py --check</code> covers all 10 published tags; a tag with no section
         prints the fix and exits 1, proved against <code>v9.9</code>.</td></tr>
+        <tr><td class="mono">D51</td><td class="mono">2026-08-25</td>
+        <td><b>&sect;1 criterion 5 is re-worded, and backed by a fourteenth acceptance suite that drives HTTP
+        rather than an SDK.</b> P6-18 required this to be decided rather than to pass unexamined, and both options
+        the task offered were checked against the world before choosing.
+        <i>Why not a pinned SDK suite.</i> The E2B Python SDK went 2.41.0 &rarr; 2.45.1 between 19 and 21 August
+        2026 &mdash; five releases in three days. Pinned, such a suite proves compatibility with a version
+        superseded within the week and then quietly stops meaning anything; unpinned, it hands a third party the
+        ability to turn this project&rsquo;s <code>main</code> red on their release schedule.
+        <code>docs/compatibility.md</code> &sect;3 already places the shim outside the promise for that reason,
+        and a suite that contradicted it would be the project arguing with itself.
+        <i>Why not simply re-word and cite what exists.</i> What existed was one hand-run in August against an
+        SDK that has since moved, which is not evidence about the SDK anybody would install today. Re-wording
+        alone would have swapped an unmet criterion for an unfalsifiable one.
+        <i>So: both halves, honestly split.</i> <code>dev/accept-shim.sh</code> tests the half this project owns
+        and can keep true &mdash; <code>/health</code>, <code>POST</code>/<code>GET /sandboxes</code>,
+        <code>DELETE /sandboxes/{id}</code>, <code>GET</code>/<code>POST /files</code> including a 4 KiB binary
+        round trip, the 501 that names what to use instead, and the flight recorder each shim sandbox gets
+        &mdash; over a real socket, against real microVMs, with no SDK installed. <b>23 checks, all passing.</b>
+        It runs in <code>caps</code>, on the bare-KVM reference. The criterion now says what that proves.
+        <i>And it corrected a document on the way.</i> <code>docs/e2b-shim.md</code> told a reader to export
+        <code>E2B_SANDBOX_URL</code>, which the current SDK&rsquo;s connection config does not read. It reads
+        <code>E2B_API_URL</code> first, falls back to <code>E2B_DOMAIN</code> &mdash; a <i>domain</i>, from which
+        it composes <code>https://api.{domain}</code>, so it is not a substitute for a URL pointing at plain HTTP
+        on loopback &mdash; and <code>E2B_DEBUG</code>, which defaults to <code>http://localhost:3000</code> and
+        happens to be this shim&rsquo;s own default address. Verified against the SDK&rsquo;s source rather than
+        its reference page, which omits <code>E2B_API_URL</code> entirely.</td>
+        <td>P6-18. <code>bash dev/accept-shim.sh</code> &mdash; 23 passed, 0 failed, against real microVMs.
+        <i>Revisit when</i> the SDK&rsquo;s configuration moves again: the paragraph in
+        <code>docs/e2b-shim.md</code> is what goes stale, and the suite is what does not.</td></tr>
     <!-- Claude Code: append rows above this line. -->
   </table>
 </section>

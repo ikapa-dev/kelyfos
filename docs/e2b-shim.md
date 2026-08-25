@@ -19,12 +19,28 @@ Then point the SDK at it:
 ```sh
 export E2B_API_KEY=e2b_0000000000000000000000000000000000000000
 export E2B_API_URL=http://127.0.0.1:3000
-export E2B_SANDBOX_URL=http://127.0.0.1:3000
 ```
 
 The key is not checked by anything — the shim has no accounts and no billing —
 but the SDK validates its *shape* client-side before sending it anywhere, so it
 has to look like an E2B key.
+
+`E2B_API_URL` is the variable to use, and it is the one the SDK's connection
+config consults first. **`E2B_DOMAIN` is not a substitute**: it is a *domain*
+rather than a URL, and the SDK composes `https://api.{domain}` from it — which
+means TLS and a wildcard name in front of a shim that serves plain HTTP on a
+loopback port. `E2B_DEBUG` is a third route to the same place and worth knowing
+about, because it defaults to `http://localhost:3000`, which is this shim's own
+default address.
+
+**Which release of the SDK this works with is checked rather than promised.**
+The E2B Python SDK shipped 2.41.0 through 2.45.1 in three days in August 2026,
+and this project pins neither it nor a claim about it: `docs/compatibility.md`
+§3 puts the shim outside the compatibility promise, and what KelyfOS tests on
+every run of `caps` is the REST surface below — `dev/accept-shim.sh`, over a real
+socket, against real microVMs, with no SDK installed (D51). If the SDK's
+configuration moves again, this paragraph is what goes stale, and the suite is
+what does not.
 
 ```python
 from e2b import Sandbox
