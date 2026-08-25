@@ -1,0 +1,16 @@
+This flavor adds no files to the guest's filesystem today, and the directory has
+to exist anyway: BR2_ROOTFS_OVERLAY names it, and rsync fails on a path that is
+not there.
+
+Git does not track empty directories, so without this file the directory is
+absent from a fresh checkout and every image build fails with
+
+    rsync: change_dir ".../image/flavors/base/overlay" failed: No such file or directory
+
+which is exactly what happened when P6-9 moved the last file out of here — the
+guest's os-release, which is generated now. It passed locally, where the empty
+directory still existed, and failed on CI's clean checkout.
+
+`.empty` rather than `.gitkeep` because Buildroot's own overlay rsync excludes
+this name (`--exclude .empty` in system/system.mk), so the file keeps the
+directory in git without landing in anybody's guest.
