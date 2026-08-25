@@ -94,7 +94,7 @@ Wait for the next message from another agent. Returns the sender, the body, and 
 
 | Parameter | Type | Required | Meaning |
 | --- | --- | --- | --- |
-| `timeout_ms` | integer | no | How long to wait. Defaults to 60000. |
+| `timeout_ms` | integer | no | How long to wait, in milliseconds. Defaults to 60000, and the host holds a call open for at most 15 minutes. |
 
 ### `team_ask`
 
@@ -103,7 +103,7 @@ Send a question to another agent and block until it answers or the wait expires.
 | Parameter | Type | Required | Meaning |
 | --- | --- | --- | --- |
 | `body` | string | **yes** | The question. |
-| `timeout_ms` | integer | no | How long to wait for an answer. Defaults to 60000. |
+| `timeout_ms` | integer | no | How long to wait for an answer, in milliseconds. Defaults to 60000, and the host holds a call open for at most 15 minutes. |
 | `to` | string | **yes** | The agent to ask. |
 
 ### `team_reply`

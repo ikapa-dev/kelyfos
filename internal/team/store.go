@@ -57,6 +57,19 @@ type Rule struct {
 const (
 	MaxValueBytes = 1 << 20  // 1 MiB per key
 	MaxStoreBytes = 64 << 20 // 64 MiB per team
+
+	// MaxKeyBytes and MaxStoreKeys are what the byte ceilings above did not
+	// count (P6-25, finding H-4).
+	//
+	// MaxStoreBytes weighed len(value) and nothing else, so a key cost an agent
+	// nothing against the only budget there was. Ten thousand one-byte keys is
+	// ten kilobytes by that arithmetic and ten thousand map entries in fact,
+	// and a single key just under MaxValueBytes bought a megabyte of host
+	// memory with one byte of value. Both are counted now, and a key has a
+	// length of its own: a name is a name, and one longer than a filesystem
+	// would accept is not one.
+	MaxKeyBytes  = 1 << 10
+	MaxStoreKeys = 10_000
 )
 
 // Store event, recorded for every access, permitted or not.
@@ -65,6 +78,13 @@ const (
 
 	KindGet = "get"
 	KindPut = "put"
+
+	// KindDelete is a put of nothing. It is a separate word in the record
+	// because "an agent removed a key" and "an agent wrote an empty value" are
+	// the same call and different events, and a transcript that called both
+	// `put` would leave a reader to work out which had happened from the byte
+	// count (P6-25, finding H-4).
+	KindDelete = "delete"
 )
 
 // NewStore validates the rules against the team that will use them.
@@ -133,15 +153,54 @@ func (s *Store) Put(agent, key string, value []byte) error {
 		return &Error{Kind: "denied",
 			Message: fmt.Sprintf("a store value may be at most %d bytes; this one is %d", MaxValueBytes, len(value))}
 	}
+	if len(key) > MaxKeyBytes {
+		s.record(Event{Type: TypeStore, From: agent, To: "", Kind: KindPut,
+			Bytes: len(value), Outcome: OutcomeRefused, Reason: "key_too_long"})
+		return &Error{Kind: "denied",
+			Message: fmt.Sprintf("a store key may be at most %d bytes; this one is %d", MaxKeyBytes, len(key))}
+	}
+
+	// Writing nothing removes the key, which is the only way an agent has to
+	// make the store smaller. Without it the store was append-only for the life
+	// of the team: no Delete, no op, no tool, so an agent that filled it had no
+	// way to give any of it back and nor did anybody else. This uses the
+	// vocabulary that already exists rather than adding an op the guest would
+	// have to learn, and docs/teams.md says so.
+	if len(value) == 0 {
+		s.mu.Lock()
+		if old, ok := s.data[key]; ok {
+			s.bytes -= len(old) + len(key)
+			delete(s.data, key)
+		}
+		s.mu.Unlock()
+		s.record(Event{Type: TypeStore, From: agent, To: key, Kind: KindDelete,
+			Outcome: OutcomeDelivered})
+		return nil
+	}
 
 	s.mu.Lock()
+	_, replacing := s.data[key]
+	if !replacing && len(s.data) >= MaxStoreKeys {
+		s.mu.Unlock()
+		s.record(Event{Type: TypeStore, From: agent, To: key, Kind: KindPut,
+			Bytes: len(value), Outcome: OutcomeRefused, Reason: "too_many_keys"})
+		return &Error{Kind: "denied",
+			Message: fmt.Sprintf("this team's store is limited to %d keys; write an empty value to remove one",
+				MaxStoreKeys)}
+	}
+	// The key is weighed with the value. It is held for as long as the entry is,
+	// so a budget that ignored it was measuring half of what it was spending.
 	grown := s.bytes - len(s.data[key]) + len(value)
+	if !replacing {
+		grown += len(key)
+	}
 	if grown > MaxStoreBytes {
 		s.mu.Unlock()
 		s.record(Event{Type: TypeStore, From: agent, To: key, Kind: KindPut,
 			Bytes: len(value), Outcome: OutcomeRefused, Reason: "store_full"})
 		return &Error{Kind: "denied",
-			Message: fmt.Sprintf("this team's store is limited to %d bytes", MaxStoreBytes)}
+			Message: fmt.Sprintf("this team's store is limited to %d bytes; write an empty value to remove a key",
+				MaxStoreBytes)}
 	}
 	s.data[key] = append([]byte(nil), value...)
 	s.bytes = grown

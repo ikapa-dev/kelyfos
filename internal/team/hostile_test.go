@@ -23,45 +23,34 @@ import (
 //
 // None of these need a VM, an image or mke2fs. They run everywhere.
 
-// H-3. A timeout the guest chooses, with no ceiling on it.
+// H-3. A timeout the guest chooses, and what the host is willing to hold open.
 //
-// Serve has a floor and no roof: a value of zero or less becomes a minute, and
-// anything above that is taken as given. 1<<40 milliseconds is about thirty-five
-// years, and the frame that carries it is the one an agent writes. The parked
-// call holds a goroutine and a mailbox slot for the life of the process, so this
-// is not one agent hurting itself — it is a team member spending the host's
-// memory, and a plain loop spends it as fast as the host will accept frames.
+// Serve had a floor and no roof: a value of zero or less became a minute, and
+// anything above that was taken as given. 1<<40 milliseconds is about
+// thirty-five years, and the frame that carries it is one an agent writes. The
+// parked call holds a goroutine and a mailbox slot for the life of the process,
+// so this was not one agent hurting itself — it was a team member spending the
+// host's memory, as fast as the host would accept frames.
+//
+// The assertion is on the clamp rather than on the wait, and deliberately: a
+// fixture that watched for a fifteen-minute ceiling by sitting through one is a
+// fixture nobody runs, and one that watched for a *short* ceiling would be
+// pinning a number chosen to make the test quick.
 func TestHostileTimeoutIsClamped(t *testing.T) {
-	// Long enough that a clamped timeout would have fired, short enough to run
-	// on every push. Anything the broker means to honour here is under a
-	// minute; a call still parked after this is parked for years.
-	const budget = 2 * time.Second
-
 	for _, tc := range []struct {
-		key string
-		op  string
-		as  string // the agent the frame arrives from
-		ms  int64
+		key  string
+		op   string
+		ms   int64
+		want time.Duration
 	}{
-		// recv parks on an empty mailbox; ask parks waiting for an answer that
-		// never comes. The asker has to be an agent with an edge to the target,
-		// or the broker refuses on the edge and returns before the timeout is
-		// ever consulted — which would make the case pass for the wrong reason.
-		{"team/timeout-recv", proto.OpTeamRecv, "worker-1", 1 << 40},
-		{"team/timeout-ask", proto.OpTeamAsk, "master", 1 << 40},
+		{"team/timeout-recv", proto.OpTeamRecv, 1 << 40, MaxWait},
+		{"team/timeout-ask", proto.OpTeamAsk, 1 << 40, MaxWait},
 	} {
 		t.Run(strings.TrimPrefix(tc.key, "team/"), func(t *testing.T) {
-			topo, err := NewTopology([]string{"master", "worker-1"},
-				[]Edge{{From: "master", To: "worker-1", Bidirectional: true}})
-			if err != nil {
-				t.Fatal(err)
-			}
-			b := New(topo, false, nil)
-
 			// The frame as it arrives on the wire, decoded by the product's own
 			// reader rather than built as a struct — so the fixture also shows
 			// that nothing between the guest and the broker rejects the number
-			// or truncates it.
+			// or truncates it on the way.
 			frame := fmt.Sprintf(`{"v":1,"id":"h3","op":%q,"to":"worker-1","timeout_ms":%d}`+"\n", tc.op, tc.ms)
 			var req proto.TeamRequest
 			if err := proto.NewReader(strings.NewReader(frame)).Read(&req); err != nil {
@@ -71,19 +60,49 @@ func TestHostileTimeoutIsClamped(t *testing.T) {
 				t.Fatalf("the frame lost the value on the way in: %d", req.TimeoutMS)
 			}
 
-			done := make(chan proto.TeamResponse, 1)
-			go func() { done <- b.Serve(tc.as, req) }()
-
 			problem := ""
-			select {
-			case <-done:
-			case <-time.After(budget):
-				problem = fmt.Sprintf("Serve is still parked after %s on timeout_ms=%d (about %s); "+
-					"the goroutine and its mailbox are held until the process ends",
-					budget, tc.ms, (time.Duration(tc.ms) * time.Millisecond).Round(time.Hour))
+			if got := waitFor(req.TimeoutMS); got != tc.want {
+				problem = fmt.Sprintf("timeout_ms=%d becomes %s, which the host will hold a goroutine "+
+					"and a mailbox open for", tc.ms, got)
 			}
 			hostile.Holds(t, tc.key, problem)
 		})
+	}
+
+	// The clamp must bound the number without breaking the ordinary use of it:
+	// zero still means the default, and a legitimate short wait is honoured
+	// exactly. A ceiling that quietly became a floor would be worse than none.
+	for _, tc := range []struct {
+		ms   int64
+		want time.Duration
+	}{
+		{0, time.Minute},
+		{-1, time.Minute},
+		{-1 << 62, time.Minute},
+		{500, 500 * time.Millisecond},
+		{int64(MaxWait / time.Millisecond), MaxWait},
+	} {
+		if got := waitFor(tc.ms); got != tc.want {
+			t.Errorf("waitFor(%d) = %s, want %s", tc.ms, got, tc.want)
+		}
+	}
+
+	// And the whole path still works: a frame with a real timeout goes through
+	// Serve and comes back.
+	topo, err := NewTopology([]string{"master", "worker-1"},
+		[]Edge{{From: "master", To: "worker-1", Bidirectional: true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := New(topo, false, nil)
+	done := make(chan proto.TeamResponse, 1)
+	go func() {
+		done <- b.Serve("worker-1", proto.TeamRequest{Op: proto.OpTeamRecv, TimeoutMS: 200})
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Error("a 200 ms recv had not returned after five seconds")
 	}
 }
 
@@ -97,10 +116,14 @@ func TestHostileTimeoutIsClamped(t *testing.T) {
 func TestHostileStoreCountsWhatTheGuestSpends(t *testing.T) {
 	t.Run("many-keys", func(t *testing.T) {
 		s := hostileStore(t)
-		// Ten thousand keys, one byte each. Against the byte ceiling that is
-		// ten kilobytes; against the host it is ten thousand map entries and
-		// ten thousand key strings, none of which anything counts.
-		const keys = 10000
+		// One past the stated ceiling, one byte of value each. Against the byte
+		// budget that is a few kilobytes; against the host it is a map entry and
+		// a key string per call, which is what nothing was counting.
+		//
+		// The count comes from the constant rather than from a number typed
+		// here, so a ceiling that moves does not leave this asserting against
+		// the old one.
+		keys := MaxStoreKeys + 1
 		var refused error
 		for i := 0; i < keys; i++ {
 			if err := s.Put("master", fmt.Sprintf("k/%d", i), []byte("x")); err != nil {
@@ -110,9 +133,19 @@ func TestHostileStoreCountsWhatTheGuestSpends(t *testing.T) {
 		}
 		problem := ""
 		if refused == nil {
-			problem = fmt.Sprintf("%d keys went in without a word; nothing counts keys and there is no Delete", keys)
+			problem = fmt.Sprintf("%d keys went in without a word; nothing counts keys", keys)
 		}
 		hostile.Holds(t, "team/store-key-count", problem)
+
+		// And the ceiling is a ceiling rather than a wall: removing a key makes
+		// room for another. A limit an agent cannot get back under would turn
+		// one greedy moment into a dead store.
+		if err := s.Put("master", "k/0", nil); err != nil {
+			t.Fatalf("removing a key: %v", err)
+		}
+		if err := s.Put("master", "after-the-delete", []byte("x")); err != nil {
+			t.Errorf("the store stayed full after a key was removed: %v", err)
+		}
 	})
 
 	t.Run("long-keys", func(t *testing.T) {

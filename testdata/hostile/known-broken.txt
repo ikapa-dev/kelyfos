@@ -17,16 +17,5 @@
 # every one of them is fixed by P6-24. When this file has only comments left,
 # the trust-boundary group is closed.
 
-exec/flood-empty-frames           M-9 · frames carrying no bytes never advance the ceiling, so the loop never ends
-exec/flood-unknown-stream         M-9 · the stream switch has no default; an unknown name is skipped forever
-exec/flood-blank-lines            M-9 · proto.Reader.Read skips blank lines without bound, inside one call
-exec/never-answers                M-9 · no host-side deadline on the exec channel; every other guest channel sets one
-team/timeout-recv                 H-3 · a guest's timeout_ms has a floor and no ceiling; 1<<40 parks a goroutine for years
-team/timeout-ask                  H-3 · the same number on the ask path
-team/store-key-count              H-4 · nothing counts keys, and no agent can remove one
-team/store-key-length             H-4 · a key is never measured against the budget its value is measured against
-team/store-no-delete              H-4 · the store is append-only for the life of the team
-team/refusal-keeps-payload        H-5 · a refused message's body is written to the record beside the digest
-shim/sandbox-count                H-6 · nothing bounds how many sandboxes one caller may ask the shim to build
-shim/no-authentication            H-6 · no route asks who is calling; documented as deliberate, recorded so it stays visible
-control/guest-controls-the-terminal  found while building the OpTrust stub · a guest's refusal reaches the operator's terminal with its control bytes intact
+shim/no-authentication            H-6 · unauthenticated by default, which is the documented decision. A token can now be
+#                                        required (KELYFOS_SHIM_TOKEN); this line records that the default is still open.

@@ -64,13 +64,32 @@ const MaxMCPLine = 16 << 20
 // ErrLineTooLong is returned when a peer sends a frame beyond MaxLine.
 var ErrLineTooLong = errors.New("proto: frame exceeds maximum line length")
 
+// ErrBlankFlood is returned when a peer sends nothing but blank lines. A frame
+// is what this reader waits for; a peer that never sends one is not slow, it is
+// answering with silence in a form that costs it nothing.
+var ErrBlankFlood = errors.New("proto: peer sent only blank lines")
+
 // Error is the single error shape used across every channel (§4).
 type Error struct {
 	Kind    string `json:"kind"`
 	Message string `json:"message"`
 }
 
-func (e *Error) Error() string { return e.Kind + ": " + e.Message }
+// Error renders the two fields through SafeText, because both came from the
+// other end of a channel and this string is printed on somebody's terminal.
+//
+// A guest answering with "\x1b[1A\x1b[2K\r" moves the cursor up a line and
+// erases it, and what it erases is whatever the host printed immediately
+// before — on the trust-anchor path, the line saying the sandbox is ready and
+// which walls were around it. The guest got to choose what the operator saw
+// about the guest.
+//
+// Found while building a stub for the OpTrust fixture rather than by the audit
+// that prompted it (P6-22). SafeText already existed for exactly this and was
+// applied on other paths; it is applied here, at the one place every one of
+// them formats a guest's error, rather than at each caller — a rule enforced in
+// six places is a rule with six chances to be forgotten.
+func (e *Error) Error() string { return SafeText(e.Kind) + ": " + SafeText(e.Message) }
 
 // Error kinds. Anything reported to the host is one of these.
 const (
@@ -335,7 +354,21 @@ func NewReaderLimit(r io.Reader, max int) *Reader {
 // Read decodes the next frame into v. It returns io.EOF at end of stream and
 // ErrLineTooLong if the peer exceeded the frame limit, which the caller should
 // treat as fatal for that connection.
+// maxBlankLines bounds how long one Read will keep skipping nothing.
+//
+// Blank lines are tolerated because §3 says they are, and skipping them is
+// right. Skipping them without a bound is not: a sender writing "\n" forever
+// keeps a single Read spinning inside its own loop, so a caller that wanted to
+// budget frames between calls never gets control back to do it. That is below
+// every channel built on this reader rather than in any one of them (M-9).
+//
+// The number is far above any run of blank lines a writer produces — this
+// package's own Writer emits none — so reaching it means the other end is
+// sending nothing on purpose.
+const maxBlankLines = 1024
+
 func (p *Reader) Read(v any) error {
+	blanks := 0
 	for {
 		if !p.s.Scan() {
 			if err := p.s.Err(); err != nil {
@@ -352,6 +385,10 @@ func (p *Reader) Read(v any) error {
 			line = line[:n-1]
 		}
 		if len(line) == 0 {
+			blanks++
+			if blanks > maxBlankLines {
+				return ErrBlankFlood
+			}
 			continue
 		}
 		return json.Unmarshal(line, v)

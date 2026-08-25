@@ -13,21 +13,22 @@ package shim
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/p4r4n0rm4l/KelyfOS/internal/egress"
+	"github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
+	"github.com/p4r4n0rm4l/KelyfOS/internal/sandbox"
 	"io"
 	"log"
 	"mime"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/p4r4n0rm4l/KelyfOS/internal/egress"
-	"github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
-	"github.com/p4r4n0rm4l/KelyfOS/internal/sandbox"
 )
 
 // EnvdVersion is what the shim reports to the SDK. The SDK gates features on
@@ -116,6 +117,28 @@ func New(p Policy) *Server {
 	return &Server{Policy: p, boxes: map[string]*box{}}
 }
 
+// MaxSandboxes is how many machines one shim will hold at once.
+//
+// A sandbox is a microVM: memory, a disk image, a TAP device, a process. The
+// policy carries a ceiling for each of those per machine and, until P6-25, none
+// for the number of machines — so the arithmetic was whatever the caller asked
+// for times whatever the policy allowed, and the shim is the one door in this
+// product another machine can knock on (finding H-6).
+//
+// Sixteen because the shim is a developer's stand-in for a hosted API on one
+// host, not a fleet. A caller that wants more deletes one first, which is a
+// request it already has.
+const MaxSandboxes = 16
+
+// tokenEnv names the credential the shim requires when it is set.
+//
+// Unauthenticated is the documented default and stays the default: the shim is
+// a tool for a machine you already trust, and turning it into a service with
+// mandatory credentials would be answering a question nobody asked. What was
+// missing is the choice — there was no way to require one at all. Set it and
+// every route asks; leave it and the shim says out loud, once, what it is.
+const tokenEnv = "KELYFOS_SHIM_TOKEN"
+
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	// envd routes
@@ -127,7 +150,29 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /sandboxes", s.listSandboxes)
 	mux.HandleFunc("DELETE /sandboxes/{id}", s.killSandbox)
 	mux.HandleFunc("/", s.notImplemented)
-	return logging(mux)
+	return logging(authenticated(mux))
+}
+
+// authenticated gates every route on a bearer token, when one is configured.
+//
+// The comparison is constant-time. A token checked with == leaks its length and
+// its prefix to anything that can time a request, and a credential compared
+// carelessly is the kind of thing this repository spends a whole document
+// refusing to do elsewhere.
+func authenticated(next http.Handler) http.Handler {
+	want := os.Getenv(tokenEnv)
+	if want == "" {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got, _ := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+		if subtle.ConstantTimeCompare([]byte(got), []byte(want)) != 1 {
+			writeErr(w, http.StatusUnauthorized,
+				"this shim requires a bearer token; it was started with "+tokenEnv+" set")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // Close stops every sandbox the shim created.
@@ -162,6 +207,18 @@ func (s *Server) createSandbox(w http.ResponseWriter, r *http.Request) {
 		TemplateID string `json:"templateID"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&req)
+
+	// Before the machine is built rather than after, because the cost this is
+	// bounding is the building of it.
+	s.mu.Lock()
+	live := len(s.boxes)
+	s.mu.Unlock()
+	if live >= MaxSandboxes {
+		writeErr(w, http.StatusTooManyRequests, fmt.Sprintf(
+			"this shim holds %d sandboxes and its limit is %d; delete one before asking for another",
+			live, MaxSandboxes))
+		return
+	}
 
 	b, err := s.boot(r.Context())
 	if err != nil {

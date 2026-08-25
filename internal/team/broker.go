@@ -98,6 +98,43 @@ type ask struct {
 // nobody asked for.
 const mailbox = 64
 
+// MaxWait is the longest an agent may ask the broker to hold a call open.
+//
+// Fifteen minutes is far above any round trip a team makes — an ask that has
+// not been answered in that long is not going to be — and far below the point
+// where a parked goroutine is a leak. An agent that wants longer asks again,
+// which costs it a frame and costs the host nothing it cannot reclaim.
+const MaxWait = 15 * time.Minute
+
+// waitFor turns the number in an agent's frame into how long the host will
+// actually hold the call open.
+//
+// A floor and, since P6-25, a ceiling (finding H-3). The number arrives in a
+// frame an agent wrote, and there was a floor with nothing above it: a
+// `timeout_ms` of 1<<40 — about thirty-five years — parked a goroutine and a
+// mailbox slot for the life of the process, and a plain loop spent the host's
+// memory as fast as it would accept frames.
+//
+// Clamped rather than refused. An agent asking to wait a long time is not
+// misbehaving, and refusing would leave a caller that wanted an hour with
+// nothing instead of MaxWait. A negative number, which is what an overflowing
+// millisecond count becomes, takes the floor with everything else at or below
+// zero.
+//
+// It is a function rather than four lines inside Serve so that the rule can be
+// checked without waiting for it: a test that had to observe a fifteen-minute
+// clamp by sitting through one would not be a test anybody runs.
+func waitFor(ms int64) time.Duration {
+	d := time.Duration(ms) * time.Millisecond
+	switch {
+	case d <= 0:
+		return time.Minute
+	case d > MaxWait:
+		return MaxWait
+	}
+	return d
+}
+
 // New builds a broker over a resolved topology.
 //
 // record is called for every message and every refusal, on the goroutine that
@@ -132,10 +169,7 @@ func (b *Broker) Serve(agent string, req proto.TeamRequest) proto.TeamResponse {
 	if err != nil {
 		return failed(&Error{Kind: proto.ErrBadRequest, Message: "body is not base64"})
 	}
-	timeout := time.Duration(req.TimeoutMS) * time.Millisecond
-	if timeout <= 0 {
-		timeout = time.Minute
-	}
+	timeout := waitFor(req.TimeoutMS)
 
 	switch req.Op {
 	case proto.OpTeamSend:
@@ -367,7 +401,20 @@ func (b *Broker) describe(from, to string, body []byte, kind, outcome, reason st
 	if outcome == OutcomeRefused {
 		e.Type = TypeRefused
 	}
-	if b.capture {
+	// The payload is kept only for a message that was actually delivered
+	// (P6-25, finding H-5).
+	//
+	// This branch used not to look at the outcome, so an agent with no edge to
+	// anybody could fill the host's disk with the contents of messages that
+	// reached nobody — at whatever size it chose, as many times as it liked,
+	// and with `record_payloads` on that is a team asking for its transcript to
+	// hold what was said, not what was refused.
+	//
+	// The digest above is why nothing is lost. A refusal already records who,
+	// to whom, how many bytes and why, and the SHA-256 lets a later claim about
+	// the message be checked without the record holding a second copy of it —
+	// the same reasoning docs/events.md gives for team.message in general.
+	if b.capture && outcome == OutcomeDelivered {
 		e.Body = string(body)
 	}
 	return e

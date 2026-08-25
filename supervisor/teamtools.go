@@ -44,7 +44,7 @@ func teamToolDefinitions(maySpawn bool) []mcp.Tool {
 			InputSchema: mcp.Schema{
 				Type: "object",
 				Properties: map[string]mcp.Property{
-					"timeout_ms": {Type: "integer", Description: "How long to wait. Defaults to 60000."},
+					"timeout_ms": {Type: "integer", Description: "How long to wait, in milliseconds. Defaults to 60000, and the host holds a call open for at most 15 minutes."},
 				},
 			},
 		},
@@ -60,7 +60,7 @@ func teamToolDefinitions(maySpawn bool) []mcp.Tool {
 				Properties: map[string]mcp.Property{
 					"to":         str("The agent to ask."),
 					"body":       str("The question."),
-					"timeout_ms": {Type: "integer", Description: "How long to wait for an answer. Defaults to 60000."},
+					"timeout_ms": {Type: "integer", Description: "How long to wait for an answer, in milliseconds. Defaults to 60000, and the host holds a call open for at most 15 minutes."},
 				},
 			},
 		},

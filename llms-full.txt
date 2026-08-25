@@ -2081,11 +2081,25 @@ Every access — permitted or not — is an event in the flight recorder, which 
 the difference between shared state and shared state you can account for
 afterwards.
 
-Two limits, neither of them a security boundary (the sandbox is that): a value
-is at most 1 MiB and a team's store at most 64 MiB. A store with no bound is a
-way for one agent to make the host hold an unbounded amount of data on the
-team's behalf, and a team that hits a limit gets an error rather than a host that
-has quietly swallowed a gigabyte.
+Four limits, none of them a security boundary (the sandbox is that): a value is
+at most 1 MiB, a key at most 1 KiB, a team's store at most 64 MiB, and at most
+10,000 keys. A store with no bound is a way for one agent to make the host hold
+an unbounded amount of data on the team's behalf, and a team that hits a limit
+gets an error rather than a host that has quietly swallowed a gigabyte.
+
+The last two arrived at v1.0, and their absence is worth naming rather than
+quietly fixing: the byte ceiling weighed **values only**. A key cost nothing
+against it, so ten thousand one-byte keys were ten kilobytes by that arithmetic
+and ten thousand map entries in fact, and a single key just under the value limit
+bought a megabyte of the host's memory with one byte of budget. Keys are weighed
+with their values now.
+
+**Writing an empty value removes the key.** That is the only way to make the
+store smaller, and until v1.0 there was none — no delete, no op, no tool, so an
+agent that filled the store had no way to give any of it back and neither did
+anybody else. It uses the vocabulary that already exists rather than adding one
+an agent would have to learn, and the record says `delete` rather than `put` so a
+reader is not left inferring which happened from a byte count.
 
 **Absence is not a refusal.** Reading a key that was never written is
 `not_found`; reading one you may not read is `denied`. An agent that cannot tell
@@ -3290,6 +3304,18 @@ A `serve-mcp` session exports the same way, with **one lane per sandbox** —
 the same machinery a team's transcript uses, because it is the same question.
 A call naming no sandbox spans every lane, and a refused call is drawn like a
 refused message.
+
+A `team.store` event carries `kind` `get`, `put` or — since v1.0 — `delete`,
+which is what writing an empty value does. The two are one call and different
+events, and a record that called both `put` would leave a reader working out
+which had happened from a byte count.
+
+A refused `team.message` never carries `data`, whatever `record_payloads` says.
+The option asks for the transcript to hold what was *said*; a message the broker
+rejected was said to nobody, and keeping its body let an agent with no edges fill
+the host's disk with the contents of messages that reached no one. The `sha256`
+is still there, which is what lets a later claim about the message be checked
+without the record holding a second copy of it.
 
 **An ask and its reply are recorded by two different agents**, and either may
 reach the chain first. The asking side cannot record its `team.message` until the
@@ -5416,12 +5442,24 @@ and `session.end` when it is killed. `kelyfos log --list` shows them and
 `kelyfos log --verify` checks the chain, exactly as for a sandbox `kelyfos run`
 started.
 
-**One thing the shim still does not do is authenticate anybody.** While it is
-running, any process on the machine that can reach its port can boot sandboxes,
-kill them, and read and write files inside them. `--addr` binds loopback by
-default and is the only thing between it and the network. That is a property of
-being an unauthenticated local API, not an oversight, and
+**By default the shim does not authenticate anybody.** While it is running, any
+process on the machine that can reach its port can boot sandboxes, kill them, and
+read and write files inside them. `--addr` binds loopback by default and is the
+only thing between it and the network. That is a property of being an
+unauthenticated local API, not an oversight, and
 [`docs/threat-model.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/threat-model.md) says so.
+
+**Set `KELYFOS_SHIM_TOKEN` and it does.** Every route then requires
+`Authorization: Bearer <token>`, compared in constant time, and answers `401`
+without it. The default is unchanged because the shim is a developer's stand-in
+for a hosted API on a machine you already trust; what was missing until v1.0 was
+the *choice*, since there was no way to require a credential at all.
+
+**And there is a ceiling on how many sandboxes it will hold: 16.** Each one is a
+microVM — memory, a disk image, a TAP device, a process — and the policy carried
+a ceiling for each of those per machine and none for the number of machines, so
+the arithmetic was whatever a caller asked for times whatever the policy allowed.
+A caller at the limit deletes one first, which is a request it already has.
 
 ## What is implemented
 
@@ -8747,7 +8785,7 @@ Wait for the next message from another agent. Returns the sender, the body, and 
 
 | Parameter | Type | Required | Meaning |
 | --- | --- | --- | --- |
-| `timeout_ms` | integer | no | How long to wait. Defaults to 60000. |
+| `timeout_ms` | integer | no | How long to wait, in milliseconds. Defaults to 60000, and the host holds a call open for at most 15 minutes. |
 
 ### `team_ask`
 
@@ -8756,7 +8794,7 @@ Send a question to another agent and block until it answers or the wait expires.
 | Parameter | Type | Required | Meaning |
 | --- | --- | --- | --- |
 | `body` | string | **yes** | The question. |
-| `timeout_ms` | integer | no | How long to wait for an answer. Defaults to 60000. |
+| `timeout_ms` | integer | no | How long to wait for an answer, in milliseconds. Defaults to 60000, and the host holds a call open for at most 15 minutes. |
 | `to` | string | **yes** | The agent to ask. |
 
 ### `team_reply`

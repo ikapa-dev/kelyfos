@@ -657,6 +657,18 @@ the same machinery a team's transcript uses, because it is the same question.
 A call naming no sandbox spans every lane, and a refused call is drawn like a
 refused message.
 
+A `team.store` event carries `kind` `get`, `put` or — since v1.0 — `delete`,
+which is what writing an empty value does. The two are one call and different
+events, and a record that called both `put` would leave a reader working out
+which had happened from a byte count.
+
+A refused `team.message` never carries `data`, whatever `record_payloads` says.
+The option asks for the transcript to hold what was *said*; a message the broker
+rejected was said to nobody, and keeping its body let an agent with no edges fill
+the host's disk with the contents of messages that reached no one. The `sha256`
+is still there, which is what lets a later claim about the message be checked
+without the record holding a second copy of it.
+
 **An ask and its reply are recorded by two different agents**, and either may
 reach the chain first. The asking side cannot record its `team.message` until the
 send has returned — until then nobody knows whether the message was delivered or

@@ -26,8 +26,10 @@ import (
 // machine you already trust, and docs/e2b-shim.md says so twice. The fixture
 // does not argue with that decision; it pins the *consequence*, which is that
 // anything able to reach the port can spend the host's memory without limit.
-// If the answer is a token, these turn green. If the answer is a ceiling, the
-// ceiling case turns green and the token case stays as a recorded decision.
+// That is what happened: P6-25 added the ceiling, so that case is green, and a
+// token can now be required with KELYFOS_SHIM_TOKEN — but unauthenticated stays
+// the default, so the token case remains on the ledger as the recorded decision
+// rather than as an open defect.
 
 // drive runs one request against the handler with no network and no VM.
 func drive(t *testing.T, h http.Handler, method, target, body string) (int, string) {
@@ -65,8 +67,9 @@ func TestHostileSandboxCountIsBounded(t *testing.T) {
 
 	// Pre-existing boxes, reachable because this is the same package. Safe:
 	// createSandbox only writes its own new key and listSandboxes ranges keys,
-	// so a nil sb is never dereferenced.
-	const already = 64
+	// so a nil sb is never dereferenced. The count comes from the constant, so
+	// a ceiling that moves does not leave this asserting against the old one.
+	already := MaxSandboxes
 	for i := 0; i < already; i++ {
 		s.boxes[fmt.Sprintf("box-%d", i)] = &box{}
 	}
@@ -76,7 +79,7 @@ func TestHostileSandboxCountIsBounded(t *testing.T) {
 	// The request cannot succeed here — there is no image to boot from — so the
 	// question is *why* it failed. A refusal names the ceiling. Anything else
 	// means the shim went on to try, and on a machine with images it would have
-	// built the sixty-fifth machine.
+	// built one more machine than its ceiling.
 	problem := ""
 	if !mentionsAny(body, "too many", "limit", "ceiling", "at capacity", "maximum") {
 		problem = fmt.Sprintf("with %d sandboxes already registered, POST /sandboxes answered %d %q — "+
@@ -109,6 +112,46 @@ func TestHostileShimAsksWhoIsCalling(t *testing.T) {
 		}
 	}
 	hostile.Holds(t, "shim/no-authentication", problem)
+}
+
+// And when a token IS configured, every route asks for it — including the one
+// that answers before any sandbox exists.
+//
+// Unauthenticated stays the default, because the shim is a tool for a machine
+// you already trust and that is documented twice. What was missing was the
+// choice: there was no way to require a credential at all.
+func TestTheShimCanBeToldToRequireAToken(t *testing.T) {
+	t.Setenv(tokenEnv, "a-secret-the-caller-must-know")
+	s := hostileShim(t)
+	h := s.Handler()
+
+	for _, route := range []struct{ method, target string }{
+		{"GET", "/sandboxes"},
+		{"POST", "/sandboxes"},
+		{"GET", "/health"},
+		{"GET", "/files"},
+	} {
+		if code, _ := drive(t, h, route.method, route.target, `{}`); code != http.StatusUnauthorized {
+			t.Errorf("%s %s answered %d without the token", route.method, route.target, code)
+		}
+		code, _ := driveAuth(t, h, route.method, route.target, "wrong-token")
+		if code != http.StatusUnauthorized {
+			t.Errorf("%s %s answered %d to the wrong token", route.method, route.target, code)
+		}
+		code, _ = driveAuth(t, h, route.method, route.target, "a-secret-the-caller-must-know")
+		if code == http.StatusUnauthorized {
+			t.Errorf("%s %s refused the right token", route.method, route.target)
+		}
+	}
+}
+
+func driveAuth(t *testing.T, h http.Handler, method, target, token string) (int, string) {
+	t.Helper()
+	req := httptest.NewRequest(method, target, strings.NewReader(`{}`))
+	req.Header.Set("Authorization", "Bearer "+token)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	return rr.Code, strings.TrimSpace(rr.Body.String())
 }
 
 func mentionsAny(haystack string, needles ...string) bool {

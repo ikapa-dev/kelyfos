@@ -108,10 +108,14 @@ func answers(uds string, budget time.Duration) (string, bool) {
 }
 
 func TestHostileExecStreamCannotRunForever(t *testing.T) {
-	// Long enough to be sure, short enough to run on every push. The cases
-	// that hold return in under a tenth of a second; the ones that do not
-	// return never do, so anything above the noise floor separates them.
-	const budget = 3 * time.Second
+	// Taken from the product's own constant rather than guessed. The host now
+	// stops reading at the command's budget plus execGrace, so a case that
+	// holds returns by then and a case that does not never returns at all —
+	// and a budget below execGrace would report a working deadline as a hang.
+	//
+	// It costs nothing for the cases that return quickly: this is how long the
+	// test is willing to wait, not how long it waits.
+	budget := execGrace + 3*time.Second
 	oneMiB := base64.StdEncoding.EncodeToString([]byte(strings.Repeat("A", 600<<10)))
 
 	cases := []struct {

@@ -351,11 +351,25 @@ Every access — permitted or not — is an event in the flight recorder, which 
 the difference between shared state and shared state you can account for
 afterwards.
 
-Two limits, neither of them a security boundary (the sandbox is that): a value
-is at most 1 MiB and a team's store at most 64 MiB. A store with no bound is a
-way for one agent to make the host hold an unbounded amount of data on the
-team's behalf, and a team that hits a limit gets an error rather than a host that
-has quietly swallowed a gigabyte.
+Four limits, none of them a security boundary (the sandbox is that): a value is
+at most 1 MiB, a key at most 1 KiB, a team's store at most 64 MiB, and at most
+10,000 keys. A store with no bound is a way for one agent to make the host hold
+an unbounded amount of data on the team's behalf, and a team that hits a limit
+gets an error rather than a host that has quietly swallowed a gigabyte.
+
+The last two arrived at v1.0, and their absence is worth naming rather than
+quietly fixing: the byte ceiling weighed **values only**. A key cost nothing
+against it, so ten thousand one-byte keys were ten kilobytes by that arithmetic
+and ten thousand map entries in fact, and a single key just under the value limit
+bought a megabyte of the host's memory with one byte of budget. Keys are weighed
+with their values now.
+
+**Writing an empty value removes the key.** That is the only way to make the
+store smaller, and until v1.0 there was none — no delete, no op, no tool, so an
+agent that filled the store had no way to give any of it back and neither did
+anybody else. It uses the vocabulary that already exists rather than adding one
+an agent would have to learn, and the record says `delete` rather than `put` so a
+reader is not left inferring which happened from a byte count.
 
 **Absence is not a refusal.** Reading a key that was never written is
 `not_found`; reading one you may not read is `denied`. An agent that cannot tell

@@ -58,12 +58,24 @@ and `session.end` when it is killed. `kelyfos log --list` shows them and
 `kelyfos log --verify` checks the chain, exactly as for a sandbox `kelyfos run`
 started.
 
-**One thing the shim still does not do is authenticate anybody.** While it is
-running, any process on the machine that can reach its port can boot sandboxes,
-kill them, and read and write files inside them. `--addr` binds loopback by
-default and is the only thing between it and the network. That is a property of
-being an unauthenticated local API, not an oversight, and
+**By default the shim does not authenticate anybody.** While it is running, any
+process on the machine that can reach its port can boot sandboxes, kill them, and
+read and write files inside them. `--addr` binds loopback by default and is the
+only thing between it and the network. That is a property of being an
+unauthenticated local API, not an oversight, and
 [`docs/threat-model.md`](threat-model.md) says so.
+
+**Set `KELYFOS_SHIM_TOKEN` and it does.** Every route then requires
+`Authorization: Bearer <token>`, compared in constant time, and answers `401`
+without it. The default is unchanged because the shim is a developer's stand-in
+for a hosted API on a machine you already trust; what was missing until v1.0 was
+the *choice*, since there was no way to require a credential at all.
+
+**And there is a ceiling on how many sandboxes it will hold: 16.** Each one is a
+microVM — memory, a disk image, a TAP device, a process — and the policy carried
+a ceiling for each of those per machine and none for the number of machines, so
+the arithmetic was whatever a caller asked for times whatever the policy allowed.
+A caller at the limit deletes one first, which is a request it already has.
 
 ## What is implemented
 

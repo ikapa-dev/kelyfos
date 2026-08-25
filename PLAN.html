@@ -180,7 +180,7 @@
     <span class="bl-name">Overall</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">P6-6 done &mdash; the export carries the record it was rendered from and <code>kelyfos verify</code> re-runs the chain over it offline. <b>An external security audit then arrived (D45) and v1.0 is gated on its trust-boundary group</b>: the workspace block device is a guest&rarr;host surface the threat model does not list. Seven tasks inserted before P6-7. <b>P6-21 done</b> &mdash; <code>--review</code> no longer destroys an edit made while somebody was reading it. <b>P6-6 corrected</b>: its own adversarial review landed late and found a false claim about truncation and an unchecked chain head, both reproduced and both fixed. <b>P6-22 done</b> &mdash; nine fixture groups, twenty-one recorded breaks, a ledger that can only shrink, and a CI job that runs the lot. <b>D46</b> triaged seven findings against HEAD and corrected two. <b>P6-24 done &mdash; the v1.0 gate is open.</b> C-1, H-1 and H-2 are closed in two layers, the workspace block device is in the trust-boundary table, and the full acceptance suite passes on the final code. P6-23 stands at 11/23, blocked on the audit text for the rest (D47). Next: <b>P6-25</b>, the exhaustion clamps</b></div>
+  <div class="focusline">Current focus: <b id="focus">P6-6 done &mdash; the export carries the record it was rendered from and <code>kelyfos verify</code> re-runs the chain over it offline. <b>An external security audit then arrived (D45) and v1.0 is gated on its trust-boundary group</b>: the workspace block device is a guest&rarr;host surface the threat model does not list. Seven tasks inserted before P6-7. <b>P6-21 done</b> &mdash; <code>--review</code> no longer destroys an edit made while somebody was reading it. <b>P6-6 corrected</b>: its own adversarial review landed late and found a false claim about truncation and an unchecked chain head, both reproduced and both fixed. <b>P6-22 done</b> &mdash; nine fixture groups, twenty-one recorded breaks, a ledger that can only shrink, and a CI job that runs the lot. <b>D46</b> triaged seven findings against HEAD and corrected two. <b>P6-24 done &mdash; the v1.0 gate is open.</b> C-1, H-1 and H-2 are closed in two layers, the workspace block device is in the trust-boundary table, and the full acceptance suite passes on the final code. P6-23 stands at 11/23, blocked on the audit text for the rest (D47). <b>P6-25 done</b> &mdash; the blocking set is closed and the hostile ledger is down to one line, which is a recorded decision rather than a defect. Next: <b>P6-26</b>, M-2 and M-5</b></div>
 </div>
 
 <!-- ====================================================== 1. END GOAL -->
@@ -937,7 +937,7 @@
         three findings are closed; they do not prove the fix left everything else standing, and a boundary repair
         that quietly broke the feature it guards would pass a fixture-only gate.</span></li>
 
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">P6-25</span><span class="tk"><b>The clamps a hostile agent can reach: H-3, H-4, H-5,
         H-6, M-9.</b> Each is small, each is a denial of service on the <i>host</i> driven from the untrusted side,
         and together they are the rest of the v1.0-blocking set. A <code>timeout_ms</code> the guest chooses with
@@ -2941,6 +2941,53 @@ after:
         the documentation rode this commit and not an earlier one: the trust-boundary table has the workspace
         device as a first-class guest&rarr;host path, and the README&rsquo;s &ldquo;Both layers exist now&rdquo;
         says which layer was incomplete until v1.0 and what closed it</td></tr>
+        <tr><td class="mono">2026-08-25</td><td class="mono">P6-25</td>
+        <td><b>The clamps a hostile agent can reach, and the ledger is down to one line.</b> H-3, H-4, H-5, H-6 and
+        M-9 &mdash; the rest of the v1.0-blocking set. Each is small; each was a denial of service on the
+        <i>host</i>, driven from the untrusted side.
+        <b>M-9, under the description D46 corrected it to.</b> Not &ldquo;no total-output ceiling&rdquo;, which
+        <code>ac8968f</code> fixed before the audit was read, but the four ways a stream that never ends made
+        <code>sandbox.Exec</code> never return. The <code>timeout</code> in its signature was a number mailed to
+        the untrusted party &mdash; <code>Connect</code> clears the deadline it dialled with, so nothing on the
+        host&rsquo;s side ever stopped reading, while <i>every other</i> guest&rarr;host channel in the package
+        sets one. It has a deadline now, at the command&rsquo;s own budget plus a grace; the stream switch has the
+        <code>default</code> the CLI&rsquo;s copy always had, so the library serving other people is no longer the
+        lax one; frames are counted as well as bytes, because empty frames advance a byte ceiling not at all; and
+        <code>proto.Reader.Read</code> bounds the blank lines it skips, which sits below every channel rather than
+        in any one of them.
+        <b>H-3 is a ceiling where there was only a floor</b>, and it is a function rather than four lines inside
+        <code>Serve</code> so the rule can be checked without waiting fifteen minutes to watch it work.
+        <b>H-4 is the store weighing what it spends.</b> The byte ceiling counted values, so a key cost an agent
+        nothing against the only budget there was. Keys are weighed with their values now, there is a count and a
+        key length &mdash; and <b>writing an empty value removes the key</b>, which is the only way an agent has to
+        make the store smaller. There was none: no delete, no op, no tool, so an agent that filled it could not
+        give any of it back and nor could anybody else. The record says <code>delete</code> rather than
+        <code>put</code>, because a reader should not have to infer which happened from a byte count.
+        <b>H-5 is the record keeping a digest where it was keeping a body.</b> <code>describe</code> did not look
+        at the outcome, so a refused message was written in full &mdash; and the digest beside it is why nothing is
+        lost.
+        <b>H-6 is both halves, against the briefing.</b> A ceiling of sixteen sandboxes, and a bearer token that
+        can be <i>required</i> &mdash; unauthenticated stays the default, because that is the documented decision
+        and the shim is a developer&rsquo;s stand-in on a machine you already trust; what was missing was the
+        choice. Compared in constant time, because a credential compared with <code>==</code> leaks its length.
+        <b>And the last thing the corpus found rather than the audit</b> is fixed at its source:
+        <code>(*proto.Error).Error()</code> renders through <code>SafeText</code>, so a guest can no longer write
+        on the operator&rsquo;s terminal. At the one place every path formats a guest&rsquo;s error, rather than at
+        each of six callers &mdash; a rule enforced in six places has six chances to be forgotten.</td>
+        <td class="mono"><b>the ledger is one line</b>, and that line is a recorded decision rather than an open
+        defect: the shim is unauthenticated by default on purpose, and now says so beside the token that changes
+        it<br>
+        <b>the full acceptance suite, again on the final code: 13 suites, 239 checks, 0 failed, 14 cookbook
+        recipes</b> &mdash; these clamps sit on live paths and the suite is what says they did not narrow one<br>
+        two fixtures were rewritten rather than satisfied, and both for the same reason: a ceiling of fifteen
+        minutes and one of sixteen sandboxes cannot be observed by waiting for them, so the assertions moved to the
+        rule and the counts now come from the constants rather than from numbers typed beside them<br>
+        the clamps are bounded but not brittle: <code>waitFor</code> is checked at zero, at negative, at an
+        overflowed millisecond count and at exactly MaxWait; the store's ceiling is a ceiling rather than a wall,
+        with a case proving a removal makes room again<br>
+        <code>gofmt</code>, <code>vet</code>, 14 packages, <code>make docs</code> clean; the guest-facing tool
+        descriptions, <code>docs/teams.md</code>, <code>docs/e2b-shim.md</code> and <code>docs/events.md</code>
+        state each new bound where the person who meets it will be reading</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>

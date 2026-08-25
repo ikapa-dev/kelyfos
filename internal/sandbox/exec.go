@@ -32,6 +32,22 @@ type ExecResult struct {
 // a stated one with a clear error rather than a frame failure further along.
 const MaxExecOutput = 16 << 20
 
+// execGrace is how long past a command's own budget the host keeps reading.
+//
+// The guest is asked to stop at timeout_ms and is given this much longer to say
+// what happened. Past it the host stops listening, because a guest that has
+// neither finished nor reported is a guest this call cannot wait on — and the
+// caller may be a server holding the goroutine for everybody else.
+const execGrace = 10 * time.Second
+
+// maxExecFrames bounds a conversation that carries no bytes.
+//
+// MaxExecOutput counts what a command produced; this counts how many times it
+// said anything at all. A guest sending empty frames advances the first not at
+// all and this one every time, which is the whole of the difference between a
+// ceiling that holds and one that reads as if it does.
+const maxExecFrames = 1 << 20
+
 // Exec runs one command in a sandbox and collects its output.
 //
 // It is the programmatic form of `kelyfos exec`, for callers that need the
@@ -43,6 +59,28 @@ func Exec(udsPath string, argv []string, stdin []byte, timeout time.Duration) (*
 		return nil, err
 	}
 	defer conn.Close()
+
+	// A deadline on the host's side of the channel (P6-24/P6-25, finding M-9).
+	//
+	// The timeout in this function's signature was, until now, a number mailed
+	// to the untrusted party: it travels in the request as timeout_ms and asks
+	// the guest to please stop. Connect clears the deadline it dialled with, so
+	// nothing here ever stopped reading. A guest that answered with frames
+	// carrying no bytes, or with a stream name no case matched, or with blank
+	// lines, kept this call inside its loop for as long as the process lived —
+	// and the caller is `sandbox_exec` on a long-lived server, so the goroutine,
+	// the connection and its buffer were held for good.
+	//
+	// The grace above the command's own budget is what lets a guest that is
+	// obeying the timeout report the result of doing so. Every other guest→host
+	// channel in this package sets a deadline; this was the one that did not.
+	deadline := timeout + execGrace
+	if timeout <= 0 {
+		deadline = execGrace
+	}
+	if err := conn.SetDeadline(time.Now().Add(deadline)); err != nil {
+		return nil, err
+	}
 
 	req := proto.ExecRequest{
 		V: proto.Version, ID: fmt.Sprintf("x%d", time.Now().UnixNano()),
@@ -56,6 +94,7 @@ func Exec(udsPath string, argv []string, stdin []byte, timeout time.Duration) (*
 	}
 
 	out := &ExecResult{Code: -1}
+	frames := 0
 	r := proto.NewReader(conn)
 	for {
 		var resp proto.ExecResponse
@@ -87,6 +126,23 @@ func Exec(udsPath string, argv []string, stdin []byte, timeout time.Duration) (*
 			}
 			out.Err = resp.Error
 			return out, nil
+		default:
+			// The switch had no default, so a stream name nothing matched fell
+			// out of it and the loop went round again — forever, at no cost to
+			// the sender. `kelyfos exec`'s own copy of this loop has always had
+			// this case; the library the servers use did not, which made the
+			// CLI stricter than the thing serving other people.
+			return nil, fmt.Errorf("guest sent an unknown stream %q", proto.SafeText(resp.Stream))
+		}
+
+		// Frames that carry nothing still cost something to receive. The output
+		// ceiling counts bytes, so a stream of empty frames never reaches it —
+		// this is the same ceiling expressed in the other currency.
+		frames++
+		if frames > maxExecFrames {
+			return nil, fmt.Errorf("guest sent more than %d frames without finishing; "+
+				"a command that produces this much has more to say than one result can carry",
+				maxExecFrames)
 		}
 	}
 }
