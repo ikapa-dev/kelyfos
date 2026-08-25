@@ -305,7 +305,23 @@ channels between a guest and its host or between two guests on one machine.
 Firecracker documents its own position on those; KelyfOS inherits it and adds
 nothing.
 
-**The supply chain.** Reproducible builds, signed images and an SBOM are P4-3
+**Reproducibility is measured rather than claimed.** Four knobs are on —
+`BR2_REPRODUCIBLE`, `SOURCE_DATE_EPOCH` taken from the commit rather than the
+clock, a fixed ext4 UUID and directory hash seed, and `gzip -n` — and the
+`repro-check` workflow builds the same commit twice and diffs it per artifact,
+because turning a knob on is not the same as the thing working. Upstream calls
+Buildroot's reproducible mode experimental and requires an identical build path;
+the compiler cache has been mixing cached and fresh objects in every build this
+project has ever done; and until v1.0 nobody here had measured it at all.
+
+Measured: the two CLI binaries are identical when built from two *different*
+source paths, and `Image`, `rootfs.ext4` and `image.json` are identical across
+two full aarch64 `dev` builds from nothing on one machine with an identical
+build path. That last is the scope, and the scope is part of the answer — one
+machine, one architecture, two builds. It is not a claim that anybody else's
+machine produces these bytes.
+
+**The supply chain.** Signed images and an SBOM are P4-3
 and are not in this phase. A hardened runtime built from an unverified toolchain
 is a locked door in a wall nobody measured.
 

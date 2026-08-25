@@ -1,0 +1,145 @@
+# Whether this project's artifacts rebuild byte-identically — measured, and the
+# measurement is the statement (P6-9, D38).
+#
+# The word "reproducible" is not written anywhere on the strength of a
+# configuration. Four knobs are on — BR2_REPRODUCIBLE, SOURCE_DATE_EPOCH, a fixed
+# filesystem UUID and hash seed, and gzip -n — and turning them on is not the
+# same as the thing working. Upstream calls Buildroot's reproducible mode
+# experimental and requires an identical build path; the compiler cache has been
+# mixing cached and fresh objects in every build this project has ever done; and
+# whether a full tree rebuilds byte-identically here has never been measured.
+#
+# So this workflow builds the same commit twice and diffs the results, and what
+# the project says about reproducibility is whatever this last reported —
+# **per artifact, pass or fail**. A statement that says "the CLI is, the rootfs
+# is not, here is the run that shows it" is worth more than one that says
+# "reproducible", and it is the only one this project is entitled to.
+#
+# It is expensive on purpose: two full image builds is hours of runner time. It
+# runs on demand and on a schedule, never on a push, because the question it
+# answers does not change commit by commit.
+name: repro-check
+
+on:
+  workflow_dispatch:
+    inputs:
+      arch:
+        description: "architecture to measure"
+        required: false
+        default: aarch64
+        type: choice
+        options: [aarch64, x86_64]
+  schedule:
+    # Monthly. Often enough that an answer is never a year old, rarely enough
+    # that it is not burning a day of runner time to re-learn the same thing.
+    - cron: "0 4 1 * *"
+
+permissions:
+  contents: read
+
+jobs:
+  cli:
+    name: the Go binaries
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      # A different source path on the second build, deliberately. -trimpath is
+      # what is supposed to make that irrelevant, and a check that used the same
+      # path both times would not be checking it.
+      - name: Build twice, from two different paths
+        run: |
+          set -euo pipefail
+          make release-cli
+          mkdir -p /tmp/first && cp dist/kelyfos-linux-* /tmp/first/
+          rm -rf dist
+          cp -r "$GITHUB_WORKSPACE" /tmp/elsewhere
+          cd /tmp/elsewhere && make release-cli
+          cd /tmp
+          fail=0
+          for f in first/kelyfos-linux-*; do
+            name="$(basename "$f")"
+            if cmp -s "$f" "/tmp/elsewhere/dist/$name"; then
+              echo "REPRODUCIBLE  $name  $(sha256sum "$f" | cut -d' ' -f1)"
+            else
+              echo "DIFFERS       $name"
+              fail=1
+            fi
+          done
+          exit "$fail"
+
+  image:
+    name: the guest image (${{ inputs.arch || 'aarch64' }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    env:
+      ARCH: ${{ inputs.arch || 'aarch64' }}
+      FLAVOR: dev
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install build dependencies
+        run: bash dev/install-build-deps.sh
+
+      # No cache, either build. A tree restored from a cache is a tree somebody
+      # else built, and the question is whether *this* runner building twice
+      # gets the same answer — which a warm cache would answer for it.
+      - name: Build once
+        run: make image ARCH="$ARCH" FLAVOR="$FLAVOR"
+
+      - name: Record what the first build produced
+        run: |
+          set -euo pipefail
+          sha256sum ~/.cache/kelyfos/out/"$ARCH"/* | sed 's|  .*/|  |' | sort > /tmp/first.sums
+          cat /tmp/first.sums
+
+      # The whole tree, from nothing. Keeping the toolchain and clearing only
+      # `target` and `images` was tried and does not work: Buildroot's
+      # finalize step expects a target directory its per-package stamps say is
+      # already populated, so it fails on the first thing it looks for. Measured
+      # rather than assumed — the failure is "target/etc/shells: No such file or
+      # directory".
+      #
+      # Which leaves the expensive version, and it is the one D38 asks for
+      # anyway: whether a *full* Buildroot tree rebuilds byte-identically here
+      # has never been measured, and that is the question. The download cache is
+      # kept, because re-fetching upstream tarballs measures a mirror rather
+      # than this project.
+      - name: Build again, from nothing
+        run: |
+          set -euo pipefail
+          rm -rf ~/.cache/kelyfos/out/"$ARCH" ~/.cache/kelyfos/build/"$ARCH-$FLAVOR"
+          make image ARCH="$ARCH" FLAVOR="$FLAVOR"
+
+      - name: Per artifact, pass or fail
+        run: |
+          set -euo pipefail
+          sha256sum ~/.cache/kelyfos/out/"$ARCH"/* | sed 's|  .*/|  |' | sort > /tmp/second.sums
+          echo "first:";  cat /tmp/first.sums
+          echo "second:"; cat /tmp/second.sums
+          echo
+          fail=0
+          while read -r sum name; do
+            other="$(grep "  $name\$" /tmp/second.sums | cut -d' ' -f1 || true)"
+            if [ "$sum" = "$other" ]; then
+              echo "REPRODUCIBLE  $name  $sum"
+            else
+              echo "DIFFERS       $name"
+              echo "                first  $sum"
+              echo "                second ${other:-<absent>}"
+              fail=1
+            fi
+          done < /tmp/first.sums
+          echo
+          echo "This run's result is the statement the project makes about"
+          echo "reproducibility. Whatever it says, docs/ says the same."
+          exit "$fail"

@@ -10,6 +10,14 @@
 # release number it does not have.
 KELYFOS_VERSION ?= $(shell git describe --tags --dirty --always 2>/dev/null || echo dev)
 
+# The timestamp everything that records one uses (P6-9, D38).
+#
+# Taken from the commit rather than from the clock, so two builds of one commit
+# agree about what time it is. A tree with no git history falls back to zero,
+# which is the epoch every reproducible-build tool treats as "no date" rather
+# than a date somebody chose.
+export SOURCE_DATE_EPOCH ?= $(shell git log -1 --pretty=%ct 2>/dev/null || echo 0)
+
 # Pinned toolchain versions (P0-6). Hard include: a build with no version policy
 # is not a build this project is willing to make.
 include versions.mk
@@ -153,7 +161,14 @@ linux-only:
 # machine where nothing else is loaded yet, and it must not care that the rest of
 # the image is musl.
 supervisor: ## Cross-compile the guest supervisor into the rootfs overlay
-	@mkdir -p $(GUEST_OVERLAY)/sbin $(GUEST_OVERLAY)/.oldroot
+	@mkdir -p $(GUEST_OVERLAY)/sbin $(GUEST_OVERLAY)/.oldroot $(GUEST_OVERLAY)/etc
+	@# The guest's own os-release, generated (P6-1 routed this here, P6-9).
+	@# It was a static file in each flavor's overlay saying 0.1.0-dev, which was
+	@# false from v0.1 onwards: a machine that reports a version nobody shipped
+	@# is a machine whose transcript names the wrong thing. Generated from the
+	@# same KELYFOS_VERSION the binaries carry, so the two cannot disagree.
+	@printf 'NAME="KelyfOS"\nID=kelyfos\nPRETTY_NAME="KelyfOS (%s)"\nVERSION="%s"\nVERSION_ID=%s\nHOME_URL="https://github.com/p4r4n0rm4l/KelyfOS"\n' \
+	  "$(FLAVOR)" "$(KELYFOS_VERSION)" "$(KELYFOS_VERSION)" > $(GUEST_OVERLAY)/etc/os-release
 	CGO_ENABLED=0 GOOS=linux GOARCH=$(GOARCH) \
 	  go build -trimpath -ldflags="-s -w -X main.Version=$(KELYFOS_VERSION)" \
 	    -o $(GUEST_OVERLAY)/sbin/kelyfos-supervisor ./supervisor
@@ -179,8 +194,11 @@ fetch-image: ## Download a prebuilt guest image for ARCH instead of building it
 # both, with the sums file fetch-image.sh verifies against.
 release-artifacts: ## Stage $(IMAGE_DIR) artifacts + SHA256SUMS into dist/
 	@mkdir -p $(CURDIR)/dist
-	@gzip -9 -c $(IMAGE_DIR)/$(KERNEL_ARTIFACT) > $(CURDIR)/dist/$(KERNEL_ARTIFACT)-$(ARCH).gz
-	@gzip -9 -c $(IMAGE_DIR)/rootfs.ext4        > $(CURDIR)/dist/rootfs-$(ARCH).ext4.gz
+	@# -n: no original name and no timestamp in the gzip header. Without it two
+	@# identical images compress to two different files, and the difference is
+	@# the clock rather than anything in them (P6-9).
+	@gzip -9 -n -c $(IMAGE_DIR)/$(KERNEL_ARTIFACT) > $(CURDIR)/dist/$(KERNEL_ARTIFACT)-$(ARCH).gz
+	@gzip -9 -n -c $(IMAGE_DIR)/rootfs.ext4        > $(CURDIR)/dist/rootfs-$(ARCH).ext4.gz
 	@cp -f $(IMAGE_DIR)/image.json $(CURDIR)/dist/image-$(ARCH).json
 	@cd $(CURDIR)/dist && ls -la $(KERNEL_ARTIFACT)-$(ARCH).gz rootfs-$(ARCH).ext4.gz
 

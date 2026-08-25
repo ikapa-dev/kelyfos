@@ -180,7 +180,7 @@
     <span class="bl-name">Overall</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">P6-6 done &mdash; the export carries the record it was rendered from and <code>kelyfos verify</code> re-runs the chain over it offline. <b>An external security audit then arrived (D45) and v1.0 is gated on its trust-boundary group</b>: the workspace block device is a guest&rarr;host surface the threat model does not list. Seven tasks inserted before P6-7. <b>P6-21 done</b> &mdash; <code>--review</code> no longer destroys an edit made while somebody was reading it. <b>P6-6 corrected</b>: its own adversarial review landed late and found a false claim about truncation and an unchecked chain head, both reproduced and both fixed. <b>P6-22 done</b> &mdash; nine fixture groups, twenty-one recorded breaks, a ledger that can only shrink, and a CI job that runs the lot. <b>D46</b> triaged seven findings against HEAD and corrected two. <b>P6-24 done &mdash; the v1.0 gate is open.</b> C-1, H-1 and H-2 are closed in two layers, the workspace block device is in the trust-boundary table, and the full acceptance suite passes on the final code. P6-23 stands at 11/23, blocked on the audit text for the rest (D47). <b>P6-25 done</b> &mdash; the blocking set is closed and the hostile ledger is down to one line, which is a recorded decision rather than a defect. <b>P6-26 done. The audit&rsquo;s v1.0-blocking set is closed</b> &mdash; boundary group, clamps and both claims &mdash; and the hostile ledger is one line, which is a recorded decision. P6-23 and P6-27 are blocked on the audit text for the remaining twelve findings (D47). <b>P6-7 done</b> &mdash; signed exports with a key the reader anchors, and a vocabulary rather than a badge. <b>P6-8 done</b> &mdash; the release is a workflow, the sums file is written from scratch and checked both ways, and the flavor is in the cache key. Next: <b>P6-9</b>, determinism configured and reproducibility measured</b></div>
+  <div class="focusline">Current focus: <b id="focus">P6-6 done &mdash; the export carries the record it was rendered from and <code>kelyfos verify</code> re-runs the chain over it offline. <b>An external security audit then arrived (D45) and v1.0 is gated on its trust-boundary group</b>: the workspace block device is a guest&rarr;host surface the threat model does not list. Seven tasks inserted before P6-7. <b>P6-21 done</b> &mdash; <code>--review</code> no longer destroys an edit made while somebody was reading it. <b>P6-6 corrected</b>: its own adversarial review landed late and found a false claim about truncation and an unchecked chain head, both reproduced and both fixed. <b>P6-22 done</b> &mdash; nine fixture groups, twenty-one recorded breaks, a ledger that can only shrink, and a CI job that runs the lot. <b>D46</b> triaged seven findings against HEAD and corrected two. <b>P6-24 done &mdash; the v1.0 gate is open.</b> C-1, H-1 and H-2 are closed in two layers, the workspace block device is in the trust-boundary table, and the full acceptance suite passes on the final code. P6-23 stands at 11/23, blocked on the audit text for the rest (D47). <b>P6-25 done</b> &mdash; the blocking set is closed and the hostile ledger is down to one line, which is a recorded decision rather than a defect. <b>P6-26 done. The audit&rsquo;s v1.0-blocking set is closed</b> &mdash; boundary group, clamps and both claims &mdash; and the hostile ledger is one line, which is a recorded decision. P6-23 and P6-27 are blocked on the audit text for the remaining twelve findings (D47). <b>P6-7 done</b> &mdash; signed exports with a key the reader anchors, and a vocabulary rather than a badge. <b>P6-8 done</b> &mdash; the release is a workflow, the sums file is written from scratch and checked both ways, and the flavor is in the cache key. <b>P6-9 done</b> &mdash; and measured: two full builds from nothing produce byte-identical artifacts on this machine, which is more than D38 expected. Next: <b>P6-10</b>, the SBOM</b></div>
 </div>
 
 <!-- ====================================================== 1. END GOAL -->
@@ -997,7 +997,7 @@
         per-flavor, so every release-flavor build has been running cold at about forty minutes. This task is the
         prerequisite of P6-11 and of the exit itself.</span></li>
 
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">P6-9</span><span class="tk"><b>Determinism configured, and reproducibility measured
         rather than claimed (D38).</b> The Go binaries are already bit-reproducible &mdash; measured, cold cache,
         different source path, identical digest. The image layer is not, and the reasons are four knobs:
@@ -3106,6 +3106,42 @@ after:
         180-minute image builds on a runner, and P6-18 is where that time is budgeted.</b> What is verified here is
         everything that does not need one<br>
         <code>gofmt</code>, <code>vet</code>, 14 packages, <code>make docs</code> clean</td></tr>
+        <tr><td class="mono">2026-08-25</td><td class="mono">P6-9</td>
+        <td><b>Determinism configured, reproducibility measured &mdash; and the answer is better than D38 expected.</b>
+        The four knobs are on: <code>BR2_REPRODUCIBLE</code>, <code>SOURCE_DATE_EPOCH</code> taken from the commit
+        rather than the clock, a fixed ext4 UUID and directory hash seed, and <code>gzip -n</code>. D38 said not to
+        write the word down but to add a workflow that rebuilds and diffs and let its result be the statement, so
+        <code>repro-check.yml</code> does exactly that, per artifact, pass or fail.
+        <b>Then it was actually run.</b> <b>Two full aarch64 <code>dev</code> builds from nothing produced
+        byte-identical <code>Image</code>, <code>rootfs.ext4</code> and <code>image.json</code></b>, and the two
+        CLI binaries are identical when built from two <i>different</i> source paths. D38 anticipated
+        &ldquo;the CLI is, the rootfs is not&rdquo;; the rootfs is, on this machine.
+        <b>The scope is part of the result and the documents say so.</b> One machine, one architecture, an
+        identical build path &mdash; which is what Buildroot&rsquo;s own reproducible mode requires &mdash; and two
+        builds rather than many. x86_64 is unmeasured. That is a narrower claim than &ldquo;reproducible
+        builds&rdquo; and it is the one this project is entitled to; the workflow is what keeps it current.
+        <b>And the <code>0.1.0-dev</code> debt is paid.</b> P6-1 routed the guest&rsquo;s
+        <code>os-release</code> here because fixing it needed an image build to verify, and there was one. It was
+        a static file in each flavor&rsquo;s overlay saying <code>0.1.0-dev</code> &mdash; false from v0.1 onwards,
+        so every machine reported a version nobody shipped. It is generated from the same
+        <code>KELYFOS_VERSION</code> the binaries carry now, and verified in a built image.</td>
+        <td class="mono"><b>measured, not configured-and-assumed:</b> builds 2 and 3, each a full build after
+        <code>rm -rf</code> of the whole tree, agree on all three artifacts &mdash;
+        <code>rootfs.ext4 aac9a43f7ab8b21da…</code>, <code>Image be8bcf9202582be7…</code>,
+        <code>image.json 21bd116ad14c36e2…</code><br>
+        the CLI pair built from <code>/Users/…/KelyfOS</code> and from <code>/tmp/elsewhere</code>:
+        <code>kelyfos-linux-aarch64 f3d9b23f51cdf638…</code>, <code>kelyfos-linux-x86_64 0114d7bdbfb7dc53…</code><br>
+        <b>two things went wrong on the way and both are in the workflow now.</b> Clearing only Buildroot&rsquo;s
+        <code>target</code> and <code>images</code> to force a cheap rebuild does not work &mdash; finalize expects
+        a target directory its stamps say is populated, and fails on
+        <code>target/etc/shells: No such file or directory</code> &mdash; so the expensive version is the only
+        version, which is what D38 said. And the first comparison was worthless because
+        <code>sed 's|.*/||'</code> stripped the hash along with the path, leaving three filenames and no digests.
+        Both were found by running it<br>
+        the guest&rsquo;s generated <code>os-release</code>, read out of a built image:
+        <code>PRETTY_NAME="KelyfOS (dev)"</code>, <code>VERSION="v0.9-33-g5d623a4-dirty"</code><br>
+        <code>gofmt</code>, <code>vet</code>, 14 packages, <code>make docs</code> clean; both new workflows
+        parse</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>

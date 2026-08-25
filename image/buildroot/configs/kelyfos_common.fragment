@@ -60,8 +60,21 @@ BR2_ROOTFS_DEVICE_CREATION_DYNAMIC_DEVTMPFS=y
 
 # --- filesystem ------------------------------------------------------------
 # ext4, mounted read-only by the guest with a tmpfs overlay for writes.
+# Determinism, configured rather than claimed (P6-9, D38).
+#
+# BR2_REPRODUCIBLE makes Buildroot pin timestamps, sort what it can and drop the
+# build path out of what it produces. Upstream calls it experimental and says it
+# needs an identical build path, so what it buys is measured by the repro-check
+# workflow rather than asserted here — this fragment configures the attempt, and
+# the workflow's result is the statement the project makes.
+BR2_REPRODUCIBLE=y
+
 BR2_TARGET_ROOTFS_EXT2=y
 BR2_TARGET_ROOTFS_EXT2_4=y
+# A filesystem's UUID and its directory hash seed are random per mkfs by design,
+# and two images differing only in those two fields are two images that differ.
+# Fixed here so the question the workflow asks is about the contents.
+BR2_TARGET_ROOTFS_EXT2_MKFS_OPTIONS="-O ^64bit -U 6b1d0c96-6cf1-4b0a-a2c4-1d3c3f5e9a77 -E hash_seed=5f3c2a19-8d4e-4a6b-9c2f-7e1b0d8a4c63"
 BR2_TARGET_ROOTFS_TAR=n
 # Rootfs size is set per flavor (image/flavors/<flavor>/buildroot.fragment):
 # base is deliberately tiny, dev carries a toolbox. The file is sparse either

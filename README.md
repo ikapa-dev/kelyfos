@@ -143,10 +143,25 @@ regenerated from scratch over exactly the files attached. Releases up to and
 including v0.9 were assembled by hand from a laptop, and it showed: v0.9's two
 architectures were built on two different machines, one of them a developer's.
 
-They are still **not** bit-for-bit what your own `make image` produces: the build
-is not reproducible yet, and that claim is measured rather than asserted — see
-[`PLAN.html`](PLAN.html) P6-9. Being built by CI is what makes the question worth
-asking; it is not the answer to it. Building it yourself takes about thirty-five
+**Whether they are bit-for-bit what your own `make image` produces is measured,
+not claimed.** Determinism is configured — `BR2_REPRODUCIBLE`,
+`SOURCE_DATE_EPOCH` from the commit, a fixed filesystem UUID and hash seed,
+`gzip -n` — and configuring it is not the same as it working, so
+[`repro-check`](.github/workflows/repro-check.yml) builds the same commit twice
+and diffs the result, per artifact.
+
+What it has measured so far, and the scope is part of the result:
+
+| artifact | result | how |
+| --- | --- | --- |
+| `kelyfos-linux-{aarch64,x86_64}` | **identical** | built twice from two *different* source paths |
+| `Image`, `rootfs.ext4`, `image.json` (aarch64/dev) | **identical** | two full builds from nothing, same machine, same build path |
+
+The image half is a stronger result than expected and a narrower one than
+"reproducible builds": one machine, one architecture, an identical build path —
+which is what Buildroot's own reproducible mode requires — and two builds rather
+than many. x86_64 has not been measured. The workflow is what keeps the answer
+current, and whatever it last said is what this page says. Building it yourself takes about thirty-five
 minutes, because it compiles a cross toolchain, a kernel and a userland:
 
 ```sh
