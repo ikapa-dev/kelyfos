@@ -68,10 +68,36 @@ for script in "$WORK"/recipes/*.sh; do
   rm -rf "${HOME:?}/.cache/kelyfos/run"/*
 
   start=$(date +%s)
-  if timeout "${RECIPE_TIMEOUT:-600}" bash "$script" 2>&1 | sed 's/^/      /'; then
+  # Into a file rather than through a pipe, and the reason is diagnostic
+  # (P6-18).
+  #
+  # `pause-and-resume` stalled twice in a row on the x86_64 runner: 96 minutes
+  # of a 180-minute job, and the log's last line was `recipe: pause-and-resume`
+  # with no verdict after it. The 600-second cap did not produce one. **Why it
+  # did not is still open** — the obvious theory, that a backgrounded
+  # `kelyfos run &` holds the pipe open so `sed` never sees EOF, was tested on
+  # Linux and is wrong: coreutils `timeout` puts the child in its own process
+  # group and signals the group, so the orphan dies with the script.
+  #
+  # What this change buys is the thing that was missing while that question is
+  # answered: a verdict. Output goes to a file, `timeout`'s own exit status is
+  # read directly rather than through a pipeline, and 124 is reported as
+  # TIMED OUT with the recipe's name — so the next occurrence says which recipe
+  # and that it hung, in the log, at the moment it happens.
+  out="$WORK/$name.out"
+  timeout --kill-after=30 "${RECIPE_TIMEOUT:-600}" bash "$script" >"$out" 2>&1
+  rc=$?
+  sed 's/^/      /' "$out"
+  if [ "$rc" -eq 0 ]; then
     pass "$name ($(( $(date +%s) - start ))s)"
   else
-    fail "$name ($(( $(date +%s) - start ))s)"
+    # 124 is timeout's own verdict, and it is worth saying out loud: a recipe
+    # that hung is a different defect from a recipe that failed.
+    if [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ]; then
+      fail "$name — TIMED OUT after ${RECIPE_TIMEOUT:-600}s"
+    else
+      fail "$name ($(( $(date +%s) - start ))s, exit $rc)"
+    fi
   fi
 done
 
