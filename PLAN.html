@@ -180,7 +180,7 @@
     <span class="bl-name">Overall</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">P6-6 done &mdash; the export carries the record it was rendered from and <code>kelyfos verify</code> re-runs the chain over it offline. <b>An external security audit then arrived (D45) and v1.0 is gated on its trust-boundary group</b>: the workspace block device is a guest&rarr;host surface the threat model does not list. Seven tasks inserted before P6-7. <b>P6-21 done</b> &mdash; <code>--review</code> no longer destroys an edit made while somebody was reading it. <b>P6-6 corrected</b>: its own adversarial review landed late and found a false claim about truncation and an unchecked chain head, both reproduced and both fixed. <b>P6-22 done</b> &mdash; nine fixture groups, twenty-one recorded breaks, a ledger that can only shrink, and a CI job that runs the lot. <b>D46</b> triaged seven findings against HEAD and corrected two. <b>P6-24 done &mdash; the v1.0 gate is open.</b> C-1, H-1 and H-2 are closed in two layers, the workspace block device is in the trust-boundary table, and the full acceptance suite passes on the final code. P6-23 stands at 11/23, blocked on the audit text for the rest (D47). <b>P6-25 done</b> &mdash; the blocking set is closed and the hostile ledger is down to one line, which is a recorded decision rather than a defect. Next: <b>P6-26</b>, M-2 and M-5</b></div>
+  <div class="focusline">Current focus: <b id="focus">P6-6 done &mdash; the export carries the record it was rendered from and <code>kelyfos verify</code> re-runs the chain over it offline. <b>An external security audit then arrived (D45) and v1.0 is gated on its trust-boundary group</b>: the workspace block device is a guest&rarr;host surface the threat model does not list. Seven tasks inserted before P6-7. <b>P6-21 done</b> &mdash; <code>--review</code> no longer destroys an edit made while somebody was reading it. <b>P6-6 corrected</b>: its own adversarial review landed late and found a false claim about truncation and an unchecked chain head, both reproduced and both fixed. <b>P6-22 done</b> &mdash; nine fixture groups, twenty-one recorded breaks, a ledger that can only shrink, and a CI job that runs the lot. <b>D46</b> triaged seven findings against HEAD and corrected two. <b>P6-24 done &mdash; the v1.0 gate is open.</b> C-1, H-1 and H-2 are closed in two layers, the workspace block device is in the trust-boundary table, and the full acceptance suite passes on the final code. P6-23 stands at 11/23, blocked on the audit text for the rest (D47). <b>P6-25 done</b> &mdash; the blocking set is closed and the hostile ledger is down to one line, which is a recorded decision rather than a defect. <b>P6-26 done.</b> Next: <b>P6-27</b>, the long tail &mdash; most of which is blocked on the audit text (D47)</b></div>
 </div>
 
 <!-- ====================================================== 1. END GOAL -->
@@ -946,7 +946,7 @@
         one of which has moved since <code>babec8f</code> and is re-read rather than re-fixed; and no total-output
         ceiling anywhere. Every one of them has a fixture in P6-22 before it has a fix.</span></li>
 
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">P6-26</span><span class="tk"><b>M-2 and M-5, which are not trivia.</b> <code>fork</code>
         applies no CPU quota, so a documented <i>hard ceiling</i> is bypassed by asking for it from the untrusted
         side &mdash; a cap that is not applied is worse than a cap that was never claimed. And an agent name
@@ -2988,6 +2988,44 @@ after:
         <code>gofmt</code>, <code>vet</code>, 14 packages, <code>make docs</code> clean; the guest-facing tool
         descriptions, <code>docs/teams.md</code>, <code>docs/e2b-shim.md</code> and <code>docs/events.md</code>
         state each new bound where the person who meets it will be reading</td></tr>
+        <tr><td class="mono">2026-08-25</td><td class="mono">P6-26</td>
+        <td><b>Two claims the code did not keep.</b> Neither blocks v1.0 and both come before the trivia, because
+        the shape of them is what this phase exists to remove.
+        <b>M-2: <code>fork</code> applied no CPU quota, because it read no policy file at all.</b>
+        <code>docs/resources.md</code> describes <code>cpu_quota</code> as cgroup v2 <code>cpu.max</code> on the
+        Firecracker process and carves out no exception for this command, so a reader would plan around a ceiling
+        that was simply absent from every forked machine &mdash; and the way to get an uncapped machine was to ask
+        from the side that was not looking. A cap that one entry point ignores is worse than one never claimed. It
+        reads the file now, takes <code>--policy</code> and <code>--cpu-quota</code> under the same ceiling rule as
+        everywhere else, and applies the quota <b>per fork</b>: the quota is what one machine may consume, and N
+        forks are N machines. <code>snapshot restore</code> still reads no policy file, which is a separate gap and
+        the page now says so rather than leaving the two to be assumed alike.
+        <b>M-5: an agent&rsquo;s name reached the kernel command line unexamined</b>, and the comment beside the
+        line that writes it says the command line is &ldquo;the one thing inside the guest that the guest did not
+        write&rdquo;. That is the reason the channel exists, and it held only while a name could not carry a space.
+        Measured before anything was written: <code>worker init=/bin/sh</code> produced a line with <b>two</b>
+        <code>init=</code> parameters, and <code>w&lt;tab&gt;kelyfos.spawn=1</code> <b>granted itself a spawn
+        budget the host never gave it</b> &mdash; which the report does not mention and which is a privilege
+        escalation inside the team model rather than a curiosity about kernel arguments.
+        <b>Two layers again, and the second is where the rule is not enforced twice by accident.</b> The topology
+        refuses the name when the file is read, with the offending character named, because that is the check a
+        person actually meets. <code>bootArgs</code> checks again, because the sentence it is protecting is
+        load-bearing and one check is one thing to forget. <b>The second layer drops rather than refuses, and it is
+        the one place P6-24&rsquo;s refuse-don&rsquo;t-sanitise rule does not apply</b>: by there the machine is
+        being built and the caller has no error path worth taking, and a guest that does not know its own name is a
+        smaller wrong than a guest somebody else configured.</td>
+        <td class="mono">M-5 measured before the fix and pinned after it: the fixture asserts the count of
+        <code>init=</code> parameters and that <code>kelyfos.spawn=</code> cannot appear from a name, and it
+        asserts the ordinary case still reaches the guest &mdash; a guard that dropped every name would have
+        stopped the team feature working quietly<br>
+        the name rule is checked against what people actually use (<code>master</code>, <code>worker-1</code>,
+        <code>worker_2</code>, <code>api.v2</code>) as well as against what they must not, because a rule that
+        refused those would have made the check the problem<br>
+        <b>the full acceptance suite: 13 suites, 239 checks, 0 failed, 14 cookbook recipes</b> &mdash; the team
+        suites are what a name rule most risks and they are among them<br>
+        <code>gofmt</code>, <code>vet</code>, 14 packages, <code>make docs</code> clean;
+        <code>docs/resources.md</code> and <code>docs/teams.md</code> state both rules where the person who meets
+        them will be reading</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>

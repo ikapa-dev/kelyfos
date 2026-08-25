@@ -40,11 +40,51 @@ type Topology struct {
 // An edge naming an agent that does not exist is an error rather than a no-op.
 // A typo in a topology is not a smaller problem than a typo in an allowlist:
 // both produce a machine that silently cannot do what its author wrote down.
+// ValidAgentName refuses a name an agent cannot safely be called (P6-26,
+// finding M-5).
+//
+// An agent's name is not only a label. It travels on the guest's **kernel
+// command line** as `kelyfos.agent=<name>`, which is the channel the host uses
+// precisely because it is the one thing inside the guest the guest did not
+// write. That argument holds only while the name cannot carry a space:
+// measured, an agent called `worker init=/bin/sh` produced a command line with
+// two `init=` parameters, and one called "w\tkelyfos.spawn=1" granted itself a
+// spawn budget the host never gave it. The second is not a curiosity about
+// kernel arguments — it is a privilege escalation inside the team model.
+//
+// A name also becomes a directory on the host, a lane in a transcript and a
+// column in `team ps`, so the same characters are unwelcome for duller reasons.
+//
+// Refused rather than sanitised, in the shape P6-24 settled: a name that has to
+// be repaired was written to be repaired, and the repaired version is a guess
+// about what somebody meant. The person naming their agents is right there,
+// reading the error, and can pick another one.
+func ValidAgentName(name string) error {
+	switch {
+	case name == "":
+		return fmt.Errorf("an agent with an empty name cannot be addressed")
+	case len(name) > 64:
+		return fmt.Errorf("the agent name %q is %d characters; 64 is the most an agent may be called",
+			name[:32]+"…", len(name))
+	}
+	for _, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		case r == '-', r == '_', r == '.':
+		default:
+			return fmt.Errorf("the agent name %q contains %q. An agent may be named with letters, digits, "+
+				"'-', '_' and '.' — the name travels on the guest's kernel command line, where a space would "+
+				"start a second parameter the host did not write", name, r)
+		}
+	}
+	return nil
+}
+
 func NewTopology(agents []string, edges []Edge) (*Topology, error) {
 	known := map[string]bool{}
 	for _, a := range agents {
-		if a == "" {
-			return nil, fmt.Errorf("an agent with an empty name cannot be addressed")
+		if err := ValidAgentName(a); err != nil {
+			return nil, err
 		}
 		if known[a] {
 			return nil, fmt.Errorf("two agents are both called %q", a)

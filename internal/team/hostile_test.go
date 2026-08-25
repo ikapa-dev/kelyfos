@@ -306,3 +306,38 @@ func TestHostileStoreFrameReachesTheStoreUnexamined(t *testing.T) {
 	}
 	hostile.Holds(t, "team/store-key-length", problem)
 }
+
+// M-5 at the other layer: the topology refuses the name outright.
+//
+// This is the check a person actually meets — it fires when their kelyfos.toml
+// is read, with the name and the character in the message, rather than leaving
+// them to discover that their agent silently lost its identity. The guard in
+// bootArgs is the one that holds if something ever gets past this.
+func TestHostileAgentNameIsRefusedAtTheTopology(t *testing.T) {
+	for _, name := range []string{
+		"worker init=/bin/sh",
+		"w\tkelyfos.spawn=1",
+		"w quiet console=ttyS1",
+		"w\nkelyfos.flavor=base",
+		"../escape",
+		"has/a/separator",
+		"a\x00b",
+		strings.Repeat("x", 65),
+		"",
+	} {
+		if err := ValidAgentName(name); err == nil {
+			t.Errorf("the agent name %q was accepted", name)
+		}
+		if _, err := NewTopology([]string{"master", name}, nil); err == nil {
+			t.Errorf("a topology accepted the agent name %q", name)
+		}
+	}
+
+	// The names people actually use keep working. A rule that refused these
+	// would have made the check the problem.
+	for _, name := range []string{"master", "worker-1", "worker_2", "api.v2", "A1"} {
+		if err := ValidAgentName(name); err != nil {
+			t.Errorf("the ordinary agent name %q was refused: %v", name, err)
+		}
+	}
+}

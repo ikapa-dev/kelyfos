@@ -311,6 +311,22 @@ type Vsock struct {
 // /dev/vda, the next is /dev/vdb, and so on.
 func driveDevice(i int) string { return "/dev/vd" + string(rune('a'+i)) }
 
+// agentNameSafe is the second check on a name that reaches the kernel command
+// line. It is deliberately a copy of the rule rather than a call into the team
+// package: internal/sandbox does not import internal/team, and inverting that
+// to share four lines would be paying a dependency for a tautology.
+func agentNameSafe(name string) error {
+	for _, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		case r == '-', r == '_', r == '.':
+		default:
+			return fmt.Errorf("agent name %q contains %q", name, r)
+		}
+	}
+	return nil
+}
+
 func bootArgs(opts Options, pluginsDev string) string {
 	arch, quiet, net := opts.Arch, opts.Quiet, opts.Net
 	scratchBytes, agent, maySpawn := opts.ScratchBytes, opts.Agent, opts.MaySpawn
@@ -363,7 +379,23 @@ func bootArgs(opts Options, pluginsDev string) string {
 		// as the proxy address and the scratch cap, and for the same reason:
 		// the kernel command line is the one thing inside the guest that the
 		// guest did not write (E2-2).
-		args = append(args, "kelyfos.agent="+agent)
+		//
+		// Which is true only while a name cannot carry a space. The team
+		// topology refuses one that can (team.ValidAgentName), and this is the
+		// second place that checks, because the sentence above is load-bearing
+		// and a single check is a single thing to forget: a name reaching here
+		// with a space in it would put a second `init=` on the line, and the
+		// whole claim would be false without anything looking different.
+		//
+		// Dropped rather than refused, and this is the one place P6-24's
+		// refuse-don't-sanitise rule does not apply. By here the machine is
+		// being built, the caller has no error path left worth taking, and a
+		// guest told nothing about which agent it is degrades to a machine that
+		// does not know its own name — while a guest told a name with a space
+		// in it is a machine somebody else configured.
+		if err := agentNameSafe(agent); err == nil {
+			args = append(args, "kelyfos.agent="+agent)
+		}
 	}
 	if maySpawn {
 		// Whether this agent may ask for workers is the host's answer, so the

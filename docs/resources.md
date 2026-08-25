@@ -424,6 +424,16 @@ shape and no percentage rather than a number it has not measured yet. Once the
 sandbox stops there is nothing left to sample and the lane shows the recorded
 receipt instead.
 
+`kelyfos fork` reads `kelyfos.toml` for `cpu_quota` and applies it **per fork**,
+which is what `run` does for one sandbox: the quota is what one machine may
+consume, and N forks of a prepared snapshot are N machines. It did not until
+v1.0 — it read no policy file at all, so the ceiling this page describes was
+simply absent from every forked machine, and asking for an uncapped machine was
+a matter of asking from the side that was not looking. `--policy` names the file
+and `--cpu-quota` overrides it, under the same ceiling rule as everywhere else.
+`snapshot restore` still reads no policy file; that is a separate gap and this
+page does not claim otherwise.
+
 A `kelyfos run` session, and every agent in a team, ends with a
 `resource.summary` event in the flight recorder — CPU seconds, peak RSS, bytes in
 and out, disk bytes written, each alongside the cap it was consumed under — which

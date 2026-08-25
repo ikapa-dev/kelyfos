@@ -226,9 +226,11 @@ kelyfos fork [flags]
 | Flag | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `--arch` | string | the build host's architecture | guest architecture |
+| `--cpu-quota` | int | — | percent of one core's worth of host CPU each fork may consume |
 | `--image` | string | "dev" | image flavor the snapshot was taken from |
 | `-n` | int | 2 | how many forks to create |
 | `--name` | string | "default" | snapshot to fork from |
+| `--policy` | string | the nearest one, found by walking up | the kelyfos.toml whose ceilings apply |
 
 ## kelyfos team up
 

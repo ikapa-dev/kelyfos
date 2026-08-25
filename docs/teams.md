@@ -371,6 +371,15 @@ anybody else. It uses the vocabulary that already exists rather than adding one
 an agent would have to learn, and the record says `delete` rather than `put` so a
 reader is not left inferring which happened from a byte count.
 
+**An agent's name is letters, digits, `-`, `_` and `.`, and at most 64 of them.**
+The name is not only a label: it travels on the guest's kernel command line as
+`kelyfos.agent=<name>`, which is the channel the host uses precisely because it
+is the one thing inside the guest that the guest did not write. A name carrying a
+space would end that — an agent called `worker init=/bin/sh` put a second `init=`
+on the line, and one with a tab in it granted itself a spawn budget the host
+never gave. Refused when the file is read, with the character named, rather than
+repaired: a name that has to be repaired was written to be repaired.
+
 **Absence is not a refusal.** Reading a key that was never written is
 `not_found`; reading one you may not read is `denied`. An agent that cannot tell
 the two apart retries the wrong problem.

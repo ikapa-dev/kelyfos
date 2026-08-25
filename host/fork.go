@@ -5,15 +5,15 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
+	"github.com/p4r4n0rm4l/KelyfOS/internal/sandbox"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
-
-	"github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
-	"github.com/p4r4n0rm4l/KelyfOS/internal/sandbox"
 )
 
 func forkCmd(argv []string) error {
@@ -23,6 +23,11 @@ func forkCmd(argv []string) error {
 		n      = fs.Int("n", 2, "how many forks to create")
 		arch   = fs.String("arch", sandbox.HostArch(), "guest architecture")
 		flavor = fs.String("image", "dev", "image flavor the snapshot was taken from")
+		// The policy is named the same way `run` names it, and for the same
+		// reason: a ceiling that only some entry points read is not a ceiling
+		// (P6-26, finding M-2).
+		policyPath = fs.String("policy", "", "the kelyfos.toml whose ceilings apply (default: the nearest one, found by walking up)")
+		cpuQuota   = fs.Int("cpu-quota", 0, "percent of one core's worth of host CPU each fork may consume")
 	)
 	fs.Usage = func() {
 		fmt.Fprint(fs.Output(), `usage: kelyfos fork [flags]
@@ -55,6 +60,15 @@ unique guest network identity, which is backlog work.
 		err     error
 	}
 	results := make([]forked, *n)
+	// One cgroup slice per fork, closed with the fork it caps.
+	slices := make([]*sandbox.Slice, *n)
+	defer func() {
+		for _, sl := range slices {
+			if sl != nil {
+				sl.Close()
+			}
+		}
+	}()
 
 	// Refuse before starting rather than failing partway through the third
 	// copy. Without reflink support each fork is a full copy of the workspace.
@@ -81,14 +95,54 @@ unique guest network identity, which is backlog work.
 			*name, strings.Join(meta.Allow, ","), *name)
 	}
 
+	// The ceiling the file declares, applied here because until now it was
+	// not applied at all (P6-26, finding M-2).
+	//
+	// `fork` never read kelyfos.toml, so `resources.cpu_quota` — which
+	// docs/resources.md describes as cgroup v2 cpu.max on the Firecracker
+	// process, with no exception for this command — was simply absent from
+	// every forked machine. A ceiling that one entry point ignores is worse
+	// than one that was never claimed: the claim is what a reader plans around,
+	// and the way to get an unlimited machine was to ask for it from the side
+	// that was not looking.
+	//
+	// Per fork rather than shared, matching what `run` does for a single
+	// sandbox: the quota is what one machine may consume, and N forks of a
+	// prepared snapshot are N machines.
+	typedQuota := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "cpu-quota" {
+			typedQuota = true
+		}
+	})
+	cfg, cfgErr := loadPolicyAt(*policyPath)
+	if cfgErr != nil {
+		return cfgErr
+	}
+	if cfg != nil {
+		if err := ceiling("cpu_quota", "cpu-quota", cfg, cfg.ResCPUQuota, cpuQuota,
+			typedQuota, func(v int) string { return strconv.Itoa(v) + "%" }); err != nil {
+			return err
+		}
+	}
+
 	started := time.Now()
 	var wg sync.WaitGroup
 	for i := 0; i < *n; i++ {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			sb, elapsed, err := sandbox.Restore(snapshotDir(*name),
-				sandbox.Options{Arch: *arch, Flavor: *flavor, Quiet: true})
+			opts := sandbox.Options{Arch: *arch, Flavor: *flavor, Quiet: true}
+			if *cpuQuota > 0 {
+				slice, err := sandbox.NewCPUSlice(fmt.Sprintf("fork-%d-%d", started.UnixNano(), i), *cpuQuota)
+				if err != nil {
+					results[i] = forked{err: err}
+					return
+				}
+				slices[i] = slice
+				opts.CPUSlice = slice
+			}
+			sb, elapsed, err := sandbox.Restore(snapshotDir(*name), opts)
 			results[i] = forked{sb: sb, elapsed: elapsed, err: err}
 		}(i)
 	}
