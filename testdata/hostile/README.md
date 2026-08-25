@@ -21,11 +21,41 @@ fail, which is a fixture that proves nothing.
 
 ## What is here and what generates it
 
-Textual inputs — frames, request bodies, path lists — are committed as they are.
-Filesystem images are **generated** by `mkimages.go` when the tests run, because
-a megabyte of ext4 per case is a poor thing to keep in a history and the
-generator is the part a person needs to read. The generator is the fixture; the
-image is its output.
+This file and the ledger beside it. Everything else is **generated when the
+tests run**, by `internal/sandbox/hostile.go` for the filesystem images and by
+the fixtures themselves for the frames, the requests and the paths.
+
+That is a deliberate choice and not a shortcut. A megabyte of ext4 per case is a
+poor thing to keep in a history, and it is the wrong artefact to review: what a
+person needs to read is *how the attack is built* — that a crafted directory
+entry is patched over a placeholder which reserved its room, and that `name_len`
+moves with it so a shorter name needs no record after it to move. The generator
+is the fixture. The image is its output, and it is rebuilt from scratch every
+time so it cannot drift away from the code that explains it.
+
+## Where the cases live
+
+Beside the code they attack, because that is where somebody changing it will see
+them:
+
+| file | surface | findings |
+| --- | --- | --- |
+| `internal/sandbox/hostile_test.go` | the workspace block device, read back with `debugfs` | C-1, H-2 |
+| `internal/sandbox/hostile_exec_test.go` | the exec channel, which has no host-side deadline | M-9 |
+| `internal/sandbox/hostile_control_test.go` | the control channel, and what a guest's refusal prints | — |
+| `supervisor/hostile_test.go` | `read_file` / `write_file`, run by an unconfined PID 1 | H-1 |
+| `internal/team/hostile_test.go` | the broker's timeouts, the store, the refusal record | H-3, H-4, H-5 |
+| `shim/hostile_test.go` | the one door another machine can knock on | H-6 |
+
+Two of them do not correspond to the finding that prompted them, and both say so
+in their own file. `hostile_exec_test.go` does not test "no total-output
+ceiling", which was fixed before the audit was read; it tests the four ways a
+stream that never ends makes the call never return. `hostile_control_test.go`
+does not test "the host proceeds on a refusal", which it does not — that stub,
+while it was being built, printed the guest's chosen bytes on the terminal.
+
+A fixture for a defect that does not exist is worse than no fixture: it is a
+test somebody will one day "fix" by looking for a bug that was never there.
 
 `mke2fs` and `debugfs` are needed for the image cases. They are what
 `kelyfos doctor` already requires for `--workspace`, so a machine that can run
