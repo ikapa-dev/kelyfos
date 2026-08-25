@@ -3,7 +3,7 @@
 Updated 2026-08-25 · synced with origin/main · **v0.9 released** · CI green on main · **Phase 6 open**
 
 ## Plans
-- PLAN.html — **70/82**. Phases 0–3 and 5 done. Phase 4 dispositioned and parked (D35). **Phase 6 open —
+- PLAN.html — **71/82**. Phases 0–3 and 5 done. Phase 4 dispositioned and parked (D35). **Phase 6 open —
   "v1.0, the promise", 29 tasks**: an external security audit arrived mid-phase and added seven (D45), and the documentation audit added one more (D49).
 - PLAN-FEATURES.html — **COMPLETE and closed.** 42/42, five epics, v0.4–v0.8 released.
 - **The overall bar will not reach 100% and is not meant to.** Seven of the denominator's boxes are Phase 4's
@@ -104,8 +104,11 @@ real allowlist short, setgid stripped from every extracted directory, and guest-
 rendered raw into `kelyfos log`. All fixed. One test passed against a deliberately broken build until it was
 rewritten.
 
-**Next: P6-18's last gate** — the full cookbook on x86_64 — then **P6-19**, which needs a fresh session with no
-source tree.
+**P6-18 done.** The full cookbook is green on x86_64: **15 passed, 0 failed, in 3m43s** — the same run that
+took 96 minutes and reported nothing before the shutdown fix and the harness fix.
+
+**Next: P6-19**, the docs-only exam — a fresh session with the binaries and `llms-full.txt` and nothing else.
+It is the only substantial task left that does not need John.
 
 ## Blocked / needs John
 - **The audit's text for M-1, M-4, M-6, M-7, M-8, L-1 through L-7 and D-1.** Twelve findings are known here only
