@@ -3,7 +3,7 @@
 Updated 2026-08-25 · synced with origin/main · **v0.9 released** · CI green on main · **Phase 6 open**
 
 ## Plans
-- PLAN.html — **69/82**. Phases 0–3 and 5 done. Phase 4 dispositioned and parked (D35). **Phase 6 open —
+- PLAN.html — **70/82**. Phases 0–3 and 5 done. Phase 4 dispositioned and parked (D35). **Phase 6 open —
   "v1.0, the promise", 29 tasks**: an external security audit arrived mid-phase and added seven (D45), and the documentation audit added one more (D49).
 - PLAN-FEATURES.html — **COMPLETE and closed.** 42/42, five epics, v0.4–v0.8 released.
 - **The overall bar will not reach 100% and is not meant to.** Seven of the denominator's boxes are Phase 4's
@@ -79,8 +79,33 @@ two cannot disagree" — they were two independent `const charsPerToken = 3.83` 
 value by coincidence. There is one now, in `internal/docsize`, with the ratio's provenance beside it and a test
 that fails if it is repinned without re-measuring. The refactor leaves the generated set byte-identical.
 
-**Next: P6-18** — the bars and every suite. **It needs the bare-KVM reference (D15)** and **P6-19 needs a fresh
-session with no source tree** — both are environment-bound rather than work-bound.
+**P6-18's bars are re-earned, on the bare-KVM reference, ten runs each.** Cold boot-to-ready **134 ms** median
+(p95 143), snapshot restore **48 ms** (p95 53) — against 135 and 49 at v0.9, so everything this phase put on the
+boot path, the rewritten workspace extraction included, cost nothing ten runs can see. The five-agent figure is
+now printed as a **range**: two runs on the same commit gave 343 ms and 543 ms cold, 285 ms and 384 ms forked,
+and the old published 412/286 sits inside that spread. One cold sample on a shared runner is not a number.
+
+**14/14 acceptance suites, 263 checks, 0 failures.** Both §1 criteria that no pillar covered are discharged: the
+E2B one by decision and a suite (D51), the verifiable export by proving it end to end — a session run in the
+Linux guest, exported signed, verified on **macOS** by a Mach-O arm64 binary with no guest and no source tree;
+wrong key and one flipped base64 character both exit 1. And **1,542 chains spanning v0.6→v0.9 all verify** under
+the v1.0 verifier.
+
+**P6-28 done — fourteen of D49's fifteen code defects closed, the fifteenth decided (D52).** The one that had
+been hiding behind a CI timeout is the important one: `kelyfos pause` could not stop a microVM on **x86_64**.
+The guest called `POWER_OFF`, and Firecracker virtualises no power management there — it watches the emulated
+i8042 reset line, which is what `reboot=k` on the kernel command line was already for. Every machine here is
+arm64, where PSCI makes both calls work, so a headline feature shipped broken on the commoner architecture and
+no suite caught it. Now 4 seconds and green on the runner that had the bug.
+
+**The fixes needed two adversarial passes, and three of them were worse than what they replaced** — an
+unbounded marshal that could write a chain line the recorder's own readers can never parse, a budget that cut a
+real allowlist short, setgid stripped from every extracted directory, and guest-controlled escape sequences
+rendered raw into `kelyfos log`. All fixed. One test passed against a deliberately broken build until it was
+rewritten.
+
+**Next: P6-18's last gate** — the full cookbook on x86_64 — then **P6-19**, which needs a fresh session with no
+source tree.
 
 ## Blocked / needs John
 - **The audit's text for M-1, M-4, M-6, M-7, M-8, L-1 through L-7 and D-1.** Twelve findings are known here only
