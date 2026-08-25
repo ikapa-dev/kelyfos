@@ -180,7 +180,7 @@
     <span class="bl-name">Overall</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">P6-6 done &mdash; the export carries the record it was rendered from and <code>kelyfos verify</code> re-runs the chain over it offline. <b>An external security audit then arrived (D45) and v1.0 is gated on its trust-boundary group</b>: the workspace block device is a guest&rarr;host surface the threat model does not list. Seven tasks inserted before P6-7. <b>P6-21 done</b> &mdash; <code>--review</code> no longer destroys an edit made while somebody was reading it. <b>P6-6 corrected</b>: its own adversarial review landed late and found a false claim about truncation and an unchecked chain head, both reproduced and both fixed. <b>P6-22 done</b> &mdash; nine fixture groups, twenty-one recorded breaks, a ledger that can only shrink, and a CI job that runs the lot. <b>D46</b> triaged seven findings against HEAD and corrected two. Next: <b>P6-23</b>, the remaining sixteen verdicts, then <b>P6-24</b> &mdash; the gate</b></div>
+  <div class="focusline">Current focus: <b id="focus">P6-6 done &mdash; the export carries the record it was rendered from and <code>kelyfos verify</code> re-runs the chain over it offline. <b>An external security audit then arrived (D45) and v1.0 is gated on its trust-boundary group</b>: the workspace block device is a guest&rarr;host surface the threat model does not list. Seven tasks inserted before P6-7. <b>P6-21 done</b> &mdash; <code>--review</code> no longer destroys an edit made while somebody was reading it. <b>P6-6 corrected</b>: its own adversarial review landed late and found a false claim about truncation and an unchecked chain head, both reproduced and both fixed. <b>P6-22 done</b> &mdash; nine fixture groups, twenty-one recorded breaks, a ledger that can only shrink, and a CI job that runs the lot. <b>D46</b> triaged seven findings against HEAD and corrected two. <b>P6-23 at 11/23 and blocked</b> on the audit text for the rest (D47). Next: <b>P6-24</b> &mdash; the gate</b></div>
 </div>
 
 <!-- ====================================================== 1. END GOAL -->
@@ -901,7 +901,12 @@
         <code>CONFIRMED-against-current-code</code>, <code>ALREADY-FIXED-since-babec8f</code>, <code>STALE</code>,
         <code>WONTFIX</code> with the reason written down. <b>Nothing is fixed that was not first reproduced or
         read as present in current source</b> &mdash; the rule that keeps a triage from turning into a rewrite of
-        code somebody else described.</span></li>
+        code somebody else described.
+        <b class="blocked">[BLOCKED 2026-08-25 &mdash; needs John: the audit&rsquo;s text for M-1, M-4, M-6, M-7,
+        M-8, L-1 through L-7, and D-1.]</b> Eleven of the twenty-three have verdicts (D46, D47) and every finding
+        in the v1.0 gate and in the blocking set is among them. The remaining twelve are known here only as
+        identifiers, and a finding that cannot be read cannot be triaged &mdash; inventing a plausible defect to
+        match an identifier would break the one rule this task exists to enforce.</span></li>
 
     <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">P6-24</span><span class="tk"><b>The trust boundary the threat model does not have: the
@@ -3764,6 +3769,40 @@ after:
         real code in-process, KVM-free, and the reproductions are what P6-22&rsquo;s fixtures are built from.
         <i>Revisit when</i> the rest are triaged: two corrections in seven is a rate worth remembering when
         reading the other sixteen.</td></tr>
+        <tr><td class="mono">D47</td><td class="mono">2026-08-25</td>
+        <td><b>M-2 and M-5 confirmed, the triage closed at eleven of twenty-three, and the rest blocked on text
+        this seat does not have.</b>
+        <i>M-2 &mdash; CONFIRMED.</i> <code>host/fork.go:91</code> builds
+        <code>sandbox.Options{Arch, Flavor, Quiet}</code> and nothing else; <code>NewCPUSlice</code> appears in
+        <code>run.go</code> and twice in <code>team.go</code> and <b>nowhere in <code>fork.go</code></b>. A forked
+        machine gets no CPU quota at all. The ceiling is documented as hard, and a ceiling that is not applied is
+        worse than one never claimed: the claim is what a reader plans around.
+        <i>M-5 &mdash; CONFIRMED, and it reaches further than the report says.</i> <code>bootArgs</code> writes
+        <code>"kelyfos.agent="+agent</code> with no validation, and <code>NewTopology</code> checks only for an
+        empty name and a duplicate one &mdash; no character is refused anywhere on the path. Measured:
+        an agent named <code>worker init=/bin/sh</code> produces a command line carrying <b>two</b>
+        <code>init=</code> parameters, and one named <code>w&lt;tab&gt;kelyfos.spawn=1</code> grants itself a spawn
+        budget the host never gave it. The comment three lines above that <code>append</code> says the kernel
+        command line is &ldquo;the one thing inside the guest that the guest did not write&rdquo;, which stays
+        true and is beside the point: what writes it is a name from <code>kelyfos.toml</code>, and a team file
+        travels &mdash; from a template, a repository, a colleague. <b>The spawn-budget injection is the half the
+        report does not mention</b>, and it is a privilege escalation inside the team model rather than a
+        curiosity about kernel arguments.
+        <i>The state of the triage.</i> Eleven findings now have a verdict: C-1 and H-2 reproduced at P6-22, H-1,
+        H-3, H-4, H-5, H-6 and M-9 at D46, M-3 fixed at P6-21, and M-2 and M-5 here. <b>Twelve do not, because
+        their text was never provided</b> &mdash; M-1, M-4, M-6, M-7, M-8 and every <code>L-*</code> are known to
+        this seat only as identifiers, along with D-1. They cannot be triaged and they will not be guessed at:
+        &ldquo;do not fix a finding you cannot first reproduce or read as present in current source&rdquo; is the
+        rule this instalment is written under, and inventing a plausible defect to match an identifier is the
+        worst available way to break it. P6-23 carries the blocker with the exact ask.
+        <i>What this does not change.</i> The v1.0 gate is the boundary group, and every finding in it has a
+        verdict and a fixture. The blocking set beyond it &mdash; H-3, H-4, H-5, H-6, M-9 &mdash; is triaged
+        whole. Nothing waiting on text is in either.</td>
+        <td>P6-23, second instalment. M-2 read in current source; M-5 measured by driving
+        <code>bootArgs</code> in-process &mdash; <code>init= count: 2</code>. <b>Needs John:</b> the audit&rsquo;s
+        text for M-1, M-4, M-6, M-7, M-8, L-1 through L-7 and D-1. <i>Revisit when</i> it arrives: three of the
+        eleven triaged so far did not say what they were reported to say, so the remaining twelve are worth
+        reading rather than assuming.</td></tr>
     <!-- Claude Code: append rows above this line. -->
   </table>
 </section>
