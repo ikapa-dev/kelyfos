@@ -3,42 +3,51 @@
 Updated 2026-08-25 · synced with origin/main · **v0.9 released** · CI green on main · **Phase 6 open**
 
 ## Plans
-- PLAN.html — **55/81**. Phases 0–3 and 5 done. **Phase 4 dispositioned and parked** (D35). **Phase 6 open —
-  "v1.0, the promise", now 28 tasks**: an external security audit arrived mid-phase and added seven (D45).
+- PLAN.html — **61/81**. Phases 0–3 and 5 done. **Phase 4 dispositioned and parked** (D35). **Phase 6 open —
+  "v1.0, the promise", 28 tasks**: an external security audit arrived mid-phase and added seven (D45).
 - PLAN-FEATURES.html — **COMPLETE and closed.** 42/42, five epics, v0.4–v0.8 released.
 - **The overall bar will not reach 100% and is not meant to.** Seven of the denominator's boxes are Phase 4's
-  permanent record rows. A denominator adjusted to flatter the numerator is the same defect as a ticked box.
+  permanent record rows.
 
 ## Now
-**P6-22 done: the hostile corpus is complete.** Nine fixture groups across five packages, twenty-one boundary
-cases recorded broken, and a CI job named for the question it asks. Every case drives the real code with no VM —
-a crafted ext4 image, a Unix socket speaking the vsock handshake, an `httptest` handler, a broker frame decoded
-by the product's own reader. Until this task **`Broker.Serve` had no test behind it at all**, which is the entry
-point an agent reaches.
+**The audit's v1.0-blocking set is closed.** The boundary group (C-1, H-1, H-2) at P6-24, the exhaustion clamps
+(H-3, H-4, H-5, H-6, M-9) at P6-25, and the two claims the code did not keep (M-2, M-5) at P6-26. The hostile
+ledger is down to **one line**, and that line is a recorded decision rather than a defect: the shim is
+unauthenticated by default on purpose, and a token can now be required.
 
-**The ledger is the mechanism worth remembering.** The corpus must fail before it passes, but a red `main` until
-P6-24 would make §8 rule 8 stop meaning anything. So `testdata/hostile/known-broken.txt` records the failures and
-the check is symmetric: an unlisted failure is a new break on the commit that caused it, and a listed case that
-starts holding must take its own line off in the commit that fixed it. **It earned itself four times** — it
-refused an over-listing, caught a case keyed by a name containing a NUL, panicked when a fixture that must
-`chdir` moved the ledger out from under itself, and removed `exec/flood-with-bytes` because that one holds.
+**The gate opened on evidence, not on ticked boxes.** Every gate-group fixture green *and* the full acceptance
+suite — 13 suites, 239 checks, 0 failed, 14 cookbook recipes — re-run on the final code, as the owner required.
+The documentation corrections rode the commits that made them true.
 
-**Two fixtures do not test the finding that prompted them**, and say so in their own files. M-9 as worded was
-fixed before the audit was read; what is live is that the ceiling counts *bytes*, so frames carrying none make
-`Exec` never return, and the `timeout` in its signature is a number mailed to the untrusted party rather than a
-deadline on the socket. And building the OpTrust stub found something the audit did not: **a guest's refusal
-reaches the operator's terminal with its control bytes intact** — a guest answering `\x1b[1A\x1b[2K\r` erases
-the line the host just printed about it. `proto.SafeText` exists for exactly this and is not applied there.
+**Since then, three more tasks.** P6-7: signed exports with a key the reader anchors — ed25519 from the standard
+library, the user's own key, signing the record rather than the page so a re-export produces the same signature,
+and a *vocabulary* rather than a badge. P6-8: the release is a workflow now, `SHA256SUMS` is written from scratch
+and checked both ways, and the cache key carries the flavor that made every release build run cold. P6-9:
+determinism configured and then **measured** — two full builds from nothing produced byte-identical `Image`,
+`rootfs.ext4` and `image.json`, and the CLI pair is identical from two different source paths. D38 expected "the
+CLI is, the rootfs is not"; on this machine the rootfs is. The scope is in the claim: one machine, one
+architecture, an identical build path, two builds.
 
-**Still true from D46, and it contradicts the briefing**: H-6 is *not* partly fixed. `git diff babec8f..HEAD --
-shim/` is five lines of audit wiring. Both halves are live.
+**Things this stretch found that nobody was looking for**, all fixed:
+- A **chain with no digests verified** — `"hash":""` on every line, the cheapest forgery there is.
+- **`html/template` escapes `+`**, so the embedded record was silently corrupt for any session whose base64
+  contained one — reintroducing, at the export, the false alarm P6-6's first half removed.
+- A **failed export truncated the report already at that path** to zero bytes.
+- A guest's refusal **wrote on the operator's terminal** with ANSI escapes intact.
+- An agent name **granted itself a spawn budget** through the kernel command line.
+- Stripping group-write from returning files **rewrote every `0664` file in a umask-002 user's project**, which
+  the acceptance suite caught and no fixture would have.
 
-**Next: P6-23** — the remaining sixteen verdicts. Two corrections in the first seven is a rate worth carrying into
-the rest. Then **P6-24**, the gate, which now opens only on green fixtures *and* a full acceptance suite, with the
-documentation corrections riding the same commit and the boot/restore bars re-measured if the extraction path
-moved.
+**Two corrections to the briefing**, both reproduced against HEAD rather than read: **H-6 is not partly fixed**
+(`git diff babec8f..HEAD -- shim/` is five lines of audit wiring), and **M-9 as worded was already fixed** before
+the audit was read, while a worse variant of it was live.
 
 ## Blocked / needs John
+- **The audit's text for M-1, M-4, M-6, M-7, M-8, L-1 through L-7 and D-1.** Twelve findings are known here only
+  as identifiers. P6-23 (triage) and P6-27 (the long tail) both wait on it. Nothing in the v1.0 gate or the
+  blocking set is among them — those are triaged whole (D46, D47). Three of the eleven findings that *were*
+  triaged did not say what they were reported to say, so the remaining twelve are worth reading rather than
+  assuming.
 - **DCO.** `CONTRIBUTING.md` and the README require a `Signed-off-by`; 0 of the last 50 commits carry one and
   history cannot be rewritten. Sign from here on, gate only new commits, or amend the document. John's call.
 - **Enable private vulnerability reporting** — Settings → Security, or
@@ -56,9 +65,9 @@ moved.
   change those facts.
 
 ## Debts carried into Phase 6
-- **Cleared by P6-6:** `docs/events.md` §3's "adding a field is not breaking" is true now and says it was false
-  until v1.0; §2's "verification re-serializes each parsed event" was stale after the fix and is corrected; the
-  conformance table no longer points the verifiable export at the dead id P4-3.
+- **Cleared this stretch:** the `0.1.0-dev` guest os-release (P6-9, generated and verified in a built image);
+  `SHA256SUMS` appended-to-and-never-truncated (P6-8); the CI cache key that made every release build run cold
+  (P6-8); `docs/events.md` §3's "adding a field is not breaking", true now and saying it was false until v1.0.
 - **The rendering gap is open by design and permanent, and now narrower than it was.** The values the page
   *states* about its record — head, event count, session id — are checked. Its *drawing* of the events is not, and
   will not be: the list of things to compare in a timeline has no end, and a partial answer would invite a reader
@@ -78,7 +87,6 @@ moved.
 - The five-agent pair is **412 ms cold / 286 ms forked** on `demo-team`'s graph, not `prove-team`'s CPU-capped
   737/149; and the macOS quickstart is not one number — **10 s is KelyfOS's own part**, the Linux layer was 28 s
   warm and 138 s cold and that part is Lima's.
-- No release workflow exists; every release so far was cut by hand from a laptop. P6-8.
 - `kelyfos runs --all` counts an unreadable session directory as missing rather than reporting it.
 - On x86_64 the VMM carries a fifth KVM-created task; the filter check requires it to report filter mode.
 - The E2B SDK smoke test (§1 criterion 5) was run once by hand in August: no suite, no CI job, no HTTP test. P6-18.
