@@ -14,6 +14,7 @@ import (
 	"github.com/p4r4n0rm4l/KelyfOS/internal/mcp"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/sandbox"
+	"github.com/p4r4n0rm4l/KelyfOS/internal/sessionpolicy"
 )
 
 // sandbox_snapshot, sandbox_restore and sandbox_fork (E4-2).
@@ -97,8 +98,9 @@ func (s *hostServer) toolSnapshot(raw json.RawMessage) *mcp.CallToolResult {
 
 func (s *hostServer) toolRestore(raw json.RawMessage) *mcp.CallToolResult {
 	var a struct {
-		Name  string   `json:"name"`
-		Allow []string `json:"allow"`
+		Name        string   `json:"name"`
+		Allow       []string `json:"allow"`
+		Traceparent string   `json:"traceparent"`
 	}
 	if err := json.Unmarshal(raw, &a); err != nil {
 		return mcp.Errorf("sandbox_restore: %v", err)
@@ -161,8 +163,11 @@ func (s *hostServer) toolRestore(raw json.RawMessage) *mcp.CallToolResult {
 	}
 
 	var ca *egress.CA
+	// Hoisted so session.policy can read it back once the machine is ready
+	// (P7-2, docs/policy-record.md §5) — scoped to building the proxy above,
+	// but what it bound is part of what this restore was permitted.
+	var boundSecrets []*egress.Secret
 	if meta.HasNetwork {
-		var secrets []*egress.Secret
 		if s.policy != nil {
 			for _, spec := range s.policy.Secrets {
 				sec, err := egress.ParseSecret(spec)
@@ -170,11 +175,11 @@ func (s *hostServer) toolRestore(raw json.RawMessage) *mcp.CallToolResult {
 					return mcp.Errorf("sandbox_restore: %v", err)
 				}
 				if containsDomain(allow, sec.Domain) {
-					secrets = append(secrets, sec)
+					boundSecrets = append(boundSecrets, sec)
 				}
 			}
 		}
-		if b.proxy, ca, err = restoreNetwork(meta, allow, secrets, &opts); err != nil {
+		if b.proxy, ca, err = restoreNetwork(meta, allow, boundSecrets, &opts); err != nil {
 			return mcp.Errorf("sandbox_restore: %v", err)
 		}
 		b.net = opts.Net
@@ -213,6 +218,26 @@ func (s *hostServer) toolRestore(raw json.RawMessage) *mcp.CallToolResult {
 	_ = b.rec.Append(recorder.Event{
 		Type: recorder.TypeSessionReady, BootMS: elapsed.Milliseconds(),
 	}.WithPosture(sb.State.Jailed, sb.State.Profile))
+
+	// What this restore was permitted (P7-2, docs/policy-record.md §5).
+	// scratch, the rate caps and both budgets are genuinely absent here — a
+	// restore's opts carries only Arch/Flavor/Quiet/VcpuCount/MemMiB (above),
+	// the same enforcement gap host/snapshot.go's own restore has.
+	cpuQuota := 0
+	if s.policy != nil {
+		cpuQuota = s.policy.ResCPUQuota
+	}
+	rootfsSHA, kernelSHA := sessionpolicy.Digests(sandbox.ImageDir(opts.Arch))
+	_ = b.rec.Append(recorder.NewSessionPolicy("", recorder.PolicyFields{
+		VcpuCount: opts.VcpuCount, MemMiB: opts.MemMiB, CPUQuota: cpuQuota,
+		Allow: b.allow, Ports: sessionpolicy.Ports(b.allow),
+		Secrets:       sessionpolicy.Secrets(boundSecrets),
+		Tools:         sessionpolicy.MCPTools,
+		ParentSession: meta.SourceSession,
+		RootfsSHA256:  rootfsSHA,
+		KernelSHA256:  kernelSHA,
+		Traceparent:   a.Traceparent,
+	}))
 
 	if err := s.adopt(b); err != nil {
 		return mcp.Errorf("%v", err)
@@ -293,8 +318,9 @@ func (s *hostServer) checkSnapshotFits(name string, meta *sandbox.SnapshotMeta) 
 
 func (s *hostServer) toolFork(raw json.RawMessage) *mcp.CallToolResult {
 	var a struct {
-		Name  string `json:"name"`
-		Count int    `json:"count"`
+		Name        string `json:"name"`
+		Count       int    `json:"count"`
+		Traceparent string `json:"traceparent"`
 	}
 	if err := json.Unmarshal(raw, &a); err != nil {
 		return mcp.Errorf("sandbox_fork: %v", err)
@@ -399,6 +425,20 @@ func (s *hostServer) toolFork(raw json.RawMessage) *mcp.CallToolResult {
 		_ = r.rec.Append(recorder.Event{
 			Type: recorder.TypeSessionReady, BootMS: r.elapsed.Milliseconds(),
 		}.WithPosture(r.sb.State.Jailed, r.sb.State.Profile))
+		// What this fork was permitted (P7-2, docs/policy-record.md §5).
+		// Always no network, no secrets, no workspace: a networked snapshot
+		// is refused before any of this runs (above). cpu_quota is genuinely
+		// unapplied on this door — nothing here builds a CPUSlice, unlike
+		// `kelyfos fork`'s own -cpu-quota flag.
+		rootfsSHA, kernelSHA := sessionpolicy.Digests(sandbox.ImageDir(arch))
+		_ = r.rec.Append(recorder.NewSessionPolicy("", recorder.PolicyFields{
+			VcpuCount: meta.VcpuCount, MemMiB: meta.MemMiB,
+			Tools:         sessionpolicy.MCPTools,
+			ParentSession: meta.SourceSession,
+			RootfsSHA256:  rootfsSHA,
+			KernelSHA256:  kernelSHA,
+			Traceparent:   a.Traceparent,
+		}))
 		if err := s.adopt(b); err != nil {
 			// The limit was checked before any of this started, so getting here
 			// means another call took the room. Stop the fork rather than

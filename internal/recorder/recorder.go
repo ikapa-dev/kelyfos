@@ -69,6 +69,12 @@ const (
 	TypeShellStart      = "shell.start"
 	TypeShellEnd        = "shell.end"
 	TypeForwardAccept   = "forward.accept"
+	// TypeSessionPolicy is P7-2's addition: what a machine was permitted to
+	// do, declared once per machine at the door that made it, alongside that
+	// machine's session.ready — never on session.start, for the reason
+	// docs/policy-record.md §3 gives (a team's session.start opens one chain
+	// for several machines, and session.policy describes one).
+	TypeSessionPolicy = "session.policy"
 )
 
 // ReasonServeMCP marks a session.start as a server's own session rather than a
@@ -223,6 +229,33 @@ type Event struct {
 	// (D32). Appended at the end, like Jailed before it, because the field order
 	// in this struct is the order the hash is computed over.
 	Profile string `json:"profile,omitempty"`
+
+	// session.policy (P7-2, docs/policy-record.md §5). What the machine was
+	// permitted. Three of the eleven [resources] caps already exist above —
+	// VcpuCount, MemMiB and CPUQuota — and are reused rather than duplicated;
+	// the remaining eight caps and everything else session.policy carries are
+	// new, appended here in the order docs/policy-record.md §5 fixes as
+	// normative (positions 1-19). Never a secret value: EvSecret carries a
+	// name, a host and a path scope, and nothing else.
+	DiskBytes     int64      `json:"disk_bytes,omitempty"`
+	ScratchBytes  int64      `json:"scratch_bytes,omitempty"`
+	NetMbpsRx     int        `json:"net_mbps_rx,omitempty"`
+	NetMbpsTx     int        `json:"net_mbps_tx,omitempty"`
+	DiskIOPS      int        `json:"disk_iops,omitempty"`
+	DiskMbps      int        `json:"disk_mbps,omitempty"`
+	MaxRuntimeMS  int64      `json:"max_runtime_ms,omitempty"`
+	IdleTimeoutMS int64      `json:"idle_timeout_ms,omitempty"`
+	Allow         []string   `json:"allow,omitempty"`
+	Ports         []int      `json:"ports,omitempty"`
+	Secrets       []EvSecret `json:"secrets,omitempty"`
+	Workspace     string     `json:"workspace,omitempty"`
+	Plugins       []string   `json:"plugins,omitempty"`
+	Forwards      []string   `json:"forwards,omitempty"`
+	RootfsSHA256  string     `json:"rootfs_sha256,omitempty"`
+	KernelSHA256  string     `json:"kernel_sha256,omitempty"`
+	Tools         []string   `json:"tools,omitempty"`
+	ParentSession string     `json:"parent_session,omitempty"`
+	Traceparent   string     `json:"traceparent,omitempty"`
 }
 
 // WithPosture fills the two fields that say which walls were around a machine.
@@ -241,6 +274,75 @@ func (e Event) WithPosture(jailed bool, profile string) Event {
 type EvError struct {
 	Kind    string `json:"kind"`
 	Message string `json:"message"`
+}
+
+// EvSecret is one bound credential on a session.policy — never its value.
+// Name and Host mirror what secret.use already writes for the same
+// credential; Path is the one field with no existing precedent, and comes
+// from egress.Secret.Scope.Path (docs/policy-record.md §8.1).
+type EvSecret struct {
+	Name string `json:"name"`
+	Host string `json:"host"`
+	Path string `json:"path,omitempty"`
+}
+
+// PolicyFields is everything session.policy declares about one machine,
+// assembled by the door and handed whole to NewSessionPolicy. A struct
+// rather than nineteen positional parameters, because a caller assembling
+// nineteen values by position is a caller one reordering away from silently
+// swapping two of them — the same reasoning WithPosture's single call
+// gives for its own two.
+type PolicyFields struct {
+	VcpuCount, MemMiB, CPUQuota              int
+	DiskBytes, ScratchBytes                  int64
+	NetMbpsRx, NetMbpsTx, DiskIOPS, DiskMbps int
+	MaxRuntimeMS, IdleTimeoutMS              int64
+	Allow, Plugins, Forwards, Tools          []string
+	Ports                                    []int
+	Secrets                                  []EvSecret
+	Workspace, RootfsSHA256, KernelSHA256    string
+	ParentSession, Traceparent               string
+}
+
+// NewSessionPolicy is session.policy's one constructor (docs/policy-record.md
+// §5, §9.3's door-enumerating test). Every door that opens a machine builds a
+// PolicyFields and calls this rather than filling in an Event literal by
+// hand, so a field present at one door and forgotten at another cannot
+// happen — the same failure WithPosture already exists to close for jailed
+// and profile, applied here to the wider set session.policy carries.
+//
+// agent is the team member's name inside a team, or "" outside one — the
+// same convention session.ready already uses, so a reader who has learned
+// that convention once does not have to learn it twice.
+func NewSessionPolicy(agent string, p PolicyFields) Event {
+	return Event{
+		Type:  TypeSessionPolicy,
+		Agent: agent,
+
+		VcpuCount: p.VcpuCount,
+		MemMiB:    p.MemMiB,
+		CPUQuota:  p.CPUQuota,
+
+		DiskBytes:     p.DiskBytes,
+		ScratchBytes:  p.ScratchBytes,
+		NetMbpsRx:     p.NetMbpsRx,
+		NetMbpsTx:     p.NetMbpsTx,
+		DiskIOPS:      p.DiskIOPS,
+		DiskMbps:      p.DiskMbps,
+		MaxRuntimeMS:  p.MaxRuntimeMS,
+		IdleTimeoutMS: p.IdleTimeoutMS,
+		Allow:         p.Allow,
+		Ports:         p.Ports,
+		Secrets:       p.Secrets,
+		Workspace:     p.Workspace,
+		Plugins:       p.Plugins,
+		Forwards:      p.Forwards,
+		RootfsSHA256:  p.RootfsSHA256,
+		KernelSHA256:  p.KernelSHA256,
+		Tools:         p.Tools,
+		ParentSession: p.ParentSession,
+		Traceparent:   p.Traceparent,
+	}
 }
 
 // Recorder appends events to one session's file.
@@ -502,19 +604,43 @@ func fitUnderMaxLine(e *Event) error {
 // thing on a command.start event while every string field was empty. Cmd
 // competes for "largest field" like everything else, and clips to a single
 // summarising element rather than being left unclippable.
+//
+// P7-2 added five more slices reflection cannot see the same way: Allow,
+// Secrets, Plugins and Forwards are all string-shaped like Cmd, and Ports is
+// not, so it gets its own measurement and its own clip (below). Extending
+// this list is required in the same commit that adds a new slice field to
+// Event — the landmine this function's whole history is a record of.
 func clipLargestField(e *Event) bool {
 	target := largestStringField(e)
 	best := 0
 	if target != nil {
 		best = len(*target)
 	}
-	if cmdLen := cmdBytes(e.Cmd); cmdLen > 0 && cmdLen > best {
-		orig := len(e.Cmd)
-		joined := strings.Join(e.Cmd, " ")
-		kept := clipUTF8(joined, cmdLen/2)
-		e.Cmd = []string{fmt.Sprintf("%s...(clipped from %d bytes across %d argv elements)", kept, cmdLen, orig)}
+
+	type slice struct {
+		bytes int
+		clip  func()
+	}
+	slices := []slice{
+		{stringsBytes(e.Cmd), func() { e.Cmd = clipStrings(e.Cmd, "argv elements") }},
+		{stringsBytes(e.Allow), func() { e.Allow = clipStrings(e.Allow, "domains") }},
+		{stringsBytes(e.Plugins), func() { e.Plugins = clipStrings(e.Plugins, "plugin names") }},
+		{stringsBytes(e.Forwards), func() { e.Forwards = clipStrings(e.Forwards, "forwards") }},
+		{secretsBytes(e.Secrets), func() { e.Secrets = clipSecrets(e.Secrets) }},
+		{portsBytes(e.Ports), func() { e.Ports = clipPorts(e.Ports) }},
+	}
+	var chosen *slice
+	for i := range slices {
+		if slices[i].bytes > 0 && slices[i].bytes > best {
+			best = slices[i].bytes
+			chosen = &slices[i]
+		}
+	}
+	if chosen != nil {
+		chosen.clip()
 		return true
 	}
+
 	if target == nil || len(*target) == 0 {
 		return false
 	}
@@ -522,6 +648,59 @@ func clipLargestField(e *Event) bool {
 	kept := clipUTF8(*target, orig/2)
 	*target = fmt.Sprintf("%s...(clipped from %d to %d bytes)", kept, orig, len(kept))
 	return true
+}
+
+// clipStrings is Cmd's original clip, generalised to any []string field
+// P7-2 added: join, keep half the joined bytes, replace the whole slice with
+// one element noting what was lost. label names the elements in that note —
+// "argv elements" for Cmd reproduces the message exactly as it read before
+// this generalisation.
+func clipStrings(s []string, label string) []string {
+	orig := len(s)
+	origBytes := stringsBytes(s)
+	joined := strings.Join(s, " ")
+	kept := clipUTF8(joined, origBytes/2)
+	return []string{fmt.Sprintf("%s...(clipped from %d bytes across %d %s)", kept, origBytes, orig, label)}
+}
+
+// secretsBytes is Secrets' size for the same comparison cmdBytes always gave
+// Cmd: every field of every entry, since that is what actually reaches the
+// wire once marshalled.
+func secretsBytes(s []EvSecret) int {
+	n := 0
+	for _, sec := range s {
+		n += len(sec.Name) + len(sec.Host) + len(sec.Path)
+	}
+	return n
+}
+
+// clipSecrets replaces an oversized Secrets slice with one placeholder entry
+// noting how many were dropped and how large they were. A secret's own
+// fields are never guest-influenced — they come from the operator's
+// --secret flags or kelyfos.toml, never from a request a guest or an MCP
+// client made — but the slice can still grow long enough on a machine that
+// declares many, and reflection cannot see it either way (§9.1 of
+// docs/policy-record.md).
+func clipSecrets(s []EvSecret) []EvSecret {
+	return []EvSecret{{Name: fmt.Sprintf("...(clipped from %d bytes across %d secrets)", secretsBytes(s), len(s))}}
+}
+
+// portsBytes estimates what Ports contributes to the marshalled line: four
+// bytes per entry is enough to decide correctly which field is largest
+// without an actual marshal, since a real port number is at most five digits
+// plus a comma.
+func portsBytes(p []int) int { return len(p) * 4 }
+
+// clipPorts is Ports' clip. There is no string to shrink and annotate the
+// way every other field here gets, so an oversized list is truncated to its
+// first sixteen entries instead — a ports list that large is already
+// meaningless to a reader, and truncating is enough to bound the line.
+func clipPorts(p []int) []int {
+	const keep = 16
+	if len(p) <= keep {
+		return p
+	}
+	return p[:keep]
 }
 
 // largestStringField walks every string-typed field reachable from an Event —
@@ -567,13 +746,14 @@ func largestStringField(e *Event) *string {
 	return target
 }
 
-// cmdBytes is the size clipLargestField and fitUnderMaxLine's marshalled
-// measurement both care about: the bytes Cmd's elements actually contribute,
-// not len(e.Cmd), which is the element count.
-func cmdBytes(cmd []string) int {
+// stringsBytes is the size clipLargestField and fitUnderMaxLine's marshalled
+// measurement both care about for any []string field: the bytes its elements
+// actually contribute, not len(s), which is the element count. Named cmdBytes
+// until P7-2 needed the same measurement for Allow, Plugins and Forwards too.
+func stringsBytes(s []string) int {
 	n := 0
-	for _, s := range cmd {
-		n += len(s)
+	for _, v := range s {
+		n += len(v)
 	}
 	return n
 }

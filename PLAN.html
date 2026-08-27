@@ -4209,6 +4209,119 @@ after:
         tasks, 78 checked, 63 decisions&rdquo;, unchanged<br>
         reviewer confirmed this is the only remaining item and is a go once it lands; still not
         self-ticked &mdash; the checkbox is the coordinator's to set</td></tr>
+    <tr><td class="mono">2026-08-27</td><td class="mono">P7-2</td>
+        <td><code>session.policy</code> implemented against the cleared P7-0 spec, exactly as
+        specified: nineteen new <code>Event</code> fields plus <code>EvSecret</code>, appended in
+        the &sect;5 order, positions 1&ndash;19 (<code>internal/recorder/recorder.go</code>);
+        <code>NewSessionPolicy</code>/<code>PolicyFields</code> as the one constructor; a new
+        <code>internal/sessionpolicy</code> package (mirroring <code>internal/argsummary</code>'s
+        reason for existing) holding the conversions every door needed twice &mdash;
+        <code>Secrets</code>, <code>Ports</code>, <code>PluginNames</code>, <code>Forwards</code>,
+        <code>Digests</code>, and the two fixed <code>tools</code> vocabularies &sect;8.3 settles.
+        <b>&sect;9.1's clip-extension landmine closed in the same commit</b>: <code>clipLargestField</code>
+        now measures and clips <code>Allow</code>, <code>Secrets</code>, <code>Plugins</code>,
+        <code>Forwards</code> (generalising <code>Cmd</code>'s own clip via a new
+        <code>clipStrings</code> helper) and <code>Ports</code> (truncated, not string-substituted,
+        since there is no string to annotate) &mdash; five hostile fixtures, each 10&ndash;20 MiB
+        oversized on its own, each proven to clip and still verify
+        (<code>TestAppendClipsEverySessionPolicySlice</code>).
+        <br><b>Wired at all eight doors</b> &sect;4 names, immediately after each machine's existing
+        <code>WithPosture</code> call: <code>run</code>, <code>team up</code> (the declared-agent
+        loop), <code>fork</code>, <code>snapshot restore</code>, <code>shim</code>, and
+        <code>serve-mcp</code>'s <code>sandbox_run</code>/<code>sandbox_restore</code>/<code>sandbox_fork</code>.
+        <b>&sect;4.2's gap closed, not merely documented</b>: <code>broker.OnSpawn</code>
+        (<code>host/team.go</code>) now writes <code>session.ready</code>+<code>WithPosture</code>+
+        <code>session.policy</code> for a runtime-spawned worker, sharing the declared-agent loop's
+        own build point (a new <code>agentPolicyEvent</code> helper) so the two paths cannot drift
+        the way P5-1's jailed/profile gap once did. <code>parent_session</code> required a new
+        field, <code>SnapshotMeta.SourceSession</code> (<code>internal/sandbox/sandbox.go</code>),
+        populated at the two places a snapshot's metadata is written
+        (<code>SnapshotRunning</code>; <code>host/team.go</code>'s <code>bootTemplate</code>) and
+        read back at every restore/fork door. <code>traceparent</code> added as a new optional
+        argument to <code>sandbox_run</code>/<code>sandbox_restore</code>/<code>sandbox_fork</code>'s
+        input schemas, recorded verbatim, never parsed.
+        <br><b>Two mechanical, source-scanning door-enumerating tests</b> (&sect;9.3), one per
+        package: <code>host/policy_wiring_test.go</code> walks every function-LIKE node (not just
+        top-level functions, so a closure like <code>OnSpawn</code> cannot hide inside a wired
+        outer function) and fails when one calls <code>WithPosture</code> without calling
+        <code>NewSessionPolicy</code> in the same scope; <code>shim/policy_wiring_test.go</code> is
+        the one-door version. Proven to actually catch the class of bug it exists for: a scratch
+        fixture with <code>WithPosture</code> and no matching call was added, the test failed with
+        the exact message a future ninth door would get, then the fixture was removed and the suite
+        went green again &mdash; not merely written and trusted.
+        <br><b>Corrected against real output, not left as written</b>: a real boot with a
+        <code>--workspace</code> flag showed <code>session.policy.workspace</code> holding the
+        literal, unresolved string <code>&quot;ws&quot;</code>, which docs/policy-record.md's own
+        &ldquo;resolved host directory&rdquo; language did not intend; fixed to
+        <code>filepath.Abs</code> before recording, and re-verified. A second boot with no
+        workspace showed <code>disk_bytes</code> present anyway &mdash; the schema's own
+        <code>When</code> clause said &ldquo;a workspace is attached&rdquo;, which was never true of
+        the code; the same was true of <code>net_mbps_rx</code>/<code>net_mbps_tx</code>'s
+        &ldquo;network is attached&rdquo; clause. Both <code>When</code> clauses corrected in
+        <code>schema.go</code> to what the code actually does, and <code>docs/events.md</code>'s new
+        <code>### session.policy</code> section states the corrected behaviour, including the
+        honest absence of every cap <code>snapshot restore</code>/<code>sandbox_restore</code>/
+        <code>sandbox_fork</code> do not enforce today.
+        <br>Not self-ticked: P7-2 is a RECORD-surface task and &sect;8 rule 10 holds it to review by
+        an agent that did not write it before the checkbox is set.</td>
+        <td class="mono">inside <code>kelyfos-dev</code>, this branch: <code>gofmt -l .</code>
+        &rarr; clean; <code>go vet ./...</code> then <code>go test ./...</code> &rarr; every
+        package <code>ok</code> or <code>[no test files]</code>, all eighteen touched/added files
+        included<br>
+        <code>go test -run TestEveryWithPostureCallHasAMatchingSessionPolicy -v ./host/...</code>
+        &rarr; PASS; regression check: a scratch fixture file with a bare
+        <code>WithPosture</code> call and no <code>NewSessionPolicy</code> added, re-run &rarr;
+        FAIL with &ldquo;a function calls WithPosture&hellip;but never
+        NewSessionPolicy&hellip;in the same scope&rdquo;; fixture removed, re-run &rarr; PASS again<br>
+        <code>go test -run TestAppendClipsEverySessionPolicySlice -v ./internal/recorder/...</code>
+        &rarr; PASS across all five subtests (Allow, Plugins, Forwards, Secrets, Ports), each an
+        oversized fixture (10&ndash;20 MiB) proven clipped and re-verified with <code>Verify</code><br>
+        <code>go test -fuzz=FuzzAppendFieldValues -fuzztime=30s ./internal/recorder/</code> &rarr;
+        PASS, 47101 execs, 238 interesting corpus entries, 0 crashers;
+        <code>go test -fuzz=FuzzVerifyAgreesWithRead -fuzztime=10s ./internal/recorder/</code>
+        &rarr; PASS, 0 crashers<br>
+        <code>make vuln</code> &rarr; &ldquo;No vulnerabilities found.&rdquo;<br>
+        <b>A real boot, not a unit test standing in for one</b>: <code>make image ARCH=aarch64
+        FLAVOR=base</code> (11s, incremental) then <code>make cli</code>, then
+        <code>kelyfos run</code> under a <code>kelyfos.toml</code> with all eleven
+        <code>[resources]</code> keys at eleven distinct values (<code>cpus=3 mem=777M disk=1536M
+        scratch=111M cpu_quota=133% net_mbps_rx=17 net_mbps_tx=19 disk_iops=321 disk_mbps=23
+        max_runtime=9m idle_timeout=4m</code>), <code>--workspace ws --secret TESTTOKEN@example.com</code>
+        &rarr; sandbox <code>7829bd4d</code> ready in 1220&nbsp;ms; <code>session.policy</code> read
+        back out of the raw JSONL (not the CLI's own printed output) with <code>python3 -m
+        json.tool</code>: <code>mem_mib:777 vcpu_count:3 cpu_quota_percent:133
+        disk_bytes:1610612736 scratch_bytes:116391936 net_mbps_rx:17 net_mbps_tx:19 disk_iops:321
+        disk_mbps:23 max_runtime_ms:540000 idle_timeout_ms:240000</code> &mdash; eleven of eleven,
+        named, matching the file that declared them exactly (Phase 7 acceptance item 1); <code>allow:
+        [&quot;example.com&quot;] ports:[80,443] secrets:[{&quot;name&quot;:&quot;TESTTOKEN&quot;,
+        &quot;host&quot;:&quot;example.com&quot;}] workspace:&quot;/tmp/p72accept/ws&quot;</code>
+        (absolute, after the fix) <code>tools:[&quot;exec&quot;,&quot;shell&quot;,&quot;diff&quot;,
+        &quot;snapshot save&quot;,&quot;pause&quot;]</code><br>
+        secret-value check (Phase 7 acceptance item 2): <code>grep -c dummy-value-not-real
+        events.jsonl</code> &rarr; <code>0</code> &mdash; the bound secret's real value, grepped for
+        in the raw file, found nowhere<br>
+        <code>kelyfos verify &lt;path&gt;/events.jsonl</code> &rarr; &ldquo;chain intact, 5 events
+        verified&rdquo;<br>
+        a second boot, no workspace, same secret &rarr; <code>disk_bytes</code> still present
+        (1610612736), <code>workspace</code> correctly absent &mdash; the finding that fixed the
+        <code>When</code> clauses above<br>
+        a real <code>kelyfos team up</code> with two declared agents (<code>master</code>,
+        <code>worker</code>, no per-agent resources) &rarr; chain
+        <code>session.start, session.ready(master), session.policy(master), session.ready(worker),
+        session.policy(worker), resource.summary&times;2, session.end</code>, each
+        <code>session.policy</code> correctly carrying <code>agent</code> and the image digests,
+        every cap correctly absent (none declared); <code>kelyfos verify</code> &rarr; &ldquo;chain
+        intact, 8 events verified&rdquo;<br>
+        <code>make docs</code> &rarr; <code>docs/reference/events.md</code> and
+        <code>docs/reference/tools.md</code> both gained the new rows automatically (no hand edit);
+        <code>gendocs: llms.txt 6749 bytes &middot; llms-full.txt 606926 bytes, about 157667
+        tokens</code>; <code>make tokens</code> &rarr; <code>measured 606926 bytes &middot; 603865
+        characters &middot; 11745 lines</code>, <code>~157667 tokens</code> (up from ~155793),
+        logged per &sect;8 rule 9<br>
+        <code>python3 tools/check-plan.py</code> (host) &rarr; &ldquo;PLAN.html is coherent: 99
+        tasks, 78 checked, 63 decisions&rdquo;<br>
+        not self-ticked, not pushed, not merged; standing by for RECORD-surface review before P7-3
+        starts (Lane 1 is strictly serial)</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>

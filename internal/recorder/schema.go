@@ -15,7 +15,7 @@ package recorder
 // Field is one payload field on one event type.
 type Field struct {
 	Name string // the JSON key
-	Type string // integer, string, boolean, string array, object
+	Type string // integer, string, boolean, string array, integer array, object, object array
 	Doc  string
 	When string // non-empty: the condition under which it appears
 }
@@ -341,6 +341,36 @@ func Types() []EventType {
 				{Name: "name", Type: "string", Doc: "the plugin"},
 				{Name: "reason", Type: "string", Doc: "what it exited with, or why it never started"},
 				{Name: "agent", Type: "string", Doc: "which member's plugin it was", When: "in a team"},
+			}},
+		{Type: TypeSessionPolicy, Source: SourceHost,
+			Doc: "what the machine was permitted, once per machine, alongside its session.ready " +
+				"(docs/policy-record.md §3 has the reasoning for why not session.start). Three " +
+				"fields are shared with resource.oom and resource.summary rather than duplicated: " +
+				"vcpu_count, mem_mib and cpu_quota_percent",
+			Fields: []Field{
+				{Name: "vcpu_count", Type: "integer", Doc: "cpus — cores the guest sees"},
+				{Name: "mem_mib", Type: "integer", Doc: "mem — guest RAM cap, MiB"},
+				{Name: "cpu_quota_percent", Type: "integer", Doc: "cpu_quota — host CPU time, percent of one core; absent when uncapped"},
+				{Name: "disk_bytes", Type: "integer", Doc: "disk — ceiling on the packed workspace image", When: "disk is declared, whether or not a workspace ends up attached"},
+				{Name: "scratch_bytes", Type: "integer", Doc: "scratch — tmpfs size behind the overlay"},
+				{Name: "net_mbps_rx", Type: "integer", Doc: "inbound rate cap, decimal Mbps", When: "a cap is set, whether or not the machine ends up with a network interface"},
+				{Name: "net_mbps_tx", Type: "integer", Doc: "outbound rate cap, decimal Mbps", When: "a cap is set, whether or not the machine ends up with a network interface"},
+				{Name: "disk_iops", Type: "integer", Doc: "block device operations/sec cap", When: "a cap is set"},
+				{Name: "disk_mbps", Type: "integer", Doc: "block device bytes/sec cap", When: "a cap is set"},
+				{Name: "max_runtime_ms", Type: "integer", Doc: "wall-clock budget", When: "a budget is set"},
+				{Name: "idle_timeout_ms", Type: "integer", Doc: "idle budget", When: "a budget is set"},
+				{Name: "allow", Type: "string array", Doc: "the resolved egress allowlist", When: "network is attached"},
+				{Name: "ports", Type: "integer array", Doc: "ports the allowlist actually covers", When: "network is attached"},
+				{Name: "secrets", Type: "object array", Doc: "bound credentials — name, host and path scope, never a value", When: "one or more are bound"},
+				{Name: "workspace", Type: "string", Doc: "resolved host directory attached at /work", When: "a workspace is attached"},
+				{Name: "plugins", Type: "string array", Doc: "configured plugin names", When: "one or more [[plugin]] entries"},
+				{Name: "forwards", Type: "string array", Doc: "host-port:guest-port per [[forward]] entry", When: "one or more are configured"},
+				{Name: "rootfs_sha256", Type: "string", Doc: "the image manifest's rootfs digest"},
+				{Name: "kernel_sha256", Type: "string", Doc: "the image manifest's kernel digest"},
+				{Name: "tools", Type: "string array", Doc: "the outward verbs usable against this machine"},
+				{Name: "parent_session", Type: "string", Doc: "the session id this machine was forked or restored from", When: "it came from another session"},
+				{Name: "traceparent", Type: "string", Doc: "an inbound W3C traceparent, verbatim", When: "serve-mcp, and the caller supplied one"},
+				agentField(),
 			}},
 	}
 }

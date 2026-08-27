@@ -260,3 +260,109 @@ func TestAppendClipsOversizedEvErrorMessage(t *testing.T) {
 		t.Fatalf("clipped event does not verify: %v", verr)
 	}
 }
+
+// TestAppendClipsEverySessionPolicySlice is F8's fixture repeated for P7-2's
+// five new slice fields, named in docs/policy-record.md §9.1 as the ones the
+// same reflection gap misses: Allow, Secrets, Plugins and Forwards are
+// []string or []EvSecret, invisible to largestStringField the way Cmd always
+// was; Ports is []int and gets its own dedicated clip rather than a string
+// substitution. Each case is oversized on its own — nothing else on the event
+// contributes — so the event vanishing here would be this field's clip
+// missing, not some other field masking it.
+func TestAppendClipsEverySessionPolicySlice(t *testing.T) {
+	longStrings := func(n, each int) []string {
+		out := make([]string, n)
+		for i := range out {
+			out[i] = strings.Repeat("d", each)
+		}
+		return out
+	}
+	longPorts := func(n int) []int {
+		out := make([]int, n)
+		for i := range out {
+			out[i] = 10000 + i
+		}
+		return out
+	}
+
+	cases := []struct {
+		name  string
+		build func(e *Event)
+		check func(t *testing.T, e Event)
+	}{
+		{"Allow", func(e *Event) { e.Allow = longStrings(1000, 10<<10) },
+			func(t *testing.T, e Event) {
+				if len(e.Allow) != 1 || !strings.Contains(e.Allow[0], "clipped from") {
+					t.Fatalf("Allow = %v, want one element noting a clip", e.Allow)
+				}
+			}},
+		{"Plugins", func(e *Event) { e.Plugins = longStrings(1000, 10<<10) },
+			func(t *testing.T, e Event) {
+				if len(e.Plugins) != 1 || !strings.Contains(e.Plugins[0], "clipped from") {
+					t.Fatalf("Plugins = %v, want one element noting a clip", e.Plugins)
+				}
+			}},
+		{"Forwards", func(e *Event) { e.Forwards = longStrings(1000, 10<<10) },
+			func(t *testing.T, e Event) {
+				if len(e.Forwards) != 1 || !strings.Contains(e.Forwards[0], "clipped from") {
+					t.Fatalf("Forwards = %v, want one element noting a clip", e.Forwards)
+				}
+			}},
+		{"Secrets", func(e *Event) {
+			s := make([]EvSecret, 2000)
+			for i := range s {
+				s[i] = EvSecret{Name: strings.Repeat("n", 5000), Host: strings.Repeat("h", 5000)}
+			}
+			e.Secrets = s
+		}, func(t *testing.T, e Event) {
+			if len(e.Secrets) != 1 || !strings.Contains(e.Secrets[0].Name, "clipped from") {
+				t.Fatalf("Secrets = %v, want one entry noting a clip", e.Secrets)
+			}
+		}},
+		{"Ports", func(e *Event) { e.Ports = longPorts(3 << 20) },
+			func(t *testing.T, e Event) {
+				if len(e.Ports) > 16 {
+					t.Fatalf("Ports has %d entries, want truncated to 16", len(e.Ports))
+				}
+			}},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			root := t.TempDir()
+			rec, err := Open(root, "slice")
+			if err != nil {
+				t.Fatalf("open: %v", err)
+			}
+			e := Event{Type: TypeSessionPolicy}
+			c.build(&e)
+			if err := rec.Append(e); err != nil {
+				t.Fatalf("Append refused an event whose only oversized field was %s: %v", c.name, err)
+			}
+			if err := rec.Close(); err != nil {
+				t.Fatalf("close: %v", err)
+			}
+
+			blob, err := os.ReadFile(Path(root, "slice"))
+			if err != nil {
+				t.Fatalf("reading the chain back: %v", err)
+			}
+			for i, line := range bytes.Split(bytes.TrimRight(blob, "\n"), []byte("\n")) {
+				if len(line) > MaxLine {
+					t.Fatalf("line %d is %d bytes, over MaxLine (%d)", i+1, len(line), MaxLine)
+				}
+			}
+			events, rerr := Read(bytes.NewReader(blob))
+			if rerr != nil {
+				t.Fatalf("reading back the appended event: %v", rerr)
+			}
+			if len(events) != 1 {
+				t.Fatalf("want 1 event recorded, got %d — the oversized %s field must not make the event vanish", len(events), c.name)
+			}
+			c.check(t, events[0])
+			if _, _, verr := Verify(bytes.NewReader(blob)); verr != nil {
+				t.Fatalf("clipped event does not verify: %v", verr)
+			}
+		})
+	}
+}

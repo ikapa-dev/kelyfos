@@ -50,6 +50,19 @@ func TestTheEventFieldOrderIsFrozen(t *testing.T) {
 		Jailed:    &yes,
 		GuestPort: 1,
 		Profile:   "p",
+		DiskBytes: 1, ScratchBytes: 1,
+		NetMbpsRx: 1, NetMbpsTx: 1, DiskIOPS: 1, DiskMbps: 1,
+		MaxRuntimeMS: 1, IdleTimeoutMS: 1,
+		Allow: []string{"a"}, Ports: []int{1},
+		Secrets:       []EvSecret{{Name: "n", Host: "h", Path: "p"}},
+		Workspace:     "w",
+		Plugins:       []string{"p"},
+		Forwards:      []string{"f"},
+		RootfsSHA256:  "r",
+		KernelSHA256:  "k",
+		Tools:         []string{"t"},
+		ParentSession: "s",
+		Traceparent:   "t",
 	}
 	body, err := json.Marshal(e)
 	if err != nil {
@@ -78,6 +91,15 @@ func TestTheEventFieldOrderIsFrozen(t *testing.T) {
 		"jailed",
 		"guest_port",
 		"profile",
+		// session.policy (P7-2, docs/policy-record.md §5) — positions 1-19,
+		// normative per §9.2.
+		"disk_bytes", "scratch_bytes",
+		"net_mbps_rx", "net_mbps_tx", "disk_iops", "disk_mbps",
+		"max_runtime_ms", "idle_timeout_ms",
+		"allow", "ports", "secrets",
+		"workspace", "plugins", "forwards",
+		"rootfs_sha256", "kernel_sha256",
+		"tools", "parent_session", "traceparent",
 	}
 
 	got := keysInOrder(t, string(body))

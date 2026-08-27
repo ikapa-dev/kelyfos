@@ -18,6 +18,7 @@ import (
 	"github.com/p4r4n0rm4l/KelyfOS/internal/egress"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/sandbox"
+	"github.com/p4r4n0rm4l/KelyfOS/internal/sessionpolicy"
 )
 
 func snapshotCmd(argv []string) error {
@@ -137,6 +138,12 @@ func snapshotRestore(argv []string) error {
 			return err
 		}
 	}
+	// Hoisted out of the block below so session.policy can read them back once
+	// the machine is ready (P7-2, docs/policy-record.md §5) — both are scoped
+	// to building the proxy, but what was permitted is part of what this
+	// restore was permitted to do.
+	var restoredAllow []string
+	var restoredSecrets []*egress.Secret
 	if metaErr == nil && meta.HasNetwork {
 		list := splitAllow(*allow)
 		if len(list) == 0 {
@@ -161,6 +168,7 @@ func snapshotRestore(argv []string) error {
 		}
 		defer opts.Net.Down()
 		defer proxy.Close()
+		restoredAllow, restoredSecrets = list, vetted
 	}
 
 	// The id is picked here, before Restore is ever called, whether or not
@@ -280,6 +288,26 @@ func snapshotRestore(argv []string) error {
 	_ = rec.Append(recorder.Event{
 		Type: recorder.TypeSessionReady, BootMS: elapsed.Milliseconds(),
 	}.WithPosture(sb.State.Jailed, sb.State.Profile))
+
+	// What this restore was permitted (P7-2, docs/policy-record.md §5).
+	// cpu_quota, scratch, the rate caps and both budgets are genuinely absent
+	// here — this door has no flags for any of them and applies none — which
+	// is the honest value of an enforcement gap docs/policy-record.md's own
+	// research found while wiring this door, not a value this task invented.
+	var sourceSession string
+	if metaErr == nil {
+		sourceSession = meta.SourceSession
+	}
+	rootfsSHA, kernelSHA := sessionpolicy.Digests(sandbox.ImageDir(*arch))
+	_ = rec.Append(recorder.NewSessionPolicy("", recorder.PolicyFields{
+		VcpuCount: sb.State.VcpuCount, MemMiB: sb.State.MemMiB,
+		Allow: restoredAllow, Ports: sessionpolicy.Ports(restoredAllow),
+		Secrets:       sessionpolicy.Secrets(restoredSecrets),
+		Tools:         sessionpolicy.ToolsForCLI(false),
+		ParentSession: sourceSession,
+		RootfsSHA256:  rootfsSHA,
+		KernelSHA256:  kernelSHA,
+	}))
 
 	fmt.Printf("sandbox %s restored from %q in %d ms\n", sb.State.ID, *name, elapsed.Milliseconds())
 	fmt.Printf("  vsock       %s\n", sb.State.UDSPath)

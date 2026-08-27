@@ -15,6 +15,7 @@ import (
 	"github.com/p4r4n0rm4l/KelyfOS/internal/mcp"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/sandbox"
+	"github.com/p4r4n0rm4l/KelyfOS/internal/sessionpolicy"
 )
 
 // The outward tool surface (E4-1). Names are lowercase ASCII with underscores
@@ -42,6 +43,8 @@ func hostToolDefinitions() []mcp.Tool {
 					"mem":   str("Guest memory, e.g. \"512M\". At most what the policy allows."),
 					"allow": {Type: "array", Description: "Domains this sandbox may reach. Must be a subset of the policy's allowlist.",
 						Items: &mcp.Property{Type: "string"}},
+					"traceparent": str("An inbound W3C traceparent header, for a caller that wants this " +
+						"machine's record to carry it. Recorded verbatim; not required and not parsed."),
 				},
 			},
 		},
@@ -142,6 +145,8 @@ func hostToolDefinitions() []mcp.Tool {
 					"name": str("The snapshot name."),
 					"allow": {Type: "array", Description: "Narrow the restored machine's allowlist. Defaults to the snapshot's own.",
 						Items: &mcp.Property{Type: "string"}},
+					"traceparent": str("An inbound W3C traceparent header, for a caller that wants this " +
+						"machine's record to carry it. Recorded verbatim; not required and not parsed."),
 				},
 				Required: []string{"name"},
 			},
@@ -158,6 +163,8 @@ func hostToolDefinitions() []mcp.Tool {
 				Properties: map[string]mcp.Property{
 					"name":  str("The snapshot name."),
 					"count": {Type: "integer", Description: "How many forks to make. At least 1."},
+					"traceparent": str("An inbound W3C traceparent header, for a caller that wants each " +
+						"fork's record to carry it. Recorded verbatim; not required and not parsed."),
 				},
 				Required: []string{"name", "count"},
 			},
@@ -173,6 +180,10 @@ type runArgs struct {
 	CPUs  int      `json:"cpus"`
 	Mem   string   `json:"mem"`
 	Allow []string `json:"allow"`
+	// Traceparent is an inbound W3C traceparent header, recorded verbatim on
+	// session.policy when the caller supplies one (P7-2,
+	// docs/policy-record.md §5, §8.7). Optional, and never parsed here.
+	Traceparent string `json:"traceparent"`
 }
 
 func (s *hostServer) toolRun(raw json.RawMessage) *mcp.CallToolResult {
@@ -192,7 +203,7 @@ func (s *hostServer) toolRun(raw json.RawMessage) *mcp.CallToolResult {
 		return mcp.Errorf("%v", err)
 	}
 
-	b, err := s.boot(opts)
+	b, err := s.boot(opts, a.Traceparent)
 	if err != nil {
 		return mcp.Errorf("sandbox_run: %v", err)
 	}
@@ -338,7 +349,7 @@ func (s *hostServer) resolve(a *runArgs) (sandbox.Options, error) {
 // boot builds one sandbox: cgroup slice, egress path when the policy grants
 // one, recorder, machine. Same order `kelyfos run` uses, and the order matters
 // (docs/networking.md).
-func (s *hostServer) boot(opts sandbox.Options) (*servedBox, error) {
+func (s *hostServer) boot(opts sandbox.Options, traceparent string) (*servedBox, error) {
 	id, err := sandbox.NewID()
 	if err != nil {
 		return nil, err
@@ -468,6 +479,39 @@ func (s *hostServer) boot(opts sandbox.Options) (*servedBox, error) {
 		Type: recorder.TypeSessionReady, BootMS: b.sb.State.BootReadyMS,
 		Kernel: ready.Kernel, Supervisor: ready.Supervisor, Overlay: &overlay,
 	}.WithPosture(b.sb.State.Jailed, b.sb.State.Profile))
+
+	// What this machine was permitted (P7-2, docs/policy-record.md §5).
+	// max_runtime, idle_timeout, workspace and forwards are genuinely
+	// unsupported on this door today (docs/policy-record.md's own research,
+	// confirmed against resolve() and packPlugins/resolveForwards's actual
+	// callers) — recording zero and empty is the honest value, not a
+	// defect this task should silently fix by inventing enforcement.
+	var pluginNames []string
+	if opts.Plugins != nil {
+		pluginNames = opts.Plugins.Names()
+	}
+	var boundSecrets []*egress.Secret
+	if b.proxy != nil {
+		boundSecrets = b.proxy.Policy.Secrets
+	}
+	cpuQuota := 0
+	if s.policy != nil {
+		cpuQuota = s.policy.ResCPUQuota
+	}
+	rootfsSHA, kernelSHA := sessionpolicy.Digests(sandbox.ImageDir(opts.Arch))
+	_ = b.rec.Append(recorder.NewSessionPolicy("", recorder.PolicyFields{
+		VcpuCount: opts.VcpuCount, MemMiB: opts.MemMiB, CPUQuota: cpuQuota,
+		ScratchBytes: opts.ScratchBytes,
+		NetMbpsRx:    opts.IO.NetMbpsRx, NetMbpsTx: opts.IO.NetMbpsTx,
+		DiskIOPS: opts.IO.DiskIOPS, DiskMbps: opts.IO.DiskMbps,
+		Allow: opts.Allow, Ports: sessionpolicy.Ports(opts.Allow),
+		Secrets:      sessionpolicy.Secrets(boundSecrets),
+		Plugins:      pluginNames,
+		Tools:        sessionpolicy.MCPTools,
+		RootfsSHA256: rootfsSHA,
+		KernelSHA256: kernelSHA,
+		Traceparent:  traceparent,
+	}))
 	ok = true
 	return b, nil
 }

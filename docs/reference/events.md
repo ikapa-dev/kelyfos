@@ -363,3 +363,33 @@ A plugin's process ended. Its tools fail from then on and say so; the sandbox, t
 | `name` | string | the plugin |
 | `reason` | string | what it exited with, or why it never started |
 | `agent` | string | which member's plugin it was *(in a team)* |
+
+## `session.policy`
+
+What the machine was permitted, once per machine, alongside its session.ready (docs/policy-record.md §3 has the reasoning for why not session.start). Three fields are shared with resource.oom and resource.summary rather than duplicated: vcpu_count, mem_mib and cpu_quota_percent. Written by the **host**.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `vcpu_count` | integer | cpus — cores the guest sees |
+| `mem_mib` | integer | mem — guest RAM cap, MiB |
+| `cpu_quota_percent` | integer | cpu_quota — host CPU time, percent of one core; absent when uncapped |
+| `disk_bytes` | integer | disk — ceiling on the packed workspace image *(disk is declared, whether or not a workspace ends up attached)* |
+| `scratch_bytes` | integer | scratch — tmpfs size behind the overlay |
+| `net_mbps_rx` | integer | inbound rate cap, decimal Mbps *(a cap is set, whether or not the machine ends up with a network interface)* |
+| `net_mbps_tx` | integer | outbound rate cap, decimal Mbps *(a cap is set, whether or not the machine ends up with a network interface)* |
+| `disk_iops` | integer | block device operations/sec cap *(a cap is set)* |
+| `disk_mbps` | integer | block device bytes/sec cap *(a cap is set)* |
+| `max_runtime_ms` | integer | wall-clock budget *(a budget is set)* |
+| `idle_timeout_ms` | integer | idle budget *(a budget is set)* |
+| `allow` | string array | the resolved egress allowlist *(network is attached)* |
+| `ports` | integer array | ports the allowlist actually covers *(network is attached)* |
+| `secrets` | object array | bound credentials — name, host and path scope, never a value *(one or more are bound)* |
+| `workspace` | string | resolved host directory attached at /work *(a workspace is attached)* |
+| `plugins` | string array | configured plugin names *(one or more [[plugin]] entries)* |
+| `forwards` | string array | host-port:guest-port per [[forward]] entry *(one or more are configured)* |
+| `rootfs_sha256` | string | the image manifest's rootfs digest |
+| `kernel_sha256` | string | the image manifest's kernel digest |
+| `tools` | string array | the outward verbs usable against this machine |
+| `parent_session` | string | the session id this machine was forked or restored from *(it came from another session)* |
+| `traceparent` | string | an inbound W3C traceparent, verbatim *(serve-mcp, and the caller supplied one)* |
+| `agent` | string | which machine produced it; present inside a team *(in a team)* |
