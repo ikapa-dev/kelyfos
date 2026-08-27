@@ -5,6 +5,8 @@ import (
 	"bytes"
 	"io"
 	"net/http"
+	"net/url"
+	"path"
 	"strings"
 	"testing"
 )
@@ -185,6 +187,114 @@ func FuzzScrubPreservesEverythingButTheSecret(f *testing.F) {
 			i += len(v)
 		}
 	})
+}
+
+// FuzzScopeCovers drives Scope.covers, the check that decides whether a
+// path-scoped credential is attached to a request (S3).
+//
+// covers matches against req.URL.Path — what Go decoded — but terminate()
+// sends req.URL.EscapedPath() upstream verbatim; RoundTrip never re-normalizes
+// it. So the property that has to hold is not "covers agrees with itself", it
+// is "covers agrees with what a real origin server would do with the escaped
+// bytes it actually receives". No single server's rules are this package's to
+// assume, so the property is checked against two different, plausible
+// re-segmentation rules (a Tomcat/Jetty-style matrix-parameter strip, and an
+// IIS/.NET-style backslash-as-separator); a decoded path this package
+// approves must still resolve beneath the bound prefix under both.
+//
+// A third rule — an origin that reads an overlong UTF-8 encoding of '/' as a
+// separator — is not simulated here. literalAndNormal's character allowlist
+// rejects any percent-encoding other than "%20" outright, before covers ever
+// reaches the prefix check; no escaped path containing "%c0%af" (or any other
+// non-%20 escape) can make it to this property in the first place, so a
+// simulator for that rule would never have anything to find.
+func FuzzScopeCovers(f *testing.F) {
+	f.Add("/repos/", "/repos/x/..;/..;/admin")
+	f.Add("/repos/", "/repos/x%5c..%5c..%5cadmin")
+	f.Add("/repos/", "/repos/x%c0%af..%c0%afadmin")
+	f.Add("/repos/", "/repos/anthropics/x")
+	f.Add("/repos/", "/repos/")
+	f.Add("/repos/", "/repos")
+	f.Add("/repos/", "/repos/my%20repo/x")
+	f.Add("/repos/", "/repos/../admin")
+	f.Add("/repos/", "/repos/%2e%2e/admin")
+	f.Add("/repos/", "/repos%2f..%2fadmin")
+	f.Add("/repos/", "/repos//../admin")
+	f.Add("/repos/", "/repos/./x")
+	f.Add("/repos/", "/repos-private/secret")
+	f.Add("/repos/", "/Repos/x")
+	f.Add("/repos/", "/admin")
+	f.Add("/user", "/user")
+	f.Add("/user", "/user/emails")
+
+	f.Fuzz(func(t *testing.T, prefix, target string) {
+		// An empty Scope.Path is "no restriction at all" (TestAnEmptyScopeCoversEverything)
+		// by design — covers() returns true unconditionally and never consults a
+		// prefix. That is not what this property is about, and testing it here
+		// would just rediscover that documented, intentional behaviour as a
+		// false failure.
+		if prefix == "" {
+			t.Skip()
+		}
+		if target == "" || target[0] != '/' {
+			t.Skip()
+		}
+		raw := "GET " + target + " HTTP/1.1\r\nHost: api.github.com\r\n\r\n"
+		req, err := http.ReadRequest(bufio.NewReader(strings.NewReader(raw)))
+		if err != nil {
+			t.Skip()
+		}
+
+		scope := Scope{Path: prefix}
+		ok, _ := scope.covers(req)
+		if !ok {
+			return
+		}
+
+		escaped := req.URL.EscapedPath()
+		for _, sim := range []struct {
+			name string
+			fn   func(string) string
+		}{
+			{"matrix-param strip (Tomcat/Jetty)", simulateMatrixParamStrip},
+			{"backslash-as-separator (IIS/.NET)", simulateBackslashAsSeparator},
+		} {
+			got := sim.fn(escaped)
+			if !covered(prefix, got) {
+				t.Fatalf("covers(%q) approved escaped path %q, but under %s it resolves to %q, which is not beneath %q",
+					target, escaped, sim.name, got, prefix)
+			}
+		}
+	})
+}
+
+// simulateMatrixParamStrip mimics a Tomcat/Jetty-style servlet container,
+// which decodes the path, then strips everything from the first ';' in each
+// segment (an old-style matrix parameter) before its own normalization.
+func simulateMatrixParamStrip(escaped string) string {
+	decoded, err := url.PathUnescape(escaped)
+	if err != nil {
+		decoded = escaped
+	}
+	segments := strings.Split(decoded, "/")
+	for i, seg := range segments {
+		if j := strings.IndexByte(seg, ';'); j >= 0 {
+			segments[i] = seg[:j]
+		}
+	}
+	return path.Clean(strings.Join(segments, "/"))
+}
+
+// simulateBackslashAsSeparator mimics an IIS/.NET-style server, which
+// percent-decodes the path and then treats a raw backslash the same as a
+// forward slash.
+func simulateBackslashAsSeparator(escaped string) string {
+	decoded, err := url.PathUnescape(escaped)
+	if err != nil {
+		decoded = escaped
+	}
+	decoded = strings.ReplaceAll(decoded, `\`, "/")
+	return path.Clean(decoded)
 }
 
 // chunked hands over at most n bytes per Read, so a value can be split anywhere.

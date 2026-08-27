@@ -43,6 +43,22 @@ reference described in the README and re-measured per release.
   places in this product that build a proxy — before `sandbox.Restore` is
   ever called, so nothing the guest does from the moment it resumes goes
   unaudited.
+- **A path-scoped credential (`Scope.Path`, endpoint locking) could be
+  attached to a request whose literal, on-the-wire bytes an origin server
+  would route outside the bound path.** The check compared the *decoded*
+  request path against the bound prefix, but Go sends the *escaped* path
+  upstream verbatim, and the two can be made to differ in ways a real server
+  re-segments and Go's own parser has no opinion on at all: a `;`
+  matrix-parameter a Tomcat/Jetty container strips before routing, a raw
+  backslash IIS/.NET treats as a separator, an overlong UTF-8 encoding of `/`
+  a lenient legacy decoder accepts. The old check enumerated only the two
+  encodings Go's own parser treats specially (`%2f`, `%2e`), which is not the
+  same claim as "safe on every origin this could be bound to". It is now an
+  allowlist: the escaped path may contain only unreserved characters, `/`,
+  and the one vetted exception (`%20`, for an ordinary encoded space in a
+  path segment) — anything else, including any other percent-encoding,
+  withholds the credential instead of trying to reason about what a
+  particular server would do with it.
 
 ---
 

@@ -68,31 +68,59 @@ func (s Scope) covers(req *http.Request) (bool, string) {
 //
 // This is the whole security of endpoint locking, and it is not obvious, so it
 // is measured rather than argued. Go decodes a request target into URL.Path and
-// sends URL.EscapedPath() upstream — the two can differ, and every way they
-// differ is a way for the path this proxy *matched* to not be the path the
-// server *routes*:
+// sends URL.EscapedPath() upstream — the two can differ, and this proxy matches
+// against the former while the latter, verbatim, is what a real origin server
+// receives and re-segments in its own way.
 //
-//	request line              URL.Path (matched)   sent upstream
-//	/repos/../admin           /repos/../admin      /repos/../admin      → /admin
-//	/repos/%2e%2e/admin       /repos/../admin      /repos/%2e%2e/admin  → /admin
-//	/repos%2f..%2fadmin       /repos/../admin      /repos%2f..%2fadmin  → /admin
+// That re-segmentation cannot be enumerated. Earlier this function tried:
+// reject a literal "%2f" or "%2e" in the escaped path, then require the decoded
+// path to already be in path.Clean's normal form. That enumerated what *Go's
+// own parser* treats specially — but a real origin server is free to
+// re-segment on bytes Go's parser has no opinion on at all, and every one of
+// these passed the old check while a real server would have routed the request
+// somewhere the bound prefix never approved:
 //
-// All three have a URL.Path beginning "/repos/", so a naive prefix match hands
-// a credential bound to /repos/ to a request the server resolves to /admin.
+//   - "/repos/x/..;/..;/admin" — ';' is an ordinary, unencoded path character
+//     to Go, so path.Clean leaves it alone. Tomcat and Jetty strip everything
+//     from the first ';' in a segment before routing, see two ".." segments,
+//     and land on /admin.
+//   - "/repos/x%5c..%5c..%5cadmin" — %5c decodes to a literal backslash, which
+//     path.Clean does not treat as a separator. IIS and .NET do, and land on
+//     /admin.
+//   - "/repos/x%c0%af..%c0%afadmin" — %c0%af is an overlong, invalid UTF-8
+//     encoding of '/'. Go decodes it to two raw bytes and stops there; a
+//     server with a lenient legacy decoder reads it as '/' and lands on
+//     /admin.
 //
-// So a credential is attached only to a path that is literal and already in
-// normal form: no percent-encoded slash or dot, which are the encodings that
-// let a server re-segment what was matched, and nothing for path.Clean to do.
-// Other encodings are harmless here and stay allowed, because a repository name
-// containing a space is an ordinary request and refusing it would push people
-// to widen the binding instead.
+// Those three are illustrations, not the list. Any enumeration of "the
+// encodings that matter" is a claim about every HTTP stack an operator might
+// bind a credential to, and this project cannot make that claim. So this
+// function does not enumerate what to reject; it allowlists the narrow set of
+// bytes that are safe on every stack, and rejects everything else, including
+// every percent-encoding this project has not specifically vetted for safety.
+// The one exception is "%20": an ordinary encoded space in a repository name
+// is a legitimate, existing use, and refusing it would only teach people to
+// widen the binding to the whole domain instead — a worse outcome than the
+// narrow exception is.
 func literalAndNormal(escaped, decoded string) bool {
-	low := strings.ToLower(escaped)
-	if strings.Contains(low, "%2f") || strings.Contains(low, "%2e") {
-		return false
+	for i := 0; i < len(escaped); i++ {
+		b := escaped[i]
+		switch {
+		case b >= 'A' && b <= 'Z', b >= 'a' && b <= 'z', b >= '0' && b <= '9':
+		case b == '-' || b == '.' || b == '_' || b == '~':
+		case b == '/':
+		case b == '%' && i+2 < len(escaped) && escaped[i+1] == '2' && (escaped[i+2] == '0'):
+			i += 2
+		default:
+			return false
+		}
 	}
-	// path.Clean strips a trailing slash, which is normal form for asking after
-	// a collection rather than a traversal, so it is allowed back.
+	// path.Clean does not know about the bytes just excluded above, but it is
+	// still the right check for what it always caught: a literal, unencoded
+	// ".." or "." segment, which the character allowlist does not exclude on
+	// its own — '.' is in the allowed set. It strips a trailing slash, which
+	// is normal form for asking after a collection rather than a traversal, so
+	// that is allowed back.
 	c := path.Clean(decoded)
 	return c == decoded || c+"/" == decoded
 }

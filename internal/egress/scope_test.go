@@ -54,6 +54,17 @@ func TestAScopedCredentialIsNotAttachedToARequestTheServerWouldRouteElsewhere(t 
 		{target: "/repos%2f..%2fadmin", want: false, why: WithheldNotPlain},
 		{target: "/repos//../admin", want: false, why: WithheldNotPlain},
 		{target: "/repos/./x", want: false, why: WithheldNotPlain},
+		// Matrix-parameter stripping (Tomcat/Jetty): ';' is an ordinary,
+		// unencoded path character to Go, so path.Clean is a no-op on it, but
+		// a servlet container strips from the first ';' in a segment before
+		// routing, sees two ".." segments, and lands on /admin.
+		{target: "/repos/x/..;/..;/admin", want: false, why: WithheldNotPlain},
+		// A raw backslash: IIS/.NET treats '\' as a separator; Go and
+		// path.Clean never do.
+		{target: "/repos/x%5c..%5c..%5cadmin", want: false, why: WithheldNotPlain},
+		// An overlong, invalid UTF-8 encoding of '/' that a lenient legacy
+		// decoder reads as a path separator.
+		{target: "/repos/x%c0%af..%c0%afadmin", want: false, why: WithheldNotPlain},
 
 		// A neighbouring tree that shares a prefix but not a segment boundary.
 		{target: "/repos-private/secret", want: false, why: WithheldPath},
