@@ -21,6 +21,7 @@ import (
 	"github.com/p4r4n0rm4l/KelyfOS/internal/egress"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/sandbox"
+	"github.com/p4r4n0rm4l/KelyfOS/internal/sessionpolicy"
 	"io"
 	"log"
 	"mime"
@@ -356,6 +357,23 @@ func (s *Server) boot(parent context.Context) (*box, error) {
 		Type: recorder.TypeSessionReady, BootMS: b.sb.State.BootReadyMS,
 		Kernel: ready.Kernel, Supervisor: ready.Supervisor, Overlay: &overlay,
 	}.WithPosture(b.sb.State.Jailed, b.sb.State.Profile))
+
+	// What this machine was permitted (P7-2, docs/policy-record.md §5).
+	// Workspace, plugins, forwards, max_runtime and idle_timeout are all
+	// genuinely absent from the E2B-compatible surface — docs/e2b-shim.md's
+	// own "what it deliberately omits" — not values this task invented.
+	rootfsSHA, kernelSHA := sessionpolicy.Digests(sandbox.ImageDir(s.Policy.Arch))
+	_ = b.rec.Append(recorder.NewSessionPolicy("", recorder.PolicyFields{
+		VcpuCount: s.Policy.Vcpus, MemMiB: s.Policy.MemMiB, CPUQuota: s.Policy.CPUQuota,
+		ScratchBytes: s.Policy.ScratchBytes,
+		NetMbpsRx:    s.Policy.IO.NetMbpsRx, NetMbpsTx: s.Policy.IO.NetMbpsTx,
+		DiskIOPS: s.Policy.IO.DiskIOPS, DiskMbps: s.Policy.IO.DiskMbps,
+		Allow: s.Policy.Allow, Ports: sessionpolicy.Ports(s.Policy.Allow),
+		Secrets:      sessionpolicy.Secrets(s.Policy.Secrets),
+		Tools:        sessionpolicy.ToolsForCLI(false),
+		RootfsSHA256: rootfsSHA,
+		KernelSHA256: kernelSHA,
+	}))
 	ok = true
 	return b, nil
 }

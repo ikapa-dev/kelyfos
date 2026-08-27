@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/sandbox"
+	"github.com/p4r4n0rm4l/KelyfOS/internal/sessionpolicy"
 	"os"
 	"os/signal"
 	"strconv"
@@ -214,7 +215,7 @@ unique guest network identity, which is backlog work.
 		}
 		live++
 		if r.rec != nil {
-			if err := recordFork(r.rec, r.sb, r.elapsed); err == nil {
+			if err := recordFork(r.rec, r.sb, r.elapsed, meta, *cpuQuota, *arch); err == nil {
 				recs = append(recs, r.rec)
 			}
 		}
@@ -240,12 +241,26 @@ unique guest network identity, which is backlog work.
 // calling sandbox.Restore. The recorder is left open on success rather than
 // closed, because a session ends when the machine does and the caller's
 // shutdown defer is what knows when that is.
-func recordFork(rec *recorder.Recorder, sb *sandbox.Sandbox, elapsed time.Duration) error {
+func recordFork(rec *recorder.Recorder, sb *sandbox.Sandbox, elapsed time.Duration,
+	meta *sandbox.SnapshotMeta, cpuQuota int, arch string) error {
 	if err := rec.Append(recorder.Event{
 		Type: recorder.TypeSessionReady, BootMS: elapsed.Milliseconds(),
 	}.WithPosture(sb.State.Jailed, sb.State.Profile)); err != nil {
 		_ = rec.Close()
 		return err
 	}
-	return nil
+	// What this fork was permitted (P7-2, docs/policy-record.md §5). Allow,
+	// Ports, Secrets and Workspace are always empty: a fork is vsock-only, so
+	// a snapshot with either is refused before any of this runs (above).
+	// VcpuCount and MemMiB are the frozen machine's own — Firecracker takes
+	// them from the state file, not from an option this door could offer
+	// (SnapshotMeta's own doc comment).
+	rootfsSHA, kernelSHA := sessionpolicy.Digests(sandbox.ImageDir(arch))
+	return rec.Append(recorder.NewSessionPolicy("", recorder.PolicyFields{
+		VcpuCount: meta.VcpuCount, MemMiB: meta.MemMiB, CPUQuota: cpuQuota,
+		Tools:         sessionpolicy.ToolsForCLI(false),
+		ParentSession: meta.SourceSession,
+		RootfsSHA256:  rootfsSHA,
+		KernelSHA256:  kernelSHA,
+	}))
 }

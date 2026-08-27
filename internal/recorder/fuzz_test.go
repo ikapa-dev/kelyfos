@@ -260,3 +260,243 @@ func TestAppendClipsOversizedEvErrorMessage(t *testing.T) {
 		t.Fatalf("clipped event does not verify: %v", verr)
 	}
 }
+
+// TestAppendClipsEverySessionPolicySlice is F8's fixture repeated for P7-2's
+// six new slice fields, named in docs/policy-record.md §9.1 as the ones the
+// same reflection gap misses: Allow, Secrets, Plugins, Forwards and Tools are
+// []string or []EvSecret, invisible to largestStringField the way Cmd always
+// was; Ports is []int and gets its own dedicated clip rather than a string
+// substitution. Each case is oversized on its own — nothing else on the event
+// contributes — so the event vanishing here would be this field's clip
+// missing, not some other field masking it.
+//
+// Tools was the field this test did not cover on P7-2's first pass — the
+// review that reopened P7-2 (F1) proved with this exact fixture shape that an
+// oversized Tools value made the whole event vanish, since clipLargestField's
+// list named the other five and stopped one short. Its subtest below is that
+// proof kept as a regression test, and TestClipLargestFieldCoversEverySliceField
+// further down backstops the whole list by construction so a seventh miss
+// cannot happen silently.
+func TestAppendClipsEverySessionPolicySlice(t *testing.T) {
+	longStrings := func(n, each int) []string {
+		out := make([]string, n)
+		for i := range out {
+			out[i] = strings.Repeat("d", each)
+		}
+		return out
+	}
+	longPorts := func(n int) []int {
+		out := make([]int, n)
+		for i := range out {
+			out[i] = 10000 + i
+		}
+		return out
+	}
+
+	cases := []struct {
+		name  string
+		build func(e *Event)
+		check func(t *testing.T, e Event)
+	}{
+		{"Allow", func(e *Event) { e.Allow = longStrings(1000, 10<<10) },
+			func(t *testing.T, e Event) {
+				if len(e.Allow) != 1 || !strings.Contains(e.Allow[0], "clipped from") {
+					t.Fatalf("Allow = %v, want one element noting a clip", e.Allow)
+				}
+			}},
+		{"Plugins", func(e *Event) { e.Plugins = longStrings(1000, 10<<10) },
+			func(t *testing.T, e Event) {
+				if len(e.Plugins) != 1 || !strings.Contains(e.Plugins[0], "clipped from") {
+					t.Fatalf("Plugins = %v, want one element noting a clip", e.Plugins)
+				}
+			}},
+		{"Forwards", func(e *Event) { e.Forwards = longStrings(1000, 10<<10) },
+			func(t *testing.T, e Event) {
+				if len(e.Forwards) != 1 || !strings.Contains(e.Forwards[0], "clipped from") {
+					t.Fatalf("Forwards = %v, want one element noting a clip", e.Forwards)
+				}
+			}},
+		{"Secrets", func(e *Event) {
+			s := make([]EvSecret, 2000)
+			for i := range s {
+				s[i] = EvSecret{Name: strings.Repeat("n", 5000), Host: strings.Repeat("h", 5000)}
+			}
+			e.Secrets = s
+		}, func(t *testing.T, e Event) {
+			if len(e.Secrets) != 1 || !strings.Contains(e.Secrets[0].Name, "clipped from") {
+				t.Fatalf("Secrets = %v, want one entry noting a clip", e.Secrets)
+			}
+		}},
+		{"Tools", func(e *Event) { e.Tools = longStrings(1000, 10<<10) },
+			func(t *testing.T, e Event) {
+				if len(e.Tools) != 1 || !strings.Contains(e.Tools[0], "clipped from") {
+					t.Fatalf("Tools = %v, want one element noting a clip", e.Tools)
+				}
+			}},
+		{"Ports", func(e *Event) { e.Ports = longPorts(3 << 20) },
+			func(t *testing.T, e Event) {
+				if len(e.Ports) > 16 {
+					t.Fatalf("Ports has %d entries, want truncated to 16", len(e.Ports))
+				}
+			}},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			root := t.TempDir()
+			rec, err := Open(root, "slice")
+			if err != nil {
+				t.Fatalf("open: %v", err)
+			}
+			e := Event{Type: TypeSessionPolicy}
+			c.build(&e)
+			if err := rec.Append(e); err != nil {
+				t.Fatalf("Append refused an event whose only oversized field was %s: %v", c.name, err)
+			}
+			if err := rec.Close(); err != nil {
+				t.Fatalf("close: %v", err)
+			}
+
+			blob, err := os.ReadFile(Path(root, "slice"))
+			if err != nil {
+				t.Fatalf("reading the chain back: %v", err)
+			}
+			for i, line := range bytes.Split(bytes.TrimRight(blob, "\n"), []byte("\n")) {
+				if len(line) > MaxLine {
+					t.Fatalf("line %d is %d bytes, over MaxLine (%d)", i+1, len(line), MaxLine)
+				}
+			}
+			events, rerr := Read(bytes.NewReader(blob))
+			if rerr != nil {
+				t.Fatalf("reading back the appended event: %v", rerr)
+			}
+			if len(events) != 1 {
+				t.Fatalf("want 1 event recorded, got %d — the oversized %s field must not make the event vanish", len(events), c.name)
+			}
+			c.check(t, events[0])
+			if _, _, verr := Verify(bytes.NewReader(blob)); verr != nil {
+				t.Fatalf("clipped event does not verify: %v", verr)
+			}
+		})
+	}
+}
+
+// oversizedSliceValue builds an oversized value for a slice type, generically
+// enough to cover every shape a slice field on Event has today and every
+// shape docs/policy-record.md §6 says P7-3 is about to add (EvAgent,
+// EvStoreKey — both structs with string fields, the same shape EvSecret
+// already has). It is used by TestClipLargestFieldCoversEverySliceField below
+// rather than a per-field literal, so a new slice field this function does
+// not yet know how to grow fails loudly, with a message that says so, instead
+// of silently building an undersized value that would let the guard test pass
+// for the wrong reason.
+func oversizedSliceValue(t *testing.T, sliceType reflect.Type) reflect.Value {
+	t.Helper()
+	// Comfortably past MaxLine (8<<20) on its own, matching the margin the
+	// hand-written cases above already use (10 MiB across 1000 Allow/Plugins/
+	// Forwards/Tools elements, 10 MB across 2000 Secrets).
+	const targetBytes = 12 << 20
+	elem := sliceType.Elem()
+	switch elem.Kind() {
+	case reflect.String:
+		const n = 1200
+		each := targetBytes / n
+		out := reflect.MakeSlice(sliceType, n, n)
+		for i := 0; i < n; i++ {
+			out.Index(i).SetString(strings.Repeat("d", each))
+		}
+		return out
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		const n = 2 << 20 // ports-shaped: many small integers, not few large ones
+		out := reflect.MakeSlice(sliceType, n, n)
+		for i := 0; i < n; i++ {
+			out.Index(i).SetInt(int64(10000 + i))
+		}
+		return out
+	case reflect.Struct:
+		const n = 600
+		each := targetBytes / n
+		out := reflect.MakeSlice(sliceType, n, n)
+		for i := 0; i < n; i++ {
+			ev := out.Index(i)
+			for j := 0; j < ev.NumField(); j++ {
+				if fv := ev.Field(j); fv.Kind() == reflect.String && fv.CanSet() {
+					fv.SetString(strings.Repeat("d", each))
+				}
+			}
+		}
+		return out
+	default:
+		t.Fatalf("oversizedSliceValue does not know how to grow a []%s (element kind %s) — extend it before this guard test can cover that field",
+			elem, elem.Kind())
+		return reflect.Value{}
+	}
+}
+
+// TestClipLargestFieldCoversEverySliceField is docs/policy-record.md §9.1's
+// landmine closed structurally rather than by list. F8 closed it for string
+// fields with largestStringField's own reflection walk; P7-2 then had to
+// reopen the same question for slices by hand, five names at a time
+// (recorder.go's clipLargestField), and named five of its own six new slices
+// — Tools slipped through (F1, the review that reopened P7-2). A sixth
+// hand-written subtest above closes that specific miss, but a hand-maintained
+// list has now failed this exact way twice — once for strings, once for
+// slices — so this test does not add a seventh name to a list; it walks
+// Event by reflection instead, the same way largestStringField itself does,
+// and asserts the property directly: give any one slice-kind field on Event
+// an oversized value, with every other field left zero, and the event must
+// still be recorded — never zero events, because that is the exact shape F8
+// and F1 both were.
+//
+// This covers every slice field Event has today (Argv, Cmd, Allow, Ports,
+// Secrets, Plugins, Forwards, Tools) without naming any of them, and — the
+// point of writing it this way — will cover P7-3's three new slices (Agents,
+// Edges, StoreKeys) the day they are appended to Event, whether or not
+// clipLargestField is updated for them: if it is not, this test fails with
+// the field's own name in the message, in this exact form, in CI, rather
+// than three months later against a real session that lost an event.
+func TestClipLargestFieldCoversEverySliceField(t *testing.T) {
+	et := reflect.TypeOf(Event{})
+	for i := 0; i < et.NumField(); i++ {
+		field := et.Field(i)
+		if field.Type.Kind() != reflect.Slice {
+			continue
+		}
+		t.Run(field.Name, func(t *testing.T) {
+			root := t.TempDir()
+			rec, err := Open(root, "sliceguard")
+			if err != nil {
+				t.Fatalf("open: %v", err)
+			}
+			e := Event{Type: TypeSessionPolicy}
+			reflect.ValueOf(&e).Elem().Field(i).Set(oversizedSliceValue(t, field.Type))
+			if err := rec.Append(e); err != nil {
+				t.Fatalf("Append refused an event whose only oversized field was %s: %v", field.Name, err)
+			}
+			if err := rec.Close(); err != nil {
+				t.Fatalf("close: %v", err)
+			}
+
+			blob, err := os.ReadFile(Path(root, "sliceguard"))
+			if err != nil {
+				t.Fatalf("reading the chain back: %v", err)
+			}
+			for j, line := range bytes.Split(bytes.TrimRight(blob, "\n"), []byte("\n")) {
+				if len(line) > MaxLine {
+					t.Fatalf("line %d is %d bytes, over MaxLine (%d)", j+1, len(line), MaxLine)
+				}
+			}
+			events, rerr := Read(bytes.NewReader(blob))
+			if rerr != nil {
+				t.Fatalf("reading back the appended event: %v", rerr)
+			}
+			if len(events) != 1 {
+				t.Fatalf("want 1 event recorded, got %d — field %s's oversized value made the event vanish; clipLargestField needs a clip case for it",
+					len(events), field.Name)
+			}
+			if _, _, verr := Verify(bytes.NewReader(blob)); verr != nil {
+				t.Fatalf("clipped event does not verify: %v", verr)
+			}
+		})
+	}
+}

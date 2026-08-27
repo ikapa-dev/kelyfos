@@ -169,6 +169,7 @@ Boot a hardware-isolated microVM and return its id. Anything run inside it canno
 | `cpus` | integer | no | Cores the guest sees. At most what the policy allows. |
 | `image` | string | no | Image flavor. Defaults to the project's. |
 | `mem` | string | no | Guest memory, e.g. "512M". At most what the policy allows. |
+| `traceparent` | string | no | An inbound W3C traceparent header, for a caller that wants this machine's record to carry it. Recorded verbatim; not required and not parsed. |
 
 ### `sandbox_exec`
 
@@ -233,6 +234,7 @@ Bring a snapshot back as a new sandbox, which takes milliseconds rather than a b
 | --- | --- | --- | --- |
 | `allow` | array of string | no | Narrow the restored machine's allowlist. Defaults to the snapshot's own. |
 | `name` | string | **yes** | The snapshot name. |
+| `traceparent` | string | no | An inbound W3C traceparent header, for a caller that wants this machine's record to carry it. Recorded verbatim; not required and not parsed. |
 
 ### `sandbox_fork`
 
@@ -242,6 +244,7 @@ Restore one snapshot into several sandboxes at once. Each fork resumes from the 
 | --- | --- | --- | --- |
 | `count` | integer | **yes** | How many forks to make. At least 1. |
 | `name` | string | **yes** | The snapshot name. |
+| `traceparent` | string | no | An inbound W3C traceparent header, for a caller that wants each fork's record to carry it. Recorded verbatim; not required and not parsed. |
 
 ### `team_up`
 

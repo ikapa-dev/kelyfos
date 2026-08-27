@@ -18,6 +18,7 @@ import (
 	"github.com/p4r4n0rm4l/KelyfOS/internal/egress"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/sandbox"
+	"github.com/p4r4n0rm4l/KelyfOS/internal/sessionpolicy"
 )
 
 func snapshotCmd(argv []string) error {
@@ -137,6 +138,12 @@ func snapshotRestore(argv []string) error {
 			return err
 		}
 	}
+	// Hoisted out of the block below so session.policy can read them back once
+	// the machine is ready (P7-2, docs/policy-record.md §5) — both are scoped
+	// to building the proxy, but what was permitted is part of what this
+	// restore was permitted to do.
+	var restoredAllow []string
+	var restoredSecrets []*egress.Secret
 	if metaErr == nil && meta.HasNetwork {
 		list := splitAllow(*allow)
 		if len(list) == 0 {
@@ -161,6 +168,7 @@ func snapshotRestore(argv []string) error {
 		}
 		defer opts.Net.Down()
 		defer proxy.Close()
+		restoredAllow, restoredSecrets = list, vetted
 	}
 
 	// The id is picked here, before Restore is ever called, whether or not
@@ -280,6 +288,40 @@ func snapshotRestore(argv []string) error {
 	_ = rec.Append(recorder.Event{
 		Type: recorder.TypeSessionReady, BootMS: elapsed.Milliseconds(),
 	}.WithPosture(sb.State.Jailed, sb.State.Profile))
+
+	// What this restore was permitted (P7-2, docs/policy-record.md §5).
+	// cpu_quota, scratch, the rate caps and both budgets are genuinely absent
+	// here — this door has no flags for any of them and applies none — which
+	// is the honest value of an enforcement gap docs/policy-record.md's own
+	// research found while wiring this door, not a value this task invented.
+	// VcpuCount and MemMiB come from the snapshot's own metadata, not from
+	// sb.State: Firecracker takes both from the state file at resume time,
+	// and this door's sandbox.Options never sets VcpuCount/MemMiB (there is
+	// no flag for either), so sb.State.VcpuCount/MemMiB stay zero even though
+	// the restored machine genuinely has them — the same reasoning
+	// recordFork (host/fork.go) already applies to its own meta.VcpuCount/
+	// meta.MemMiB (F2, RECORD review of P7-2: a restored 5-vCPU/823-MiB
+	// machine was recording session.policy with neither field present, which
+	// docs/events.md's own table defines as "nothing declared a cap," false
+	// for this door). memMiB itself is already in scope above, computed under
+	// the same metaErr == nil guard for guestEventRecorder; vcpuCount is its
+	// twin, new here.
+	var sourceSession string
+	var vcpuCount int
+	if metaErr == nil {
+		sourceSession = meta.SourceSession
+		vcpuCount = meta.VcpuCount
+	}
+	rootfsSHA, kernelSHA := sessionpolicy.Digests(sandbox.ImageDir(*arch))
+	_ = rec.Append(recorder.NewSessionPolicy("", recorder.PolicyFields{
+		VcpuCount: vcpuCount, MemMiB: memMiB,
+		Allow: restoredAllow, Ports: sessionpolicy.Ports(restoredAllow),
+		Secrets:       sessionpolicy.Secrets(restoredSecrets),
+		Tools:         sessionpolicy.ToolsForCLI(false),
+		ParentSession: sourceSession,
+		RootfsSHA256:  rootfsSHA,
+		KernelSHA256:  kernelSHA,
+	}))
 
 	fmt.Printf("sandbox %s restored from %q in %d ms\n", sb.State.ID, *name, elapsed.Milliseconds())
 	fmt.Printf("  vsock       %s\n", sb.State.UDSPath)

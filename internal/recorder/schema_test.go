@@ -78,6 +78,7 @@ func TestSchemaDescribesNothingExtra(t *testing.T) {
 		TypePluginCall: true, TypePluginCrash: true,
 		TypeSessionPause: true, TypeSessionResume: true, TypeRunReview: true,
 		TypeShellStart: true, TypeShellEnd: true, TypeForwardAccept: true,
+		TypeSessionPolicy: true,
 	}
 	for _, e := range Types() {
 		if !real[e.Type] {

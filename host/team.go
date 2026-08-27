@@ -23,6 +23,7 @@ import (
 	"github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/report"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/sandbox"
+	"github.com/p4r4n0rm4l/KelyfOS/internal/sessionpolicy"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/team"
 )
 
@@ -361,6 +362,22 @@ func raiseTeam(parent context.Context, opt teamOptions) (*teamRig, error) {
 		// them, and inventing an inheritance rule would let an agent hand its
 		// own network to a machine the user never wrote down (E2-5).
 		res := plan.spawnResources(req.Spawner)
+		// req.Lifetime, not res.MaxRuntime, is the wall-clock ceiling actually
+		// enforced for a spawned worker: the goroutine a few lines down calls
+		// Despawn/stop after req.Lifetime elapses, the same role the
+		// declared-agent max_runtime goroutine plays above for plan.agents[i]
+		// .res.MaxRuntime — but nothing plays that role for res.MaxRuntime
+		// here, because a spawn budget's optional [resources] sub-block has no
+		// equivalent enforcement loop of its own. Left alone, agentPolicyEvent
+		// would record whatever res.MaxRuntime happens to hold (typically
+		// zero, since operators write the ceiling as `lifetime` on the spawn
+		// budget) while staying silent about the ceiling genuinely in force —
+		// the same "a wall with nothing in the record saying so" shape P7-2
+		// exists to close, reappearing at the one door P7-0's own review (F2)
+		// already flagged it at once (F4, the review that reopened P7-2).
+		if req.Lifetime > 0 {
+			res.MaxRuntime = req.Lifetime
+		}
 		rig, err := bootAgent(ctx, plannedAgent{name: req.Name, image: req.Image, res: res},
 			broker, rec, teamSlice, arch, timeout)
 		if err != nil {
@@ -368,6 +385,17 @@ func raiseTeam(parent context.Context, opt teamOptions) (*teamRig, error) {
 		}
 		rig.via = "cold"
 		sb := rig.sb
+		// A spawned worker is a machine in this chain like any other, and gets
+		// the same session.ready/WithPosture/session.policy pair a declared
+		// agent's ready loop already writes. Before P7-2 this path called the
+		// recorder nowhere at all, so a spawned worker's own posture (jailed,
+		// profile) went unrecorded — the exact P5-1 shape this phase exists
+		// to close, found in the one door P5-1 itself never reached
+		// (docs/policy-record.md §4.2).
+		_ = rec.Append(recorder.Event{Type: recorder.TypeSessionReady, Agent: rig.name,
+			Image: req.Image, Via: rig.via, BootMS: sb.State.BootReadyMS}.
+			WithPosture(sb.State.Jailed, sb.State.Profile))
+		_ = rec.Append(agentPolicyEvent(rig, plannedAgent{name: req.Name, image: req.Image, res: res}, arch))
 		crew.add(rig, req.Spawner+" -> "+req.Name, req.Name+" -> "+req.Spawner)
 		fmt.Fprintf(out, "  %-12s %s spawned by %s, ready in %d ms\n",
 			req.Name, sb.State.ID, req.Spawner, sb.State.BootReadyMS)
@@ -507,6 +535,7 @@ func raiseTeam(parent context.Context, opt teamOptions) (*teamRig, error) {
 		_ = rec.Append(recorder.Event{Type: recorder.TypeSessionReady, Agent: rig.name,
 			Image: plan.agents[i].image, Via: rig.via, BootMS: rig.sb.State.BootReadyMS}.
 			WithPosture(rig.sb.State.Jailed, rig.sb.State.Profile))
+		_ = rec.Append(agentPolicyEvent(rig, plan.agents[i], arch))
 	}
 	summary := fmt.Sprintf("team up in %d ms  (%d cold)", total.Milliseconds(), len(cold))
 	if forked := len(plan.agents) - len(cold); forked > 0 {
@@ -611,6 +640,11 @@ type agentRig struct {
 	// two paths to be visible rather than inferred, so it travels into
 	// team.json, into `team ps`, and into the transcript.
 	via string
+	// parentSession is the session a forked member's memory image came from
+	// (SnapshotMeta.SourceSession, P7-2), read once in forkAgent so the ready
+	// loop does not have to re-open the template's meta.json. Empty for a
+	// cold-booted member, which has no ancestor.
+	parentSession string
 
 	// stop can be reached from two directions at once, so it is allowed to
 	// happen exactly once. A max_runtime timer and a spawn lifetime each stop
@@ -961,6 +995,14 @@ func bootTemplate(ctx context.Context, a plannedAgent, sessionID, arch string,
 	if err := sandbox.WriteSnapshotMeta(snapDir, sandbox.SnapshotMeta{
 		Arch: arch, Flavor: a.image,
 		VcpuCount: sb.State.VcpuCount, MemMiB: sb.State.MemMiB,
+		// The team's own session, not the template's — the template never
+		// appears in the transcript as an agent (this function's own doc
+		// comment), so it has no session of its own to name. A member forked
+		// from this template within the *same* team-up leaves parent_session
+		// empty regardless (§3: it is the same chain, not a prior one); a
+		// later team-up that forks from this cached template is a genuinely
+		// different chain, and that is the case this field is for.
+		SourceSession: sessionID,
 	}); err != nil {
 		stopNow()
 		_ = os.RemoveAll(snapDir)
@@ -1030,8 +1072,48 @@ func forkAgent(ctx context.Context, a plannedAgent, snapDir string, broker *team
 		return nil, err
 	}
 	rig.sb = sb
+	// Best-effort: a template snapshot with no meta.json (predating this
+	// field) leaves parentSession empty, the same as a cold-booted member.
+	if meta, err := sandbox.ReadSnapshotMeta(snapDir); err == nil {
+		rig.parentSession = meta.SourceSession
+	}
 	ok = true
 	return rig, nil
+}
+
+// agentPolicyEvent is session.policy's one shared build point for a team
+// member (P7-2, docs/policy-record.md §5), used identically by a declared
+// agent's ready loop and by a runtime-spawned worker (broker.OnSpawn) — the
+// same reason NewSessionPolicy is one constructor rather than an Event
+// literal at each call site, one level up: a caps struct built two ways for
+// two kinds of team member is exactly how one of them ends up missing a
+// field the other has.
+//
+// No plugins, no forwards: neither is ever set for a team member today
+// (host/plugins.go, host/forward.go — packPlugins and resolveForwards are
+// called from `run` and `serve-mcp` alone), so recording an empty list here
+// is the accurate value, not an omission. tools is the CLI vocabulary: a
+// team member is driven with --sandbox <id>, the same as a standalone run.
+func agentPolicyEvent(rig *agentRig, a plannedAgent, arch string) recorder.Event {
+	var secrets []*egress.Secret
+	if rig.proxy != nil {
+		secrets = rig.proxy.Policy.Secrets
+	}
+	rootfsSHA, kernelSHA := sessionpolicy.Digests(sandbox.ImageDir(arch))
+	return recorder.NewSessionPolicy(rig.name, recorder.PolicyFields{
+		VcpuCount: a.res.CPUs, MemMiB: a.res.MemMiB, CPUQuota: a.res.CPUQuota,
+		DiskBytes: a.res.DiskByte, ScratchBytes: a.res.ScratchByte,
+		NetMbpsRx: a.res.NetMbpsRx, NetMbpsTx: a.res.NetMbpsTx,
+		DiskIOPS: a.res.DiskIOPS, DiskMbps: a.res.DiskMbps,
+		MaxRuntimeMS: a.res.MaxRuntime.Milliseconds(), IdleTimeoutMS: a.res.IdleTimeout.Milliseconds(),
+		Allow: a.allow, Ports: sessionpolicy.Ports(a.allow),
+		Secrets:       sessionpolicy.Secrets(secrets),
+		Workspace:     a.workspace,
+		RootfsSHA256:  rootfsSHA,
+		KernelSHA256:  kernelSHA,
+		Tools:         sessionpolicy.ToolsForCLI(false),
+		ParentSession: rig.parentSession,
+	})
 }
 
 // describeAgent is the one-line summary `up` prints under each member: what it

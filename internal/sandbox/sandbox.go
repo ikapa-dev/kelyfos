@@ -888,6 +888,19 @@ type SnapshotMeta struct {
 	Netmask   string `json:"netmask,omitempty"`
 	HostMAC   string `json:"host_mac,omitempty"`
 	ProxyPort int    `json:"proxy_port,omitempty"`
+	// SourceSession is the chain the frozen machine's events belonged to —
+	// State.RecordSession() at the moment it was frozen, which is the
+	// machine's own id outside a team and the team's id inside one. A
+	// restore or fork reads it back to populate session.policy's
+	// parent_session (P7-2, docs/policy-record.md §5), which is what makes
+	// "a snapshot name is not a session id" stop being true: before this, the
+	// only record of where a restored machine came from was the prose in its
+	// session.start's reason field, and a name cannot be followed back across
+	// a second hop the way an id can. Empty on a snapshot taken before this
+	// field existed, which restores exactly as it always did — parent_session
+	// is simply absent, the same as any other field an older snapshot never
+	// wrote.
+	SourceSession string `json:"source_session,omitempty"`
 }
 
 func snapshotMetaPath(dir string) string  { return filepath.Join(dir, "meta.json") }
@@ -966,7 +979,8 @@ func SnapshotRunning(st *State, dir string) (statePath, memPath string, err erro
 		}
 	}
 
-	meta := SnapshotMeta{Arch: st.Arch, Flavor: st.Flavor, VcpuCount: st.VcpuCount, MemMiB: st.MemMiB}
+	meta := SnapshotMeta{Arch: st.Arch, Flavor: st.Flavor, VcpuCount: st.VcpuCount, MemMiB: st.MemMiB,
+		SourceSession: st.RecordSession()}
 	if st.TAP != "" {
 		meta.HasNetwork = true
 		meta.IfaceID = "eth0"

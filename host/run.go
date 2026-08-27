@@ -25,6 +25,7 @@ import (
 	"github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/report"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/sandbox"
+	"github.com/p4r4n0rm4l/KelyfOS/internal/sessionpolicy"
 )
 
 func runCmd(argv []string) error {
@@ -332,6 +333,11 @@ status. This is how you hand an agent a sandbox and nothing else:
 	// can send a packet anywhere (docs/networking.md).
 	var proxy *egress.Proxy
 	var ca *egress.CA
+	// Hoisted out of the block below so session.policy can read it back once
+	// the machine is ready — policy itself is scoped to building the proxy,
+	// but what it bound is part of what this run was permitted to do
+	// (P7-2, docs/policy-record.md §5).
+	var boundSecrets []*egress.Secret
 	if list := splitAllow(*allow); len(list) > 0 {
 		opts.Allow = list
 		opts.Net, err = sandbox.NewNetwork(sandboxID)
@@ -357,6 +363,7 @@ status. This is how you hand an agent a sandbox and nothing else:
 				return err
 			}
 		}
+		boundSecrets = policy.Secrets
 		proxy = &egress.Proxy{Policy: policy, CA: ca}
 		port, err := proxy.Listen(opts.Net.HostIP.String() + ":0")
 		if err != nil {
@@ -622,6 +629,45 @@ status. This is how you hand an agent a sandbox and nothing else:
 		Type: recorder.TypeSessionReady, BootMS: sb.State.BootReadyMS,
 		Kernel: ready.Kernel, Supervisor: ready.Supervisor, Overlay: &overlay,
 	}.WithPosture(sb.State.Jailed, sb.State.Profile))
+
+	// What this machine was permitted, once, alongside its session.ready
+	// (P7-2, docs/policy-record.md §3, §5). Never a secret value: only what
+	// secret.use already writes, by name and host.
+	var pluginNames []string
+	if plugins != nil {
+		pluginNames = plugins.Names()
+	}
+	imgManifestDir := *imgDir
+	if imgManifestDir == "" {
+		imgManifestDir = sandbox.ImageDir(*arch)
+	}
+	rootfsSHA, kernelSHA := sessionpolicy.Digests(imgManifestDir)
+	// Absolute, not the raw --workspace flag: an explicit flag is never
+	// resolved against the policy file the way kelyfos.toml's own workspace
+	// key already is (a few lines up), so a relative one recorded as typed
+	// would need cwd on session.start joined onto it by hand to mean
+	// anything. A live boot of this exact door with --workspace ws is what
+	// found this — the field held the literal string "ws" before this fix.
+	workspaceAbs := *wsDir
+	if workspaceAbs != "" {
+		if abs, err := filepath.Abs(workspaceAbs); err == nil {
+			workspaceAbs = abs
+		}
+	}
+	_ = rec.Append(recorder.NewSessionPolicy("", recorder.PolicyFields{
+		VcpuCount: *cpus, MemMiB: *memMiB, CPUQuota: cpuQuota,
+		DiskBytes: diskCeiling, ScratchBytes: scratchBytes,
+		NetMbpsRx: ioLimits.NetMbpsRx, NetMbpsTx: ioLimits.NetMbpsTx,
+		DiskIOPS: ioLimits.DiskIOPS, DiskMbps: ioLimits.DiskMbps,
+		MaxRuntimeMS: maxRuntime.Milliseconds(), IdleTimeoutMS: idleTimeout.Milliseconds(),
+		Allow: opts.Allow, Ports: sessionpolicy.Ports(opts.Allow),
+		Secrets:   sessionpolicy.Secrets(boundSecrets),
+		Workspace: workspaceAbs, Plugins: pluginNames,
+		Forwards:     sessionpolicy.Forwards(theForwards),
+		RootfsSHA256: rootfsSHA,
+		KernelSHA256: kernelSHA,
+		Tools:        sessionpolicy.ToolsForCLI(plugins != nil),
+	}))
 
 	fmt.Printf("sandbox %s ready in %d ms (vmm %d ms + guest %d ms)\n",
 		sb.State.ID, sb.State.BootReadyMS, sb.State.BootReadyMS-guestMS, guestMS)

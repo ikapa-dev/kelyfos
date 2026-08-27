@@ -438,6 +438,11 @@ func TestEveryKnownEventTypeIsClassified(t *testing.T) {
 		recorder.TypeShellStart:     true,
 		recorder.TypeShellEnd:       true,
 		recorder.TypeForwardAccept:  true,
+		// session.policy (P7-2) landed after this package did. Nothing here
+		// folds it yet — P7-7/P7-8's views are what actually need to read a
+		// machine's declared caps, and that is real work for whichever of
+		// them picks it up, not a one-line fix here.
+		recorder.TypeSessionPolicy: true,
 	}
 	for _, typ := range allEventTypes() {
 		// command.output and command.exit never append their own Timeline

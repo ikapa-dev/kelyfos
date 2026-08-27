@@ -674,6 +674,45 @@ identical to a plugin that never had those tools. After a crash its tools stay
 advertised and fail with the reason, so the transcript and the agent agree about
 what happened.
 
+### `session.policy`
+What the machine was permitted, once per machine, immediately after its
+`session.ready` — never on `session.start`, because a team's `session.start`
+opens one chain for several machines and this describes one
+(`docs/policy-record.md` §3, written before P7-2 built it). Inside a team it
+carries `agent`, the same way `session.ready` does; outside one, it carries
+none. Three fields are not new: `vcpu_count`, `mem_mib` and
+`cpu_quota_percent` are the same fields `resource.oom` and `resource.summary`
+already carry, reused for the declared cap rather than duplicated for a
+fourth spelling of it.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `vcpu_count` | integer | Cores the guest sees. Absent when nothing declared a cap for this machine (a bare team member with no `[team.agent.resources]`, say). |
+| `mem_mib` | integer | Guest RAM cap, MiB. Same absence rule. |
+| `cpu_quota_percent` | integer | Host CPU time, percent of one core. Absent when uncapped. |
+| `disk_bytes` | integer | Ceiling on the packed workspace image. Present whenever `disk` (or a per-agent equivalent) is declared, whether or not a workspace is actually attached to this machine — the ceiling is what was declared, not only what ended up mattering. |
+| `scratch_bytes` | integer | `scratch` — tmpfs size behind the overlay. |
+| `net_mbps_rx` / `net_mbps_tx` | integer | Rate caps, decimal Mbps. Absent when unthrottled. |
+| `disk_iops` / `disk_mbps` | integer | Block device caps. Absent when unthrottled. |
+| `max_runtime_ms` / `idle_timeout_ms` | integer | Budgets, milliseconds. Absent when unbudgeted. |
+| `allow` | string array | The resolved egress allowlist. Absent when the machine has no network interface at all. |
+| `ports` | integer array | Ports the allowlist actually covers — `[80, 443]` whenever there is a network, since `egress.Policy.Ports` has no caller yet (P7-4) and that pair is its own runtime default. Same absence rule as `allow`. |
+| `secrets` | object array | `name`, `host` and — when the binding names one — `path`. Never a value: checked by grepping a real chain for the value and finding nothing (this section's own acceptance evidence). |
+| `workspace` | string | The host directory attached at `/work`, resolved to an absolute path. Absent when no workspace is attached. |
+| `plugins` | string array | Configured plugin names — nothing about their path, command or arguments. Absent on a door that does not support `[[plugin]]` for this machine (every team member, today). |
+| `forwards` | string array | `"<host-port>:<guest-port>"` per `[[forward]]` entry. Absent on a door that does not support forwards for this machine (every team member and every `serve-mcp`-created machine, today). |
+| `rootfs_sha256` / `kernel_sha256` | string | The image manifest's own digests (`internal/sandbox/manifest.go`). |
+| `tools` | string array | The outward verbs usable against this machine: `["exec", "shell", "diff", "snapshot save", "pause"]` for a CLI-facing machine, plus `"mcp"` when it has plugins configured; `["sandbox_exec", "sandbox_read_file", "sandbox_write_file", "sandbox_stop", "sandbox_snapshot"]` for one `serve-mcp` created. |
+| `parent_session` | string | The session this machine's memory image came from, when it has one — a fork or a restore, CLI or `serve-mcp`. Read from the snapshot's own metadata (`SourceSession`), which is what lets a run's history be followed across two hops the way a snapshot *name* never could. |
+| `traceparent` | string | An inbound W3C `traceparent`, verbatim and unparsed. Only ever present on a `serve-mcp`-created machine, and only when the caller supplied one. |
+
+Some caps are genuinely absent on a door that does not enforce them today
+rather than omitted by policy: `kelyfos snapshot restore`, `sandbox_restore`
+and `sandbox_fork` apply none of `cpu_quota`, `scratch`, the rate caps or
+either budget, so `session.policy` on those three doors correctly shows none
+of them — the record is honest about an enforcement gap docs/policy-record.md
+§4's own research found while wiring these doors, not silent about it.
+
 ---
 
 ## 5. Reading the file
@@ -866,3 +905,4 @@ between for the two to get out of step.
 | `forward.accept` per connection, carried or refused | E5-5 |
 | The export carries its record; `kelyfos verify` re-runs the chain offline | P6-6 |
 | Signed exports, verifiable offline against a key the reader holds | P6-7 |
+| `session.policy` per machine, alongside `session.ready`, at every door | P7-2 |
