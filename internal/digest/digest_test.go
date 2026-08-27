@@ -439,9 +439,13 @@ func TestEveryKnownEventTypeIsClassified(t *testing.T) {
 		recorder.TypeShellEnd:       true,
 		recorder.TypeForwardAccept:  true,
 	}
-	for _, typ := range allEventTypes {
-		d := Walk([]recorder.Event{{Type: typ}})
-		got := d.Timeline[0].Category
+	for _, typ := range allEventTypes() {
+		// command.output and command.exit never append their own Timeline
+		// entry — they fold into the command.start entry they belong to, or
+		// (with none open, as here) do nothing to Timeline at all — so this
+		// reads Absorb's own return value rather than indexing Timeline,
+		// which the two of them can leave empty.
+		got := New().Absorb(recorder.Event{Type: typ}).Category
 		if got == "other" && !knownUnclassified[typ] {
 			t.Errorf("%s classified as %q with no entry in knownUnclassified — "+
 				"either give it a category or add it to the list deliberately", typ, got)
@@ -501,6 +505,133 @@ func TestOutputAndExitStillFoldWithoutKeepingTimeline(t *testing.T) {
 	}
 }
 
+// A command that exits with no numeric code at all — a supervisor crash
+// mid-exec, docs/events.md's `error` case; host/servemcptools.go's
+// exec-failure path writes exactly this shape — still marks its command
+// entry Exited, and still carries the Error a view needs to explain what
+// happened. This is the direct regression test for review finding 1: a first
+// pass at P7-1 gated the whole exit line, error included, on Code being
+// non-nil, which this event never has, so the diagnostic disappeared
+// silently on exactly the class of exit where it matters most.
+func TestExitWithNoCodeStillMarksExitedAndKeepsItsError(t *testing.T) {
+	d := New()
+	d.Absorb(recorder.Event{Type: recorder.TypeCommandStart, Agent: "a", Call: "c1", Via: "serve-mcp"})
+	exit := d.Absorb(recorder.Event{Type: recorder.TypeCommandExit, Agent: "a", Call: "c1",
+		Error: &recorder.EvError{Kind: "internal", Message: "vsock closed mid-exec"}})
+
+	if !exit.Refused {
+		t.Error("a no-code exit was not flagged Refused")
+	}
+	owner := d.Timeline[0]
+	if !owner.Exited {
+		t.Fatal("the command's entry was not marked Exited")
+	}
+	if owner.Code != nil {
+		t.Errorf("Code = %v, want nil (no code was ever reported)", owner.Code)
+	}
+	if owner.Error == nil || owner.Error.Kind != "internal" || owner.Error.Message != "vsock closed mid-exec" {
+		t.Errorf("Error = %v, want the exit's own error carried through", owner.Error)
+	}
+}
+
+// Output does not accumulate at all when KeepTimeline is unset — the direct
+// regression test for review finding 2. A zero-value Digest is kelyfos
+// watch's exact shape: it never reads Output back (it renders each
+// command.output's own transient Text as the chunk arrives), so a
+// still-running, still-printing command must not grow an unbounded string on
+// an entry nothing will ever read.
+func TestOutputDoesNotAccumulateWithoutKeepTimeline(t *testing.T) {
+	var live Digest
+	live.Absorb(recorder.Event{Type: recorder.TypeCommandStart, Agent: "a", Call: "c1"})
+	chunk := strings.Repeat("x", 1024)
+	for i := 0; i < 5000; i++ {
+		out := live.Absorb(recorder.Event{Type: recorder.TypeCommandOutput, Agent: "a", Call: "c1",
+			Data: base64.StdEncoding.EncodeToString([]byte(chunk))})
+		if out.Text != chunk {
+			t.Fatalf("chunk %d: Text = %d bytes, want %d", i, len(out.Text), len(chunk))
+		}
+	}
+	owner := live.openCommands["c1"]
+	if owner == nil {
+		t.Fatal("the command is no longer open")
+	}
+	if owner.Output != "" {
+		t.Errorf("Output accumulated to %d bytes with KeepTimeline unset, want 0", len(owner.Output))
+	}
+
+	// The same chunks, kept: Output does accumulate, because
+	// internal/report reads it back.
+	kept := New()
+	kept.Absorb(recorder.Event{Type: recorder.TypeCommandStart, Agent: "a", Call: "c1"})
+	for i := 0; i < 3; i++ {
+		kept.Absorb(recorder.Event{Type: recorder.TypeCommandOutput, Agent: "a", Call: "c1",
+			Data: base64.StdEncoding.EncodeToString([]byte(chunk))})
+	}
+	if got := len(kept.Timeline[0].Output); got != 3*len(chunk) {
+		t.Errorf("kept Output = %d bytes, want %d", got, 3*len(chunk))
+	}
+}
+
+// Past MaxDistinctKeys distinct domains, a new host does not mint another map
+// entry — the direct regression test for review finding 3: an already-hostile
+// session naming an unbounded number of distinct hosts must not grow a
+// long-running kelyfos watch's own heap by one entry per host, forever.
+// Domains, Store and Pairs all share the same bound; this exercises Domains
+// and Store directly and Pairs by the same construction.
+func TestDistinctDomainsAreBoundedAndSayWhenTruncated(t *testing.T) {
+	var d Digest
+	blocked := false
+	for i := 0; i < MaxDistinctKeys+100; i++ {
+		d.Absorb(recorder.Event{Type: recorder.TypeEgressAttempt,
+			Host: fmt.Sprintf("host-%d.evil", i), Port: 443, Allowed: &blocked, Reason: "not_in_allowlist"})
+	}
+	if len(d.Domains) != MaxDistinctKeys {
+		t.Errorf("Domains has %d entries, want capped at %d", len(d.Domains), MaxDistinctKeys)
+	}
+	if !d.DomainsTruncated {
+		t.Error("DomainsTruncated was not set past the cap")
+	}
+	// A host seen before the cap keeps accumulating after it is reached.
+	for i := 0; i < 5; i++ {
+		d.Absorb(recorder.Event{Type: recorder.TypeEgressAttempt, Host: "host-0.evil", Port: 443,
+			Allowed: &blocked, Reason: "not_in_allowlist"})
+	}
+	if got := d.Domains["host-0.evil"].Blocked; got != 6 {
+		t.Errorf("host-0.evil.Blocked = %d, want 6 (1 from the loop, 5 more after the cap)", got)
+	}
+}
+
+// Store keys are bounded the same way domains are — a distinct, guest-chosen
+// key past the cap does not mint another map entry.
+func TestDistinctStoreKeysAreBoundedAndSayWhenTruncated(t *testing.T) {
+	var d Digest
+	for i := 0; i < MaxDistinctKeys+50; i++ {
+		d.Absorb(recorder.Event{Type: recorder.TypeTeamStore, Agent: "a",
+			Peer: fmt.Sprintf("key-%d", i), Kind: "get", Outcome: "refused", Reason: "denied"})
+	}
+	if len(d.Store) != MaxDistinctKeys {
+		t.Errorf("Store has %d entries, want capped at %d", len(d.Store), MaxDistinctKeys)
+	}
+	if !d.StoreTruncated {
+		t.Error("StoreTruncated was not set past the cap")
+	}
+}
+
+// A chain that never carried a session.start at all — malformed or a
+// partial read — leaves SawSessionStart false, so a view knows to say
+// nothing about the image rather than assert a fact the chain never stated.
+// The direct regression test for review finding 4.
+func TestSawSessionStartIsFalseWithoutOne(t *testing.T) {
+	d := Walk([]recorder.Event{{Type: recorder.TypeCommandStart, Call: "c1"}})
+	if d.SawSessionStart {
+		t.Error("SawSessionStart was set with no session.start ever absorbed")
+	}
+	withStart := Walk([]recorder.Event{{Type: recorder.TypeSessionStart}})
+	if !withStart.SawSessionStart {
+		t.Error("SawSessionStart was not set by an agentless session.start")
+	}
+}
+
 // openCommands is bounded by commands still running, not by how many have
 // ever run: it is freed the moment a command's exit is absorbed, win or lose.
 func TestOpenCommandsIsFreedOnExit(t *testing.T) {
@@ -541,15 +672,35 @@ func TestAZeroValueDigestIsSafeToAbsorbInto(t *testing.T) {
 	}
 }
 
-var allEventTypes = []string{
-	recorder.TypeSessionStart, recorder.TypeSessionReady, recorder.TypeSessionEnd,
-	recorder.TypeCommandStart, recorder.TypeFileWrite, recorder.TypeEgressAttempt,
-	recorder.TypeSecretUse, recorder.TypeSecretWithheld, recorder.TypeSecretScrubbed,
-	recorder.TypeResourceOOM, recorder.TypeResourceTimeout, recorder.TypeResourceSummary,
-	recorder.TypeTeamMessage, recorder.TypeTeamRefused, recorder.TypeTeamStore, recorder.TypeTeamSpawn,
-	recorder.TypeMCPHostCall, recorder.TypeMCPHostResult, recorder.TypePluginCall, recorder.TypePluginCrash,
-	recorder.TypeSessionPause, recorder.TypeSessionResume, recorder.TypeRunReview,
-	recorder.TypeShellStart, recorder.TypeShellEnd, recorder.TypeForwardAccept,
+// allEventTypes reads internal/recorder's own type list rather than trusting
+// a hand-kept copy of it — the same rule TestSchemaCoversEveryType applies to
+// the recorder package itself. A hand-kept slice here would make
+// TestEveryKnownEventTypeIsClassified's own claim false: a new event type
+// added to recorder without a case in this package's switch would silently
+// not appear in the loop that is supposed to catch exactly that (review
+// finding, P7-1).
+func allEventTypes() []string {
+	types := recorder.Types()
+	out := make([]string, len(types))
+	for i, t := range types {
+		out[i] = t.Type
+	}
+	return out
+}
+
+// allEventTypes genuinely tracks recorder.Types() rather than a hand-kept
+// copy of it, and stays in sync with no maintenance.
+func TestAllEventTypesTracksTheRecorderPackage(t *testing.T) {
+	got := allEventTypes()
+	want := recorder.Types()
+	if len(got) != len(want) {
+		t.Fatalf("allEventTypes() has %d entries, recorder.Types() has %d", len(got), len(want))
+	}
+	for i, typ := range want {
+		if got[i] != typ.Type {
+			t.Errorf("allEventTypes()[%d] = %q, want %q", i, got[i], typ.Type)
+		}
+	}
 }
 
 // FuzzAbsorbNeverPanics is this package's hostile-input target: every string
@@ -562,21 +713,37 @@ var allEventTypes = []string{
 // kept-Timeline Digest and once through a live one, exercises both of
 // KeepTimeline's paths (P7-1) with one corpus.
 func FuzzAbsorbNeverPanics(f *testing.F) {
-	for _, typ := range allEventTypes {
+	for _, typ := range allEventTypes() {
 		f.Add(typ, "agent-1", "peer-1", "call-1", "cmd one\x00cmd two", "example.com",
-			"/etc/passwd", "api-key", "denied", "get", "delivered", "\x1b[2Jhi", 3, true)
+			"/etc/passwd", "api-key", "denied", "get", "delivered", "\x1b[2Jhi", 3, true, false)
 	}
-	f.Add("command.start", "", "", "", "", "", "", "", "", "", "", "", 0, false)
+	f.Add("command.start", "", "", "", "", "", "", "", "", "", "", "", 0, false, false)
 	f.Add("team.store", "a", "<script>alert(1)</script>", "c1", "", "", "", "",
-		"", "delete", "refused", "", 0, false)
+		"", "delete", "refused", "", 0, false, false)
+	// The exact shape review finding 1 caught escaping this corpus: a
+	// command.exit with no numeric code at all (a supervisor crash mid-exec,
+	// docs/events.md's `error` case — host/servemcptools.go's exec-failure
+	// path writes precisely this) and an Error carrying the diagnostic. No
+	// prior seed ever set codeIsNil, so this class of event was never
+	// fuzzed; report.go's rendering guard regressed to dropping both the
+	// exit line and the error text together and 6.5M prior fuzz execs never
+	// noticed, because none of them could produce a nil Code.
+	f.Add("command.exit", "a", "", "c1", "", "", "", "",
+		"internal", "", "", "", 0, false, true)
 
 	f.Fuzz(func(t *testing.T, typ, agent, peer, call, cmd, host, path, name,
-		reason, kind, outcome, data string, code int, allowed bool) {
+		reason, kind, outcome, data string, code int, allowed, codeIsNil bool) {
+		var codePtr *int
+		if !codeIsNil {
+			c := code
+			codePtr = &c
+		}
 		e := recorder.Event{
 			Type: typ, Agent: agent, Peer: peer, Call: call,
 			Cmd: strings.Split(cmd, "\x00"), Host: host, Path: path, Name: name,
 			Reason: reason, Kind: kind, Outcome: outcome, Data: data,
-			Code: &code, Allowed: &allowed, Mode: "terminated", Bytes: len(data),
+			Code: codePtr, Allowed: &allowed, Mode: "terminated", Bytes: len(data),
+			Error: &recorder.EvError{Kind: reason, Message: outcome},
 		}
 
 		kept := New()
@@ -586,6 +753,9 @@ func FuzzAbsorbNeverPanics(f *testing.F) {
 		}
 		if entry.Category == "" {
 			t.Errorf("entry for type %q has an empty Category", typ)
+		}
+		if typ == recorder.TypeCommandExit && codeIsNil && !entry.Refused {
+			t.Errorf("a command.exit with no code was not treated as a failure")
 		}
 
 		var live Digest

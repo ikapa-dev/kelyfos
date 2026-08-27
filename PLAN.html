@@ -4084,6 +4084,66 @@ after:
         independently, inside Buildroot's <code>target-finalize</code> step, before any Go code runs. The real-VM
         checks above exercise the identical <code>kelyfos log --export</code> / <code>kelyfos verify</code> path
         cookbook recipe 6 does, with <code>--image base</code> substituted, and pass</td></tr>
+    <tr><td class="mono">2026-08-27</td><td class="mono">P7-1</td>
+        <td><b>Adversarial review of P7-1 found three blocking regressions the fold's own tests never reached, and
+        one non-blocking one; all four fixed, plus two hygiene findings, in this pass.</b> The review built both
+        the pre-P7-1 and post-P7-1 <code>kelyfos</code> binaries and diffed 115 real session chains through both
+        report renderers &mdash; 31 differed, every difference traced to one of these.
+        <b>Finding 1 (blocking):</b> the flat and lane views had come to gate a command's whole exit line, error
+        message included, on <code>en.Code != nil</code> &mdash; but a command can exit with <i>no</i> numeric
+        code at all (a supervisor crash mid-exec; <code>host/servemcptools.go</code>'s exec-failure path writes
+        exactly this shape), and the old code always showed the line, defaulting the code to -1, regardless.
+        Fixed with a new <code>Entry.Exited</code> flag, set once a command's exit is absorbed, independent of
+        whether that exit carried a code &mdash; the flat and lane views now gate on <code>Exited</code> and
+        default <code>code := -1</code> inside it, exactly as before P7-1.
+        <b>Finding 2 (blocking):</b> <code>Entry.Output</code> accumulated every command.output chunk onto its
+        command's entry regardless of <code>KeepTimeline</code>, so a live <code>kelyfos watch</code>
+        (<code>KeepTimeline</code> false, which never reads <code>Output</code> back) still grew that string
+        without bound for any still-running, still-printing command &mdash; the same defect class
+        <code>KeepTimeline</code> was added to close, left half-open in the one place that accumulates by
+        volume rather than by event count. Fixed: the accumulation itself is now gated on
+        <code>KeepTimeline</code>.
+        <b>Finding 3 (blocking):</b> <code>Domains</code>, <code>Store</code> and <code>Pairs</code> mint one map
+        entry per distinct host, store key or message pair and never free one &mdash; every key at least partly a
+        guest's choice, every attempt recorded whether allowed or refused. A hostile session naming an unbounded
+        number of distinct hosts or keys grew a long-running watcher's own heap linearly and forever. Fixed with
+        <code>MaxDistinctKeys</code> (4096): past the cap a key already tracked keeps accumulating, a genuinely
+        new one sets a <code>*Truncated</code> flag instead of minting another entry &mdash; bounded, and saying
+        so, per the RENDER checklist's own words.
+        <b>Finding 4 (non-blocking):</b> <code>shownImage</code> asserted &ldquo;per agent&rdquo; for any chain
+        with a blank <code>Image</code>, including one that never carried a <code>session.start</code> at all.
+        Fixed with <code>Digest.SawSessionStart</code>, set only by an agentless <code>session.start</code>;
+        the fallback text now requires it.
+        <b>Two hygiene findings also fixed:</b> <code>digest_test.go</code>'s <code>allEventTypes</code> was a
+        hand-kept slice whose comment claimed it read <code>internal/recorder</code>'s own type list &mdash; it
+        now actually does, via <code>recorder.Types()</code>, with a test pinning that it stays in sync; and
+        <code>FuzzAbsorbNeverPanics</code> never generated a nil <code>Code</code> (finding 1's exact shape), so
+        6.5M prior fuzz execs could not have caught it &mdash; a <code>codeIsNil</code> fuzz parameter and a
+        dedicated seed close that gap. <b>An evidence nit in the row above is also reconciled here</b> rather than
+        edited there: that row's &ldquo;8 events&rdquo; was captured mid-teardown, before
+        <code>session.end</code>/<code>resource.summary</code> were appended; a fresh export of the same kind of
+        session after full teardown reads 10, matching what the review found on disk.</td>
+        <td class="mono">every fix has a direct, non-fuzz regression test naming the finding it closes:
+        <code>TestExitWithNoCodeStillMarksExitedAndKeepsItsError</code> and (rendered, both views)
+        <code>TestExitWithNoCodeStillShowsItsErrorEverywhere</code>;
+        <code>TestOutputDoesNotAccumulateWithoutKeepTimeline</code> (5000 chunks, 1 KiB each, <code>Output</code>
+        stays 0 bytes unkept vs. accumulates correctly when kept);
+        <code>TestDistinctDomainsAreBoundedAndSayWhenTruncated</code> and
+        <code>TestDistinctStoreKeysAreBoundedAndSayWhenTruncated</code> (<code>MaxDistinctKeys</code>+100 distinct
+        keys &rarr; capped at <code>MaxDistinctKeys</code>, <code>*Truncated</code> set, an already-tracked key
+        still accumulates past the cap); <code>TestSawSessionStartIsFalseWithoutOne</code> and
+        <code>TestNoSessionStartMeansNoImageClaim</code>; <code>TestAllEventTypesTracksTheRecorderPackage</code><br>
+        <code>go vet ./...</code> clean; <code>go test ./...</code> &rarr; 18 packages <code>ok</code>
+        (<code>internal/digest</code> now 30 tests + <code>FuzzAbsorbNeverPanics</code>,
+        <code>internal/report</code> now 17); every test from the prior row's pass still passes unmodified<br>
+        <code>go test -run='^$' -fuzz=FuzzAbsorbNeverPanics -fuzztime=15s</code> &rarr; ~2.0M execs, 0 failures
+        (now exercising the nil-Code path every iteration <code>codeIsNil</code> fuzzes true); the four
+        <code>internal/report</code> fuzz targets re-run at 15s each, clean; <code>make vuln</code> &rarr; no
+        vulnerabilities found; <code>make docs</code> &rarr; still no diff<br>
+        real-VM re-verification inside <code>kelyfos-dev</code>: a fresh single-sandbox run, exported only after
+        full teardown (<code>kelyfos verify</code> &rarr; &ldquo;chain intact, 10 events verified&rdquo;),
+        confirms both the reconciled event count and that the happy path (a normal, non-nil exit code) still
+        renders &ldquo;exit 5&rdquo; correctly with these changes in place</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>

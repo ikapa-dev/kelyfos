@@ -33,6 +33,26 @@ import (
 	"github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
 )
 
+// MaxDistinctKeys bounds how many distinct domains, store keys and message
+// pairs a Digest will ever mint a map entry for.
+//
+// Every one of these is keyed on a value at least partly under a guest's
+// choice: the host an egress.attempt names, the key a team.store access
+// requests, the peer named in a team.message — every one recorded whether it
+// was allowed or refused. kelyfos watch absorbs from a session this project's
+// own threat model treats as hostile for as long as it keeps running, so
+// `for i in $(seq 1 200000); do wget http://$i.evil/; done` must not be able
+// to grow the *watcher's* own heap by one map entry per distinct hostname,
+// without bound, for as long as the loop runs. Past the cap, a key already
+// being tracked keeps accumulating normally; a genuinely new key sets the
+// matching Truncated flag instead of minting another entry — the aggregate
+// stays bounded, and says so, rather than silently stopping being accurate
+// (the RENDER checklist's own "output bounded, and saying so when it
+// truncates"). Applied unconditionally, not only when KeepTimeline is unset:
+// internal/report reads a chain already large enough to have hit this is a
+// chain a view should say so about too, not only a live one.
+const MaxDistinctKeys = 4096
+
 // Counters is one bucket's tally: a session's own, or one agent's. The two
 // views disagree about which bucket an event lands in — watch keeps a team's
 // agentless events and its agents' events apart; report sums both into one
@@ -116,6 +136,17 @@ type Entry struct {
 	Refused  bool
 	Flow     bool
 
+	// Exited is set on a command.start entry once its command.exit has been
+	// absorbed — distinct from Code being non-nil, which it is not: a
+	// command can exit with no numeric code at all (a supervisor crash mid-
+	// exec, docs/events.md's `error` case) and still need its Error shown. A
+	// view must not use "Code != nil" as a proxy for "this command finished"
+	// — that was P7-1's own regression, caught by review rather than by the
+	// fold's own tests: it silently dropped the exit line and the error
+	// detail together on exactly the event shape where the diagnostic
+	// matters most.
+	Exited bool
+
 	// Output is filled in only on the command.start entry: the decoded,
 	// stream-prefixed text of every command.output event that named the same
 	// Call, accumulated here so a static view (the report) can show a
@@ -141,6 +172,15 @@ type Digest struct {
 	Image, Arch, Kelyfos, Kernel, Supervisor string
 	BootMS                                   int64
 	Started, Ended, EndReason                string
+	// SawSessionStart is whether an agentless session.start was ever
+	// absorbed — distinct from Image being non-empty, which it is not: a
+	// team or a server session.start legitimately carries no single image
+	// and still happened. A view asking "what should I show for the image"
+	// needs to tell "this chain has no single flavour" (fall back to a
+	// label) apart from "this chain never told me" (show nothing) — a
+	// malformed or partial chain with no session.start at all should not
+	// have a view assert "per agent" about a fact it never received.
+	SawSessionStart bool
 	// Served marks a serve-mcp session, whose lanes are sandboxes rather
 	// than agents (E4-4).
 	Served bool
@@ -159,6 +199,9 @@ type Digest struct {
 	Receipt *recorder.Event
 
 	Secrets []SecretRef // de-duplicated by name+host, first-seen order
+	// SecretsTruncated is set once a distinct name+host past MaxDistinctKeys
+	// was seen and not added to Secrets. See MaxDistinctKeys.
+	SecretsTruncated bool
 
 	// Team is true the moment any event names an agent — no flag, no
 	// asking, the same rule watch and report have always used.
@@ -182,12 +225,21 @@ type Digest struct {
 
 	PairOrder []Pair
 	Pairs     map[Pair]*PairCounts
+	// PairsTruncated is set once a distinct (From, To) past MaxDistinctKeys
+	// was seen and not added to Pairs. See MaxDistinctKeys.
+	PairsTruncated bool
 
 	DomainOrder []string
 	Domains     map[string]*Domain
+	// DomainsTruncated is set once a distinct host past MaxDistinctKeys was
+	// seen and not added to Domains. See MaxDistinctKeys.
+	DomainsTruncated bool
 
 	StoreOrder []string
 	Store      map[string]*StoreKey
+	// StoreTruncated is set once a distinct key past MaxDistinctKeys was
+	// seen and not added to Store. See MaxDistinctKeys.
+	StoreTruncated bool
 
 	// KeepTimeline controls whether Absorb retains Timeline. A batch caller
 	// that already holds a whole chain in memory — internal/report, via Walk,
@@ -322,42 +374,64 @@ func (d *Digest) peer(name string) {
 	d.PeerOnly = append(d.PeerOnly, name)
 }
 
+// pair returns p's counters, minting them the first time p is seen — unless
+// MaxDistinctKeys distinct pairs already exist, in which case it returns nil
+// and sets PairsTruncated rather than let a session naming an unbounded
+// number of distinct peers grow this map without bound (see MaxDistinctKeys).
+// A nil return means "do not update anything for this pair", not an error.
 func (d *Digest) pair(p Pair) *PairCounts {
 	pc, ok := d.Pairs[p]
-	if !ok {
-		pc = &PairCounts{}
-		if d.Pairs == nil {
-			d.Pairs = map[Pair]*PairCounts{}
-		}
-		d.Pairs[p] = pc
-		d.PairOrder = append(d.PairOrder, p)
+	if ok {
+		return pc
 	}
+	if len(d.Pairs) >= MaxDistinctKeys {
+		d.PairsTruncated = true
+		return nil
+	}
+	pc = &PairCounts{}
+	if d.Pairs == nil {
+		d.Pairs = map[Pair]*PairCounts{}
+	}
+	d.Pairs[p] = pc
+	d.PairOrder = append(d.PairOrder, p)
 	return pc
 }
 
+// domain is pair's counterpart for egress hosts. See pair and MaxDistinctKeys.
 func (d *Digest) domain(host string) *Domain {
 	dm, ok := d.Domains[host]
-	if !ok {
-		dm = &Domain{Host: host}
-		if d.Domains == nil {
-			d.Domains = map[string]*Domain{}
-		}
-		d.Domains[host] = dm
-		d.DomainOrder = append(d.DomainOrder, host)
+	if ok {
+		return dm
 	}
+	if len(d.Domains) >= MaxDistinctKeys {
+		d.DomainsTruncated = true
+		return nil
+	}
+	dm = &Domain{Host: host}
+	if d.Domains == nil {
+		d.Domains = map[string]*Domain{}
+	}
+	d.Domains[host] = dm
+	d.DomainOrder = append(d.DomainOrder, host)
 	return dm
 }
 
+// store is pair's counterpart for store keys. See pair and MaxDistinctKeys.
 func (d *Digest) store(key string) *StoreKey {
 	sk, ok := d.Store[key]
-	if !ok {
-		sk = &StoreKey{Key: key}
-		if d.Store == nil {
-			d.Store = map[string]*StoreKey{}
-		}
-		d.Store[key] = sk
-		d.StoreOrder = append(d.StoreOrder, key)
+	if ok {
+		return sk
 	}
+	if len(d.Store) >= MaxDistinctKeys {
+		d.StoreTruncated = true
+		return nil
+	}
+	sk = &StoreKey{Key: key}
+	if d.Store == nil {
+		d.Store = map[string]*StoreKey{}
+	}
+	d.Store[key] = sk
+	d.StoreOrder = append(d.StoreOrder, key)
 	return sk
 }
 
@@ -399,6 +473,7 @@ func (d *Digest) Absorb(e recorder.Event) *Entry {
 	case recorder.TypeSessionStart:
 		entry.Category = "session"
 		if e.Agent == "" {
+			d.SawSessionStart = true
 			d.Image, d.Arch, d.Kelyfos = e.Image, e.Arch, e.Kelyfos
 			d.Started = e.TS
 			// Served only when Image is blank too, matching the fallback it
@@ -446,17 +521,18 @@ func (d *Digest) Absorb(e recorder.Event) *Entry {
 			d.Terminated++
 		}
 		if e.Host != "" {
-			dm := d.domain(e.Host)
-			if allowed {
-				dm.Allowed++
-			} else {
-				dm.Blocked++
+			if dm := d.domain(e.Host); dm != nil {
+				if allowed {
+					dm.Allowed++
+				} else {
+					dm.Blocked++
+				}
+				if terminated {
+					dm.Terminated++
+				}
+				dm.BytesIn += e.BytesIn
+				dm.BytesOut += e.BytesOut
 			}
-			if terminated {
-				dm.Terminated++
-			}
-			dm.BytesIn += e.BytesIn
-			dm.BytesOut += e.BytesOut
 		}
 
 	case recorder.TypeSecretUse:
@@ -464,11 +540,15 @@ func (d *Digest) Absorb(e recorder.Event) *Entry {
 		count(agent, &d.Session, func(c *Counters) { c.Secrets++ })
 		key := e.Name + "@" + e.Host
 		if !d.seenSecret[key] {
-			if d.seenSecret == nil {
-				d.seenSecret = map[string]bool{}
+			if len(d.Secrets) >= MaxDistinctKeys {
+				d.SecretsTruncated = true
+			} else {
+				if d.seenSecret == nil {
+					d.seenSecret = map[string]bool{}
+				}
+				d.seenSecret[key] = true
+				d.Secrets = append(d.Secrets, SecretRef{e.Name, e.Host})
 			}
-			d.seenSecret[key] = true
-			d.Secrets = append(d.Secrets, SecretRef{e.Name, e.Host})
 		}
 
 	case recorder.TypeTeamMessage, recorder.TypeTeamRefused:
@@ -482,12 +562,13 @@ func (d *Digest) Absorb(e recorder.Event) *Entry {
 			d.Messages++
 		}
 		d.peer(e.Peer)
-		pc := d.pair(Pair{e.Agent, e.Peer})
-		if refused {
-			pc.Refused++
-		} else {
-			pc.Messages++
-			pc.Bytes += int64(e.Bytes)
+		if pc := d.pair(Pair{e.Agent, e.Peer}); pc != nil {
+			if refused {
+				pc.Refused++
+			} else {
+				pc.Messages++
+				pc.Bytes += int64(e.Bytes)
+			}
 		}
 
 	case recorder.TypeTeamStore:
@@ -497,19 +578,20 @@ func (d *Digest) Absorb(e recorder.Event) *Entry {
 		if refused {
 			d.StoreRefused++
 		}
-		sk := d.store(e.Peer)
-		switch e.Kind {
-		case "get":
-			sk.Gets++
-		case "put":
-			sk.Puts++
-		case "delete":
-			sk.Deletes++
-		}
-		if refused {
-			sk.Denied++
-		} else {
-			sk.Bytes += int64(e.Bytes)
+		if sk := d.store(e.Peer); sk != nil {
+			switch e.Kind {
+			case "get":
+				sk.Gets++
+			case "put":
+				sk.Puts++
+			case "delete":
+				sk.Deletes++
+			}
+			if refused {
+				sk.Denied++
+			} else {
+				sk.Bytes += int64(e.Bytes)
+			}
 		}
 
 	case recorder.TypeTeamSpawn:
@@ -585,15 +667,32 @@ func (d *Digest) Absorb(e recorder.Event) *Entry {
 // this package existed — accumulates it onto the command.start entry it
 // belongs to, and returns a transient entry carrying just this chunk for a
 // live view to render immediately.
+//
+// The accumulation itself is gated on KeepTimeline, not just its presence in
+// Timeline: openCommands tracks the owning entry regardless of KeepTimeline
+// (Code/DurationMS/Error/Refused all need it), but Output is the one field on
+// that entry that grows with the command's own output volume rather than
+// with the chain's event count — a still-running command watched live can
+// print without bound, and appending to a Go string on every chunk is
+// O(n^2) over its lifetime on top of that. A live caller (KeepTimeline
+// false) never reads Output back — it renders each chunk's own Text as it
+// arrives — so there is nothing to accumulate for; only a caller that opted
+// into keeping Timeline (internal/report, building one block of output per
+// command) needs it, and pays for it. This is the same defect class
+// KeepTimeline itself was added to close, in the one place it was left
+// half-open: tracking the owner unconditionally was correct, growing an
+// unbounded field on it regardless of KeepTimeline was not.
 func (d *Digest) absorbOutput(e recorder.Event) *Entry {
 	data, _ := base64.StdEncoding.DecodeString(e.Data)
 	text := string(data)
-	if owner, ok := d.openCommands[e.Call]; ok {
-		prefix := ""
-		if e.Stream == "stderr" {
-			prefix = "stderr: "
+	if d.KeepTimeline {
+		if owner, ok := d.openCommands[e.Call]; ok {
+			prefix := ""
+			if e.Stream == "stderr" {
+				prefix = "stderr: "
+			}
+			owner.Output += prefix + text
 		}
-		owner.Output += prefix + text
 	}
 	return &Entry{Event: e, Category: "command-output", Text: text}
 }
@@ -620,6 +719,7 @@ func (d *Digest) absorbExit(e recorder.Event, agent *Agent) *Entry {
 		owner.DurationMS = e.DurationMS
 		owner.Error = e.Error
 		owner.Refused = refused
+		owner.Exited = true
 		delete(d.openCommands, e.Call)
 	}
 	if refused {

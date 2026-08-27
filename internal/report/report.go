@@ -212,8 +212,15 @@ func RenderSigned(w io.Writer, sessionID string, chain []byte, key ed25519.Priva
 // shownImage is what the header and the session-start row both say the
 // image was: the recorded flavor, or — when a team or a server left it blank
 // because no single flavor covers every machine — a fallback that names which
-// kind of hole this is rather than rendering an empty one (F-D33).
+// kind of hole this is rather than rendering an empty one (F-D33). A chain
+// that never carried a session.start at all gets neither: asserting "per
+// agent" about a fact the chain never stated would be the view inventing
+// something the record does not contain, on exactly the kind of malformed or
+// partial chain an audit artefact should stay silent about instead.
 func shownImage(d *digest.Digest) string {
+	if !d.SawSessionStart {
+		return ""
+	}
 	if d.Image != "" {
 		return d.Image
 	}
@@ -312,8 +319,17 @@ func timelineRows(d *digest.Digest) []Row {
 				fmt.Sprintf("%s after %d ms", en.Reason, en.DurationMS), "", false})
 		case recorder.TypeCommandStart:
 			detail := "via " + en.Via
-			if en.Code != nil {
-				detail += fmt.Sprintf(" · exit %d · %d ms", *en.Code, en.DurationMS)
+			// Exited, not "en.Code != nil": a command can exit with no
+			// numeric code at all — a supervisor crash mid-exec — and still
+			// carry an Error worth showing. Gating on Code being non-nil
+			// silently dropped both the exit line and the error detail
+			// together on exactly that shape (caught by review, P7-1).
+			if en.Exited {
+				code := -1
+				if en.Code != nil {
+					code = *en.Code
+				}
+				detail += fmt.Sprintf(" · exit %d · %d ms", code, en.DurationMS)
 				if en.Error != nil {
 					detail += fmt.Sprintf(" · %s: %s", en.Error.Kind, en.Error.Message)
 				}
@@ -516,8 +532,14 @@ func buildLanes(d *digest.Digest) ([]string, []LaneRow) {
 
 		case recorder.TypeCommandStart:
 			detail := "via " + en.Via
-			if en.Code != nil {
-				detail += fmt.Sprintf(" · exit %d", *en.Code)
+			// Exited, not "en.Code != nil" — see the same guard in
+			// timelineRows above.
+			if en.Exited {
+				code := -1
+				if en.Code != nil {
+					code = *en.Code
+				}
+				detail += fmt.Sprintf(" · exit %d", code)
 			}
 			add(LaneRow{ts, "command", strings.Join(en.Cmd, " "), detail, en.Output, en.Refused, laneOf(en.Agent), false})
 		case recorder.TypeFileWrite:

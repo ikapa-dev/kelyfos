@@ -204,6 +204,40 @@ func TestCommandOutputAttachesToItsCommandInTheLanes(t *testing.T) {
 	}
 }
 
+// A command that exits with no numeric code at all — a supervisor crash
+// mid-exec, docs/events.md's `error` case; host/servemcptools.go's
+// exec-failure path writes exactly this shape — still shows an exit line
+// (defaulting to -1, as it always has) and its error, in both the flat
+// timeline and the lane view. This is the direct regression test for review
+// finding 1: gating the whole exit line on Code being non-nil, rather than
+// on whether the command exited at all, silently dropped both together on
+// exactly the event class where the diagnostic matters most.
+func TestExitWithNoCodeStillShowsItsErrorEverywhere(t *testing.T) {
+	start := ev(recorder.TypeCommandStart, "worker-1")
+	start.Call, start.Cmd, start.Via = "c1", []string{"run"}, "serve-mcp"
+	exit := ev(recorder.TypeCommandExit, "worker-1")
+	exit.Call, exit.DurationMS = "c1", 1234
+	exit.Error = &recorder.EvError{Kind: "internal", Message: "vsock closed mid-exec"}
+
+	_, rows := buildLanes(digest.Walk([]recorder.Event{start, exit}))
+	if len(rows) != 1 {
+		t.Fatalf("expected one row for one command, got %d", len(rows))
+	}
+	if !rows[0].IsError {
+		t.Error("a no-code exit was not flagged as an error in the lane view")
+	}
+	if !strings.Contains(rows[0].Detail, "exit -1") {
+		t.Errorf("lane detail = %q, want it to default the missing code to -1", rows[0].Detail)
+	}
+
+	html := render(t, []recorder.Event{start, exit})
+	for _, want := range []string{"exit -1", "1234 ms", "internal: vsock closed mid-exec"} {
+		if !strings.Contains(html, want) {
+			t.Errorf("the report is missing %q for a no-code exit", want)
+		}
+	}
+}
+
 // An event that names no agent must not be attributed to whichever agent
 // happens to be first. In a record whose whole purpose is saying who did what,
 // that is the worst failure available.
@@ -378,5 +412,17 @@ func TestAServerSessionBecomesLanesOfSandboxes(t *testing.T) {
 	}
 	if strings.Contains(html, "per agent") {
 		t.Error("a server session's summary calls its sandboxes agents")
+	}
+}
+
+// A chain with no session.start at all — malformed, or a partial read — must
+// not have the report assert "per agent" about a fact the chain never
+// stated. The direct regression test for review finding 4: shownImage's
+// fallback used to trigger on Image being merely blank, which a chain that
+// never opened is indistinguishable from.
+func TestNoSessionStartMeansNoImageClaim(t *testing.T) {
+	html := render(t, []recorder.Event{ev(recorder.TypeCommandStart, "")})
+	if strings.Contains(html, "per agent") || strings.Contains(html, "per sandbox") {
+		t.Error("the report asserted an image fallback for a chain with no session.start")
 	}
 }
