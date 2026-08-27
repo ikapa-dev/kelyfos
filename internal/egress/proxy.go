@@ -98,6 +98,25 @@ type Attempt struct {
 	BytesOut int64
 }
 
+// DefaultPorts is what every sandbox in this product gets: the two ports the
+// proxy carries when a Policy names none of its own. It is exported, named
+// and tested rather than left as the two bare integers `allowsPort` used to
+// compare against, because nothing before P7-4 gave a reader — a person or a
+// future view rendering a Policy — anywhere to look this up. No caller in
+// production code ever sets Policy.Ports (tests do — see the Ports field
+// below); every sandbox this product boots is on this default, and
+// docs/networking.md §6 and EgressPort's own fix line (internal/denial) both
+// say so. See P7-4 for why this stayed a fixed property instead of becoming
+// a kelyfos.toml key: opening egress to arbitrary ports is a bigger and more
+// security-relevant surface than anything demanded it, so the smaller
+// change — making the existing fixed pair discoverable — is what shipped
+// (D65).
+//
+// A function returning a fresh slice each call, not an exported var: a shared
+// backing array would let one caller's in-place edit of what it thinks is its
+// own copy corrupt the default for every Policy that ever falls back to it.
+func DefaultPorts() []int { return []int{80, 443} }
+
 // Policy decides what may leave.
 type Policy struct {
 	// Allow lists permitted hostnames. A bare hostname matches itself and its
@@ -105,7 +124,8 @@ type Policy struct {
 	// someone typing --allow github.com means, and refusing it would only teach
 	// them to pass a wildcard.
 	Allow []string
-	// Ports that may be reached. Empty means 80 and 443.
+	// Ports that may be reached. Empty means DefaultPorts (80 and 443). No
+	// caller in this codebase ever sets this outside a test — see DefaultPorts.
 	Ports []int
 	// Secrets bound to domains. A domain with a secret is TLS-terminated so the
 	// credential can be attached; every other domain is tunnelled untouched
@@ -124,11 +144,29 @@ func (p *Policy) allowsHost(host string) bool {
 	return false
 }
 
-func (p *Policy) allowsPort(port int) bool {
-	if len(p.Ports) == 0 {
-		return port == 80 || port == 443
+// EffectivePorts is what this Policy actually enforces: Ports when the policy
+// names its own, DefaultPorts otherwise. Reading Policy.Ports directly gives
+// the wrong answer for the common case — nil, which looks like "no port is
+// permitted" rather than "the fixed default applies" — which is exactly the
+// trap a future reader of the record (P7-2's session.policy) or a view
+// (P7-7/P7-8) would fall into without this (P7-4).
+//
+// Both branches return a slice this Policy does not itself hold a reference
+// into: the custom-Ports branch copies rather than returning p.Ports itself,
+// for the same reason DefaultPorts is a function and not a shared var — a
+// caller that mutated what it got back would otherwise mutate this Policy's
+// own Ports in place, and a port check made after that would silently be
+// checking against a different policy than the one that was configured
+// (found in review).
+func (p *Policy) EffectivePorts() []int {
+	if len(p.Ports) > 0 {
+		return append([]int(nil), p.Ports...)
 	}
-	for _, allowed := range p.Ports {
+	return DefaultPorts()
+}
+
+func (p *Policy) allowsPort(port int) bool {
+	for _, allowed := range p.EffectivePorts() {
 		if port == allowed {
 			return true
 		}

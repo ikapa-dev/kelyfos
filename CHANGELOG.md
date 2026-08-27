@@ -373,6 +373,19 @@ reference described in the README and re-measured per release.
   base image with wget in place of curl and got the correct events in the correct order, confirming
   S2/P6-4 works correctly on real hardware and this was always a test bug.
 
+### Changed
+- **A `kelyfos.toml` combining `[team]` with `[[plugin]]` or `[[forward]]` is now refused by `kelyfos
+  team up` (and `serve-mcp`'s `team_up`), at plan time, instead of silently booting a team where
+  neither did anything.** Both keys are file-level and always parsed next to an ordinary `[team]`
+  section, but `packPlugins` and `resolveForwards` — the two functions that actually launch a plugin
+  or open a forward — are only ever called from the single-sandbox doors (`kelyfos run`,
+  `serve-mcp`'s own sandbox), never from a team boot. A file naming either alongside `[team]` used to
+  load without complaint and produce a team with no plugin tools advertised and no forwarded port
+  listening; it is now refused by name, with the line, and with the fix (drop the block, or run that
+  plugin or forward outside `[team]`). Ruled not a breaking change (D66): the combination never
+  worked, so nothing that depended on its effect can be broken by this — only the earlier silence
+  about it. `[[plugin]]` and `[[forward]]` continue to work exactly as before outside `[team]`.
+
 ---
 
 ## v1.0 — 2026-08-25
