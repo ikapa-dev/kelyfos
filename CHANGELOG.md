@@ -225,6 +225,16 @@ reference described in the README and re-measured per release.
   change. Verified live against a rebuilt guest image: an argument built from the four bytes
   `0x80 0x81 0x82 0x83` — not valid UTF-8 on their own — now round-trips through `kelyfos exec`
   byte-for-byte instead of coming back as four U+FFFD replacement characters.
+- **A TOML array element containing a comma inside its own quotes broke parsing of the whole
+  policy file.** `parseArray` (internal/config/config.go) split the raw bracket contents on every
+  `,` with `strings.Split` before `parseString` ever saw an element, so `args = ["x", "--y=a,b"]`
+  under `[[plugin]]` — or the same shape under `[sandbox]`/`[[team.agent]]` allow and secrets,
+  spawn images, or store read/write — tore the second element in two at the internal comma and
+  failed with a misleading "expected a quoted string" error instead of loading. The split is now
+  a quote-aware scan (`splitTopLevel`): it walks the bracket contents tracking whether the cursor
+  is inside a `"..."` string, honoring `\"` as an escaped quote that does not close it, and only
+  splits on a comma seen outside quotes. Verified with the finding's own repro — a `kelyfos.toml`
+  with `[[plugin]] args = ["x", "--y=a,b"]` — which now loads with the two-element array intact.
 
 ---
 

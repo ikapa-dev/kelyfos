@@ -49,6 +49,24 @@ command = "./db-server"
 	}
 }
 
+// F7: the exact repro from the finding — a plugin arg with a literal comma
+// inside its quotes must not break parsing of the whole file.
+func TestPluginArgsWithCommaInsideQuotes(t *testing.T) {
+	cfg, err := loadPlugin(t, `
+[[plugin]]
+name    = "browser"
+path    = "./plugins/browser"
+command = "node"
+args    = ["x", "--y=a,b"]
+`)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if len(cfg.Plugins[0].Args) != 2 || cfg.Plugins[0].Args[0] != "x" || cfg.Plugins[0].Args[1] != "--y=a,b" {
+		t.Errorf("args = %v, want [x --y=a,b]", cfg.Plugins[0].Args)
+	}
+}
+
 // The name is the prefix of every tool the plugin advertises, so it cannot
 // contain the separator and cannot be a shape a client will rewrite (F-D36).
 func TestAPluginNameCannotContainTheSeparator(t *testing.T) {

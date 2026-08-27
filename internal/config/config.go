@@ -338,7 +338,7 @@ func parseArray(v, where string) ([]string, error) {
 		return nil, nil
 	}
 	var out []string
-	for _, part := range strings.Split(inner, ",") {
+	for _, part := range splitTopLevel(inner) {
 		part = strings.TrimSpace(part)
 		if part == "" {
 			continue
@@ -350,6 +350,40 @@ func parseArray(v, where string) ([]string, error) {
 		out = append(out, s)
 	}
 	return out, nil
+}
+
+// splitTopLevel splits s on commas that fall outside a "..." string, so an
+// element like "--y=a,b" survives intact instead of being torn in two before
+// parseString ever sees it. It is a small state scan, not a regex: walk the
+// bytes tracking whether the cursor is inside a quoted string, treating \"
+// as an escaped quote that does not close it (matching how TOML escapes a
+// quote), and only split on a comma seen outside quotes. A quote that is
+// never closed just runs to the end of the element, same as before — the
+// unterminated element then fails parseString's own quoting check with its
+// existing error message. Found by the security review (F7): the previous
+// strings.Split(inner, ",") ran before any quote-awareness existed, so a
+// single comma inside a quoted array element broke the whole file.
+func splitTopLevel(s string) []string {
+	var out []string
+	inQuotes := false
+	start := 0
+	for i := 0; i < len(s); i++ {
+		switch s[i] {
+		case '\\':
+			if inQuotes && i+1 < len(s) {
+				i++ // skip the escaped character, e.g. \" or \\
+			}
+		case '"':
+			inQuotes = !inQuotes
+		case ',':
+			if !inQuotes {
+				out = append(out, s[start:i])
+				start = i + 1
+			}
+		}
+	}
+	out = append(out, s[start:])
+	return out
 }
 
 // parseBytes reads a human size — 512M, 2G, or a bare byte count. Sizes in a
