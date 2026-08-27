@@ -24,10 +24,14 @@ import (
 // the function must actually be called.
 //
 // The rule is per file rather than per function on purpose. `restoreNetwork`
-// builds the proxy and its caller wires it, which is legitimate — the recorder
-// is keyed on a sandbox id that does not exist until the restore returns — and
-// both live in snapshot.go. A file is the smallest unit that holds the whole
-// arrangement.
+// builds the proxy and its caller wires it, which is legitimate — both live in
+// snapshot.go, and the caller wires before calling sandbox.Restore, not after:
+// Restore resumes the guest and lets it round-trip over the control port
+// (Resync, confirmSeccomp, InstallTrustAnchor) well before it returns, so a
+// recorder wired only once it returns would still miss a live, unaudited
+// window. The sandbox id restoreNetwork assigns is known beforehand, which is
+// what makes wiring early possible. A file is the smallest unit that holds the
+// whole arrangement.
 //
 // Same shape as internal/config's TestEveryKeyFunctionIsScanned: read the
 // source, do not trust a list.

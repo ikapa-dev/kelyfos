@@ -30,6 +30,19 @@ reference described in the README and re-measured per release.
   way `kelyfos exec` already chunks it. `Append` itself also refuses,
   unconditionally, to write a line its own readers could not read back,
   whatever field made it that large and whatever door produced it.
+- **`kelyfos snapshot restore` could run a restored guest's egress unaudited
+  for the whole restore.** It wired the proxy's audit hooks only after
+  `sandbox.Restore` returned — but `Restore` resumes the guest and lets it
+  round-trip over the control port (clock/entropy resync, the seccomp check)
+  well before it returns, and `InstallTrustAnchor` ran after that, itself a
+  control-port round trip with a read deadline a hostile guest controls the
+  far end of. Every egress attempt, secret use and withheld-credential
+  decision in that window went unrecorded: the proxy still enforced its
+  allowlist, but nothing told the flight recorder about it. The audit hooks
+  are now wired — with the sandbox id already known, same as the other four
+  places in this product that build a proxy — before `sandbox.Restore` is
+  ever called, so nothing the guest does from the moment it resumes goes
+  unaudited.
 
 ---
 

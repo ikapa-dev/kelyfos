@@ -123,8 +123,55 @@ func snapshotRestore(argv []string) error {
 		defer proxy.Close()
 	}
 
+	// The id is picked here, before Restore is ever called, whether or not
+	// there is a network: restoreNetwork already assigns one when there is,
+	// and the no-network case has no reason to be different. sandbox.Restore
+	// does not merely build a Sandbox value and hand it back — it calls the
+	// Firecracker resume API partway through, and the guest is live, and
+	// making its own round trips over the control port (Resync,
+	// confirmSeccomp), well before Restore returns to this function. A
+	// recorder wired only after Restore returns is wired after the guest has
+	// already been running unaudited; this used to be that recorder, and
+	// P6-4 is the fix (see the comment below wireProxyAudit for what it cost).
+	if opts.ID == "" {
+		var err error
+		if opts.ID, err = sandbox.NewID(); err != nil {
+			return err
+		}
+	}
+
+	rec, err := recorder.Open(sandbox.Root(), opts.ID)
+	if err != nil {
+		return err
+	}
+	defer rec.Close()
+	_ = rec.Append(recorder.Event{
+		Type: recorder.TypeSessionStart, Image: *flavor, Arch: *arch,
+		Kelyfos: Version, Argv: os.Args, Reason: "restored from " + *name,
+	})
+	// A restored machine records its egress like any other. It did not until
+	// P6-4 went looking: this is the fifth of five proxies in the product and
+	// the only one whose audit hooks were never wired, so a restore wrote a
+	// chain with a start, a ready and an end and nothing in between — a blocked
+	// attempt left no trace, and a credential spent left no trace.
+	//
+	// Wired here, before sandbox.Restore is called, rather than after it
+	// returns as this used to do: the id is already known (above), so there is
+	// no reason left to wait, and waiting is what left the gap. It is not a
+	// gap of milliseconds — InstallTrustAnchor below is a control-port round
+	// trip to the very guest that just resumed, with a 10-second read deadline
+	// a hostile guest controls the far end of (internal/sandbox/sandbox.go's
+	// InstallTrustAnchor), and the deferred Shutdown a few lines down adds
+	// another 5. wireProxyAudit no-ops safely when proxy is nil, which is the
+	// no-network case here — see host/denials.go. `serve-mcp`'s restore
+	// (host/servemcpstate.go) already wires before Restore for the same
+	// reason; this was the one restore path that did not.
+	wireProxyAudit(proxy, rec, "", newBlockedOnce(os.Stderr))
+
 	sb, elapsed, err := sandbox.Restore(dir, opts)
 	if err != nil {
+		_ = rec.Append(recorder.Event{Type: recorder.TypeSessionEnd, Reason: "error",
+			DurationMS: rec.Since().Milliseconds()})
 		return err
 	}
 	// Registered the instant there is a machine, before anything that can fail
@@ -146,34 +193,17 @@ func snapshotRestore(argv []string) error {
 	}()
 	// D6 mints a fresh CA every run, so a restored guest is carrying an anchor
 	// for a CA that no longer exists. It has to be replaced before anything in
-	// there tries to reach a secret-bound domain.
+	// there tries to reach a secret-bound domain. The audit hooks above are
+	// already live by the time this runs, so a guest that stalls or refuses
+	// here is a stall or a refusal the chain actually shows.
 	if ca != nil {
 		if err := sb.InstallTrustAnchor(ca.AnchorPEM()); err != nil {
+			_ = rec.Append(recorder.Event{Type: recorder.TypeSessionEnd, Reason: "error",
+				DurationMS: rec.Since().Milliseconds()})
 			return err
 		}
 	}
 
-	rec, err := recorder.Open(sandbox.Root(), sb.State.ID)
-	if err != nil {
-		return err
-	}
-	defer rec.Close()
-	// A restored machine records its egress like any other. It did not until
-	// P6-4 went looking: this is the fifth of five proxies in the product and
-	// the only one whose audit hooks were never wired, so a restore wrote a
-	// chain with a start, a ready and an end and nothing in between — a blocked
-	// attempt left no trace, and a credential spent left no trace.
-	//
-	// Wired here rather than at restoreNetwork because the recorder is keyed on
-	// the sandbox id and that id does not exist until Restore returns. The gap
-	// that leaves is the milliseconds between the proxy binding and this line,
-	// during which the guest has not resumed; `serve-mcp`'s restore has no such
-	// gap because it knows the box id in advance.
-	wireProxyAudit(proxy, rec, "", newBlockedOnce(os.Stderr))
-	_ = rec.Append(recorder.Event{
-		Type: recorder.TypeSessionStart, Image: *flavor, Arch: *arch,
-		Kelyfos: Version, Argv: os.Args, Reason: "restored from " + *name,
-	})
 	_ = rec.Append(recorder.Event{
 		Type: recorder.TypeSessionReady, BootMS: elapsed.Milliseconds(),
 	}.WithPosture(sb.State.Jailed, sb.State.Profile))
