@@ -258,6 +258,26 @@ reference described in the README and re-measured per release.
   already carry the file and line that produced them, and `docs/reference/denials.md`'s own banner
   already states, on purpose, that refusals from those two paths are excluded because "the thing to
   go and look at is the line you wrote" — reversing that is a product decision, not a gap.
+- **`Append`'s own size backstop only looked at six of the event struct's fields, though its
+  comment claimed to cover "whatever field made it that large."** `clipLargestField`
+  (internal/recorder/recorder.go) named `Data`, `Args`, `Host`, `Path`, `Name` and `Cmd` by hand;
+  an oversized value anywhere else — `EvError.Message`, `Reason`, `Tool`, and every other string
+  field on `Event` — was invisible to it, so `fitUnderMaxLine`'s clip loop found nothing to clip,
+  exhausted its attempt budget, and `Append` refused the whole event: the event vanished from the
+  record instead of being clipped and kept, the same failure mode S1 closed for `Data` and `Host`
+  specifically. No current caller can put an oversized value in one of the missed fields, so this
+  was latent rather than reachable, but the backstop's whole point is to hold even for a door this
+  code does not yet know about. `clipLargestField` now finds its candidate by walking the struct
+  with reflection (`largestStringField`) instead of a hand-maintained list — every string field,
+  plus the fields of `*EvError` — so a field added to `Event` next month is covered the day it
+  lands rather than the day someone reads this function and remembers to add it. `Cmd` keeps its
+  separate `[]string` handling, since reflection over string-kinded fields does not see it.
+  `FuzzAppendFieldValues` now drives one event through `setAllStringFields`, its own independent
+  reflective walk, so a future field reachable by that walk but missed by `clipLargestField`'s own
+  walk fails the fuzz run rather than needing a code read to find. Verified with the finding's own
+  repro — a 9 MiB `EvError.Message` on an otherwise-empty event — which failed closed before this
+  fix (confirmed by temporarily disabling the new code path) and now clips and keeps the event,
+  verifying like any other clipped field.
 
 ---
 
