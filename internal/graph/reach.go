@@ -4,7 +4,8 @@ package graph
 // compromised agent's output — could actually travel: a declared Edge
 // directly, or a StoreKey resource one agent writes and another reads,
 // chained as far as either kind of hop goes. See the package doc comment for
-// why only StoreKey resources feed this and Domain/Secret ones do not.
+// why only StoreKey resources feed this and Domain/Secret ones do not — and
+// for what SharedResources exists to say about the two that don't.
 type Closure struct {
 	// Agents is the sorted row/column order Hops is indexed by.
 	Agents []AgentID
@@ -15,7 +16,8 @@ type Closure struct {
 	// privilege question.
 	Hops [][]int
 
-	idx map[AgentID]int
+	idx         map[AgentID]int
+	resourcesOf map[AgentID][]ResourceID
 }
 
 // TransitiveClosure computes Closure for in. It shares in's validation with
@@ -47,7 +49,20 @@ func TransitiveClosure(in Input) (Closure, error) {
 
 	writers := map[ResourceID][]AgentID{}
 	readers := map[ResourceID][]AgentID{}
+	resourcesOf := map[AgentID][]ResourceID{}
+	seenResourceOf := map[AgentID]map[ResourceID]bool{}
 	for _, a := range n.access {
+		if seenResourceOf[a.Agent] == nil {
+			seenResourceOf[a.Agent] = map[ResourceID]bool{}
+		}
+		if !seenResourceOf[a.Agent][a.Resource] {
+			// n.access is sorted by (Agent, Resource, Write), so for a fixed
+			// Agent every Resource it names arrives already in ascending
+			// order — nothing here needs a separate sort to stay
+			// deterministic.
+			seenResourceOf[a.Agent][a.Resource] = true
+			resourcesOf[a.Agent] = append(resourcesOf[a.Agent], a.Resource)
+		}
 		if n.resIdx[a.Resource].Kind != StoreKey {
 			continue
 		}
@@ -57,9 +72,19 @@ func TransitiveClosure(in Input) (Closure, error) {
 			readers[a.Resource] = append(readers[a.Resource], a.Agent)
 		}
 	}
-	for key, ws := range writers {
-		for _, w := range ws {
-			for _, r := range readers[key] {
+	// Walked as n.resources (already sorted by ID) rather than ranged as the
+	// writers map directly: a map's iteration order is randomized per
+	// process, and BFS's own order-invariance happened to keep that from
+	// reaching Hops's *values* — but it still reached the *order* adjacency
+	// entries were appended in, which is exactly what a future caller
+	// wanting to report a path or a via-agent would read. Independent
+	// review of this task caught it; see the package doc comment.
+	for _, res := range n.resources {
+		if res.Kind != StoreKey {
+			continue
+		}
+		for _, w := range writers[res.ID] {
+			for _, r := range readers[res.ID] {
 				if w == r {
 					continue
 				}
@@ -78,7 +103,7 @@ func TransitiveClosure(in Input) (Closure, error) {
 		bfsHops(i, adj, hops[i])
 	}
 
-	return Closure{Agents: agents, Hops: hops, idx: idx}, nil
+	return Closure{Agents: agents, Hops: hops, idx: idx, resourcesOf: resourcesOf}, nil
 }
 
 // bfsHops fills dist (already sized len(adj), pre-set to -1 except dist[from]
@@ -139,6 +164,42 @@ func (c Closure) ReachableFrom(from AgentID) []AgentID {
 		}
 		if c.Hops[i][j] >= 0 {
 			out = append(out, agent)
+		}
+	}
+	return out
+}
+
+// SharedResources lists every resource — of any Kind, read or write — both a
+// and b have an Access record for, sorted. This is not a reach path and is
+// never folded into Hops: two agents co-tenant on a Domain or a Secret are
+// not connected by anything this package's hop arithmetic can bound, but a
+// caller may still want to say so rather than say nothing — see the package
+// doc comment's note on why Domain and Secret are excluded from the hop
+// relation without being excluded from the signal entirely. Empty when
+// a == b, or when either AgentID is not one this Closure was computed with.
+func (c Closure) SharedResources(a, b AgentID) []ResourceID {
+	if a == b {
+		return nil
+	}
+	if _, ok := c.idx[a]; !ok {
+		return nil
+	}
+	if _, ok := c.idx[b]; !ok {
+		return nil
+	}
+	ra, rb := c.resourcesOf[a], c.resourcesOf[b]
+	var out []ResourceID
+	i, j := 0, 0
+	for i < len(ra) && j < len(rb) {
+		switch {
+		case ra[i] == rb[j]:
+			out = append(out, ra[i])
+			i++
+			j++
+		case ra[i] < rb[j]:
+			i++
+		default:
+			j++
 		}
 	}
 	return out

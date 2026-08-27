@@ -23,11 +23,40 @@ type TerminalNode struct {
 	Row, Col     int
 }
 
-// Canvas is a rune grid a terminal can print directly, plus the legend that
-// says which node is which.
+// TerminalEdge is one edge's identity, independent of anything Cells drew
+// for it. See Canvas's doc comment for why this exists and why Cells alone
+// is never enough to read a topology off of.
+type TerminalEdge struct {
+	From, To NodeID
+	Kind     EdgeKind
+}
+
+// Canvas is a rune grid a terminal can print directly, plus the two tables
+// that say what it actually means: Legend for node identity, Edges for which
+// nodes actually connect.
+//
+// Cells is a sketch, not a source of truth, for the same reason a node's own
+// name does not fit on it: two routed edges can bend through the same grid
+// cell — the routing in layout.go picks a corner from a source's column and
+// a target's row (or vice versa), and on a real team that point is often
+// another node's own position — so a line that looks continuous on Cells can
+// be two unrelated edges whose corners happened to land on a third node, and
+// a corner landing exactly on a node's cell is drawn over by that node's own
+// glyph and vanishes. Read literally, Cells can show a star topology as a
+// connected chain: two workers with no edge between them at all, joined on
+// the page by a hub's line passing behind a third worker's glyph. This is
+// not a hypothetical — testdata/golden/star_with_resources.txt's own worker
+// row draws exactly that, and TestCanvasEdgesAreAuthoritativeEvenWhenCellsCollide
+// exists to keep it that way on purpose rather than by accident.
+//
+// Edges is what actually connects to what, straight from the Placement's own
+// RoutedEdges and unaffected by anything Cells drew or failed to draw — a
+// renderer that wants to say what the topology is, rather than what it looks
+// like it might be, reads this table and not the picture.
 type Canvas struct {
 	Cells  [][]rune
 	Legend []TerminalNode
+	Edges  []TerminalEdge
 }
 
 // String renders the canvas as newline-joined rows, each with trailing
@@ -62,13 +91,41 @@ func glyphFor(n PlacedNode) rune {
 // other is SVG (svg.go); both draw the exact same Placement, so a diagram in
 // the terminal and one in an exported report never disagree about a topology
 // their common caller only computed once.
+//
+// The canvas is sized from the actual maximum node and path position in l,
+// never from l.Width/l.Height directly. Every Placement Layout returns has
+// those fields agree with its Nodes and Edges, so this only matters for a
+// Placement built by hand — Placement's fields are exported and cornerGlyph
+// already anticipates hand-built ones (as tests do) — where a Width or
+// Height smaller than what l.Nodes actually uses would otherwise panic
+// rather than draw a wider canvas than claimed.
 func Terminal(l Placement) Canvas {
 	if len(l.Nodes) == 0 {
 		return Canvas{}
 	}
 
-	rows := (l.Height-1)*rowStep + 1
-	cols := (l.Width-1)*colStep + 1
+	maxX, maxY := 0, 0
+	for _, node := range l.Nodes {
+		if node.Pos.X > maxX {
+			maxX = node.Pos.X
+		}
+		if node.Pos.Y > maxY {
+			maxY = node.Pos.Y
+		}
+	}
+	for _, e := range l.Edges {
+		for _, p := range e.Path {
+			if p.X > maxX {
+				maxX = p.X
+			}
+			if p.Y > maxY {
+				maxY = p.Y
+			}
+		}
+	}
+
+	rows := maxY*rowStep + 1
+	cols := maxX*colStep + 1
 	cells := make([][]rune, rows)
 	for i := range cells {
 		cells[i] = make([]rune, cols)
@@ -77,8 +134,10 @@ func Terminal(l Placement) Canvas {
 		}
 	}
 
+	edges := make([]TerminalEdge, 0, len(l.Edges))
 	for _, e := range l.Edges {
 		drawPath(cells, e.Path)
+		edges = append(edges, TerminalEdge{From: e.From, To: e.To, Kind: e.Kind})
 	}
 
 	legend := make([]TerminalNode, 0, len(l.Nodes))
@@ -94,7 +153,7 @@ func Terminal(l Placement) Canvas {
 		})
 	}
 
-	return Canvas{Cells: cells, Legend: legend}
+	return Canvas{Cells: cells, Legend: legend, Edges: edges}
 }
 
 // drawPath rasterizes one routed, axis-aligned path (2 or 3 grid points) onto

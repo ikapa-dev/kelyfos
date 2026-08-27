@@ -2,6 +2,7 @@ package graph
 
 import (
 	"fmt"
+	"reflect"
 	"testing"
 )
 
@@ -116,20 +117,37 @@ func FuzzLayoutNeverPanicsAndIsDeterministic(f *testing.F) {
 		}
 
 		// Determinism: normalizing and computing again must be byte-for-byte
-		// identical.
+		// identical — asserted with reflect.DeepEqual directly on the
+		// Placement and Closure structs, which is the level that actually
+		// matters. A review finding proved the Terminal-string comparison
+		// alone is not enough: rebuilding Layout's Nodes/Edges slices via
+		// unordered map iteration (identical positions, nondeterministic
+		// slice order) still passed every test and 2.8M fuzz execs when the
+		// only check was on rendered output, because Terminal draws by
+		// position and does not care what order it received things in. SVG
+		// maps l.Nodes/l.Edges index-for-index, so a Placement whose slice
+		// order varies between two runs is exactly the "diff nobody can
+		// read" this task exists to prevent, one layer down from anything a
+		// human looks at.
 		l2, err2 := Layout(in)
 		if err2 != nil {
 			t.Fatalf("Layout succeeded once and failed on an identical second call: %v", err2)
 		}
+		if !reflect.DeepEqual(l1, l2) {
+			t.Fatalf("Layout is not deterministic at the Placement level for input=%+v", in)
+		}
 		if Terminal(l1).String() != Terminal(l2).String() {
 			t.Fatalf("Layout is not deterministic for input=%+v", in)
+		}
+		if s1, s2 := SVG(l1, DefaultSVGOptions()), SVG(l2, DefaultSVGOptions()); !reflect.DeepEqual(s1, s2) {
+			t.Fatalf("SVG is not deterministic for input=%+v", in)
 		}
 
 		c2, err2c := TransitiveClosure(in)
 		if err2c != nil {
 			t.Fatalf("TransitiveClosure succeeded once and failed on an identical second call: %v", err2c)
 		}
-		if fmt.Sprint(c1.Hops) != fmt.Sprint(c2.Hops) || fmt.Sprint(c1.Agents) != fmt.Sprint(c2.Agents) {
+		if !reflect.DeepEqual(c1.Agents, c2.Agents) || !reflect.DeepEqual(c1.Hops, c2.Hops) {
 			t.Fatalf("TransitiveClosure is not deterministic for input=%+v", in)
 		}
 
@@ -183,6 +201,21 @@ func checkLayoutInvariants(t *testing.T, l Placement) {
 			}
 		}
 	}
+
+	// Terminal must never panic on Layout's own output, and Canvas.Edges must
+	// be a faithful, order-preserving projection of l.Edges regardless of
+	// whatever Cells drew (the review finding that Cells alone can be
+	// ambiguous — see terminal.go's Canvas doc comment — is exactly why
+	// Edges exists and must always agree with the Placement it came from).
+	canvas := Terminal(l)
+	if len(canvas.Edges) != len(l.Edges) {
+		t.Fatalf("Canvas.Edges has %d entries for %d Placement edges", len(canvas.Edges), len(l.Edges))
+	}
+	for i, e := range l.Edges {
+		if canvas.Edges[i] != (TerminalEdge{From: e.From, To: e.To, Kind: e.Kind}) {
+			t.Fatalf("Canvas.Edges[%d] = %+v does not match Placement edge %+v", i, canvas.Edges[i], e)
+		}
+	}
 }
 
 func checkClosureInvariants(t *testing.T, c Closure) {
@@ -210,6 +243,18 @@ func checkClosureInvariants(t *testing.T, c Closure) {
 	for _, a := range c.Agents {
 		if c.Reaches(a, a) {
 			t.Fatalf("agent %q reaches itself, which Reaches must never report", a)
+		}
+		if got := c.SharedResources(a, a); got != nil {
+			t.Fatalf("SharedResources(%q, %q) = %v, want nil for an agent and itself", a, a, got)
+		}
+	}
+	for _, a := range c.Agents {
+		for _, b := range c.Agents {
+			ab, ba := c.SharedResources(a, b), c.SharedResources(b, a)
+			if !reflect.DeepEqual(ab, ba) {
+				t.Fatalf("SharedResources(%q,%q)=%v but SharedResources(%q,%q)=%v — "+
+					"co-tenancy must be symmetric", a, b, ab, b, a, ba)
+			}
 		}
 	}
 }

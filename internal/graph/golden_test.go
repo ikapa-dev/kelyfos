@@ -3,6 +3,7 @@ package graph
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -24,6 +25,16 @@ func goldenFixtures() map[string]Input {
 		// without a declared edge, an egress domain, and a bound secret —
 		// one of each resource kind, so the golden file also freezes the
 		// Domain/StoreKey/Secret row ordering.
+		//
+		// Known, intentional reading trap in this fixture's own golden file:
+		// row 3 of testdata/golden/star_with_resources.txt draws
+		// worker-1───worker-2───worker-3 as one continuous run, even though
+		// there is no worker↔worker edge anywhere in this Input — the hub's
+		// own edges to worker-2 and worker-3 bend through worker-1's cell and
+		// vanish under its glyph (Canvas's doc comment explains why). That is
+		// Cells being a sketch, not a bug in this fixture: Canvas.Edges is
+		// what is authoritative, and TestCanvasEdgesAreAuthoritativeEvenWhenCellsCollide
+		// (terminal_test.go) proves it stays correct on this exact shape.
 		"star_with_resources": {
 			Agents: []Agent{
 				{ID: "hub"}, {ID: "worker-1", Group: "worker"},
@@ -90,7 +101,11 @@ func TestGoldenTerminalLayout(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Layout: %v", err)
 			}
-			got := Terminal(l).String() + "\n"
+			canvas := Terminal(l)
+			if len(canvas.Edges) != len(l.Edges) {
+				t.Fatalf("Canvas.Edges has %d entries for %d Placement edges", len(canvas.Edges), len(l.Edges))
+			}
+			got := canvas.String() + "\n"
 
 			path := filepath.Join("testdata", "golden", name+".txt")
 			if update {
@@ -114,8 +129,15 @@ func TestGoldenTerminalLayout(t *testing.T) {
 }
 
 // TestGoldenLayoutIsStableAcrossRuns re-runs Layout on every fixture twice in
-// the same process and requires byte-identical output, so this suite catches
-// a determinism regression even before anyone regenerates the golden files.
+// the same process and requires byte-identical output at the Placement level
+// — not only in whatever Terminal happens to render from it — so this suite
+// catches a determinism regression even before anyone regenerates the golden
+// files. reflect.DeepEqual on the two Placement structs is the assertion
+// that actually matters (review finding: every check here used to go through
+// Terminal's rendered string, which draws by position and would not have
+// noticed a Placement whose Nodes/Edges came back in a different slice
+// order); the Terminal comparison stays alongside it as a cheap, readable
+// second signal.
 func TestGoldenLayoutIsStableAcrossRuns(t *testing.T) {
 	for name, in := range goldenFixtures() {
 		t.Run(name, func(t *testing.T) {
@@ -126,6 +148,10 @@ func TestGoldenLayoutIsStableAcrossRuns(t *testing.T) {
 			l2, err := Layout(in)
 			if err != nil {
 				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(l1, l2) {
+				t.Error("two runs of Layout on the same Input produced different Placement structs " +
+					"(order, not just rendering, must be stable)")
 			}
 			if Terminal(l1).String() != Terminal(l2).String() {
 				t.Error("two runs of Layout on the same Input produced different terminal output")

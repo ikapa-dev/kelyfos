@@ -1,6 +1,9 @@
 package graph
 
-import "testing"
+import (
+	"reflect"
+	"testing"
+)
 
 func TestLayoutEmptyInputIsEmptyLayout(t *testing.T) {
 	l, err := Layout(Input{})
@@ -155,7 +158,11 @@ func TestLayoutOmitsRowsForAbsentResourceKinds(t *testing.T) {
 
 // TestLayoutIsDeterministicAcrossInputOrder is the property the whole task
 // exists to guarantee: the same team, described in a different field order,
-// produces byte-identical output.
+// produces byte-identical output — asserted directly on the two Placement
+// structs with reflect.DeepEqual, not only on what Terminal renders from
+// them (a review finding: the Terminal-string comparison alone would not
+// have caught Nodes or Edges coming back in a different slice order, since
+// Terminal draws by position and does not care about order).
 func TestLayoutIsDeterministicAcrossInputOrder(t *testing.T) {
 	build := func(reversed bool) Input {
 		agents := []Agent{{ID: "hub"}, {ID: "worker-1"}, {ID: "worker-2"}}
@@ -181,6 +188,9 @@ func TestLayoutIsDeterministicAcrossInputOrder(t *testing.T) {
 	b, err := Layout(build(true))
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(a, b) {
+		t.Errorf("Placement depends on input order:\n--- forward ---\n%+v\n--- reversed ---\n%+v", a, b)
 	}
 	if Terminal(a).String() != Terminal(b).String() {
 		t.Errorf("layout depends on input order:\n--- forward ---\n%s\n--- reversed ---\n%s",

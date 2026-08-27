@@ -20,12 +20,24 @@
 //
 // Determinism is not a nicety here, it is the point named in the task text:
 // "a layout that moves between two runs of the same team is a diff nobody can
-// read." Every function in this package is a pure function of its Input —
-// no randomness, no map iteration exposed to an output order, no wall clock.
+// read." Every function in this package is a pure function of its Input — no
+// randomness, no wall clock, and every map this package builds along the way
+// (BFS visitation, per-row and per-resource bucketing) is sorted, or walked
+// in an already-sorted order, before anything reads a result out of it — a
+// map is never ranged over in a way that lets Go's randomized iteration order
+// reach an output. (An earlier version of this package got that wrong once:
+// reach.go built the shared-store-key adjacency by ranging a
+// map[ResourceID][]AgentID directly, which BFS's own order-invariance
+// happened to hide from Hops but would not have stayed hidden from a caller
+// that wanted to name which resource explained a reach path. Independent
+// review caught it; the fix walks the already-sorted resource list instead.)
 // The same Input, run twice, in two processes, on two machines, produces
-// byte-identical output. That is what makes a golden test possible at all,
-// and it is what makes a diff between two reports of the same team meaningful
-// instead of noise.
+// byte-identical output — at the Placement and Closure level, not merely in
+// whatever a backend renders from them, which is exactly what
+// TestLayoutIsDeterministicAcrossInputOrder, TestGoldenLayoutIsStableAcrossRuns
+// and the fuzz target assert directly on those structs. That is what makes a
+// golden test possible at all, and it is what makes a diff between two
+// reports of the same team meaningful instead of noise.
 //
 // # Why an edge referencing an unknown agent is an error and not a drop
 //
@@ -51,15 +63,36 @@
 // two hops through the hub is not the isolation it looks like. A declared
 // team.edge is one such path. A shared, host-mediated store key is a second,
 // quieter one: if agent A may write key K and agent B may read it, A can pass
-// B data with no edge between them at all (docs/teams.md §4). An egress
-// domain or a bound secret is neither — they are destinations outside the
-// team, not state shared between two agents inside it, so two agents allowed
-// the same domain do not thereby gain a path to each other through this
-// product's own machinery. TransitiveClosure therefore derives its one-hop
-// relation from Edges plus write→read pairs on the same StoreKey resource,
-// and from nothing else; Layout still places and routes every Access
-// regardless of Resource.Kind, because what a reach view must compute and
-// what a picture must show are different questions.
+// B data with no edge between them at all (docs/teams.md §4). TransitiveClosure
+// therefore derives its one-hop relation from Edges plus write→read pairs on
+// the same StoreKey resource, and from nothing else; Layout still places and
+// routes every Access regardless of Resource.Kind, because what a reach view
+// must compute and what a picture must show are different questions.
+//
+// An egress domain or a bound secret is deliberately outside that hop
+// relation — not because two agents sharing one can never affect each other,
+// but because this package can only count a hop this product's own machinery
+// actually mediates, and neither one is that: they are destinations outside
+// the team, not host-mediated state exchanged between two agents inside it.
+// That is a real exclusion, not a clean one. Two agents allowed the same
+// domain share a plausible out-of-band channel this product cannot see and
+// therefore cannot rule out (a shared domain can be a dead drop — a gist, a
+// paste, a webhook both can reach; a shared secret is credential
+// inheritance, not mere co-tenancy). Closure.SharedResources(a, b) names
+// exactly this: every resource — of any Kind — both agents have an Access
+// record for, so a caller can render "no reach path through this product,
+// but co-tenant on github.com" instead of silence, without folding a signal
+// this package cannot bound into Hops's hop count.
+//
+// A store key with no [[team.store.key]] rule naming it is readable and
+// writable by the whole team by default (internal/team/store.go: "No rule
+// mentions this key, so it belongs to the whole team."). A caller building
+// Input.Access from declared rules alone will describe only the *narrowed*
+// keys and miss that any-to-any reach on every other one — which understates
+// what the team can touch, the one direction this package must never fail
+// in. Synthesizing an Access for every agent on every such key is the
+// caller's obligation, not this package's to infer, because only the caller
+// knows which keys had no rule at all.
 package graph
 
 import "fmt"
@@ -130,7 +163,9 @@ type Resource struct {
 // agent may read or write this store key — after any glob in the rule that
 // granted it (docs/teams.md §4's `read`/`write` lists) is resolved to the
 // concrete agent it names. Write is meaningless for Domain and Secret
-// resources; callers should leave it false for those.
+// resources; callers should leave it false for those. A StoreKey with no
+// rule at all is open to the whole team by default and needs an Access
+// synthesized for every agent, not omitted — see the package doc comment.
 type Access struct {
 	Agent    AgentID
 	Resource ResourceID

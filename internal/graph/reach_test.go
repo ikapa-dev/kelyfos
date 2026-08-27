@@ -206,3 +206,97 @@ func TestClosureIsDeterministicAcrossInputOrder(t *testing.T) {
 		}
 	}
 }
+
+// TestSharedResourcesNamesCoTenancyHopsCannotCount is the design-note
+// addition: two agents allowed the same domain, or bound to the same secret,
+// share a plausible out-of-band channel this product cannot mediate and
+// therefore cannot count as a hop — but a reach view should still be able to
+// say "no reach path through this product, but co-tenant on X" rather than
+// nothing at all.
+func TestSharedResourcesNamesCoTenancyHopsCannotCount(t *testing.T) {
+	in := Input{
+		Agents: []Agent{{ID: "a"}, {ID: "b"}, {ID: "c"}},
+		Resources: []Resource{
+			{ID: "github.com", Kind: Domain},
+			{ID: "TOKEN@github.com", Kind: Secret},
+			{ID: "only-a", Kind: Domain},
+		},
+		Access: []Access{
+			{Agent: "a", Resource: "github.com"},
+			{Agent: "b", Resource: "github.com"},
+			{Agent: "a", Resource: "TOKEN@github.com"},
+			{Agent: "b", Resource: "TOKEN@github.com"},
+			{Agent: "a", Resource: "only-a"},
+		},
+	}
+	c, err := TransitiveClosure(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// a and b share both resources, and neither has a reach path (proven
+	// separately by TestDomainAndSecretAccessDoNotOpenAChannel) — the two
+	// facts are meant to coexist.
+	got := c.SharedResources("a", "b")
+	want := []ResourceID{"TOKEN@github.com", "github.com"} // sorted by ID
+	if len(got) != len(want) {
+		t.Fatalf("SharedResources(a,b) = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("SharedResources(a,b) = %v, want %v", got, want)
+		}
+	}
+	if c.Reaches("a", "b") || c.Reaches("b", "a") {
+		t.Error("co-tenancy must not itself count as a reach path")
+	}
+
+	// c shares nothing with a or b.
+	if got := c.SharedResources("a", "c"); got != nil {
+		t.Errorf("SharedResources(a,c) = %v, want nil (c touches nothing a or b touch)", got)
+	}
+
+	// Symmetric.
+	ab, ba := c.SharedResources("a", "b"), c.SharedResources("b", "a")
+	if len(ab) != len(ba) {
+		t.Fatalf("SharedResources is not symmetric: (a,b)=%v (b,a)=%v", ab, ba)
+	}
+
+	// An agent shares nothing with itself — SharedResources is about
+	// collusion between two parties, not a self-inventory.
+	if got := c.SharedResources("a", "a"); got != nil {
+		t.Errorf("SharedResources(a,a) = %v, want nil", got)
+	}
+
+	// Unknown agents: nil, not a panic.
+	if got := c.SharedResources("ghost", "a"); got != nil {
+		t.Errorf("SharedResources(ghost,a) = %v, want nil", got)
+	}
+}
+
+// TestSharedResourcesIncludesStoreKeysToo confirms SharedResources is not
+// restricted to Domain/Secret — a StoreKey both agents merely read (with no
+// write→read pair between them, so no Hops path) still shows up as a shared
+// resource, because co-tenancy on a StoreKey is a real fact even when it
+// creates no directed reach edge.
+func TestSharedResourcesIncludesStoreKeysToo(t *testing.T) {
+	in := Input{
+		Agents:    []Agent{{ID: "a"}, {ID: "b"}},
+		Resources: []Resource{{ID: "plan", Kind: StoreKey}},
+		Access: []Access{
+			{Agent: "a", Resource: "plan", Write: false},
+			{Agent: "b", Resource: "plan", Write: false},
+		},
+	}
+	c, err := TransitiveClosure(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Reaches("a", "b") || c.Reaches("b", "a") {
+		t.Error("two readers of the same key share no directed hop")
+	}
+	got := c.SharedResources("a", "b")
+	if len(got) != 1 || got[0] != "plan" {
+		t.Errorf("SharedResources(a,b) = %v, want [plan]", got)
+	}
+}
