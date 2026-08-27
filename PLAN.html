@@ -130,7 +130,7 @@
      injected secrets, full audit replay, and millisecond forking.</p>
   <div class="meta">
     owner: <b>John</b> &nbsp;·&nbsp; developer: <b>Claude Code</b> &nbsp;·&nbsp;
-    status: <b class="amber" id="meta-status">ACTIVE &mdash; <b>Phase 7</b>, the declared shape of a run, opened 2026-08-27 on the owner&rsquo;s ruling (D59). v1.0 is tagged and every earlier phase is closed; this one exits at <code>v1.1</code>. Fourteen tasks, none started &mdash; the bar moved backwards on purpose when they joined the denominator.</b> &nbsp;&middot;&nbsp;
+    status: <b class="amber" id="meta-status">ACTIVE &mdash; <b>Phase 7</b>, the declared shape of a run, opened 2026-08-27 on the owner&rsquo;s ruling (D59). v1.0 is tagged and every earlier phase is closed; this one exits at <code>v1.1</code>. Fifteen tasks; P7-4 and P7-6 done and reviewed, P7-14 added mid-phase (D67) for a defect P7-4's own re-verification found.</b> &nbsp;&middot;&nbsp;
     last updated: <b id="meta-updated">2026-08-27</b><br>
     repo file: <b>PLAN.html</b> (commit this document at the repository root — it is the single source of truth)<br>
     <span class="quiet">KelyfOS — from κέλυφος (kélyfos), "shell": the guest OS wrapped around the agent. Formerly working-titled "agos" (D4 → D10).</span>
@@ -1426,6 +1426,26 @@
         made it worth having was that nothing was fixed from a description. Findings are answered in the log one by
         one, <i>including the ones rejected and the reason</i>. A phase that adds a socket, twenty event fields and
         two renderers does not exit on its acceptance test alone.</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P7-14</span><span class="tk"><b>A path-scoped credential can attach across a
+        double-trailing-slash boundary.</b> <code>internal/egress/scope.go</code>'s <code>covered()</code> trims
+        exactly one trailing slash off a bound <code>Scope.Path</code> before comparing
+        (<code>strings.TrimSuffix(prefix, "/")</code>), so a scope configured with a doubled trailing slash (e.g.
+        <code>/repos//</code>, a plausible config typo rather than a contrived input) approves a request to
+        <code>/repos/</code> that the fuzz property's own Tomcat/Jetty matrix-param-strip simulation resolves to
+        <code>/repos</code> &mdash; not beneath the literal bound prefix. Found by <code>FuzzScopeCovers</code>
+        during P7-4's re-verification (2026-08-27), confirmed independently by the orchestrator by tracing the
+        actual property function against source, not taken on report. Same risk family as S3
+        (<code>f6ac169</code>, a path-scoped credential attached across a re-segmentation boundary) and the
+        general path-scoping discipline in <code>CHANGELOG.md</code>'s <code>Unreleased</code> section; this is a
+        case that fix did not cover. <b>Fix <code>covered()</code> to normalize away every trailing slash on both
+        sides before comparing</b> (not just one), commit the regression seed
+        (<code>prefix="/repos//"</code>, <code>target="/repos/"</code>) alongside the fix per
+        <code>dev/fuzz.sh</code>'s own convention, and extend <code>FuzzScopeCovers</code>'s seed corpus with it so
+        the specific input is never rediscovered from scratch. Not gated by D62's barrier and not owned by any of
+        the four lanes &mdash; <code>internal/egress/scope.go</code> is outside all four lanes' file boundaries;
+        pick this up whenever convenient, reviewed as a PROXY surface per &sect;8 rule 10 (credential-attachment
+        logic).</span></li>
   </ul>
 
   <div class="accept">
@@ -5720,6 +5740,20 @@ after:
         product made. Required and done as part of this ruling: this row, and a <code>### Changed</code> entry
         under <code>## Unreleased</code> in <code>CHANGELOG.md</code>, in the voice the S6-S24 entries already use
         there.</td></tr>
+    <tr><td class="mono">D67</td><td class="mono">2026-08-27</td>
+        <td><b>P7-14 added mid-phase: a real, narrow defect in path-scoped credential matching, found as a
+        byproduct of P7-4's re-verification and unrelated to any of the four lanes' actual work.</b>
+        <code>internal/egress/scope.go</code>'s <code>covered()</code> only strips one trailing slash off a bound
+        <code>Scope.Path</code>, so a scope configured with a doubled trailing slash approves a request that a real
+        origin server's own normalization would resolve outside it &mdash; confirmed by <code>FuzzScopeCovers</code>
+        and independently re-traced by the orchestrator against the actual fuzz property, not taken on the
+        author's report. Owner's ruling, 2026-08-27: track it as a new Phase 7 task (P7-14) rather than a
+        standalone fix outside the phase or a logged-and-deferred item, since <code>internal/egress</code> is
+        already phase-adjacent (P7-4 touches it) and the fix is small and self-contained.</td>
+        <td>Same family as S3 and the general path-scoping discipline already in <code>CHANGELOG.md</code>'s
+        <code>Unreleased</code> section &mdash; this is a boundary case that fix did not cover, not a new class of
+        problem. Not gated by D62's barrier: it touches no file any of the four lanes own, and nothing else in
+        Phase 7 depends on it landing before the barrier or before v1.1's exit checkpoint.</td></tr>
     <!-- Claude Code: append rows above this line. -->
   </table>
 </section>
