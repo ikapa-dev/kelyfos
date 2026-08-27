@@ -652,7 +652,8 @@ func (r *agentRig) stop(timeout time.Duration, out io.Writer) error {
 				NetInBytes: u.NetInBytes, NetOutBytes: u.NetOutBytes,
 				DiskReadBytes: u.DiskReadBytes, DiskWriteBytes: u.DiskWriteBytes,
 				MemMiB: r.sb.State.MemMiB, VcpuCount: r.sb.State.VcpuCount,
-				CPUQuota: r.sb.State.CPUQuota,
+				CPUQuota:       r.sb.State.CPUQuota,
+				BlockedPackets: blockedPackets(r.net),
 			})
 		}
 		r.stopErr = r.sb.Shutdown(timeout)

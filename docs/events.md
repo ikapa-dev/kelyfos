@@ -473,6 +473,7 @@ The usage receipt, written once at teardown. Written from E1-7.
 | `net_in_bytes`, `net_out_bytes` | integer | Bytes across the TAP, from the guest's point of view. |
 | `disk_read_bytes`, `disk_write_bytes` | integer | Bytes the VMM moved to and from host storage. |
 | `vcpu_count`, `mem_mib`, `cpu_quota_percent` | integer | The caps those figures were consumed under. |
+| `blocked_packets` | integer | Packets the egress firewall's drop rule counted for this sandbox. Zero both for a sandbox that blocked nothing and for one with no network interface at all — the same non-distinction the rest of this event already makes for the figures above. |
 | `agent` | string | Present inside a team: whose receipt this is. A team writes **one per member** — do not sum them and call it the session's. |
 
 Every number is read on the host, from counters the kernel keeps about the

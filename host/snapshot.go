@@ -231,6 +231,18 @@ func snapshotRestore(argv []string) error {
 	// workspace copy and the run directory with it (finding M-1).
 	defer func() {
 		ws := sb.State.Workspace
+		// The receipt is sampled before Shutdown, the same as every other
+		// teardown in this product (E1-7). This door had none until F14.
+		if u, err := sb.State.Sample(); err == nil {
+			_ = rec.Append(recorder.Event{
+				Type:       recorder.TypeResourceSummary,
+				CPUSeconds: u.CPUSeconds, PeakRSSKiB: u.PeakRSSKiB,
+				NetInBytes: u.NetInBytes, NetOutBytes: u.NetOutBytes,
+				DiskReadBytes: u.DiskReadBytes, DiskWriteBytes: u.DiskWriteBytes,
+				MemMiB: sb.State.MemMiB, VcpuCount: sb.State.VcpuCount, CPUQuota: sb.State.CPUQuota,
+				BlockedPackets: blockedPackets(opts.Net),
+			})
+		}
 		if err := sb.Shutdown(5 * time.Second); err != nil {
 			fmt.Fprintf(os.Stderr, "kelyfos: shutdown: %v\n", err)
 		}

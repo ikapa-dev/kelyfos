@@ -196,6 +196,7 @@ func Types() []EventType {
 				{Name: "mem_mib", Type: "integer", Doc: "the cap it ran under"},
 				{Name: "vcpu_count", Type: "integer", Doc: "the cap it ran under"},
 				{Name: "cpu_quota_percent", Type: "integer", Doc: "the cap it ran under, when one was set"},
+				{Name: "blocked_packets", Type: "integer", Doc: "packets the egress firewall's drop rule counted for this sandbox — zero for a sandbox with no network interface at all, the same as one that never had a packet blocked"},
 				agentField(),
 			}},
 		{Type: TypeTeamMessage, Source: SourceHost,

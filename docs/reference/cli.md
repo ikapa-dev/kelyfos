@@ -154,6 +154,7 @@ kelyfos snapshot restore
 | `--console` | boolean | — | stream the guest serial console |
 | `--image` | string | "dev" | image flavor the snapshot was taken from |
 | `--name` | string | "default" | snapshot name |
+| `--policy` | string | the nearest one, found by walking up — same as run and fork | the kelyfos.toml whose ceilings, allowlist and secrets this restore is held to |
 | `--secret` | value | — | attach a credential to a domain: NAME@domain[:bearer\|basic]. Repeatable. |
 
 ## kelyfos pause

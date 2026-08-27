@@ -507,6 +507,21 @@ final shutdown the pause deferred.
 		defer syncResumedWorkspace(sb, meta.WorkspaceHost)
 	}
 	defer func() {
+		// The receipt is sampled before Shutdown, the same as every other
+		// teardown in this product (E1-7). No blocked_packets here: a session
+		// with a network refuses to resume through this door (above), so
+		// there is never one to sample.
+		if rec != nil {
+			if u, err := sb.State.Sample(); err == nil {
+				_ = rec.Append(recorder.Event{
+					Type:       recorder.TypeResourceSummary,
+					CPUSeconds: u.CPUSeconds, PeakRSSKiB: u.PeakRSSKiB,
+					NetInBytes: u.NetInBytes, NetOutBytes: u.NetOutBytes,
+					DiskReadBytes: u.DiskReadBytes, DiskWriteBytes: u.DiskWriteBytes,
+					MemMiB: sb.State.MemMiB, VcpuCount: sb.State.VcpuCount, CPUQuota: sb.State.CPUQuota,
+				})
+			}
+		}
 		if err := sb.Shutdown(10 * time.Second); err != nil {
 			fmt.Fprintf(os.Stderr, "kelyfos: shutdown: %v\n", err)
 		}

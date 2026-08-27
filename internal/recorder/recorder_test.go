@@ -349,3 +349,46 @@ func TestAChainFromANewerBuildStillVerifies(t *testing.T) {
 		t.Errorf("verified %d events, want 1", n)
 	}
 }
+
+// F14 (2): blocked_packets round-trips through Append and Read like every
+// other resource.summary field, and — like the rest of that event — is
+// omitted entirely rather than written as an explicit zero when there was
+// nothing to count, which is what every un-networked sandbox's receipt does.
+func TestResourceSummaryCarriesBlockedPackets(t *testing.T) {
+	root := t.TempDir()
+	rec, err := Open(root, "test-sandbox")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if err := rec.Append(Event{Type: TypeResourceSummary, CPUSeconds: 1.5, BlockedPackets: 42}); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	if err := rec.Append(Event{Type: TypeResourceSummary, CPUSeconds: 1.5}); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	if err := rec.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	blob, err := os.ReadFile(Path(root, "test-sandbox"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	events, err := Read(bytes.NewReader(blob))
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("wrote 2 events, read back %d", len(events))
+	}
+	if events[0].BlockedPackets != 42 {
+		t.Errorf("event 1: blocked_packets read back as %d, want 42", events[0].BlockedPackets)
+	}
+	if events[1].BlockedPackets != 0 {
+		t.Errorf("event 2: blocked_packets read back as %d, want 0", events[1].BlockedPackets)
+	}
+	lines := strings.Split(strings.TrimSpace(string(blob)), "\n")
+	if strings.Contains(lines[1], "blocked_packets") {
+		t.Error("a sandbox that blocked nothing should omit blocked_packets, not write an explicit 0")
+	}
+}

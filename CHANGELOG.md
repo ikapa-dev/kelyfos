@@ -235,6 +235,29 @@ reference described in the README and re-measured per release.
   is inside a `"..."` string, honoring `\"` as an escaped quote that does not close it, and only
   splits on a comma seen outside quotes. Verified with the finding's own repro — a `kelyfos.toml`
   with `[[plugin]] args = ["x", "--y=a,b"]` — which now loads with the two-element array intact.
+- **`resource.summary`, the usage receipt written once at teardown, was emitted from only two of
+  the places a session actually ends.** `kelyfos run` and a team member's own `stop` sampled and
+  wrote one; `kelyfos serve-mcp`'s per-sandbox `close()` (which also covers the two early-boot-
+  failure paths in `servemcptools.go` that route through it), `kelyfos resume`, and `kelyfos
+  snapshot restore` did not, so a session ending through any of those three doors left a
+  `session.start`/`session.ready`/`session.end` chain with no receipt of what it actually spent in
+  between. Each now samples and appends the same event immediately before its own `Shutdown`,
+  following the pattern the two working sites already used. Separately,
+  `internal/sandbox/network.go`'s `BlockedPackets` — the egress firewall's own nftables drop
+  counter — had no caller anywhere in the product; it is now read into a new `blocked_packets`
+  field on every `resource.summary` event (zero for a sandbox with no network interface at all,
+  same as one that blocked nothing), through one small helper shared by every teardown path rather
+  than a nil check repeated at each. Verified live in the Lima VM: a `kelyfos serve-mcp` session's
+  sandbox now writes a `resource.summary` ahead of its `session.end`, and a `kelyfos run --allow`
+  session that made a connection attempt outside its allowlist now reports a nonzero
+  `blocked_packets` on that same event. `kelyfos bench`'s throwaway boot-timing VMs and the
+  fork-template cache's own build-and-snapshot machine (`host/teamtemplate.go`) were left alone —
+  neither opens a flight recorder session at all, by design, so instrumenting them is a bigger
+  change than this pass covers. The third sub-item of this finding — giving `kelyfos.toml` parse
+  errors and team-plan check errors their own `denial` catalog IDs — was left alone too: both
+  already carry the file and line that produced them, and `docs/reference/denials.md`'s own banner
+  already states, on purpose, that refusals from those two paths are excluded because "the thing to
+  go and look at is the line you wrote" — reversing that is a product decision, not a gap.
 
 ---
 

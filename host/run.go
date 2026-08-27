@@ -550,6 +550,7 @@ status. This is how you hand an agent a sandbox and nothing else:
 				NetInBytes: u.NetInBytes, NetOutBytes: u.NetOutBytes,
 				DiskReadBytes: u.DiskReadBytes, DiskWriteBytes: u.DiskWriteBytes,
 				MemMiB: sb.State.MemMiB, VcpuCount: sb.State.VcpuCount, CPUQuota: sb.State.CPUQuota,
+				BlockedPackets: blockedPackets(opts.Net),
 			})
 		}
 		if err := sb.Shutdown(5 * time.Second); err != nil {

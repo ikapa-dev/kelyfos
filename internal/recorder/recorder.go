@@ -172,6 +172,12 @@ type Event struct {
 	DiskWriteBytes int64   `json:"disk_write_bytes,omitempty"`
 	VcpuCount      int     `json:"vcpu_count,omitempty"`
 	CPUQuota       int     `json:"cpu_quota_percent,omitempty"`
+	// BlockedPackets is the sandbox's own nftables drop counter
+	// (internal/sandbox/network.go's BlockedPackets), zero for a sandbox with
+	// no network at all rather than absent — the same "no interface, not
+	// merely no traffic" distinction the egress lines elsewhere in this
+	// product already draw (F14).
+	BlockedPackets int64 `json:"blocked_packets,omitempty"`
 
 	// mcp.host.* (E4-4). Args is a redacted summary of a client tool call's
 	// arguments — every key it was given, with anything carrying content
