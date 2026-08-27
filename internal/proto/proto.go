@@ -5,6 +5,7 @@ package proto
 
 import (
 	"bufio"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -203,11 +204,40 @@ const (
 type ExecRequest struct {
 	V         int               `json:"v"`
 	ID        string            `json:"id"`
-	Cmd       []string          `json:"cmd"`
+	Cmd       []string          `json:"cmd"` // base64, one element per argv entry
 	Cwd       string            `json:"cwd,omitempty"`
 	Env       map[string]string `json:"env,omitempty"`
 	Stdin     string            `json:"stdin,omitempty"` // base64
 	TimeoutMS int64             `json:"timeout_ms,omitempty"`
+}
+
+// EncodeCmd and DecodeCmd convert an argv between its in-memory form and the
+// base64-per-element form ExecRequest.Cmd carries on the wire.
+//
+// encoding/json marshals a Go string as UTF-8 and silently replaces any byte
+// sequence that is not valid UTF-8 with U+FFFD, so a plain string field cannot
+// carry an argument built from arbitrary bytes without corrupting it. Cmd gets
+// the same treatment Stdin already has (docs/protocol.md §3: "every field
+// whose value is raw bytes is base64"), applied per element so the argv
+// boundaries stay visible on the wire.
+func EncodeCmd(argv []string) []string {
+	out := make([]string, len(argv))
+	for i, a := range argv {
+		out[i] = base64.StdEncoding.EncodeToString([]byte(a))
+	}
+	return out
+}
+
+func DecodeCmd(cmd []string) ([]string, error) {
+	out := make([]string, len(cmd))
+	for i, c := range cmd {
+		b, err := base64.StdEncoding.DecodeString(c)
+		if err != nil {
+			return nil, fmt.Errorf("cmd[%d] is not valid base64: %w", i, err)
+		}
+		out[i] = string(b)
+	}
+	return out, nil
 }
 
 // Stream names on an exec response frame.

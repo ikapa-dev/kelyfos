@@ -277,12 +277,12 @@ for the life of the sandbox, carrying every request that agent makes (§5.6).
 Request (host writes one line, then may write nothing else):
 
 ```json
-{"v":1,"id":"a1","cmd":["/bin/sh","-c","uname -a"],"cwd":"/","env":{"PATH":"/usr/bin:/bin"},"stdin":"","timeout_ms":30000}
+{"v":1,"id":"a1","cmd":["L2Jpbi9zaA==","LWM=","dW5hbWUgLWE="],"cwd":"/","env":{"PATH":"/usr/bin:/bin"},"stdin":"","timeout_ms":30000}
 ```
 
 | Field | Type | Required | Meaning |
 | --- | --- | --- | --- |
-| `cmd` | array of string | yes | argv. **Not** a shell string: element 0 is the executable, resolved against the *supervisor's* `PATH` and not the one in `env` — the lookup happens before the child's environment is applied. Wrap in `["/bin/sh","-c", …]` when a shell is genuinely wanted, so that choice is visible in the audit log. |
+| `cmd` | array of string | yes | argv, one element per array entry, each element **base64**. Not a shell string: element 0 is the executable, resolved against the *supervisor's* `PATH` and not the one in `env` — the lookup happens before the child's environment is applied. Wrap in `["/bin/sh","-c", …]` when a shell is genuinely wanted, so that choice is visible in the audit log. Each argument is base64 like `stdin` below, because argv can carry arbitrary bytes and a plain JSON string cannot: `encoding/json` silently replaces invalid UTF-8 with U+FFFD on marshal, which would corrupt a non-UTF-8 argument with no error anywhere. |
 | `cwd` | string | no | Working directory. Default `/`. |
 | `env` | object | no | Environment, **replacing** the default set rather than merging — a sandbox that silently inherits environment is how secrets leak. |
 | `stdin` | string | no | base64. Empty or absent means stdin is an immediately-closed pipe, never a terminal. |

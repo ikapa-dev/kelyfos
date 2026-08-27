@@ -165,7 +165,7 @@ func (s *mcpSession) toolExec(raw json.RawMessage, meta *mcp.CallMeta) *mcp.Call
 	}
 
 	res := runCommand(proto.ExecRequest{
-		V: proto.Version, ID: "mcp", Cmd: argv, Cwd: a.Cwd,
+		V: proto.Version, ID: "mcp", Cmd: proto.EncodeCmd(argv), Cwd: a.Cwd,
 		Stdin: base64.StdEncoding.EncodeToString([]byte(a.Stdin)), TimeoutMS: a.TimeoutMS,
 	}, s.rp,
 		func(b []byte) { emit(proto.StreamStdout, b) },

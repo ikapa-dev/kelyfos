@@ -412,7 +412,7 @@ func runGuestExec(uds string, cmd []string) (stdout string, code int, perr *prot
 	defer conn.Close()
 
 	if err := proto.NewWriter(conn).Write(proto.ExecRequest{
-		V: proto.Version, ID: "realvm-audit-test", Cmd: cmd, TimeoutMS: 20000,
+		V: proto.Version, ID: "realvm-audit-test", Cmd: proto.EncodeCmd(cmd), TimeoutMS: 20000,
 	}); err != nil {
 		return "", 0, nil, err
 	}

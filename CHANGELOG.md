@@ -208,6 +208,23 @@ reference described in the README and re-measured per release.
   `proto.MaxMCPLine` and a frame with a literal embedded newline: the session now answers each and
   keeps serving normal calls afterward, including a `write_file` whose event still lands in the
   flight recorder, rather than the bridge exiting silently.
+- **`kelyfos exec` silently mangled an argument containing invalid UTF-8 bytes.**
+  `proto.ExecRequest.Cmd` was a plain `[]string` JSON field, unlike `Stdin`, which
+  docs/protocol.md §3 already requires base64 for because "every field whose value is raw bytes
+  is base64": `encoding/json` marshals a Go string as UTF-8 and silently replaces any byte
+  sequence that is not valid UTF-8 with U+FFFD, so an argv entry built from arbitrary bytes — a
+  filename, a fetched credential, anything not guaranteed to be text — arrived in the guest
+  corrupted, with no error anywhere on either side. `cmd` now gets the same treatment `stdin`
+  already had: each argv element is base64-encoded by the host before the request is sent
+  (`proto.EncodeCmd`) and decoded by the supervisor before it reaches `exec.Command`
+  (`proto.DecodeCmd`), an invalid element failing the request with `error.kind = "bad_request"`
+  rather than being silently accepted. The array structure is unchanged — only each element's
+  encoding — so argv boundaries stay visible on the wire. Every place that builds an
+  `ExecRequest` (`kelyfos exec`, `sandbox.Exec`, the guest's own `exec` MCP tool) and the one
+  place that decodes it (`runCommand`) were updated in lockstep, since this is a wire-protocol
+  change. Verified live against a rebuilt guest image: an argument built from the four bytes
+  `0x80 0x81 0x82 0x83` — not valid UTF-8 on their own — now round-trips through `kelyfos exec`
+  byte-for-byte instead of coming back as four U+FFFD replacement characters.
 
 ---
 
