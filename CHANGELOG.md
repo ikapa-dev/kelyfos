@@ -147,6 +147,19 @@ reference described in the README and re-measured per release.
   restore cannot reach. This is a real default-behaviour change: a working directory with a
   `kelyfos.toml` above it — this repository's own included — now gets its restores held to it by
   default, the way its `run`s and `fork`s already were.
+- **`count` under `[[team.agent]]` had no upper bound, unlike every sibling numeric field, so
+  `count = 999999999999` in a `kelyfos.toml` crashed the whole `kelyfos` process with an
+  unrecoverable Go OOM abort — from parsing the policy file alone, before any topology, budget or
+  scratch check ran.** `host/teamplan.go`'s `expandCount` allocates `make([]string, 0, count)` per
+  agent group as the very first thing `planTeam` does with a parsed count, so a large enough number
+  was never a slow boot or a refused plan — it was a slice the allocator could not satisfy and an
+  abort no `recover` catches. `count` is now capped at 64 in `internal/config/team.go`, refused at
+  parse time with the same clear error `count < 1` already gets, rather than left to fail wherever
+  the number was first used. 64 is headroom over anything this project's own examples or
+  `max_sandboxes`'s default of 4 suggest a real team needs — `docs/teams.md` documents the ceiling
+  next to `count`. `FuzzConfigParse` gained the finding's own reproduction as a seed and an
+  invariant checking every parsed `Count` against the ceiling, alongside a dedicated unit test for
+  the boundary itself.
 
 ---
 
