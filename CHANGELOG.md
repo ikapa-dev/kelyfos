@@ -336,6 +336,18 @@ reference described in the README and re-measured per release.
   `internal/sandbox.jailRunDir` builds — and after teardown it asserts specifically that none of
   those PIDs are still alive, rather than asking whether Firecracker is running anywhere on the
   host.
+- **`kelyfos snapshot restore` could write its `resource.summary` receipt after the `session.end`
+  that is supposed to close the chain.** F14's fix wired `resource.summary` into a `defer`
+  registered right after `sandbox.Restore` succeeds, but the CA-install-error, interrupted
+  (Ctrl-C), and `vm_exited` exits still appended `session.end` inline, immediately before their
+  own `return` — code that runs *after* that defer was registered, so on every one of those three
+  paths the defer necessarily unwound afterward, writing `resource.summary` behind an event
+  `docs/events.md` documents as the one that closes the file. `session.end` is now written from its
+  own `defer`, registered before the resource-summary one so defers unwind last-registered-first
+  and it fires second, the same ordering `run.go`'s own `reason`/`session.end` defer already keeps
+  against its usage defer; the three sites set a `reason` variable instead of appending inline.
+  Verified live in the Lima VM: a restored sandbox's `-json` log now shows `resource.summary`
+  immediately ahead of `session.end` on both the interrupted and the `vm_exited` path.
 
 ---
 

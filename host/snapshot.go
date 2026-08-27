@@ -229,6 +229,20 @@ func snapshotRestore(argv []string) error {
 	// Firecracker nobody held: the VMM is started with its own process group and
 	// no Pdeathsig, so it outlived `kelyfos restore` itself, taking the
 	// workspace copy and the run directory with it (finding M-1).
+	//
+	// session.end is written from this defer rather than inline before each of
+	// the returns below, and registered here — before the resource-summary
+	// defer that follows — so that defers unwind last-registered-first and the
+	// receipt always lands ahead of the event that closes the file
+	// (docs/events.md), the same ordering run.go's own reason/session.end
+	// defer keeps against its usage defer. Every return past this point used to
+	// append session.end inline and let this defer fire afterward, which wrote
+	// resource.summary after the event that is supposed to close the chain.
+	reason := "error"
+	defer func() {
+		_ = rec.Append(recorder.Event{Type: recorder.TypeSessionEnd, Reason: reason,
+			DurationMS: rec.Since().Milliseconds()})
+	}()
 	defer func() {
 		ws := sb.State.Workspace
 		// The receipt is sampled before Shutdown, the same as every other
@@ -259,8 +273,6 @@ func snapshotRestore(argv []string) error {
 	// here is a stall or a refusal the chain actually shows.
 	if ca != nil {
 		if err := sb.InstallTrustAnchor(ca.AnchorPEM()); err != nil {
-			_ = rec.Append(recorder.Event{Type: recorder.TypeSessionEnd, Reason: "error",
-				DurationMS: rec.Since().Milliseconds()})
 			return err
 		}
 	}
@@ -290,11 +302,9 @@ func snapshotRestore(argv []string) error {
 	select {
 	case <-ctx.Done():
 		fmt.Println("\nstopping...")
-		_ = rec.Append(recorder.Event{Type: recorder.TypeSessionEnd, Reason: "interrupted",
-			DurationMS: rec.Since().Milliseconds()})
+		reason = "interrupted"
 	case <-vmExited:
-		_ = rec.Append(recorder.Event{Type: recorder.TypeSessionEnd, Reason: "vm_exited",
-			DurationMS: rec.Since().Milliseconds()})
+		reason = "vm_exited"
 		return errors.New("the restored microVM exited unexpectedly")
 	}
 	return nil
