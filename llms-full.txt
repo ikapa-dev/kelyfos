@@ -2303,7 +2303,20 @@ hoped for.
   wildcard, so `--allow *.github.com` normalises to `github.com` and permits the
   apex too; the same normalisation lower-cases the entry and trims trailing
   dots.
-- Ports are restricted to 80 and 443. No policy key widens that.
+- **Ports are restricted to 80 and 443, for every sandbox this product boots,
+  and there is no `kelyfos.toml` key that widens that.** This is a fixed
+  property of the proxy rather than an omission: `egress.Policy` has a `Ports`
+  field, but nothing in this codebase ever sets it — every `Policy` this
+  product constructs leaves it empty, which is why `egress.DefaultPorts()`
+  (`80`, `443`) is what actually applies, always. `Policy.EffectivePorts()` is
+  the one place that fact is computed, and it is what a reader of the record —
+  `session.policy`, and the run map and reach matrix that render it — reads
+  instead of the field directly, because the field alone reads as "nothing is
+  permitted" rather than "the fixed default applies" (P7-4, D65). Promoting
+  `Ports` to a real key was considered and set aside: nothing has asked for a
+  sandbox that can reach an arbitrary port, and widening what every sandbox in
+  this product can reach is a bigger, more security-relevant change than
+  fixing the fact that the existing, correct default was invisible.
 - A refusal is answered with `403` and a body naming the domain and the edit
   that would allow it (`[egress.host]` in [`denials.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/denials.md)). For plain
   HTTP the guest reads it; for a refused `CONNECT` most clients discard the
@@ -2497,6 +2510,19 @@ its own kernel, its own memory, its own egress policy and its own resource caps.
 `master` may message any worker and any worker may message `master`. No worker
 may message another worker — not because a rule forbids it, but because there is
 nothing to send it over.
+
+**Two keys this file may also carry are refused here, by name, rather than
+silently doing nothing.** `[[plugin]]` and `[[forward]]` are both file-level —
+they sit beside `[team]` rather than under it — and both are for a single
+sandbox: a plugin is packed by `packPlugins`, which `kelyfos run` and
+`serve-mcp`'s own single-sandbox door call and `team up` never does; a forward
+is opened by `resolveForwards`, which only `kelyfos run` calls. Before P7-4 a
+team file naming either loaded, parsed, and booted a team that quietly had
+neither — no plugin tools advertised, no port listening, and nothing said so.
+`kelyfos team up` (and `serve-mcp`'s `team_up`) now refuse a file naming
+either, at plan time, before any agent boots. The fix is to drop the block, or
+to run that plugin or forward outside `[team]`, against a single sandbox
+(`kelyfos run` or `serve-mcp`) instead.
 
 ### 1.1 `[team]`
 
@@ -10130,7 +10156,7 @@ Who may read and write one key or glob.
 
 ## `[[plugin]]`
 
-One MCP server to run inside the guest; its tools are advertised as <name>_<tool>.
+One MCP server to run inside the guest; its tools are advertised as <name>_<tool> — refused when this file also has a [team] section, because a team boot does not launch plugin servers yet (P7-4).
 
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
@@ -10141,7 +10167,7 @@ One MCP server to run inside the guest; its tools are advertised as <name>_<tool
 
 ## `[[forward]]`
 
-One host port carried to a guest-local port over vsock; the firewall is untouched.
+One host port carried to a guest-local port over vsock; the firewall is untouched — refused when this file also has a [team] section, because a team boot does not open forwarded ports yet (P7-4).
 
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |

@@ -60,6 +60,9 @@ func planTeam(cfg *config.Config) (*teamPlan, error) {
 	if len(t.Agents) == 0 {
 		return nil, fmt.Errorf("%s: a team with no [[team.agent]] has nothing to run", cfg.Path)
 	}
+	if err := checkTeamFileScope(cfg); err != nil {
+		return nil, err
+	}
 
 	plan := &teamPlan{name: t.Name, capture: t.RecordPayloads, budget: t.Budget}
 	if err := checkTeamBudget(cfg); err != nil {
@@ -157,6 +160,40 @@ func planTeam(cfg *config.Config) (*teamPlan, error) {
 		plan.storeEnabled, plan.storeRules = true, rules
 	}
 	return plan, nil
+}
+
+// checkTeamFileScope refuses two keys a team's own kelyfos.toml may also
+// carry that a team boot does not wire in: [[plugin]] and [[forward]] are
+// both file-level, both parse next to a perfectly ordinary [team] section,
+// and neither has ever done anything there. packPlugins is called from
+// `kelyfos run` and from serve-mcp's single-sandbox door; resolveForwards is
+// called from `kelyfos run` alone. Neither is ever reached from raiseTeam, so
+// a plugin or a forward written beside [team] loads, is silently dropped, and
+// the person who wrote it has no way to discover that short of reading this
+// file (P7-4).
+//
+// Refused rather than wired in, because refusing is the smaller change and
+// is strictly better than the silence it replaces — the same ruling
+// checkAgentPolicy already made for idle_timeout and a spawn budget's dead
+// keys, just above. Checked before a single agent is resolved, so a file
+// naming either is refused the same way `kelyfos team graph` will refuse it
+// once P7-7 exists: with nothing booted yet.
+func checkTeamFileScope(cfg *config.Config) error {
+	if len(cfg.Plugins) > 0 {
+		return fmt.Errorf("%s:%d: [[plugin]] has no effect inside a team\n"+
+			"    a team boot does not launch plugin servers yet, so this block would parse "+
+			"and then silently do nothing\n"+
+			"    drop it, or run this plugin outside [team] with `kelyfos run` or `serve-mcp`",
+			cfg.Path, cfg.Plugins[0].Line)
+	}
+	if len(cfg.Forwards) > 0 {
+		return fmt.Errorf("%s:%d: [[forward]] has no effect inside a team\n"+
+			"    a team boot does not open forwarded ports yet, so this block would parse "+
+			"and then silently do nothing\n"+
+			"    drop it, or forward this port outside [team] with `kelyfos run -p`",
+			cfg.Path, cfg.Forwards[0].Line)
+	}
+	return nil
 }
 
 // checkTeamBudget refuses an agent that asks for more CPU time than the team it

@@ -64,6 +64,19 @@ its own kernel, its own memory, its own egress policy and its own resource caps.
 may message another worker — not because a rule forbids it, but because there is
 nothing to send it over.
 
+**Two keys this file may also carry are refused here, by name, rather than
+silently doing nothing.** `[[plugin]]` and `[[forward]]` are both file-level —
+they sit beside `[team]` rather than under it — and both are for a single
+sandbox: a plugin is packed by `packPlugins`, which `kelyfos run` and
+`serve-mcp`'s own single-sandbox door call and `team up` never does; a forward
+is opened by `resolveForwards`, which only `kelyfos run` calls. Before P7-4 a
+team file naming either loaded, parsed, and booted a team that quietly had
+neither — no plugin tools advertised, no port listening, and nothing said so.
+`kelyfos team up` (and `serve-mcp`'s `team_up`) now refuse a file naming
+either, at plan time, before any agent boots. The fix is to drop the block, or
+to run that plugin or forward outside `[team]`, against a single sandbox
+(`kelyfos run` or `serve-mcp`) instead.
+
 ### 1.1 `[team]`
 
 | key | type | meaning |

@@ -4032,6 +4032,55 @@ after:
         what this does <i>not</i> cover: an actual green <code>ci.yml</code>/<code>security.yml</code> run on
         GitHub&rsquo;s own runners, or x86_64 boot under GitHub&rsquo;s KVM. Re-run both workflows for real once
         Actions is restored for this account; until then this row is the CI reconciliation of record.</td></tr>
+    <tr><td class="mono">2026-08-27</td><td class="mono">P7-4</td>
+        <td><b>Two silences made loud, on Lane 4 (<code>phase7/lane4-defects</code>, from <code>4a57db1</code>).</b>
+        Not touched: <code>host/team.go</code>, Lane 1&rsquo;s only overlap file &mdash; this task's changes live
+        entirely in <code>host/teamplan.go</code>.
+        <b>Silence 1, refused rather than wired in</b> (the smaller, strictly-better change): a new
+        <code>checkTeamFileScope</code> in <code>host/teamplan.go</code>, called from <code>planTeam</code> before
+        a single agent is resolved, refuses a <code>kelyfos.toml</code> that carries <code>[[plugin]]</code> or
+        <code>[[forward]]</code> beside a <code>[team]</code> section &mdash; both are file-level, both used to
+        parse and load and do nothing, because <code>packPlugins</code>/<code>resolveForwards</code> are never
+        called from <code>raiseTeam</code>. One choke point covers both doors that reach it (<code>kelyfos team
+        up</code> and <code>serve-mcp</code>'s <code>team_up</code>), and will cover <code>kelyfos team graph</code>
+        too once P7-7 exists, since that task also lints via <code>planTeam</code>.
+        <b>Silence 2, documented rather than promoted</b> (D65): every sandbox has always reached ports 80/443 only,
+        but <code>egress.Policy.Ports</code> had no caller and nothing let a reader look the fixed pair up.
+        <code>egress.DefaultPorts()</code> (new, exported) and <code>Policy.EffectivePorts()</code> (new) replace
+        the two bare integers <code>allowsPort</code> compared against, so P7-2's <code>session.policy</code> and
+        P7-7/P7-8's views have a correct value to read instead of the misleading <code>nil</code>
+        <code>Policy.Ports</code> reads as today. <code>docs/networking.md</code> &sect;6 and
+        <code>docs/teams.md</code> &sect;1 both updated; the schema's <code>plugin</code>/<code>forward</code>
+        section docs in <code>internal/config/schema.go</code> now say the refusal out loud, which
+        <code>make docs</code> carries into <code>docs/reference/config.md</code> and <code>llms-full.txt</code>
+        automatically. Hostile fixtures proven to fail before the fix (stashed <code>teamplan.go</code>, reran,
+        restored). No cookbook recipe needed: no new command, flag or <code>kelyfos.toml</code> key was added, and
+        the existing plugin (&sect;11) and forward (&ldquo;forward-a-port&rdquo;) recipes were checked by hand —
+        neither combines with <code>[team]</code>, so neither is affected.
+        <b>PROXY surface (D63): this task is not ticked here.</b> It needs an adversarial review by an agent that
+        did not write it before the checkbox gains <code>checked</code>; the orchestrator handles that dispatch.</td>
+        <td class="mono">all commands run inside <code>limactl shell kelyfos-dev</code>, repo at this branch's
+        tip on top of <code>4a57db1</code>:<br>
+        <code>go test ./host/... -run 'TestAPluginBesideATeamIsRefused|TestAForwardBesideATeamIsRefused|TestATeamFileWithAPluginParsesAndIsThenRefused' -v</code>
+        &rarr; all three <code>PASS</code>; the same three re-run against <code>teamplan.go</code> with the fix
+        stashed out &rarr; all three <code>FAIL</code> (&ldquo;...was planned successfully&rdquo;), proving the
+        fixture fails before the fix, exactly as landmine 2 requires<br>
+        <code>make test</code> &rarr; <code>go vet ./...</code> clean, <code>go test ./...</code> every package
+        <code>ok</code> or <code>[no test files]</code>, including <code>host</code> (16.1s) and
+        <code>internal/egress</code> (10.5s)<br>
+        <code>make vuln</code> &rarr; &ldquo;No vulnerabilities found.&rdquo;<br>
+        <code>bash dev/fuzz.sh 10s</code> &rarr; &ldquo;23 fuzz targets, 10s each, no failures&rdquo;; the four
+        <code>internal/egress</code> targets re-run individually for 10&ndash;11s each with full output captured
+        (<code>FuzzSplitTarget</code>, <code>FuzzParseSecret</code>, <code>FuzzScrubPreservesEverythingButTheSecret</code>,
+        <code>FuzzScopeCovers</code>) &mdash; all four <code>PASS</code><br>
+        <code>go test ./internal/egress/... -run TestDefaultPortsAreExactlyEightyAndFourFourThree -v</code> &rarr;
+        <code>PASS</code>, including the same-backing-array mutation check<br>
+        <code>make docs</code> &rarr; ``gendocs: wrote 8 files``; diff of <code>docs/reference/config.md</code>
+        shows exactly the two intended lines changed (<code>[[plugin]]</code>, <code>[[forward]]</code> section
+        docs)<br>
+        <code>make tokens</code> &rarr; <code>llms-full.txt</code> 570078 bytes &middot; 567275 characters &middot;
+        11179 lines &middot; ~148114 tokens estimated (was ~148113 before this task; the generated set changed, so
+        re-measured per &sect;8 rule 9)</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
@@ -5274,6 +5323,28 @@ after:
         verification (&ldquo;aarch64 is build-only here and boot-verified on the dev machine&rdquo;). Evidence and
         its scope limits are in the Progress Log entry beside this row. Real CI reconciliation resumes the session
         Actions is restored.</td></tr>
+    <tr><td class="mono">D65</td><td class="mono">2026-08-27</td>
+        <td><b>P7-4&rsquo;s second silence &mdash; every sandbox reaching ports 80 and 443 only, with
+        <code>egress.Policy.Ports</code> unreachable from any caller &mdash; is closed by documenting the fixed
+        pair and exporting it (<code>egress.DefaultPorts()</code>, <code>Policy.EffectivePorts()</code>), not by
+        promoting <code>Ports</code> to a <code>kelyfos.toml</code> key.</b> The task text offered both as equally
+        valid (&ldquo;the default is right either way&rdquo;); this session chose the narrower one.</td>
+        <td>Nothing has asked for a sandbox that can reach an arbitrary port, and widening what every sandbox in
+        this product can reach is a bigger, more security-relevant change than fixing the fact that the existing,
+        correct default was invisible &mdash; the same reasoning D60 applied when it kept <code>kelyfos view</code>
+        to a narrow admission rather than the broadest shape that would satisfy the ask. A real <code>ports</code>
+        key would also need range/overlap validation, four call sites wired (<code>host/run.go</code>,
+        <code>host/team.go</code>, <code>host/servemcptools.go</code>, <code>host/snapshot.go</code>), a
+        <code>docs/reference/config.md</code> row, its own hostile-input tests, and its own line in
+        <code>docs/threat-model.md</code> &mdash; a proportionate amount of review for a capability nobody has
+        requested. The chosen fix stays inside P7-4&rsquo;s actual defect: <code>egress.DefaultPorts()</code> makes
+        the fixed pair a named, tested fact instead of two bare integers inside <code>allowsPort</code>, and
+        <code>Policy.EffectivePorts()</code> gives P7-2&rsquo;s <code>session.policy</code> and P7-7/P7-8&rsquo;s
+        views a correct value to read &mdash; <code>Policy.Ports</code> alone is <code>nil</code> for every
+        sandbox this product has ever booted, and <code>nil</code> reads as &ldquo;nothing permitted&rdquo; rather
+        than &ldquo;the fixed default applies&rdquo;. Reopenable if a real demand for configurable ports appears;
+        nothing here forecloses it, since <code>Policy.Ports</code> still exists as exactly the extension point
+        promoting a <code>ports</code> key would use.</td></tr>
     <!-- Claude Code: append rows above this line. -->
   </table>
 </section>

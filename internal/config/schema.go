@@ -122,8 +122,8 @@ func Sections() []Section {
 		{Name: "team.edge", Header: "[[team.edge]]", Repeated: true, Doc: "one permitted path; the edge list is the topology"},
 		{Name: "team.store", Header: "[team.store]", Doc: "the permissioned key/blob store shared by the team"},
 		{Name: "team.store.key", Header: "[[team.store.key]]", Repeated: true, Doc: "who may read and write one key or glob"},
-		{Name: "plugin", Header: "[[plugin]]", Repeated: true, Doc: "one MCP server to run inside the guest; its tools are advertised as <name>_<tool>"},
-		{Name: "forward", Header: "[[forward]]", Repeated: true, Doc: "one host port carried to a guest-local port over vsock; the firewall is untouched"},
+		{Name: "plugin", Header: "[[plugin]]", Repeated: true, Doc: "one MCP server to run inside the guest; its tools are advertised as <name>_<tool> — refused when this file also has a [team] section, because a team boot does not launch plugin servers yet (P7-4)"},
+		{Name: "forward", Header: "[[forward]]", Repeated: true, Doc: "one host port carried to a guest-local port over vsock; the firewall is untouched — refused when this file also has a [team] section, because a team boot does not open forwarded ports yet (P7-4)"},
 	}
 }
 

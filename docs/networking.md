@@ -214,7 +214,20 @@ hoped for.
   wildcard, so `--allow *.github.com` normalises to `github.com` and permits the
   apex too; the same normalisation lower-cases the entry and trims trailing
   dots.
-- Ports are restricted to 80 and 443. No policy key widens that.
+- **Ports are restricted to 80 and 443, for every sandbox this product boots,
+  and there is no `kelyfos.toml` key that widens that.** This is a fixed
+  property of the proxy rather than an omission: `egress.Policy` has a `Ports`
+  field, but nothing in this codebase ever sets it — every `Policy` this
+  product constructs leaves it empty, which is why `egress.DefaultPorts()`
+  (`80`, `443`) is what actually applies, always. `Policy.EffectivePorts()` is
+  the one place that fact is computed, and it is what a reader of the record —
+  `session.policy`, and the run map and reach matrix that render it — reads
+  instead of the field directly, because the field alone reads as "nothing is
+  permitted" rather than "the fixed default applies" (P7-4, D65). Promoting
+  `Ports` to a real key was considered and set aside: nothing has asked for a
+  sandbox that can reach an arbitrary port, and widening what every sandbox in
+  this product can reach is a bigger, more security-relevant change than
+  fixing the fact that the existing, correct default was invisible.
 - A refusal is answered with `403` and a body naming the domain and the edit
   that would allow it (`[egress.host]` in [`denials.md`](denials.md)). For plain
   HTTP the guest reads it; for a refused `CONNECT` most clients discard the

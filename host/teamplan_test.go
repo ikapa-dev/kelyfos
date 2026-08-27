@@ -2,6 +2,8 @@ package main
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -69,6 +71,82 @@ func TestATeamNeedsANameAndAtLeastOneAgent(t *testing.T) {
 	}
 	if _, err := planFrom(t, &config.Team{Name: "t"}); err == nil {
 		t.Error("a team with no agents was accepted")
+	}
+}
+
+// A [[plugin]] beside [team] used to parse, load, and do nothing:
+// packPlugins is never reached from raiseTeam, so the block silently vanished
+// with no refusal, no warning and nothing in the docs. It is refused before a
+// single agent is resolved instead (P7-4).
+func TestAPluginBesideATeamIsRefused(t *testing.T) {
+	_, err := planTeam(&config.Config{
+		Path: "kelyfos.toml", Image: "dev",
+		Team:    &config.Team{Name: "t", Agents: []config.TeamAgent{{Name: "a", Count: 1}}},
+		Plugins: []config.Plugin{{Name: "browser", Path: "./plugins/browser", Command: "node", Line: 5}},
+	})
+	if err == nil {
+		t.Fatal("a team file with a [[plugin]] block was planned successfully")
+	}
+	if !strings.Contains(err.Error(), "[[plugin]]") {
+		t.Errorf("the refusal does not name [[plugin]]: %v", err)
+	}
+	if !strings.Contains(err.Error(), "kelyfos.toml:5") {
+		t.Errorf("the refusal does not name the file and line: %v", err)
+	}
+}
+
+// The same silence, for [[forward]] (P7-4): resolveForwards is only ever
+// called from `kelyfos run`.
+func TestAForwardBesideATeamIsRefused(t *testing.T) {
+	_, err := planTeam(&config.Config{
+		Path: "kelyfos.toml", Image: "dev",
+		Team:     &config.Team{Name: "t", Agents: []config.TeamAgent{{Name: "a", Count: 1}}},
+		Forwards: []config.Forward{{Host: 8080, Guest: 80, Line: 7}},
+	})
+	if err == nil {
+		t.Fatal("a team file with a [[forward]] block was planned successfully")
+	}
+	if !strings.Contains(err.Error(), "[[forward]]") {
+		t.Errorf("the refusal does not name [[forward]]: %v", err)
+	}
+	if !strings.Contains(err.Error(), "kelyfos.toml:7") {
+		t.Errorf("the refusal does not name the file and line: %v", err)
+	}
+}
+
+// The hostile fixture: a real file, parsed by the real parser, exactly the
+// shape the Phase 7 acceptance test names — "a policy carrying [[plugin]]
+// beside [team] is refused with the sentence P7-4 writes". Constructing the
+// struct by hand (above) proves the plan-time check; this proves the whole
+// door, from bytes on disk to the refusal a person actually sees.
+func TestATeamFileWithAPluginParsesAndIsThenRefused(t *testing.T) {
+	path := filepath.Join(t.TempDir(), config.FileName)
+	body := `
+[team]
+name = "t"
+
+[[team.agent]]
+name = "master"
+
+[[plugin]]
+name    = "browser"
+path    = "./plugins/browser"
+command = "node"
+`
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("a well-formed [[plugin]] beside [team] did not even parse: %v", err)
+	}
+	if len(cfg.Plugins) != 1 {
+		t.Fatalf("the plugin did not reach cfg.Plugins: %+v", cfg.Plugins)
+	}
+	if _, err := planTeam(cfg); err == nil {
+		t.Fatal("a loaded team file with a [[plugin]] block was planned successfully")
+	} else if !strings.Contains(err.Error(), "[[plugin]]") {
+		t.Errorf("the refusal does not name [[plugin]]: %v", err)
 	}
 }
 

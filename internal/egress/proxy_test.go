@@ -70,6 +70,37 @@ func TestDefaultPortsAreWebOnly(t *testing.T) {
 	}
 }
 
+// DefaultPorts is the named, exported fact every sandbox in this product
+// actually runs on (P7-4). A change to it is a change to what every sandbox
+// can reach, so this test exists to make that change loud rather than a
+// one-line diff nobody reading the record would notice.
+func TestDefaultPortsAreExactlyEightyAndFourFourThree(t *testing.T) {
+	if got := DefaultPorts(); len(got) != 2 || got[0] != 80 || got[1] != 443 {
+		t.Errorf("DefaultPorts() = %v, want [80 443]", got)
+	}
+	// A fresh slice every call: mutating one caller's copy must never touch
+	// another's, or the default itself.
+	a, b := DefaultPorts(), DefaultPorts()
+	a[0] = 9999
+	if b[0] == 9999 {
+		t.Error("DefaultPorts() shares a backing array across calls")
+	}
+}
+
+// EffectivePorts is what P7-2's session.policy and P7-7/P7-8's views must
+// read instead of Policy.Ports directly — Policy.Ports is nil for every
+// sandbox this product has ever booted, and nil reads as "nothing permitted"
+// rather than "the fixed default applies".
+func TestEffectivePortsFallsBackToTheDefault(t *testing.T) {
+	if got := (&Policy{}).EffectivePorts(); len(got) != 2 || got[0] != 80 || got[1] != 443 {
+		t.Errorf("an empty policy's EffectivePorts = %v, want DefaultPorts", got)
+	}
+	custom := []int{8443}
+	if got := (&Policy{Ports: custom}).EffectivePorts(); len(got) != 1 || got[0] != 8443 {
+		t.Errorf("a policy with its own Ports returned %v, want %v", got, custom)
+	}
+}
+
 // D6's binding condition (2) is that a user can always prove which traffic the
 // proxy was able to read. That only holds if the value never understates it,
 // and for one path it did: an ordinary HTTP request is parsed, rewritten and
