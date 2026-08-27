@@ -4032,6 +4032,62 @@ after:
         what this does <i>not</i> cover: an actual green <code>ci.yml</code>/<code>security.yml</code> run on
         GitHub&rsquo;s own runners, or x86_64 boot under GitHub&rsquo;s KVM. Re-run both workflows for real once
         Actions is restored for this account; until then this row is the CI reconciliation of record.</td></tr>
+    <tr><td class="mono">2026-08-27</td><td class="mono">P7-6</td>
+        <td><b>The layout, once &mdash; <code>internal/graph</code> added.</b> A pure function from agents, directed
+        edges and the resources they touch to placed nodes and routed edges (<code>Layout</code>, returning a
+        <code>Placement</code>), plus the transitive closure the reach view needs (<code>TransitiveClosure</code>,
+        returning a <code>Closure</code>). One implementation, two backends: <code>Terminal</code> renders a
+        <code>Placement</code> to a rune canvas with a legend, <code>SVG</code> scales the same
+        <code>Placement</code> to pixel coordinates only &mdash; numbers, never markup, so nothing it returns needs
+        escaping downstream.
+        <br><b>Deterministic by construction.</b> A shared <code>normalize</code> step sorts and validates before
+        either public function computes anything, so <code>Layout</code> and <code>TransitiveClosure</code> always
+        agree about which agents and resources exist. Order in the input slices never affects the output
+        (<code>TestNormalizeIsOrderIndependent</code>, <code>TestLayoutIsDeterministicAcrossInputOrder</code>,
+        <code>TestClosureIsDeterministicAcrossInputOrder</code>). A dangling edge or access reference is refused
+        rather than dropped &mdash; dropping it would make a reach view understate what a team can reach, the one
+        direction this must never fail silently in &mdash; while a self-loop edge is silently skipped, mirroring
+        <code>internal/team.NewTopology</code>&rsquo;s own precedent for the same case.
+        <br><b>The reach view answers the task text&rsquo;s own example.</b> A hub with a bidirectional edge to N
+        workers has no edge naming two workers together anywhere, and is not thereby isolation:
+        <code>TestStarTopologyIsNotIsolation</code> asserts every worker reaches every other in exactly two hops
+        through the hub. A second, quieter path is modelled too: a <code>StoreKey</code> resource one agent may
+        write and another may read opens a directed reach edge with no declared <code>team.edge</code> at all
+        (<code>TestSharedStoreKeyOpensAnIndirectChannel</code>); a <code>Domain</code> or <code>Secret</code>
+        resource deliberately does not, because those are destinations outside the team rather than state shared
+        between two agents inside it (<code>TestDomainAndSecretAccessDoNotOpenAChannel</code>).
+        <br>Four golden fixtures under <code>testdata/golden/</code> freeze <code>Terminal</code>&rsquo;s rune
+        output for a star with one resource of each kind, a pipeline, two disconnected components plus an isolated
+        agent, and a single agent &mdash; hand-verified against what <code>Layout</code>&rsquo;s placement and
+        routing rules should produce before being committed as golden. A byte-driven fuzz target
+        (<code>FuzzLayoutNeverPanicsAndIsDeterministic</code>) builds bounded random graphs from raw fuzz bytes over
+        a small ID pool, so duplicate IDs and dangling references &mdash; the two cases <code>normalize</code> is
+        written to catch &mdash; occur often rather than needing a lucky corpus; on every input it asserts
+        <code>Layout</code> and <code>TransitiveClosure</code> never disagree about validity, never panic, and are
+        byte-identical across a repeated call on the same <code>Input</code>.
+        <br><b>No files shared with any other lane</b> (D62): a new package, importing nothing from
+        <code>internal/recorder</code>, <code>internal/team</code> or <code>internal/config</code> &mdash; a caller
+        converts its own domain type into a <code>graph.Input</code>, which is what lets <code>kelyfos team
+        graph</code> reading <code>kelyfos.toml</code> (P7-7) and the exported report reading a session&rsquo;s fold
+        (P7-1/P7-8) agree about a topology without a third copy of this computation existing anywhere. Adds no CLI
+        command, flag, MCP tool or <code>kelyfos.toml</code> key, so &sect;8 rule 9&rsquo;s cookbook-recipe
+        obligation does not apply this task, and <code>make docs</code> produced no diff (checked below) &mdash; the
+        generated reference, <code>llms.txt</code> and <code>llms-full.txt</code> are unchanged, so no
+        re-measurement was needed. Per the brief&rsquo;s surface table this task gets light review (not one of
+        RECORD/PROXY/BROKER/RENDER) but is still not self-ticked &mdash; the checkbox is left unchecked for the
+        orchestrator&rsquo;s review dispatch.</td>
+        <td class="mono">commands run inside <code>limactl shell kelyfos-dev</code>, this worktree (branch
+        <code>phase7/lane3-layout</code> off <code>4a57db1</code>): <code>gofmt -l ./internal/graph/</code> &rarr;
+        clean; <code>go vet ./internal/graph/...</code> &rarr; clean; <code>go test ./internal/graph/... -v</code>
+        &rarr; 34 tests + 4 golden-fixture subtests, all <code>PASS</code>; <code>go test ./internal/graph/
+        -run=^$ -fuzz=FuzzLayoutNeverPanicsAndIsDeterministic -fuzztime=60s</code> &rarr;
+        &ldquo;15846963 execs, 280 interesting (total 287), PASS&rdquo;, 0 failures; <code>make test</code> (whole
+        repo: <code>go vet ./...</code> + <code>go test ./...</code>) &rarr; every package <code>ok</code> or
+        <code>[no test files]</code>, including the new <code>internal/graph</code>; <code>make vuln</code> &rarr;
+        &ldquo;No vulnerabilities found.&rdquo;; <code>make docs</code> &rarr; &ldquo;gendocs: wrote 8 files&rdquo;,
+        <code>git status --porcelain</code> before and after shows no change to any tracked file, only the new
+        untracked <code>internal/graph/</code>; <code>python3 tools/check-plan.py</code> &rarr; &ldquo;PLAN.html is
+        coherent: 99 tasks, 78 checked, 63 decisions&rdquo; both before and after this row was added.</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
