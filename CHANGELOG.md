@@ -59,6 +59,17 @@ reference described in the README and re-measured per release.
   path segment) — anything else, including any other percent-encoding,
   withholds the credential instead of trying to reason about what a
   particular server would do with it.
+- **An exported report's own tamper-evidence markers could be defeated by an edit that a
+  verifier's own doc comment already said should be refused.** `marked()` reads each of the six
+  values a page states about itself (chain head, event count, session, and — the sharpest case —
+  the signing key's fingerprint, the exact check P6-19 added so a swapped signing key could not
+  hide behind a fingerprint the reader trusts) by looking for one `<code id="...">` or, failing
+  that, one `<span id="...">`. On finding the `<code>` count ambiguous (2+), it fell through to
+  check `<span>` instead of refusing outright — so an editor could show a fake value in a visible,
+  duplicated `<code>` tag and hide the true value in a lone `<span>` for the same id, and
+  `marked()` would hand back the true value, agreeing with the record while the page a human
+  reads shows the fake one. `kelyfos verify` now refuses to answer for a marker that is ambiguous
+  across *either* tag kind, matching what `marked()`'s comment already promised.
 
 ---
 

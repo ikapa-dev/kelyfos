@@ -2,6 +2,8 @@ package report
 
 import (
 	"bytes"
+	"crypto/ed25519"
+	"crypto/rand"
 	"encoding/base64"
 	"strings"
 	"testing"
@@ -140,6 +142,152 @@ func TestExtractionRefusesRatherThanGuesses(t *testing.T) {
 		if !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("%s: error is %q, want it to mention %q", tc.name, err, tc.want)
 		}
+	}
+}
+
+// marked's own contract, tested directly rather than through a rendered page:
+// exactly one occurrence of the id, in either candidate tag, answers; anything
+// else — including one occurrence of each tag kind for the same id, which is
+// the shape the cross-tag fallback bug let through — is no answer at all.
+func TestMarkedRefusesAmbiguityAcrossTagKinds(t *testing.T) {
+	for _, tc := range []struct {
+		name, page, want string
+	}{
+		{
+			name: "exactly one code",
+			page: `<code id="x">real</code>`,
+			want: "real",
+		},
+		{
+			name: "exactly one span",
+			page: `<span id="x">real</span>`,
+			want: "real",
+		},
+		{
+			name: "two code, zero span: ambiguous within one tag",
+			page: `<code id="x">real</code><code id="x">fake</code>`,
+			want: "",
+		},
+		{
+			name: "one code and one span for the same id: the cross-tag bug",
+			// This is the exploit shape verbatim: a genuine, visible value,
+			// duplicated so the code count is ambiguous, plus a second tag
+			// kind carrying a — possibly different, possibly identical —
+			// value. Either way there is no way to say which tag is real, so
+			// this must answer nothing rather than fall through to the span.
+			page: `<code id="x">edited</code><code id="x">edited-again</code><span id="x">real</span>`,
+			want: "",
+		},
+		{
+			name: "zero occurrences of either tag",
+			page: `<div id="x">real</div>`,
+			want: "",
+		},
+	} {
+		if got := marked([]byte(tc.page), "x"); got != tc.want {
+			t.Errorf("%s: marked() = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
+// The exact exploit the finding describes, reproduced against a genuinely
+// rendered, genuinely signed page rather than hand-built HTML: edit the
+// visible kelyfos-fingerprint <code> to a fake value, duplicate it so the
+// <code> count for that id goes ambiguous, and add a hidden <span> carrying
+// the true fingerprint read back out of the untampered render — the shape
+// that, before this fix, made marked() fall through from the ambiguous
+// <code> to the lone <span> and hand back the true value, so the page's own
+// check agreed with the record while a human reading the page saw the fake
+// one.
+//
+// Reasoning through the old code rather than reverting it here: the old
+// marked() looped over "code" first, saw bytes.Count == 2 for
+// `<code id="kelyfos-fingerprint">`, and `continue`d to "span" instead of
+// returning "" — found exactly one `<span id="kelyfos-fingerprint">`, and
+// returned *that* text, which is the true value planted below. ClaimsIn's
+// Fingerprint would have been the true value, matching SignatureIn's derived
+// fingerprint exactly, so Disagree would have reported zero problems for a
+// page whose visible, human-readable claim was false. This test's assertion
+// — at least one problem, and specifically about the fingerprint — is the
+// fix under test: after it, the combined <code>+<span> count for this id is
+// 3, marked() refuses, ClaimsIn's Fingerprint comes back "", and Disagree
+// reports the page states no fingerprint at all.
+func TestATamperedFingerprintSurvivesBehindAHiddenSpanIsCaught(t *testing.T) {
+	chain := chainOf(t, []recorder.Event{
+		ev(recorder.TypeSessionStart, ""),
+		ev(recorder.TypeSessionEnd, ""),
+	})
+	_, key, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var buf bytes.Buffer
+	n, err := RenderSigned(&buf, "s1", chain, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	genuine := buf.Bytes()
+
+	_, head, err := recorder.Verify(bytes.NewReader(chain))
+	if err != nil {
+		t.Fatal(err)
+	}
+	trueFP := ClaimsIn(genuine).Fingerprint
+	if trueFP == "" {
+		t.Fatal("the genuine render carries no fingerprint to attack")
+	}
+	if bad := ClaimsIn(genuine).Disagree(head, n, chain, SignatureIn(genuine).Fingerprint()); len(bad) != 0 {
+		t.Fatalf("the untampered render already disagrees with itself: %v", bad)
+	}
+
+	openTag := `<code id="kelyfos-fingerprint">`
+	start := bytes.Index(genuine, []byte(openTag))
+	if start < 0 {
+		t.Fatal("the genuine render carries no fingerprint marker to tamper with")
+	}
+	rest := genuine[start+len(openTag):]
+	end := bytes.Index(rest, []byte("</code>"))
+	if end < 0 {
+		t.Fatal("the fingerprint marker is never closed")
+	}
+	after := rest[end+len("</code>"):]
+
+	// (1) is `genuine` itself, a real export. (2)-(4) below, in order. The
+	// hidden span carries no attribute of its own — style="display:none" sits
+	// on a wrapping div instead — because marked()'s open-tag pattern is the
+	// literal `<span id="kelyfos-fingerprint">` with the closing '>'
+	// immediately after the id: an attribute placed directly on the marker
+	// tag itself (as an earlier version of this fixture did) stops the span
+	// from ever matching that pattern at all, in both the fixed code and the
+	// bug this test exists to catch — which would make this test pass for the
+	// wrong reason regardless of whether marked() falls through across tags
+	// or not. Found by an adversarial review of this very fix.
+	trueSpan := `<span id="kelyfos-fingerprint">` + trueFP + `</span>`
+	edit := openTag + strings.Repeat("f", len(trueFP)) + "</code>" + // (2) the visible, edited fake value
+		openTag + strings.Repeat("d", len(trueFP)) + "</code>" + // (3) a second, hidden <code> for the same id
+		`<div style="display:none">` + trueSpan + `</div>` // (4) the true value, hidden
+	tampered := []byte(string(genuine[:start]) + edit + string(after))
+
+	if n := bytes.Count(tampered, []byte(openTag)); n != 2 {
+		t.Fatalf("fixture bug: <code id=\"kelyfos-fingerprint\"> occurs %d times, want 2", n)
+	}
+	if n := bytes.Count(tampered, []byte(`<span id="kelyfos-fingerprint">`)); n != 1 {
+		t.Fatalf("fixture bug: <span id=\"kelyfos-fingerprint\"> occurs %d times, want 1", n)
+	}
+
+	bad := ClaimsIn(tampered).Disagree(head, n, chain, SignatureIn(tampered).Fingerprint())
+	if len(bad) == 0 {
+		t.Fatal("a page with an edited, visible fingerprint backed by a hidden span carrying the true one verified clean")
+	}
+	var sawFingerprint bool
+	for _, b := range bad {
+		if strings.Contains(b, "fingerprint") {
+			sawFingerprint = true
+		}
+	}
+	if !sawFingerprint {
+		t.Errorf("Disagree found a problem, but not about the fingerprint: %v", bad)
 	}
 }
 

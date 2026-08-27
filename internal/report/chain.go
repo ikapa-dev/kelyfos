@@ -127,9 +127,23 @@ func ClaimsIn(page []byte) Claimed {
 
 // marked pulls the text out of the one element carrying an id. Two of them is
 // no answer rather than the first answer, for the reason ExtractChain refuses a
-// page with two islands.
+// page with two islands — and "two of them" is counted across every candidate
+// tag together, not within one tag at a time: a page with one `<code id="x">`
+// and one `<span id="x">` is exactly as ambiguous as two of either, because
+// nothing declares which tag kind is the real marker and which is the decoy.
+// A first pass over the combined count decides whether to answer at all; only
+// then does a second pass go find the single occurrence to extract.
 func marked(page []byte, id string) string {
-	for _, tag := range []string{"code", "span"} {
+	tags := []string{"code", "span"}
+	total := 0
+	for _, tag := range tags {
+		open := []byte(`<` + tag + ` id="` + id + `">`)
+		total += bytes.Count(page, open)
+	}
+	if total != 1 {
+		return ""
+	}
+	for _, tag := range tags {
 		open := []byte(`<` + tag + ` id="` + id + `">`)
 		if bytes.Count(page, open) != 1 {
 			continue

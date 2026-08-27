@@ -21,7 +21,11 @@ func ev(t string, agent string) recorder.Event {
 // that cannot happen: a report is rendered from a chain the host wrote, digests
 // and all, and the digests are the thing every assertion about the embedded
 // record ultimately rests on.
-func chainOf(t *testing.T, events []recorder.Event) []byte {
+//
+// Takes testing.TB rather than *testing.T so a fuzz target can also use it to
+// build its one fixed base page outside f.Fuzz, with *testing.F standing in
+// for t.
+func chainOf(t testing.TB, events []recorder.Event) []byte {
 	t.Helper()
 	root := t.TempDir()
 	rec, err := recorder.Open(root, "s1")
