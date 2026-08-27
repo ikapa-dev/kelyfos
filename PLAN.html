@@ -130,8 +130,8 @@
      injected secrets, full audit replay, and millisecond forking.</p>
   <div class="meta">
     owner: <b>John</b> &nbsp;·&nbsp; developer: <b>Claude Code</b> &nbsp;·&nbsp;
-    status: <b class="amber" id="meta-status">COMPLETE &mdash; <b>v1.0 tagged</b>. Every phase closed: 0&ndash;3 and 5 shipped, 6 done in full, PLAN-FEATURES complete and closed, Phase 4 dispositioned and parked with every row given a verdict (D35). The bar reads 78/85 and stops there on purpose &mdash; the seven open boxes are Phase 4&rsquo;s permanent record rows (D34), which are a record rather than work.</b> &nbsp;&middot;&nbsp;
-    last updated: <b id="meta-updated">2026-08-24</b><br>
+    status: <b class="amber" id="meta-status">ACTIVE &mdash; <b>Phase 7</b>, the declared shape of a run, opened 2026-08-27 on the owner&rsquo;s ruling (D59). v1.0 is tagged and every earlier phase is closed; this one exits at <code>v1.1</code>. Fourteen tasks, none started &mdash; the bar moved backwards on purpose when they joined the denominator.</b> &nbsp;&middot;&nbsp;
+    last updated: <b id="meta-updated">2026-08-27</b><br>
     repo file: <b>PLAN.html</b> (commit this document at the repository root — it is the single source of truth)<br>
     <span class="quiet">KelyfOS — from κέλυφος (kélyfos), "shell": the guest OS wrapped around the agent. Formerly working-titled "agos" (D4 → D10).</span>
   </div>
@@ -180,7 +180,7 @@
     <span class="bl-name">Overall</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">Nothing &mdash; <b>Phase 6 is closed and v1.0 is tagged.</b> The security audit that arrived mid-phase is answered in full: twenty-four findings read against current source, and not one fixed from its description alone. The documentation audit corrected 174 claims across 21 documents and turned up eighteen defects in the code. Two release candidates were cut before the tag, and rc1 earned itself by failing at a step no release had ever run. What remains is not work but a decision: the release is <i>drafted</i>, and publishing it is the owner&rsquo;s &mdash; as is the launch post.</b></div>
+  <div class="focusline">Current focus: <b id="focus"><b>P7-0 &mdash; the policy-record spec, written before the code.</b> <code>docs/policy-record.md</code>: every field Phase 7 adds, its key, its Go type, its position in the frozen hash order, which of the eight doors writes it, and what it deliberately omits. D59 has already settled the one irreversible question &mdash; typed fields, not JSON in a string &mdash; so this task specifies rather than decides. It is reviewed before P7-2 touches <code>internal/recorder</code>, for the reason P5-0 existed: a schema argued about after it is hashed is a migration rather than an argument.</b></div>
 </div>
 
 <!-- ====================================================== 1. END GOAL -->
@@ -1266,6 +1266,208 @@
      everything it says about itself is true.&rdquo;</p>
 </section>
 
+<section class="phase" id="p7" data-phase="7" data-status="active">
+  <div class="phase-head">
+    <div>
+      <div class="kconfig">config KELYFOS_PHASE_7</div>
+      <h2>Phase 7 &mdash; The declared shape of a run (v1.1 &middot; &ldquo;what it was allowed to do&rdquo;)</h2>
+    </div>
+    <span class="badge">ACTIVE</span>
+  </div>
+  <p class="goal"><b>Goal:</b> make the record say what a run was <i>permitted</i> to do, not only what it did.
+     Thirty-four settings decide what a machine can touch &mdash; eleven resource caps, an allowlist and the ports
+     it covers, bound credentials, a workspace, a spawn budget, store ACLs and an edge list &mdash; and every one
+     of them is enforced on each call and then thrown away when the run stops. So a finished session cannot show
+     its own caps, its allowlist, its image digest or its topology, and the first question a reviewer asks
+     &mdash; <i>what was this allowed to reach?</i> &mdash; has no answer in the file that answers everything else.
+     That is the same gap <code>mcp.host.result</code> was written to close, in this document&rsquo;s own words:
+     a policy ceiling nobody can see being enforced is a ceiling nobody can audit.
+     <br>This phase writes the declaration into the chain and then builds the views that read it &mdash; a run map,
+     an agent sheet and a reach matrix, in the terminal and in the exported report &mdash; and closes three defects
+     the survey turned up on the way. Promoted into this document on the product owner&rsquo;s ruling of
+     2026-08-27 (D59): <a href="PLAN-FEATURES.html">PLAN-FEATURES.html</a> is complete and closed, and F-D56
+     already redirected the promotion path here.</p>
+  <ul class="tasks">
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P7-0</span><span class="tk"><b>The policy-record spec, written before the code.</b>
+        <code>docs/policy-record.md</code>: every field this phase adds, its JSON key, its Go type, its position in
+        the frozen order, which of the eight doors that open a chain writes it, and &mdash; the longer half &mdash;
+        what it deliberately omits and why. Reviewed before P7-2 starts, the way <code>docs/hardening.md</code> was
+        at P5-0, because a schema argued about after it is hashed is a migration rather than an argument.
+        D59 settles the one irreversible question so this task does not reopen it: <b>typed fields on
+        <code>Event</code></b>, not JSON inside a string, so <code>tools/gendocs</code> documents each one and
+        <code>TestSchemaFieldsExist</code> covers it.</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P7-1</span><span class="tk"><b>One fold, not three.</b> <code>internal/digest</code> walks a chain once and returns the
+        aggregate every view needs: per-agent counters, per-pair message counts, per-domain egress, store activity,
+        the policy, the timeline. <code>kelyfos watch</code> and <code>internal/report</code> are rewritten onto it
+        and lose their own copies. This is first, and not a refactor to do afterwards, because there are already
+        <i>two</i> folds &mdash; <code>host/watch.go</code>&rsquo;s <code>absorb()</code> and the three loops in
+        <code>internal/report</code> &mdash; and the views below would add a third. This project has found that
+        exact class of duplication twice: in the MCP argument summarisers (S19) and in the three copies of
+        <code>SafeText</code> that existed by the end of P6-3.</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P7-2</span><span class="tk"><b><code>session.policy</code>, at every door that opens a chain.</b> What the machine was
+        permitted: all eleven <code>[resources]</code> caps, the egress allowlist and the ports it actually covers,
+        bound credentials by name with their host and path scope, workspace, scratch, plugins, forwards, the
+        image&rsquo;s <code>rootfs_sha256</code> and <code>kernel_sha256</code>, the tool surface, the parent session
+        id when this machine came from another, and an inbound W3C <code>traceparent</code> when one is supplied.
+        <b>One constructor and one test that enumerates the doors</b> and fails when a new one appears without it
+        &mdash; the shape <code>WithPosture</code> exists to enforce, because P5-1 set <code>jailed</code> at one of
+        eight doors and seven kinds of session then said nothing about a wall that was in fact around them.
+        Never a secret value: names, hosts and path scopes only, which is what <code>secret.use</code> already
+        writes. The parent field also closes the third defect &mdash; a restored or forked sandbox records its
+        origin as prose (<code>reason: "forked from nightly"</code>), and a snapshot name is not a session id, so
+        a run&rsquo;s history cannot be followed across two hops.</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P7-3</span><span class="tk"><b><code>team.topology</code>, at team boot.</b> The resolved agents with their own sandbox ids
+        and their fork-template group, the declared edges, the store keys with their read and write lists, the
+        collective slice, and whether payloads are being captured. <code>team.spawn</code> already records attach
+        and detach, so the graph replays over time with nothing new. This closes two absences at once: the edge
+        list exists only in <code>run/team.json</code>, which <code>team down</code> deletes, and a member&rsquo;s
+        own sandbox id &mdash; the handle <code>kelyfos diff</code> and <code>kelyfos shell</code> take &mdash;
+        lives nowhere else either.</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P7-4</span><span class="tk"><b>Two silences made loud.</b> <code>[[plugin]]</code> and <code>[[forward]]</code> parse in a
+        team policy, load, and do nothing: <code>packPlugins</code> is called from <code>run</code> and
+        <code>serve-mcp</code> and never from the team path, and <code>resolveForwards</code> from <code>run</code>
+        alone. Nothing refuses them, warns, or documents the limitation. Refused at plan time with a sentence
+        saying why, or wired in &mdash; refusing is the smaller change and is strictly better than the current
+        silence. And every sandbox in this product reaches ports 80 and 443 only, because
+        <code>egress.Policy.Ports</code> has no caller and there is no <code>ports</code> key in the schema: either
+        documented as a fixed property in <code>docs/networking.md</code> and printed in the views, or promoted to
+        a configuration key. The default is right either way; the invisibility is not. Placed before the views so
+        that what they show is true.</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P7-5</span><span class="tk"><b>Retention, pruning and tombstones</b> (D61). <code>~/.cache/kelyfos/sessions/</code> has never
+        been pruned &mdash; the template cache has a bound and is swept oldest-first, and the records that outlive
+        every sandbox grow without limit, with no setting, no <code>kelyfos sessions prune</code> and no warning.
+        A retention floor, a prune command, a size warning, and an erasure path that writes a <b>replacement
+        record</b> preserving chain integrity while keeping a content fingerprint &mdash; a digest proving what was
+        there without keeping it. KelyfOS is unusually well placed for that pattern because
+        <code>file.write</code> already records by digest rather than by content, so it is native rather than
+        bolted on, and it is what lets a GDPR Article 17 erasure and an EU AI Act Article 12 record coexist instead
+        of cancelling.</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P7-6</span><span class="tk"><b>The layout, once.</b> <code>internal/graph</code>: a pure function from agents, edges and the
+        resources they touch to placed nodes and routed edges, plus the transitive closure the reach view needs
+        &mdash; because a star topology in which every worker reaches every other in two hops through the hub is
+        not the isolation it looks like, and OWASP names transitive privilege inheritance by name. Deterministic,
+        golden-tested and fuzzed: a layout that moves between two runs of the same team is a diff nobody can read.
+        One implementation, two backends &mdash; runes for the terminal, coordinates for the SVG.</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P7-7</span><span class="tk"><b>The terminal views.</b> <code>kelyfos team graph</code> renders the topology straight from
+        <code>kelyfos.toml</code> with nothing booted: a pre-flight lint in the category of <code>doctor</code>
+        rather than a monitor, and the place P7-4&rsquo;s two silences become visible before they cost somebody an
+        afternoon. <code>kelyfos team ps --graph</code> does the same for a running team, and <code>watch</code>
+        gains the map and the agent sheet as panes with live counters. Every refusal carries the fix line the
+        denial explainer already writes, so the view answers &ldquo;now what&rdquo; and not only
+        &ldquo;what&rdquo;; every guest-influenced string goes through <code>proto.SafeText</code> first. <b>The
+        three modes get their names here and keep them everywhere</b>: <i>declared</i>, <i>aggregate</i>,
+        <i>as-it-ran</i> &mdash; three questions, and only the first is one anybody else can answer.</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P7-8</span><span class="tk"><b>The report&rsquo;s run section.</b> The run map, the agent sheets, the reach matrix and the
+        store panel, above the existing lane timeline, which does not change. Still one file, still no scripts,
+        still no external request. Three fixes ride with it because this is the task that touches the template:
+        a <code>&lt;meta http-equiv="Content-Security-Policy"&gt;</code> on a file whose whole purpose is to be
+        forwarded and opened from <code>file://</code> and which has none today; <code>role="img"</code> with
+        <code>&lt;title&gt;</code> and <code>&lt;desc&gt;</code> on the drawing, and no distinction carried by
+        colour alone; and a <code>@media print</code> block, because the report&rsquo;s <code>pre</code> blocks are
+        capped at 340px with <code>overflow:auto</code> and truncate on paper. Adversary strings reach element text
+        content only &mdash; every SVG attribute is a number computed in Go, and there is no
+        <code>&lt;foreignObject&gt;</code>, <code>href</code> or <code>style</code> attribute anywhere in the
+        drawing.</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P7-9</span><span class="tk"><b>Exporting a running session.</b> <code>--export</code> against a live team, and
+        <code>--refresh</code>, which rewrites the file atomically and emits a meta-refresh so a browser tab
+        follows a running team with <b>no socket anywhere in the path</b>. This is the honest answer to
+        &ldquo;live&rdquo; for anyone who does not want a listener, and it exists whether or not P7-12 does.</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P7-10</span><span class="tk"><b><code>--json</code> where it is missing.</b> <code>team ps</code>, <code>team graph</code> and
+        the digest, as a documented stable shape. Today only <code>bench</code>, <code>log</code> and
+        <code>verify</code> can be piped, so somebody who wants a view this phase did not think of has to parse a
+        table. This is the extensibility surface, and it is cheaper than any plugin system.</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P7-11</span><span class="tk"><b>OTLP export.</b> <code>kelyfos log --export-otlp</code>, mapping a session to OTLP-JSON spans:
+        <code>invoke_agent</code> per agent, <code>execute_tool</code> per command, egress attempts and refusals as
+        span events. <b>Versioned apart from the chain and never an input to verification</b>, because as of the
+        v1.42 conventions every <code>gen_ai.*</code> attribute still carries the &ldquo;Development&rdquo; badge
+        with no stabilisation timeline, and this record&rsquo;s field order is hashed. Export to the standard;
+        do not adopt it. A second mapping to the IETF agent-audit-trail draft rides on the same machinery and is
+        worth having ready rather than shipping &mdash; it is an individual submission at <code>-01</code> that
+        expires in February 2027.</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P7-12</span><span class="tk"><b><code>kelyfos view</code> &mdash; the localhost read-only viewer</b> (D60). The same page as
+        P7-8, served live over server-sent events. <b>These are conditions on the task, not suggestions</b>, and
+        every other process on the host is treated as hostile: binds <code>127.0.0.1</code> on a kernel-assigned
+        port and refuses any non-loopback address, with no flag that relaxes it; never starts implicitly and never
+        opens a browser; a 256-bit token from <code>crypto/rand</code> minted per process, printed once, required
+        on every route including the stream, compared in constant time, and never passed as an argument;
+        the <code>Host</code> header must match the address it bound; <code>GET</code> and <code>HEAD</code> only,
+        so the read-only property is structural rather than a check; a strict CSP whose script and style hashes are
+        pinned by a test that fails when the inline script changes; the live update carries data and never markup,
+        with <code>textContent</code> and numeric SVG attributes only and <code>innerHTML</code> nowhere; the
+        session file opened read-only, no path from the URL reaching the filesystem, and the process exiting when
+        the session ends or after an idle timeout. <b>The residual risk is stated rather than buried:</b> on a
+        shared host, loopback is reachable by every local user, so the token is what separates them and not the
+        interface. A Unix socket at <code>0600</code> would be stronger and no browser can open one — that is
+        the cost of the page being a page.</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P7-13</span><span class="tk"><b>The phase read back against its own source.</b> Before the exit checkpoint, an agent
+        that wrote none of Phase 7 reviews the whole diff &mdash; every new event field, both renderers, the
+        viewer, and the retention and tombstone path &mdash; against the four checklists in &sect;8 rule 10 and
+        against <code>docs/threat-model.md</code>, with <code>make vuln</code> and every fuzz target at a raised
+        <code>FUZZTIME</code>. This is the P6 precedent rather than a new idea: an audit arrived mid-phase and what
+        made it worth having was that nothing was fixed from a description. Findings are answered in the log one by
+        one, <i>including the ones rejected and the reason</i>. A phase that adds a socket, twenty event fields and
+        two renderers does not exit on its acceptance test alone.</span></li>
+  </ul>
+
+  <div class="accept">
+    <h4>Acceptance test &mdash; recreate &amp; verify</h4>
+    <ol>
+      <li><b>Every cap read back out of the record, field by field.</b> A run with all eleven
+          <code>[resources]</code> keys set to distinct values, then <code>session.policy</code> parsed out of the
+          JSONL &mdash; not out of the CLI&rsquo;s own output &mdash; and compared to the file that declared them.
+          Eleven of eleven, named, or the task is not done.</li>
+      <li><b>A secret bound and never used still appears</b>, by name and domain, with no value anywhere in the
+          chain &mdash; checked by grepping the raw file for the value and finding nothing.</li>
+      <li><code>bash dev/demo-team.sh</code> re-run green and unchanged, plus: the exported report&rsquo;s run map
+          renders six agents, five declared edges, the store with its two ACLs, the one allowed domain and the
+          refusal that carries no edge &mdash; each counted out of the HTML rather than eyeballed.</li>
+      <li><code>kelyfos team graph</code> in the demo directory, with nothing booted, prints the same topology the
+          running team shows; and a policy carrying <code>[[plugin]]</code> beside <code>[team]</code> is refused
+          with the sentence P7-4 writes.</li>
+      <li><code>kelyfos team ps --json</code> and the digest&rsquo;s JSON parse under a schema check, and
+          <code>kelyfos log --export-otlp</code> validates against OTLP-JSON with its span names asserted.</li>
+      <li><b>The viewer, attacked before it is accepted:</b> fetched with no token (401), with a wrong
+          <code>Host</code> (refused), with <code>POST</code> (405), bound to a non-loopback address (refused at
+          startup), and with the token (200) &mdash; and the process confirmed to hold the session file read-only.</li>
+      <li><b>Retention proves both halves.</b> A pruned session leaves a chain that still verifies; an erased
+          payload leaves a tombstone whose content fingerprint matches what was removed; <code>kelyfos verify</code>
+          is green on both, offline and with no key.</li>
+      <li><b>The hostile corpus extended and the ledger no larger.</b> Rendering fixtures for markup in a path, an
+          escape sequence in a message body, a store key that is a <code>&lt;script&gt;</code> tag, a 1 KiB key, a
+          64-character agent name and a 200 MB session &mdash; asserted on the rendered output: no
+          <code>&lt;script</code>, no <code>on*=</code>, no <code>javascript:</code>, no raw control byte. Each
+          fixture fails before its fix.</li>
+      <li><b>Every RECORD, PROXY, BROKER and RENDER task carries a review by an agent that did not write it</b>
+          (&sect;8 rule 10), with its findings in the log &mdash; the rejected ones too. P7-13&rsquo;s whole-phase
+          read-back is complete and answered line by line. <code>make vuln</code> clean, and every fuzz target the
+          phase touched run at a raised <code>FUZZTIME</code> with the corpus committed.</li>
+      <li><b>The documentation obligations, per &sect;8 rule 9:</b> <code>make docs</code> clean,
+          <code>llms.txt</code> and <code>llms-full.txt</code> regenerated and committed, the token count
+          re-measured and logged, a cookbook recipe CI executes for every new command and flag, and the docs-only
+          exam re-run &mdash; this phase adds commands, so the exam is not optional.</li>
+      <li>The Go suite, every acceptance suite in <code>dev/</code>, and every cookbook recipe re-run green on the
+          reference, with the count of each stated so &ldquo;green&rdquo; is a number.</li>
+    </ol>
+  </div>
+
+  <p class="exit">Exit checkpoint: <b>tag v1.1</b> &mdash; &ldquo;the record says what the run was allowed to do,
+     and three ways of reading it agree.&rdquo;</p>
+</section>
+
 <!-- ====================================================== QUICKSTART -->
 <section id="quickstart">
   <p class="eyebrow">section 7</p>
@@ -1323,6 +1525,26 @@ make cli           <span class="c"># the kelyfos binary into bin/ — image does
     <li><b>7. Blocked?</b> Mark the task with <code>[BLOCKED: reason]</code> appended to its text, log it, and move to the next task. Surface all blockers at the end of the session summary.</li>
     <li><b>8. Reconcile against CI, not only against the tree.</b> Session start-up reads the latest CI run for <code>origin/main</code> alongside <code>git status</code> and <code>git log</code>. <b>A red <code>main</code> is a blocker and is fixed before any new task is started</b> &mdash; not noted, not carried, fixed. This rule exists because <code>main</code> was red from P5-1 until P5-2 found it three tasks later: the failure was in the job after the one that had always passed, every session read the tree and none read the pipeline, and nothing in these rules required anyone to look. A clean tree is not a green build, and P3-6 asked for a green pipeline on <code>main</code>, not for one that is usually green. (The product owner&rsquo;s ruling of 2026-08-24.) <b class="promoted">[AMENDED 2026-08-24, D42.]</b> &ldquo;The latest CI run&rdquo; means the latest run of <i>every</i> workflow that gates <code>main</code>, not only <code>ci.yml</code>. P6-2 added <code>security.yml</code>, whose whole purpose is to go red when nothing in this repository has changed &mdash; an advisory published against a dependency that has not moved. A rule that reads only the build would never see it.</li>
     <li><b>9. Documentation rides with the task that changed the surface.</b> No task is ticked until <code>make docs</code> is clean (CI enforces the generated reference &mdash; F-D4); <code>llms.txt</code> and <code>llms-full.txt</code> are regenerated and committed <i>with</i> it; every new user-facing command, flag, <code>kelyfos.toml</code> key or MCP tool has a cookbook recipe that CI executes; the <code>llms-full.txt</code> token count is re-measured and logged whenever the generated set changed; and, when a phase added commands or MCP tools, the docs-only exam is re-run against that phase&rsquo;s artifacts before its exit. This is <b>F-D9</b>, which governed <a href="PLAN-FEATURES.html">PLAN-FEATURES.html</a> through five epics and then evaporated when that file closed &mdash; this document&rsquo;s protocol never carried it, and the consequence is that Phase 5 shipped v0.9 with no token re-measurement and no exam, not because anyone decided to skip them but because nothing here required them. A rule that governed the project through its most productive stretch does not stop being true when the file it lived in is finished. (D40.)</li>
+    <li><b>10. Verified by somebody who did not write it.</b> No task that touches <b>the record, the proxy,
+       the broker or a renderer</b> is ticked until an agent that did not write the diff has reviewed it
+       adversarially &mdash; trying to make the change wrong rather than confirming it is right &mdash; and
+       <b>against the source rather than against the description</b>, which is the rule Phase 6&rsquo;s audit set
+       when it read twenty-four findings and fixed not one of them from its description alone. The reviewer
+       reports; the author fixes; <b>the reviewer does not push</b>, because authorship and verification stop being
+       separate the moment the same hand does both. Findings go in the Progress Log with the task, <i>including the
+       ones rejected and why</i> &mdash; a review that records only what it changed is indistinguishable from one
+       that found nothing.
+       <br>The four checklists. <b>RECORD:</b> a field appended and never inserted; every new field clippable,
+       slices included; a <code>schema.go</code> row and a generated reference; the door-enumerating test; no secret
+       value reachable by any path; and a real session&rsquo;s chain still verifying end to end.
+       <b>PROXY:</b> no new plaintext path; the value never inside the guest; the CA never persisted; every
+       decision recorded with its reason. <b>BROKER:</b> no path that reaches a peer without an edge; every refusal
+       recorded; ACLs evaluated before the effect and not after it; caps enforced rather than reported.
+       <b>RENDER:</b> contextual escaping on every value; <code>template.HTML</code> nowhere but the chain blob;
+       every SVG attribute a number computed in Go; <code>proto.SafeText</code> on every terminal path; output
+       bounded, and saying so when it truncates.
+       <br><code>make test</code>, <code>make vuln</code> and every fuzz target the task touched are part of the
+       review, run by the reviewer, and not taken on the author&rsquo;s word. (D63.)</li>
   </ul>
 </section>
 
@@ -3731,6 +3953,41 @@ after:
         <code>[  OK  ]</code> at 92%, and the masthead reads COMPLETE &mdash; consistent<br>
         the reported count of &ldquo;two active and two parked&rdquo; included the four CSS rules that define
         those states; the real badges were one wrong and one right</td></tr>
+    <tr><td class="mono">2026-08-27</td><td class="mono">&mdash;</td>
+        <td><b>Phase 7 opened.</b> Thirteen tasks (P7-0 &hellip; P7-12), an acceptance test, and an exit checkpoint
+        of <code>v1.1</code>, with D59, D60 and D61 recorded before any code &mdash; &sect;8 rule 5. Scope: the
+        policy record, one fold to replace two, the layout engine, the terminal and report views,
+        <code>--json</code>, the OTLP export, retention with tombstones, and the localhost read-only viewer that
+        D60 admits. Three defects found during the survey are tasks rather than notes: <code>[[plugin]]</code> and
+        <code>[[forward]]</code> load and do nothing in a team; egress is ports 80 and 443 with no key and no
+        documentation; and a restored or forked machine records its origin as prose rather than as a session id.
+        <b>The dashboard bars move backwards, correctly.</b> Overall fell from 92% because thirteen unchecked boxes
+        joined the denominator &mdash; the bars compute from the markup, and new work is meant to show as
+        unfinished.</td>
+        <td class="mono">survey read against the working tree at 0b3dfb8, not from memory: the 34 settings are
+        <code>internal/config/schema.go</code>&rsquo;s own <code>resourceKeys()</code> and <code>Schema()</code>;
+        the two folds are <code>host/watch.go:327</code> and <code>internal/report/report.go:194,428,441</code>;
+        the plugin and forward call sites are <code>host/plugins.go:20</code> and <code>host/forward.go:72</code>;
+        <code>egress.Policy.Ports</code> has no caller<br>
+        external check: OWASP Top 10 for Agentic Applications 2026, OpenTelemetry GenAI semantic conventions
+        v1.42 (Development), IETF draft-sharif-agent-audit-trail-01 (2026-08-19), EU AI Act Article 12
+        (in force 2026-08-02)</td></tr>
+    <tr><td class="mono">2026-08-27</td><td class="mono">&mdash;</td>
+        <td><b>Phase 7 given its execution model and its verification discipline.</b> D62 records the four-lane
+        deviation from &sect;8 rule 1 and the barrier, with Lane 1 serial because the record&rsquo;s field order is
+        the hash order. D63 adds <b>&sect;8 rule 10</b> &mdash; every task touching the record, the proxy, the
+        broker or a renderer is reviewed by an agent that did not write it, adversarially, against the source, with
+        four per-surface checklists, and with rejected findings logged alongside accepted ones. P7-13 added: the
+        whole-phase read-back before the exit checkpoint. The acceptance test gains a matching item. Phase 7 now
+        stands at fourteen tasks.</td>
+        <td class="mono">the trap that prompted the checklists, found by reading rather than by running:
+        <code>clipLargestField</code> selects candidates through <code>largestStringField</code>, which walks the
+        struct by reflection over string-kinded fields only &mdash; slices are invisible to it, which is why
+        <code>Cmd</code> carries a hand-written case (recorder.go:497)<br>
+        P7-2 adds <code>allow</code>, <code>secrets</code>, <code>ports</code> and P7-3 adds <code>agents</code>,
+        <code>edges</code>, <code>store_keys</code>: all slices, none clippable as written, so an oversized one
+        fails <code>Append</code> closed and the event leaves no trace &mdash; the exact failure S16 was written to
+        prevent</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
@@ -4860,6 +5117,100 @@ after:
         direction.</td>
         <td>P6-30. PRs #1, #2, #3. <i>Revisit when</i> v1.0 is tagged: merge them, then cut an rc that runs the
         release path with the new actions before anything else is tagged.</td></tr>
+    <tr><td class="mono">D59</td><td class="mono">2026-08-27</td>
+        <td>The declared policy of a run enters the flight recorder, and the views read it. Two additive event
+        types &mdash; <code>session.policy</code> and <code>team.topology</code> &mdash; record what a machine and
+        a team were permitted to do alongside what they did: every resource cap, the allowlist and its ports, bound
+        credentials by name, the workspace, the tool surface, the image digest, the parent session, the edge list,
+        the store ACLs and the fork lineage. A single fold (<code>internal/digest</code>) replaces the two that
+        exist. The run map, the agent sheet and the reach matrix are then built as readers of that fold, in
+        <code>kelyfos watch</code>, <code>kelyfos team ps --graph</code> and the exported report, with
+        <code>--json</code> and an OTLP export as the outward surfaces. Opened as Phase 7 here rather than in
+        PLAN-FEATURES.html, which is closed &mdash; F-D56&rsquo;s redirect.
+        <b>Encoding, decided by John on 2026-08-27 and not to be reopened by P7-0:</b> typed fields appended to
+        <code>Event</code>&rsquo;s frozen order, not compact JSON inside one string. It costs roughly twenty fields
+        of struct surface and buys three things a string cannot: <code>tools/gendocs</code> generates a row for
+        each, <code>TestSchemaFieldsExist</code> covers each, and a consumer filters without parsing twice. On a
+        project whose stated thesis is that the schema is the product, the string is the cheaper thing to write and
+        the worse thing to have shipped.
+        <b>Boundaries.</b> <code>kelyfos team graph</code> reads <code>kelyfos.toml</code> and is a pre-flight lint
+        in the category of <code>doctor</code>, not a monitor. The OTLP and audit-trail mappings are one-way,
+        versioned apart from the chain, and never inputs to verification &mdash; both specifications they track are
+        still moving (<code>gen_ai.*</code> is Development-status with no timeline; the IETF agent-audit-trail draft
+        is an individual submission at <code>-01</code> expiring February 2027) and this record&rsquo;s field order
+        is hashed.</td>
+        <td>The record holds behaviour and not policy, so a finished session cannot show its own caps, allowlist,
+        image digest, topology, or a credential bound and never used. Putting the declaration in the chain is also
+        what keeps every view a reader of the JSONL, which is D7&rsquo;s line: <code>kelyfos.toml</code> is a file
+        the user can edit afterwards, and <code>run/team.json</code> does not outlive the run. Six of the ten OWASP
+        Agentic risks published 2025-12-09 are questions this record can then answer and today cannot; EU AI Act
+        Article 12 came into force 2026-08-02 and asks for exactly this kind of recording.</td></tr>
+    <tr><td class="mono">D60</td><td class="mono">2026-08-27</td>
+        <td><b>The &ldquo;no web dashboard&rdquo; non-goal is renegotiated, by name, and narrowly.</b> Decided by
+        John on 2026-08-27, which is the renegotiation PLAN-FEATURES &sect;2 requires and D7 anticipated.
+        <code>kelyfos view</code> (P7-12) is admitted: a <i>localhost read-only viewer</i>, which D7 already named
+        as the absolute ceiling. What stays forbidden is unchanged and is restated here so the boundary does not
+        drift: no fleet view, no persistence beyond the session files that already exist, no authentication system,
+        no hosted service, and <b>no route on any page that can change a sandbox</b> &mdash; D7&rsquo;s litmus test
+        stands, and this is a reader. The demand condition D7 attached is <i>waived by the owner</i> rather than
+        met: the repository had no community signal to read, and waiting for one would have parked a designed
+        feature indefinitely. That waiver is the decision, and it is recorded as a waiver rather than dressed up as
+        evidence.</td>
+        <td>The security conditions in P7-12 are binding parts of this decision, not implementation notes: loopback
+        only with no relaxing flag, a per-process token compared in constant time, a <code>Host</code>-header check
+        against DNS rebinding, GET and HEAD only, a hash-pinned CSP, no <code>innerHTML</code>, a read-only file
+        handle and an idle exit. Chrome 142&rsquo;s Local Network Access prompt now gates public pages reaching
+        loopback, which helps and changes nothing: it is one browser&rsquo;s behaviour rather than a property of
+        this server, and it does nothing about the other processes on the host. The honest residual is that
+        loopback is shared with every local user, so the token separates them and the interface does not.</td></tr>
+    <tr><td class="mono">D61</td><td class="mono">2026-08-27</td>
+        <td>Retention, pruning and tombstones are adopted as P7-5 rather than left as a papercut. A retention
+        floor in <code>kelyfos.toml</code>, <code>kelyfos sessions prune</code>, a size warning, and an erasure
+        path that writes a replacement record preserving chain integrity while keeping a content fingerprint.</td>
+        <td>The session directory has never been pruned &mdash; the template cache has a bound and the records that
+        outlive every sandbox do not &mdash; and the obligation this answers came into force on 2026-08-02, not at
+        some future date: EU AI Act Article 12 requires automatic, tamper-evident recording, with a floor read
+        alongside GDPR at twelve months from session close for Annex III systems and six for general-purpose, and
+        Recitals 99 and 100 extend the boundary to every agent in a chain performing a high-risk function &mdash;
+        which is per-agent records, which D59 supplies. KelyfOS shipped the tamper-evident half in v1.0 and has no
+        retention policy at all, which is half a compliance story told confidently. The tombstone pattern is taken
+        from the IETF agent-audit-trail draft and is cheap here for a reason particular to this design:
+        <code>file.write</code> already records by digest rather than by content, so proving what was there without
+        keeping it is native. It also dissolves a tension this plan had written off as unresolvable &mdash; that
+        redaction breaks the verification that makes an export worth forwarding.</td></tr>
+    <tr><td class="mono">D62</td><td class="mono">2026-08-27</td>
+        <td><b>Phase 7 is worked by several agents in four lanes, which is a deliberate deviation from &sect;8
+        rule 1.</b> Rule 1 takes work top-down by list position and assumes one worker. The lanes and the barrier:
+        <b>Lane 1, the record</b> &mdash; P7-0, P7-2, P7-3, P7-5, <i>one agent, strictly serial</i>;
+        <b>Lane 2, the fold</b> &mdash; P7-1, owning <code>host/watch.go</code> and <code>internal/report</code>
+        until it lands; <b>Lane 3, the layout</b> &mdash; P7-6, a new package with no shared files;
+        <b>Lane 4, the defects</b> &mdash; P7-4. Nothing in the second half starts until P7-1, P7-2, P7-3 and P7-6
+        are ticked <i>in this file</i>; a tick is the signal and a green local build is not. Then P7-7 and P7-8 in
+        parallel, then P7-9, P7-10 and P7-11, then P7-12, then P7-13 last and by an agent that wrote none of it.</td>
+        <td>Lane 1 is serial for a reason that is not scheduling: <code>Event</code>&rsquo;s field order <i>is</i>
+        the order the hash is computed over, so two agents appending fields concurrently produce two different
+        orders and a chain neither can verify. That is why nobody outside Lane 1 opens
+        <code>internal/recorder</code>. The lane boundaries are drawn on file ownership rather than on subject
+        matter, which is what makes them enforceable: Lane 2 owns the two folds, Lane 3 owns a package nobody else
+        imports yet, and Lane 4&rsquo;s only overlap with Lane 1 is <code>host/team.go</code>, which is named so it
+        is coordinated rather than discovered in a conflict.</td></tr>
+    <tr><td class="mono">D63</td><td class="mono">2026-08-27</td>
+        <td><b>&sect;8 gains rule 10: verified by somebody who did not write it.</b> Every task touching the
+        record, the proxy, the broker or a renderer is reviewed before its checkbox is ticked, by an agent that did
+        not write the diff, adversarially and against the source rather than the description. The reviewer reports
+        and does not push; the author fixes. Findings go in the Progress Log <i>including the rejected ones and the
+        reason</i>. Four per-surface checklists are written into the rule so the review is a list rather than a
+        judgement. <code>make test</code>, <code>make vuln</code> and the touched fuzz targets are run by the
+        reviewer. P7-13 adds the whole-phase read-back before the exit checkpoint.</td>
+        <td>This phase is the wrong one to verify casually. It adds roughly twenty fields to a structure whose
+        field order is hashed, two renderers fed entirely by strings a prompt-injected agent chooses, and &mdash;
+        under D60 &mdash; a listening socket. Each of those has a failure mode that is invisible in a diff: a field
+        inserted rather than appended still compiles; a renderer that forgets one escape still renders; a viewer
+        missing its <code>Host</code> check still serves the page. The precedent is Phase 6, where an external
+        audit&rsquo;s value came from reading current source rather than trusting its own summaries, and where the
+        hostile corpus was given a ledger so a fixture has to fail before it passes. Splitting authorship from
+        verification is the cheap half of that; recording the rejected findings is the half that keeps the record
+        honest, because a review that lists only its wins reads identically to a review that did not happen.</td></tr>
     <!-- Claude Code: append rows above this line. -->
   </table>
 </section>
