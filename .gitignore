@@ -37,3 +37,11 @@
 # The seccomp probe leaves what it observed here when no record for this
 # architecture is committed yet; the record itself is tracked.
 /dev/expect/*.observed
+
+# Point-in-time security review reports. These are working documents for
+# whoever is fixing findings, not project documentation — what actually
+# changed and why lives in CHANGELOG.md, in the commit that fixed it. Keep
+# the review itself outside the repo once its findings are closed.
+/SECURITY-REVIEW.html
+/SECURITY_AUDIT.md
+/PEN_TEST_REPORT.md
