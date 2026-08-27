@@ -791,6 +791,17 @@ columns, says how wide the terminal would have to be, and shows one column with
 each line labelled by the agent it came from — the information without the
 layout, rather than the layout without the information.
 
+Two more panes sit behind this one (P7-7): `2` (or `m`) draws the **map** —
+the team's topology, read off its own recorded `team.topology` and every
+agent's `session.policy`, the same rendering `kelyfos team ps --graph` (§8.4)
+draws for a one-shot look — with a "refused since boot" section underneath it
+naming every `no_edge`/store-denied refusal seen so far, each carrying the fix
+line `internal/denial`'s catalog already writes for it. `3` (or `s`) draws the
+**agent sheet**: one row per agent, its declared caps and allowlist size
+beside what it has actually done — the declared and the aggregate side by
+side. `1` (or `v`) returns to the activity view above. All three read the
+same fold; switching panes changes nothing about what is being watched.
+
 ### 8.3 The recorder is not a delivery buffer
 
 These two facts are orthogonal and are stated together because they look
@@ -811,6 +822,58 @@ guess. `outcome: timeout` is **an ask that nobody answered in time**. A
 writes *no event at all*, because nothing happened: no message was sent, none was
 delivered, and a recorder of message outcomes has no outcome to record. An
 orchestrator waiting on a quiet agent should not expect the record to say so.
+
+### 8.4 `kelyfos team graph` and `kelyfos team ps --graph` (P7-7)
+
+Three questions about a team, three commands, and P7-7 names them so the rest
+of this document — and everything built on top of it — can keep the names
+straight: **declared** (what `kelyfos.toml` says, nothing booted), **aggregate**
+(a fold of what has actually happened) and **as-it-ran** (the live or replayed
+timeline, `kelyfos watch` and `kelyfos log` above). Only *declared* is
+something anyone else — an auditor, a teammate reading the file over your
+shoulder — can currently answer without this feature.
+
+`kelyfos team graph` renders the **declared** topology straight from
+`kelyfos.toml`, with nothing booted: a pre-flight lint in the same category as
+`kelyfos doctor`, not a monitor. It runs the exact plan-time checks
+`kelyfos team up` runs before it boots anything — the same file that combines
+`[team]` with `[[plugin]]` or `[[forward]]` is refused here with the same
+sentence (§1.1's `checkTeamFileScope`), before it costs anybody an afternoon.
+The picture: every agent, the resolved edges, the domains and secrets each
+agent reaches, and the store's rules — including one entry standing for
+*every key no `[[team.store.key]]` rule names*, because such a key is
+readable and writable by the whole team by default (§4) and a picture that
+omitted it would understate what the team can touch. Egress ports are the
+fixed pair every sandbox in this product gets (`docs/networking.md` §6),
+printed once rather than per domain.
+
+```
+$ kelyfos team graph
+team suppliers — declared topology (kelyfos team graph), nothing booted: 5 agents, 8 edges
+
+●───┐
+│   │
+●───●
+...
+
+edges — read from the authoritative table, not the picture above
+  master -> worker-1
+  ...
+```
+
+`kelyfos team ps --graph` draws the same picture for a **running** team,
+sourced from that team's own recorded `team.topology` and `session.policy`
+events rather than from `kelyfos.toml` (which somebody can edit after the
+team came up) or `run/team.json` (which does not outlive the run) — D59's own
+reasoning for putting the declaration in the chain applies here too. A
+declared graph and a running one are never two independent readings of one
+file: both go through the same conversion (`host/teamgraph.go`'s
+`buildGraphInput`), so `kelyfos team graph` in a project directory and
+`kelyfos team ps --graph` against the team it boots print the identical
+topology. It also lists every refusal recorded since boot — a `team.refused`
+with no edge, a `team.store` denied — each with the fix line
+`internal/denial`'s catalog already writes for it, bounded to the most recent
+twenty with a note when more happened.
 
 ---
 

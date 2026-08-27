@@ -20,11 +20,16 @@
 // different constraints — the fold is what both need to agree on before
 // either starts drawing.
 //
-// session.policy and team.topology (P7-2, P7-3) are not folded here yet:
-// neither event type exists in today's schema. Absorb already forwards every
-// event it does not recognise into Digest.Timeline unrecognised, so the two
-// event types can be added to this file's switch the day they land, without
-// either consumer changing again.
+// session.policy and team.topology (P7-2, P7-3): what a machine or a team was
+// declared to be permitted, folded onto Agent.Policy / Digest.Policy and
+// Digest.Topology respectively (P7-7) — the same "kept verbatim, read back by
+// name" shape Receipt already established for resource.summary, because a
+// declared policy is a fact recorded once and never re-derived, not a counter
+// this package accumulates. P7-7's map and agent-sheet views are the first
+// readers: a team's own recorded topology is what `kelyfos team ps --graph`
+// draws, rather than kelyfos.toml (which the user can edit afterwards) or
+// run/team.json (which does not outlive the run) — D59's own reasoning for
+// putting the declaration in the chain in the first place.
 package digest
 
 import (
@@ -83,6 +88,10 @@ type Agent struct {
 	Name string
 	Counters
 	Receipt *recorder.Event
+	// Policy is this agent's session.policy event, verbatim, nil until one is
+	// absorbed — the caps, allowlist, bound secrets and tools this machine
+	// was declared to have (P7-2). See Digest.Policy for the agentless case.
+	Policy *recorder.Event
 }
 
 // SecretRef is one secret bound during the session, named but never valued —
@@ -200,6 +209,17 @@ type Digest struct {
 	// Receipt is the agentless resource.summary, nil until the session ends
 	// (or for a team, which writes one per agent instead — see Agents).
 	Receipt *recorder.Event
+	// Policy is the agentless session.policy: a single machine outside a
+	// team (P7-2). nil until one is absorbed, and never set for a team
+	// session — each agent's own is on Agent.Policy instead, the same split
+	// Receipt/Agent.Receipt already draws for resource.summary.
+	Policy *recorder.Event
+
+	// Topology is the team.topology event, verbatim, nil until a team boot
+	// writes one (P7-3). Agents, Edges, StoreKeys, the team-wide CPUQuota
+	// and RecordPayloads all come from here — P7-7's map view is the first
+	// reader.
+	Topology *recorder.Event
 
 	Secrets []SecretRef // de-duplicated by name+host, first-seen order
 	// SecretsTruncated is set once a distinct name+host past MaxDistinctKeys
@@ -651,6 +671,20 @@ func (d *Digest) Absorb(e recorder.Event) *Entry {
 			d.Receipt = &ev
 		}
 
+	case recorder.TypeSessionPolicy:
+		entry.Category = "policy"
+		ev := e
+		if agent != nil {
+			agent.Policy = &ev
+		} else {
+			d.Policy = &ev
+		}
+
+	case recorder.TypeTeamTopology:
+		entry.Category = "topology"
+		ev := e
+		d.Topology = &ev
+
 	case recorder.TypePluginCall:
 		entry.Category = "plugin"
 		entry.Refused = e.Outcome != "ok"
@@ -667,11 +701,11 @@ func (d *Digest) Absorb(e recorder.Event) *Entry {
 		entry.Refused = e.Outcome != "ok"
 
 	default:
-		// session.policy and team.topology (P7-2, P7-3) land here until
-		// those event types exist, and any future type does the same: the
+		// A future type this switch does not yet classify lands here: the
 		// entry is still recorded, still visible in Timeline, and this
-		// package's own tests catch a category that never gets classified
-		// once the switch above is extended to it.
+		// package's own tests (TestEveryKnownEventTypeIsClassified) catch a
+		// category that never gets classified once the switch above is
+		// extended to it.
 		entry.Category = "other"
 	}
 

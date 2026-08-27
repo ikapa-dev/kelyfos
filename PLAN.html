@@ -131,7 +131,7 @@
   <div class="meta">
     owner: <b>John</b> &nbsp;·&nbsp; developer: <b>Claude Code</b> &nbsp;·&nbsp;
     status: <b class="amber" id="meta-status">ACTIVE &mdash; <b>Phase 7</b>, the declared shape of a run, opened 2026-08-27 on the owner&rsquo;s ruling (D59). v1.0 is tagged and every earlier phase is closed; this one exits at <code>v1.1</code>. Fifteen tasks; P7-4 and P7-6 done and reviewed, P7-14 added mid-phase (D67) for a defect P7-4's own re-verification found.</b> &nbsp;&middot;&nbsp;
-    last updated: <b id="meta-updated">2026-08-27</b><br>
+    last updated: <b id="meta-updated">2026-08-28</b><br>
     repo file: <b>PLAN.html</b> (commit this document at the repository root — it is the single source of truth)<br>
     <span class="quiet">KelyfOS — from κέλυφος (kélyfos), "shell": the guest OS wrapped around the agent. Formerly working-titled "agos" (D4 → D10).</span>
   </div>
@@ -5295,6 +5295,118 @@ after:
         barrier check, read directly from the markup rather than assumed: <code>P7-1</code>, <code>P7-2</code>,
         <code>P7-3</code>, <code>P7-6</code> all carry <code>checked</code> &mdash; D62's condition for stage two
         is met.</td></tr>
+    <tr><td class="mono">2026-08-28</td><td class="mono">P7-7</td>
+        <td><b>The terminal views.</b> <code>kelyfos team graph</code> (new subcommand,
+        <code>host/teamgraph.go</code>): loads <code>kelyfos.toml</code> via the same <code>loadPolicyAt</code>/
+        <code>planTeam</code>/<code>checkTeamScratch</code> path <code>kelyfos team up</code> runs before it boots
+        anything &mdash; including <code>checkTeamFileScope</code>, so a file combining <code>[team]</code> with
+        <code>[[plugin]]</code> or <code>[[forward]]</code> is refused here, by name and line, with nothing
+        booted. <code>kelyfos team ps --graph</code> (new flag on <code>teamPS</code>) draws the identical picture
+        for a running team, sourced from that team's own recorded <code>team.topology</code> and
+        <code>session.policy</code> events rather than from the file or <code>run/team.json</code> (D59's own
+        reasoning). One conversion, <code>buildGraphInput</code>, serves both: agents, the resolved edges, every
+        domain and secret an agent reaches, and the store's declared rules &mdash; plus one synthesized resource,
+        <code>(any other key)</code>, standing for every store key no <code>[[team.store.key]]</code> rule names,
+        because such a key is team-wide by default (<code>internal/team/store.go</code>) and omitting it would
+        understate what the team can touch, the one direction <code>internal/graph</code>'s own package doc says
+        a caller must never fail in. Rendered from <code>Canvas.Edges</code>, the authoritative table, never the
+        raw rune grid. A short "indirect reach" section reads <code>graph.TransitiveClosure</code> for any pair
+        with no direct edge but a path through another agent or a shared store key &mdash; the OWASP
+        transitive-privilege-inheritance case this whole feature exists to surface. Egress ports are printed once
+        as the fixed default (<code>egress.DefaultPorts()</code>, D65), which is P7-4's second silence made loud
+        in these views. <code>kelyfos watch</code> gains two panes behind the existing one, switched with
+        <code>1</code>/<code>2</code>/<code>3</code> (or <code>v</code>/<code>m</code>/<code>s</code>): a
+        <b>map</b> (the same conversion, read off the live fold once <code>team.topology</code>/
+        <code>session.policy</code> land, plus a "refused since boot" section) and an <b>agent sheet</b> (declared
+        caps beside live counters, one row per agent). Every refusal shown &mdash; in <code>team ps --graph</code>
+        and in the map pane &mdash; carries the fix line <code>internal/denial</code>'s catalog already writes for
+        it (<code>denial.TeamEdge</code>, <code>denial.TeamStore</code>), bounded to the most recent twenty with a
+        truncation note. Every string this task prints that could carry a guest's choice (a <code>team.refused</code>
+        peer, in particular &mdash; <code>internal/team/broker.go</code> writes it verbatim for a recipient outside
+        the team) goes through <code>proto.SafeText</code> first, no exceptions.
+        <br><b>The three modes are named here, as the task asks</b>: <i>declared</i> (<code>kelyfos.toml</code>,
+        nothing booted &mdash; <code>team graph</code>), <i>aggregate</i> (a fold of what happened &mdash; the
+        agent sheet's live counters), <i>as-it-ran</i> (the live/replayed timeline &mdash; <code>watch</code>'s
+        activity pane and <code>kelyfos log</code>, unchanged). Named in <code>docs/teams.md</code> &sect;8.4 so
+        P7-8 through P7-11 reuse them rather than inventing their own words for the same three questions.
+        <br><b><code>internal/digest</code> extended, flagged in advance per the brief</b>: two new fields,
+        <code>Agent.Policy</code>/<code>Digest.Policy</code> and <code>Digest.Topology</code>, holding
+        <code>session.policy</code>/<code>team.topology</code> verbatim &mdash; the exact
+        <code>Receipt</code>/<code>Agent.Receipt</code> shape <code>resource.summary</code> already established,
+        not a new pattern. Two new <code>Absorb</code> cases, additive only; no existing case, field or behaviour
+        touched. This closes the gap <code>internal/digest</code>'s own package doc and P7-1's merge row named as
+        "real work for whichever of P7-7/P7-8 picks it up" &mdash; the <code>knownUnclassified</code> test entries
+        for both types are removed and replaced with real coverage
+        (<code>TestPolicyGoesToTheRightBucket</code>, <code>TestTopologyIsFoldedVerbatim</code>). Small and
+        clearly additive by the brief's own test; no conflict expected with P7-8's own read of these two events,
+        but not confirmed against that agent's diff, per the brief's request to flag rather than assume.
+        <br>A real, cross-lane gap found and fixed along the way: <code>host/teamgraph.go</code>'s
+        <code>teamPSGraph</code> printed the egress-ports footer line <code>team graph</code> does, and did not,
+        until this was noticed diffing the two commands' output against each other via the new cookbook recipe
+        &mdash; fixed to match.
+        <br>Not self-ticked: P7-7 is a RENDER-surface task and &sect;8 rule 10 holds it to review by an agent
+        that did not write it before the checkbox is set.</td>
+        <td>Per D64, GitHub Actions is disabled for this account this session; the checks below are the CI
+        reconciliation of record, run inside <code>kelyfos-dev</code>.<br>
+        <code>gofmt -l .</code> &rarr; clean; <code>go vet ./...</code> &rarr; clean; <code>go build ./...</code>
+        &rarr; clean<br>
+        <code>go test -count=1 ./...</code> &rarr; every package <code>ok</code> or <code>[no test files]</code>,
+        including <code>host</code> (16.3s, real KVM boots) and <code>internal/digest</code>;
+        <code>go test -v ./host/...</code> &rarr; 183 <code>--- PASS</code> lines, 0 fail (up from 195 in the
+        P7-3 merge row's own count &mdash; two new test files, <code>teamgraph_test.go</code> and additions to
+        <code>watch_test.go</code>, more than offset the ones that moved); <code>go test -v
+        ./internal/digest/...</code> &rarr; 34 <code>--- PASS</code> lines, 0 fail (up from 31)<br>
+        <code>govulncheck ./...</code> &rarr; &ldquo;No vulnerabilities found.&rdquo;<br>
+        <b>Real boot, three real verification passes inside <code>kelyfos-dev</code></b> (only the
+        <code>base</code> flavor is built there; substituted for <code>dev</code> in every ad hoc policy file
+        below, the same substitution P7-1's own evidence row used, and named in the demo-team.toml-shaped
+        cookbook recipe's own comment):
+        (1) a three-agent team (<code>master</code> + two workers, a star edge, one store rule) &mdash;
+        <code>kelyfos team graph</code> before boot and <code>kelyfos team ps --graph</code> after
+        <code>kelyfos team up</code> printed byte-identical topologies (diffed by hand, then by the cookbook
+        recipe's own <code>diff</code>), and a <code>[[plugin]]</code> beside <code>[team]</code> was refused by
+        <code>team graph</code> with P7-4's exact sentence, exit 1;
+        (2) the same team, with a worker-to-worker message across no edge and a denied store read induced over
+        real MCP calls &mdash; both appear in <code>team ps --graph</code>'s "refused since boot" section with
+        the matching <code>internal/denial</code> fix line, word for word against what the MCP call itself
+        returned;
+        (3) <code>kelyfos watch --session &lt;team&gt;</code> driven under a real <code>tmux</code> pane (not a
+        synthetic PTY harness &mdash; a first attempt with a hand-rolled pty+regex driver produced unreadable
+        output against Bubble Tea v2's incremental repaints, and <code>tmux capture-pane</code> reads the
+        terminal's actual resolved state instead) with resource caps set in the policy file: the map pane showed
+        the same topology as (1)/(2) plus the live "refused since boot" section (this required a second fix
+        &mdash; see below); the agent sheet showed each agent's real sandbox id, correct declared caps
+        (<code>1c/384M/0%</code>, <code>1c/256M/0%</code>) and live counters; <code>1</code>/<code>2</code>/
+        <code>3</code> and <code>v</code>/<code>m</code>/<code>s</code> all switched panes correctly.
+        <br><b>A real regression caught by this verification, not by a unit test alone, and fixed before this
+        row was written</b>: the map pane's "refused since boot" section called
+        <code>printRecentRefusals(&amp;b, &amp;m.d)</code>, the same helper <code>team ps --graph</code> uses
+        &mdash; but a live <code>kelyfos watch</code>'s <code>Digest</code> is zero-value and deliberately never
+        retains <code>Timeline</code> (P7-1), so the helper always found nothing there, silently. Fixed with a
+        second, independent, bounded list (<code>watchModel.refusals</code>) pushed to at absorb time as each
+        refusal streams in, live, regardless of <code>KeepTimeline</code> &mdash; proven against the real running
+        team above, and by a new unit test
+        (<code>TestMapPaneShowsLiveRefusalsWithTheirFixLine</code>) that fails without the fix.<br>
+        <code>bash dev/accept-watch.sh</code> &rarr; 5/5 pass, unchanged &mdash; the existing PTY acceptance
+        script for the activity pane's alt-screen/quit behaviour still holds with the pane-switching keys added.
+        <br><code>make docs</code>: <code>docs/reference/cli.md</code> gained <code>## kelyfos team graph</code>
+        and <code>--graph</code> on <code>## kelyfos team ps</code> automatically; no other reference page
+        changed. <code>gendocs: llms.txt 6749 bytes &middot; llms-full.txt 619913 bytes, about 161030 tokens</code>
+        (up from 158593), logged per &sect;8 rule 9. Cookbook recipe 15 added (<code>team-graph</code>,
+        &ldquo;Sixteen recipes&rdquo; now accurate); <code>go run ./tools/cookbook -in docs/cookbook.md -out
+        &lt;dir&gt;</code> &rarr; &ldquo;wrote 16 recipes&rdquo;, extraction and count-check both clean; the new
+        recipe run standalone with <code>image = "dev"</code> substituted for <code>"base"</code> (this VM's own
+        limitation, not the recipe's) &rarr; exit 0, including the induced <code>[[plugin]]</code> refusal and the
+        declared/running <code>diff</code>.<br>
+        <code>python3 tools/check-plan.py</code> (host) &rarr; &ldquo;PLAN.html is coherent: 101 tasks, 84
+        checked, 68 decisions&rdquo; before this row; unchanged by this edit (a row and evidence only, no
+        checkbox).<br>
+        Not self-ticked, not pushed, not merged; standing by for a RENDER-surface review by an agent that did not
+        write it (&sect;8 rule 10) before the checkbox is set. No Decision Log row: the digest extension follows
+        the brief's own "small, clearly additive" carve-out and the report to the orchestrator below covers it;
+        the store-rule glob-expansion logic (<code>expandStoreSpecs</code>) mirrors
+        <code>internal/team/store.go</code>'s own <code>may()</code> without reopening how it works; everything
+        else implements P7-7's task text without deviation.</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>

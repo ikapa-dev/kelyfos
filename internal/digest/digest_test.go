@@ -407,11 +407,64 @@ func TestReceiptGoesToTheRightBucket(t *testing.T) {
 	}
 }
 
+// session.policy lands on the agent when it names one, and on the session
+// when it does not — the same split Receipt already draws for
+// resource.summary, and for the same reason: a team writes one per agent, and
+// those must not overwrite each other or the agentless case (P7-2, P7-7).
+func TestPolicyGoesToTheRightBucket(t *testing.T) {
+	d := Walk([]recorder.Event{
+		recorder.NewSessionPolicy("master", recorder.PolicyFields{VcpuCount: 2}),
+		recorder.NewSessionPolicy("", recorder.PolicyFields{VcpuCount: 4}),
+	})
+	if d.Policy == nil || d.Policy.VcpuCount != 4 {
+		t.Errorf("session policy = %v, want VcpuCount=4", d.Policy)
+	}
+	if d.Agents["master"].Policy == nil || d.Agents["master"].Policy.VcpuCount != 2 {
+		t.Errorf("master's policy = %v, want VcpuCount=2", d.Agents["master"].Policy)
+	}
+}
+
+// team.topology carries no agent field of its own (docs/policy-record.md §6)
+// and is folded onto the digest as a whole, verbatim, for P7-7's map view to
+// read back — Agents, Edges and StoreKeys exactly as team boot wrote them.
+func TestTopologyIsFoldedVerbatim(t *testing.T) {
+	capture := true
+	ev := recorder.NewTeamTopology(recorder.TopologyFields{
+		Agents:         []recorder.EvAgent{{Name: "master", Sandbox: "abc123"}},
+		Edges:          []string{"master -> worker-1"},
+		StoreKeys:      []recorder.EvStoreKey{{Name: "findings", Read: []string{"master"}}},
+		CPUQuota:       150,
+		RecordPayloads: &capture,
+	})
+	d := Walk([]recorder.Event{ev})
+	if d.Topology == nil {
+		t.Fatal("Topology is nil after absorbing a team.topology event")
+	}
+	if len(d.Topology.Agents) != 1 || d.Topology.Agents[0].Name != "master" {
+		t.Errorf("Topology.Agents = %v", d.Topology.Agents)
+	}
+	if len(d.Topology.Edges) != 1 || d.Topology.Edges[0] != "master -> worker-1" {
+		t.Errorf("Topology.Edges = %v", d.Topology.Edges)
+	}
+	if len(d.Topology.StoreKeys) != 1 || d.Topology.StoreKeys[0].Name != "findings" {
+		t.Errorf("Topology.StoreKeys = %v", d.Topology.StoreKeys)
+	}
+	if d.Topology.CPUQuota != 150 {
+		t.Errorf("Topology.CPUQuota = %d, want 150", d.Topology.CPUQuota)
+	}
+	if d.Topology.RecordPayloads == nil || !*d.Topology.RecordPayloads {
+		t.Errorf("Topology.RecordPayloads = %v, want true", d.Topology.RecordPayloads)
+	}
+}
+
 // An event type this package's switch does not classify still lands in the
 // timeline, tagged "other" rather than silently dropped — the extension
-// point session.policy and team.topology (P7-2, P7-3) will use.
+// point a future event type will use. session.policy and team.topology used
+// to be this test's example; both are classified now (P7-7), so this uses a
+// type this switch genuinely does not know, to keep testing the fallback
+// itself rather than a case that has since been given one.
 func TestAnUnclassifiedTypeStillReachesTheTimeline(t *testing.T) {
-	d := Walk([]recorder.Event{{Type: "session.policy"}})
+	d := Walk([]recorder.Event{{Type: "some.future.type"}})
 	if len(d.Timeline) != 1 {
 		t.Fatalf("Timeline has %d entries, want 1", len(d.Timeline))
 	}
@@ -438,13 +491,6 @@ func TestEveryKnownEventTypeIsClassified(t *testing.T) {
 		recorder.TypeShellStart:     true,
 		recorder.TypeShellEnd:       true,
 		recorder.TypeForwardAccept:  true,
-		// session.policy and team.topology (P7-2, P7-3) both landed after this
-		// package did. Nothing here folds either yet — P7-7/P7-8's views are
-		// what actually need to read a machine's declared caps and a team's
-		// roster, and that is real work for whichever of them picks it up,
-		// not a one-line fix here.
-		recorder.TypeSessionPolicy: true,
-		recorder.TypeTeamTopology:  true,
 	}
 	for _, typ := range allEventTypes() {
 		// command.output and command.exit never append their own Timeline

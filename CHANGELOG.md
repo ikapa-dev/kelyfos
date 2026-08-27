@@ -17,6 +17,22 @@ reference described in the README and re-measured per release.
 
 ## Unreleased
 
+### Added
+- **`kelyfos team graph`**: renders a team's topology straight from
+  `kelyfos.toml`, with nothing booted — the same plan-time checks
+  `kelyfos team up` runs before it boots anything, including the refusal a
+  `[[plugin]]`/`[[forward]]` beside `[team]` already gets. The picture: every
+  agent, the resolved edges, the domains and secrets each agent reaches, and
+  the store's rules — including the access every key with no matching
+  `[[team.store.key]]` rule has by default. `kelyfos team ps --graph` draws
+  the identical picture for a running team, read from that team's own
+  recorded `team.topology` and `session.policy` events rather than from the
+  file. `kelyfos watch` gains two panes alongside the existing one — a map
+  (`2`/`m`) and an agent sheet (`3`/`s`, caps beside live counters) — both
+  read off the same fold, and the map's "refused since boot" section carries
+  the fix line `internal/denial`'s catalog already writes for each refusal
+  (P7-7).
+
 ### Fixed
 - **A single oversized, guest-influenced field could make the flight recorder
   permanently unreadable from that line on.** The record is a hash chain read
