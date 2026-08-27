@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -160,15 +161,22 @@ func TestSnapshotRestoreRealVMWiresAuditBeforeResume(t *testing.T) {
 			}
 		}
 
-		if err := guestEgressAttempt(sb, upstream.port); err != nil {
+		hitsBefore := upstream.Hits()
+		code, err := guestEgressAttempt(sb, upstream.port)
+		if err != nil {
 			t.Fatalf("guest egress attempt: %v", err)
 		}
+		requireRealHTTPClientRan(t, code)
 		// Waits for the proxy's own handler goroutine — including its call to
 		// report(), which is what actually calls OnEvent — to finish before
 		// this goroutine reads the chain back below. Same reasoning as
 		// snapshot_restore_window_test.go's identical call in its
 		// "wired_before" subtest.
 		proxy.Close()
+		if upstream.Hits() <= hitsBefore {
+			t.Fatal("no request reached the upstream server — the guest's exec did not make a " +
+				"genuine attempt, so this subtest cannot prove what it claims to")
+		}
 
 		events := readChain(t, sandbox.Root(), opts.ID)
 		if !hasEgressAttemptFor(events, "127.0.0.1", 80) {
@@ -210,9 +218,12 @@ func TestSnapshotRestoreRealVMWiresAuditBeforeResume(t *testing.T) {
 			}
 		}
 
-		if err := guestEgressAttempt(sb, upstream.port); err != nil {
+		hitsBefore := upstream.Hits()
+		code, err := guestEgressAttempt(sb, upstream.port)
+		if err != nil {
 			t.Fatalf("guest egress attempt: %v", err)
 		}
+		requireRealHTTPClientRan(t, code)
 		// Same barrier as the sibling subtest, for the same reason: wait for
 		// the attempt's own handler goroutine to finish before this goroutine
 		// writes OnEvent/OnSecret/OnWithheld by wiring below — without it the
@@ -220,6 +231,18 @@ func TestSnapshotRestoreRealVMWiresAuditBeforeResume(t *testing.T) {
 		// though production code never wires a proxy while a request it
 		// already accepted is in flight.
 		proxy.Close()
+		// This is the guard against F20's vacuous-pass failure mode: the
+		// assertion below this one proves the ABSENCE of egress.attempt and
+		// secret.withheld, which passes trivially if the guest never made a
+		// request at all. requireRealHTTPClientRan already rules out "the
+		// client binary was missing"; this rules out every other way the
+		// request could have failed to happen by checking, independently of
+		// the recorder chain this subtest is about to say is silent, that the
+		// request genuinely landed on the real upstream server.
+		if upstream.Hits() <= hitsBefore {
+			t.Fatal("no request reached the upstream server — the guest's exec did not make a " +
+				"genuine attempt, so the assertion below would pass vacuously")
+		}
 
 		recPath := recorder.Path(sandbox.Root(), opts.ID)
 		t.Cleanup(func() { _ = os.Remove(recPath) })
@@ -350,6 +373,7 @@ func bootSourceForSnapshot(t *testing.T, base sandbox.Options) (*sandbox.Sandbox
 type port80Server struct {
 	*httptest.Server
 	port int
+	hits *int32
 }
 
 // newPort80Server binds one, or skips this test cleanly when the environment
@@ -362,41 +386,81 @@ func newPort80Server(t *testing.T) port80Server {
 	if err != nil {
 		t.Skipf("cannot bind 127.0.0.1:80 in this environment: %v", err)
 	}
+	var hits int32
 	ts := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
 		w.WriteHeader(http.StatusOK)
 	}))
 	_ = ts.Listener.Close()
 	ts.Listener = ln
 	ts.Start()
 	t.Cleanup(ts.Close)
-	return port80Server{Server: ts, port: 80}
+	return port80Server{Server: ts, port: 80, hits: &hits}
+}
+
+// Hits reports how many real HTTP requests this server has received so far.
+// It exists so a subtest can prove, independently of the recorder chain, that
+// guestEgressAttempt's exec genuinely reached this process rather than merely
+// that the exec returned without a protocol-level error — the two are not the
+// same claim, and F20 is exactly a case where they were conflated.
+// forwardHTTP (internal/egress/proxy.go) calls RoundTrip against this server
+// regardless of whether OnEvent/OnSecret/OnWithheld are wired, so a real
+// attempt lands here the same way whether or not the recorder saw it; a
+// subtest that asserts the recorder did NOT see it still needs this to prove
+// the silence was the proxy's unwired hooks and not a guest that never tried.
+func (p port80Server) Hits() int32 {
+	return atomic.LoadInt32(p.hits)
 }
 
 // guestEgressAttempt drives the real guest to make one real HTTP request to
 // 127.0.0.1:port through its own HTTPS_PROXY — the same environment variable
 // docs/networking.md §5 says the supervisor sets from the kernel command
-// line, and the same one a real curl or wget invocation inside the sandbox
-// would pick up unprompted. NO_PROXY and no_proxy are cleared for this one
-// command: the supervisor also sets them, to "localhost,127.0.0.1" (§5), and
-// with them in place curl bypasses the proxy entirely and dials the guest's
-// OWN loopback instead — which has nothing listening on it and fails before
-// ever reaching the proxy this test means to exercise. This is confirmed
-// against a real guest, not assumed: an unmodified request to 127.0.0.1
-// fails with "Connection refused" from the guest's own loopback, and clearing
-// NO_PROXY is what turns that into a real CONNECT/absolute-URI request the
-// proxy receives.
+// line, and the same one a real wget invocation inside the sandbox would pick
+// up unprompted. NO_PROXY and no_proxy are cleared for this one command: the
+// supervisor also sets them, to "localhost,127.0.0.1" (§5), and with them in
+// place wget bypasses the proxy entirely and dials the guest's OWN loopback
+// instead — which has nothing listening on it and fails before ever reaching
+// the proxy this test means to exercise. This is confirmed against a real
+// guest, not assumed: an unmodified request to 127.0.0.1 fails with
+// "Connection refused" from the guest's own loopback, and clearing NO_PROXY
+// is what turns that into a real CONNECT/absolute-URI request the proxy
+// receives.
 //
-// curl is what the base and dev image flavors both carry (dev/accept-e1.sh
-// uses it the same way, over the same proxy, against a real destination).
-// The command's own exit status is not asserted on: a non-200 response or a
-// curl error is still a real attempt, and what this test checks is whether
-// the recorder chain saw it, not whether it succeeded.
-func guestEgressAttempt(sb *sandbox.Sandbox, port int) error {
+// wget, not curl: image/flavors/base/buildroot.fragment is explicit that the
+// base flavor is "BusyBox and musl and nothing else. No TLS client" — curl is
+// dev-flavor-only (BR2_PACKAGE_LIBCURL_CURL in
+// image/flavors/dev/buildroot.fragment), so a guest built from the base
+// flavor, which is what requireRealSandbox accepts and what this VM normally
+// builds, has no curl in it at all (F20: an earlier version of this comment
+// claimed otherwise, and was wrong). BusyBox wget is on both flavors and
+// carries -q/-O/-T, which is enough for the plain-HTTP attempt this test
+// makes. The exit code is returned rather than swallowed here, on purpose:
+// 127 (command not found) looks identical to a connection error from
+// outside, and a caller that never distinguishes the two can spend hours
+// asking "is the product broken?" about a guest that never ran the command at
+// all. It is the caller's job to check it, in both subtests — see
+// requireRealHTTPClientRan.
+func guestEgressAttempt(sb *sandbox.Sandbox, port int) (code int, err error) {
 	cmd := []string{"/bin/sh", "-c", fmt.Sprintf(
-		"NO_PROXY= no_proxy= curl -s -o /dev/null -m 10 http://127.0.0.1:%d/", port,
+		"NO_PROXY= no_proxy= wget -q -O /dev/null -T 10 http://127.0.0.1:%d/", port,
 	)}
-	_, _, _, err := runGuestExec(sb.State.UDSPath, cmd)
-	return err
+	_, code, _, err = runGuestExec(sb.State.UDSPath, cmd)
+	return code, err
+}
+
+// requireRealHTTPClientRan fails the subtest loudly when the guest's exec
+// never actually ran an HTTP client — exit 127, "command not found" — rather
+// than let it proceed on the false premise that a real attempt was made. This
+// is the fix for F20: guestEgressAttempt used to discard the exec's exit
+// status entirely, so a guest image missing the client it was told to run
+// looked, from here, identical to one that ran it and hit a real connection
+// error.
+func requireRealHTTPClientRan(t *testing.T, code int) {
+	t.Helper()
+	if code == 127 {
+		t.Fatal("guest lacks a usable HTTP client (exit 127, command not found) — " +
+			"this test requires BusyBox wget in the guest image")
+	}
 }
 
 // runGuestExec performs one full exec round trip over vsock and returns

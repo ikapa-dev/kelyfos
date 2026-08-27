@@ -348,6 +348,30 @@ reference described in the README and re-measured per release.
   against its usage defer; the three sites set a `reason` variable instead of appending inline.
   Verified live in the Lima VM: a restored sandbox's `-json` log now shows `resource.summary`
   immediately ahead of `session.end` on both the interrupted and the `vm_exited` path.
+- **`TestSnapshotRestoreRealVMWiresAuditBeforeResume` asserted through a binary the guest image
+  doesn't carry, and silently discarded the exit code that would have said so (F20) — not a gap in
+  S2/P6-4's restore-audit fix.** `guestEgressAttempt` drove the guest with `curl`, and its own doc
+  comment claimed curl is what the base and dev image flavors both carry;
+  `image/flavors/base/buildroot.fragment` says the opposite — base is "BusyBox and musl and nothing
+  else. No TLS client" — curl is dev-only (`BR2_PACKAGE_LIBCURL_CURL`, in the dev fragment), and
+  `requireRealSandbox` never asks for the dev flavor specifically. On a base-flavor guest, which is
+  what this VM normally builds, the guest's shell answered "curl: not found" with `EXIT=127`, no
+  request was ever made, and the exit status was thrown away, so a missing binary looked identical
+  from the caller's side to a connection error. `fixed_order_captures_the_attempt` failed on both
+  its assertions as a result, while `old_order_missed_the_attempt` passed regardless — it only
+  checks for the ABSENCE of `egress.attempt`/`secret.withheld`, which is guaranteed whether or not a
+  real attempt was made, so the guard subtest meant to prove its sibling meaningful reported green
+  in exactly the situation where neither subtest proved anything. `guestEgressAttempt` now drives
+  the guest with BusyBox wget, which both flavors carry, and returns its exit code instead of
+  dropping it; both subtests now assert that code is not 127, failing loudly and by name rather than
+  proceeding on a false premise. That alone only closes one way to no-op, so both subtests also
+  count real hits on the upstream test server and assert the count moved: `forwardHTTP`
+  (`internal/egress/proxy.go`) reaches it over a genuine `RoundTrip` whether or not
+  `OnEvent`/`OnSecret`/`OnWithheld` are wired, so a rising count proves a request truly landed there
+  — independent of the recorder chain the old-order subtest is busy saying is silent. Root-caused by
+  the repository owner's review of PR #6, who re-ran the fixed ordering by hand against the same
+  base image with wget in place of curl and got the correct events in the correct order, confirming
+  S2/P6-4 works correctly on real hardware and this was always a test bug.
 
 ---
 
