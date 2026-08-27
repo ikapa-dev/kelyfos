@@ -4091,6 +4091,90 @@ after:
         <code>python3 tools/check-plan.py</code> (host, outside Lima), before and after this edit
         &rarr; &ldquo;PLAN.html is coherent: 99 tasks, 78 checked, 63 decisions&rdquo; both times
         (this row adds no decision and ticks no box)</td></tr>
+    <tr><td class="mono">2026-08-27</td><td class="mono">P7-0</td>
+        <td><b>Independent review of P7-0 landed and is answered here, per &sect;8 rule 10 &mdash;
+        all six findings, none rejected.</b> This row also corrects a number the row above got
+        wrong; that row is left as written, per &sect;8 rule 6 (append, never rewrite).
+        <br><b>Blocking, all fixed in <code>docs/policy-record.md</code>:</b>
+        <br><b>F1</b> &mdash; the doc's own central claim that the <code>session.start</code> and
+        <code>WithPosture</code> enumerations &ldquo;agree&rdquo; was false: a ninth
+        <code>session.start</code> site exists, <code>host/servemcpaudit.go</code>'s
+        <code>openAudit</code>, the <code>serve-mcp</code> server's own audit chain, which correctly
+        carries no posture because it is not a machine. Accepted. New &sect;4.1 names it, cites the
+        existing <code>Reason == recorder.ReasonServeMCP</code> marker three other call sites already
+        rely on to tell it apart from a sandbox's chain, and &sect;9.3's door-enumerating test spec
+        now exempts it by that marker instead of failing on the first real <code>serve-mcp</code>
+        session.
+        <br><b>F2</b> &mdash; door 2's row claimed <code>session.policy</code> coverage for
+        &ldquo;every agent, cold or forked, declared or runtime-spawned&rdquo;; the runtime-spawned
+        half was false. Accepted. Checked end to end: <code>broker.OnSpawn</code>
+        (<code>host/team.go:358-391</code>) and <code>bootAgent</code> (<code>host/team.go:736</code>
+        onward) contain zero <code>rec.Append</code> calls between them; <code>host/team.go:507</code>
+        is the only <code>session.ready</code>/<code>WithPosture</code> site in the file, inside the
+        loop over the initially planned roster only. A runtime-spawned worker gets real caps
+        (<code>plan.spawnResources</code>, <code>host/team.go:363</code>) and no posture at all today
+        &mdash; the P5-1 shape this phase exists to close, found in a path P5-1 never reached. New
+        &sect;4.2 names this as a real gap, not scoped out: P7-2 must extend the spawn path itself,
+        not only test it.
+        <br><b>F3</b> &mdash; four errors in &sect;8.3's hand-specified <code>tools</code> vocabulary,
+        all confirmed against the actual input schemas and CLI flag definitions rather than assumed
+        from a name: <code>sandbox_restore</code>/<code>sandbox_fork</code> take a snapshot
+        <i>name</i>, not a sandbox id (<code>host/servemcptools.go:142,159</code>) and are excluded
+        by the doc's own stated rule, same as <code>sandbox_run</code>; <code>&quot;forward&quot;</code>
+        is not a verb (no <code>case &quot;forward&quot;</code> in <code>host/main.go</code>);
+        <code>&quot;fork&quot;</code> restores <i>from</i> a snapshot and names no running machine
+        (<code>host/fork.go:22</code>); <code>&quot;pause&quot;</code>, which does target one
+        (<code>host/sessions.go:84</code>), was missing. Accepted, all four fixed; the corrected CLI
+        list is <code>[&quot;exec&quot;, &quot;shell&quot;, &quot;diff&quot;, &quot;snapshot
+        save&quot;, &quot;pause&quot;]</code> and the corrected MCP list is
+        <code>[&quot;sandbox_exec&quot;, &quot;sandbox_read_file&quot;, &quot;sandbox_write_file&quot;,
+        &quot;sandbox_stop&quot;, &quot;sandbox_snapshot&quot;]</code>.
+        <br><b>Non-blocking, fixed in the same pass:</b> <b>F4</b> &mdash; <code>secrets</code>'
+        <code>Path</code> was wrongly attributed to <code>secret.use</code>, which has no path field;
+        re-sourced to <code>egress.Secret.Scope.Path</code>, and &ldquo;<code>value</code> has no
+        accessor&rdquo; corrected (<code>Header()</code> does return it) in favour of the argument
+        that actually holds: <code>EvSecret</code> has no field for it to flow into.
+        <code>Secret.Scheme</code> added to the stated omissions. <b>F5</b> &mdash; &ldquo;eight
+        fields are not new&rdquo; was wrong; three are (<code>MemMiB</code>, <code>VcpuCount</code>,
+        <code>CPUQuota</code>) &mdash; corrected in the doc, and corrected here since the row above
+        carries the same wrong number and is not itself edited. <b>F6</b> &mdash; the field-order
+        table's position column is now normative (numbered 1&ndash;23), not hedged as a proposal P7-2
+        could resequence, matching the doc's own opening premise. A pre-existing, unrelated
+        cross-reference bug this pass also found and fixed: &sect;4's mention of why
+        <code>resume</code> gets no <code>session.policy</code> pointed at &sect;8.3
+        (<code>tools</code>) instead of &sect;8.4 (the actual explanation).
+        <br>One reviewer-noted item left alone, per the reviewer's own instruction: <code>tools/
+        check-plan.py</code>'s decision count vs. the highest D-id already disagreed before this
+        task's first commit and is not this task's to fix.</td>
+        <td class="mono">every one of the reviewer's file:line citations re-verified against current
+        source before writing the fix, not taken on the review's word: <code>awk 'NR==92,NR==106'
+        host/servemcpaudit.go</code> confirms <code>openAudit</code>; <code>grep -n
+        &quot;sandbox&quot; host/log.go host/runs.go internal/report/report.go</code> confirms the
+        <code>ReasonServeMCP</code> marker at the three cited lines; <code>awk 'NR==358,NR==391'
+        host/team.go</code> and a grep for <code>rec\.|WithPosture</code> across that range confirm
+        zero recorder calls in <code>OnSpawn</code>, and the same grep across
+        <code>bootAgent</code>'s body confirms the same; <code>grep -n &quot;TypeSessionReady&quot;
+        host/team.go</code> &rarr; exactly one hit, line 507; <code>awk 'NR==133,NR==165'
+        host/servemcptools.go</code> confirms <code>sandbox_restore</code>/<code>sandbox_fork</code>'s
+        <code>name</code> parameter; <code>grep -n 'case &quot;' host/main.go</code> confirms no
+        <code>forward</code> case and confirms <code>pause</code>; <code>grep -n '&quot;sandbox&quot;'
+        host/exec.go host/shell.go host/review.go host/snapshot.go host/sessions.go</code> confirms
+        all five CLI verbs' <code>--sandbox</code> flag at the cited lines; <code>awk 'NR==139,
+        NR==140' internal/recorder/schema.go</code> confirms <code>secret.use</code> carries
+        <code>name</code>/<code>host</code> and no <code>path</code>; <code>awk 'NR==150,NR==174,
+        NR==175' internal/recorder/recorder.go</code> confirms exactly three existing fields
+        (<code>MemMiB</code>, <code>VcpuCount</code>, <code>CPUQuota</code>)<br>
+        after the doc edits, inside <code>kelyfos-dev</code>: <code>gofmt -l .</code> &rarr; clean;
+        <code>go vet ./...</code> then <code>go test ./...</code> &rarr; every package
+        <code>ok</code> or <code>[no test files]</code>, unchanged (only <code>docs/policy-
+        record.md</code> and this file changed &mdash; no Go source touched by this pass)<br>
+        <code>grep -c '^```' docs/policy-record.md</code> &rarr; <code>2</code> (the one Go code
+        fence still opens and closes)<br>
+        <code>python3 tools/check-plan.py</code> (host) &rarr; &ldquo;PLAN.html is coherent: 99
+        tasks, 78 checked, 63 decisions&rdquo; &mdash; unchanged, as expected: this row is a
+        Progress Log addition, not a Decision Log row, and none was added<br>
+        still not self-ticked, still not pushed or merged; standing by for the coordinator to confirm
+        the fix before P7-2 starts</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
