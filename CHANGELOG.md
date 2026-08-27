@@ -324,6 +324,18 @@ reference described in the README and re-measured per release.
   over `argsummary.Summarise`; every existing test in both packages, and both fuzz targets, pass
   unchanged against the shared implementation, and `internal/argsummary` carries its own test suite
   covering the same guarantees directly.
+- **`dev/demo-team.sh`'s teardown check false-failed on a shared host.** Step 6 asked `pgrep
+  firecracker` a host-wide question — whether *any* Firecracker process exists anywhere on the
+  machine — after tearing down its own five (or six, with the step-5 spawn) sandboxes, so any
+  unrelated Firecracker session running alongside it on a shared dev box reported a teardown leak
+  even though the demo's own VMs came down cleanly (F18, reproduced live during the security
+  review that found it). The script already tracks each agent's sandbox ID in `$M`/`$W1`-`$W4` (and
+  the step-5 spawn in `$NEW`) to report per-agent PASS/FAIL earlier in the run, so those are reused
+  rather than adding new tracking: before `team down` runs, it now reads each sandbox's own
+  `firecracker.pid` from `$RUN_ROOT/firecracker/<sandbox-id>/root/` — the same jail run-directory
+  `internal/sandbox.jailRunDir` builds — and after teardown it asserts specifically that none of
+  those PIDs are still alive, rather than asking whether Firecracker is running anywhere on the
+  host.
 
 ---
 
