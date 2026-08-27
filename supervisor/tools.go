@@ -405,6 +405,14 @@ func writeFile(path string, data []byte, mode os.FileMode) *mcp.CallToolResult {
 	if len(data) > maxToolBytes {
 		return mcp.Errorf("content is %d bytes, over the %d byte per-call limit", len(data), maxToolBytes)
 	}
+	// Checked again immediately before the write, not only inside
+	// writableFor: a symlink can be planted in the gap between that decision
+	// and this call, and MkdirAll below will walk straight through one in a
+	// parent directory exactly as willingly as os.WriteFile follows one at
+	// the leaf (F1).
+	if err := noSymlinksBeneath(path); err != nil {
+		return mcp.Errorf("%v", err)
+	}
 	if dir := filepath.Dir(path); dir != "" && dir != "." {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return mcp.Errorf("%v", err)

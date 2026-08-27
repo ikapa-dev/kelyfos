@@ -90,6 +90,18 @@ reference described in the README and re-measured per release.
   `https://` request sent straight to the proxy without a `CONNECT` was recorded as
   `mode: plain` / `not_encrypted` even though it is a real, certificate-validated TLS fetch —
   a new mode and withheld reason say what actually happened instead.
+- **A symlink planted inside a tree the sandbox may write let `write_file` and `upload` reach
+  anywhere on the host, including the raw block devices behind the guest's own read-only root and
+  workspace.** `writableFor` was a pure lexical check — `filepath.Clean` plus a prefix comparison
+  against the writable trees — and the write itself was a bare `os.WriteFile`/`os.MkdirAll` on
+  whatever path the agent supplied, so neither ever asked what a path component actually pointed
+  at. Creating a symlink costs a confined exec nothing beyond what it already has —
+  `LANDLOCK_ACCESS_FS_MAKE_SYM` is granted on every tree write is — so `ln -s /dev/vda /work/escape`
+  followed by `write_file("/work/escape", …)` reached the disk without the tool ever naming it.
+  Both call sites now walk the path component by component with `Lstat` and refuse if any
+  component — including a pre-existing symlink at the final one — is a symlink, once as part of the
+  writability decision and again immediately before the write itself, since a symlink can be
+  planted in the gap between the two.
 
 ---
 
