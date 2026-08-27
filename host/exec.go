@@ -102,7 +102,7 @@ to close.
 	if err := proto.NewWriter(conn).Write(proto.ExecRequest{
 		V:         proto.Version,
 		ID:        reqID,
-		Cmd:       cmd,
+		Cmd:       proto.EncodeCmd(cmd),
 		Cwd:       *cwd,
 		Stdin:     stdin,
 		TimeoutMS: timeout.Milliseconds(),

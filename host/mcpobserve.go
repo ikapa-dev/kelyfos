@@ -2,10 +2,12 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"sort"
 	"strings"
@@ -77,19 +79,119 @@ type pendingID struct {
 }
 
 // tee returns a reader that yields exactly what it was given, while feeding a
-// copy to sink. Nothing downstream can tell it is there.
+// copy to sink. Nothing downstream can tell it is there — with one line this
+// scanner cannot buffer as a token, which used to be the one case where
+// downstream could tell, and worse: everything after it too.
+//
+// A line over proto.MaxMCPLine makes sc.Scan below give up (bufio.ErrTooLong),
+// and the loop that only ran while Scan kept returning true stopped right
+// there — closing pw with that error, which ends this reader for good and, one
+// level up, io.Copy(conn, tee(...)): the whole client->guest or guest->client
+// relay this tee sits in. Nothing sent after that oversized line, on the same
+// connection, from either side, was ever getting through, no matter how the
+// far end handled it — the observer meant to be a tee, watching a copy of the
+// traffic, had become a filter that could stop the traffic itself. Sending an
+// oversized frame at the MCP door used to end the bridge silently before the
+// guest's own answer to it — the fix in supervisor/mcp.go — was ever reached.
 func tee(r io.Reader, sink func([]byte)) io.Reader {
 	pr, pw := io.Pipe()
 	go func() {
-		sc := bufio.NewScanner(io.TeeReader(r, pw))
-		sc.Buffer(make([]byte, 0, 64<<10), proto.MaxMCPLine)
-		for sc.Scan() {
-			line := append([]byte(nil), sc.Bytes()...)
-			sink(line)
+		for {
+			sc := bufio.NewScanner(io.TeeReader(r, pw))
+			sc.Buffer(make([]byte, 0, 64<<10), proto.MaxMCPLine)
+			for sc.Scan() {
+				line := append([]byte(nil), sc.Bytes()...)
+				sink(line)
+			}
+			err := sc.Err()
+			if err == nil {
+				pw.CloseWithError(nil) // true EOF: nothing left to relay
+				return
+			}
+			if !errors.Is(err, bufio.ErrTooLong) {
+				pw.CloseWithError(err) // r itself failed; no line to resync to
+				return
+			}
+			// The scanner has already mirrored the first proto.MaxMCPLine
+			// bytes of the oversized line into pw via the TeeReader above —
+			// that part already reached the connection. What has not is the
+			// rest of that same line, up to its real newline: relay it raw,
+			// with nothing asked to parse it as a token, then loop and build
+			// a fresh scanner (bufio.Scanner does not resume after an error;
+			// see internal/proto's resetScanner for the same fact on the
+			// guest side of this channel) so observation of whatever comes
+			// after resumes rather than staying degraded for the rest of the
+			// session over one oversized message.
+			//
+			// relayRestOfLine reads in chunks, not byte by byte, so a single
+			// Read can return bytes from *past* that newline too — the start
+			// of whatever comes next, already off the wire and out of r for
+			// good. Those come back as leftover rather than being dropped,
+			// and go in front of r for the next round: a scanner reading r
+			// after that sees exactly the stream it would have seen were the
+			// chunking not there, just reassembled from two pieces instead of
+			// one.
+			leftover, relayErr := relayRestOfLine(pw, r)
+			if relayErr != nil {
+				pw.CloseWithError(relayErr)
+				return
+			}
+			if len(leftover) > 0 {
+				r = io.MultiReader(bytes.NewReader(leftover), r)
+			}
 		}
-		pw.CloseWithError(sc.Err())
 	}()
 	return pr
+}
+
+// maxTeeOverlongRelay bounds how far relayRestOfLine reads past the frame
+// limit looking for the newline that ends an oversized line, so a peer that
+// never sends one cannot hold this goroutine — and the pipe it feeds — open
+// forever. A small multiple of proto.MaxMCPLine, the same margin
+// proto.Reader.DrainOverlongLine gives the guest side of this same problem.
+const maxTeeOverlongRelay = 4 * proto.MaxMCPLine
+
+// relayRestOfLine copies r to w, unparsed, until it writes a newline or r
+// ends, then reports whatever it read past that newline in the same chunk —
+// bytes belonging to the frame after it, already consumed from r and not yet
+// written to w. It exists only for the oversized-line recovery in tee above:
+// the bytes up to the newline are relayed exactly as read, because by the
+// time this runs they have already failed to fit in a token this
+// connection's own reader would accept either (proto.MaxMCPLine on both ends
+// of the MCP channel, docs/protocol.md §3) — there is nothing left to gain by
+// holding them for a parse that was always going to fail, and holding them is
+// what silently dropped them before.
+func relayRestOfLine(w io.Writer, r io.Reader) (leftover []byte, err error) {
+	buf := make([]byte, 32<<10)
+	var total int
+	for {
+		n, rerr := r.Read(buf)
+		if n > 0 {
+			chunk := buf[:n]
+			if i := bytes.IndexByte(chunk, '\n'); i >= 0 {
+				if _, werr := w.Write(chunk[:i+1]); werr != nil {
+					return nil, werr
+				}
+				if i+1 < n {
+					return append([]byte(nil), chunk[i+1:]...), nil
+				}
+				return nil, nil
+			}
+			if _, werr := w.Write(chunk); werr != nil {
+				return nil, werr
+			}
+			total += n
+			if total > maxTeeOverlongRelay {
+				return nil, proto.ErrLineTooLong
+			}
+		}
+		if rerr != nil {
+			if errors.Is(rerr, io.EOF) {
+				return nil, nil
+			}
+			return nil, rerr
+		}
+	}
 }
 
 // fromClient records tool calls as they are requested: a command starts here,

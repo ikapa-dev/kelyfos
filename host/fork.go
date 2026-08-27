@@ -56,6 +56,7 @@ unique guest network identity, which is backlog work.
 
 	type forked struct {
 		sb      *sandbox.Sandbox
+		rec     *recorder.Recorder
 		elapsed time.Duration
 		err     error
 	}
@@ -132,7 +133,12 @@ unique guest network identity, which is backlog work.
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			opts := sandbox.Options{Arch: *arch, Flavor: *flavor, Quiet: true}
+			id, err := sandbox.NewID()
+			if err != nil {
+				results[i] = forked{err: err}
+				return
+			}
+			opts := sandbox.Options{ID: id, Arch: *arch, Flavor: *flavor, Quiet: true}
 			if *cpuQuota > 0 {
 				slice, err := sandbox.NewCPUSlice(fmt.Sprintf("fork-%d-%d", started.UnixNano(), i), *cpuQuota)
 				if err != nil {
@@ -142,8 +148,29 @@ unique guest network identity, which is backlog work.
 				slices[i] = slice
 				opts.CPUSlice = slice
 			}
+			// Opened and wired before Restore, not after every fork in the batch
+			// has finished as this used to do: the guest is live and reporting
+			// from the instant Restore resumes it, and a handler wired only
+			// afterward missed whatever the fastest of them said first (F3).
+			rec, err := recorder.Open(sandbox.Root(), id)
+			if err != nil {
+				results[i] = forked{err: err}
+				return
+			}
+			_ = rec.Append(recorder.Event{
+				Type: recorder.TypeSessionStart, Image: *flavor, Arch: *arch,
+				Kelyfos: Version, Argv: os.Args, Reason: "forked from " + *name,
+			})
+			opts.OnGuestEvent = guestEventRecorder(rec, "", meta.MemMiB)
 			sb, elapsed, err := sandbox.Restore(snapshotDir(*name), opts)
-			results[i] = forked{sb: sb, elapsed: elapsed, err: err}
+			if err != nil {
+				_ = rec.Append(recorder.Event{Type: recorder.TypeSessionEnd, Reason: "error",
+					DurationMS: rec.Since().Milliseconds()})
+				_ = rec.Close()
+				results[i] = forked{err: err}
+				return
+			}
+			results[i] = forked{sb: sb, rec: rec, elapsed: elapsed}
 		}(i)
 	}
 	wg.Wait()
@@ -186,8 +213,10 @@ unique guest network identity, which is backlog work.
 			continue
 		}
 		live++
-		if rec, err := recordFork(r.sb, *flavor, *arch, *name, r.elapsed); err == nil {
-			recs = append(recs, rec)
+		if r.rec != nil {
+			if err := recordFork(r.rec, r.sb, r.elapsed); err == nil {
+				recs = append(recs, r.rec)
+			}
 		}
 		fmt.Printf("fork %d/%d  sandbox %s  restored in %d ms\n",
 			i+1, *n, r.sb.State.ID, r.elapsed.Milliseconds())
@@ -206,26 +235,17 @@ unique guest network identity, which is backlog work.
 	return nil
 }
 
-// recordFork opens one fork's chain and writes its opening events. The recorder
-// is returned rather than closed, because a session ends when the machine does
-// and the caller is what knows when that is.
-func recordFork(sb *sandbox.Sandbox, flavor, arch, snapshot string, elapsed time.Duration) (*recorder.Recorder, error) {
-	rec, err := recorder.Open(sandbox.Root(), sb.State.ID)
-	if err != nil {
-		return nil, err
-	}
-	if err := rec.Append(recorder.Event{
-		Type: recorder.TypeSessionStart, Image: flavor, Arch: arch,
-		Kelyfos: Version, Argv: os.Args, Reason: "forked from " + snapshot,
-	}); err != nil {
-		_ = rec.Close()
-		return nil, err
-	}
+// recordFork writes the "ready" event into a fork's chain, which the goroutine
+// above already opened and started (with its guest-event handler wired) before
+// calling sandbox.Restore. The recorder is left open on success rather than
+// closed, because a session ends when the machine does and the caller's
+// shutdown defer is what knows when that is.
+func recordFork(rec *recorder.Recorder, sb *sandbox.Sandbox, elapsed time.Duration) error {
 	if err := rec.Append(recorder.Event{
 		Type: recorder.TypeSessionReady, BootMS: elapsed.Milliseconds(),
 	}.WithPosture(sb.State.Jailed, sb.State.Profile)); err != nil {
 		_ = rec.Close()
-		return nil, err
+		return err
 	}
-	return rec, nil
+	return nil
 }

@@ -94,6 +94,56 @@ func TestCommentsAndBlankLines(t *testing.T) {
 	}
 }
 
+// F7: a comma inside a quoted array element must not split the element in
+// two. Before the fix, parseArray split on every comma in the raw bracket
+// contents before parseString ever saw an element, so this failed to parse.
+func TestArrayCommaInsideQuotes(t *testing.T) {
+	out, err := parseArray(`["x", "--y=a,b"]`, "test")
+	if err != nil {
+		t.Fatalf("parseArray: %v", err)
+	}
+	if len(out) != 2 || out[0] != "x" || out[1] != "--y=a,b" {
+		t.Errorf("got %v, want [x --y=a,b]", out)
+	}
+}
+
+// Multiple elements can each carry their own internal comma.
+func TestArrayMultipleElementsWithInternalCommas(t *testing.T) {
+	out, err := parseArray(`["a,b", "c,d,e", "f"]`, "test")
+	if err != nil {
+		t.Fatalf("parseArray: %v", err)
+	}
+	want := []string{"a,b", "c,d,e", "f"}
+	if len(out) != len(want) {
+		t.Fatalf("got %v, want %v", out, want)
+	}
+	for i := range want {
+		if out[i] != want[i] {
+			t.Errorf("element %d = %q, want %q", i, out[i], want[i])
+		}
+	}
+}
+
+func TestArrayEmpty(t *testing.T) {
+	out, err := parseArray(`[]`, "test")
+	if err != nil {
+		t.Fatalf("parseArray: %v", err)
+	}
+	if out != nil {
+		t.Errorf("got %v, want nil", out)
+	}
+}
+
+func TestArraySingleElement(t *testing.T) {
+	out, err := parseArray(`["solo"]`, "test")
+	if err != nil {
+		t.Fatalf("parseArray: %v", err)
+	}
+	if len(out) != 1 || out[0] != "solo" {
+		t.Errorf("got %v, want [solo]", out)
+	}
+}
+
 // A '#' inside a quoted value is part of the value, not a comment.
 func TestHashInsideAString(t *testing.T) {
 	cfg, err := Load(write(t, "[sandbox]\nworkspace = \"./a#b\"\n"))

@@ -50,6 +50,18 @@ func (t *Team) Ceiling(key string) (line int, ok bool) {
 	return line, ok
 }
 
+// maxAgentCount is the ceiling on [[team.agent]] count. Nothing in this
+// project's own topology runs past single-digit replicas (docs/teams.md's own
+// example uses 3, and serve-mcp's max_sandboxes defaults to 4), so this is
+// generous headroom for a real team rather than a number chosen to be hit.
+// Below it, expandCount's make([]string, 0, count) is a harmless allocation;
+// above it, the same call is a slice big enough to abort the process with an
+// unrecoverable OOM before a single VM boots — from parsing the file alone,
+// with no sandbox and no attacker code involved. Refused here for the same
+// reason count < 1 already is: at parse time, with a message that names the
+// number that was too big.
+const maxAgentCount = 64
+
 // TeamAgent is one [[team.agent]].
 type TeamAgent struct {
 	Name      string
@@ -255,6 +267,11 @@ func (c *Config) teamKey(section, key, value, where string) error {
 			a.Count, err = parseInt(value, where)
 			if err == nil && a.Count < 1 {
 				return fmt.Errorf("%s: count must be at least 1", where)
+			}
+			if err == nil && a.Count > maxAgentCount {
+				return fmt.Errorf("%s: count = %d is over the limit of %d\n"+
+					"    a team this large is not what [[team.agent]] is for; split the work across "+
+					"several teams instead", where, a.Count, maxAgentCount)
 			}
 		case "allow":
 			a.Allow, err = parseArray(value, where)

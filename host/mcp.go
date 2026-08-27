@@ -138,5 +138,13 @@ func answerOutstanding(w io.Writer, obs *observer) error {
 	}
 	fmt.Fprintf(os.Stderr, "kelyfos: %d tool call(s) were unanswered when the bridge closed; "+
 		"each was answered with an error rather than left silent\n", len(pending))
-	return nil
+	// A bridge that closes with calls still outstanding is not a clean
+	// shutdown, whatever ended the connection to the guest — the sandbox
+	// tearing down, or a guest MCP session giving up on a frame it could not
+	// parse (F6). The client got the synthetic answer above either way, but
+	// this used to return nil regardless, so the one signal that would tell a
+	// wrapper script or supervisor process something went wrong — $? — said
+	// success. The diagnostic above is what a person reads; this is what a
+	// script checks.
+	return &exitError{code: 1}
 }

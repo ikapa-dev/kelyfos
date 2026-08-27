@@ -159,6 +159,7 @@ func TestTheSubsetRefusesWhatItDoesNotUnderstand(t *testing.T) {
 		"an unknown key in a store rule":                "[[team.store.key]]\nnaem = \"k\"\n",
 		"a non-boolean where a boolean belongs":         "[team]\nrecord_payloads = yes\n",
 		"a count below one":                             "[[team.agent]]\ncount = 0\n",
+		"a count over the ceiling":                      "[[team.agent]]\ncount = 65\n",
 		"an unterminated header":                        "[team\n",
 		"an empty header":                               "[]\n",
 		"an unknown key in the team budget":             "[team.resources]\ncpu_quata = \"200%\"\n",
@@ -176,6 +177,38 @@ func TestTheSubsetRefusesWhatItDoesNotUnderstand(t *testing.T) {
 		if !strings.Contains(err.Error(), ".toml:") {
 			t.Errorf("%s: refusal does not name a line: %v", what, err)
 		}
+	}
+}
+
+// count has a ceiling for the same reason count < 1 is refused: unlike a
+// negative count, an absurdly large one parses cleanly and only fails later,
+// where the failure is host/teamplan.go's expandCount allocating a slice with
+// that capacity — an unrecoverable OOM abort, not a catchable error, from
+// parsing a file alone (F4). The boundary itself must stay usable, and the
+// finding's own repro number must be refused with a message a reader can act
+// on rather than crash the process.
+func TestCountHasACeiling(t *testing.T) {
+	atCeiling := "[[team.agent]]\nname = \"a\"\ncount = 64\n"
+	cfg := writeAndLoad(t, atCeiling)
+	if cfg.Team.Agents[0].Count != maxAgentCount {
+		t.Errorf("count at the ceiling (%d) was not accepted: got %d", maxAgentCount, cfg.Team.Agents[0].Count)
+	}
+
+	overCeiling := "[[team.agent]]\nname = \"a\"\ncount = 65\n"
+	if _, err := loadString(t, overCeiling); err == nil {
+		t.Error("count one over the ceiling was accepted")
+	} else if !strings.Contains(err.Error(), "count") || !strings.Contains(err.Error(), "64") {
+		t.Errorf("refusal does not explain itself: %v", err)
+	}
+
+	// The finding's own reproduction: a count large enough that
+	// make([]string, 0, count) would abort the process rather than return an
+	// error. If this ever regresses to an accepted value, the test process
+	// itself would be the one to OOM — which is the point of asserting the
+	// refusal instead of expanding it.
+	hugeCount := "[[team.agent]]\nname = \"a\"\ncount = 999999999999\n"
+	if _, err := loadString(t, hugeCount); err == nil {
+		t.Fatal("a count of 999999999999 was accepted instead of refused")
 	}
 }
 

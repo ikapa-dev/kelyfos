@@ -73,6 +73,10 @@ func runCommand(req proto.ExecRequest, rp *reaper, onStdout, onStderr func([]byt
 	if len(req.Cmd) == 0 {
 		return Result{Code: -1, Err: &proto.Error{Kind: proto.ErrBadRequest, Message: "cmd must not be empty"}}
 	}
+	argv, err := proto.DecodeCmd(req.Cmd)
+	if err != nil {
+		return Result{Code: -1, Err: &proto.Error{Kind: proto.ErrBadRequest, Message: err.Error()}}
+	}
 
 	var stdin []byte
 	if req.Stdin != "" {
@@ -104,7 +108,7 @@ func runCommand(req proto.ExecRequest, rp *reaper, onStdout, onStderr func([]byt
 		return internalErr(err)
 	}
 
-	cmd := exec.Command(req.Cmd[0], req.Cmd[1:]...)
+	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Dir = "/"
 	if req.Cwd != "" {
 		cmd.Dir = req.Cwd

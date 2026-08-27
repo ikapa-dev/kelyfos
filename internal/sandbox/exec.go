@@ -84,7 +84,7 @@ func Exec(udsPath string, argv []string, stdin []byte, timeout time.Duration) (*
 
 	req := proto.ExecRequest{
 		V: proto.Version, ID: fmt.Sprintf("x%d", time.Now().UnixNano()),
-		Cmd: argv, TimeoutMS: timeout.Milliseconds(),
+		Cmd: proto.EncodeCmd(argv), TimeoutMS: timeout.Milliseconds(),
 	}
 	if len(stdin) > 0 {
 		req.Stdin = base64.StdEncoding.EncodeToString(stdin)

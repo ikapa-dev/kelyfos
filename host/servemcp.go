@@ -178,9 +178,27 @@ func (b *servedBox) guestEvent(ev proto.GuestEvent) {
 }
 
 func (b *servedBox) close(reason string) {
+	// The receipt is sampled before Shutdown, for the same reason run.go's
+	// and team.go's own teardowns sample first: every counter it reads
+	// belongs to a process that is about to stop existing (E1-7). This door
+	// had no such receipt at all until F14 — every session raised through
+	// serve-mcp ended with a session.end and nothing about what it spent.
+	b.recMu.Lock()
+	rec := b.rec
+	b.recMu.Unlock()
 	// A box can be half-built: a restore that failed after its network was up
 	// has everything here except a machine.
 	if b.sb != nil {
+		if u, err := b.sb.State.Sample(); err == nil && rec != nil {
+			_ = rec.Append(recorder.Event{
+				Type:       recorder.TypeResourceSummary,
+				CPUSeconds: u.CPUSeconds, PeakRSSKiB: u.PeakRSSKiB,
+				NetInBytes: u.NetInBytes, NetOutBytes: u.NetOutBytes,
+				DiskReadBytes: u.DiskReadBytes, DiskWriteBytes: u.DiskWriteBytes,
+				MemMiB: b.sb.State.MemMiB, VcpuCount: b.sb.State.VcpuCount, CPUQuota: b.sb.State.CPUQuota,
+				BlockedPackets: blockedPackets(b.net),
+			})
+		}
 		_ = b.sb.Shutdown(5 * time.Second)
 	}
 	if b.proxy != nil {
@@ -201,7 +219,7 @@ func (b *servedBox) close(reason string) {
 		_ = os.Remove(b.sb.State.Workspace)
 	}
 	b.recMu.Lock()
-	rec := b.rec
+	rec = b.rec
 	b.rec = nil
 	b.recMu.Unlock()
 	if rec != nil {

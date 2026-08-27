@@ -195,6 +195,7 @@ The usage receipt, written once at teardown from host-side counters. Written by 
 | `mem_mib` | integer | the cap it ran under |
 | `vcpu_count` | integer | the cap it ran under |
 | `cpu_quota_percent` | integer | the cap it ran under, when one was set |
+| `blocked_packets` | integer | packets the egress firewall's drop rule counted for this sandbox — zero for a sandbox with no network interface at all, the same as one that never had a packet blocked |
 | `agent` | string | which machine produced it; present inside a team *(in a team)* |
 
 ## `team.message`

@@ -5,6 +5,7 @@ package proto
 
 import (
 	"bufio"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -154,6 +155,18 @@ var ErrLineTooLong = errors.New("proto: frame exceeds maximum line length")
 // answering with silence in a form that costs it nothing.
 var ErrBlankFlood = errors.New("proto: peer sent only blank lines")
 
+// MalformedFrame wraps a JSON decoding failure for one frame that the scanner
+// had already found in full: a complete, newline-terminated line came off the
+// wire, and json.Unmarshal simply rejected what was in it (bad JSON, or a
+// value shaped wrong for v). Unlike ErrLineTooLong or a genuine I/O failure,
+// this leaves the stream exactly where a successful Read would: sitting on the
+// next frame's boundary. A caller that can answer with a protocol error is not
+// looking at a dead connection and can keep serving past it (supervisor/mcp.go).
+type MalformedFrame struct{ Err error }
+
+func (e *MalformedFrame) Error() string { return e.Err.Error() }
+func (e *MalformedFrame) Unwrap() error { return e.Err }
+
 // Error is the single error shape used across every channel (§4).
 type Error struct {
 	Kind    string `json:"kind"`
@@ -191,11 +204,40 @@ const (
 type ExecRequest struct {
 	V         int               `json:"v"`
 	ID        string            `json:"id"`
-	Cmd       []string          `json:"cmd"`
+	Cmd       []string          `json:"cmd"` // base64, one element per argv entry
 	Cwd       string            `json:"cwd,omitempty"`
 	Env       map[string]string `json:"env,omitempty"`
 	Stdin     string            `json:"stdin,omitempty"` // base64
 	TimeoutMS int64             `json:"timeout_ms,omitempty"`
+}
+
+// EncodeCmd and DecodeCmd convert an argv between its in-memory form and the
+// base64-per-element form ExecRequest.Cmd carries on the wire.
+//
+// encoding/json marshals a Go string as UTF-8 and silently replaces any byte
+// sequence that is not valid UTF-8 with U+FFFD, so a plain string field cannot
+// carry an argument built from arbitrary bytes without corrupting it. Cmd gets
+// the same treatment Stdin already has (docs/protocol.md §3: "every field
+// whose value is raw bytes is base64"), applied per element so the argv
+// boundaries stay visible on the wire.
+func EncodeCmd(argv []string) []string {
+	out := make([]string, len(argv))
+	for i, a := range argv {
+		out[i] = base64.StdEncoding.EncodeToString([]byte(a))
+	}
+	return out
+}
+
+func DecodeCmd(cmd []string) ([]string, error) {
+	out := make([]string, len(cmd))
+	for i, c := range cmd {
+		b, err := base64.StdEncoding.DecodeString(c)
+		if err != nil {
+			return nil, fmt.Errorf("cmd[%d] is not valid base64: %w", i, err)
+		}
+		out[i] = string(b)
+	}
+	return out, nil
 }
 
 // Stream names on an exec response frame.
@@ -424,21 +466,50 @@ func (p *Writer) Write(v any) error {
 }
 
 // Reader reads newline-delimited JSON with a hard bound on line length.
-type Reader struct{ s *bufio.Scanner }
+type Reader struct {
+	s *bufio.Scanner
+	// r is the same reader s scans from, kept so DrainOverlongLine can read
+	// past what the scanner gave up on (see there), and so the scanner can be
+	// rebuilt in place once it has.
+	r   io.Reader
+	max int
+}
 
 func NewReader(r io.Reader) *Reader { return NewReaderLimit(r, MaxLine) }
 
 // NewReaderLimit is NewReader with a frame limit of the caller's choosing. The
 // MCP channels use it with MaxMCPLine; nothing else should need it.
 func NewReaderLimit(r io.Reader, max int) *Reader {
-	s := bufio.NewScanner(r)
-	s.Buffer(make([]byte, 0, 64<<10), max)
-	return &Reader{s: s}
+	p := &Reader{r: r, max: max}
+	p.resetScanner()
+	return p
 }
 
-// Read decodes the next frame into v. It returns io.EOF at end of stream and
-// ErrLineTooLong if the peer exceeded the frame limit, which the caller should
-// treat as fatal for that connection.
+// resetScanner (re)builds the scanner p reads through. bufio.Scanner
+// "[stops] unrecoverably at EOF, the first I/O error, or a token too large to
+// fit in the buffer" (its own doc comment) — ErrTooLong included, whatever
+// caused it. A Scan() after that does not simply keep failing the way an
+// ordinary sticky error would: on the very next call it hands back the
+// already-buffered, oversized data as a final token, as if the stream had
+// legitimately ended there, and json.Unmarshal on that garbage is what a
+// caller actually observes — not the ErrLineTooLong it might expect to keep
+// seeing. DrainOverlongLine calls this once it has found the real frame
+// boundary, so the scanner that resumes has none of that stale state and
+// reads the connection's next bytes as what they are, not as leftovers of the
+// line that just failed.
+func (p *Reader) resetScanner() {
+	s := bufio.NewScanner(p.r)
+	s.Buffer(make([]byte, 0, 64<<10), p.max)
+	p.s = s
+}
+
+// Read decodes the next frame into v. It returns io.EOF at end of stream,
+// ErrLineTooLong if the peer exceeded the frame limit, and *MalformedFrame if
+// a complete frame was found but would not decode. Most callers should treat
+// either of the latter two as fatal for the connection, same as any other
+// error; a caller willing to do more — draining the rest of an oversized line
+// with DrainOverlongLine first — can resync and keep the connection instead
+// (supervisor/mcp.go does, for the MCP session channel).
 // maxBlankLines bounds how long one Read will keep skipping nothing.
 //
 // Blank lines are tolerated because §3 says they are, and skipping them is
@@ -476,7 +547,67 @@ func (p *Reader) Read(v any) error {
 			}
 			continue
 		}
-		return json.Unmarshal(line, v)
+		if err := json.Unmarshal(line, v); err != nil {
+			return &MalformedFrame{Err: err}
+		}
+		return nil
+	}
+}
+
+// maxDrainOverlong bounds how many bytes DrainOverlongLine will read past the
+// frame it already refused. It is a small multiple of the reader's own frame
+// limit — generous enough to reach the end of a line that merely overshot the
+// limit, not so generous that a peer which simply never sends a newline turns
+// draining into another way to hold the goroutine open indefinitely; a peer
+// like that is answered with ErrLineTooLong and the connection is closed, the
+// same as before this existed.
+const maxDrainOverlong = 4 * MaxMCPLine
+
+// DrainOverlongLine discards what is left of a line that just failed Read with
+// ErrLineTooLong. It reads directly off the underlying connection rather than
+// through the scanner, whose own buffer stopped growing at the frame limit and
+// holds nothing past that point — every byte still to come is unread on the
+// wire (see Read; bufio.Scanner never consumes more than the max it was
+// configured with while searching for one token). It stops at the next
+// newline, at EOF, at a read error, or after maxDrainOverlong bytes, whichever
+// comes first.
+//
+// Calling this before answering an oversized frame is what keeps that answer
+// from racing bytes the peer is still sending on the same line: writing a
+// reply — or worse, closing the connection — while the tail of the oversized
+// line is still unread can interleave with it or be cut short by a reset, and
+// either way risks losing the one reply the caller had left to send. Draining
+// first leaves the stream sitting on a clean frame boundary, so the reply goes
+// out clean and — if the caller chooses to — serving can simply continue from
+// there.
+//
+// A non-nil return means no newline was found: the connection ended, failed,
+// or the peer kept talking past the bound above. That stream is not resynced
+// to anything and the caller should treat it as it would any other dead
+// connection.
+func (p *Reader) DrainOverlongLine() error {
+	buf := make([]byte, 32<<10)
+	var total int
+	for {
+		n, err := p.r.Read(buf)
+		for _, b := range buf[:n] {
+			if b == '\n' {
+				// The scanner that hit ErrLineTooLong is not safe to keep
+				// using (see resetScanner) — rebuild it now, at the exact
+				// point in the stream this drain stopped at, so the next
+				// Read starts clean rather than replaying the scanner's own
+				// stale, already-buffered state.
+				p.resetScanner()
+				return nil
+			}
+		}
+		total += n
+		if total > maxDrainOverlong {
+			return ErrLineTooLong
+		}
+		if err != nil {
+			return err
+		}
 	}
 }
 

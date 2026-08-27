@@ -199,7 +199,14 @@ Named rather than left to be discovered:
   `help`. The rest of the CLI needs Linux, refuses on macOS with the way in, and
   "the same commands everywhere" is explicitly not promised — it needs a
   transport across `limactl shell` that an interrupt does not survive.
-- **`kelyfos snapshot restore` reads no policy file.** A restored machine gets no
-  ceilings, no allowlist and no secrets from `kelyfos.toml`. That is current
-  behaviour and it is a gap rather than a promise; fixing it will be a minor
-  release, because it only ever adds enforcement.
+- **`kelyfos snapshot restore` reads `kelyfos.toml` the same way `run` and
+  `fork` do.** `--policy` names a file; with nothing named it walks up from
+  the working directory and applies whatever it finds, same as the other two
+  (F9). A restore held to a policy is refused if the frozen machine's vcpu or
+  memory is over the ceiling, if its allowlist reaches a domain the policy
+  does not permit, and defaults its `--secret`s to the policy's own when none
+  are typed — mirroring the same three limits `serve-mcp`'s `sandbox_restore`
+  already enforced. This closes a real gap from every kelyfos before this
+  one, where restore read no policy file at all; a working directory with a
+  `kelyfos.toml` above it now gets its restores held to it by default, the
+  way its `run`s and `fork`s already were.

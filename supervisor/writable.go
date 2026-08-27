@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 )
@@ -45,6 +46,9 @@ func writableFor(path string) error {
 		return fmt.Errorf("%q is not an absolute path; the tools write to absolute paths inside the sandbox, "+
 			"and a relative one means whatever directory the supervisor happens to be in", path)
 	}
+	if err := noSymlinksBeneath(clean); err != nil {
+		return err
+	}
 	for _, tree := range writableEverywhere {
 		if beneath(clean, tree) {
 			return nil
@@ -65,6 +69,56 @@ func writableFor(path string) error {
 		"including the raw disks behind the root filesystem and the workspace, and the file tools do not "+
 		"get to be the way around it",
 		clean, strings.Join(writableEverywhere, ", "))
+}
+
+// noSymlinksBeneath refuses a path that carries a symlink in any component,
+// including a pre-existing symlink at the final component (finding F1).
+//
+// beneath is a pure string/prefix decision, and creating a symlink costs
+// nothing a confined exec doesn't already have: LANDLOCK_ACCESS_FS_MAKE_SYM is
+// granted on every tree write is, alongside it. "ln -s /dev/vda /work/escape"
+// is therefore one command away from any confined agent, and write_file(path)
+// handed straight to os.WriteFile follows it exactly like open(2) does — the
+// lexical check above never looks past the name to ask what it points at, so
+// /work/escape reads as beneath /work right up until the kernel resolves it
+// onto the raw disk behind the read-only root.
+//
+// This is the same discipline extract.go's host-side workspace extraction
+// already uses — a symlink is never resolved through, on the way to a write —
+// worked by hand rather than through an *os.Root: that package anchors one
+// root per tree it writes and lets openat2's RESOLVE_BENEATH|RESOLVE_NO_SYMLINKS
+// enforce it, but the file tools address the whole filesystem by absolute path
+// across five separate writable trees and a short list of exact device nodes,
+// not one tree opened once, so there is no single root to anchor here. Walking
+// the path component by component with Lstat is the same rule stated by hand:
+// nothing along the way is allowed to be a symlink, existing or not, so
+// nothing here is ever resolved through one to find out where it leads.
+func noSymlinksBeneath(path string) error {
+	clean := filepath.Clean(path)
+	cur := string(filepath.Separator)
+	for _, part := range strings.Split(strings.TrimPrefix(clean, string(filepath.Separator)), string(filepath.Separator)) {
+		if part == "" {
+			continue
+		}
+		cur = filepath.Join(cur, part)
+		info, err := os.Lstat(cur)
+		if err != nil {
+			// Nothing here yet. write_file creates the target itself and
+			// MkdirAll creates whatever parents are missing, and a component
+			// that does not exist cannot be a symlink — and nothing can exist
+			// beneath a component that is itself missing, so there is nothing
+			// further along the path left to check.
+			if os.IsNotExist(err) {
+				return nil
+			}
+			return fmt.Errorf("checking whether %s is a symlink: %w", cur, err)
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("%s is a symlink; the file tools refuse to write through one component of a "+
+				"path — planted by the sandbox or not — rather than trust where it leads", cur)
+		}
+	}
+	return nil
 }
 
 // beneath is the path test, done on components rather than on strings.

@@ -165,7 +165,7 @@ func (s *mcpSession) toolExec(raw json.RawMessage, meta *mcp.CallMeta) *mcp.Call
 	}
 
 	res := runCommand(proto.ExecRequest{
-		V: proto.Version, ID: "mcp", Cmd: argv, Cwd: a.Cwd,
+		V: proto.Version, ID: "mcp", Cmd: proto.EncodeCmd(argv), Cwd: a.Cwd,
 		Stdin: base64.StdEncoding.EncodeToString([]byte(a.Stdin)), TimeoutMS: a.TimeoutMS,
 	}, s.rp,
 		func(b []byte) { emit(proto.StreamStdout, b) },
@@ -404,6 +404,14 @@ func writeFile(path string, data []byte, mode os.FileMode) *mcp.CallToolResult {
 	}
 	if len(data) > maxToolBytes {
 		return mcp.Errorf("content is %d bytes, over the %d byte per-call limit", len(data), maxToolBytes)
+	}
+	// Checked again immediately before the write, not only inside
+	// writableFor: a symlink can be planted in the gap between that decision
+	// and this call, and MkdirAll below will walk straight through one in a
+	// parent directory exactly as willingly as os.WriteFile follows one at
+	// the leaf (F1).
+	if err := noSymlinksBeneath(path); err != nil {
+		return mcp.Errorf("%v", err)
 	}
 	if dir := filepath.Dir(path); dir != "" && dir != "." {
 		if err := os.MkdirAll(dir, 0o755); err != nil {

@@ -78,7 +78,7 @@ func runExec(uds string, cmd []string) (stdout string, code int, perr *proto.Err
 	defer conn.Close()
 
 	if err := proto.NewWriter(conn).Write(proto.ExecRequest{
-		V: proto.Version, ID: "t", Cmd: cmd, TimeoutMS: 20000,
+		V: proto.Version, ID: "t", Cmd: proto.EncodeCmd(cmd), TimeoutMS: 20000,
 	}); err != nil {
 		return "", 0, nil, err
 	}

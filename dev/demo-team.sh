@@ -358,18 +358,36 @@ fi
 say "6. kelyfos team down — every VM gone, every workspace synced"
 echo "        before: $(ls "$PROJ/ws" | tr '\n' ' ')"
 "$KELYFOS" exec --sandbox "$M" 'echo "assembled: 28 lines across 4 suppliers" > /work/report.txt' >/dev/null 2>&1
+# Collect this run's own Firecracker PIDs before teardown (F18): the jailer
+# writes one at $RUN_ROOT/firecracker/<sandbox-id>/root/firecracker.pid, the
+# same run-directory shape internal/sandbox.jailRunDir builds, so this reuses
+# the sandbox IDs the script already tracked ($M/$W1-4, plus the step-5 spawn)
+# instead of introducing new tracking. Read before "team down" runs, since
+# teardown is what removes the jail directory the pid file lives in.
+fc_pid() { local f="$RUN_ROOT/firecracker/$1/root/firecracker.pid"; [ -f "$f" ] && cat "$f" 2>/dev/null; }
+TEAM_PIDS=()
+for s in "$M" "$W1" "$W2" "$W3" "$W4" "${NEW:-}"; do
+  [ -n "$s" ] || continue
+  p="$(fc_pid "$s")"
+  [ -n "$p" ] && TEAM_PIDS+=("$p")
+done
 "$KELYFOS" team down 2>&1 | sed 's/^/        /'
 for _ in $(seq 1 120); do [ -f "$RUN_ROOT/team.json" ] || break; sleep 0.5; done
 wait "$UPPID" 2>/dev/null
 sed -n '/stopping/,$p' "$PROJ/team.log" | sed 's/^/        /'
 echo "        after:  $(ls "$PROJ/ws" | tr '\n' ' ')"
-# pgrep -c prints 0 and *exits 1* when nothing matches, so a `|| echo 0`
-# fallback appends a second zero and the comparison then fails on a machine
-# where everything is right. Ask the question directly instead.
-if pgrep firecracker >/dev/null 2>&1; then
-  fail "$(pgrep -c firecracker) firecracker process(es) survived teardown"
-else
+# Scoped to this run's own sandboxes (the PIDs collected above), not every
+# Firecracker process on the host: an unrelated demo or session's VMs on a
+# shared machine must not fail this check when this run's own VMs tore down
+# cleanly (F18).
+STILL_ALIVE=()
+for p in ${TEAM_PIDS[@]+"${TEAM_PIDS[@]}"}; do
+  kill -0 "$p" 2>/dev/null && STILL_ALIVE+=("$p")
+done
+if [ "${#STILL_ALIVE[@]}" -eq 0 ]; then
   pass "every VM is gone"
+else
+  fail "${#STILL_ALIVE[@]} of this run's own firecracker process(es) survived teardown: ${STILL_ALIVE[*]}"
 fi
 if [ -f "$PROJ/ws/report.txt" ]; then
   echo "        $PROJ/ws/report.txt: $(cat "$PROJ/ws/report.txt")"

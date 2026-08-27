@@ -17,6 +17,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -172,6 +173,12 @@ type Event struct {
 	DiskWriteBytes int64   `json:"disk_write_bytes,omitempty"`
 	VcpuCount      int     `json:"vcpu_count,omitempty"`
 	CPUQuota       int     `json:"cpu_quota_percent,omitempty"`
+	// BlockedPackets is the sandbox's own nftables drop counter
+	// (internal/sandbox/network.go's BlockedPackets), zero for a sandbox with
+	// no network at all rather than absent — the same "no interface, not
+	// merely no traffic" distinction the egress lines elsewhere in this
+	// product already draw (F14).
+	BlockedPackets int64 `json:"blocked_packets,omitempty"`
 
 	// mcp.host.* (E4-4). Args is a redacted summary of a client tool call's
 	// arguments — every key it was given, with anything carrying content
@@ -467,32 +474,36 @@ func fitUnderMaxLine(e *Event) error {
 	}
 }
 
-// clipLargestField halves whichever of the event's guest-influenced fields is
-// currently largest, noting the original size in-band rather than adding a
-// schema field — the same pattern host/servemcpaudit.go's summariseArgs uses
-// for the outward MCP audit lane, reused here as the last line of defense for
-// the flight recorder itself. It reports false when nothing is left worth
+// clipLargestField halves whichever of the event's fields is currently
+// largest, noting the original size in-band rather than adding a schema field
+// — the same pattern host/servemcpaudit.go's summariseArgs uses for the
+// outward MCP audit lane, reused here as the last line of defense for the
+// flight recorder itself. It reports false when nothing is left worth
 // clipping, which fitUnderMaxLine treats as "cannot make this fit."
 //
-// Cmd is measured and clipped separately from the string fields because it is
-// a []string, not a string: an external review of this fix found that a
-// caller-supplied argv (host/mcpobserve.go, host/servemcptools.go,
-// host/exec.go all build Cmd from a request field with no upstream length
-// bound) could be the single largest thing on a command.start event while
-// every string field above was empty, and the pre-fix version of this
-// function then reported nothing to clip — so fitUnderMaxLine failed closed
-// and Append dropped the whole event. Dropping an event is the same failure
-// mode this file exists to close (a missing event is also a hole), so Cmd now
+// The candidate string fields come from largestStringField, which walks the
+// struct by reflection rather than a hand-maintained list — a hand-maintained
+// list is exactly what F8 found wrong with the previous version of this
+// function: it named six fields (Data, Args, Host, Path, Name, and Cmd) while
+// claiming to cover "whatever field made it that large," and EvError.Message,
+// Reason, Tool and every other string field on Event were invisible to it. An
+// oversized value in one of those went through fitUnderMaxLine's loop with
+// nothing to clip, so Append failed closed and the event vanished from the
+// record instead of being clipped and kept — the exact failure mode this
+// function exists to prevent. Reflection means a field added to Event next
+// month is covered the day it lands, not the day someone reads this function
+// and remembers to add it to a list.
+//
+// Cmd is measured and clipped separately because it is a []string, not a
+// string, so reflection over string-kinded fields does not see it: an
+// external review of this fix found that a caller-supplied argv
+// (host/mcpobserve.go, host/servemcptools.go, host/exec.go all build Cmd from
+// a request field with no upstream length bound) could be the single largest
+// thing on a command.start event while every string field was empty. Cmd
 // competes for "largest field" like everything else, and clips to a single
 // summarising element rather than being left unclippable.
 func clipLargestField(e *Event) bool {
-	fields := []*string{&e.Data, &e.Args, &e.Host, &e.Path, &e.Name}
-	var target *string
-	for _, f := range fields {
-		if target == nil || len(*f) > len(*target) {
-			target = f
-		}
-	}
+	target := largestStringField(e)
 	best := 0
 	if target != nil {
 		best = len(*target)
@@ -511,6 +522,49 @@ func clipLargestField(e *Event) bool {
 	kept := clipUTF8(*target, orig/2)
 	*target = fmt.Sprintf("%s...(clipped from %d to %d bytes)", kept, orig, len(kept))
 	return true
+}
+
+// largestStringField walks every string-typed field reachable from an Event —
+// its own top-level fields, plus the fields of any pointed-to struct such as
+// *EvError — and returns the address of whichever currently holds the most
+// bytes, or nil when every string field is empty. Using the address, rather
+// than returning a copy, is what lets clipLargestField overwrite the field it
+// found in place.
+//
+// Walking by reflection instead of a fixed field list is the fix for F8: a
+// list has to be remembered and kept in sync by hand, and this file's own
+// history is the proof that does not happen reliably. A field this function
+// does not yet know how to reach (a nested struct two levels down, say) would
+// still miss coverage, but that is a shape Event does not currently have, and
+// FuzzAppendFieldValues exercises this by setting every reachable string field
+// at once so a future field that *is* reachable and gets missed here fails a
+// fuzz run rather than needing a code read to find.
+func largestStringField(e *Event) *string {
+	var target *string
+	consider := func(f *string) {
+		if target == nil || len(*f) > len(*target) {
+			target = f
+		}
+	}
+	v := reflect.ValueOf(e).Elem()
+	for i := 0; i < v.NumField(); i++ {
+		fv := v.Field(i)
+		switch fv.Kind() {
+		case reflect.String:
+			consider(fv.Addr().Interface().(*string))
+		case reflect.Ptr:
+			if fv.IsNil() || fv.Type().Elem().Kind() != reflect.Struct {
+				continue
+			}
+			sv := fv.Elem()
+			for j := 0; j < sv.NumField(); j++ {
+				if sfv := sv.Field(j); sfv.Kind() == reflect.String {
+					consider(sfv.Addr().Interface().(*string))
+				}
+			}
+		}
+	}
+	return target
 }
 
 // cmdBytes is the size clipLargestField and fitUnderMaxLine's marshalled

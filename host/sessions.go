@@ -483,6 +483,16 @@ final shutdown the pause deferred.
 			name, name)
 	}
 
+	// Opened before Restore, and kept open for the resumed machine's whole
+	// life rather than closed the instant the resume event is written, as this
+	// used to do: an OOM kill or a plugin crash any time after this point
+	// otherwise left no trace in the session it resumed into (F3).
+	rec, recErr := recorder.Open(sandbox.Root(), meta.Session)
+	if recErr == nil {
+		opts.OnGuestEvent = guestEventRecorder(rec, "", snapMeta.MemMiB)
+		defer rec.Close()
+	}
+
 	sb, elapsed, err := sandbox.Restore(dir, opts)
 	if err != nil {
 		return err
@@ -497,15 +507,29 @@ final shutdown the pause deferred.
 		defer syncResumedWorkspace(sb, meta.WorkspaceHost)
 	}
 	defer func() {
+		// The receipt is sampled before Shutdown, the same as every other
+		// teardown in this product (E1-7). No blocked_packets here: a session
+		// with a network refuses to resume through this door (above), so
+		// there is never one to sample.
+		if rec != nil {
+			if u, err := sb.State.Sample(); err == nil {
+				_ = rec.Append(recorder.Event{
+					Type:       recorder.TypeResourceSummary,
+					CPUSeconds: u.CPUSeconds, PeakRSSKiB: u.PeakRSSKiB,
+					NetInBytes: u.NetInBytes, NetOutBytes: u.NetOutBytes,
+					DiskReadBytes: u.DiskReadBytes, DiskWriteBytes: u.DiskWriteBytes,
+					MemMiB: sb.State.MemMiB, VcpuCount: sb.State.VcpuCount, CPUQuota: sb.State.CPUQuota,
+				})
+			}
+		}
 		if err := sb.Shutdown(10 * time.Second); err != nil {
 			fmt.Fprintf(os.Stderr, "kelyfos: shutdown: %v\n", err)
 		}
 	}()
 
-	if rec, err := recorder.Open(sandbox.Root(), meta.Session); err == nil {
+	if rec != nil {
 		_ = rec.Append(recorder.Event{Type: recorder.TypeSessionResume, Name: name,
 			BootMS: elapsed.Milliseconds(), Reason: strings.Join(differences, ", ")})
-		_ = rec.Close()
 	}
 
 	fmt.Printf("resumed %q in %d ms (paused %s ago)\n", name, elapsed.Milliseconds(),

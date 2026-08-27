@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/p4r4n0rm4l/KelyfOS/internal/hostile"
+	"github.com/p4r4n0rm4l/KelyfOS/internal/mcp"
 )
 
 // The hostile corpus for the guest's own file tools (P6-22, finding H-1).
@@ -127,6 +129,85 @@ func TestHostileWriteFileRefusesTheBlockDevicesBeforeOpening(t *testing.T) {
 					" from a rule of its own: %q", dev, text)
 			}
 			hostile.Holds(t, "write-file/block-device", problem)
+		})
+	}
+}
+
+// F1. A symlink planted inside a tree the sandbox may write, pointing at
+// something it may not, was a way around every check above: writableFor's
+// prefix comparison and write_file's own os.WriteFile both take the name at
+// face value and let open(2) resolve it. Creating the symlink costs a confined
+// exec nothing beyond what it already has — LANDLOCK_ACCESS_FS_MAKE_SYM is
+// granted on every tree write is — so "ln -s /dev/vda /work/escape" followed
+// by write_file("/work/escape", …) reached the raw disk behind the read-only
+// root without ever naming it.
+//
+// /dev/vda itself is not the target here, on purpose: this process runs
+// unconfined, the same way the supervisor does, so a bug in the fix would make
+// the write actually land rather than merely fail differently, and a fixture
+// that can reach the disk behind the guest's own root filesystem is not one to
+// run on a shared machine. /var/tmp stands in for it — outside every tree
+// writableEverywhere lists, and safe to lose if the guard does not hold.
+func TestHostileWriteFileRefusesASymlinkPlantedInsideAWritableTree(t *testing.T) {
+	hostileTempCwd(t)
+
+	victimDir, err := os.MkdirTemp("/var/tmp", "kelyfos-hostile-symlink-victim-*")
+	if err != nil {
+		t.Fatalf("could not stage the escape target under /var/tmp: %v", err)
+	}
+	t.Cleanup(func() { os.RemoveAll(victimDir) })
+	victim := filepath.Join(victimDir, "owned")
+
+	// /tmp is one of the trees writableEverywhere names, so a write that lands
+	// beneath it — rather than through the symlink planted in it — is the
+	// ordinary, permitted case this fixture must not also break.
+	writableDir, err := os.MkdirTemp("/tmp", "kelyfos-hostile-symlink-tree-*")
+	if err != nil {
+		t.Fatalf("could not stage the writable tree under /tmp: %v", err)
+	}
+	t.Cleanup(func() { os.RemoveAll(writableDir) })
+	escape := filepath.Join(writableDir, "escape")
+	if err := os.Symlink(victim, escape); err != nil {
+		t.Fatalf("could not plant the symlink: %v", err)
+	}
+
+	for _, tc := range []struct {
+		name string
+		call func(path string) *mcp.CallToolResult
+	}{
+		{"write_file", func(path string) *mcp.CallToolResult {
+			arg, err := json.Marshal(map[string]string{"path": path, "content": "owned by the guest\n"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			return toolWriteFile(json.RawMessage(arg))
+		}},
+		{"upload", func(path string) *mcp.CallToolResult {
+			arg, err := json.Marshal(map[string]string{
+				"path": path,
+				"data": base64.StdEncoding.EncodeToString([]byte("owned by the guest\n")),
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			return toolUpload(json.RawMessage(arg))
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			res := tc.call(escape)
+
+			problem := ""
+			switch text := resultText(res); {
+			case res == nil || !res.IsError:
+				problem = fmt.Sprintf("%s wrote through the symlink at %s instead of refusing it", tc.name, escape)
+			case !mentionsAny(text, "symlink"):
+				problem = fmt.Sprintf("%s refused %s, but not because it is a symlink: %q", tc.name, escape, text)
+			}
+			if got, err := os.ReadFile(victim); err == nil && strings.Contains(string(got), "owned by the guest") {
+				problem = fmt.Sprintf("%s: the guest's bytes reached %s, through the symlink at %s",
+					tc.name, victim, escape)
+			}
+			hostile.Holds(t, "write-file/symlink-escape-"+tc.name, problem)
 		})
 	}
 }

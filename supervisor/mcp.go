@@ -52,9 +52,61 @@ func (s *mcpSession) serve(conn net.Conn) {
 			if errors.Is(err, io.EOF) {
 				return
 			}
+
 			// A frame we cannot parse is a protocol error. There is no id to
 			// answer with, so JSON-RPC says report it against a null id.
-			_ = s.send(mcp.NewError(nil, mcp.CodeParseError, err.Error()))
+			//
+			// Two shapes of that are worth surviving rather than treated as a
+			// dead connection, because both leave the stream on a clean frame
+			// boundary once handled:
+			//
+			//   - ErrLineTooLong, once DrainOverlongLine has read past the
+			//     rest of that same line. Answering without draining first
+			//     used to race whatever the peer was still sending on it: a
+			//     close right after this reply could interleave with, or be
+			//     cut short by, those unread bytes, and the reply — the one
+			//     thing a caller had left to receive — was not guaranteed to
+			//     arrive. A peer whose oversized line never ends is not left
+			//     drained forever either; DrainOverlongLine gives up past its
+			//     own bound and this falls through to the close below.
+			//   - a *proto.MalformedFrame, e.g. a request whose JSON carries a
+			//     literal (unescaped) newline: the scanner had already found
+			//     and consumed a complete, newline-terminated line before
+			//     json.Unmarshal rejected it, so the next Read starts clean
+			//     regardless of what this one send did.
+			//
+			// A single bad frame from a client otherwise behaving normally
+			// used to take the whole session down with it — every call still
+			// in flight on the connection lost along with it, and nothing to
+			// show afterward but an EOF the caller could not explain. This is
+			// the same precedent the oversized-*answer* path already set
+			// (tooLongToSend, below): the channel refusing one frame is not
+			// the channel dying (F6).
+			var overlong = errors.Is(err, proto.ErrLineTooLong)
+			var malformed *proto.MalformedFrame
+			recoverable := errors.As(err, &malformed)
+			if overlong {
+				if drainErr := r.DrainOverlongLine(); drainErr != nil {
+					_ = s.send(mcp.NewError(nil, mcp.CodeParseError, err.Error()))
+					logf("mcp session: closing after an oversized frame could not be drained: %v", drainErr)
+					return
+				}
+				recoverable = true
+			}
+
+			if sendErr := s.send(mcp.NewError(nil, mcp.CodeParseError, err.Error())); sendErr != nil {
+				return
+			}
+			if recoverable {
+				continue
+			}
+			// Neither of the above: a genuine I/O failure on the connection
+			// itself (reset, timeout, closed pipe). There is no frame
+			// boundary to resync to, so unlike the two cases above this one
+			// really does end the session — logged so a session that ends
+			// this way leaves a trace instead of looking like an ordinary
+			// close.
+			logf("mcp session: closing after a read error: %v", err)
 			return
 		}
 		if resp := s.dispatch(&req); resp != nil {

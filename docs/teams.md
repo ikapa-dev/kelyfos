@@ -78,7 +78,7 @@ nothing to send it over.
 | --- | --- | --- |
 | `name` | string | Unique within the team. Required. Becomes the address other agents use. |
 | `image` | string | Flavor, as `kelyfos run --image`. |
-| `count` | integer | Boot this many, named `<name>-1` … `<name>-N`. Default 1. |
+| `count` | integer | Boot this many, named `<name>-1` … `<name>-N`. Default 1, max 64 — refused at the file rather than let a typo (or a hostile policy file) ask the host to allocate and boot a number that was never a real team size. |
 | `allow` | array | Egress allowlist for this agent alone. |
 | `secrets` | array | `NAME@domain`, names only, exactly as a single run. |
 | `workspace` | string | Host directory for this agent's `/work`. |

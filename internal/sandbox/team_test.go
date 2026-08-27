@@ -223,3 +223,89 @@ func TestAnOversizedKeyIsRefusedRatherThanReachingTheStore(t *testing.T) {
 	default:
 	}
 }
+
+// serveTeam's accept loop had no connection cap and no read deadline: any
+// process inside the guest can dial the team channel directly over vsock,
+// without going through the supervisor's own well-behaved client, and one
+// that connects and never writes a byte used to pin a goroutine forever.
+// Enough of them and no connection — including the supervisor's real one —
+// could ever be served again (F5). This proves both halves of the fix at
+// once: maxConcurrentGuestConnections bounds how many silent connections can
+// occupy a slot, and guestFirstFrameTimeout is what gets a slot back from one
+// that never speaks, so a legitimate connection queued behind the cap is
+// eventually served rather than stuck for good.
+func TestSilentTeamConnectionsAreCappedAndReclaimed(t *testing.T) {
+	dir := t.TempDir()
+	served := make(chan struct{}, 1)
+	s := &Sandbox{
+		State: State{UDSPath: filepath.Join(dir, "v.sock")},
+		opts: Options{OnTeamRequest: func(proto.TeamRequest) proto.TeamResponse {
+			served <- struct{}{}
+			return proto.TeamResponse{OK: true}
+		}},
+	}
+	if err := s.listenTeam(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.teamLn.Close() })
+	addr := fmt.Sprintf("%s_%d", s.State.UDSPath, proto.PortTeam)
+
+	// Saturate every slot with connections that dial in and never write
+	// anything — exactly what a guest process reaching this listener
+	// directly, rather than through teamClient, can do.
+	for i := 0; i < maxConcurrentGuestConnections; i++ {
+		c, err := net.Dial("unix", addr)
+		if err != nil {
+			t.Fatalf("silent connection %d: %v", i, err)
+		}
+		t.Cleanup(func() { _ = c.Close() })
+	}
+	// Accept happens asynchronously to Dial returning, so give the loop a
+	// moment to actually pull all of them in and fill the semaphore.
+	deadline := time.Now().Add(2 * time.Second)
+	for len(s.teamSem) < maxConcurrentGuestConnections && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if n := len(s.teamSem); n != maxConcurrentGuestConnections {
+		t.Fatalf("only %d of %d silent connections filled the cap", n, maxConcurrentGuestConnections)
+	}
+
+	// One legitimate connection on top of the cap: with every slot held by a
+	// connection that will never free it on its own, this must not reach the
+	// broker yet — that is the bound actually doing something.
+	conn, err := net.Dial("unix", addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	if err := conn.SetDeadline(time.Now().Add(guestFirstFrameTimeout + 20*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	w, r := proto.NewWriter(conn), proto.NewReader(conn)
+	if err := w.Write(proto.TeamRequest{V: proto.Version, ID: "1", Op: proto.OpTeamPeers}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-served:
+		t.Fatal("a connection past the cap reached the broker while every slot was held by a silent one")
+	case <-time.After(500 * time.Millisecond):
+	}
+
+	// guestFirstFrameTimeout is what gets those slots back: once it passes,
+	// every silent connection is closed from the host side, freeing the cap,
+	// and the legitimate connection above is finally accepted and answered —
+	// proof that a guest holding the cap in connections it never finishes
+	// costs those connections and nothing more, not the channel for good.
+	var resp proto.TeamResponse
+	if err := r.Read(&resp); err != nil {
+		t.Fatalf("the legitimate connection was never served once the silent ones' deadline passed: %v", err)
+	}
+	if !resp.OK || resp.ID != "1" {
+		t.Fatalf("served with the wrong answer: %+v", resp)
+	}
+	select {
+	case <-served:
+	default:
+		t.Fatal("a response came back but OnTeamRequest was never actually called")
+	}
+}

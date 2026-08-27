@@ -473,8 +473,18 @@ v1.0 — it read no policy file at all, so the ceiling this page describes was
 simply absent from every forked machine, and asking for an uncapped machine was
 a matter of asking from the side that was not looking. `--policy` names the file
 and `--cpu-quota` overrides it, under the same ceiling rule as everywhere else.
-`snapshot restore` still reads no policy file; that is a separate gap and this
-page does not claim otherwise.
+
+`kelyfos snapshot restore` reads `kelyfos.toml` too now, resolved the same way
+(`--policy` names one, or it walks up from the working directory and applies
+whatever it finds). Firecracker takes a restored machine's vcpu and memory
+from its state file rather than from any flag, so there is nothing to clamp —
+a restore over the `cpus`/`mem` ceiling is refused outright, the same way
+`serve-mcp`'s `sandbox_restore` already refused one. The allowlist and any
+`--secret` follow the same rule `restoreAllow` already applied through
+`serve-mcp`: the policy narrows what a restore may reach and never widens it,
+and with no `--secret` typed the policy's own `secrets` fill in, each one
+dropped rather than erroring when its domain is outside what this particular
+restore can reach.
 
 A `kelyfos run` session, and every agent in a team, ends with a
 `resource.summary` event in the flight recorder — CPU seconds, peak RSS, bytes in

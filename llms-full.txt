@@ -839,10 +839,17 @@ Named rather than left to be discovered:
   `help`. The rest of the CLI needs Linux, refuses on macOS with the way in, and
   "the same commands everywhere" is explicitly not promised — it needs a
   transport across `limactl shell` that an interrupt does not survive.
-- **`kelyfos snapshot restore` reads no policy file.** A restored machine gets no
-  ceilings, no allowlist and no secrets from `kelyfos.toml`. That is current
-  behaviour and it is a gap rather than a promise; fixing it will be a minor
-  release, because it only ever adds enforcement.
+- **`kelyfos snapshot restore` reads `kelyfos.toml` the same way `run` and
+  `fork` do.** `--policy` names a file; with nothing named it walks up from
+  the working directory and applies whatever it finds, same as the other two
+  (F9). A restore held to a policy is refused if the frozen machine's vcpu or
+  memory is over the ceiling, if its allowlist reaches a domain the policy
+  does not permit, and defaults its `--secret`s to the policy's own when none
+  are typed — mirroring the same three limits `serve-mcp`'s `sandbox_restore`
+  already enforced. This closes a real gap from every kelyfos before this
+  one, where restore read no policy file at all; a working directory with a
+  `kelyfos.toml` above it now gets its restores held to it by default, the
+  way its `run`s and `fork`s already were.
 
 
 ---
@@ -2002,8 +2009,18 @@ v1.0 — it read no policy file at all, so the ceiling this page describes was
 simply absent from every forked machine, and asking for an uncapped machine was
 a matter of asking from the side that was not looking. `--policy` names the file
 and `--cpu-quota` overrides it, under the same ceiling rule as everywhere else.
-`snapshot restore` still reads no policy file; that is a separate gap and this
-page does not claim otherwise.
+
+`kelyfos snapshot restore` reads `kelyfos.toml` too now, resolved the same way
+(`--policy` names one, or it walks up from the working directory and applies
+whatever it finds). Firecracker takes a restored machine's vcpu and memory
+from its state file rather than from any flag, so there is nothing to clamp —
+a restore over the `cpus`/`mem` ceiling is refused outright, the same way
+`serve-mcp`'s `sandbox_restore` already refused one. The allowlist and any
+`--secret` follow the same rule `restoreAllow` already applied through
+`serve-mcp`: the policy narrows what a restore may reach and never widens it,
+and with no `--secret` typed the policy's own `secrets` fill in, each one
+dropped rather than erroring when its domain is outside what this particular
+restore can reach.
 
 A `kelyfos run` session, and every agent in a team, ends with a
 `resource.summary` event in the flight recorder — CPU seconds, peak RSS, bytes in
@@ -2495,7 +2512,7 @@ nothing to send it over.
 | --- | --- | --- |
 | `name` | string | Unique within the team. Required. Becomes the address other agents use. |
 | `image` | string | Flavor, as `kelyfos run --image`. |
-| `count` | integer | Boot this many, named `<name>-1` … `<name>-N`. Default 1. |
+| `count` | integer | Boot this many, named `<name>-1` … `<name>-N`. Default 1, max 64 — refused at the file rather than let a typo (or a hostile policy file) ask the host to allocate and boot a number that was never a real team size. |
 | `allow` | array | Egress allowlist for this agent alone. |
 | `secrets` | array | `NAME@domain`, names only, exactly as a single run. |
 | `workspace` | string | Host directory for this agent's `/work`. |
@@ -3921,6 +3938,7 @@ The usage receipt, written once at teardown. Written from E1-7.
 | `net_in_bytes`, `net_out_bytes` | integer | Bytes across the TAP, from the guest's point of view. |
 | `disk_read_bytes`, `disk_write_bytes` | integer | Bytes the VMM moved to and from host storage. |
 | `vcpu_count`, `mem_mib`, `cpu_quota_percent` | integer | The caps those figures were consumed under. |
+| `blocked_packets` | integer | Packets the egress firewall's drop rule counted for this sandbox. Zero both for a sandbox that blocked nothing and for one with no network interface at all — the same non-distinction the rest of this event already makes for the figures above. |
 | `agent` | string | Present inside a team: whose receipt this is. A team writes **one per member** — do not sum them and call it the session's. |
 
 Every number is read on the host, from counters the kernel keeps about the
@@ -4600,12 +4618,12 @@ for the life of the sandbox, carrying every request that agent makes (§5.6).
 Request (host writes one line, then may write nothing else):
 
 ```json
-{"v":1,"id":"a1","cmd":["/bin/sh","-c","uname -a"],"cwd":"/","env":{"PATH":"/usr/bin:/bin"},"stdin":"","timeout_ms":30000}
+{"v":1,"id":"a1","cmd":["L2Jpbi9zaA==","LWM=","dW5hbWUgLWE="],"cwd":"/","env":{"PATH":"/usr/bin:/bin"},"stdin":"","timeout_ms":30000}
 ```
 
 | Field | Type | Required | Meaning |
 | --- | --- | --- | --- |
-| `cmd` | array of string | yes | argv. **Not** a shell string: element 0 is the executable, resolved against the *supervisor's* `PATH` and not the one in `env` — the lookup happens before the child's environment is applied. Wrap in `["/bin/sh","-c", …]` when a shell is genuinely wanted, so that choice is visible in the audit log. |
+| `cmd` | array of string | yes | argv, one element per array entry, each element **base64**. Not a shell string: element 0 is the executable, resolved against the *supervisor's* `PATH` and not the one in `env` — the lookup happens before the child's environment is applied. Wrap in `["/bin/sh","-c", …]` when a shell is genuinely wanted, so that choice is visible in the audit log. Each argument is base64 like `stdin` below, because argv can carry arbitrary bytes and a plain JSON string cannot: `encoding/json` silently replaces invalid UTF-8 with U+FFFD on marshal, which would corrupt a non-UTF-8 argument with no error anywhere. |
 | `cwd` | string | no | Working directory. Default `/`. |
 | `env` | object | no | Environment, **replacing** the default set rather than merging — a sandbox that silently inherits environment is how secrets leak. |
 | `stdin` | string | no | base64. Empty or absent means stdin is an immediately-closed pipe, never a terminal. |
@@ -9679,6 +9697,7 @@ kelyfos snapshot restore
 | `--console` | boolean | — | stream the guest serial console |
 | `--image` | string | "dev" | image flavor the snapshot was taken from |
 | `--name` | string | "default" | snapshot name |
+| `--policy` | string | the nearest one, found by walking up — same as run and fork | the kelyfos.toml whose ceilings, allowlist and secrets this restore is held to |
 | `--secret` | value | — | attach a credential to a domain: NAME@domain[:bearer\|basic]. Repeatable. |
 
 ## kelyfos pause
@@ -10603,6 +10622,7 @@ The usage receipt, written once at teardown from host-side counters. Written by 
 | `mem_mib` | integer | the cap it ran under |
 | `vcpu_count` | integer | the cap it ran under |
 | `cpu_quota_percent` | integer | the cap it ran under, when one was set |
+| `blocked_packets` | integer | packets the egress firewall's drop rule counted for this sandbox — zero for a sandbox with no network interface at all, the same as one that never had a packet blocked |
 | `agent` | string | which machine produced it; present inside a team *(in a team)* |
 
 ## `team.message`
@@ -10940,6 +10960,17 @@ port 8443 is not permitted, to api.stripe.com or to anywhere else [egress.port]
 ```
 
 Named: `host`, `port`. The values above are an example.
+
+## `egress.resolved_addr`
+
+An allowlisted domain resolved to an address the proxy refuses to dial: loopback, link-local (which includes the cloud instance metadata address, 169.254.169.254), or other private/reserved space no legitimate public domain should ever resolve to.
+
+```
+api.example.com resolved to 169.254.169.254, which this proxy will not dial [egress.resolved_addr]
+    this is not something to work around by retrying — it usually means api.example.com's DNS is compromised, hijacked or misconfigured; a destination that is genuinely internal does not belong behind this proxy's allowlist at all
+```
+
+Named: `addr`, `host`. The values above are an example.
 
 ## `forward.closed`
 

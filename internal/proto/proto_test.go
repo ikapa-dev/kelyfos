@@ -28,6 +28,69 @@ func TestWriteReadRoundTrip(t *testing.T) {
 	}
 }
 
+// A plain JSON string field silently replaces invalid UTF-8 with U+FFFD on
+// marshal (encoding/json's documented behavior), which would corrupt an argv
+// entry built from arbitrary bytes. EncodeCmd/DecodeCmd exist so ExecRequest.Cmd
+// survives that trip exactly, the same way Stdin's base64 already does (F15).
+func TestEncodeDecodeCmdRoundTripsNonUTF8Bytes(t *testing.T) {
+	// Lone continuation bytes: not valid UTF-8 on their own, and exactly what
+	// json.Marshal would otherwise mangle into four U+FFFD characters.
+	invalid := []byte{0x80, 0x81, 0x82, 0x83}
+	argv := []string{"/bin/sh", "-c", string(invalid)}
+
+	encoded := EncodeCmd(argv)
+	if len(encoded) != len(argv) {
+		t.Fatalf("EncodeCmd changed argc: got %d elements, want %d", len(encoded), len(argv))
+	}
+	for _, e := range encoded {
+		if !json.Valid([]byte(`"` + e + `"`)) {
+			t.Fatalf("encoded element %q is not safe to embed as a plain JSON string", e)
+		}
+	}
+
+	decoded, err := DecodeCmd(encoded)
+	if err != nil {
+		t.Fatalf("DecodeCmd: %v", err)
+	}
+	if len(decoded) != len(argv) {
+		t.Fatalf("DecodeCmd changed argc: got %d elements, want %d", len(decoded), len(argv))
+	}
+	for i := range argv {
+		if decoded[i] != argv[i] {
+			t.Fatalf("element %d round-tripped to %q, want %q", i, decoded[i], argv[i])
+		}
+	}
+	if decoded[2] != string(invalid) {
+		t.Fatalf("non-UTF-8 argument corrupted: got %v, want %v", []byte(decoded[2]), invalid)
+	}
+
+	// The full wire path: build the request the way host code does, marshal
+	// it as ExecRequest actually travels, and confirm the bytes are still
+	// exact on the far side — not replaced with U+FFFD anywhere along the way.
+	var buf bytes.Buffer
+	req := ExecRequest{V: Version, ID: "t1", Cmd: EncodeCmd(argv)}
+	if err := NewWriter(&buf).Write(req); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	var got ExecRequest
+	if err := NewReader(&buf).Read(&got); err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	gotArgv, err := DecodeCmd(got.Cmd)
+	if err != nil {
+		t.Fatalf("DecodeCmd after wire round trip: %v", err)
+	}
+	if gotArgv[2] != string(invalid) {
+		t.Fatalf("argument corrupted across the wire: got %v, want %v", []byte(gotArgv[2]), invalid)
+	}
+}
+
+func TestDecodeCmdRejectsInvalidBase64(t *testing.T) {
+	if _, err := DecodeCmd([]string{"not valid base64!!"}); err == nil {
+		t.Fatal("expected an error for a non-base64 cmd element")
+	}
+}
+
 // The framing rule the MCP spec states and every KelyfOS channel inherits:
 // one message per line, and no literal newline inside a message.
 func TestNoEmbeddedNewlines(t *testing.T) {

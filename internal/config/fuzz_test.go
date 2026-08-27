@@ -21,6 +21,12 @@ func FuzzConfigParse(f *testing.F) {
 	f.Add([]byte("image = \"dev\"\nallow = [\"github.com\"]\n"))
 	f.Add([]byte("[resources]\ncpus = 2\nmem = \"2G\"\ncpu_quota = \"150%\"\nmax_runtime = \"30m\"\n"))
 	f.Add([]byte("[team]\nname = \"t\"\n[[team.agent]]\nname = \"a\"\ncount = 4\n[[team.edge]]\nfrom = \"a\"\nto = \"a-*\"\n"))
+	// F4: a count large enough that host/teamplan.go's expandCount would abort
+	// the process allocating a slice with that capacity, before any topology or
+	// budget check ran. count must be refused with this shape in the corpus, not
+	// just in the unit test, because the fuzz harness is what would have caught
+	// the missing ceiling in the first place.
+	f.Add([]byte("[[team.agent]]\nname = \"a\"\ncount = 999999999999\n"))
 	f.Add([]byte("[[plugin]]\nname = \"p\"\ncommand = \"x\"\n"))
 	f.Add([]byte("[resources]\nmem = \"999999999999999999999G\"\n"))
 	f.Add([]byte("[unclosed\n"))
@@ -54,6 +60,16 @@ func FuzzConfigParse(f *testing.F) {
 		}
 		if cfg.ResMaxRuntime < 0 {
 			t.Fatalf("accepted a negative max_runtime: %v", cfg.ResMaxRuntime)
+		}
+		// F4: a parsed count past this ceiling is a config the rest of the
+		// product cannot safely act on — host/teamplan.go's expandCount turns it
+		// straight into a slice of that capacity before anything else runs.
+		if cfg.Team != nil {
+			for _, a := range cfg.Team.Agents {
+				if a.Count > maxAgentCount {
+					t.Fatalf("accepted count = %d, over the ceiling of %d", a.Count, maxAgentCount)
+				}
+			}
 		}
 	})
 }

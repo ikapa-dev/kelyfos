@@ -191,6 +191,11 @@ func (s *hostServer) toolRestore(raw json.RawMessage) *mcp.CallToolResult {
 		Kelyfos: Version, Argv: s.argv, Reason: "restored from " + a.Name + " through serve-mcp session " + s.auditID,
 	})
 	b.wireAudit()
+	// Wired before Restore, same as sandbox_snapshot's CLI sibling in
+	// snapshot.go: the guest is live and reporting well before Restore
+	// returns, and an OOM kill or a plugin crash here otherwise left no trace
+	// at all (F3).
+	opts.OnGuestEvent = guestEventRecorder(rec, "", meta.MemMiB)
 
 	sb, elapsed, err := sandbox.Restore(dir, opts)
 	if err != nil {
@@ -333,6 +338,7 @@ func (s *hostServer) toolFork(raw json.RawMessage) *mcp.CallToolResult {
 	}
 	type result struct {
 		sb      *sandbox.Sandbox
+		rec     *recorder.Recorder
 		elapsed time.Duration
 		err     error
 	}
@@ -343,11 +349,39 @@ func (s *hostServer) toolFork(raw json.RawMessage) *mcp.CallToolResult {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			sb, elapsed, err := sandbox.Restore(dir, sandbox.Options{
-				Arch: arch, Flavor: meta.Flavor, Quiet: true,
-				VcpuCount: meta.VcpuCount, MemMiB: meta.MemMiB,
+			id, err := sandbox.NewID()
+			if err != nil {
+				results[i] = result{err: err}
+				return
+			}
+			// Opened and wired before Restore, not after it returns as this
+			// used to do: the guest is live and reporting from the instant
+			// Restore resumes it, and a recorder opened only once every fork
+			// in the batch has finished is a recorder that missed whatever
+			// the fastest of them said first (F3).
+			rec, err := recorder.Open(sandbox.Root(), id)
+			if err != nil {
+				results[i] = result{err: err}
+				return
+			}
+			_ = rec.Append(recorder.Event{
+				Type: recorder.TypeSessionStart, Image: meta.Flavor, Arch: arch,
+				Kelyfos: Version, Argv: s.argv,
+				Reason: "forked from " + a.Name + " through serve-mcp session " + s.auditID,
 			})
-			results[i] = result{sb: sb, elapsed: elapsed, err: err}
+			sb, elapsed, err := sandbox.Restore(dir, sandbox.Options{
+				ID: id, Arch: arch, Flavor: meta.Flavor, Quiet: true,
+				VcpuCount: meta.VcpuCount, MemMiB: meta.MemMiB,
+				OnGuestEvent: guestEventRecorder(rec, "", meta.MemMiB),
+			})
+			if err != nil {
+				_ = rec.Append(recorder.Event{Type: recorder.TypeSessionEnd, Reason: "error",
+					DurationMS: rec.Since().Milliseconds()})
+				_ = rec.Close()
+				results[i] = result{err: err}
+				return
+			}
+			results[i] = result{sb: sb, rec: rec, elapsed: elapsed}
 		}(i)
 	}
 	wg.Wait()
@@ -361,17 +395,10 @@ func (s *hostServer) toolFork(raw json.RawMessage) *mcp.CallToolResult {
 			continue
 		}
 		b := &servedBox{sb: r.sb, image: meta.Flavor, created: time.Now()}
-		if rec, err := recorder.Open(sandbox.Root(), r.sb.State.ID); err == nil {
-			b.setRec(rec)
-			_ = rec.Append(recorder.Event{
-				Type: recorder.TypeSessionStart, Image: meta.Flavor, Arch: arch,
-				Kelyfos: Version, Argv: s.argv,
-				Reason: "forked from " + a.Name + " through serve-mcp session " + s.auditID,
-			})
-			_ = rec.Append(recorder.Event{
-				Type: recorder.TypeSessionReady, BootMS: r.elapsed.Milliseconds(),
-			}.WithPosture(r.sb.State.Jailed, r.sb.State.Profile))
-		}
+		b.setRec(r.rec)
+		_ = r.rec.Append(recorder.Event{
+			Type: recorder.TypeSessionReady, BootMS: r.elapsed.Milliseconds(),
+		}.WithPosture(r.sb.State.Jailed, r.sb.State.Profile))
 		if err := s.adopt(b); err != nil {
 			// The limit was checked before any of this started, so getting here
 			// means another call took the room. Stop the fork rather than

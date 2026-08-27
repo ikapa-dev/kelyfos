@@ -175,7 +175,19 @@ func readRuns() ([]runRow, error) {
 		if !e.IsDir() {
 			continue
 		}
-		row, ok := readRun(filepath.Join(dir, e.Name(), "events.jsonl"), e.Name())
+		row, ok, err := readRun(filepath.Join(dir, e.Name(), "events.jsonl"), e.Name())
+		if err != nil {
+			// Genuinely missing (ENOENT) never reaches here — readRun turns
+			// that into ok=false, nil below, because a session directory can
+			// legitimately race with its own creation. Anything else —
+			// permission denied, an I/O error — is a session that exists but
+			// couldn't be read, and the "one row per session directory"
+			// guarantee (docs/events.md §6) means that has to be visible
+			// rather than indistinguishable from a session that was never
+			// there.
+			fmt.Fprintf(os.Stderr, "kelyfos: could not read session %s: %v\n", e.Name(), err)
+			continue
+		}
 		if !ok {
 			continue
 		}
@@ -185,15 +197,18 @@ func readRuns() ([]runRow, error) {
 	return rows, nil
 }
 
-func readRun(path, session string) (runRow, bool) {
+func readRun(path, session string) (runRow, bool, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return runRow{}, false
+		if os.IsNotExist(err) {
+			return runRow{}, false, nil
+		}
+		return runRow{}, false, err
 	}
 	defer f.Close()
 	events, err := recorder.Read(f)
 	if err != nil || len(events) == 0 {
-		return runRow{}, false
+		return runRow{}, false, nil
 	}
 	row := runRow{Session: session, Events: len(events)}
 	agents := map[string]bool{}
@@ -232,7 +247,7 @@ func readRun(path, session string) (runRow, bool) {
 	if row.When.IsZero() {
 		row.When = parseTS(events[0].TS)
 	}
-	return row, true
+	return row, true, nil
 }
 
 // parseTS reads the recorder's own timestamp format. An unparseable one is the

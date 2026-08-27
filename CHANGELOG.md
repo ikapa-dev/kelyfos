@@ -90,6 +90,288 @@ reference described in the README and re-measured per release.
   `https://` request sent straight to the proxy without a `CONNECT` was recorded as
   `mode: plain` / `not_encrypted` even though it is a real, certificate-validated TLS fetch —
   a new mode and withheld reason say what actually happened instead.
+- **A symlink planted inside a tree the sandbox may write let `write_file` and `upload` reach
+  anywhere on the host, including the raw block devices behind the guest's own read-only root and
+  workspace.** `writableFor` was a pure lexical check — `filepath.Clean` plus a prefix comparison
+  against the writable trees — and the write itself was a bare `os.WriteFile`/`os.MkdirAll` on
+  whatever path the agent supplied, so neither ever asked what a path component actually pointed
+  at. Creating a symlink costs a confined exec nothing beyond what it already has —
+  `LANDLOCK_ACCESS_FS_MAKE_SYM` is granted on every tree write is — so `ln -s /dev/vda /work/escape`
+  followed by `write_file("/work/escape", …)` reached the disk without the tool ever naming it.
+  Both call sites now walk the path component by component with `Lstat` and refuse if any
+  component — including a pre-existing symlink at the final one — is a symlink, once as part of the
+  writability decision and again immediately before the write itself, since a symlink can be
+  planted in the gap between the two.
+- **The egress proxy allowed a connection based on a hostname string and never checked where that
+  hostname actually resolved to, so an allowlisted domain that is DNS-hijacked, or simply taken
+  over, could be pointed at `169.254.169.254` — a cloud instance's metadata endpoint, on port 80,
+  already in the proxy's always-allowed port set — and an ordinary guest CONNECT to that
+  already-allowed name would be tunnelled straight there.** `allowsHost` and `secretsFor` only ever
+  looked at the string a guest's CONNECT or request line named; nothing in `tunnel`, terminate's
+  upstream leg, or `forwardHTTP` ever looked at the address DNS actually sent the connection to.
+  All three now dial through a `net.Dialer.Control` hook that runs once per address a resolver
+  returns, immediately before the connect syscall for that address, refusing loopback, link-local
+  (169.254.0.0/16 included) and other private/reserved space — skipped only when the host being
+  dialled is already a literal IP address, since nothing is resolved there for DNS to have
+  hijacked, which is also why this changes nothing for the many tests in this package that dial
+  real loopback test servers by address. The refusal is recorded in the flight recorder the same
+  way any other egress denial is, as a new `unsafe_resolved_address` reason with an
+  `egress.resolved_addr` catalog entry naming the address and explaining why retrying will not help.
+- **A guest OOM kill or a plugin call/crash on a restored, forked or resumed sandbox left no trace
+  in the flight recorder.** `sandbox.Options.OnGuestEvent` is what turns a guest's report into a
+  recorder line, and `sandbox.go`'s `serveEvents` drops the frame outright, silently, when it is
+  nil. That was correct for a fresh `sandbox.New` boot and for a team member forked from a
+  template — `host/team.go`'s `memberOptions` already solved exactly this problem once, per its
+  own comment — but every other door that resumes a machine with `sandbox.Restore` built a bare
+  `sandbox.Options{}` with no handler at all: `kelyfos fork`, `kelyfos snapshot restore`,
+  `kelyfos resume`, and `serve-mcp`'s `sandbox_restore` and `sandbox_fork` tools. `memberOptions`'s
+  inline closure is now `guestEventRecorder`, one function shared by all six call sites. Three of
+  them also had to open their recorder before calling `sandbox.Restore` rather than after: the
+  guest starts reporting the instant the machine resumes, and a recorder opened only once every
+  fork in a batch had finished, or only long enough to append a single resume event and close
+  again, missed whatever the guest said in between.
+- **`kelyfos snapshot restore` read no policy file at all, unlike `run` and `fork` (which enforce
+  `[resources]` ceilings) and unlike `serve-mcp`'s `sandbox_restore` — the identical operation
+  through the MCP door, which already calls `checkSnapshotFits` and `restoreAllow` before
+  restoring.** A restored machine got no ceiling, no allowlist narrowing and no secrets from
+  `kelyfos.toml`, a gap `docs/compatibility.md` and `docs/resources.md` already disclosed by name
+  but the asymmetry with the MCP door was undocumented. `snapshot restore` now takes `-policy`,
+  resolved by `loadPolicyAt` exactly the way `run` and `fork` resolve it — a named file that does
+  not exist is an error, and with nothing named it walks up from the working directory and applies
+  whatever `kelyfos.toml` it finds. Found or named, a restore is held to it the same three ways
+  `sandbox_restore` already holds one to it: `checkSnapshotCeiling` refuses a frozen machine whose
+  recorded vcpu or memory is over the ceiling (Firecracker takes both from the state file, so
+  there is nothing to clamp — only allow or refuse), `restoreAllowCeiling` refuses reaching a
+  domain the policy does not permit, and `restoreSecrets` defaults `--secret` from the policy's
+  own `secrets` when none are typed, dropping rather than erroring on the ones this particular
+  restore cannot reach. This is a real default-behaviour change: a working directory with a
+  `kelyfos.toml` above it — this repository's own included — now gets its restores held to it by
+  default, the way its `run`s and `fork`s already were.
+- **`count` under `[[team.agent]]` had no upper bound, unlike every sibling numeric field, so
+  `count = 999999999999` in a `kelyfos.toml` crashed the whole `kelyfos` process with an
+  unrecoverable Go OOM abort — from parsing the policy file alone, before any topology, budget or
+  scratch check ran.** `host/teamplan.go`'s `expandCount` allocates `make([]string, 0, count)` per
+  agent group as the very first thing `planTeam` does with a parsed count, so a large enough number
+  was never a slow boot or a refused plan — it was a slice the allocator could not satisfy and an
+  abort no `recover` catches. `count` is now capped at 64 in `internal/config/team.go`, refused at
+  parse time with the same clear error `count < 1` already gets, rather than left to fail wherever
+  the number was first used. 64 is headroom over anything this project's own examples or
+  `max_sandboxes`'s default of 4 suggest a real team needs — `docs/teams.md` documents the ceiling
+  next to `count`. `FuzzConfigParse` gained the finding's own reproduction as a seed and an
+  invariant checking every parsed `Count` against the ceiling, alongside a dedicated unit test for
+  the boundary itself.
+- **The guest-facing team and events channels' accept loops had no connection cap and no read
+  deadline, unlike the egress proxy's identical accept loop, fixed for exactly this shape by S5a —
+  the fix was never mirrored to these two sibling listeners.** Both are unix sockets any process
+  inside the guest can dial directly over vsock, not only through the supervisor's own
+  well-behaved clients, and `serveTeam`/`serveEvents` spawned one goroutine per `Accept` with
+  nothing bounding how many could be outstanding or how long one could sit open having sent
+  nothing at all — enough silent connections and no connection, including a real one, could ever
+  be served again. Both loops now acquire a 128-connection semaphore before `Accept`, the same cap
+  and the same before-not-after placement `internal/egress/proxy.go` uses, and set a 10-second read
+  deadline on an accepted connection that is cleared the moment its first frame parses — a
+  connection already mid-conversation is never punished for an idle gap before its next request,
+  which on the team channel can legitimately be arbitrarily long.
+  `TestSilentTeamConnectionsAreCappedAndReclaimed` and `TestSilentEventsConnectionsAreCappedAndReclaimed`
+  fill each cap with connections that never write and prove a legitimate connection queued behind
+  it is still served once the deadline reclaims a slot, rather than stuck for good.
+- **An oversized or malformed MCP frame — one over the 16 MiB channel limit, or one carrying a
+  literal, unescaped newline — used to kill the whole session over a single bad frame, and could
+  lose even the one reply meant to explain why.** `mcpSession.serve`'s read loop answered any
+  non-EOF read error with a best-effort, id-less parse error and unconditionally closed the
+  connection; for an oversized frame, `bufio.Scanner` gives up having buffered exactly the frame
+  limit and no more, so the rest of that same line was still unread on the wire when the close
+  raced it — the close could interleave with, or be cut short by, those unread bytes, and the
+  reply was not guaranteed to arrive. Every call still in flight on the connection was lost with
+  it, for a defect in one frame that had nothing to do with them. The session now recovers instead
+  of closing: on `proto.ErrLineTooLong` it drains the rest of the oversized line first (a new
+  `proto.Reader.DrainOverlongLine`, reading straight off the connection since the scanner's own
+  buffer holds nothing past its limit) so the reply is never racing unread bytes, and on a frame
+  that decoded to a complete, newline-terminated line but failed `json.Unmarshal` (the embedded-
+  newline case, now reported as `*proto.MalformedFrame`) there was never anything to drain — the
+  stream was already back at a clean boundary. Both cases reply and keep serving. Getting the
+  first case right needed `proto.Reader` itself to stop reusing a `bufio.Scanner` after any error:
+  one does not resume cleanly — the very next `Scan()` hands back its already-buffered, oversized
+  data as if it were a normal final token, which is what a caller actually observed instead of the
+  `ErrLineTooLong` it expected — so a successful drain now rebuilds the scanner in place
+  (`resetScanner`) before resuming. The host bridge's own observer had the identical flaw one
+  level up: `tee` in `host/mcpobserve.go` drove the client→guest and guest→client copies through a
+  `bufio.Scanner` of its own for the flight recorder's sake, so the same oversized-line give-up
+  closed the pipe the real byte copy reads from — silently dropping every byte sent afterward on
+  that connection, from either side, regardless of how gracefully the guest handled the frame.
+  `tee` now relays an oversized line's remainder raw and rebuilds its own scanner to resume
+  observing what comes after, rather than ending the copy. `kelyfos mcp` also no longer exits 0
+  when the bridge closes with a call still outstanding: `answerOutstanding` already wrote the
+  client a synthetic error and a stderr line saying so, but returned nil regardless, so the one
+  thing a wrapper script or supervisor process checks — `$?` — said success; it now returns a
+  non-zero `exitError`. Verified against a real sandbox's MCP channel with both a frame just over
+  `proto.MaxMCPLine` and a frame with a literal embedded newline: the session now answers each and
+  keeps serving normal calls afterward, including a `write_file` whose event still lands in the
+  flight recorder, rather than the bridge exiting silently.
+- **`kelyfos exec` silently mangled an argument containing invalid UTF-8 bytes.**
+  `proto.ExecRequest.Cmd` was a plain `[]string` JSON field, unlike `Stdin`, which
+  docs/protocol.md §3 already requires base64 for because "every field whose value is raw bytes
+  is base64": `encoding/json` marshals a Go string as UTF-8 and silently replaces any byte
+  sequence that is not valid UTF-8 with U+FFFD, so an argv entry built from arbitrary bytes — a
+  filename, a fetched credential, anything not guaranteed to be text — arrived in the guest
+  corrupted, with no error anywhere on either side. `cmd` now gets the same treatment `stdin`
+  already had: each argv element is base64-encoded by the host before the request is sent
+  (`proto.EncodeCmd`) and decoded by the supervisor before it reaches `exec.Command`
+  (`proto.DecodeCmd`), an invalid element failing the request with `error.kind = "bad_request"`
+  rather than being silently accepted. The array structure is unchanged — only each element's
+  encoding — so argv boundaries stay visible on the wire. Every place that builds an
+  `ExecRequest` (`kelyfos exec`, `sandbox.Exec`, the guest's own `exec` MCP tool) and the one
+  place that decodes it (`runCommand`) were updated in lockstep, since this is a wire-protocol
+  change. Verified live against a rebuilt guest image: an argument built from the four bytes
+  `0x80 0x81 0x82 0x83` — not valid UTF-8 on their own — now round-trips through `kelyfos exec`
+  byte-for-byte instead of coming back as four U+FFFD replacement characters.
+- **A TOML array element containing a comma inside its own quotes broke parsing of the whole
+  policy file.** `parseArray` (internal/config/config.go) split the raw bracket contents on every
+  `,` with `strings.Split` before `parseString` ever saw an element, so `args = ["x", "--y=a,b"]`
+  under `[[plugin]]` — or the same shape under `[sandbox]`/`[[team.agent]]` allow and secrets,
+  spawn images, or store read/write — tore the second element in two at the internal comma and
+  failed with a misleading "expected a quoted string" error instead of loading. The split is now
+  a quote-aware scan (`splitTopLevel`): it walks the bracket contents tracking whether the cursor
+  is inside a `"..."` string, honoring `\"` as an escaped quote that does not close it, and only
+  splits on a comma seen outside quotes. Verified with the finding's own repro — a `kelyfos.toml`
+  with `[[plugin]] args = ["x", "--y=a,b"]` — which now loads with the two-element array intact.
+- **`resource.summary`, the usage receipt written once at teardown, was emitted from only two of
+  the places a session actually ends.** `kelyfos run` and a team member's own `stop` sampled and
+  wrote one; `kelyfos serve-mcp`'s per-sandbox `close()` (which also covers the two early-boot-
+  failure paths in `servemcptools.go` that route through it), `kelyfos resume`, and `kelyfos
+  snapshot restore` did not, so a session ending through any of those three doors left a
+  `session.start`/`session.ready`/`session.end` chain with no receipt of what it actually spent in
+  between. Each now samples and appends the same event immediately before its own `Shutdown`,
+  following the pattern the two working sites already used. Separately,
+  `internal/sandbox/network.go`'s `BlockedPackets` — the egress firewall's own nftables drop
+  counter — had no caller anywhere in the product; it is now read into a new `blocked_packets`
+  field on every `resource.summary` event (zero for a sandbox with no network interface at all,
+  same as one that blocked nothing), through one small helper shared by every teardown path rather
+  than a nil check repeated at each. Verified live in the Lima VM: a `kelyfos serve-mcp` session's
+  sandbox now writes a `resource.summary` ahead of its `session.end`, and a `kelyfos run --allow`
+  session that made a connection attempt outside its allowlist now reports a nonzero
+  `blocked_packets` on that same event. `kelyfos bench`'s throwaway boot-timing VMs and the
+  fork-template cache's own build-and-snapshot machine (`host/teamtemplate.go`) were left alone —
+  neither opens a flight recorder session at all, by design, so instrumenting them is a bigger
+  change than this pass covers. The third sub-item of this finding — giving `kelyfos.toml` parse
+  errors and team-plan check errors their own `denial` catalog IDs — was left alone too: both
+  already carry the file and line that produced them, and `docs/reference/denials.md`'s own banner
+  already states, on purpose, that refusals from those two paths are excluded because "the thing to
+  go and look at is the line you wrote" — reversing that is a product decision, not a gap.
+- **`Append`'s own size backstop only looked at six of the event struct's fields, though its
+  comment claimed to cover "whatever field made it that large."** `clipLargestField`
+  (internal/recorder/recorder.go) named `Data`, `Args`, `Host`, `Path`, `Name` and `Cmd` by hand;
+  an oversized value anywhere else — `EvError.Message`, `Reason`, `Tool`, and every other string
+  field on `Event` — was invisible to it, so `fitUnderMaxLine`'s clip loop found nothing to clip,
+  exhausted its attempt budget, and `Append` refused the whole event: the event vanished from the
+  record instead of being clipped and kept, the same failure mode S1 closed for `Data` and `Host`
+  specifically. No current caller can put an oversized value in one of the missed fields, so this
+  was latent rather than reachable, but the backstop's whole point is to hold even for a door this
+  code does not yet know about. `clipLargestField` now finds its candidate by walking the struct
+  with reflection (`largestStringField`) instead of a hand-maintained list — every string field,
+  plus the fields of `*EvError` — so a field added to `Event` next month is covered the day it
+  lands rather than the day someone reads this function and remembers to add it. `Cmd` keeps its
+  separate `[]string` handling, since reflection over string-kinded fields does not see it.
+  `FuzzAppendFieldValues` now drives one event through `setAllStringFields`, its own independent
+  reflective walk, so a future field reachable by that walk but missed by `clipLargestField`'s own
+  walk fails the fuzz run rather than needing a code read to find. Verified with the finding's own
+  repro — a 9 MiB `EvError.Message` on an otherwise-empty event — which failed closed before this
+  fix (confirmed by temporarily disabling the new code path) and now clips and keeps the event,
+  verifying like any other clipped field.
+- **`shim.Policy.Secrets` held `[]egress.Secret` — values, not pointers — the one container in the
+  product that broke the pattern every other secret-holding container follows.** `Secret.String()`
+  deliberately has a pointer receiver so it can redact: a `*Secret` formats as
+  `Secret{NAME@domain scheme=Bearer}`, but a bare `Secret` value is outside that method's receiver
+  set, so a stray `%v`/`%+v` on it falls back to reflecting over the struct fields — including the
+  unexported `value` holding the plaintext credential — and prints it. Nothing formats
+  `shim.Policy` as a whole today, so the gap was dormant, but it stood next to `egress.Policy.Secrets`
+  and every other secret container in this codebase, all of which already carry `[]*egress.Secret`
+  for exactly this reason. `shim.Policy.Secrets` is now `[]*egress.Secret` too; `host/shim.go`'s
+  population of it (`shimCmd`, from `--secret` and the policy file) appends the already-owned
+  pointer instead of dereferencing it, and `shim/shim.go`'s use of the field when building the
+  sandbox's `egress.Policy` collapses to a plain slice assignment now that the two field types
+  match. `TestPolicySecretsNeverFormatTheirValue` (shim/policy_secrets_test.go) pins it: it builds a
+  `Policy` with a real parsed secret and asserts `%v`/`%+v` on the `Policy`, on `Policy.Secrets`, and
+  on a `Secrets` element never contain the token, the same shape `TestSecretValueNeverFormats`
+  already pins for a bare `Secret`.
+- **`kelyfos runs --all` treated a locked-down or otherwise unreadable session directory as if it
+  had never existed, in silence.** `readRun` (host/runs.go) passed every `os.Open` error, not just
+  the "no such session" case, through the same bare `false` its caller reads as "nothing here" —
+  so a permission-denied directory (or any other read error) vanished from the listing exactly like
+  a directory that genuinely was not a session, with nothing distinguishing the two. docs/events.md
+  §6 states the listing's guarantee as a count, "one row per session directory, no more and no
+  fewer," which a silent drop breaks. `readRun` now returns its error separately from its found/not-
+  found bool: `os.IsNotExist` still means "no session, say nothing," the same as before, but any
+  other error — permission denied, an I/O error — is reported by `readRuns` as a
+  `kelyfos: could not read session <id>: <err>` line on stderr instead of being folded into
+  "missing." Verified live in the Lima VM with the finding's own repro: two session directories, one
+  `chmod 000`'d — `kelyfos runs --all` now lists the readable one and warns about the other, where
+  the prior binary listed only the readable one with no warning at all.
+- **The host and supervisor MCP argument summarisers were two independent, byte-for-byte duplicated
+  implementations — `summariseArgs` (host/servemcpaudit.go) and `summarisePluginArgs`
+  (supervisor/pluginhost.go), each with its own copy of the `maxArgBytes`/`maxArgsBytes`/
+  `maxArrayBytes` constants and its own copy of `clipUTF8`.** They were in exact lock-step by
+  discipline rather than by construction: the shared low-level `proto.SafeText` the pair both call
+  is genuinely unified, but nothing stopped a future edit to one copy's redaction or bounding rules
+  from landing without the other, which would have made a supervisor-recorded plugin call redact
+  differently from a host-recorded tool call with no way to notice. The shared logic — key sorting,
+  `contentKeys` handling, the compact/clip rendering, the `maxArgsBytes` line budget, and `clipUTF8`
+  itself — now lives once, in a new `internal/argsummary` package both binaries import; only what is
+  genuinely caller-specific stayed local (host's `clipField`, which also bounds the tool name and
+  sandbox id fields `summariseArgs` never touched). `contentKeys` and the three size constants are
+  identical between the two callers, so those moved whole rather than being kept as two decisions
+  that happened to agree. Both `summariseArgs` and `summarisePluginArgs` are now one-line wrappers
+  over `argsummary.Summarise`; every existing test in both packages, and both fuzz targets, pass
+  unchanged against the shared implementation, and `internal/argsummary` carries its own test suite
+  covering the same guarantees directly.
+- **`dev/demo-team.sh`'s teardown check false-failed on a shared host.** Step 6 asked `pgrep
+  firecracker` a host-wide question — whether *any* Firecracker process exists anywhere on the
+  machine — after tearing down its own five (or six, with the step-5 spawn) sandboxes, so any
+  unrelated Firecracker session running alongside it on a shared dev box reported a teardown leak
+  even though the demo's own VMs came down cleanly (F18, reproduced live during the security
+  review that found it). The script already tracks each agent's sandbox ID in `$M`/`$W1`-`$W4` (and
+  the step-5 spawn in `$NEW`) to report per-agent PASS/FAIL earlier in the run, so those are reused
+  rather than adding new tracking: before `team down` runs, it now reads each sandbox's own
+  `firecracker.pid` from `$RUN_ROOT/firecracker/<sandbox-id>/root/` — the same jail run-directory
+  `internal/sandbox.jailRunDir` builds — and after teardown it asserts specifically that none of
+  those PIDs are still alive, rather than asking whether Firecracker is running anywhere on the
+  host.
+- **`kelyfos snapshot restore` could write its `resource.summary` receipt after the `session.end`
+  that is supposed to close the chain.** F14's fix wired `resource.summary` into a `defer`
+  registered right after `sandbox.Restore` succeeds, but the CA-install-error, interrupted
+  (Ctrl-C), and `vm_exited` exits still appended `session.end` inline, immediately before their
+  own `return` — code that runs *after* that defer was registered, so on every one of those three
+  paths the defer necessarily unwound afterward, writing `resource.summary` behind an event
+  `docs/events.md` documents as the one that closes the file. `session.end` is now written from its
+  own `defer`, registered before the resource-summary one so defers unwind last-registered-first
+  and it fires second, the same ordering `run.go`'s own `reason`/`session.end` defer already keeps
+  against its usage defer; the three sites set a `reason` variable instead of appending inline.
+  Verified live in the Lima VM: a restored sandbox's `-json` log now shows `resource.summary`
+  immediately ahead of `session.end` on both the interrupted and the `vm_exited` path.
+- **`TestSnapshotRestoreRealVMWiresAuditBeforeResume` asserted through a binary the guest image
+  doesn't carry, and silently discarded the exit code that would have said so (F20) — not a gap in
+  S2/P6-4's restore-audit fix.** `guestEgressAttempt` drove the guest with `curl`, and its own doc
+  comment claimed curl is what the base and dev image flavors both carry;
+  `image/flavors/base/buildroot.fragment` says the opposite — base is "BusyBox and musl and nothing
+  else. No TLS client" — curl is dev-only (`BR2_PACKAGE_LIBCURL_CURL`, in the dev fragment), and
+  `requireRealSandbox` never asks for the dev flavor specifically. On a base-flavor guest, which is
+  what this VM normally builds, the guest's shell answered "curl: not found" with `EXIT=127`, no
+  request was ever made, and the exit status was thrown away, so a missing binary looked identical
+  from the caller's side to a connection error. `fixed_order_captures_the_attempt` failed on both
+  its assertions as a result, while `old_order_missed_the_attempt` passed regardless — it only
+  checks for the ABSENCE of `egress.attempt`/`secret.withheld`, which is guaranteed whether or not a
+  real attempt was made, so the guard subtest meant to prove its sibling meaningful reported green
+  in exactly the situation where neither subtest proved anything. `guestEgressAttempt` now drives
+  the guest with BusyBox wget, which both flavors carry, and returns its exit code instead of
+  dropping it; both subtests now assert that code is not 127, failing loudly and by name rather than
+  proceeding on a false premise. That alone only closes one way to no-op, so both subtests also
+  count real hits on the upstream test server and assert the count moved: `forwardHTTP`
+  (`internal/egress/proxy.go`) reaches it over a genuine `RoundTrip` whether or not
+  `OnEvent`/`OnSecret`/`OnWithheld` are wired, so a rising count proves a request truly landed there
+  — independent of the recorder chain the old-order subtest is busy saying is silent. Root-caused by
+  the repository owner's review of PR #6, who re-ran the fixed ordering by hand against the same
+  base image with wget in place of curl and got the correct events in the correct order, confirming
+  S2/P6-4 works correctly on real hardware and this was always a test bug.
 
 ---
 

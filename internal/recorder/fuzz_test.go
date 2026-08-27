@@ -3,6 +3,7 @@ package recorder
 import (
 	"bytes"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -67,6 +68,21 @@ func FuzzVerifyAgreesWithRead(f *testing.F) {
 // "believes," because Append is allowed to refuse a field it truly cannot
 // bring under MaxLine (fitUnderMaxLine's maxClipAttempts bound), just never by
 // writing a line no reader can get past.
+//
+// F8: an oversized value in a field clipLargestField could not see (it named
+// six fields by hand; EvError.Message was not one of them) made Append fail
+// closed instead of clipping, so the event vanished from the record rather
+// than being kept in truncated form — the same failure mode as the bug this
+// fuzz target was originally written for, just reached through a different
+// field. The middle event below now goes through setAllStringFields, which
+// sets *every* string field this test can reach on Event — including
+// EvError.Message and .Kind — to the fuzzed value, rather than naming Data and
+// Host by hand the way this target used to. A field added to Event later that
+// clipLargestField fails to cover will make this event's Append behave
+// differently from the six original fields (or, if it is not even reachable
+// by fitUnderMaxLine's own reflection, fail identically to how F8's bug
+// behaved), and either way the round-trip checks below catch it without
+// anyone having to read clipLargestField to notice.
 func FuzzAppendFieldValues(f *testing.F) {
 	f.Add("", "")
 	f.Add("short output", "github.com")
@@ -74,6 +90,7 @@ func FuzzAppendFieldValues(f *testing.F) {
 	f.Add(strings.Repeat("x", 20<<20), strings.Repeat("y", 1<<20))
 	f.Add(string([]byte{0xff, 0xfe, 0x00, 0x80}), "")
 	f.Add(strings.Repeat("é", 5<<20), strings.Repeat("日", 5<<20))
+	f.Add(strings.Repeat("m", 9<<20), "")
 
 	f.Fuzz(func(t *testing.T, data, host string) {
 		root := t.TempDir()
@@ -81,11 +98,14 @@ func FuzzAppendFieldValues(f *testing.F) {
 		if err != nil {
 			t.Fatalf("open: %v", err)
 		}
+		everyField := Event{Bytes: len(data)}
+		setAllStringFields(&everyField, data)
+		everyField.Type = TypeCommandOutput
 		// Bracketed by two ordinary events, so a gap left by a refused event in
 		// the middle — the bug this fuzz target is really aimed at — shows up as
 		// a broken chain rather than merely a short one.
 		_ = rec.Append(Event{Type: TypeSessionStart})
-		_ = rec.Append(Event{Type: TypeCommandOutput, Data: data, Bytes: len(data)})
+		_ = rec.Append(everyField)
 		_ = rec.Append(Event{Type: TypeEgressAttempt, Host: host})
 		_ = rec.Append(Event{Type: TypeSessionEnd})
 		if err := rec.Close(); err != nil {
@@ -147,4 +167,96 @@ func validChain(f *testing.F, n int) []byte {
 		f.Fatalf("the seed chain this test built does not verify: %v", err)
 	}
 	return blob
+}
+
+// setAllStringFields sets every string field reachable from e — its own
+// top-level fields, plus the fields of any pointed-to struct such as *EvError
+// — to s, allocating the pointed-to struct first if it is nil.
+//
+// It walks the struct the same way largestStringField in recorder.go does,
+// deliberately by a second, independent reflect.Value walk rather than by
+// calling into that function: the point of FuzzAppendFieldValues is to catch
+// a future field clipLargestField's walk fails to reach, and a test that
+// reused clipLargestField's own traversal to build its input could never
+// observe that kind of gap — whatever the production walk missed, this one
+// would miss identically, for the same reason.
+func setAllStringFields(e *Event, s string) {
+	v := reflect.ValueOf(e).Elem()
+	for i := 0; i < v.NumField(); i++ {
+		fv := v.Field(i)
+		switch fv.Kind() {
+		case reflect.String:
+			fv.SetString(s)
+		case reflect.Ptr:
+			if fv.Type().Elem().Kind() != reflect.Struct {
+				continue
+			}
+			if fv.IsNil() {
+				fv.Set(reflect.New(fv.Type().Elem()))
+			}
+			sv := fv.Elem()
+			for j := 0; j < sv.NumField(); j++ {
+				if sfv := sv.Field(j); sfv.Kind() == reflect.String {
+					sfv.SetString(s)
+				}
+			}
+		}
+	}
+}
+
+// TestAppendClipsOversizedEvErrorMessage is F8's direct repro: an oversized
+// EvError.Message used to be invisible to clipLargestField, which named six
+// fields by hand and did not include it, so fitUnderMaxLine's clip loop found
+// nothing to clip, exhausted maxClipAttempts, and Append refused the whole
+// event — an oversized error message made the event carrying it vanish from
+// the record instead of being clipped and kept, exactly like an oversized
+// Data or Host used to before S1 closed those two doors.
+//
+// 9<<20 bytes matches the finding: comfortably past MaxLine (8<<20) on its
+// own, so no other field needs to contribute for the bug to reproduce.
+func TestAppendClipsOversizedEvErrorMessage(t *testing.T) {
+	root := t.TempDir()
+	rec, err := Open(root, "f8")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	oversized := strings.Repeat("m", 9<<20)
+	if err := rec.Append(Event{
+		Type:  TypeCommandExit,
+		Error: &EvError{Kind: "oom", Message: oversized},
+	}); err != nil {
+		t.Fatalf("Append refused an event whose only oversized field was EvError.Message: %v", err)
+	}
+	if err := rec.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	blob, err := os.ReadFile(Path(root, "f8"))
+	if err != nil {
+		t.Fatalf("reading the chain back: %v", err)
+	}
+	events, rerr := Read(bytes.NewReader(blob))
+	if rerr != nil {
+		t.Fatalf("reading back the appended event: %v", rerr)
+	}
+	if len(events) != 1 {
+		t.Fatalf("want 1 event recorded, got %d — the oversized EvError.Message must not make the event vanish", len(events))
+	}
+	got := events[0]
+	if got.Error == nil {
+		t.Fatalf("event was recorded but its Error field is gone entirely")
+	}
+	if got.Error.Kind != "oom" {
+		t.Fatalf("EvError.Kind = %q, want %q — clipping the message must not disturb an unrelated field", got.Error.Kind, "oom")
+	}
+	if len(got.Error.Message) >= len(oversized) {
+		t.Fatalf("EvError.Message is %d bytes, want it clipped below the original %d", len(got.Error.Message), len(oversized))
+	}
+	if !strings.Contains(got.Error.Message, "clipped from") {
+		t.Fatalf("EvError.Message = %q, want it to carry the clip note fitUnderMaxLine's other clipped fields carry", got.Error.Message)
+	}
+
+	if _, _, verr := Verify(bytes.NewReader(blob)); verr != nil {
+		t.Fatalf("clipped event does not verify: %v", verr)
+	}
 }
