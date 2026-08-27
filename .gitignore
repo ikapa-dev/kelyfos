@@ -19,6 +19,9 @@
 *.out
 # `go build ./tools/...` drops its binary in the working directory.
 /gendocs
+# Same for tools/sbom — release-sbom invokes it with `go run`, so a built
+# binary here is a stray artifact, not something the build needs committed.
+/sbom
 
 # macOS
 .DS_Store
