@@ -617,6 +617,33 @@ func TestDistinctStoreKeysAreBoundedAndSayWhenTruncated(t *testing.T) {
 	}
 }
 
+// PeerOnly is bounded the same way its four siblings are — the one
+// collection review found still missing the cap. A team.refused for a
+// recipient outside the team carries whatever `to` string the guest sent,
+// verbatim (internal/team/broker.go), so an agent sending team_send in a
+// loop to an unbounded stream of invented names must not grow this list
+// without bound on a live kelyfos watch.
+func TestDistinctPeersAreBoundedAndSayWhenTruncated(t *testing.T) {
+	var d Digest
+	for i := 0; i < MaxDistinctKeys+75; i++ {
+		d.Absorb(recorder.Event{Type: recorder.TypeTeamRefused, Agent: "master",
+			Peer: fmt.Sprintf("ghost-%d", i), Kind: "send", Reason: "no_such_agent"})
+	}
+	if len(d.PeerOnly) != MaxDistinctKeys {
+		t.Errorf("PeerOnly has %d entries, want capped at %d", len(d.PeerOnly), MaxDistinctKeys)
+	}
+	if !d.PeerOnlyTruncated {
+		t.Error("PeerOnlyTruncated was not set past the cap")
+	}
+	// A peer seen before the cap is not re-added or duplicated after it.
+	d.Absorb(recorder.Event{Type: recorder.TypeTeamRefused, Agent: "master",
+		Peer: "ghost-0", Kind: "send", Reason: "no_such_agent"})
+	if len(d.PeerOnly) != MaxDistinctKeys {
+		t.Errorf("PeerOnly has %d entries after re-seeing an existing peer, want still %d",
+			len(d.PeerOnly), MaxDistinctKeys)
+	}
+}
+
 // A chain that never carried a session.start at all — malformed or a
 // partial read — leaves SawSessionStart false, so a view knows to say
 // nothing about the image rather than assert a fact the chain never stated.

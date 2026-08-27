@@ -33,12 +33,15 @@ import (
 	"github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
 )
 
-// MaxDistinctKeys bounds how many distinct domains, store keys and message
-// pairs a Digest will ever mint a map entry for.
+// MaxDistinctKeys bounds how many distinct domains, store keys, message
+// pairs, secrets and peer-only lane names a Digest will ever mint an entry
+// for.
 //
 // Every one of these is keyed on a value at least partly under a guest's
 // choice: the host an egress.attempt names, the key a team.store access
-// requests, the peer named in a team.message — every one recorded whether it
+// requests, the peer named in a team.message or a team.refused for a
+// recipient outside the team (internal/team/broker.go carries the guest's
+// own `to` string verbatim onto the refusal) — every one recorded whether it
 // was allowed or refused. kelyfos watch absorbs from a session this project's
 // own threat model treats as hostile for as long as it keeps running, so
 // `for i in $(seq 1 200000); do wget http://$i.evil/; done` must not be able
@@ -213,6 +216,13 @@ type Digest struct {
 	// grid view, or a message to them has nowhere to point (report's
 	// buildLanes has always minted these; watch never has).
 	PeerOnly []string
+	// PeerOnlyTruncated is set once a distinct peer past MaxDistinctKeys was
+	// seen and not added to PeerOnly. See MaxDistinctKeys: a peer name is a
+	// guest's choice as much as an egress host or a store key is — a
+	// team.refused for an unknown recipient carries whatever name the guest
+	// sent (internal/team/broker.go), unbounded, so this needs the same cap
+	// its four siblings (Domains, Store, Pairs, Secrets) already have.
+	PeerOnlyTruncated bool
 
 	// Messages and MessagesRefused count team.message and team.refused.
 	// SpawnRefused and StoreRefused are kept apart because the two existing
@@ -270,6 +280,7 @@ type Digest struct {
 	// run.
 	openCommands map[string]*Entry
 	seenSecret   map[string]bool // name+"@"+host, for Secrets' de-duplication
+	peerSeen     map[string]bool // for PeerOnly's de-duplication — a set, not a scan
 }
 
 // New returns an empty Digest with KeepTimeline set, ready for a caller that
@@ -349,6 +360,7 @@ func (d *Digest) agent(name string) *Agent {
 		for i, p := range d.PeerOnly {
 			if p == name {
 				d.PeerOnly = append(d.PeerOnly[:i], d.PeerOnly[i+1:]...)
+				delete(d.peerSeen, name)
 				break
 			}
 		}
@@ -359,6 +371,16 @@ func (d *Digest) agent(name string) *Agent {
 // peer registers a name as needing a lane even though it may never generate
 // an event of its own — the same rule internal/report's buildLanes has always
 // applied to the peer of a team.message, team.refused or team.spawn.
+//
+// Bounded and de-duplicated through peerSeen, a set, rather than a scan of
+// PeerOnly: a peer name is as much a guest's choice as an egress host or a
+// store key — a team.refused for a recipient outside the team carries
+// whatever `to` string the guest sent, verbatim (internal/team/broker.go) —
+// so team_send in a loop to an unbounded stream of invented names must not
+// grow this list without bound, or (the shape this had before review caught
+// it) at worse than linear cost per insert, on kelyfos watch's own Update
+// loop. Same cap and the same Truncated convention as pair, domain and
+// store; this was the one sibling collection review found still missing it.
 func (d *Digest) peer(name string) {
 	if name == "" {
 		return
@@ -366,11 +388,17 @@ func (d *Digest) peer(name string) {
 	if _, ok := d.Agents[name]; ok {
 		return
 	}
-	for _, p := range d.PeerOnly {
-		if p == name {
-			return
-		}
+	if d.peerSeen[name] {
+		return
 	}
+	if len(d.PeerOnly) >= MaxDistinctKeys {
+		d.PeerOnlyTruncated = true
+		return
+	}
+	if d.peerSeen == nil {
+		d.peerSeen = map[string]bool{}
+	}
+	d.peerSeen[name] = true
 	d.PeerOnly = append(d.PeerOnly, name)
 }
 

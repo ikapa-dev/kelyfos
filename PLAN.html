@@ -4144,6 +4144,44 @@ after:
         full teardown (<code>kelyfos verify</code> &rarr; &ldquo;chain intact, 10 events verified&rdquo;),
         confirms both the reconciled event count and that the happy path (a normal, non-nil exit code) still
         renders &ldquo;exit 5&rdquo; correctly with these changes in place</td></tr>
+    <tr><td class="mono">2026-08-27</td><td class="mono">P7-1</td>
+        <td><b>Re-review (189 real chains this time, up from 115) confirmed the three blocking fixes hold
+        byte-identical, and found one sibling collection the cap pass missed.</b> <code>PeerOnly</code> &mdash;
+        the peer of a message or spawn that never generated an event of its own, minted for a grid view's benefit
+        &mdash; sat one line above the now-capped <code>Pairs</code> in the same <code>case</code> block and did
+        not get <code>MaxDistinctKeys</code>: <code>peer()</code> de-duplicated with a linear scan of
+        <code>d.PeerOnly</code> before an unbounded <code>append</code>, so it was quadratic on top of being
+        unbounded. Reachable with a guest-chosen key exactly like its four siblings:
+        <code>internal/team/broker.go</code> writes a <code>team.refused</code> carrying whatever recipient name a
+        guest sent, verbatim, for any name outside the team, so <code>team_send</code> in a loop to an invented
+        name mints one <code>PeerOnly</code> entry per call, forever, on a collection <code>host/watch.go</code>
+        never even reads back (grepped: the only reader is <code>internal/report/report.go</code>'s
+        <code>buildLanes</code>). Fixed the same way as its siblings &mdash; capped at
+        <code>MaxDistinctKeys</code> with a <code>PeerOnlyTruncated</code> flag &mdash; and the de-duplication
+        switched from the scan to a <code>peerSeen</code> set at the same time, closing the quadratic cost as
+        well as the unboundedness; the promotion path in <code>agent()</code> (a peer that later acts becomes a
+        real agent) now keeps <code>peerSeen</code> in sync when it splices <code>PeerOnly</code>.</td>
+        <td class="mono"><code>TestDistinctPeersAreBoundedAndSayWhenTruncated</code> added, in the shape of the
+        three tests already covering <code>Domains</code>/<code>Store</code>: <code>MaxDistinctKeys</code>+75
+        distinct <code>team.refused</code> peers &rarr; <code>PeerOnly</code> capped at <code>MaxDistinctKeys</code>,
+        <code>PeerOnlyTruncated</code> set, a peer already tracked is not re-added or duplicated past the cap<br>
+        quadratic-to-linear confirmed directly, mirroring the review's own methodology (fresh <code>Digest</code>,
+        <code>n</code> distinct <code>team.refused</code> peers, wall-clock per <code>n</code>): n=10000 &rarr;
+        3.97 ms, n=20000 &rarr; 6.11 ms, n=40000 &rarr; 11.71 ms, n=80000 &rarr; 20.89 ms &mdash; each doubling of
+        <code>n</code> roughly doubles the time (linear), against the review's measured quadratic growth on the
+        pre-fix scan (91 ms / 233 ms / 946 ms at n=10000/20000/40000); past the cap the remaining insertions are
+        O(1) rejections, so the absolute times are lower again on top of no longer being quadratic<br>
+        <code>go vet ./...</code> clean; <code>go test ./...</code> &rarr; 18 packages <code>ok</code>
+        (<code>internal/digest</code> now 31 tests + <code>FuzzAbsorbNeverPanics</code>); every test from both
+        prior passes still passes unmodified; <code>FuzzAbsorbNeverPanics</code> re-run at 15s (3.85M execs, 0
+        failures) and the four <code>internal/report</code> fuzz targets re-run at 15s each, all clean;
+        <code>make vuln</code> clean; <code>make docs</code> still no diff<br>
+        real-VM re-verification inside <code>kelyfos-dev</code>, exercising the exact
+        <code>internal/team/broker.go</code> path cited: a two-agent team, <code>master</code> sends to an unknown
+        recipient <code>ghost-agent</code> &rarr; MCP call returns
+        <code>no_such_agent: ghost-agent is not in this team</code>, exported and verified
+        (&ldquo;chain intact, 9 events verified&rdquo;), the rendered report carrying both
+        <code>no_such_agent</code> and <code>ghost-agent</code></td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
