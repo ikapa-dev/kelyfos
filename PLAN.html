@@ -175,12 +175,17 @@
     <span class="bl-name"><a href="#p6">Phase 6 &mdash; v1.0, the promise</a></span>
     <span class="bl-bar"><i></i></span><span class="bl-pct">0%</span>
   </div>
+  <div class="bl-row" data-phase="7" data-s="todo">
+    <span class="bl-tag todo">[ TODO ]</span>
+    <span class="bl-name"><a href="#p7">Phase 7 &mdash; The declared shape of a run (v1.1)</a></span>
+    <span class="bl-bar"><i></i></span><span class="bl-pct">0%</span>
+  </div>
   <div class="bl-row bl-total" data-s="todo">
     <span class="bl-tag active">[ INIT ]</span>
     <span class="bl-name">Overall</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus"><b>P7-0 &mdash; the policy-record spec, written before the code.</b> <code>docs/policy-record.md</code>: every field Phase 7 adds, its key, its Go type, its position in the frozen hash order, which of the eight doors writes it, and what it deliberately omits. D59 has already settled the one irreversible question &mdash; typed fields, not JSON in a string &mdash; so this task specifies rather than decides. It is reviewed before P7-2 touches <code>internal/recorder</code>, for the reason P5-0 existed: a schema argued about after it is hashed is a migration rather than an argument.</b></div>
+  <div class="focusline">Current focus: <b id="focus">P7-0 &mdash; the policy-record spec, written before the code.</b> <code>docs/policy-record.md</code>: every field Phase 7 adds, its key, its Go type, its position in the frozen hash order, which of the eight doors writes it, and what it deliberately omits. D59 has already settled the one irreversible question &mdash; typed fields, not JSON in a string &mdash; so this task specifies rather than decides. It is reviewed before P7-2 touches <code>internal/recorder</code>, for the reason P5-0 existed: a schema argued about after it is hashed is a migration rather than an argument.</div>
 </div>
 
 <!-- ====================================================== 1. END GOAL -->
@@ -3988,6 +3993,45 @@ after:
         <code>edges</code>, <code>store_keys</code>: all slices, none clippable as written, so an oversized one
         fails <code>Append</code> closed and the event leaves no trace &mdash; the exact failure S16 was written to
         prevent</td></tr>
+    <tr><td class="mono">2026-08-27</td><td class="mono">&mdash;</td>
+        <td><b>&sect;8 rule 8, substituted (D64).</b> GitHub Actions is disabled for this account and has not run
+        since 2026-08-25T15:24:05Z &mdash; nothing for the S6-S24 merge (<code>1eddaf3</code>) or for Phase 7
+        opening (<code>b55103f</code>). In its place, the equivalent of <code>ci.yml</code>&rsquo;s three jobs and
+        <code>security.yml</code>&rsquo;s two, run by hand against <code>b55103f</code> inside
+        <code>kelyfos-dev</code>, the project&rsquo;s own Lima VM: <code>gofmt -l .</code> (clean), <code>go vet
+        ./...</code> (clean), <code>go test ./...</code> (all packages ok), <code>govulncheck</code> (no
+        vulnerabilities found), all 23 fuzz targets at the 10s per-push duration (0 failures, 0 crashers),
+        <code>make cli</code> and <code>make image</code> (aarch64/base, incremental, 4.4s), and a real boot under
+        KVM with <code>kelyfos doctor</code> (all checks passed) followed by <code>kelyfos run</code> +
+        <code>kelyfos exec "uname -a"</code> (kernel 6.12.105 aarch64, supervisor <code>v1.0-29-gb55103f</code>,
+        sandbox ready in 1117 ms). Notably, the fuzz pass is a direct answer to the one real signal GitHub CI ever
+        gave here: <code>security.yml</code>&rsquo;s last actual run, 2026-08-24 on <code>dfda5b3</code>
+        (pre-S6-S24), found seven real defects across sixteen targets and failed. All 23 targets (16 grew to 23
+        since) now pass clean, which is what S6-S24 was for.
+        <b>This substitution also found a real defect this workflow&rsquo;s own &ldquo;checks&rdquo; job would have
+        caught</b>: <code>tools/check-plan.py</code>, part of that job even on a docs-only push, failed on
+        <code>b55103f</code> as committed &mdash; Phase 7&rsquo;s dashboard row was never added when the phase
+        opened, and <code>#focus</code>&rsquo;s markup nested a second <code>&lt;b&gt;</code> immediately inside the
+        first (<code>&lt;b id="focus"&gt;&lt;b&gt;P7-0 &hellip;</code>), which the checker&rsquo;s
+        &ldquo;non-empty&rdquo; regex reads as empty. Both fixed in this commit: the missing
+        <code>.bl-row[data-phase="7"]</code> added to the dashboard, the doubled <code>&lt;b&gt;</code> collapsed to
+        one. This is exactly the gap rule 8 exists to close &mdash; a clean tree that would not have passed the
+        pipeline&rsquo;s first and fastest job &mdash; found only because CI being unreachable forced someone to
+        run the equivalent by hand instead of trusting the merge.</td>
+        <td class="mono">commands run verbatim inside <code>limactl shell kelyfos-dev</code>, repo at
+        <code>b55103f</code> (git status clean, HEAD matches host): <code>gofmt -l .</code>; <code>make test</code>
+        &rarr; <code>go vet ./...</code> then <code>go test ./...</code>, every package <code>ok</code> or
+        <code>[no test files]</code>; <code>make vuln</code> &rarr; &ldquo;No vulnerabilities found.&rdquo;;
+        <code>make fuzz</code> &rarr; 23/23 <code>PASS</code>; <code>make cli && make image</code> &rarr;
+        &ldquo;rootfs contains /sbin/kelyfos-supervisor (PID 1)&rdquo;; <code>./bin/kelyfos doctor</code> &rarr;
+        &ldquo;all checks passed&rdquo;; <code>./bin/kelyfos run --image base</code> +
+        <code>./bin/kelyfos exec "uname -a"</code> &rarr; <code>Linux kelyfos 6.12.105 #1 SMP ... aarch64
+        GNU/Linux</code>; before the fix, <code>python3 tools/check-plan.py</code> (run on the host, outside Lima)
+        &rarr; &ldquo;phases with no dashboard row: [&rsquo;7&rsquo;]&rdquo; and &ldquo;#focus is missing or
+        empty&rdquo;; after &rarr; &ldquo;PLAN.html is coherent: 99 tasks, 78 checked, 63 decisions&rdquo;<br>
+        what this does <i>not</i> cover: an actual green <code>ci.yml</code>/<code>security.yml</code> run on
+        GitHub&rsquo;s own runners, or x86_64 boot under GitHub&rsquo;s KVM. Re-run both workflows for real once
+        Actions is restored for this account; until then this row is the CI reconciliation of record.</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
@@ -5211,6 +5255,25 @@ after:
         hostile corpus was given a ledger so a fixture has to fail before it passes. Splitting authorship from
         verification is the cheap half of that; recording the rejected findings is the half that keeps the record
         honest, because a review that lists only its wins reads identically to a review that did not happen.</td></tr>
+    <tr><td class="mono">D64</td><td class="mono">2026-08-27</td>
+        <td><b>&sect;8 rule 8 is satisfied by local verification, not GitHub&rsquo;s CI, while Actions stays
+        disabled for this account.</b> Every <code>workflow_dispatch</code> call against <code>ci.yml</code> and
+        <code>security.yml</code> returns <code>HTTP 422: Actions has been disabled for this user</code>; neither
+        workflow has run since 2026-08-25T15:24:05Z, and <code>commits/b55103f/status</code> reads
+        <code>pending</code> with zero check-runs &mdash; not a red main, an unverifiable one. Owner&rsquo;s
+        decision, 2026-08-27: for this session, run the equivalent of both workflows by hand against
+        <code>origin/main</code> inside <code>kelyfos-dev</code>, this project&rsquo;s own Lima VM, and log the
+        result as the CI reconciliation of record. Rule 8 itself is not amended &mdash; the substitution is scoped
+        to the outage.</td>
+        <td>Rule 8 exists because a clean tree is not a green build, and the failure it was written to catch
+        (P5-1&rsquo;s three-task-late discovery) does not care why CI cannot be trusted, only that it cannot be
+        skipped. But rule 8 assumes CI <i>can</i> run; here it cannot, at the account level, for a reason no commit
+        in this repository can fix. The choice was between declaring <code>main</code> permanently unverifiable
+        until a billing or account setting elsewhere is corrected, or running the same checks by hand on the one
+        machine <code>ci.yml</code>&rsquo;s own comments already name as authoritative for aarch64 boot
+        verification (&ldquo;aarch64 is build-only here and boot-verified on the dev machine&rdquo;). Evidence and
+        its scope limits are in the Progress Log entry beside this row. Real CI reconciliation resumes the session
+        Actions is restored.</td></tr>
     <!-- Claude Code: append rows above this line. -->
   </table>
 </section>
