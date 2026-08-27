@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -64,6 +65,28 @@ func TestBlockedPortIsItsOwnRefusal(t *testing.T) {
 	got := out.String()
 	if !strings.Contains(got, "[egress.port]") || !strings.Contains(got, "8080") {
 		t.Errorf("the port refusal is not what was printed:\n%s", got)
+	}
+}
+
+// A guest that floods the proxy with distinct disallowed hostnames must not
+// grow this map — or the lines printed for it — without limit (S5a).
+func TestBlockedOnceCapsHowManyDistinctDenialsItRemembers(t *testing.T) {
+	var out strings.Builder
+	b := newBlockedOnce(&out)
+	for i := 0; i < maxBlockedEntries+200; i++ {
+		b.say(egress.Attempt{Host: fmt.Sprintf("host-%d.example", i), Port: 443, Reason: egress.ReasonNotAllowed})
+	}
+	if len(b.seen) > maxBlockedEntries {
+		t.Errorf("seen grew to %d entries, want at most %d", len(b.seen), maxBlockedEntries)
+	}
+
+	// An ordinary run — a handful of distinct hosts, nowhere near the cap —
+	// must keep deduplicating exactly as before: a host seen before the cap
+	// was reached still prints nothing the second time.
+	before := out.Len()
+	b.say(egress.Attempt{Host: "host-0.example", Port: 443, Reason: egress.ReasonNotAllowed})
+	if out.Len() != before {
+		t.Error("a host seen before the cap was reached printed again")
 	}
 }
 

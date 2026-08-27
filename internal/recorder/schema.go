@@ -128,7 +128,7 @@ func Types() []EventType {
 				{Name: "port", Type: "integer", Doc: "requested port", When: "the request parsed"},
 				{Name: "allowed", Type: "boolean", Doc: "whether policy permitted it"},
 				{Name: "reason", Type: "string", Doc: "not_in_allowlist, port_not_allowed, bad_request, upstream_unreachable, tls_pinning_rejected_our_ca", When: "it did not go through"},
-				{Name: "mode", Type: "string", Doc: "how much the proxy could read: tunnelled (a CONNECT it relayed unopened), terminated (a secret-bound domain it decrypted), or plain (ordinary HTTP, which it necessarily read in full)", When: "allowed"},
+				{Name: "mode", Type: "string", Doc: "how much the proxy could read: tunnelled (a CONNECT it relayed unopened), terminated (a secret-bound domain it decrypted), plain (ordinary HTTP, which it necessarily read in full), or direct_tls (an absolute-form https request reaching the proxy without a CONNECT, fetched itself over a real TLS connection)", When: "allowed"},
 				{Name: "bytes_in", Type: "integer", Doc: "bytes read from upstream"},
 				{Name: "bytes_out", Type: "integer", Doc: "bytes written upstream"},
 				agentField(),
@@ -152,7 +152,10 @@ func Types() []EventType {
 					"addressed a different host than the connection was opened to), path_not_covered " +
 					"(outside the endpoint the credential is bound to), path_not_literal (a path carrying " +
 					"an encoded slash or dot, or dot segments, which a server may re-segment into somewhere " +
-					"else), or not_encrypted (a plaintext request, which never carries a credential)"},
+					"else), not_encrypted (a plaintext request, which never carries a credential), or " +
+					"not_via_connect (an absolute-form https request reaching the proxy directly, which is " +
+					"genuinely encrypted but never goes through the CONNECT+terminate path credential " +
+					"injection is wired into)"},
 				agentField(),
 			}},
 		{Type: TypeSecretScrubbed, Source: SourceHost,

@@ -24,6 +24,7 @@ import (
 
 	"github.com/p4r4n0rm4l/KelyfOS/internal/denial"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/proto"
+	"github.com/p4r4n0rm4l/KelyfOS/internal/team"
 )
 
 // Root is where KelyfOS keeps everything it generates. It matches the Makefile,
@@ -451,6 +452,20 @@ func refuseUnanswerable(req proto.TeamRequest) *proto.TeamResponse {
 			Error: &proto.Error{Kind: proto.ErrBadRequest, Message: fmt.Sprintf(
 				"a team message may carry at most %d bytes; this one is %d",
 				proto.MaxTeamBody, n)},
+		}
+	}
+	// The store key travels on this same envelope (proto.TeamRequest.Key) for
+	// store_get and store_put, and internal/team already has a bound for it —
+	// MaxKeyBytes — but nothing on this side of the wire enforced it before
+	// OnTeamRequest ever saw the request, unlike the id and the body just
+	// above. Checked here rather than duplicated as a second constant, so the
+	// two bounds cannot drift apart (S5b).
+	if len(req.Key) > team.MaxKeyBytes {
+		return &proto.TeamResponse{
+			V: proto.Version, ID: req.ID,
+			Error: &proto.Error{Kind: proto.ErrBadRequest, Message: fmt.Sprintf(
+				"a store key may be at most %d bytes; this one is %d",
+				team.MaxKeyBytes, len(req.Key))},
 		}
 	}
 	return nil

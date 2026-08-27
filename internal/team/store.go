@@ -117,6 +117,16 @@ func NewStore(topo *Topology, rules []Rule, record func(Event)) (*Store, error) 
 
 // Get reads a key.
 func (s *Store) Get(agent, key string) ([]byte, error) {
+	// Checked before mayRead, and recorded redacted when it fires, the same
+	// way Put's own key_too_long branch does: an oversized key must never
+	// reach the record whole, including on the path where the agent would
+	// also have been denied for an unrelated reason (S5b).
+	if len(key) > MaxKeyBytes {
+		s.record(Event{Type: TypeStore, From: agent, To: "", Kind: KindGet,
+			Outcome: OutcomeRefused, Reason: "key_too_long"})
+		return nil, &Error{Kind: "denied",
+			Message: fmt.Sprintf("a store key may be at most %d bytes; this one is %d", MaxKeyBytes, len(key))}
+	}
 	if !s.mayRead(agent, key) {
 		s.record(Event{Type: TypeStore, From: agent, To: key, Kind: KindGet,
 			Outcome: OutcomeRefused, Reason: "denied"})
@@ -141,6 +151,20 @@ func (s *Store) Get(agent, key string) ([]byte, error) {
 
 // Put writes a key.
 func (s *Store) Put(agent, key string, value []byte) error {
+	// Checked first, and deliberately before mayWrite: mayWrite's own denial
+	// branch records the key in full (To: key), which is right when the key
+	// is an ordinary one denied for its own reasons, and wrong when the key
+	// is also oversized — an agent should not get the full key back in the
+	// record merely because it was ALSO going to be denied for something
+	// else. Redacted here (To: "") the same way this check already redacted
+	// it when it ran later; only the ordering relative to mayWrite changes
+	// (S5b).
+	if len(key) > MaxKeyBytes {
+		s.record(Event{Type: TypeStore, From: agent, To: "", Kind: KindPut,
+			Bytes: len(value), Outcome: OutcomeRefused, Reason: "key_too_long"})
+		return &Error{Kind: "denied",
+			Message: fmt.Sprintf("a store key may be at most %d bytes; this one is %d", MaxKeyBytes, len(key))}
+	}
 	if !s.mayWrite(agent, key) {
 		s.record(Event{Type: TypeStore, From: agent, To: key, Kind: KindPut,
 			Bytes: len(value), Outcome: OutcomeRefused, Reason: "denied"})
@@ -152,12 +176,6 @@ func (s *Store) Put(agent, key string, value []byte) error {
 			Bytes: len(value), Outcome: OutcomeRefused, Reason: "value_too_large"})
 		return &Error{Kind: "denied",
 			Message: fmt.Sprintf("a store value may be at most %d bytes; this one is %d", MaxValueBytes, len(value))}
-	}
-	if len(key) > MaxKeyBytes {
-		s.record(Event{Type: TypeStore, From: agent, To: "", Kind: KindPut,
-			Bytes: len(value), Outcome: OutcomeRefused, Reason: "key_too_long"})
-		return &Error{Kind: "denied",
-			Message: fmt.Sprintf("a store key may be at most %d bytes; this one is %d", MaxKeyBytes, len(key))}
 	}
 
 	// Writing nothing removes the key, which is the only way an agent has to

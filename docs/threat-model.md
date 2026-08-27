@@ -308,8 +308,11 @@ only in memory, is never written to disk, and only domains you deliberately
 bound a credential to are terminated. Everything else is tunnelled untouched,
 and `kelyfos log` records per connection how much the proxy could read, so you
 can always prove it: `terminated` for a session it decrypted, `plain` for an
-ordinary HTTP request it necessarily parsed, and `tunnelled` only for a
-connection it relayed without opening.
+ordinary HTTP request it necessarily parsed, `tunnelled` only for a connection
+it relayed without opening, and `direct_tls` for an absolute-form `https://`
+request that reached the proxy without a CONNECT — encrypted on the wire to
+the origin, but never eligible for credential injection either way, since that
+is wired only into the CONNECT-and-terminate path above.
 
 ### Side channels
 No defence is claimed against Spectre-class attacks, cache timing, or any other

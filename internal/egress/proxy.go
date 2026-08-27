@@ -41,6 +41,17 @@ const (
 	// tunnelled was the one place the audit log understated the host's own
 	// visibility (F-D33).
 	ModePlain = "plain"
+	// ModeDirectTLS: an absolute-form request whose target scheme is https,
+	// sent straight to this proxy without a CONNECT first — a request line
+	// RFC 7230 §5.3.2 permits and forwardHTTP has always accepted. The proxy
+	// performs the fetch itself, over a real, certificate-validated TLS
+	// connection to the origin, so it read all of it, exactly as it does for
+	// ModePlain — but unlike ModePlain, something here genuinely was
+	// encrypted: the leg the proxy itself ran to reach the origin. Recording
+	// it as ModePlain would be F-D33's understatement again, the other way
+	// round: ModePlain's own doc says "nothing was encrypted", which is false
+	// on this path (S5d).
+	ModeDirectTLS = "direct_tls"
 )
 
 // Reasons recorded when a connection is refused.
@@ -51,6 +62,22 @@ const (
 	ReasonDialFailed = "upstream_unreachable"
 	ReasonPinned     = "tls_pinning_rejected_our_ca"
 )
+
+// WithheldNotViaConnect belongs beside scope.go's own WithheldPath,
+// WithheldNotPlain, WithheldUnencrypted and WithheldHostMismatch — it is the
+// same vocabulary, for the same OnWithheld callback — but scope.go is mid-edit
+// for a separate, already-closed finding at the time of this one, so this
+// constant is declared here instead rather than adding a second hand to that
+// file's diff.
+//
+// It is for exactly the request ModeDirectTLS records: an absolute-form
+// https:// request that reached forwardHTTP directly, never sending a
+// CONNECT. The connection to the origin is genuinely TLS-protected there, so
+// WithheldUnencrypted would be a false statement about it — what is actually
+// true is narrower: credential injection is wired only into the
+// CONNECT+terminate path (decision D6), and this path never reaches it,
+// encrypted or not (S5d).
+const WithheldNotViaConnect = "not_via_connect"
 
 // Attempt is one outbound connection, reported to the caller's recorder whether
 // it was permitted or not. A blocked attempt is the interesting one.
@@ -135,6 +162,13 @@ type Proxy struct {
 	wg   sync.WaitGroup
 	once sync.Once
 
+	// sem bounds how many client connections are being served at once (S5a).
+	// Serve creates it lazily so a Proxy built without Listen's other setup
+	// still works. Acquired before Accept, not after, so a proxy already at
+	// capacity blocks *there* — throttling acceptance itself, not just how
+	// many goroutines pile up behind it.
+	sem chan struct{}
+
 	// lastActive is the last moment any byte crossed this proxy, in Unix
 	// nanoseconds. It exists for the idle timeout (E1-6): a sandbox pulling a
 	// large file down a tunnel is not idle, and reporting only completed
@@ -181,16 +215,37 @@ func (p *Proxy) Listen(addr string) (int, error) {
 	return ln.Addr().(*net.TCPAddr).Port, nil
 }
 
+// maxConcurrentConnections bounds how many client connections Serve will
+// service at once. A sandbox's egress traffic is one guest's, not a public
+// server's, so this is generous for real parallel work — many simultaneous
+// package downloads or API calls — while still bounding the worst case: a
+// guest that opens far more connections than this cannot make Serve spawn
+// more than this many goroutines, however many it opens or however slowly
+// each one speaks (S5a).
+const maxConcurrentConnections = 128
+
 // Serve accepts until Close.
 func (p *Proxy) Serve() {
+	if p.sem == nil {
+		p.sem = make(chan struct{}, maxConcurrentConnections)
+	}
 	for {
+		// Acquired before the next Accept, not after: once maxConcurrentConnections
+		// goroutines are outstanding this send blocks, and Serve does not call
+		// Accept again until one of them finishes and releases its slot. That is
+		// the whole mechanism — a guest holding the cap in connections it never
+		// finishes leaves its own next connection unaccepted, not merely queued
+		// behind an ever-growing pile of goroutines (S5a).
+		p.sem <- struct{}{}
 		conn, err := p.ln.Accept()
 		if err != nil {
+			<-p.sem
 			return
 		}
 		p.wg.Add(1)
 		go func() {
 			defer p.wg.Done()
+			defer func() { <-p.sem }()
 			p.handle(conn)
 		}()
 	}
@@ -212,10 +267,78 @@ func (p *Proxy) report(a Attempt) {
 	}
 }
 
+// readHeaderTimeout bounds how long a connection may take to finish sending a
+// request before the proxy gives up on it. This is a guest→proxy concern, and
+// a different one from DialTimeout, which bounds the proxy→upstream leg: a
+// guest that opens a connection and never finishes a request line otherwise
+// holds a goroutine, a buffer and an accepted socket forever, one of the
+// maxConcurrentConnections slots spent for good. Ten seconds is generous for
+// this link — every real client here is a library handing over a request it
+// already assembled in memory over a local, single-hop TAP, not a person
+// typing at a terminal — and short enough that flooding empty connections
+// cannot hold the cap's slots for long (S5a).
+const readHeaderTimeout = 10 * time.Second
+
+// maxRequestHeaderBytes bounds how many bytes http.ReadRequest may consume
+// trying to parse one request off the wire. http.ReadRequest enforces no such
+// limit itself — net/http's own Server does, but this package talks to
+// net.Conn directly, so nothing did — and an unbounded request line or header
+// block is unbounded memory per connection while it parses. Sized like
+// internal/proto's own guest-facing ceilings (MaxLine is 1 MiB): far more than
+// any real request line and header block need, and small enough that
+// maxConcurrentConnections of them at once is nowhere near a problem. A
+// request whose headers do not fit is refused as ReasonBadRequest below,
+// exactly like any other request this proxy cannot parse (S5a).
+const maxRequestHeaderBytes = 1 << 20
+
+// headerLimitReader bounds bytes read while active, then passes every further
+// read straight through once released.
+//
+// A plain io.LimitReader will not do here: http.ReadRequest's returned
+// req.Body reads from the exact reader passed to it, so a bufio.Reader built
+// over a plain io.LimitReader keeps charging a plain-HTTP or direct-TLS
+// request's BODY against the same budget meant only for its headers — a real,
+// found-in-review regression, since a request whose header+body together
+// crossed maxRequestHeaderBytes had its body silently truncated mid-transfer
+// even though nothing here was ever meant to cap body size. Releasing the
+// limit the moment http.ReadRequest returns fixes that: the only bytes ever
+// charged against the header budget are the request line and header block,
+// plus at most one bufio.Reader-internal-buffer's worth of whatever came
+// after (bufio fills ahead of what a caller asked for) — negligible against a
+// 1 MiB budget and never repeated, since every read after release is
+// unbounded, matching this proxy's pre-existing, uncapped body handling.
+type headerLimitReader struct {
+	r       io.Reader
+	n       int64
+	limited bool
+}
+
+func (h *headerLimitReader) Read(p []byte) (int, error) {
+	if !h.limited {
+		return h.r.Read(p)
+	}
+	if h.n <= 0 {
+		return 0, io.EOF
+	}
+	if int64(len(p)) > h.n {
+		p = p[:h.n]
+	}
+	n, err := h.r.Read(p)
+	h.n -= int64(n)
+	return n, err
+}
+
 func (p *Proxy) handle(client net.Conn) {
 	defer client.Close()
 	p.touch()
-	br := bufio.NewReader(client)
+	// Set before anything is read, so a connection that never finishes sending
+	// a request is closed by the deadline rather than held open indefinitely
+	// (S5a). The error path below already reports and returns on whatever
+	// http.ReadRequest hands back when this fires, so it needs no handling of
+	// its own.
+	_ = client.SetReadDeadline(time.Now().Add(readHeaderTimeout))
+	limited := &headerLimitReader{r: client, n: maxRequestHeaderBytes, limited: true}
+	br := bufio.NewReader(limited)
 
 	req, err := http.ReadRequest(br)
 	if err != nil {
@@ -224,6 +347,13 @@ func (p *Proxy) handle(client net.Conn) {
 		}
 		return
 	}
+	// Both the header deadline and the header byte budget were only ever
+	// about the guest finishing a request; whatever tunnel, terminate or
+	// forwardHTTP does next is a legitimate, possibly long-lived transfer —
+	// of a body that can be any size — and must inherit neither a ten-second
+	// clock nor a 1 MiB ceiling.
+	_ = client.SetReadDeadline(time.Time{})
+	limited.limited = false
 
 	host, port, err := splitTarget(req)
 	if err != nil {
@@ -300,14 +430,36 @@ func (p *Proxy) tunnel(client net.Conn, host string, port int) {
 
 // forwardHTTP handles a plain (non-CONNECT) proxied request.
 func (p *Proxy) forwardHTTP(client net.Conn, req *http.Request, host string, port int) {
-	// A credential is never attached to a plaintext request, and never has
-	// been: injection lives on the terminated path alone. That is right —
-	// nobody should put a bearer token on an unencrypted request — but it had
-	// never been said anywhere, so a user who bound a secret and then reached
-	// the domain over http:// got an unauthenticated request and no reason for
-	// it. Now the record gives the reason (P6-4).
+	// Captured before the fallback below can overwrite it. An absolute-form
+	// request line already carries its own scheme: "GET https://host/path
+	// HTTP/1.1" sent straight to this proxy, with no CONNECT first, is a
+	// request line RFC 7230 §5.3.2 permits and this function has always
+	// accepted, and when that scheme is https, RoundTrip below genuinely
+	// dials the origin over a real, certificate-validated TLS connection.
+	// Both the withheld reason and the mode recorded further down have to be
+	// decided from the scheme the request actually named, not from
+	// req.URL.Scheme after the fallback has already turned an absent one into
+	// "http" (S5d).
+	effectiveScheme := req.URL.Scheme
+	if effectiveScheme == "" {
+		effectiveScheme = "http"
+	}
+
+	// A credential is never attached to a request this function handles:
+	// injection is wired only into the CONNECT+terminate path (decision D6).
+	// That is right for the genuinely plain case — nobody should put a bearer
+	// token on an unencrypted request — and WithheldUnencrypted says so
+	// accurately. It would be a false statement on the https branch, where the
+	// fetch this function performs is genuinely TLS-protected end to end; what
+	// is actually true there is narrower — this code path simply has no
+	// injection point of its own, encrypted or not — so it gets its own
+	// reason instead (P6-4, S5d).
 	if bound := p.Policy.secretsFor(host); len(bound) > 0 && p.OnWithheld != nil {
-		p.OnWithheld(bound[0].Name, host, WithheldUnencrypted)
+		reason := WithheldUnencrypted
+		if effectiveScheme == "https" {
+			reason = WithheldNotViaConnect
+		}
+		p.OnWithheld(bound[0].Name, host, reason)
 	}
 	req.RequestURI = ""
 	if req.URL.Scheme == "" {
@@ -336,7 +488,15 @@ func (p *Proxy) forwardHTTP(client net.Conn, req *http.Request, host string, por
 	resp.Body = counted
 	_ = resp.Write(client)
 	in = counted.n
-	p.report(Attempt{Host: host, Port: port, Allowed: true, Mode: ModePlain,
+	// Plain unless the target scheme was https, in which case RoundTrip just
+	// performed a real TLS handshake to fetch it. Recording that as ModePlain
+	// would repeat F-D33's mistake in the other direction: ModePlain's own doc
+	// says "nothing was encrypted", and here something genuinely was (S5d).
+	mode := ModePlain
+	if effectiveScheme == "https" {
+		mode = ModeDirectTLS
+	}
+	p.report(Attempt{Host: host, Port: port, Allowed: true, Mode: mode,
 		BytesOut: out, BytesIn: in})
 }
 

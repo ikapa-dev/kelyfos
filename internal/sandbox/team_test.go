@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/p4r4n0rm4l/KelyfOS/internal/proto"
+	"github.com/p4r4n0rm4l/KelyfOS/internal/team"
 )
 
 // teamChannel binds a team channel and dials it the way a guest does, so these
@@ -180,6 +181,45 @@ func TestAnOversizedRequestIDIsRefusedRatherThanEchoed(t *testing.T) {
 	select {
 	case <-reached:
 		t.Fatal("the request was served under an id the host cannot answer with")
+	default:
+	}
+}
+
+// The store key rides the same envelope (proto.TeamRequest.Key) for store_get
+// and store_put, and internal/team already bounds it — MaxKeyBytes — but
+// nothing here enforced that bound before OnTeamRequest, and therefore
+// internal/team's own Store, ever saw the request. Same shape as the id and
+// body checks above, and the same reason: the guest is the side that chose
+// the size, so it is the side refused with it (S5b).
+func TestAnOversizedKeyIsRefusedRatherThanReachingTheStore(t *testing.T) {
+	reached := make(chan proto.TeamRequest, 4)
+	w, r := teamChannel(t, func(req proto.TeamRequest) proto.TeamResponse {
+		reached <- req
+		return proto.TeamResponse{OK: true}
+	})
+
+	key := strings.Repeat("k", team.MaxKeyBytes+1)
+	if err := w.Write(proto.TeamRequest{
+		V: proto.Version, ID: "1", Op: proto.OpTeamStoreGet, Key: key,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var resp proto.TeamResponse
+	if err := r.Read(&resp); err != nil {
+		t.Fatalf("no answer to an oversized key: %v", err)
+	}
+	if resp.Error == nil || resp.Error.Kind != proto.ErrBadRequest {
+		t.Fatalf("an oversized key was accepted instead of refused: %+v", resp)
+	}
+	if !strings.Contains(resp.Error.Message, strconv.Itoa(team.MaxKeyBytes)) {
+		t.Errorf("the refusal does not name the limit: %q", resp.Error.Message)
+	}
+	if resp.ID != "1" {
+		t.Errorf("the refusal answers under id %q rather than the one asked with", resp.ID)
+	}
+	select {
+	case req := <-reached:
+		t.Fatalf("the broker was asked to carry an oversized key anyway: op %q, %d-byte key", req.Op, len(req.Key))
 	default:
 	}
 }

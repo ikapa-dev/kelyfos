@@ -28,6 +28,16 @@ import (
 	"github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
 )
 
+// maxBlockedEntries bounds how many distinct denial lines blockedOnce will
+// ever remember. seen is keyed on rendered denial text that embeds the
+// guest-chosen host, so a guest that tries thousands of distinct disallowed
+// hostnames would otherwise grow this map, and the lines printed for it,
+// without limit. An ordinary run refusing a handful of hosts never comes
+// close; past the cap a genuinely new denial is neither recorded nor printed,
+// which is the right failure mode — "no more new denial lines," not unbounded
+// host memory (S5a).
+const maxBlockedEntries = 4096
+
 // blockedOnce prints a policy refusal the first time each one happens.
 type blockedOnce struct {
 	mu   sync.Mutex
@@ -41,6 +51,23 @@ type blockedOnce struct {
 
 func newBlockedOnce(w io.Writer) *blockedOnce {
 	return &blockedOnce{seen: map[string]bool{}, w: w}
+}
+
+// markSeen reports whether text has not been printed yet and should be now,
+// recording it as seen when the answer is yes. Bounded by maxBlockedEntries:
+// past the cap, an unseen text is reported as already-seen so it is silently
+// dropped rather than remembered forever.
+func (b *blockedOnce) markSeen(text string) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.seen[text] {
+		return false
+	}
+	if len(b.seen) >= maxBlockedEntries {
+		return false
+	}
+	b.seen[text] = true
+	return true
 }
 
 // say prints the refusal behind a blocked attempt, or nothing at all when the
@@ -67,14 +94,9 @@ func (b *blockedOnce) say(a egress.Attempt) {
 	// print the same two lines are one thing to fix: a host refused on 80 and
 	// again on 443 needs the same entry added once, and saying so twice is
 	// noise dressed as detail.
-	key := text
-	b.mu.Lock()
-	if b.seen[key] {
-		b.mu.Unlock()
+	if !b.markSeen(text) {
 		return
 	}
-	b.seen[key] = true
-	b.mu.Unlock()
 	fmt.Fprintf(b.w, "kelyfos: %s\n", text)
 	b.notify.Send("kelyfos: blocked", firstLine(text))
 }
@@ -83,13 +105,9 @@ func (b *blockedOnce) say(a egress.Attempt) {
 // same reason: the advice is the key, so a forward refused on every connection
 // is one thing to fix rather than one line per attempt.
 func (b *blockedOnce) sayText(text string) {
-	b.mu.Lock()
-	if b.seen[text] {
-		b.mu.Unlock()
+	if !b.markSeen(text) {
 		return
 	}
-	b.seen[text] = true
-	b.mu.Unlock()
 	fmt.Fprintf(b.w, "kelyfos: %s\n", text)
 	b.notify.Send("kelyfos: blocked", firstLine(text))
 }

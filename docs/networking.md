@@ -225,7 +225,7 @@ hoped for.
   allowed or blocked, with the reason and the byte counts
   (`docs/events.md` §4).
 - Allowed connections record `mode`, which says **how much of the connection the
-  proxy could read**. Three values, and the distinction is the whole point of
+  proxy could read**. Four values, and the distinction is the whole point of
   the field (decision D6):
 
   | `mode` | What the proxy saw |
@@ -233,11 +233,15 @@ hoped for.
   | `tunnelled` | Nothing. A `CONNECT` relayed without being opened. |
   | `terminated` | Everything. A secret is bound to this domain, so the session was decrypted to attach the credential. |
   | `plain` | Everything. An ordinary HTTP request, which any proxy that forwards it necessarily parses, rewrites and re-issues. Nothing was decrypted because nothing was encrypted. |
+  | `direct_tls` | Everything. An absolute-form request naming an `https://` target, sent straight to the proxy with no `CONNECT` — the proxy fetches it anyway, over a real, certificate-validated TLS connection it performs itself, so something genuinely was encrypted even though no `CONNECT` or termination was involved. |
 
   `plain` exists because the alternative was recording it as `tunnelled`, and
   that is the one thing this field must never do: **understate what the host
   could see.** Anyone grepping for `terminated` to find the traffic the proxy
-  read would have missed every plaintext request on port 80 (F-D33).
+  read would have missed every plaintext request on port 80 (F-D33). `direct_tls`
+  exists for the same reason, the other way round: recording it as `plain` would
+  claim nothing was encrypted about a fetch that used real TLS, which is exactly
+  the kind of understatement `plain` was added to prevent.
 
 - **A credential can be bound to an endpoint rather than a domain.**
   `--secret NAME@host/path` binds it to that path on that host *exactly* — no

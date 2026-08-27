@@ -70,6 +70,26 @@ reference described in the README and re-measured per release.
   `marked()` would hand back the true value, agreeing with the record while the page a human
   reads shows the fake one. `kelyfos verify` now refuses to answer for a marker that is ambiguous
   across *either* tag kind, matching what `marked()`'s comment already promised.
+- **Four lower-severity gaps, each a guest able to spend host resources or a record able to say
+  something false.** The egress proxy accepted an unbounded number of connections, never set a
+  read deadline on one, and let `http.ReadRequest` consume an unbounded header block before
+  giving up — a guest could hold connections open forever or force unbounded memory per
+  connection while it parsed; a concurrency cap, a read deadline, and a header-size bound close all
+  three — the bound is a releasable limiting reader rather than a plain `io.LimitReader`, since the
+  latter would keep charging a request's body against the same budget as its headers and silently
+  truncate any legitimate upload once the two together crossed the limit (found in review) — and
+  the host's own denial-deduplication map is now bounded the
+  same way against a guest trying unboundedly many disallowed hostnames. The team wire bounded a
+  request's id and body but never its store key, so an oversized key reached `internal/team`'s
+  store unchecked; `Store.Put`'s own length check also ran after its access check, so an oversized
+  key denied for an unrelated reason was recorded in full before its length was ever examined —
+  the wire now refuses an oversized key outright, and `Get` and `Put` both check length before
+  anything else. A guest file named with a quote character was not refused, and the comment
+  claiming quoting already covered it was wrong: a quote is not whitespace and closes the
+  double-quoted debugfs command early; `validName` now refuses it. And an absolute-form
+  `https://` request sent straight to the proxy without a `CONNECT` was recorded as
+  `mode: plain` / `not_encrypted` even though it is a real, certificate-validated TLS fetch —
+  a new mode and withheld reason say what actually happened instead.
 
 ---
 

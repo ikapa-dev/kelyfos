@@ -1311,8 +1311,11 @@ only in memory, is never written to disk, and only domains you deliberately
 bound a credential to are terminated. Everything else is tunnelled untouched,
 and `kelyfos log` records per connection how much the proxy could read, so you
 can always prove it: `terminated` for a session it decrypted, `plain` for an
-ordinary HTTP request it necessarily parsed, and `tunnelled` only for a
-connection it relayed without opening.
+ordinary HTTP request it necessarily parsed, `tunnelled` only for a connection
+it relayed without opening, and `direct_tls` for an absolute-form `https://`
+request that reached the proxy without a CONNECT — encrypted on the wire to
+the origin, but never eligible for credential injection either way, since that
+is wired only into the CONNECT-and-terminate path above.
 
 ### Side channels
 No defence is claimed against Spectre-class attacks, cache timing, or any other
@@ -2294,7 +2297,7 @@ hoped for.
   allowed or blocked, with the reason and the byte counts
   (`docs/events.md` §4).
 - Allowed connections record `mode`, which says **how much of the connection the
-  proxy could read**. Three values, and the distinction is the whole point of
+  proxy could read**. Four values, and the distinction is the whole point of
   the field (decision D6):
 
   | `mode` | What the proxy saw |
@@ -2302,11 +2305,15 @@ hoped for.
   | `tunnelled` | Nothing. A `CONNECT` relayed without being opened. |
   | `terminated` | Everything. A secret is bound to this domain, so the session was decrypted to attach the credential. |
   | `plain` | Everything. An ordinary HTTP request, which any proxy that forwards it necessarily parses, rewrites and re-issues. Nothing was decrypted because nothing was encrypted. |
+  | `direct_tls` | Everything. An absolute-form request naming an `https://` target, sent straight to the proxy with no `CONNECT` — the proxy fetches it anyway, over a real, certificate-validated TLS connection it performs itself, so something genuinely was encrypted even though no `CONNECT` or termination was involved. |
 
   `plain` exists because the alternative was recording it as `tunnelled`, and
   that is the one thing this field must never do: **understate what the host
   could see.** Anyone grepping for `terminated` to find the traffic the proxy
-  read would have missed every plaintext request on port 80 (F-D33).
+  read would have missed every plaintext request on port 80 (F-D33). `direct_tls`
+  exists for the same reason, the other way round: recording it as `plain` would
+  claim nothing was encrypted about a fetch that used real TLS, which is exactly
+  the kind of understatement `plain` was added to prevent.
 
 - **A credential can be bound to an endpoint rather than a domain.**
   `--secret NAME@host/path` binds it to that path on that host *exactly* — no
@@ -3729,7 +3736,7 @@ One outbound connection attempt. Written from P2-5.
 | `port` | integer | Requested port. |
 | `allowed` | boolean | Whether policy permitted it. |
 | `reason` | string | Why it did not go through. See below. |
-| `mode` | string | How much the proxy could read: `tunnelled` (a `CONNECT` it relayed unopened), `terminated` (a secret-bound domain it decrypted), or `plain` (ordinary HTTP, which it necessarily read in full). **Required whenever `allowed` is true.** |
+| `mode` | string | How much the proxy could read: `tunnelled` (a `CONNECT` it relayed unopened), `terminated` (a secret-bound domain it decrypted), `plain` (ordinary HTTP, which it necessarily read in full), or `direct_tls` (an absolute-form `https://` request sent straight to the proxy with no `CONNECT`, fetched over a real TLS connection the proxy performed itself). **Required whenever `allowed` is true.** |
 | `bytes_in`, `bytes_out` | integer | Transferred, when the connection closed. |
 | `agent` | string | Present inside a team: which agent's proxy this was. |
 
@@ -3748,8 +3755,16 @@ of this connection could the host read? `tunnelled` means nothing — a `CONNECT
 relayed unopened. `terminated` means everything, because a secret is bound to the
 domain and the session was decrypted to attach it. `plain` also means
 everything, because an ordinary HTTP request is parsed and re-issued by any
-proxy that forwards it. Three values rather than two, so that a reader looking
-for what the proxy saw cannot be misled by a word (`docs/networking.md` §6).
+proxy that forwards it. `direct_tls` means everything too, and for a reason
+`plain` cannot claim: a client can send an absolute-form request naming an
+`https://` target straight to this proxy without ever sending a `CONNECT`, and
+the proxy fetches it anyway, over a genuine, certificate-validated TLS
+connection to the origin. Recording that as `plain` would say "nothing was
+encrypted" about a request where something plainly was — the same
+understatement `plain` itself was added to fix (F-D33), the other way round.
+Four values rather than three, so that a reader looking for what the proxy saw
+— and for whether a leg of the connection was actually encrypted — cannot be
+misled by a word (`docs/networking.md` §6).
 
 ### `secret.use`
 A credential was attached to a request **and left the machine**. Written from
@@ -3790,7 +3805,7 @@ else — a 401 from a server that has no idea why. That failure mode has now bee
 found four separate times in this codebase, so it gets an event rather than a
 comment.
 
-`reason` is one of four:
+`reason` is one of five:
 
 | `reason` | Meaning |
 | --- | --- |
@@ -3798,6 +3813,7 @@ comment.
 | `path_not_covered` | The credential is bound to an endpoint and the request was outside it. |
 | `path_not_literal` | The path carried an encoded slash or dot, or dot segments — forms a server may re-segment into somewhere else, so it is not compared. |
 | `not_encrypted` | A plaintext request. A credential is only ever attached on the terminated path. |
+| `not_via_connect` | An absolute-form `https://` request reached the proxy directly, without a `CONNECT` — genuinely TLS-protected (`mode: direct_tls`), but credential injection is wired only into the `CONNECT`-and-terminate path, so nothing attaches it here either. |
 
 **`host_mismatch` is worth understanding**, because it was a defect rather than
 a rule. Inside a terminated session the guest writes its own `Host:` header, and
@@ -10513,7 +10529,7 @@ One outbound connection attempt, permitted or not. Written by the **host**.
 | `port` | integer | requested port *(the request parsed)* |
 | `allowed` | boolean | whether policy permitted it |
 | `reason` | string | not_in_allowlist, port_not_allowed, bad_request, upstream_unreachable, tls_pinning_rejected_our_ca *(it did not go through)* |
-| `mode` | string | how much the proxy could read: tunnelled (a CONNECT it relayed unopened), terminated (a secret-bound domain it decrypted), or plain (ordinary HTTP, which it necessarily read in full) *(allowed)* |
+| `mode` | string | how much the proxy could read: tunnelled (a CONNECT it relayed unopened), terminated (a secret-bound domain it decrypted), plain (ordinary HTTP, which it necessarily read in full), or direct_tls (an absolute-form https request reaching the proxy without a CONNECT, fetched itself over a real TLS connection) *(allowed)* |
 | `bytes_in` | integer | bytes read from upstream |
 | `bytes_out` | integer | bytes written upstream |
 | `agent` | string | which machine produced it; present inside a team *(in a team)* |
@@ -10536,7 +10552,7 @@ A credential was bound to this domain and deliberately not attached to a request
 | --- | --- | --- |
 | `name` | string | the secret's environment-variable name |
 | `host` | string | the domain the connection was bound to |
-| `reason` | string | why it was withheld: host_mismatch (the request addressed a different host than the connection was opened to), path_not_covered (outside the endpoint the credential is bound to), path_not_literal (a path carrying an encoded slash or dot, or dot segments, which a server may re-segment into somewhere else), or not_encrypted (a plaintext request, which never carries a credential) |
+| `reason` | string | why it was withheld: host_mismatch (the request addressed a different host than the connection was opened to), path_not_covered (outside the endpoint the credential is bound to), path_not_literal (a path carrying an encoded slash or dot, or dot segments, which a server may re-segment into somewhere else), not_encrypted (a plaintext request, which never carries a credential), or not_via_connect (an absolute-form https request reaching the proxy directly, which is genuinely encrypted but never goes through the CONNECT+terminate path credential injection is wired into) |
 | `agent` | string | which machine produced it; present inside a team *(in a team)* |
 
 ## `secret.scrubbed`

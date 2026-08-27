@@ -307,6 +307,67 @@ func TestHostileStoreFrameReachesTheStoreUnexamined(t *testing.T) {
 	hostile.Holds(t, "team/store-key-length", problem)
 }
 
+// S5b. Put already redacted an oversized key once its OWN length check fired
+// — but that check ran after mayWrite's denial check, so a key that was ALSO
+// going to be denied by an unrelated write rule reached the record whole,
+// before its length was ever examined. Get had no length check anywhere, so
+// it always recorded an oversized key in full. Both are fixed the same way:
+// the length check now runs first, so an oversized key is redacted no matter
+// what an unrelated rule would otherwise have decided about it.
+func TestHostileOversizedKeyIsNeverRecordedWhole(t *testing.T) {
+	topo, err := NewTopology([]string{"master", "worker-1"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A rule that denies worker-1 both read and write on this namespace for a
+	// reason that has nothing to do with the key's length — so an oversized
+	// key inside it is refused twice over, and what matters is which refusal
+	// the record shows.
+	rules := []Rule{{Name: "K*", Read: []string{"master"}, Write: []string{"master"}}}
+	key := strings.Repeat("K", MaxKeyBytes+1)
+
+	whole := func(events []Event) string {
+		for _, e := range events {
+			if strings.Contains(e.To, "KKKK") {
+				return fmt.Sprintf("a %d-byte event.To carries the oversized key: %q", len(e.To), e.To)
+			}
+		}
+		return ""
+	}
+
+	t.Run("put", func(t *testing.T) {
+		var c collector
+		s, err := NewStore(topo, rules, c.record)
+		if err != nil {
+			t.Fatal(err)
+		}
+		problem := ""
+		if err := s.Put("worker-1", key, []byte("x")); err == nil {
+			problem = "an oversized key denied by an unrelated write rule was accepted"
+		}
+		if p := whole(c.all()); p != "" && problem == "" {
+			problem = p
+		}
+		hostile.Holds(t, "team/store-put-oversized-key-recorded-whole", problem)
+	})
+
+	t.Run("get", func(t *testing.T) {
+		var c collector
+		s, err := NewStore(topo, rules, c.record)
+		if err != nil {
+			t.Fatal(err)
+		}
+		problem := ""
+		if _, err := s.Get("worker-1", key); err == nil {
+			problem = "an oversized key denied by an unrelated read rule returned a value"
+		}
+		if p := whole(c.all()); p != "" && problem == "" {
+			problem = p
+		}
+		hostile.Holds(t, "team/store-get-oversized-key-recorded-whole", problem)
+	})
+}
+
 // M-5 at the other layer: the topology refuses the name outright.
 //
 // This is the check a person actually meets — it fires when their kelyfos.toml

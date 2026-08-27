@@ -231,6 +231,17 @@ func validName(dir, name string) error {
 		return refuse("an entry in %s is named %q", dir, name)
 	case len(name) > 255:
 		return refuse("an entry in %s has a name longer than a filesystem allows (%d bytes)", dir, len(name))
+	case strings.ContainsAny(name, `"'`):
+		// Neither character is a control character, so the loop below would
+		// let both through — and dumpFiles interpolates this name inside a
+		// double-quoted debugfs command. A double quote closes that quoted
+		// argument early, handing debugfs's own tokenizer whatever follows as
+		// unintended, unquoted tokens; a single quote is refused alongside it
+		// because it is exactly as printable and exactly as unvetted for that
+		// position, and there is no legitimate name that needs either badly
+		// enough to carve out an exception (S5c).
+		return refuse("%s contains a quote character, which cannot be closed safely inside the "+
+			"double-quoted debugfs command dumpFiles builds for it", path.Join(dir, name))
 	}
 	for _, r := range name {
 		if r < 0x20 || r == 0x7f {
@@ -435,8 +446,13 @@ func dumpFiles(imagePath string, entries []imageEntry) (map[string]string, func(
 		dest := filepath.Join(dir, strconv.Itoa(i))
 		staged[e.path] = dest
 		// The path inside the image is quoted for debugfs's own tokenizer. It
-		// has been validated already — no newline, no control character — so
-		// what is left is whitespace, which quoting covers.
+		// has been validated already — no newline, no control character, and
+		// (S5c) no quote of either kind, which is what makes this quoting
+		// actually hold: a quote character is ordinary and printable, not
+		// whitespace and not a control character, and it is the one thing
+		// that could close this quoted argument early. With it refused,
+		// everything that can still appear — including whitespace — sits
+		// safely inside this quoting.
 		fmt.Fprintf(&script, "dump -p \"/%s\" %s\n", e.path, dest)
 	}
 	if script.Len() == 0 {

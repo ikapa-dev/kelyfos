@@ -288,7 +288,7 @@ One outbound connection attempt. Written from P2-5.
 | `port` | integer | Requested port. |
 | `allowed` | boolean | Whether policy permitted it. |
 | `reason` | string | Why it did not go through. See below. |
-| `mode` | string | How much the proxy could read: `tunnelled` (a `CONNECT` it relayed unopened), `terminated` (a secret-bound domain it decrypted), or `plain` (ordinary HTTP, which it necessarily read in full). **Required whenever `allowed` is true.** |
+| `mode` | string | How much the proxy could read: `tunnelled` (a `CONNECT` it relayed unopened), `terminated` (a secret-bound domain it decrypted), `plain` (ordinary HTTP, which it necessarily read in full), or `direct_tls` (an absolute-form `https://` request sent straight to the proxy with no `CONNECT`, fetched over a real TLS connection the proxy performed itself). **Required whenever `allowed` is true.** |
 | `bytes_in`, `bytes_out` | integer | Transferred, when the connection closed. |
 | `agent` | string | Present inside a team: which agent's proxy this was. |
 
@@ -307,8 +307,16 @@ of this connection could the host read? `tunnelled` means nothing — a `CONNECT
 relayed unopened. `terminated` means everything, because a secret is bound to the
 domain and the session was decrypted to attach it. `plain` also means
 everything, because an ordinary HTTP request is parsed and re-issued by any
-proxy that forwards it. Three values rather than two, so that a reader looking
-for what the proxy saw cannot be misled by a word (`docs/networking.md` §6).
+proxy that forwards it. `direct_tls` means everything too, and for a reason
+`plain` cannot claim: a client can send an absolute-form request naming an
+`https://` target straight to this proxy without ever sending a `CONNECT`, and
+the proxy fetches it anyway, over a genuine, certificate-validated TLS
+connection to the origin. Recording that as `plain` would say "nothing was
+encrypted" about a request where something plainly was — the same
+understatement `plain` itself was added to fix (F-D33), the other way round.
+Four values rather than three, so that a reader looking for what the proxy saw
+— and for whether a leg of the connection was actually encrypted — cannot be
+misled by a word (`docs/networking.md` §6).
 
 ### `secret.use`
 A credential was attached to a request **and left the machine**. Written from
@@ -349,7 +357,7 @@ else — a 401 from a server that has no idea why. That failure mode has now bee
 found four separate times in this codebase, so it gets an event rather than a
 comment.
 
-`reason` is one of four:
+`reason` is one of five:
 
 | `reason` | Meaning |
 | --- | --- |
@@ -357,6 +365,7 @@ comment.
 | `path_not_covered` | The credential is bound to an endpoint and the request was outside it. |
 | `path_not_literal` | The path carried an encoded slash or dot, or dot segments — forms a server may re-segment into somewhere else, so it is not compared. |
 | `not_encrypted` | A plaintext request. A credential is only ever attached on the terminated path. |
+| `not_via_connect` | An absolute-form `https://` request reached the proxy directly, without a `CONNECT` — genuinely TLS-protected (`mode: direct_tls`), but credential injection is wired only into the `CONNECT`-and-terminate path, so nothing attaches it here either. |
 
 **`host_mismatch` is worth understanding**, because it was a defect rather than
 a rule. Inside a terminated session the guest writes its own `Host:` header, and
