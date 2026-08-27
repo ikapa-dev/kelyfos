@@ -294,13 +294,27 @@ func snapshotRestore(argv []string) error {
 	// here — this door has no flags for any of them and applies none — which
 	// is the honest value of an enforcement gap docs/policy-record.md's own
 	// research found while wiring this door, not a value this task invented.
+	// VcpuCount and MemMiB come from the snapshot's own metadata, not from
+	// sb.State: Firecracker takes both from the state file at resume time,
+	// and this door's sandbox.Options never sets VcpuCount/MemMiB (there is
+	// no flag for either), so sb.State.VcpuCount/MemMiB stay zero even though
+	// the restored machine genuinely has them — the same reasoning
+	// recordFork (host/fork.go) already applies to its own meta.VcpuCount/
+	// meta.MemMiB (F2, RECORD review of P7-2: a restored 5-vCPU/823-MiB
+	// machine was recording session.policy with neither field present, which
+	// docs/events.md's own table defines as "nothing declared a cap," false
+	// for this door). memMiB itself is already in scope above, computed under
+	// the same metaErr == nil guard for guestEventRecorder; vcpuCount is its
+	// twin, new here.
 	var sourceSession string
+	var vcpuCount int
 	if metaErr == nil {
 		sourceSession = meta.SourceSession
+		vcpuCount = meta.VcpuCount
 	}
 	rootfsSHA, kernelSHA := sessionpolicy.Digests(sandbox.ImageDir(*arch))
 	_ = rec.Append(recorder.NewSessionPolicy("", recorder.PolicyFields{
-		VcpuCount: sb.State.VcpuCount, MemMiB: sb.State.MemMiB,
+		VcpuCount: vcpuCount, MemMiB: memMiB,
 		Allow: restoredAllow, Ports: sessionpolicy.Ports(restoredAllow),
 		Secrets:       sessionpolicy.Secrets(restoredSecrets),
 		Tools:         sessionpolicy.ToolsForCLI(false),

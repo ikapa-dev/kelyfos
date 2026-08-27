@@ -362,6 +362,22 @@ func raiseTeam(parent context.Context, opt teamOptions) (*teamRig, error) {
 		// them, and inventing an inheritance rule would let an agent hand its
 		// own network to a machine the user never wrote down (E2-5).
 		res := plan.spawnResources(req.Spawner)
+		// req.Lifetime, not res.MaxRuntime, is the wall-clock ceiling actually
+		// enforced for a spawned worker: the goroutine a few lines down calls
+		// Despawn/stop after req.Lifetime elapses, the same role the
+		// declared-agent max_runtime goroutine plays above for plan.agents[i]
+		// .res.MaxRuntime — but nothing plays that role for res.MaxRuntime
+		// here, because a spawn budget's optional [resources] sub-block has no
+		// equivalent enforcement loop of its own. Left alone, agentPolicyEvent
+		// would record whatever res.MaxRuntime happens to hold (typically
+		// zero, since operators write the ceiling as `lifetime` on the spawn
+		// budget) while staying silent about the ceiling genuinely in force —
+		// the same "a wall with nothing in the record saying so" shape P7-2
+		// exists to close, reappearing at the one door P7-0's own review (F2)
+		// already flagged it at once (F4, the review that reopened P7-2).
+		if req.Lifetime > 0 {
+			res.MaxRuntime = req.Lifetime
+		}
 		rig, err := bootAgent(ctx, plannedAgent{name: req.Name, image: req.Image, res: res},
 			broker, rec, teamSlice, arch, timeout)
 		if err != nil {

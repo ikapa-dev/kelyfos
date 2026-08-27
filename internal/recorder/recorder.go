@@ -605,11 +605,30 @@ func fitUnderMaxLine(e *Event) error {
 // competes for "largest field" like everything else, and clips to a single
 // summarising element rather than being left unclippable.
 //
-// P7-2 added five more slices reflection cannot see the same way: Allow,
-// Secrets, Plugins and Forwards are all string-shaped like Cmd, and Ports is
-// not, so it gets its own measurement and its own clip (below). Extending
-// this list is required in the same commit that adds a new slice field to
-// Event — the landmine this function's whole history is a record of.
+// P7-2 added six more slices reflection cannot see the same way: Allow,
+// Secrets, Plugins, Forwards and Tools are all string-shaped like Cmd (Secrets
+// is []EvSecret rather than []string, but is still invisible to
+// largestStringField's field-kind switch), and Ports is not, so it gets its
+// own measurement and its own clip (below). Argv is included too, even though
+// it is bounded in practice by the OS's own argv length limit and has never
+// been observed oversized: docs/policy-record.md §9.1 already draws the same
+// conclusion about Ports ("bounded and small in practice... but it is still,
+// mechanically, a slice reflection does not see, and a fixture should say so
+// explicitly rather than leave it untested by omission"), and the same
+// argument applies here.
+//
+// Tools was the one P7-2 actually missed — the review that reopened P7-2
+// (F1) found it: the six-item list above named five of P7-2's six new
+// slices and Tools slipped through anyway, the identical shape of mistake
+// F8 made for strings one paragraph up, just one level down the type
+// system. A hand-maintained list has now failed exactly this way twice, so
+// TestClipLargestFieldCoversEverySliceField (fuzz_test.go) backstops this
+// list itself: it walks Event by reflection for every slice-kind field —
+// present or future — and fails if this function does not have a case for
+// it, rather than depending on a fifth person remembering to add one.
+// Extending this list is still required in the same commit that adds a new
+// slice field to Event; that test is what makes forgetting loud instead of
+// silent.
 func clipLargestField(e *Event) bool {
 	target := largestStringField(e)
 	best := 0
@@ -618,20 +637,33 @@ func clipLargestField(e *Event) bool {
 	}
 
 	type slice struct {
+		n     int // element count — the guard below keys on this, not bytes
 		bytes int
 		clip  func()
 	}
 	slices := []slice{
-		{stringsBytes(e.Cmd), func() { e.Cmd = clipStrings(e.Cmd, "argv elements") }},
-		{stringsBytes(e.Allow), func() { e.Allow = clipStrings(e.Allow, "domains") }},
-		{stringsBytes(e.Plugins), func() { e.Plugins = clipStrings(e.Plugins, "plugin names") }},
-		{stringsBytes(e.Forwards), func() { e.Forwards = clipStrings(e.Forwards, "forwards") }},
-		{secretsBytes(e.Secrets), func() { e.Secrets = clipSecrets(e.Secrets) }},
-		{portsBytes(e.Ports), func() { e.Ports = clipPorts(e.Ports) }},
+		{len(e.Argv), stringsBytes(e.Argv), func() { e.Argv = clipStrings(e.Argv, "process arguments") }},
+		{len(e.Cmd), stringsBytes(e.Cmd), func() { e.Cmd = clipStrings(e.Cmd, "argv elements") }},
+		{len(e.Allow), stringsBytes(e.Allow), func() { e.Allow = clipStrings(e.Allow, "domains") }},
+		{len(e.Plugins), stringsBytes(e.Plugins), func() { e.Plugins = clipStrings(e.Plugins, "plugin names") }},
+		{len(e.Forwards), stringsBytes(e.Forwards), func() { e.Forwards = clipStrings(e.Forwards, "forwards") }},
+		{len(e.Tools), stringsBytes(e.Tools), func() { e.Tools = clipStrings(e.Tools, "tool names") }},
+		{len(e.Secrets), secretsBytes(e.Secrets), func() { e.Secrets = clipSecrets(e.Secrets) }},
+		{len(e.Ports), portsBytes(e.Ports), func() { e.Ports = clipPorts(e.Ports) }},
 	}
+	// Guarding on element count rather than "bytes > 0" (F6): stringsBytes and
+	// secretsBytes measure element content only, not the per-element JSON
+	// framing every entry still costs once marshalled (quotes, colons, the
+	// comma between entries) — a slice of many empty or zero-value elements
+	// used to measure near-zero bytes and lose to any nonempty string field,
+	// even though the real marshalled line from that many empty elements
+	// could itself be the reason the line is oversized. bytes now includes a
+	// per-element estimate of that framing (below) so the comparison against
+	// best is realistic, and the guard is len > 0 rather than bytes > 0 so a
+	// slice is never skipped purely because its own measurement undercounts.
 	var chosen *slice
 	for i := range slices {
-		if slices[i].bytes > 0 && slices[i].bytes > best {
+		if slices[i].n > 0 && slices[i].bytes > best {
 			best = slices[i].bytes
 			chosen = &slices[i]
 		}
@@ -665,11 +697,18 @@ func clipStrings(s []string, label string) []string {
 
 // secretsBytes is Secrets' size for the same comparison cmdBytes always gave
 // Cmd: every field of every entry, since that is what actually reaches the
-// wire once marshalled.
+// wire once marshalled. secretsPerElementOverhead accounts for the JSON
+// object framing (F6) — `{"name":"","host":""},` alone is 22 bytes before
+// any content — so a slice of many near-empty EvSecret entries is not
+// measured as if it costs nothing: 500,000 zero-value entries proved to
+// marshal to an 11 MB line while this function, unpadded, measured under a
+// kilobyte.
+const secretsPerElementOverhead = 22
+
 func secretsBytes(s []EvSecret) int {
 	n := 0
 	for _, sec := range s {
-		n += len(sec.Name) + len(sec.Host) + len(sec.Path)
+		n += len(sec.Name) + len(sec.Host) + len(sec.Path) + secretsPerElementOverhead
 	}
 	return n
 }
@@ -746,6 +785,13 @@ func largestStringField(e *Event) *string {
 	return target
 }
 
+// stringsPerElementOverhead accounts for a []string element's own JSON
+// framing — two quotes and a separating comma — so a slice of many empty or
+// near-empty strings is not measured as if it costs nothing (F6): 3,000,000
+// empty Allow entries proved to marshal to a 9 MB line while this function,
+// unpadded, measured zero bytes.
+const stringsPerElementOverhead = 3
+
 // stringsBytes is the size clipLargestField and fitUnderMaxLine's marshalled
 // measurement both care about for any []string field: the bytes its elements
 // actually contribute, not len(s), which is the element count. Named cmdBytes
@@ -753,7 +799,7 @@ func largestStringField(e *Event) *string {
 func stringsBytes(s []string) int {
 	n := 0
 	for _, v := range s {
-		n += len(v)
+		n += len(v) + stringsPerElementOverhead
 	}
 	return n
 }

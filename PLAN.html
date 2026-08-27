@@ -4322,6 +4322,107 @@ after:
         tasks, 78 checked, 63 decisions&rdquo;<br>
         not self-ticked, not pushed, not merged; standing by for RECORD-surface review before P7-3
         starts (Lane 1 is strictly serial)</td></tr>
+    <tr><td class="mono">2026-08-27</td><td class="mono">P7-2</td>
+        <td>Review-fix round on the adversarial findings from the RECORD-surface review above (F1&ndash;F6):
+        <br><b>F1 (HIGH, fixed)</b> &mdash; <code>Tools</code> added to <code>clipLargestField</code>'s slice
+        list (<code>internal/recorder/recorder.go</code>), plus a sixth <code>Tools</code> subtest in
+        <code>TestAppendClipsEverySessionPolicySlice</code>. Structurally closed rather than patched: a new
+        <code>TestClipLargestFieldCoversEverySliceField</code> (<code>fuzz_test.go</code>) walks
+        <code>reflect.TypeOf(Event{})</code> for every slice-kind field &mdash; present or future &mdash; builds
+        an oversized value generically (string slices, int slices, struct slices with string fields, so
+        P7-3's <code>Agents</code>/<code>Edges</code>/<code>StoreKeys</code> are covered the day they land),
+        <code>Append</code>s it alone, and asserts exactly one event is still recorded. <code>Argv</code> added
+        to the clip list too, on the same reasoning <code>docs/policy-record.md</code> &sect;9.1 already gives
+        for <code>Ports</code>: bounded in practice, but mechanically invisible to reflection, so it is covered
+        rather than left untested by omission &mdash; this is what lets the new guard test pass with zero
+        exemptions.
+        <br><b>F2 (HIGH, fixed)</b> &mdash; <code>host/snapshot.go</code>'s <code>snapshotRestore</code> now
+        builds <code>session.policy</code>'s <code>VcpuCount</code>/<code>MemMiB</code> from
+        <code>meta.VcpuCount</code>/<code>meta.MemMiB</code> (guarded by <code>metaErr == nil</code>, the same
+        guard <code>sourceSession</code> already used), not from <code>sb.State</code> &mdash; matching
+        <code>host/fork.go</code>'s <code>recordFork</code>, the door that already got this right.
+        <br><b>F3 (MEDIUM, fixed)</b> &mdash; a second, independent door-enumerating test,
+        <code>TestEverySessionStartSiteHasAMatchingSessionPolicy</code>, added beside the existing
+        <code>WithPosture</code>-based one rather than replacing it (D65: the existing test's per-closure,
+        mutation-tested coverage is real and not reproduced by the new one). It starts from every
+        <code>recorder.Event</code> literal whose <code>Type</code> is <code>recorder.TypeSessionStart</code>,
+        per &sect;9.3, and requires the enclosing top-level function to <i>reach</i>
+        <code>recorder.NewSessionPolicy</code> &mdash; directly, or transitively through any function in the
+        package it calls, to any depth (<code>reachesSessionPolicy</code>), rather than matching a fixed list
+        of wrapper names. That transitivity was not optional: an early version naming only
+        <code>NewSessionPolicy</code>/<code>agentPolicyEvent</code> failed for real on
+        <code>host/fork.go</code>'s <code>forkCmd</code>, which reaches the policy call two hops away through
+        <code>recordFork</code> &mdash; the identical hand-maintained-list shape F1 found one file over, caught
+        by writing the test itself before trusting it.
+        <br><b>F4 (MEDIUM, fixed)</b> &mdash; <code>host/team.go</code>'s <code>broker.OnSpawn</code> now sets
+        <code>res.MaxRuntime = req.Lifetime</code> before building the spawned worker's
+        <code>plannedAgent</code>, when a lifetime was granted: <code>req.Lifetime</code>, not the spawn
+        budget's optional <code>[resources] max_runtime</code>, is the wall-clock ceiling actually enforced for
+        a spawned worker (the existing despawn goroutine a few lines down), and nothing enforces
+        <code>res.MaxRuntime</code> on that path the way the declared-agent loop's own goroutine does for
+        <code>plan.agents[i].res.MaxRuntime</code>.
+        <br><b>F5 (blocked, not fixed this round)</b> &mdash; <code>internal/sessionpolicy/sessionpolicy.go</code>
+        still returns the <code>[]int{80, 443}</code> literal rather than calling <code>egress.DefaultPorts()</code>:
+        that function exists on <code>main</code> (P7-4, already merged) but not yet on
+        <code>phase7/lane1-record</code>, which has not been rebased onto it. A <code>git merge main</code>
+        attempted to bring it in was refused by the session's own permission system as a git-history-changing
+        action needing explicit approval, and no workaround was attempted (duplicating the function locally
+        would only manufacture the exact conflict F5 exists to avoid, once this branch does rebase). Same value
+        today (<code>[80, 443]</code> either way), so no wrong data is recorded &mdash; left for the rebase this
+        finding already flagged as the natural point to fix it, or for an explicit go-ahead to merge now.
+        <br><b>F6 (LOW, fixed while already in <code>clipLargestField</code> for F1)</b> &mdash;
+        <code>stringsBytes</code>/<code>secretsBytes</code> now add a per-element JSON framing estimate
+        (3 bytes/string element, 22 bytes/<code>EvSecret</code>), and the slice-selection guard in
+        <code>clipLargestField</code> keys on element count rather than <code>bytes &gt; 0</code>, so a slice of
+        many empty/zero-value elements is no longer invisible to the size comparison.
+        <br>Not self-ticked: still a RECORD-surface change, still &sect;8 rule 10.</td>
+        <td>Inside <code>kelyfos-dev</code>, this branch: <code>gofmt -l .</code> &rarr; clean;
+        <code>go vet ./...</code> &rarr; clean; <code>go test ./...</code> &rarr; every package
+        <code>ok</code> or <code>[no test files]</code><br>
+        <code>go test -v ./host/...</code> &rarr; 195 <code>--- PASS</code> lines (incl. subtests), 0 fail;
+        <code>go test -v ./internal/recorder/...</code> &rarr; 52 <code>--- PASS</code> lines, 0 fail<br>
+        <b>F1 mutation-tested against itself</b>: with <code>Tools</code>'s clip case removed from
+        <code>clipLargestField</code>, both <code>TestAppendClipsEverySessionPolicySlice/Tools</code> and
+        <code>TestClipLargestFieldCoversEverySliceField/Tools</code> failed with &ldquo;event 1 (session.policy)
+        is still 10243174/12585779 bytes after 8 clips &mdash; refusing to write a line no reader could read
+        back&rdquo; &mdash; the exact F1 bug, reproduced and then re-fixed; re-run &rarr; PASS again<br>
+        <b>F3 mutation-tested against the reviewer's own proof</b>: a scratch fixture appending
+        <code>TypeSessionStart</code>/<code>TypeSessionReady</code> with no <code>WithPosture</code> call
+        anywhere &rarr; <code>TestEveryWithPostureCallHasAMatchingSessionPolicy</code> PASSED (confirming the
+        gap F3 reported), <code>TestEverySessionStartSiteHasAMatchingSessionPolicy</code> FAILED with
+        &ldquo;func tenthDoorNoPolicy appends session.start&hellip;but never reaches
+        recorder.NewSessionPolicy&hellip;&rdquo;; fixture removed, both PASS<br>
+        <b>F6 proven directly</b>: a scratch test appending <code>session.policy</code> with 3,000,000
+        empty-string <code>Allow</code> entries, and a second with 500,000 zero-value <code>EvSecret</code>
+        entries &mdash; both PASS, 1 event recorded each (pre-fix, per the reviewer's own numbers, these
+        marshal to 9&nbsp;MB/11&nbsp;MB lines the old <code>bytes &gt; 0</code> guard could not see)<br>
+        <code>go test -fuzz=FuzzAppendFieldValues -fuzztime=60s ./internal/recorder/</code> &rarr; PASS, 117447
+        execs, 261 interesting corpus entries, 0 crashers<br>
+        <code>make vuln</code> &rarr; &ldquo;No vulnerabilities found.&rdquo;<br>
+        <code>make docs</code> &rarr; regenerated identically (<code>llms.txt 6749 bytes &middot; llms-full.txt
+        606926 bytes, ~157667 tokens</code>, unchanged from the P7-2 row above); no field-shape change, no repo
+        diff from the regenerate &mdash; expected, since none of F1&ndash;F6 add or rename a field<br>
+        <b>Real boot, F2</b>: <code>kelyfos run --image base --cpus 5 --mem 823M</code> &rarr; sandbox
+        <code>fe53813f</code> ready; <code>kelyfos snapshot save --sandbox fe53813f --name f2snap</code>;
+        sandbox stopped; <code>kelyfos snapshot restore --name f2snap</code> &rarr; sandbox <code>7e18b560</code>;
+        <code>session.policy</code> read back from raw JSONL: <code>vcpu_count:5 mem_mib:823
+        parent_session:&quot;fe53813f&quot;</code> &mdash; both fields present and correct, where before the fix
+        they were silently absent on every restore; <code>kelyfos verify</code> &rarr; &ldquo;chain intact, 5
+        events verified&rdquo;<br>
+        <b>Real boot, F4</b>: a team config with one agent <code>master</code>, <code>[team.agent.spawn] max=1
+        image=[&quot;base&quot;] lifetime=&quot;20s&quot;</code>; <code>kelyfos team up</code> &rarr; master
+        <code>871624ef</code> ready; <code>team_spawn({&quot;image&quot;:&quot;base&quot;})</code> called over
+        MCP against the master &rarr; <code>master-spawn-1</code>; chain read back from raw JSONL:
+        <code>session.policy</code> for <code>master-spawn-1</code> carries
+        <code>max_runtime_ms:20000</code> (matching the 20s lifetime, absent before the fix), followed by a
+        <code>team.spawn</code> event with <code>kind:despawn</code> ~20s later, proving the ceiling was not
+        only recorded but genuinely enforced; <code>kelyfos verify</code> &rarr; &ldquo;chain intact, 8 events
+        verified&rdquo;<br>
+        <code>python3 tools/check-plan.py</code> (host) &rarr; &ldquo;PLAN.html is coherent: 99 tasks, 78
+        checked, 64 decisions&rdquo;<br>
+        not self-ticked, not pushed, not merged; standing by for RECORD-surface review of this fix round before
+        P7-3 starts (Lane 1 is strictly serial). F5 needs either a rebase onto <code>main</code> or explicit
+        permission to merge it, reported to the orchestrator rather than worked around.</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
@@ -5564,6 +5665,29 @@ after:
         verification (&ldquo;aarch64 is build-only here and boot-verified on the dev machine&rdquo;). Evidence and
         its scope limits are in the Progress Log entry beside this row. Real CI reconciliation resumes the session
         Actions is restored.</td></tr>
+    <tr><td class="mono">D65</td><td class="mono">2026-08-27</td>
+        <td><b>The door-enumerating test for <code>session.policy</code> runs two mechanisms, not the one
+        <code>docs/policy-record.md</code> &sect;9.3 literally describes.</b> The review that reopened P7-2 (F3)
+        found <code>host/policy_wiring_test.go</code>'s existing test starts from <code>WithPosture</code> call
+        sites rather than from <code>session.start</code>, so a hypothetical door that appends
+        <code>TypeSessionStart</code>/<code>TypeSessionReady</code> directly, skipping <code>WithPosture</code>
+        entirely, would pass it silently &mdash; proven with a scratch fixture. &sect;9.3 asks for a single test
+        enumerating the nine <code>session.start</code> sites. Rather than replace the existing test,
+        <code>TestEverySessionStartSiteHasAMatchingSessionPolicy</code> is added alongside it, and both now run.</td>
+        <td>The existing <code>WithPosture</code>-based test is not redundant: it is mutation-tested at
+        per-closure granularity (it caught P7-2's own <code>broker.OnSpawn</code> gap) and would catch a door that
+        calls <code>WithPosture</code> and then forgets <code>NewSessionPolicy</code> in some scope other than
+        the top-level function &mdash; a shape the new, coarser-grained <code>session.start</code>-based test does
+        not reliably distinguish. Replacing it to match &sect;9.3's "one test" phrasing exactly would trade away
+        real, proven coverage to satisfy a word count. Keeping both means a tenth door is caught two independent
+        ways: skip <code>WithPosture</code> and the new test catches it; call it and forget the policy, in any
+        scope, and the old one does. The new test itself needed a second correction while being written: an
+        earlier version recognised call sites named only <code>NewSessionPolicy</code>/<code>agentPolicyEvent</code>
+        as evidence of wiring, and failed for real on <code>host/fork.go</code>'s <code>forkCmd</code>, which
+        reaches <code>NewSessionPolicy</code> two calls away through a third helper, <code>recordFork</code> &mdash;
+        the identical hand-maintained-list shape F1 found in <code>clipLargestField</code>, one file over. Fixed
+        by a transitive call-graph reachability walk (<code>reachesSessionPolicy</code>) instead of a fixed name
+        list, so a helper added at any depth is covered without this test needing to know its name.</td></tr>
     <!-- Claude Code: append rows above this line. -->
   </table>
 </section>
