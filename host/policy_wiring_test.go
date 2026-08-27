@@ -179,7 +179,7 @@ func checkPolicyWiring(t *testing.T, file string, f *ast.File) int {
 //     which is the exact hand-maintained-list shape F1 and F3 both found
 //     wrong elsewhere in this phase, and it failed on forkCmd for exactly
 //     that reason the first time this test ran for real. Reachability
-//     through the package's actual call graph — reachesSessionPolicy below —
+//     through the package's actual call graph — reachesFunction below —
 //     closes that the same way reflection closed it for clipLargestField:
 //     a helper added next month, at any depth, is covered the day it lands.
 //
@@ -236,7 +236,7 @@ func TestEverySessionStartSiteHasAMatchingSessionPolicy(t *testing.T) {
 // checkSessionStartWiring walks one file's top-level functions. For every one
 // that appends a recorder.Event literal with Type: recorder.TypeSessionStart,
 // it requires that same function to reach recorder.NewSessionPolicy —
-// directly or transitively, per reachesSessionPolicy — unless the literal
+// directly or transitively, per reachesFunction — unless the literal
 // also carries Reason: recorder.ReasonServeMCP (docs/policy-record.md §4.1).
 // It returns how many session.start sites it found, so the caller can
 // confirm it looked in the right place at all.
@@ -262,7 +262,7 @@ func checkSessionStartWiring(t *testing.T, file string, f *ast.File, funcsByName
 		}
 		sites += len(lits)
 
-		hasPolicy := reachesSessionPolicy(fn, funcsByName, map[string]bool{})
+		hasPolicy := reachesFunction(fn, "NewSessionPolicy", funcsByName, map[string]bool{})
 		for _, lit := range lits {
 			if isServeMCPAuditLiteral(lit) {
 				continue
@@ -280,14 +280,19 @@ func checkSessionStartWiring(t *testing.T, file string, f *ast.File, funcsByName
 	return sites
 }
 
-// reachesSessionPolicy reports whether fn's body — including every nested
+// reachesFunction reports whether fn's body — including every nested
 // closure, so a broker.OnSpawn-shaped FuncLit is covered without a special
-// case — calls recorder.NewSessionPolicy, either directly or by calling
+// case — calls a function named target, either directly or by calling
 // another function defined in the host package that itself (transitively)
 // does. visited guards against infinite recursion on a call cycle and is
-// shared across the whole search from one session.start site, keyed by
-// function name.
-func reachesSessionPolicy(fn ast.Node, funcsByName map[string]*ast.FuncDecl, visited map[string]bool) bool {
+// shared across the whole search from one call site, keyed by function name.
+//
+// Generalised from a session.policy-only reachesSessionPolicy so
+// topology_wiring_test.go's team.topology check (F2, the review that
+// reopened P7-3) could reuse the same walk for a second target rather than
+// duplicating it — the one function this file needed twice stayed one
+// function.
+func reachesFunction(fn ast.Node, target string, funcsByName map[string]*ast.FuncDecl, visited map[string]bool) bool {
 	found := false
 	var next []string
 	ast.Inspect(fn, func(n ast.Node) bool {
@@ -299,7 +304,7 @@ func reachesSessionPolicy(fn ast.Node, funcsByName map[string]*ast.FuncDecl, vis
 			return true
 		}
 		name := calleeName(call)
-		if name == "NewSessionPolicy" {
+		if name == target {
 			found = true
 			return false
 		}
@@ -320,7 +325,7 @@ func reachesSessionPolicy(fn ast.Node, funcsByName map[string]*ast.FuncDecl, vis
 		if !ok {
 			continue // not a function this package defines — nothing to recurse into
 		}
-		if reachesSessionPolicy(callee, funcsByName, visited) {
+		if reachesFunction(callee, target, funcsByName, visited) {
 			return true
 		}
 	}
@@ -332,7 +337,7 @@ func reachesSessionPolicy(fn ast.Node, funcsByName map[string]*ast.FuncDecl, vis
 // method call or a package-qualified call like recorder.NewSessionPolicy
 // (the package qualifier itself is dropped, the same way callsAny already
 // treats it elsewhere in this file). Anything else (a call through a value,
-// e.g. a func-typed field or variable) returns "", which reachesSessionPolicy
+// e.g. a func-typed field or variable) returns "", which reachesFunction
 // treats as a dead end rather than a false match.
 func calleeName(call *ast.CallExpr) string {
 	switch fn := call.Fun.(type) {

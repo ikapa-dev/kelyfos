@@ -75,6 +75,10 @@ const (
 	// docs/policy-record.md §3 gives (a team's session.start opens one chain
 	// for several machines, and session.policy describes one).
 	TypeSessionPolicy = "session.policy"
+	// TypeTeamTopology is P7-3's addition: the resolved shape of a team —
+	// its agents, edges and store rules — written once at boot
+	// (docs/policy-record.md §3, §6).
+	TypeTeamTopology = "team.topology"
 )
 
 // ReasonServeMCP marks a session.start as a server's own session rather than a
@@ -256,6 +260,21 @@ type Event struct {
 	Tools         []string   `json:"tools,omitempty"`
 	ParentSession string     `json:"parent_session,omitempty"`
 	Traceparent   string     `json:"traceparent,omitempty"`
+
+	// team.topology (P7-3, docs/policy-record.md §6). The resolved shape of
+	// a team, written once at boot, after every agent's own
+	// session.ready/session.policy pair (§3): who is in it and each one's
+	// own sandbox id and fork-template group; the edges the plan declared,
+	// fully expanded; the [[team.store.key]] rules; and whether payloads are
+	// captured. Positions 20-23, appended here in the order §6 fixes as
+	// normative (§9.2). CPUQuota (above, shared with resource.oom and
+	// resource.summary) is reused a second time here for the team-wide cap —
+	// no new field for it, the same reuse §5's three shared fields already
+	// established for session.policy.
+	Agents         []EvAgent    `json:"agents,omitempty"`
+	Edges          []string     `json:"edges,omitempty"`
+	StoreKeys      []EvStoreKey `json:"store_keys,omitempty"`
+	RecordPayloads *bool        `json:"record_payloads,omitempty"`
 }
 
 // WithPosture fills the two fields that say which walls were around a machine.
@@ -342,6 +361,51 @@ func NewSessionPolicy(agent string, p PolicyFields) Event {
 		Tools:         p.Tools,
 		ParentSession: p.ParentSession,
 		Traceparent:   p.Traceparent,
+	}
+}
+
+// EvAgent is one resolved team member on a team.topology.
+type EvAgent struct {
+	Name    string `json:"name"`
+	Sandbox string `json:"sandbox"`
+	// Group is the fork-template key (host/teamtemplate.go's templateKey,
+	// already a content hash, never a filesystem path) shared by every agent
+	// forked from the same in-memory template. Empty means this agent booted
+	// cold.
+	Group string `json:"group,omitempty"`
+}
+
+// EvStoreKey is one [[team.store.key]] rule on a team.topology.
+type EvStoreKey struct {
+	Name  string   `json:"name"`
+	Read  []string `json:"read,omitempty"`
+	Write []string `json:"write,omitempty"`
+}
+
+// TopologyFields is everything team.topology declares about the team,
+// assembled by the one door (host/team.go's raiseTeam) and handed whole to
+// NewTeamTopology — the same reasoning PolicyFields gives for
+// NewSessionPolicy, applied to a struct with four fields instead of nineteen.
+type TopologyFields struct {
+	Agents         []EvAgent
+	Edges          []string
+	StoreKeys      []EvStoreKey
+	CPUQuota       int
+	RecordPayloads *bool
+}
+
+// NewTeamTopology is team.topology's one constructor (docs/policy-record.md
+// §6, §9.3). Carries no Agent field of its own: team.topology describes the
+// team, not one machine, the same scope session.start/session.end already
+// use for a team (docs/policy-record.md §3).
+func NewTeamTopology(f TopologyFields) Event {
+	return Event{
+		Type:           TypeTeamTopology,
+		Agents:         f.Agents,
+		Edges:          f.Edges,
+		StoreKeys:      f.StoreKeys,
+		CPUQuota:       f.CPUQuota,
+		RecordPayloads: f.RecordPayloads,
 	}
 }
 
@@ -629,6 +693,11 @@ func fitUnderMaxLine(e *Event) error {
 // Extending this list is still required in the same commit that adds a new
 // slice field to Event; that test is what makes forgetting loud instead of
 // silent.
+//
+// P7-3 added three more: Edges is string-shaped like Cmd; Agents
+// ([]EvAgent) and StoreKeys ([]EvStoreKey) are struct slices, the same shape
+// Secrets already established, each with its own *Bytes measurement and
+// clip below.
 func clipLargestField(e *Event) bool {
 	target := largestStringField(e)
 	best := 0
@@ -650,6 +719,9 @@ func clipLargestField(e *Event) bool {
 		{len(e.Tools), stringsBytes(e.Tools), func() { e.Tools = clipStrings(e.Tools, "tool names") }},
 		{len(e.Secrets), secretsBytes(e.Secrets), func() { e.Secrets = clipSecrets(e.Secrets) }},
 		{len(e.Ports), portsBytes(e.Ports), func() { e.Ports = clipPorts(e.Ports) }},
+		{len(e.Agents), agentsBytes(e.Agents), func() { e.Agents = clipAgents(e.Agents) }},
+		{len(e.Edges), stringsBytes(e.Edges), func() { e.Edges = clipStrings(e.Edges, "edges") }},
+		{len(e.StoreKeys), storeKeysBytes(e.StoreKeys), func() { e.StoreKeys = clipStoreKeys(e.StoreKeys) }},
 	}
 	// Guarding on element count rather than "bytes > 0" (F6): stringsBytes and
 	// secretsBytes measure element content only, not the per-element JSON
@@ -722,6 +794,48 @@ func secretsBytes(s []EvSecret) int {
 // docs/policy-record.md).
 func clipSecrets(s []EvSecret) []EvSecret {
 	return []EvSecret{{Name: fmt.Sprintf("...(clipped from %d bytes across %d secrets)", secretsBytes(s), len(s))}}
+}
+
+// agentsBytes is Agents' size, the same comparison secretsBytes gives
+// Secrets: every field of every entry, plus the same per-element JSON
+// framing estimate F6 gave secretsBytes (§9.1 of docs/policy-record.md
+// covers Agents as one of P7-3's three new invisible-to-reflection slices).
+func agentsBytes(a []EvAgent) int {
+	n := 0
+	for _, ag := range a {
+		n += len(ag.Name) + len(ag.Sandbox) + len(ag.Group) + secretsPerElementOverhead
+	}
+	return n
+}
+
+// clipAgents replaces an oversized Agents slice with one placeholder entry
+// noting how many were dropped and how large they were — clipSecrets' own
+// pattern. Not guest-influenced in practice (agent names and sandbox ids
+// both come from the operator's kelyfos.toml and this host's own id
+// minting), but still a slice reflection cannot see, so it is clipped
+// rather than left untested by omission (the same reasoning Ports and Argv
+// already carry above).
+func clipAgents(a []EvAgent) []EvAgent {
+	return []EvAgent{{Name: fmt.Sprintf("...(clipped from %d bytes across %d agents)", agentsBytes(a), len(a))}}
+}
+
+// storeKeysBytes is StoreKeys' size. Read and Write are themselves []string,
+// so their own stringsBytes — which already carries its own per-element
+// framing estimate — is what is added in here, not just their string
+// content, the same way a nested slice's real marshalled cost has to be
+// measured rather than assumed away.
+func storeKeysBytes(s []EvStoreKey) int {
+	n := 0
+	for _, k := range s {
+		n += len(k.Name) + stringsBytes(k.Read) + stringsBytes(k.Write) + secretsPerElementOverhead
+	}
+	return n
+}
+
+// clipStoreKeys replaces an oversized StoreKeys slice with one placeholder
+// entry noting how many were dropped and how large they were.
+func clipStoreKeys(s []EvStoreKey) []EvStoreKey {
+	return []EvStoreKey{{Name: fmt.Sprintf("...(clipped from %d bytes across %d store keys)", storeKeysBytes(s), len(s))}}
 }
 
 // portsBytes estimates what Ports contributes to the marshalled line: four

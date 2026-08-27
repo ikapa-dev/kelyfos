@@ -2,6 +2,8 @@ package recorder
 
 import (
 	"encoding/json"
+	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -44,9 +46,10 @@ func TestTheEventFieldOrderIsFrozen(t *testing.T) {
 		Agent: "a", Peer: "p", Kind: "k", Outcome: "o",
 		CPUSeconds: 1, PeakRSSKiB: 1, NetInBytes: 1, NetOutBytes: 1,
 		DiskReadBytes: 1, DiskWriteBytes: 1, VcpuCount: 1, CPUQuota: 1,
-		Args:  "a",
-		Tool:  "t",
-		Added: 1, Modified: 1, Deleted: 1,
+		BlockedPackets: 1, // see the reflection assertion below
+		Args:           "a",
+		Tool:           "t",
+		Added:          1, Modified: 1, Deleted: 1,
 		Jailed:    &yes,
 		GuestPort: 1,
 		Profile:   "p",
@@ -54,16 +57,42 @@ func TestTheEventFieldOrderIsFrozen(t *testing.T) {
 		NetMbpsRx: 1, NetMbpsTx: 1, DiskIOPS: 1, DiskMbps: 1,
 		MaxRuntimeMS: 1, IdleTimeoutMS: 1,
 		Allow: []string{"a"}, Ports: []int{1},
-		Secrets:       []EvSecret{{Name: "n", Host: "h", Path: "p"}},
-		Workspace:     "w",
-		Plugins:       []string{"p"},
-		Forwards:      []string{"f"},
-		RootfsSHA256:  "r",
-		KernelSHA256:  "k",
-		Tools:         []string{"t"},
-		ParentSession: "s",
-		Traceparent:   "t",
+		Secrets:        []EvSecret{{Name: "n", Host: "h", Path: "p"}},
+		Workspace:      "w",
+		Plugins:        []string{"p"},
+		Forwards:       []string{"f"},
+		RootfsSHA256:   "r",
+		KernelSHA256:   "k",
+		Tools:          []string{"t"},
+		ParentSession:  "s",
+		Traceparent:    "t",
+		Agents:         []EvAgent{{Name: "n", Sandbox: "s", Group: "g"}},
+		Edges:          []string{"e"},
+		StoreKeys:      []EvStoreKey{{Name: "n", Read: []string{"r"}, Write: []string{"w"}}},
+		RecordPayloads: &yes,
 	}
+
+	// The fixture above must set every field on Event, not only the ones
+	// `want` below already lists by name — otherwise a field inserted into
+	// an omitempty-empty slot (rather than appended after the last one)
+	// would marshal to nothing here and this test would never notice the
+	// insertion, only ever compare the fields it was already told to expect.
+	// The P7-2 review flagged exactly this landmine as something for P7-3 to
+	// close ("insertion into an omitempty-empty slot is not caught") — and
+	// this assertion, on its first real run, immediately found a second,
+	// unrelated gap: BlockedPackets (F14/S15) was appended to Event after
+	// this test was written and neither the fixture above nor `want` below
+	// had ever gained it, so its position was never actually verified. Fixed
+	// in the same commit rather than left for a sixth person to trip over.
+	ev := reflect.ValueOf(e)
+	for i := 0; i < ev.NumField(); i++ {
+		if ev.Field(i).IsZero() {
+			t.Fatalf("this test's fixture leaves Event.%s at its zero value — every field must be set "+
+				"to something non-empty, or a field inserted into this now-empty slot (rather than "+
+				"appended after the last one) could pass this test unnoticed", ev.Type().Field(i).Name)
+		}
+	}
+
 	body, err := json.Marshal(e)
 	if err != nil {
 		t.Fatal(err)
@@ -85,6 +114,7 @@ func TestTheEventFieldOrderIsFrozen(t *testing.T) {
 		"agent", "peer", "kind", "outcome",
 		"cpu_seconds", "peak_rss_kib", "net_in_bytes", "net_out_bytes",
 		"disk_read_bytes", "disk_write_bytes", "vcpu_count", "cpu_quota_percent",
+		"blocked_packets",
 		"args",
 		"tool",
 		"added", "modified", "deleted",
@@ -100,6 +130,10 @@ func TestTheEventFieldOrderIsFrozen(t *testing.T) {
 		"workspace", "plugins", "forwards",
 		"rootfs_sha256", "kernel_sha256",
 		"tools", "parent_session", "traceparent",
+		// team.topology (P7-3, docs/policy-record.md §6) — positions 20-23,
+		// normative per §9.2. cpu_quota_percent (already listed above) is
+		// reused rather than repeated here.
+		"agents", "edges", "store_keys", "record_payloads",
 	}
 
 	got := keysInOrder(t, string(body))
@@ -119,6 +153,77 @@ func TestTheEventFieldOrderIsFrozen(t *testing.T) {
 				"  makes every existing chain report as modified — which is tamper detection firing\n"+
 				"  on legitimate records, the loudest wrong answer this product can give.\n"+
 				"  got:  %v\n  want: %v", i, got[i], want[i], got, want)
+		}
+	}
+
+	// The check above only ever looked at Event's own top-level keys:
+	// keysInOrder decodes each value as an opaque json.RawMessage and
+	// discards it, so an object-valued field (error) or an object-array
+	// field (secrets, agents, store_keys) had its own internal key order
+	// checked by nothing here. The review that reopened P7-3 (F3) proved
+	// the gap: swapping EvAgent.Name and EvAgent.Sandbox left this whole
+	// test green, even though it changes the hash digest of every
+	// team.topology event ever written — the identical "field appended and
+	// never inserted" question this test already asks at the top level,
+	// one type down. Pre-existing for EvError/EvSecret since P6-14/P7-2;
+	// P7-3 doubled the exposed surface by adding EvAgent and EvStoreKey,
+	// which is what surfaced it.
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(body, &top); err != nil {
+		t.Fatal(err)
+	}
+	for key, nestedWant := range nestedFieldOrder {
+		raw, ok := top[key]
+		if !ok {
+			t.Fatalf("the fixture's %q is absent from the marshalled event — this check needs it set", key)
+		}
+		if key == "error" {
+			checkNestedOrder(t, key, raw, nestedWant)
+			continue
+		}
+		var elems []json.RawMessage
+		if err := json.Unmarshal(raw, &elems); err != nil {
+			t.Fatalf("%s: %v", key, err)
+		}
+		if len(elems) == 0 {
+			t.Fatalf("the fixture's %q is an empty array — this check needs at least one element", key)
+		}
+		for i, el := range elems {
+			checkNestedOrder(t, fmt.Sprintf("%s[%d]", key, i), el, nestedWant)
+		}
+	}
+}
+
+// nestedFieldOrder pins the key order EvError, EvSecret, EvAgent and
+// EvStoreKey each marshal in. Each list is literal, deliberately not
+// derived from reflect.TypeOf(EvAgent{}) or similar, for the same reason
+// `want` above is literal: a reflection-derived expectation reorders itself
+// in lockstep with a reordered struct and could never catch the reordering
+// it exists to catch — it would still "expect" whatever order the same
+// reordered struct actually produces.
+var nestedFieldOrder = map[string][]string{
+	"error":      {"kind", "message"},
+	"secrets":    {"name", "host", "path"},
+	"agents":     {"name", "sandbox", "group"},
+	"store_keys": {"name", "read", "write"},
+}
+
+// checkNestedOrder asserts one JSON object's own key order matches want —
+// keysInOrder is generic over any JSON object, not only Event's own top
+// level, so this is the identical comparison TestTheEventFieldOrderIsFrozen
+// makes above, applied one level down.
+func checkNestedOrder(t *testing.T, path string, raw json.RawMessage, want []string) {
+	t.Helper()
+	got := keysInOrder(t, string(raw))
+	if len(got) != len(want) {
+		t.Fatalf("%s has %d fields and this test knows %d.\n  got:  %v\n  want: %v",
+			path, len(got), len(want), got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("%s's field order changed at position %d: %q where %q was expected — every\n"+
+				"  digest computed over an event carrying this object just changed.\n"+
+				"  got:  %v\n  want: %v", path, i, got[i], want[i], got, want)
 		}
 	}
 }

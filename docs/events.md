@@ -129,9 +129,10 @@ emptied in place, so nothing about the format moved.
 `sandbox` names the **session**, and a team is one session by design (E2-1), so
 inside a team every event carries the team's id there rather than the id of the
 machine it came from. The `agent` field is what says which machine, and inside a
-team it appears on every type except `session.start` and `session.end`, which
-are about the team as a whole. A reader that sees no `agent` is looking at a
-single sandbox's session, or at one of those two.
+team it appears on every type except `session.start`, `session.end` and
+`team.topology`, which are about the team as a whole rather than one machine in
+it. A reader that sees no `agent` is looking at a single sandbox's session, or
+at one of those three.
 
 A `kelyfos serve-mcp` process is a session in the same sense, and its machines
 are sandboxes rather than agents: `agent` there carries the sandbox id a call
@@ -712,6 +713,24 @@ and `sandbox_fork` apply none of `cpu_quota`, `scratch`, the rate caps or
 either budget, so `session.policy` on those three doors correctly shows none
 of them — the record is honest about an enforcement gap docs/policy-record.md
 §4's own research found while wiring these doors, not silent about it.
+
+### `team.topology`
+The resolved shape of a team, written once at boot — after every agent's own
+`session.ready`/`session.policy` pair, so every agent's own sandbox id is
+actually known (`docs/policy-record.md` §3, written before P7-3 built it).
+Carries no `agent` field of its own: it describes the team, not one machine,
+the same scope `session.start` and `session.end` already use for a team. A
+runtime spawn's later attach and detach are already covered by `team.spawn`
+(above), so nothing here needs to anticipate one — this event is the roster at
+the moment the team came up, not a live view of it.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `agents` | object array | Every resolved agent: `name`, its own `sandbox` id — the handle `kelyfos diff` and `kelyfos shell` take — and `group`, the fork-template key it was forked from. `group` is absent when the agent booted cold. |
+| `edges` | string array | The resolved, expanded `"from -> to"` pairs — a star written as one line in `kelyfos.toml` becomes every pair it expands to, the same list `kelyfos team ps` already shows. |
+| `store_keys` | object array | Every `[[team.store.key]]` rule: `name`, `read` and `write`. Absent when the team's store is not enabled. |
+| `cpu_quota_percent` | integer | The collective slice's cap — `[team.resources] cpu_quota`. The same field `resource.oom`, `resource.summary` and `session.policy` already carry, reused here for the team-wide number rather than one machine's. Absent when `[team.resources] cpu_quota` is not set — a team can still have a shared cgroup for another reason (a per-agent or per-spawn `cpu_quota`, which needs one too) with this field absent even so. |
+| `record_payloads` | boolean | Whether `[team] record_payloads` is set. Always present on this event, unlike most other fields here: `false` is distinguishable from "not a team," the same reason `jailed` and `overlay` are recorded as pointers rather than left absent. |
 
 ---
 

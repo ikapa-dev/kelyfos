@@ -434,6 +434,13 @@ func raiseTeam(parent context.Context, opt teamOptions) (*teamRig, error) {
 	started := time.Now()
 	candidates, cold := plan.forkPlan()
 	groups := map[string][]int{}
+	// groupOf is EvAgent.Group (P7-3, docs/policy-record.md §7): the
+	// template *key* an agent forked from, keyed by its index into
+	// plan.agents. Kept separately from groups above, which maps to the
+	// template's on-disk dir — team.topology needs the content hash
+	// (templateKey's own return value), never a filesystem path, the same
+	// distinction the field's own doc comment draws.
+	groupOf := map[int]string{}
 	for _, idx := range candidates {
 		key, err := templateKey(plan.agents[idx[0]], arch)
 		if err != nil {
@@ -444,6 +451,9 @@ func raiseTeam(parent context.Context, opt teamOptions) (*teamRig, error) {
 		}
 		if dir, ok := lookupTemplate(key); ok {
 			groups[dir] = idx
+			for _, i := range idx {
+				groupOf[i] = key
+			}
 			continue
 		}
 		cold = append(cold, idx...)
@@ -560,6 +570,26 @@ func raiseTeam(parent context.Context, opt teamOptions) (*teamRig, error) {
 		}
 		fmt.Fprintf(out, "  %-12s %s\n", "cgroup", teamSlice.Path)
 	}
+
+	// team.topology (P7-3, docs/policy-record.md §3, §6): the resolved shape
+	// of the team, written once, here — after the loop above wrote every
+	// agent's own session.ready/session.policy pair, so every sandbox id is
+	// actually known, and after teamSlice just above resolved the collective
+	// cgroup's own cap. A runtime spawn's later attach and detach are already
+	// covered by team.spawn (§3), so nothing here needs to anticipate one.
+	agents := make([]recorder.EvAgent, len(order))
+	for i, rig := range order {
+		agents[i] = recorder.EvAgent{Name: plan.agents[i].name, Sandbox: rig.sb.State.ID, Group: groupOf[i]}
+	}
+	storeKeys := make([]recorder.EvStoreKey, len(plan.storeRules))
+	for i, r := range plan.storeRules {
+		storeKeys[i] = recorder.EvStoreKey{Name: r.Name, Read: r.Read, Write: r.Write}
+	}
+	capture := plan.capture
+	_ = rec.Append(recorder.NewTeamTopology(recorder.TopologyFields{
+		Agents: agents, Edges: plan.edgeText, StoreKeys: storeKeys,
+		CPUQuota: plan.budget.CPUQuota, RecordPayloads: &capture,
+	}))
 
 	// A max_runtime is a host-side cap on one agent's wall clock, enforced here
 	// for the same reason the spawn lifetime is: the budget is the user's, and
