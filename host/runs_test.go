@@ -136,8 +136,94 @@ func TestReadRunOfAnEmptyFile(t *testing.T) {
 	if err := os.WriteFile(path, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := readRun(path, "deadbeef"); ok {
-		t.Error("an empty record produced a row")
+	if _, ok, err := readRun(path, "deadbeef"); ok || err != nil {
+		t.Errorf("an empty record produced a row or an error: ok=%v err=%v", ok, err)
+	}
+}
+
+// A session directory that exists but can't be opened — locked down, an I/O
+// error, anything short of ENOENT — is not the same fact as no session at all.
+// readRuns must tell the two apart: the former is a session that is there and
+// unreadable, which docs/events.md §6's "one row per session directory, no
+// more and no fewer" guarantee says has to be surfaced rather than silently
+// dropped from the count.
+func TestReadRunReportsUnreadableDirectoryRatherThanOmittingIt(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root ignores directory permissions, so this can't be exercised as root")
+	}
+	dir := t.TempDir()
+	sessionDir := filepath.Join(dir, "deadbeef")
+	if err := os.Mkdir(sessionDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(sessionDir, "events.jsonl")
+	if err := os.WriteFile(path, []byte(`{"seq":1}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(sessionDir, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(sessionDir, 0o755) // let t.TempDir() clean up afterward
+
+	_, ok, err := readRun(path, "deadbeef")
+	if ok {
+		t.Error("an unreadable session directory produced a row")
+	}
+	if err == nil {
+		t.Fatal("an unreadable session directory was collapsed to a bare false, not reported")
+	}
+	if os.IsNotExist(err) {
+		t.Errorf("a permission error was reported as not-exist: %v", err)
+	}
+}
+
+// The finding's own repro: two session directories, one locked down. runs
+// --all must keep the readable one and warn about the other on stderr rather
+// than silently truncating the list to just the readable row.
+func TestReadRunsWarnsAboutUnreadableSessionRatherThanDroppingIt(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root ignores directory permissions, so this can't be exercised as root")
+	}
+	base := t.TempDir()
+	t.Setenv("KELYFOS_CACHE", base)
+	sessionsDir := recorder.SessionsDir(base)
+	if err := os.MkdirAll(sessionsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	writeSession := func(id string) string {
+		d := filepath.Join(sessionsDir, id)
+		if err := os.Mkdir(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		ev := recorder.Event{
+			Seq: 1, TS: "2026-08-23T18:40:37.903Z", Type: recorder.TypeSessionStart,
+			Image: "dev", Arch: "arm64", Cwd: "/work",
+			Argv: []string{"/opt/build/bin/kelyfos", "run"},
+		}
+		blob, err := json.Marshal(ev)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(d, "events.jsonl"), append(blob, '\n'), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return d
+	}
+
+	writeSession("7f3c1a2b")
+	lockedDir := writeSession("aa11bb22")
+	if err := os.Chmod(lockedDir, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(lockedDir, 0o755)
+
+	rows, err := readRuns()
+	if err != nil {
+		t.Fatalf("readRuns: %v", err)
+	}
+	if len(rows) != 1 || rows[0].Session != "7f3c1a2b" {
+		t.Fatalf("expected only the readable session in the listing, got %+v", rows)
 	}
 }
 
@@ -181,9 +267,9 @@ func TestARowNeedsTheEndOfTheFileAndNotOnlyTheStart(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	row, ok := readRun(path, "7f3c1a2b")
-	if !ok {
-		t.Fatal("a complete record did not produce a row")
+	row, ok, err := readRun(path, "7f3c1a2b")
+	if !ok || err != nil {
+		t.Fatalf("a complete record did not produce a row: ok=%v err=%v", ok, err)
 	}
 	if row.Command != "kelyfos run -- make test" {
 		t.Errorf("command is %q", row.Command)

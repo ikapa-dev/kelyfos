@@ -294,6 +294,19 @@ reference described in the README and re-measured per release.
   `Policy` with a real parsed secret and asserts `%v`/`%+v` on the `Policy`, on `Policy.Secrets`, and
   on a `Secrets` element never contain the token, the same shape `TestSecretValueNeverFormats`
   already pins for a bare `Secret`.
+- **`kelyfos runs --all` treated a locked-down or otherwise unreadable session directory as if it
+  had never existed, in silence.** `readRun` (host/runs.go) passed every `os.Open` error, not just
+  the "no such session" case, through the same bare `false` its caller reads as "nothing here" —
+  so a permission-denied directory (or any other read error) vanished from the listing exactly like
+  a directory that genuinely was not a session, with nothing distinguishing the two. docs/events.md
+  §6 states the listing's guarantee as a count, "one row per session directory, no more and no
+  fewer," which a silent drop breaks. `readRun` now returns its error separately from its found/not-
+  found bool: `os.IsNotExist` still means "no session, say nothing," the same as before, but any
+  other error — permission denied, an I/O error — is reported by `readRuns` as a
+  `kelyfos: could not read session <id>: <err>` line on stderr instead of being folded into
+  "missing." Verified live in the Lima VM with the finding's own repro: two session directories, one
+  `chmod 000`'d — `kelyfos runs --all` now lists the readable one and warns about the other, where
+  the prior binary listed only the readable one with no warning at all.
 
 ---
 
