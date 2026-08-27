@@ -183,15 +183,18 @@ func checkTeamFileScope(cfg *config.Config) error {
 		return fmt.Errorf("%s:%d: [[plugin]] has no effect inside a team\n"+
 			"    a team boot does not launch plugin servers yet, so this block would parse "+
 			"and then silently do nothing\n"+
-			"    drop it, or run this plugin outside [team] with `kelyfos run` or `serve-mcp`",
+			"    drop it — `kelyfos run` and `serve-mcp` still launch it fine, from this exact "+
+			"file, [team] and all; only `kelyfos team up` refuses a file combining the two, "+
+			"and it has no --policy flag yet to point at a different, team-only file",
 			cfg.Path, cfg.Plugins[0].Line)
 	}
 	if len(cfg.Forwards) > 0 {
 		return fmt.Errorf("%s:%d: [[forward]] has no effect inside a team\n"+
 			"    a team boot does not open forwarded ports yet, so this block would parse "+
 			"and then silently do nothing\n"+
-			"    drop it, or forward this port outside [team] with `kelyfos run -p`",
-			cfg.Path, cfg.Forwards[0].Line)
+			"    drop it here and use `kelyfos run -p %d:%d` instead — a command-line -p "+
+			"replaces the file's [[forward]] list entirely, so it works even against this file",
+			cfg.Path, cfg.Forwards[0].Line, cfg.Forwards[0].Host, cfg.Forwards[0].Guest)
 	}
 	return nil
 }

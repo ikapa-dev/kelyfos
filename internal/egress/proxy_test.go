@@ -101,6 +101,30 @@ func TestEffectivePortsFallsBackToTheDefault(t *testing.T) {
 	}
 }
 
+// The custom-Ports branch must copy exactly the way the default branch does
+// (found in review): returning p.Ports itself would let a caller that
+// mutates what EffectivePorts gave it mutate the Policy's own Ports in
+// place, so a later allowsPort check would silently run against ports this
+// Policy was never actually configured with.
+func TestEffectivePortsCopiesACustomPortsSlice(t *testing.T) {
+	custom := []int{8443}
+	pol := &Policy{Ports: custom}
+	got := pol.EffectivePorts()
+	got[0] = 9999
+	if custom[0] == 9999 {
+		t.Error("EffectivePorts() returned the Policy's own backing array, not a copy")
+	}
+	if pol.Ports[0] == 9999 {
+		t.Error("mutating EffectivePorts()'s result mutated the Policy's own Ports")
+	}
+	if !pol.allowsPort(8443) {
+		t.Error("the Policy's real port stopped being allowed after the caller mutated its own copy")
+	}
+	if pol.allowsPort(9999) {
+		t.Error("mutating EffectivePorts()'s result widened what the Policy actually allows")
+	}
+}
+
 // D6's binding condition (2) is that a user can always prove which traffic the
 // proxy was able to read. That only holds if the value never understates it,
 // and for one path it did: an ordinary HTTP request is parsed, rewritten and

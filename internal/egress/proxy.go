@@ -102,14 +102,15 @@ type Attempt struct {
 // proxy carries when a Policy names none of its own. It is exported, named
 // and tested rather than left as the two bare integers `allowsPort` used to
 // compare against, because nothing before P7-4 gave a reader — a person or a
-// future view rendering a Policy — anywhere to look this up. There is no
-// caller anywhere in this codebase that ever sets Policy.Ports; every sandbox
-// this product boots is on this default, and docs/networking.md §6 and
-// EgressPort's own fix line (internal/denial) both say so. See P7-4 for why
-// this stayed a fixed property instead of becoming a kelyfos.toml key: opening
-// egress to arbitrary ports is a bigger and more security-relevant surface
-// than anything demanded it, so the smaller change — making the existing
-// fixed pair discoverable — is what shipped (D65).
+// future view rendering a Policy — anywhere to look this up. No caller in
+// production code ever sets Policy.Ports (tests do — see the Ports field
+// below); every sandbox this product boots is on this default, and
+// docs/networking.md §6 and EgressPort's own fix line (internal/denial) both
+// say so. See P7-4 for why this stayed a fixed property instead of becoming
+// a kelyfos.toml key: opening egress to arbitrary ports is a bigger and more
+// security-relevant surface than anything demanded it, so the smaller
+// change — making the existing fixed pair discoverable — is what shipped
+// (D65).
 //
 // A function returning a fresh slice each call, not an exported var: a shared
 // backing array would let one caller's in-place edit of what it thinks is its
@@ -149,9 +150,17 @@ func (p *Policy) allowsHost(host string) bool {
 // permitted" rather than "the fixed default applies" — which is exactly the
 // trap a future reader of the record (P7-2's session.policy) or a view
 // (P7-7/P7-8) would fall into without this (P7-4).
+//
+// Both branches return a slice this Policy does not itself hold a reference
+// into: the custom-Ports branch copies rather than returning p.Ports itself,
+// for the same reason DefaultPorts is a function and not a shared var — a
+// caller that mutated what it got back would otherwise mutate this Policy's
+// own Ports in place, and a port check made after that would silently be
+// checking against a different policy than the one that was configured
+// (found in review).
 func (p *Policy) EffectivePorts() []int {
 	if len(p.Ports) > 0 {
-		return p.Ports
+		return append([]int(nil), p.Ports...)
 	}
 	return DefaultPorts()
 }

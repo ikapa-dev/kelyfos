@@ -220,10 +220,11 @@ hoped for.
   field, but nothing in this codebase ever sets it — every `Policy` this
   product constructs leaves it empty, which is why `egress.DefaultPorts()`
   (`80`, `443`) is what actually applies, always. `Policy.EffectivePorts()` is
-  the one place that fact is computed, and it is what a reader of the record —
-  `session.policy`, and the run map and reach matrix that render it — reads
-  instead of the field directly, because the field alone reads as "nothing is
-  permitted" rather than "the fixed default applies" (P7-4, D65). Promoting
+  the one place that fact is computed; today `allowsPort` is its only caller,
+  and it is what P7-2's `session.policy` and the P7-7/P7-8 views will read
+  once they exist, instead of the field directly, because the field alone
+  reads as "nothing is permitted" rather than "the fixed default applies"
+  (P7-4, D65). Promoting
   `Ports` to a real key was considered and set aside: nothing has asked for a
   sandbox that can reach an arbitrary port, and widening what every sandbox in
   this product can reach is a bigger, more security-relevant change than

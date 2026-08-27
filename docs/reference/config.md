@@ -164,7 +164,7 @@ Who may read and write one key or glob.
 
 ## `[[plugin]]`
 
-One MCP server to run inside the guest; its tools are advertised as <name>_<tool> — refused when this file also has a [team] section, because a team boot does not launch plugin servers yet (P7-4).
+One MCP server to run inside the guest; its tools are advertised as <name>_<tool> — kelyfos team up refuses a file that also has a [team] section, because a team boot does not launch plugin servers yet (P7-4).
 
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
@@ -175,7 +175,7 @@ One MCP server to run inside the guest; its tools are advertised as <name>_<tool
 
 ## `[[forward]]`
 
-One host port carried to a guest-local port over vsock; the firewall is untouched — refused when this file also has a [team] section, because a team boot does not open forwarded ports yet (P7-4).
+One host port carried to a guest-local port over vsock; the firewall is untouched — kelyfos team up refuses a file that also has a [team] section, because a team boot does not open forwarded ports yet (P7-4).
 
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
