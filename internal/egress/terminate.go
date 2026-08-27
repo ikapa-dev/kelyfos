@@ -129,8 +129,7 @@ func (p *Proxy) terminate(client net.Conn, host string, port int, bound []*Secre
 			p.OnSecret(attached.Name, host)
 		}
 		if err != nil {
-			writeStatus(inner, http.StatusBadGateway, "kelyfos: "+err.Error())
-			p.report(Attempt{Host: host, Port: port, Reason: ReasonDialFailed})
+			p.reportDialFailure(inner, host, port, err)
 			return
 		}
 		p.scrubResponse(resp, host)
@@ -169,11 +168,17 @@ func (p *Proxy) terminate(client net.Conn, host string, port int, bound []*Secre
 // Content-Length and leaves a response that can only be framed by closing the
 // connection. Passing bytes through as the server sent them keeps the framing
 // the client expects — and keeps keep-alive working.
+// DialContext is dialContextSafe, not net/http's own default dialer: it
+// carries the same resolved-address check tunnel and forwardHTTP use, so a
+// secret-bound domain that is DNS-hijacked onto loopback, link-local or other
+// private/reserved space is refused here too, before the connect syscall
+// that would otherwise let a bound credential reach it (F2).
 var terminatedTransport = &http.Transport{
 	DisableCompression:  true,
 	ForceAttemptHTTP2:   false,
 	MaxIdleConnsPerHost: 4,
 	TLSClientConfig:     &tls.Config{MinVersion: tls.VersionTLS12},
+	DialContext:         dialContextSafe,
 }
 
 func (p *Proxy) upstream() http.RoundTripper {

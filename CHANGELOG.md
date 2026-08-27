@@ -102,6 +102,21 @@ reference described in the README and re-measured per release.
   component — including a pre-existing symlink at the final one — is a symlink, once as part of the
   writability decision and again immediately before the write itself, since a symlink can be
   planted in the gap between the two.
+- **The egress proxy allowed a connection based on a hostname string and never checked where that
+  hostname actually resolved to, so an allowlisted domain that is DNS-hijacked, or simply taken
+  over, could be pointed at `169.254.169.254` — a cloud instance's metadata endpoint, on port 80,
+  already in the proxy's always-allowed port set — and an ordinary guest CONNECT to that
+  already-allowed name would be tunnelled straight there.** `allowsHost` and `secretsFor` only ever
+  looked at the string a guest's CONNECT or request line named; nothing in `tunnel`, terminate's
+  upstream leg, or `forwardHTTP` ever looked at the address DNS actually sent the connection to.
+  All three now dial through a `net.Dialer.Control` hook that runs once per address a resolver
+  returns, immediately before the connect syscall for that address, refusing loopback, link-local
+  (169.254.0.0/16 included) and other private/reserved space — skipped only when the host being
+  dialled is already a literal IP address, since nothing is resolved there for DNS to have
+  hijacked, which is also why this changes nothing for the many tests in this package that dial
+  real loopback test servers by address. The refusal is recorded in the flight recorder the same
+  way any other egress denial is, as a new `unsafe_resolved_address` reason with an
+  `egress.resolved_addr` catalog entry naming the address and explaining why retrying will not help.
 
 ---
 

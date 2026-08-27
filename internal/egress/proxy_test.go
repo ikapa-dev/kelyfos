@@ -386,14 +386,14 @@ func TestAbsoluteFormHTTPSWithoutConnectIsRecordedTruthfully(t *testing.T) {
 	policy := Policy{Allow: []string{host}, Ports: []int{atoiOrZero(portStr)}, Secrets: []*Secret{secret}}
 	proxyAddr, attempts, secretUses, withheld, _ := proxyFor(t, upstream, policy, nil)
 
-	// forwardHTTP dials through http.DefaultTransport unconditionally — unlike
-	// the terminated path, which takes p.Upstream — so the process default has
-	// to trust this test's self-signed certificate for RoundTrip to succeed at
-	// all. Swapped for the length of this test and restored after; nothing
-	// else in this package runs concurrently with it.
-	prevTransport := http.DefaultTransport
-	http.DefaultTransport = upstream.Client().Transport
-	defer func() { http.DefaultTransport = prevTransport }()
+	// forwardHTTP fetches through forwardTransport (F2 gave it one of its own,
+	// separate from http.DefaultTransport, so its DialContext could carry the
+	// resolved-address check) — so this test's self-signed certificate has to
+	// be trusted there instead. Swapped for the length of this test and
+	// restored after; nothing else in this package runs concurrently with it.
+	prevTransport := forwardTransport
+	forwardTransport = upstream.Client().Transport
+	defer func() { forwardTransport = prevTransport }()
 
 	raw, err := net.Dial("tcp", proxyAddr)
 	if err != nil {

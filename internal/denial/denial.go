@@ -133,6 +133,18 @@ var (
 		Sample: V{"host": "api.stripe.com", "port": "8443"},
 	}
 
+	EgressResolvedAddr = Denial{
+		ID: "egress.resolved_addr",
+		Doc: "an allowlisted domain resolved to an address the proxy refuses to dial: loopback, " +
+			"link-local (which includes the cloud instance metadata address, 169.254.169.254), or " +
+			"other private/reserved space no legitimate public domain should ever resolve to",
+		Msg: "<host> resolved to <addr>, which this proxy will not dial",
+		Fix: "this is not something to work around by retrying — it usually means <host>'s DNS is " +
+			"compromised, hijacked or misconfigured; a destination that is genuinely internal does " +
+			"not belong behind this proxy's allowlist at all",
+		Sample: V{"host": "api.example.com", "addr": "169.254.169.254"},
+	}
+
 	SecretUnallowed = Denial{
 		ID:  "secret.unbound",
 		Doc: "a secret was bound to a domain the sandbox cannot reach, so it could never be sent",
@@ -346,7 +358,7 @@ func All() []Denial {
 		AllowProject, AllowResume, AllowSnapshot,
 		BudgetSandboxes,
 		CeilingFlag, CeilingResume, CeilingSnapshot, CeilingSnapshotUnknown, CeilingTool,
-		EgressHost, EgressPort,
+		EgressHost, EgressPort, EgressResolvedAddr,
 		ForwardClosed,
 		JailNoSudo,
 		ProfileNotEnforced,

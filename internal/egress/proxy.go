@@ -61,6 +61,13 @@ const (
 	ReasonBadRequest = "bad_request"
 	ReasonDialFailed = "upstream_unreachable"
 	ReasonPinned     = "tls_pinning_rejected_our_ca"
+	// ReasonUnsafeResolvedAddr is a dial refused after resolution: the
+	// allowlisted host named a domain, and that domain resolved to loopback,
+	// link-local (169.254.0.0/16 — cloud instance metadata — included) or
+	// other private/reserved space (F2). allowsHost only ever looked at the
+	// hostname string; this is the check that looks at where it actually
+	// leads.
+	ReasonUnsafeResolvedAddr = "unsafe_resolved_address"
 )
 
 // WithheldNotViaConnect belongs beside scope.go's own WithheldPath,
@@ -395,10 +402,12 @@ func (p *Proxy) handle(client net.Conn) {
 // tunnel handles CONNECT: the proxy never sees inside the connection, and says
 // so in the event it records.
 func (p *Proxy) tunnel(client net.Conn, host string, port int) {
-	upstream, err := net.DialTimeout("tcp", net.JoinHostPort(host, strconv.Itoa(port)), p.DialTimeout)
+	// dialerFor is what checks the address host actually resolves to before
+	// this connects to it (F2): allowsHost above only ever looked at the
+	// hostname string a guest's CONNECT named, never at where DNS sends it.
+	upstream, err := dialerFor(host, p.DialTimeout).Dial("tcp", net.JoinHostPort(host, strconv.Itoa(port)))
 	if err != nil {
-		p.report(Attempt{Host: host, Port: port, Reason: ReasonDialFailed})
-		writeStatus(client, http.StatusBadGateway, "kelyfos: "+err.Error())
+		p.reportDialFailure(client, host, port, err)
 		return
 	}
 	defer upstream.Close()
@@ -468,10 +477,13 @@ func (p *Proxy) forwardHTTP(client net.Conn, req *http.Request, host string, por
 	if req.URL.Host == "" {
 		req.URL.Host = net.JoinHostPort(host, strconv.Itoa(port))
 	}
-	resp, err := http.DefaultTransport.RoundTrip(req)
+	// forwardTransport, not http.DefaultTransport: its DialContext carries the
+	// same resolved-address check tunnel and terminate's upstream leg use, so
+	// this path cannot be the one an allowlisted-but-DNS-hijacked domain
+	// reaches a private address through (F2).
+	resp, err := forwardTransport.RoundTrip(req)
 	if err != nil {
-		p.report(Attempt{Host: host, Port: port, Reason: ReasonDialFailed})
-		writeStatus(client, http.StatusBadGateway, "kelyfos: "+err.Error())
+		p.reportDialFailure(client, host, port, err)
 		return
 	}
 	defer resp.Body.Close()
