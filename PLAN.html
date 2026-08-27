@@ -4423,6 +4423,109 @@ after:
         not self-ticked, not pushed, not merged; standing by for RECORD-surface review of this fix round before
         P7-3 starts (Lane 1 is strictly serial). F5 needs either a rebase onto <code>main</code> or explicit
         permission to merge it, reported to the orchestrator rather than worked around.</td></tr>
+    <tr><td class="mono">2026-08-27</td><td class="mono">P7-3</td>
+        <td>The reviewer confirmed GO on all four fixed P7-2 findings (F1&ndash;F4) and left F5 correctly
+        blocked; the orchestrator merged P7-0 and P7-2 into <code>main</code> and ticked both there. This
+        branch is unrebased and unaffected by that merge, per the orchestrator&rsquo;s own instruction.
+        <br><code>team.topology</code> implemented against <code>docs/policy-record.md</code> &sect;6, &sect;7,
+        exactly as specified: four new <code>Event</code> fields (<code>Agents []EvAgent</code>,
+        <code>Edges []string</code>, <code>StoreKeys []EvStoreKey</code>,
+        <code>RecordPayloads *bool</code>) appended at positions 20&ndash;23
+        (<code>internal/recorder/recorder.go</code>); <code>CPUQuota</code> reused a second time, in its
+        existing struct position, for the team-wide cap &mdash; no new field, matching &sect;6&rsquo;s own
+        &ldquo;*(existing)*&rdquo; row; <code>EvAgent</code>/<code>EvStoreKey</code> copied verbatim from
+        &sect;7; <code>TopologyFields</code>/<code>NewTeamTopology</code> as the one constructor, mirroring
+        <code>PolicyFields</code>/<code>NewSessionPolicy</code>; <code>TypeTeamTopology =
+        &quot;team.topology&quot;</code> added to <code>schema.go</code>, carrying no <code>agent</code>
+        field of its own per &sect;3.
+        <br><b>&sect;9.1&rsquo;s clip-extension landmine closed for all three new slices</b>: <code>Agents</code>
+        and <code>StoreKeys</code> get their own <code>*Bytes</code>/<code>clip*</code> pair (the same
+        pattern <code>Secrets</code> already established; <code>StoreKeys</code>&rsquo; own <code>Read</code>/
+        <code>Write</code> sub-slices are measured through <code>stringsBytes</code>, not assumed away),
+        <code>Edges</code> reuses <code>clipStrings</code>. Three new named subtests in
+        <code>TestAppendClipsEverySessionPolicySlice</code>, and &mdash; automatically, by construction, with
+        no code change needed in the test itself &mdash; three new cases in
+        <code>TestClipLargestFieldCoversEverySliceField</code> (the reflection-driven guard F1&rsquo;s fix
+        added), proving exactly the claim that test&rsquo;s own doc comment made about P7-3.
+        <br><b>Two non-blocking review notes acted on early</b>: <code>oversizedSliceValue</code> now asserts
+        its own built value actually exceeds <code>MaxLine</code> when marshalled, so a struct element with no
+        string field this function can grow (not <code>EvAgent</code> or <code>EvStoreKey</code> today, both
+        have one) would fail loudly rather than let the guard test pass vacuously.
+        <code>TestTheEventFieldOrderIsFrozen</code> gained the requested reflection assertion &mdash; every
+        <code>Event</code> field must be non-zero in the fixture &mdash; and it found a real, pre-existing gap
+        on its first run: <code>BlockedPackets</code> (F14/S15) was appended to <code>Event</code> after this
+        test was written and neither the fixture nor <code>want</code> had ever gained it, so its position was
+        never actually verified. Fixed in the same commit.
+        <br><b>A third hand-maintained list found and closed structurally, mid-task</b>: adding
+        <code>TypeTeamTopology</code> failed <code>TestSchemaDescribesNothingExtra</code>, whose
+        <code>real</code> map was a fixed list of every <code>Type*</code> constant, kept by hand, separate
+        from its sibling <code>TestSchemaCoversEveryType</code>&rsquo;s own AST-based scan of the same
+        constants. Refactored to share one <code>typeConstants</code> helper that reads the source, so neither
+        test can drift from what the const block actually declares &mdash; the identical shape of miss F1 and
+        F3 already found twice this task, closed the same way a third time rather than patched with one more
+        line.
+        <br><code>host/team.go</code>&rsquo;s <code>raiseTeam</code> wires it once, after the per-agent
+        ready/policy loop and the <code>teamSlice</code> resolve block, before the <code>max_runtime</code>
+        enforcement loop starts: <code>Agents</code> from <code>order</code>/<code>plan.agents</code> (name,
+        <code>rig.sb.State.ID</code>, and a new <code>groupOf</code> map &mdash; the fork template&rsquo;s
+        content-hash <code>key</code>, not <code>lookupTemplate</code>&rsquo;s on-disk <code>dir</code>, per
+        <code>EvAgent.Group</code>&rsquo;s own doc comment); <code>Edges</code> directly from
+        <code>plan.edgeText</code>; <code>StoreKeys</code> from <code>plan.storeRules</code>;
+        <code>CPUQuota</code> from <code>plan.budget.CPUQuota</code>; <code>RecordPayloads</code> from
+        <code>plan.capture</code>, addressed.
+        <br><code>docs/events.md</code> gained a <code>### team.topology</code> section mirroring
+        <code>### session.policy</code>&rsquo;s own style; <code>make docs</code> regenerated
+        <code>docs/reference/events.md</code> and both <code>llms*.txt</code> automatically.
+        <br>Not self-ticked: P7-3 is a RECORD-surface task and &sect;8 rule 10 holds it to review by an agent
+        that did not write it before the checkbox is set.</td>
+        <td>Inside <code>kelyfos-dev</code>, this branch: <code>gofmt -l .</code> &rarr; clean;
+        <code>go vet ./...</code> &rarr; clean; <code>go test ./...</code> &rarr; every package
+        <code>ok</code> or <code>[no test files]</code><br>
+        <code>go test -v ./host/...</code> &rarr; 195 <code>--- PASS</code> lines, 0 fail;
+        <code>go test -v ./internal/recorder/...</code> &rarr; 58 <code>--- PASS</code> lines (up from 52:
+        three new <code>TestAppendClipsEverySessionPolicySlice</code> subtests, three new
+        <code>TestClipLargestFieldCoversEverySliceField</code> subtests), 0 fail<br>
+        <code>go test -v -run TestTheEventFieldOrderIsFrozen ./internal/recorder/...</code> &rarr; PASS, after
+        fixing the <code>BlockedPackets</code> gap the new reflection assertion found on its first real run
+        (failed with &ldquo;this test&rsquo;s fixture leaves Event.BlockedPackets at its zero value&rdquo;
+        before the fix)<br>
+        <code>go test -v -run &quot;TestSchemaCoversEveryType|TestSchemaDescribesNothingExtra&quot;
+        ./internal/recorder/...</code> &rarr; both PASS after the <code>typeConstants</code> refactor (failed
+        with &ldquo;schema describes &quot;team.topology&quot;, which no Type* constant defines&rdquo; before
+        it, from the stale hand list)<br>
+        <code>go test -fuzz=FuzzAppendFieldValues -fuzztime=45s ./internal/recorder/</code> &rarr; PASS, 52167
+        execs, 270 interesting corpus entries, 0 crashers (a first attempt at 45s was killed by an external
+        signal mid-run with no crash recorded — an environment blip, not a code fault — and the immediate
+        re-run above is clean)<br>
+        <code>make vuln</code> &rarr; &ldquo;No vulnerabilities found.&rdquo;<br>
+        <b>Real boot, cold path</b>: a team config with <code>master</code>/<code>worker</code> (both
+        <code>base</code>, cold), one bidirectional edge, <code>[team.resources] cpu_quota = &quot;150%&quot;</code>,
+        <code>[team.store]</code> enabled with one <code>findings</code> rule, <code>record_payloads = true</code>
+        &rarr; <code>kelyfos team up</code> &rarr; master <code>214aad0d</code>, worker <code>077623c1</code>;
+        chain read back from raw JSONL: <code>team.topology</code> lands once, after both agents&rsquo;
+        <code>session.ready</code>/<code>session.policy</code> pairs &mdash;
+        <code>cpu_quota_percent:150 agents:[{name:master,sandbox:214aad0d},{name:worker,sandbox:077623c1}]
+        edges:[&quot;master -&gt; worker&quot;,&quot;worker -&gt; master&quot;]
+        store_keys:[{name:findings,read:[master],write:[worker]}] record_payloads:true</code> &mdash; every
+        field named in &sect;6 present and correct, <code>group</code> correctly absent on both (cold boot);
+        <code>kelyfos verify</code> &rarr; &ldquo;chain intact, 6 events verified&rdquo;<br>
+        <b>Real boot, fork path (the <code>Group</code> field)</b>: the same team stopped and booted again
+        &mdash; the first run cached a fork template &mdash; &rarr; both agents forked
+        (<code>115e7a0d</code>, <code>b70205cb</code>); <code>team.topology</code> read back: both
+        <code>agents</code> entries now carry <code>group:&quot;ab445d5181f722210bd9fa5df6b27782&quot;</code>,
+        the identical content-hash template key, confirming <code>Group</code> end to end; <code>kelyfos
+        verify</code> &rarr; &ldquo;chain intact, 6 events verified&rdquo;<br>
+        <code>make docs</code> &rarr; <code>docs/reference/events.md</code> gained the
+        <code>## team.topology</code> section automatically; <code>gendocs: llms.txt 6749 bytes &middot;
+        llms-full.txt 609786 bytes, about 158409 tokens</code> (up from 157667), logged per &sect;8 rule 9<br>
+        <code>python3 tools/check-plan.py</code> (host) &rarr; &ldquo;PLAN.html is coherent: 99 tasks, 78
+        checked, 64 decisions&rdquo;<br>
+        not self-ticked, not pushed, not merged; standing by for RECORD-surface review before P7-5 starts
+        (Lane 1 is strictly serial). No Decision Log row: implementation followed
+        <code>docs/policy-record.md</code> &sect;6/&sect;7/&sect;9 without deviation, and the three
+        hand-list-to-reflection refactors (F1&rsquo;s clip guard, this task&rsquo;s
+        <code>typeConstants</code>) are bug fixes and hardening within existing tests, not a change of
+        approach against a spec.</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>

@@ -2,6 +2,7 @@ package recorder
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"reflect"
 	"strings"
@@ -261,12 +262,13 @@ func TestAppendClipsOversizedEvErrorMessage(t *testing.T) {
 	}
 }
 
-// TestAppendClipsEverySessionPolicySlice is F8's fixture repeated for P7-2's
-// six new slice fields, named in docs/policy-record.md §9.1 as the ones the
-// same reflection gap misses: Allow, Secrets, Plugins, Forwards and Tools are
-// []string or []EvSecret, invisible to largestStringField the way Cmd always
-// was; Ports is []int and gets its own dedicated clip rather than a string
-// substitution. Each case is oversized on its own — nothing else on the event
+// TestAppendClipsEverySessionPolicySlice is F8's fixture repeated for P7-2
+// and P7-3's nine new slice fields, named in docs/policy-record.md §9.1 as
+// the ones the same reflection gap misses: Allow, Secrets, Plugins, Forwards,
+// Tools, Agents and StoreKeys are []string or a struct slice, invisible to
+// largestStringField the way Cmd always was; Ports is []int and gets its own
+// dedicated clip rather than a string substitution; Edges is []string like
+// Allow. Each case is oversized on its own — nothing else on the event
 // contributes — so the event vanishing here would be this field's clip
 // missing, not some other field masking it.
 //
@@ -275,8 +277,11 @@ func TestAppendClipsOversizedEvErrorMessage(t *testing.T) {
 // oversized Tools value made the whole event vanish, since clipLargestField's
 // list named the other five and stopped one short. Its subtest below is that
 // proof kept as a regression test, and TestClipLargestFieldCoversEverySliceField
-// further down backstops the whole list by construction so a seventh miss
-// cannot happen silently.
+// further down backstops the whole list by construction so a further miss
+// cannot happen silently — which is what let P7-3's own three (Agents, Edges,
+// StoreKeys) be added directly to clipLargestField with the guard test
+// confirming coverage, rather than needing the same F1 shape of bug to be
+// found and fixed a third time.
 func TestAppendClipsEverySessionPolicySlice(t *testing.T) {
 	longStrings := func(n, each int) []string {
 		out := make([]string, n)
@@ -339,6 +344,34 @@ func TestAppendClipsEverySessionPolicySlice(t *testing.T) {
 					t.Fatalf("Ports has %d entries, want truncated to 16", len(e.Ports))
 				}
 			}},
+		{"Agents", func(e *Event) {
+			a := make([]EvAgent, 2000)
+			for i := range a {
+				a[i] = EvAgent{Name: strings.Repeat("n", 5000), Sandbox: strings.Repeat("s", 5000)}
+			}
+			e.Agents = a
+		}, func(t *testing.T, e Event) {
+			if len(e.Agents) != 1 || !strings.Contains(e.Agents[0].Name, "clipped from") {
+				t.Fatalf("Agents = %v, want one entry noting a clip", e.Agents)
+			}
+		}},
+		{"Edges", func(e *Event) { e.Edges = longStrings(1000, 10<<10) },
+			func(t *testing.T, e Event) {
+				if len(e.Edges) != 1 || !strings.Contains(e.Edges[0], "clipped from") {
+					t.Fatalf("Edges = %v, want one element noting a clip", e.Edges)
+				}
+			}},
+		{"StoreKeys", func(e *Event) {
+			s := make([]EvStoreKey, 2000)
+			for i := range s {
+				s[i] = EvStoreKey{Name: strings.Repeat("n", 5000), Read: []string{strings.Repeat("r", 5000)}}
+			}
+			e.StoreKeys = s
+		}, func(t *testing.T, e Event) {
+			if len(e.StoreKeys) != 1 || !strings.Contains(e.StoreKeys[0].Name, "clipped from") {
+				t.Fatalf("StoreKeys = %v, want one entry noting a clip", e.StoreKeys)
+			}
+		}},
 	}
 
 	for _, c := range cases {
@@ -382,14 +415,24 @@ func TestAppendClipsEverySessionPolicySlice(t *testing.T) {
 }
 
 // oversizedSliceValue builds an oversized value for a slice type, generically
-// enough to cover every shape a slice field on Event has today and every
-// shape docs/policy-record.md §6 says P7-3 is about to add (EvAgent,
-// EvStoreKey — both structs with string fields, the same shape EvSecret
-// already has). It is used by TestClipLargestFieldCoversEverySliceField below
-// rather than a per-field literal, so a new slice field this function does
-// not yet know how to grow fails loudly, with a message that says so, instead
-// of silently building an undersized value that would let the guard test pass
-// for the wrong reason.
+// enough to cover every shape a slice field on Event has today, including
+// P7-3's EvAgent and EvStoreKey (both structs with string fields, the same
+// shape EvSecret already has). It is used by
+// TestClipLargestFieldCoversEverySliceField below rather than a per-field
+// literal, so a new slice field this function does not yet know how to grow
+// fails loudly, with a message that says so, instead of silently building an
+// undersized value that would let the guard test pass for the wrong reason.
+//
+// The reflect.Struct case only sets a struct's string-kinded fields — so an
+// element type with no string field at all (EvStoreKey's Read/Write are
+// []string, not string, and are skipped the same way) would build a value
+// that never actually grows, and the guard test built on top of it would then
+// pass vacuously rather than because clipping genuinely worked. Neither
+// EvAgent nor EvStoreKey hits this today (both have a string Name), so this
+// has not fired for real, but the marshal-and-measure check at the end below
+// is what makes a *future* such case fail loudly instead of passing silent —
+// a non-blocking note from the review that confirmed P7-2's fixes GO,
+// applied here before P7-3 needed it for real.
 func oversizedSliceValue(t *testing.T, sliceType reflect.Type) reflect.Value {
 	t.Helper()
 	// Comfortably past MaxLine (8<<20) on its own, matching the margin the
@@ -397,26 +440,25 @@ func oversizedSliceValue(t *testing.T, sliceType reflect.Type) reflect.Value {
 	// Forwards/Tools elements, 10 MB across 2000 Secrets).
 	const targetBytes = 12 << 20
 	elem := sliceType.Elem()
+	var out reflect.Value
 	switch elem.Kind() {
 	case reflect.String:
 		const n = 1200
 		each := targetBytes / n
-		out := reflect.MakeSlice(sliceType, n, n)
+		out = reflect.MakeSlice(sliceType, n, n)
 		for i := 0; i < n; i++ {
 			out.Index(i).SetString(strings.Repeat("d", each))
 		}
-		return out
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 		const n = 2 << 20 // ports-shaped: many small integers, not few large ones
-		out := reflect.MakeSlice(sliceType, n, n)
+		out = reflect.MakeSlice(sliceType, n, n)
 		for i := 0; i < n; i++ {
 			out.Index(i).SetInt(int64(10000 + i))
 		}
-		return out
 	case reflect.Struct:
 		const n = 600
 		each := targetBytes / n
-		out := reflect.MakeSlice(sliceType, n, n)
+		out = reflect.MakeSlice(sliceType, n, n)
 		for i := 0; i < n; i++ {
 			ev := out.Index(i)
 			for j := 0; j < ev.NumField(); j++ {
@@ -425,12 +467,23 @@ func oversizedSliceValue(t *testing.T, sliceType reflect.Type) reflect.Value {
 				}
 			}
 		}
-		return out
 	default:
 		t.Fatalf("oversizedSliceValue does not know how to grow a []%s (element kind %s) — extend it before this guard test can cover that field",
 			elem, elem.Kind())
 		return reflect.Value{}
 	}
+
+	b, err := json.Marshal(out.Interface())
+	if err != nil {
+		t.Fatalf("oversizedSliceValue's own output for %s does not even marshal: %v", sliceType, err)
+	}
+	if len(b) <= MaxLine {
+		t.Fatalf("oversizedSliceValue built a %s slice that marshals to only %d bytes — not actually "+
+			"oversized (MaxLine is %d). Its element type has no field this function knows how to grow "+
+			"(reflect.Struct only fills string-kinded fields) — extend it for this element shape.",
+			sliceType, len(b), MaxLine)
+	}
+	return out
 }
 
 // TestClipLargestFieldCoversEverySliceField is docs/policy-record.md §9.1's

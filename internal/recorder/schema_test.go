@@ -6,21 +6,24 @@ import (
 	"go/token"
 	"os"
 	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
 )
 
-// Every Type* constant has to have a schema row, or the generated reference
-// would silently omit an event a consumer will meet. The constants are read out
-// of this package's own source, so adding one fails this test until it is
-// described.
-func TestSchemaCoversEveryType(t *testing.T) {
-	described := map[string]bool{}
-	for _, e := range Types() {
-		described[e.Type] = true
-	}
-
+// typeConstants returns every Type* constant this package's own source
+// declares, string value -> constant name, by parsing the source rather than
+// trusting a hand-maintained list of names. Shared by TestSchemaCoversEveryType
+// and TestSchemaDescribesNothingExtra below, which check the same fact from
+// opposite directions, so neither can drift from what the const block
+// actually declares the way TestSchemaDescribesNothingExtra's own list once
+// could: it went stale the moment P7-3 added TypeTeamTopology, silently,
+// until this test's next run caught it — proof of exactly the failure mode a
+// hand-maintained list keeps producing everywhere in this codebase (F1, F3),
+// closed here the same way those were: read the source, do not trust a list.
+func typeConstants(t *testing.T) map[string]string {
+	t.Helper()
 	fset := token.NewFileSet()
 	pkg, err := parser.ParseDir(fset, ".", func(fi os.FileInfo) bool {
 		return !strings.HasSuffix(fi.Name(), "_test.go")
@@ -29,7 +32,7 @@ func TestSchemaCoversEveryType(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var missing []string
+	out := map[string]string{}
 	for _, f := range pkg {
 		for _, file := range f.Files {
 			for _, d := range file.Decls {
@@ -49,14 +52,31 @@ func TestSchemaCoversEveryType(t *testing.T) {
 					if !ok || lit.Kind != token.STRING {
 						continue
 					}
-					v, err := strconv.Unquote(lit.Value)
-					if err == nil && !described[v] {
-						missing = append(missing, vs.Names[0].Name+" = "+v)
+					if v, err := strconv.Unquote(lit.Value); err == nil {
+						out[v] = vs.Names[0].Name
 					}
 				}
 			}
 		}
 	}
+	return out
+}
+
+// Every Type* constant has to have a schema row, or the generated reference
+// would silently omit an event a consumer will meet.
+func TestSchemaCoversEveryType(t *testing.T) {
+	described := map[string]bool{}
+	for _, e := range Types() {
+		described[e.Type] = true
+	}
+
+	var missing []string
+	for v, name := range typeConstants(t) {
+		if !described[v] {
+			missing = append(missing, name+" = "+v)
+		}
+	}
+	sort.Strings(missing)
 	if len(missing) > 0 {
 		t.Errorf("these event types are written and undescribed, so the generated "+
 			"reference would not mention them:\n  %s\n\nadd a row to Types() in schema.go",
@@ -67,21 +87,9 @@ func TestSchemaCoversEveryType(t *testing.T) {
 // The reverse: a described type that no constant defines would document an event
 // nothing can ever write.
 func TestSchemaDescribesNothingExtra(t *testing.T) {
-	real := map[string]bool{
-		TypeSessionStart: true, TypeSessionReady: true, TypeSessionEnd: true,
-		TypeCommandStart: true, TypeCommandOutput: true, TypeCommandExit: true,
-		TypeFileWrite: true, TypeEgressAttempt: true, TypeSecretUse: true,
-		TypeSecretWithheld: true, TypeSecretScrubbed: true,
-		TypeResourceOOM: true, TypeResourceTimeout: true, TypeResourceSummary: true,
-		TypeTeamMessage: true, TypeTeamRefused: true, TypeTeamStore: true,
-		TypeTeamSpawn: true, TypeMCPHostCall: true, TypeMCPHostResult: true,
-		TypePluginCall: true, TypePluginCrash: true,
-		TypeSessionPause: true, TypeSessionResume: true, TypeRunReview: true,
-		TypeShellStart: true, TypeShellEnd: true, TypeForwardAccept: true,
-		TypeSessionPolicy: true,
-	}
+	real := typeConstants(t)
 	for _, e := range Types() {
-		if !real[e.Type] {
+		if _, ok := real[e.Type]; !ok {
 			t.Errorf("schema describes %q, which no Type* constant defines", e.Type)
 		}
 	}

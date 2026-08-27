@@ -2,6 +2,7 @@ package recorder
 
 import (
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -44,9 +45,10 @@ func TestTheEventFieldOrderIsFrozen(t *testing.T) {
 		Agent: "a", Peer: "p", Kind: "k", Outcome: "o",
 		CPUSeconds: 1, PeakRSSKiB: 1, NetInBytes: 1, NetOutBytes: 1,
 		DiskReadBytes: 1, DiskWriteBytes: 1, VcpuCount: 1, CPUQuota: 1,
-		Args:  "a",
-		Tool:  "t",
-		Added: 1, Modified: 1, Deleted: 1,
+		BlockedPackets: 1, // see the reflection assertion below
+		Args:           "a",
+		Tool:           "t",
+		Added:          1, Modified: 1, Deleted: 1,
 		Jailed:    &yes,
 		GuestPort: 1,
 		Profile:   "p",
@@ -54,16 +56,42 @@ func TestTheEventFieldOrderIsFrozen(t *testing.T) {
 		NetMbpsRx: 1, NetMbpsTx: 1, DiskIOPS: 1, DiskMbps: 1,
 		MaxRuntimeMS: 1, IdleTimeoutMS: 1,
 		Allow: []string{"a"}, Ports: []int{1},
-		Secrets:       []EvSecret{{Name: "n", Host: "h", Path: "p"}},
-		Workspace:     "w",
-		Plugins:       []string{"p"},
-		Forwards:      []string{"f"},
-		RootfsSHA256:  "r",
-		KernelSHA256:  "k",
-		Tools:         []string{"t"},
-		ParentSession: "s",
-		Traceparent:   "t",
+		Secrets:        []EvSecret{{Name: "n", Host: "h", Path: "p"}},
+		Workspace:      "w",
+		Plugins:        []string{"p"},
+		Forwards:       []string{"f"},
+		RootfsSHA256:   "r",
+		KernelSHA256:   "k",
+		Tools:          []string{"t"},
+		ParentSession:  "s",
+		Traceparent:    "t",
+		Agents:         []EvAgent{{Name: "n", Sandbox: "s", Group: "g"}},
+		Edges:          []string{"e"},
+		StoreKeys:      []EvStoreKey{{Name: "n", Read: []string{"r"}, Write: []string{"w"}}},
+		RecordPayloads: &yes,
 	}
+
+	// The fixture above must set every field on Event, not only the ones
+	// `want` below already lists by name — otherwise a field inserted into
+	// an omitempty-empty slot (rather than appended after the last one)
+	// would marshal to nothing here and this test would never notice the
+	// insertion, only ever compare the fields it was already told to expect.
+	// The P7-2 review flagged exactly this landmine as something for P7-3 to
+	// close ("insertion into an omitempty-empty slot is not caught") — and
+	// this assertion, on its first real run, immediately found a second,
+	// unrelated gap: BlockedPackets (F14/S15) was appended to Event after
+	// this test was written and neither the fixture above nor `want` below
+	// had ever gained it, so its position was never actually verified. Fixed
+	// in the same commit rather than left for a sixth person to trip over.
+	ev := reflect.ValueOf(e)
+	for i := 0; i < ev.NumField(); i++ {
+		if ev.Field(i).IsZero() {
+			t.Fatalf("this test's fixture leaves Event.%s at its zero value — every field must be set "+
+				"to something non-empty, or a field inserted into this now-empty slot (rather than "+
+				"appended after the last one) could pass this test unnoticed", ev.Type().Field(i).Name)
+		}
+	}
+
 	body, err := json.Marshal(e)
 	if err != nil {
 		t.Fatal(err)
@@ -85,6 +113,7 @@ func TestTheEventFieldOrderIsFrozen(t *testing.T) {
 		"agent", "peer", "kind", "outcome",
 		"cpu_seconds", "peak_rss_kib", "net_in_bytes", "net_out_bytes",
 		"disk_read_bytes", "disk_write_bytes", "vcpu_count", "cpu_quota_percent",
+		"blocked_packets",
 		"args",
 		"tool",
 		"added", "modified", "deleted",
@@ -100,6 +129,10 @@ func TestTheEventFieldOrderIsFrozen(t *testing.T) {
 		"workspace", "plugins", "forwards",
 		"rootfs_sha256", "kernel_sha256",
 		"tools", "parent_session", "traceparent",
+		// team.topology (P7-3, docs/policy-record.md §6) — positions 20-23,
+		// normative per §9.2. cpu_quota_percent (already listed above) is
+		// reused rather than repeated here.
+		"agents", "edges", "store_keys", "record_payloads",
 	}
 
 	got := keysInOrder(t, string(body))

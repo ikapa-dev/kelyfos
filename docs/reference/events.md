@@ -393,3 +393,15 @@ What the machine was permitted, once per machine, alongside its session.ready (d
 | `parent_session` | string | the session id this machine was forked or restored from *(it came from another session)* |
 | `traceparent` | string | an inbound W3C traceparent, verbatim *(serve-mcp, and the caller supplied one)* |
 | `agent` | string | which machine produced it; present inside a team *(in a team)* |
+
+## `team.topology`
+
+The resolved shape of a team, written once at boot, after every agent's own session.ready/session.policy pair (docs/policy-record.md §3). Carries no agent field of its own — it describes the team, not one machine, the same scope session.start and session.end already use for one. cpu_quota_percent is shared with resource.oom, resource.summary and session.policy rather than duplicated, carrying the team-wide cap here instead of one machine's. Written by the **host**.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `agents` | object array | every resolved agent: name, its own sandbox id, its fork-template group |
+| `edges` | string array | the resolved, expanded "from -> to" pairs |
+| `store_keys` | object array | every [[team.store.key]] rule: its name, read list and write list *(the team's store is enabled)* |
+| `cpu_quota_percent` | integer | the collective slice's cap — [team.resources] cpu_quota; absent when the team has no shared cgroup |
+| `record_payloads` | boolean | whether [team] record_payloads is set |

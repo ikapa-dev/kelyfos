@@ -713,6 +713,24 @@ either budget, so `session.policy` on those three doors correctly shows none
 of them — the record is honest about an enforcement gap docs/policy-record.md
 §4's own research found while wiring these doors, not silent about it.
 
+### `team.topology`
+The resolved shape of a team, written once at boot — after every agent's own
+`session.ready`/`session.policy` pair, so every agent's own sandbox id is
+actually known (`docs/policy-record.md` §3, written before P7-3 built it).
+Carries no `agent` field of its own: it describes the team, not one machine,
+the same scope `session.start` and `session.end` already use for a team. A
+runtime spawn's later attach and detach are already covered by `team.spawn`
+(above), so nothing here needs to anticipate one — this event is the roster at
+the moment the team came up, not a live view of it.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `agents` | object array | Every resolved agent: `name`, its own `sandbox` id — the handle `kelyfos diff` and `kelyfos shell` take — and `group`, the fork-template key it was forked from. `group` is absent when the agent booted cold. |
+| `edges` | string array | The resolved, expanded `"from -> to"` pairs — a star written as one line in `kelyfos.toml` becomes every pair it expands to, the same list `kelyfos team ps` already shows. |
+| `store_keys` | object array | Every `[[team.store.key]]` rule: `name`, `read` and `write`. Absent when the team's store is not enabled. |
+| `cpu_quota_percent` | integer | The collective slice's cap — `[team.resources] cpu_quota`. The same field `resource.oom`, `resource.summary` and `session.policy` already carry, reused here for the team-wide number rather than one machine's. Absent when the team has no shared cgroup. |
+| `record_payloads` | boolean | Whether `[team] record_payloads` is set. Always present on this event, unlike most other fields here: `false` is distinguishable from "not a team," the same reason `jailed` and `overlay` are recorded as pointers rather than left absent. |
+
 ---
 
 ## 5. Reading the file
