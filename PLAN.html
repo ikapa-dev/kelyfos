@@ -5295,6 +5295,50 @@ after:
         barrier check, read directly from the markup rather than assumed: <code>P7-1</code>, <code>P7-2</code>,
         <code>P7-3</code>, <code>P7-6</code> all carry <code>checked</code> &mdash; D62's condition for stage two
         is met.</td></tr>
+    <tr><td class="mono">2026-08-28</td><td class="mono">P7-8</td>
+        <td>The report&rsquo;s run section &mdash; committed by the orchestrator on the author agent&rsquo;s
+        behalf. The agent's implementation and analysis were sound and its own real-boot verification was
+        genuinely in progress, but it stalled mid-wait on a background <code>dev/demo-team.sh</code> run across
+        three separate resumes without ever committing; the code sat correct and complete in its worktree, just
+        unlanded. The orchestrator built it, ran the full suite, and ran the real verification itself rather than
+        continue bouncing a stalled agent.
+        <br><b>What was built</b> (author's design, orchestrator-verified): the run map (SVG via
+        <code>internal/graph</code>'s <code>Layout</code>/<code>SVG</code>, P7-6), agent sheets (one panel per
+        machine's <code>session.policy</code>), reach matrix (<code>graph.TransitiveClosure</code> as an
+        agent&times;agent hop table, including store-key-only hops an edge list alone would miss), and a store
+        panel (declared ACLs beside observed activity, with team-wide-default synthesis for keys no
+        <code>[[team.store.key]]</code> rule names) &mdash; all above the existing lane timeline, unchanged. The
+        three required fixes: a CSP <code>&lt;meta&gt;</code> tag; <code>role="img"</code> with
+        <code>&lt;title&gt;</code>/<code>&lt;desc&gt;</code> and shape/dash-based (not colour-only) distinction;
+        a <code>@media print</code> fix for the report's <code>&lt;pre&gt;</code> blocks, previously truncating
+        silently on paper.
+        <br><b>A real, previously-unnoticed gap found and fixed along the way, credited to the author:</b>
+        <code>html/template</code>'s contextual escaping does not touch raw control bytes
+        (0x00&ndash;0x1F, 0x7F), so a guest-chosen agent name, path or store key carrying one reached the
+        rendered page unescaped &mdash; true of the pre-existing timeline/lane view exactly as much as this
+        task's new sections. Fixed once, in new <code>internal/report/safe.go</code>: <code>safe</code> reuses
+        <code>proto.SafeText</code> for identity-like fields, <code>safeBody</code> strips dangerous control
+        bytes from multi-line command output/message bodies while keeping them readable, wired through every
+        guest-influenced interpolation, old and new alike.
+        <br><b><code>internal/digest</code> extended</b> with <code>Agent.Policy</code>/<code>Digest.Policy</code>/
+        <code>Digest.Topology</code>, mirroring the existing <code>Receipt</code> pattern, additive only. P7-7
+        (built in parallel) made a similar addition independently &mdash; the orchestrator will reconcile the two
+        diffs directly before either merges, rather than assume they match.
+        <br>Not self-ticked, not pushed, not merged. Standing by for RENDER-surface adversarial review (this task
+        is explicitly security-sensitive: &ldquo;adversary strings reach element text content only&rdquo;).</td>
+        <td class="mono">commit <code>2e6e41c</code> on the author's own worktree branch, made by the
+        orchestrator after independent verification: <code>gofmt -l .</code> clean, <code>go vet ./...</code>
+        clean, <code>go test -count=1 ./...</code> every package <code>ok</code>, <code>govulncheck</code>
+        &rarr; &ldquo;No vulnerabilities found.&rdquo;, <code>make docs</code> &rarr; zero further diff beyond
+        what the commit already carries<br>
+        real end-to-end: <code>bash dev/demo-team.sh</code> against the real <code>dev</code>-flavor image,
+        full run, unmodified &mdash; <b>22 passed, 0 failed, 1 skipped</b> (the skip is D15's known
+        machine-dependent timing bar, unrelated to this task); the exported <code>team.html</code> grepped
+        directly for the new sections rather than trusted: <code>&lt;h3 class="run-sub"&gt;Agent sheets
+        &hellip;&lt;/h3&gt;</code>, <code>&hellip;Reach matrix &hellip;&lt;/h3&gt;</code>, <code>&hellip;Store
+        &hellip;&lt;/h3&gt;</code>, one <code>&lt;svg&gt;</code>, one <code>role="img"</code>, one
+        <code>Content-Security-Policy</code> meta tag, one <code>@media print</code> block &mdash; all present
+        in the real, 68376-byte, 43-event, 6-agent export.</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
