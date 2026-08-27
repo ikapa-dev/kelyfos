@@ -405,3 +405,12 @@ The resolved shape of a team, written once at boot, after every agent's own sess
 | `store_keys` | object array | every [[team.store.key]] rule: its name, read list and write list *(the team's store is enabled)* |
 | `cpu_quota_percent` | integer | the collective slice's cap — [team.resources] cpu_quota; absent when [team.resources] cpu_quota is not set (a team can still have a shared cgroup for another reason — a per-agent or per-spawn cpu_quota — with this field absent even so) |
 | `record_payloads` | boolean | whether [team] record_payloads is set |
+
+## `session.erasure`
+
+A Data, Args, Cmd or Argv field somewhere in this chain was replaced with a fingerprint of what was there — its own sha256 — by kelyfos sessions erase (P7-5, D61). The chain is rewritten and rehashed in full, so the digest of every event after the first one touched is different from what it was before this ran; the chain still verifies, and this event is the last one, appended once the rewrite is complete. Written by the **host**.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `reason` | string | why — an operator-supplied string, e.g. a GDPR Article 17 request |
+| `modified` | integer | how many events had a field replaced (not how many fields) |

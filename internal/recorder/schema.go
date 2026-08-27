@@ -386,5 +386,16 @@ func Types() []EventType {
 				{Name: "cpu_quota_percent", Type: "integer", Doc: "the collective slice's cap — [team.resources] cpu_quota; absent when [team.resources] cpu_quota is not set (a team can still have a shared cgroup for another reason — a per-agent or per-spawn cpu_quota — with this field absent even so)"},
 				{Name: "record_payloads", Type: "boolean", Doc: "whether [team] record_payloads is set"},
 			}},
+		{Type: TypeSessionErasure, Source: SourceHost,
+			Doc: "a Data, Args, Cmd or Argv field somewhere in this chain was replaced with a " +
+				"fingerprint of what was there — its own sha256 — by kelyfos sessions erase " +
+				"(P7-5, D61). The chain is rewritten and rehashed in full, so the digest of every " +
+				"event after the first one touched is different from what it was before this ran; " +
+				"the chain still verifies, and this event is the last one, appended once the " +
+				"rewrite is complete",
+			Fields: []Field{
+				{Name: "reason", Type: "string", Doc: "why — an operator-supplied string, e.g. a GDPR Article 17 request"},
+				{Name: "modified", Type: "integer", Doc: "how many events had a field replaced (not how many fields)"},
+			}},
 	}
 }

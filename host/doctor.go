@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/sandbox"
 	"golang.org/x/sys/unix"
 )
@@ -142,6 +144,7 @@ func doctorCmd(argv []string) error {
 		checkWorkspaceTools(),
 		images,
 		checkDisk(images.ok),
+		checkSessionsSize(),
 	}
 
 	var failed int
@@ -365,4 +368,53 @@ func checkDisk(haveImages bool) check {
 				"Old build trees are reclaimable:  rm -rf ~/.cache/kelyfos/build/<arch>-<flavor>"}
 	}
 	return check{"disk space", true, detail + " (enough " + why + ")", ""}
+}
+
+// sessionsSizeWarnBytes bounds ~/.cache/kelyfos/sessions/ the same way
+// templateCacheBytes bounds the fork-template cache — a constant rather than
+// a setting, because unlike retention (a compliance floor, [sessions]
+// retention_days) this is advisory only: crossing it changes nothing about
+// what KelyfOS does, only what doctor says (P7-5, D61).
+const sessionsSizeWarnBytes = 1 << 30
+
+// checkSessionsSize is P7-5's size warning (D61): the flight recorder's own
+// history has never been pruned automatically — nothing deletes a session
+// record on its own — so unlike the fork-template cache, which sweeps
+// itself, this can only ever grow until someone runs
+// `kelyfos sessions prune`. Framed as a FAIL with a fix, the same as disk
+// space above, because doctor's own fix field is exactly the place to name
+// the command that answers it.
+func checkSessionsSize() check {
+	root := recorder.SessionsDir(sandbox.Root())
+	entries, err := os.ReadDir(root)
+	if errors.Is(err, os.ErrNotExist) {
+		return check{"session records", true, "none recorded yet", ""}
+	}
+	if err != nil {
+		return check{"session records", false, "cannot read " + root + ": " + err.Error(), ""}
+	}
+	var total int64
+	var n int
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		n++
+		_ = filepath.Walk(filepath.Join(root, e.Name()), func(_ string, info os.FileInfo, err error) error {
+			if err != nil || info.IsDir() {
+				return nil
+			}
+			total += info.Size()
+			return nil
+		})
+	}
+	detail := fmt.Sprintf("%d session(s), %.1f MiB in %s", n, float64(total)/(1<<20), root)
+	if total < sessionsSizeWarnBytes {
+		return check{"session records", true, detail, ""}
+	}
+	return check{"session records", false,
+		fmt.Sprintf("%s, over the %d GiB advisory bound", detail, sessionsSizeWarnBytes>>30),
+		"Nothing is deleted automatically — the flight recorder's own history grows until pruned.\n" +
+			"    kelyfos sessions prune           deletes recorded sessions past the retention floor\n" +
+			"    kelyfos sessions prune -dry-run  shows what that would delete first"}
 }

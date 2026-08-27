@@ -17,7 +17,7 @@ Go's `flag` accepts one dash or two, so `-image` and `--image` are the same flag
 | [`kelyfos snapshot restore`](#kelyfos-snapshot-restore) | save a sandbox's state, or bring it back |
 | [`kelyfos pause`](#kelyfos-pause) | freeze a running sandbox under a name |
 | [`kelyfos resume`](#kelyfos-resume) | bring a paused session back |
-| [`kelyfos sessions`](#kelyfos-sessions) | list paused sessions, or discard one |
+| [`kelyfos sessions`](#kelyfos-sessions) | list paused sessions; rm, prune or erase one (-h on each for more) |
 | [`kelyfos diff`](#kelyfos-diff) | what a sandbox has done to its workspace |
 | [`kelyfos shell`](#kelyfos-shell) | an interactive terminal inside a sandbox |
 | [`kelyfos fork`](#kelyfos-fork) | restore one snapshot into several sandboxes |
@@ -185,7 +185,7 @@ kelyfos resume <name>
 
 ## kelyfos sessions
 
-List paused sessions, or discard one.
+List paused sessions; rm, prune or erase one (-h on each for more).
 
 ```
 kelyfos sessions [rm <name>]

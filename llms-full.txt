@@ -31,6 +31,7 @@ Contents, in reading order:
 - `docs/integrating.md` — for putting KelyfOS inside something else: the four ways in, orchestrator patterns, and the mistakes people actually make
 - `docs/qol.md` — the shell, the diff, pause and resume, port forwarding and notifications — written before the code, with the places the built thing differed marked
 - `docs/policy-record.md` — session.policy and team.topology, written before the code: every field, its position in the frozen hash order, which door writes it, and what it omits
+- `docs/retention.md` — the [sessions] retention_days floor, kelyfos sessions prune, the size warning, and kelyfos sessions erase's replacement-record pattern
 - `docs/README.md` — what every document is, and — deliberately — where each is still thin
 - `docs/reference/cli.md` — every command and flag, with types and defaults
 - `docs/reference/config.md` — every key the policy file takes, and every key it refuses
@@ -3596,10 +3597,10 @@ emptied in place, so nothing about the format moved.
 `sandbox` names the **session**, and a team is one session by design (E2-1), so
 inside a team every event carries the team's id there rather than the id of the
 machine it came from. The `agent` field is what says which machine, and inside a
-team it appears on every type except `session.start`, `session.end` and
-`team.topology`, which are about the team as a whole rather than one machine in
-it. A reader that sees no `agent` is looking at a single sandbox's session, or
-at one of those three.
+team it appears on every type except `session.start`, `session.end`,
+`team.topology` and `session.erasure`, which are about the team, or its whole
+chain, as a whole rather than one machine in it. A reader that sees no `agent`
+is looking at a single sandbox's session, or at one of those four.
 
 A `kelyfos serve-mcp` process is a session in the same sense, and its machines
 are sandboxes rather than agents: `agent` there carries the sandbox id a call
@@ -4198,6 +4199,25 @@ the moment the team came up, not a live view of it.
 | `store_keys` | object array | Every `[[team.store.key]]` rule: `name`, `read` and `write`. Absent when the team's store is not enabled. |
 | `cpu_quota_percent` | integer | The collective slice's cap — `[team.resources] cpu_quota`. The same field `resource.oom`, `resource.summary` and `session.policy` already carry, reused here for the team-wide number rather than one machine's. Absent when `[team.resources] cpu_quota` is not set — a team can still have a shared cgroup for another reason (a per-agent or per-spawn `cpu_quota`, which needs one too) with this field absent even so. |
 | `record_payloads` | boolean | Whether `[team] record_payloads` is set. Always present on this event, unlike most other fields here: `false` is distinguishable from "not a team," the same reason `jailed` and `overlay` are recorded as pointers rather than left absent. |
+
+### `session.erasure`
+Appended by `kelyfos sessions erase` (`docs/retention.md`, D61) once, as the
+new last event, after every `data`, `args`, `cmd` and `argv` field elsewhere
+in the chain that carried content has been replaced with a fingerprint of
+what was there — its own sha256 — and the whole chain rehashed from the
+first event so it still verifies. Carries no `agent` field: it is about the
+chain as a whole, the same scope `session.start`, `session.end` and
+`team.topology` already use.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `reason` | string | Why — the operator-supplied `-reason` the command requires, e.g. a GDPR Article 17 request. |
+| `modified` | integer | How many events had a field replaced. Not how many fields — an event with more than one redacted field still counts once. Reused from `run.review`'s own `modified`, disambiguated by `type` the same way `cpu_quota_percent` already is across four other event types. |
+
+A redacted field reads `"(erased — sha256:<64 hex chars>)"` in place of what
+was there — the same in-band-note shape `clipLargestField` already uses for
+a clipped one, applied to a deliberate removal instead of an accidental
+oversize.
 
 ---
 
@@ -6729,7 +6749,7 @@ description: complete recipes, each one a script CI runs on a real machine
 
 # KelyfOS cookbook
 
-Fifteen recipes, each one complete, each one runnable as it stands.
+Sixteen recipes, each one complete, each one runnable as it stands.
 
 These are not illustrations. `bash dev/cookbook.sh` extracts every script below
 and runs it on a real machine. Every commit checks that each recipe still
@@ -8200,6 +8220,77 @@ kelyfos run --image dev -p 8080:80 -- bash -c '
 # packet crossed the TAP, because the packet the server answered was created
 # inside the machine, on its own loopback.
 echo "reached a server inside the sandbox without touching the firewall"
+```
+
+---
+
+## 15. Keep the record, erase what it said
+
+A retention floor and a deletion request pull in opposite directions on the
+same file until the record separates two claims: that a session happened,
+and what it said while it did. `kelyfos sessions prune` deletes whole
+sessions once they are older than the floor — never one still inside it.
+`kelyfos sessions erase` answers the other half: it does not delete
+anything, it rewrites a session's own content fields to a fingerprint of
+what they were, in place, and the chain still verifies afterward.
+
+<!-- recipe: retention-and-erasure -->
+
+```bash
+set -euo pipefail
+work="$(mktemp -d)"
+cd "$work"
+trap 'rm -rf "$work"' EXIT
+
+# A session with something worth erasing: real command output.
+kelyfos run --image dev -- bash -c '
+  set -e
+  kelyfos exec "echo my-email-is-jane@example.com > /tmp/note.txt"
+  kelyfos exec "cat /tmp/note.txt"
+'
+
+session="$(kelyfos log --verify | sed -n 's/^session \([0-9a-f]*\):.*/\1/p')"
+record="$HOME/.cache/kelyfos/sessions/$session/events.jsonl"
+
+# The retention floor protects a session this fresh: -dry-run finds nothing
+# eligible, because prune's own floor is 180 days by default (D61 — six
+# months, the EU AI Act's own floor for a general-purpose system) and this
+# one is seconds old.
+echo
+echo "== prune leaves a fresh session alone =="
+kelyfos sessions prune -dry-run
+
+echo
+echo "== before erasure, the record holds the value =="
+grep -c 'jane@example.com' "$record"
+
+# GDPR Article 17 in one command: the content goes. The shape of what
+# happened, and the fact that this ran, does not.
+echo
+echo "== erase it =="
+kelyfos sessions erase -reason "cookbook demo — GDPR Article 17" "$session"
+
+echo
+echo "== the value is unrecoverable from the raw file =="
+if grep -q 'jane@example.com' "$record"; then
+  echo "the erased value is still in the file, which must never happen"
+  exit 1
+fi
+echo "not found, as it must be"
+
+# What erase wrote is a replacement record, not a broken one: the whole
+# chain was rehashed from the first event, and it verifies end to end.
+echo
+echo "== the chain still verifies =="
+kelyfos verify "$record"
+
+# A fingerprint in place of the content, and the erasure itself recorded —
+# an erasure that could not itself be audited would undercut the reason
+# this record exists at all.
+echo
+echo "== what took its place =="
+grep -o '"data":"[^"]*"' "$record" | tail -1
+grep -o '"type":"session.erasure"[^}]*}' "$record"
 ```
 
 ---
@@ -9730,6 +9821,207 @@ page — is where a reader goes for the fields as they actually shipped.*
 
 
 ---
+title: Retention and erasure
+url: https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/retention.md
+description: the [sessions] retention_days floor, kelyfos sessions prune, the size warning, and kelyfos sessions erase's replacement-record pattern
+---
+
+# Retention, pruning and erasure
+
+*P7-5 (Phase 7, v1.1), D61. Unlike `docs/policy-record.md` this was not
+written before the code — P7-0's own scope note said so explicitly: "whatever
+field-level shape [retention] needs is P7-5's own decision, made when its
+mechanism is designed against real code, not predicted here." This page is
+that decision, recorded once the mechanism existed rather than before it.*
+
+## 1. The gap this closes
+
+`~/.cache/kelyfos/sessions/` holds the flight recorder's own history — every
+session this machine has ever run, kept forever. The fork-template cache
+next to it has a bound and sweeps itself, oldest-used first
+(`host/teamtemplate.go`); the session history had neither a bound, a sweep,
+nor a setting, and nothing warned when it grew.
+
+That is not only a disk problem. KelyfOS shipped the tamper-evident half of
+an audit story in v1.0 — a hash-chained record nothing can edit
+undetectably — with no retention policy at all, which is half a compliance
+story told confidently. Two obligations pull in opposite directions on the
+same file:
+
+- **EU AI Act Article 12** requires automatic, tamper-evident recording for
+  the systems it covers, with a retention floor — twelve months from session
+  close for Annex III (high-risk) systems, six for a general-purpose one —
+  and Recitals 99–100 extend the boundary to every agent in a chain
+  performing a high-risk function, which is a per-agent record, which D59
+  already supplies.
+- **GDPR Article 17** gives a data subject the right to have their data
+  erased, on request.
+
+A record that must be *kept* and a request to *delete what is in it* look
+like a contradiction until the record separates two different claims: the
+**structural** one (a session happened, at this time, with these agents, in
+this many steps, in this order) and the **content** one (what was said,
+written, or run). Article 12 needs the first. Article 17 targets the second.
+KelyfOS is unusually well placed to split them because `file.write` already
+does, for a different reason: it has recorded a file's own digest rather
+than its content since before this phase, so a reader can prove a write
+happened and match it against a later claim without the record ever holding
+what was written. P7-5 applies the same pattern retroactively, to fields
+that were recording content directly.
+
+## 2. The retention floor — `[sessions] retention_days`
+
+```toml
+[sessions]
+retention_days = 365
+```
+
+A **floor**, not a target: `kelyfos sessions prune` never deletes a
+recorded session younger than this, however it is invoked — there is no
+flag that overrides it. Absent, or written as `0` (`internal/config`'s own
+convention: zero means not set, the same as every other numeric key in the
+file), it defaults to **180 days**, the EU AI Act's own floor for a
+general-purpose system. A project subject to the Annex III floor instead
+writes `retention_days = 365`.
+
+The floor is read from a policy file the same way `run`, `fork` and
+`snapshot restore` already resolve one: `--policy` names a file, and naming
+one that is not there is an error; with nothing named, `kelyfos sessions
+prune` walks up from the working directory the way `git` does. The session
+history under `~/.cache/kelyfos/sessions/` is not scoped to one project —
+many `kelyfos.toml` files can contribute sessions to the same host cache —
+so which policy's floor applies is a property of *where prune is run from*,
+not of any one session.
+
+## 3. `kelyfos sessions prune`
+
+```
+kelyfos sessions prune [-dry-run] [-policy <file>]
+```
+
+Deletes whole session directories — never a partial edit — that are older
+than the floor. Age is the directory's own mtime, not a `session.end`
+timestamp read out of the chain: cheap (no chain has to be parsed to decide
+what to prune), and it treats a cleanly closed session and an
+orphaned/crashed one alike, where a crashed session may have no
+`session.end` to read at all (`docs/events.md`: "a session that is still
+running has no `session.end`... the chain cannot tell those apart"). This
+is the same choice `pruneTemplates` already made for the fork-template
+cache, kept consistent rather than inventing a second aging rule.
+
+Two guards apply before age is even considered, and neither respects
+`-dry-run` differently — a session either is prunable or it is not:
+
+- **A currently paused session's own chain is never pruned**, however old.
+  `kelyfos pause` freezes a machine under a name and a later `kelyfos
+  resume` writes `session.resume` into the *same* chain the machine was
+  paused from — "one chain covers the whole life of the machine rather than
+  one per resume" (`docs/events.md`). Deleting that chain out from under a
+  paused session would either break the resume or make it silently start a
+  fresh one. Checked by cross-referencing every paused session's own
+  metadata (`NamedMeta.Session`) against the session id under
+  consideration.
+- **A session with a live-looking run directory is never pruned.** A
+  leftover run directory after a crash is a false positive prune would
+  rather have than the alternative — touching a chain something might still
+  be writing to.
+
+`-dry-run` reports exactly what a real run would delete, with no side
+effect. Without it, `kelyfos sessions prune` deletes and reports what it
+deleted — size, and age — the same way `kelyfos sessions rm` already says
+what it discarded rather than leaving "removed" to sound thinner than it
+is.
+
+## 4. The size warning
+
+`kelyfos doctor` gained a **session records** check: the same FAIL/fix
+shape `disk space` already uses, not a new severity tier. Nothing deletes a
+session automatically — that is what makes this a warning and not a
+sweep — so the check exists to make the situation visible before it is a
+problem, the same way `disk space` does for the cache root generally. The
+bound (1 GiB) is a constant, like `templateCacheBytes`, rather than a
+setting: crossing it changes nothing about what KelyfOS does, only what
+`doctor` says.
+
+## 5. `kelyfos sessions erase` — the replacement record
+
+```
+kelyfos sessions erase -reason "<why>" <id>
+```
+
+`-reason` has to come before `<id>`: Go's `flag` package stops looking for
+flags at the first positional argument, so `erase <id> -reason ...` would
+silently read `-reason` and its value as two more positional arguments
+rather than the flag.
+
+This is the erasure path, and it does not delete a session — that is what
+`prune` is for, and it is bound by the retention floor for exactly the
+reason erase is not: erase answers Article 17 without touching the
+Article 12 obligation at all, because it removes *content*, not the
+*record that content happened*.
+
+**What it does.** Every field on the chain known to carry
+guest-influenced or operator-supplied content — `data` (command output, a
+team message's payload), `args` (an MCP call's argument summary), `cmd` (a
+command's own argv) and `argv` (the host process's own argv — what a
+trailing `-- <command>` carries, e.g. the docs' own canonical example,
+`kelyfos run --workspace . --allow github.com -- claude`) — is replaced,
+wherever it is non-empty, with a fingerprint of what was there: its own
+sha256, in the same in-band-note shape `clipLargestField` already uses for
+a clipped field (`"(erased — sha256:…)"`). Everything else about each
+event — its type, timestamp, agent, byte counts, exit codes, resource
+figures — survives unchanged. A new `session.erasure` event is appended
+recording that this ran, why (an operator-supplied `-reason`, required —
+an erasure with no stated reason would be exactly the kind of
+unaccountable action this product's whole design argues against), and how
+many events were touched.
+
+**Why the chain still verifies afterward.** Every event's `hash` covers
+`prev`, and `prev` is the previous event's `hash`, so a content change to
+one event changes the digest of every event chained after it whether or
+not that later event's own content moved — the same property that makes
+the chain tamper-evident in the first place makes an in-place edit
+impossible without a full rebuild. `kelyfos sessions erase` does not try
+to avoid this; it embraces it. The whole chain's `seq`, `prev` and `hash`
+are recomputed from the first event, which is what makes the result a
+**replacement record** rather than a patched one — D61's own phrase. The
+session's event count, order and every untouched field survive exactly;
+only the digests differ from what they were before, because the content
+they were computed over is different now, honestly.
+
+**What it refuses, and why.** A chain that does not already verify —
+rewriting a broken chain would erase the evidence that it was broken,
+which is the one thing an erasure path must never do. An empty chain, or
+one with nothing to redact — an erasure event that changed nothing but
+claimed something happened would be worse than no event at all. A
+currently paused session, or one with a live-looking run directory — the
+same two guards `prune` applies, for the same reasons.
+
+**What is deliberately out of scope.** `EvError.Message` is not redacted:
+it is generally a system-generated string (a timeout, a signal name) with
+no established precedent for holding raw guest content the way `data`,
+`args` and `cmd` do, and widening the redacted-field list is a decision to
+make against a real request for it, not to predict here. Per-agent or
+per-event scoping — "erase only what agent X said," rather than a whole
+session — is the same kind of decision, deferred for the same reason:
+nothing has asked for it yet, and a session is usually the right unit for
+an Article 17 request in the first place, since it is one interaction.
+Neither omission is silent: this section says so, the way
+`docs/policy-record.md` §8 says what it omits and why.
+
+## 6. What a reader checks
+
+`kelyfos verify` after an erasure reports the chain intact, the same as
+before — that is the point, not a special case. `kelyfos log` replays an
+erased session exactly like any other, showing the fingerprint text where
+content used to be rather than failing or skipping the event. Grepping the
+raw `events.jsonl` for the original content finds nothing, the same
+acceptance check this product already applies to a bound secret's value
+(`docs/policy-record.md` §1's own "checked by grepping the raw file for the
+value and finding nothing").
+
+
+---
 title: Documentation map
 url: https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/README.md
 description: what every document is, and — deliberately — where each is still thin
@@ -9762,6 +10054,7 @@ hand-written half, and this page says where each is still thin.
 | running several agents together | [`teams.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/teams.md) |
 | auditing what an agent did | [`events.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/events.md) |
 | auditing what a run was *permitted* to do, not only what it did | [`policy-record.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/policy-record.md) |
+| deciding how long records are kept, or erasing what one holds | [`retention.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/retention.md) |
 | stuck on something KelyfOS refused | [`denials.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/denials.md), then [`reference/denials.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/reference/denials.md) for the exact one |
 | running something long and walking away | [`denials.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/denials.md) on `--notify`, and [`events.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/events.md) §6 for the history afterwards |
 | keeping an agent off the network | [`networking.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/networking.md) |
@@ -9786,6 +10079,7 @@ hand-written half, and this page says where each is still thin.
 | [`denials.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/denials.md) | mixed | Why every refusal names its own fix, what the ID in brackets is for, what deliberately is not in the catalog, and how `--notify` reaches somebody who stopped watching. |
 | [`qol.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/qol.md) | concept | The v0.8 specification, written before the code: named sessions and their store, the workspace manifest, the PTY channel, and why inbound forwarding does not touch the firewall. |
 | [`policy-record.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/policy-record.md) | concept | The Phase 7 policy-record specification, written before the code: every field `session.policy` and `team.topology` add, its position in the frozen hash order, which of the eight doors writes it, and what it deliberately omits. |
+| [`retention.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/retention.md) | mixed | P7-5 (D61): the `[sessions] retention_days` floor, `kelyfos sessions prune`, the size warning, and `kelyfos sessions erase` — the replacement-record pattern that lets an EU AI Act Article 12 retention floor and a GDPR Article 17 erasure request coexist by separating a chain's structure from its content. |
 | [`mcp-surface.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/mcp-surface.md) | concept | MCP in both directions: `serve-mcp` as a tool for any client, and `[[plugin]]` servers inside the guest. Specification, written before the code. |
 | [`hardening.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/hardening.md) | concept | The v0.9 specification, written before the code: what a compromised agent reaches today, what the jailer and the guest profiles take away, and what remains reachable afterwards. |
 | [`host-seccomp.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/host-seccomp.md) | mixed | The syscall filter around the VMM process: which one is in force and why that is settled, how it is proved from the kernel's own copy rather than from the absence of a flag, and every syscall it permits. |
@@ -10010,6 +10304,27 @@ why.
 [`reference/events.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/reference/events.md) once P7-2/P7-3 land.
 *Thin:* written before its code exists; nothing to report yet.
 
+### `retention.md` — retention, pruning and erasure
+
+*Mixed, and written after the code rather than before it* — P7-0's own scope
+note left this decision for P7-5 to make against a real mechanism, unlike
+`policy-record.md`'s. *Concept:* why a retention floor and an erasure
+request are not actually in tension once the record's structure and its
+content are separated; why age is measured by directory mtime rather than a
+`session.end` timestamp; why the two guards (a paused session, a live-looking
+run directory) apply identically to `prune` and `erase`; what `erase`
+deliberately does not redact and why.
+*Reference:* the `[sessions] retention_days` key is in
+[`reference/config.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/reference/config.md); the `session.erasure` event is
+in [`reference/events.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/reference/events.md). `kelyfos sessions prune`
+and `erase`'s own flags are not in [`reference/cli.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/reference/cli.md) —
+like `sessions rm`, they are subcommands of `kelyfos sessions` rather than
+top-level commands, and the generator's discovery only reaches the
+top-level usage block; `-h` on each, and this page, are where their flags
+are written down.
+*Thin:* written once, against the code that already existed; nothing to
+report yet.
+
 ### `hardening.md` — the v0.9 specification
 
 *Concept:* what a compromised agent can reach today, stated before anything is
@@ -10139,7 +10454,7 @@ Go's `flag` accepts one dash or two, so `-image` and `--image` are the same flag
 | [`kelyfos snapshot restore`](#kelyfos-snapshot-restore) | save a sandbox's state, or bring it back |
 | [`kelyfos pause`](#kelyfos-pause) | freeze a running sandbox under a name |
 | [`kelyfos resume`](#kelyfos-resume) | bring a paused session back |
-| [`kelyfos sessions`](#kelyfos-sessions) | list paused sessions, or discard one |
+| [`kelyfos sessions`](#kelyfos-sessions) | list paused sessions; rm, prune or erase one (-h on each for more) |
 | [`kelyfos diff`](#kelyfos-diff) | what a sandbox has done to its workspace |
 | [`kelyfos shell`](#kelyfos-shell) | an interactive terminal inside a sandbox |
 | [`kelyfos fork`](#kelyfos-fork) | restore one snapshot into several sandboxes |
@@ -10307,7 +10622,7 @@ kelyfos resume <name>
 
 ## kelyfos sessions
 
-List paused sessions, or discard one.
+List paused sessions; rm, prune or erase one (-h on each for more).
 
 ```
 kelyfos sessions [rm <name>]
@@ -10584,6 +10899,14 @@ Hard ceilings for a single run, and the value when no flag asks: a flag may ask 
 | `disk_mbps` | integer | unthrottled | bytes per second, decimal megabytes, on each block device |
 | `max_runtime` | duration | no budget | wall-clock budget; expiry is SIGTERM, grace, sync-back, exit 124 |
 | `idle_timeout` | duration | no budget | no tool call and no proxy traffic for this long ends the run |
+
+## `[sessions]`
+
+Retention for the flight recorder's own history, read by kelyfos sessions prune.
+
+| Key | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `retention_days` | integer | 180 (the EU AI Act's own floor for a general-purpose system, D61) | the floor kelyfos sessions prune reads: it never deletes a recorded session younger than this, however it is invoked. 0 (including an absent key) means the built-in 180-day default applies, not that every session is immediately prunable |
 
 ## `[team]`
 
@@ -11414,6 +11737,15 @@ The resolved shape of a team, written once at boot, after every agent's own sess
 | `store_keys` | object array | every [[team.store.key]] rule: its name, read list and write list *(the team's store is enabled)* |
 | `cpu_quota_percent` | integer | the collective slice's cap — [team.resources] cpu_quota; absent when [team.resources] cpu_quota is not set (a team can still have a shared cgroup for another reason — a per-agent or per-spawn cpu_quota — with this field absent even so) |
 | `record_payloads` | boolean | whether [team] record_payloads is set |
+
+## `session.erasure`
+
+A Data, Args, Cmd or Argv field somewhere in this chain was replaced with a fingerprint of what was there — its own sha256 — by kelyfos sessions erase (P7-5, D61). The chain is rewritten and rehashed in full, so the digest of every event after the first one touched is different from what it was before this ran; the chain still verifies, and this event is the last one, appended once the rewrite is complete. Written by the **host**.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `reason` | string | why — an operator-supplied string, e.g. a GDPR Article 17 request |
+| `modified` | integer | how many events had a field replaced (not how many fields) |
 
 
 ---

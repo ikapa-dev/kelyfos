@@ -129,10 +129,10 @@ emptied in place, so nothing about the format moved.
 `sandbox` names the **session**, and a team is one session by design (E2-1), so
 inside a team every event carries the team's id there rather than the id of the
 machine it came from. The `agent` field is what says which machine, and inside a
-team it appears on every type except `session.start`, `session.end` and
-`team.topology`, which are about the team as a whole rather than one machine in
-it. A reader that sees no `agent` is looking at a single sandbox's session, or
-at one of those three.
+team it appears on every type except `session.start`, `session.end`,
+`team.topology` and `session.erasure`, which are about the team, or its whole
+chain, as a whole rather than one machine in it. A reader that sees no `agent`
+is looking at a single sandbox's session, or at one of those four.
 
 A `kelyfos serve-mcp` process is a session in the same sense, and its machines
 are sandboxes rather than agents: `agent` there carries the sandbox id a call
@@ -731,6 +731,25 @@ the moment the team came up, not a live view of it.
 | `store_keys` | object array | Every `[[team.store.key]]` rule: `name`, `read` and `write`. Absent when the team's store is not enabled. |
 | `cpu_quota_percent` | integer | The collective slice's cap — `[team.resources] cpu_quota`. The same field `resource.oom`, `resource.summary` and `session.policy` already carry, reused here for the team-wide number rather than one machine's. Absent when `[team.resources] cpu_quota` is not set — a team can still have a shared cgroup for another reason (a per-agent or per-spawn `cpu_quota`, which needs one too) with this field absent even so. |
 | `record_payloads` | boolean | Whether `[team] record_payloads` is set. Always present on this event, unlike most other fields here: `false` is distinguishable from "not a team," the same reason `jailed` and `overlay` are recorded as pointers rather than left absent. |
+
+### `session.erasure`
+Appended by `kelyfos sessions erase` (`docs/retention.md`, D61) once, as the
+new last event, after every `data`, `args`, `cmd` and `argv` field elsewhere
+in the chain that carried content has been replaced with a fingerprint of
+what was there — its own sha256 — and the whole chain rehashed from the
+first event so it still verifies. Carries no `agent` field: it is about the
+chain as a whole, the same scope `session.start`, `session.end` and
+`team.topology` already use.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `reason` | string | Why — the operator-supplied `-reason` the command requires, e.g. a GDPR Article 17 request. |
+| `modified` | integer | How many events had a field replaced. Not how many fields — an event with more than one redacted field still counts once. Reused from `run.review`'s own `modified`, disambiguated by `type` the same way `cpu_quota_percent` already is across four other event types. |
+
+A redacted field reads `"(erased — sha256:<64 hex chars>)"` in place of what
+was there — the same in-band-note shape `clipLargestField` already uses for
+a clipped one, applied to a deliberate removal instead of an accidental
+oversize.
 
 ---
 

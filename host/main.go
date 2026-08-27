@@ -24,7 +24,7 @@ usage:
   kelyfos snapshot save|restore    save a sandbox's state, or bring it back
   kelyfos pause --as <name>        freeze a running sandbox under a name
   kelyfos resume <name>            bring a paused session back
-  kelyfos sessions [rm <name>]     list paused sessions, or discard one
+  kelyfos sessions [rm <name>]     list paused sessions; rm, prune or erase one (-h on each for more)
   kelyfos diff [flags]             what a sandbox has done to its workspace
   kelyfos shell [flags]            an interactive terminal inside a sandbox
   kelyfos fork [flags]             restore one snapshot into several sandboxes

@@ -91,6 +91,8 @@ func docSet() []doc {
 			Summary: "the shell, the diff, pause and resume, port forwarding and notifications — written before the code, with the places the built thing differed marked"},
 		{Path: "docs/policy-record.md", Title: "The policy record", Full: true,
 			Summary: "session.policy and team.topology, written before the code: every field, its position in the frozen hash order, which door writes it, and what it omits"},
+		{Path: "docs/retention.md", Title: "Retention and erasure", Full: true,
+			Summary: "the [sessions] retention_days floor, kelyfos sessions prune, the size warning, and kelyfos sessions erase's replacement-record pattern"},
 		{Path: "docs/README.md", Title: "Documentation map", Full: true,
 			Summary: "what every document is, and — deliberately — where each is still thin"},
 	}

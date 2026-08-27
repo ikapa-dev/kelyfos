@@ -24,7 +24,7 @@ func sectionHeader(section string) string {
 	switch section {
 	case "":
 		return ""
-	case "resources", "mcp", "team", "team.resources", "team.store":
+	case "resources", "sessions", "mcp", "team", "team.resources", "team.store":
 		return "[" + section + "]\n"
 	case "plugin":
 		return "[[plugin]]\n"

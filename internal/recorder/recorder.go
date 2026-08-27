@@ -79,6 +79,14 @@ const (
 	// its agents, edges and store rules — written once at boot
 	// (docs/policy-record.md §3, §6).
 	TypeTeamTopology = "team.topology"
+	// TypeSessionErasure is P7-5's addition (D61): appended by Erase, the one
+	// place this type is ever written, recording that a session's own
+	// guest-influenced content fields were replaced with a fingerprint of
+	// what was there. Reason carries why (an operator-supplied string, e.g.
+	// a GDPR Article 17 request); Modified carries how many events were
+	// touched — reused rather than a new field, the same way session.policy
+	// and team.topology already reuse VcpuCount/MemMiB/CPUQuota.
+	TypeSessionErasure = "session.erasure"
 )
 
 // ReasonServeMCP marks a session.start as a server's own session rather than a
