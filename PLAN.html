@@ -4032,6 +4032,58 @@ after:
         what this does <i>not</i> cover: an actual green <code>ci.yml</code>/<code>security.yml</code> run on
         GitHub&rsquo;s own runners, or x86_64 boot under GitHub&rsquo;s KVM. Re-run both workflows for real once
         Actions is restored for this account; until then this row is the CI reconciliation of record.</td></tr>
+    <tr><td class="mono">2026-08-27</td><td class="mono">P7-1</td>
+        <td><b>One fold, not three.</b> <code>internal/digest</code> (new package): <code>Digest.Absorb</code>
+        folds one event into per-agent counters, per-pair message counts, per-domain egress, store activity, the
+        session header and usage receipts, and an annotated <code>Timeline</code> entry &mdash; in exactly one
+        place. <code>Walk</code> runs it once over a whole chain (<code>internal/report</code>'s use);
+        <code>kelyfos watch</code> calls <code>Absorb</code> live, once per event, off its own tail. Both
+        <code>host/watch.go</code>'s <code>absorb()</code> and <code>internal/report</code>'s three loops (the
+        main switch and <code>buildLanes</code>' two passes) are rewritten onto it and lose their own copies:
+        <code>buildLanes</code> now takes a <code>*digest.Digest</code> instead of re-walking raw events, and
+        <code>watch.go</code> dropped its own counter bookkeeping and a second base64 decode of command output.
+        <b>Two divergences the old duplication had introduced without anyone noticing are now explicit instead of
+        forked a third time</b>: <code>internal/report</code>'s <code>Summary.TeamRefused</code> counts a refused
+        message or spawn only; <code>kelyfos watch</code>'s status line has always added a denied store access on
+        top. <code>Digest.TeamRefused()</code> and <code>Digest.AllRefusals()</code> are that difference, named and
+        tested, rather than left to re-diverge unnoticed a third time.
+        <b>A real regression caught before it landed:</b> retaining <code>Timeline</code> unconditionally would have
+        reintroduced exactly the unbounded per-session memory growth <code>host/watch.go</code>'s own
+        <code>bound()</code> helper exists to refuse &mdash; a long-running watch's <code>command.start</code>
+        entries kept forever, each still accumulating its command's whole output, for a view that never even reads
+        <code>Timeline</code> back. Fixed with <code>Digest.KeepTimeline</code> (false by default, which is what a
+        zero-value <code>Digest</code> &mdash; what <code>watchModel</code> embeds by value &mdash; gets for free;
+        <code>New</code>/<code>Walk</code> opt in for <code>internal/report</code>, which needs the whole record) and
+        <code>openCommands</code> (freed the moment a command's own exit is absorbed, so it stays bounded by commands
+        still running rather than by how many ever ran).</td>
+        <td class="mono"><code>go vet ./...</code> clean; <code>go test ./...</code> &rarr; 18 packages
+        <code>ok</code> (rest <code>[no test files]</code>), including <code>host</code> (17.9s, real KVM boots),
+        <code>internal/report</code>, <code>internal/digest</code><br>
+        <code>internal/digest</code> is new: 24 tests + <code>FuzzAbsorbNeverPanics</code>, all passing;
+        <code>go test -run='^$' -fuzz=FuzzAbsorbNeverPanics -fuzztime=10s</code> &rarr; ~2.5M execs, 0 failures.
+        <code>internal/report</code>'s four fuzz targets re-run at 10s each, clean<br>
+        every pre-existing <code>report_test.go</code> and <code>watch_test.go</code> assertion still passes:
+        <code>buildLanes</code>' 11 call sites became <code>buildLanes(digest.Walk(events))</code> (walking the
+        chain once per <code>Render</code> rather than twice), <code>watch_test.go</code>'s counter/receipt
+        assertions read <code>m.d.*</code> / <code>m.agentCounters()</code> / <code>m.agentReceipt()</code> instead
+        of duplicated fields &mdash; same behaviour, same numbers<br>
+        real-VM verification beyond the unit suite, inside <code>kelyfos-dev</code>: single sandbox &mdash;
+        <code>kelyfos run --image base</code>, mixed stdout/stderr exec, <code>kelyfos log --export report.html</code>
+        (8 events), <code>kelyfos verify report.html</code> &rarr; chain intact, <code>hello-from-guest</code>
+        present, no lanes section. Three-agent team (cookbook recipe 5's policy, <code>image = "base"</code>
+        substituted) &mdash; a send, a store put/get, a refused undeclared edge, <code>kelyfos team down</code>,
+        <code>kelyfos log --export team-report.html</code> (12 events) &rarr; chain intact and verified,
+        <code>class="lanes"</code> present with <code>master</code>/<code>worker-1</code>/<code>worker-2</code> all
+        present, 5 occurrences of the <code>team-refused</code> class<br>
+        <code>make docs</code> &rarr; same 8 files, <code>llms.txt</code> 6494 bytes /
+        <code>llms-full.txt</code> 567962 bytes &asymp; 147565 tokens, no diff (this task adds no command, flag or
+        event, confirmed rather than assumed); <code>make tokens</code> re-measured at the same figure<br>
+        <code>make cookbook</code>: 2 passed, 13 failed, every failure &ldquo;requested --image dev but &hellip;
+        holds the &lsquo;base&rsquo; image&rdquo; or cascading from it &mdash; a pre-existing gap in this Lima VM
+        (only the base flavour is built there), not a regression: <code>make image FLAVOR=dev</code> fails
+        independently, inside Buildroot's <code>target-finalize</code> step, before any Go code runs. The real-VM
+        checks above exercise the identical <code>kelyfos log --export</code> / <code>kelyfos verify</code> path
+        cookbook recipe 6 does, with <code>--image base</code> substituted, and pass</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/p4r4n0rm4l/KelyfOS/internal/digest"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
 )
 
@@ -59,11 +60,11 @@ func render(t *testing.T, events []recorder.Event) string {
 // A single sandbox has no lanes and its report is exactly the report it was
 // before teams existed. The lane view is an addition, not a replacement.
 func TestLanesAreAbsentForASingleSandbox(t *testing.T) {
-	lanes, rows := buildLanes([]recorder.Event{
+	lanes, rows := buildLanes(digest.Walk([]recorder.Event{
 		ev(recorder.TypeSessionStart, ""),
 		ev(recorder.TypeCommandStart, ""),
 		ev(recorder.TypeSessionEnd, ""),
-	})
+	}))
 	if lanes != nil || rows != nil {
 		t.Fatalf("a single-sandbox session grew lanes: %v", lanes)
 	}
@@ -75,12 +76,12 @@ func TestLanesAreAbsentForASingleSandbox(t *testing.T) {
 // Lane order is first-appearance order, which for a team is boot order — so the
 // columns read like the file the user wrote.
 func TestLaneOrderIsBootOrder(t *testing.T) {
-	lanes, _ := buildLanes([]recorder.Event{
+	lanes, _ := buildLanes(digest.Walk([]recorder.Event{
 		ev(recorder.TypeCommandStart, "master"),
 		ev(recorder.TypeCommandStart, "worker-1"),
 		ev(recorder.TypeCommandStart, "worker-2"),
 		ev(recorder.TypeCommandStart, "master"),
-	})
+	}))
 	if got := strings.Join(lanes, " "); got != "master worker-1 worker-2" {
 		t.Errorf("lanes = %q", got)
 	}
@@ -91,7 +92,7 @@ func TestLaneOrderIsBootOrder(t *testing.T) {
 func TestAPeerThatNeverActedStillGetsALane(t *testing.T) {
 	e := ev(recorder.TypeTeamMessage, "master")
 	e.Peer, e.Kind = "quiet-worker", "send"
-	lanes, rows := buildLanes([]recorder.Event{e})
+	lanes, rows := buildLanes(digest.Walk([]recorder.Event{e}))
 	if len(lanes) != 2 || lanes[1] != "quiet-worker" {
 		t.Fatalf("lanes = %v", lanes)
 	}
@@ -108,7 +109,7 @@ func TestAPeerThatNeverActedStillGetsALane(t *testing.T) {
 func TestAStoreKeyDoesNotMintALane(t *testing.T) {
 	e := ev(recorder.TypeTeamStore, "master")
 	e.Peer, e.Kind, e.Outcome = "findings/a", "put", "delivered"
-	lanes, rows := buildLanes([]recorder.Event{e})
+	lanes, rows := buildLanes(digest.Walk([]recorder.Event{e}))
 	if len(lanes) != 1 || lanes[0] != "master" {
 		t.Fatalf("a store key became a lane: %v", lanes)
 	}
@@ -128,7 +129,7 @@ func TestAReplyPointsBackwards(t *testing.T) {
 	ask.Peer, ask.Kind = "worker-1", "ask"
 	reply := ev(recorder.TypeTeamMessage, "worker-1")
 	reply.Peer, reply.Kind = "master", "reply"
-	_, rows := buildLanes([]recorder.Event{ask, reply})
+	_, rows := buildLanes(digest.Walk([]recorder.Event{ask, reply}))
 	if !strings.Contains(rows[0].Title, "→") {
 		t.Errorf("an ask does not point forwards: %q", rows[0].Title)
 	}
@@ -143,9 +144,9 @@ func TestAReplyPointsBackwards(t *testing.T) {
 func TestARefusedMessageSpansItsLanesAndIsFlagged(t *testing.T) {
 	e := ev(recorder.TypeTeamRefused, "worker-1")
 	e.Peer, e.Kind, e.Reason = "worker-2", "send", "no_edge"
-	_, rows := buildLanes([]recorder.Event{
+	_, rows := buildLanes(digest.Walk([]recorder.Event{
 		ev(recorder.TypeCommandStart, "master"), e,
-	})
+	}))
 	r := rows[len(rows)-1]
 	if !r.Flow || !r.IsError || r.Kind != "team-refused" {
 		t.Fatalf("a refused message was not flagged as one: %+v", r)
@@ -167,7 +168,7 @@ func TestARefusedMessageSpansItsLanesAndIsFlagged(t *testing.T) {
 func TestARefusedSpawnIsACellNotAFlow(t *testing.T) {
 	e := ev(recorder.TypeTeamSpawn, "master")
 	e.Outcome, e.Reason = "refused", "budget_exhausted"
-	lanes, rows := buildLanes([]recorder.Event{e})
+	lanes, rows := buildLanes(digest.Walk([]recorder.Event{e}))
 	if len(lanes) != 1 {
 		t.Fatalf("a refused spawn minted a phantom lane: %v", lanes)
 	}
@@ -191,7 +192,7 @@ func TestCommandOutputAttachesToItsCommandInTheLanes(t *testing.T) {
 	exit := ev(recorder.TypeCommandExit, "worker-1")
 	exit.Call, exit.Code = "c1", &code
 
-	_, rows := buildLanes([]recorder.Event{start, out, exit})
+	_, rows := buildLanes(digest.Walk([]recorder.Event{start, out, exit}))
 	if len(rows) != 1 {
 		t.Fatalf("expected one row for one command, got %d", len(rows))
 	}
@@ -209,11 +210,11 @@ func TestCommandOutputAttachesToItsCommandInTheLanes(t *testing.T) {
 func TestAnAgentlessEventDoesNotLandInTheFirstLane(t *testing.T) {
 	e := ev(recorder.TypeResourceTimeout, "")
 	e.Budget = "max_runtime"
-	_, rows := buildLanes([]recorder.Event{
+	_, rows := buildLanes(digest.Walk([]recorder.Event{
 		ev(recorder.TypeCommandStart, "master"),
 		ev(recorder.TypeCommandStart, "worker-1"),
 		e,
-	})
+	}))
 	last := rows[len(rows)-1]
 	if got := string(last.Place); got == "grid-column:2" {
 		t.Errorf("an agentless event was attributed to %q's lane", "master")
@@ -291,7 +292,7 @@ func TestTheBootPathIsInTheTranscript(t *testing.T) {
 	forked := ev(recorder.TypeSessionReady, "worker-1")
 	forked.Via, forked.BootMS, forked.Image = "fork", 411, "dev"
 
-	_, rows := buildLanes([]recorder.Event{cold, forked})
+	_, rows := buildLanes(digest.Walk([]recorder.Event{cold, forked}))
 	if len(rows) != 2 {
 		t.Fatalf("got %d lane rows, want one per agent", len(rows))
 	}
@@ -343,7 +344,7 @@ func TestAServerSessionBecomesLanesOfSandboxes(t *testing.T) {
 			Error: &recorder.EvError{Kind: "tool", Message: "cpus 8 exceeds the ceiling"},
 			TS:    "2026-08-23T10:00:04.000Z"},
 	}
-	lanes, rows := buildLanes(events)
+	lanes, rows := buildLanes(digest.Walk(events))
 	if len(lanes) != 2 || lanes[0] != "aaa111" || lanes[1] != "bbb222" {
 		t.Fatalf("lanes = %v, want one per sandbox in first-appearance order", lanes)
 	}

@@ -117,8 +117,9 @@ func TestATeamSessionBecomesLanesWithoutBeingTold(t *testing.T) {
 	if len(m.lines) == 0 {
 		t.Error("the session-wide event went into a lane")
 	}
-	if m.lanes["master"].commands != 1 || m.lanes["worker-1"].failed != 1 {
-		t.Errorf("counters landed in the wrong lane: %+v %+v", m.lanes["master"], m.lanes["worker-1"])
+	if m.agentCounters("master").Commands != 1 || m.agentCounters("worker-1").Failed != 1 {
+		t.Errorf("counters landed in the wrong lane: %+v %+v",
+			m.agentCounters("master"), m.agentCounters("worker-1"))
 	}
 }
 
@@ -126,9 +127,9 @@ func TestATeamSessionBecomesLanesWithoutBeingTold(t *testing.T) {
 // the ticker, with both ends and the direction.
 func TestMessagesGoToTheTickerAndNotIntoALane(t *testing.T) {
 	m := teamModel()
-	if m.messages != 1 || m.refused != 2 {
+	if m.d.Messages != 1 || m.d.AllRefusals() != 2 {
 		t.Errorf("messages=%d refused=%d, want 1 and 2 (a refused send and a denied store)",
-			m.messages, m.refused)
+			m.d.Messages, m.d.AllRefusals())
 	}
 	flow := strings.Join(m.flow, "\n")
 	for _, want := range []string{"master → worker-1", "REFUSED", "worker-1 → worker-2", "no_edge"} {
@@ -207,22 +208,22 @@ func TestALanesUsageLineIsItsOwn(t *testing.T) {
 			usage: sandbox.Usage{CPUSeconds: cpu, RSSKiB: 50 << 10},
 			state: sandbox.State{ID: "aaaa", CPUQuota: 150, MemMiB: 512}, at: at}}}}
 	}
-	if got := m.lanes["master"].laneUsage(); !strings.Contains(got, "waiting") {
+	if got := m.lanes["master"].laneUsage(m.agentReceipt("master")); !strings.Contains(got, "waiting") {
 		t.Errorf("a lane with no sample reported one: %q", got)
 	}
 	m.Update(sample(1.0, now))
-	if got := m.lanes["master"].laneUsage(); !strings.Contains(got, "cpu —") {
+	if got := m.lanes["master"].laneUsage(m.agentReceipt("master")); !strings.Contains(got, "cpu —") {
 		t.Errorf("a single sample reported a rate: %q", got)
 	}
 	m.Update(sample(1.5, now.Add(time.Second)))
-	got := m.lanes["master"].laneUsage()
+	got := m.lanes["master"].laneUsage(m.agentReceipt("master"))
 	for _, want := range []string{"cpu 50%/150%", "mem 50 MiB/512M"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("lane usage %q\n  is missing %q", got, want)
 		}
 	}
 	// The other agent has no reading of its own and must not borrow one.
-	if got := m.lanes["worker-1"].laneUsage(); !strings.Contains(got, "waiting") {
+	if got := m.lanes["worker-1"].laneUsage(m.agentReceipt("worker-1")); !strings.Contains(got, "waiting") {
 		t.Errorf("a lane borrowed another agent's numbers: %q", got)
 	}
 }
@@ -232,11 +233,11 @@ func TestALaneFallsBackToItsOwnReceipt(t *testing.T) {
 	m := teamModel()
 	m.absorb(recorder.Event{Type: recorder.TypeResourceSummary, Agent: "master",
 		TS: "2026-08-23T10:01:00.000Z", CPUSeconds: 3.15, PeakRSSKiB: 49 << 10})
-	if got := m.lanes["master"].laneUsage(); !strings.Contains(got, "final 3.1s cpu") {
+	if got := m.lanes["master"].laneUsage(m.agentReceipt("master")); !strings.Contains(got, "final 3.1s cpu") {
 		t.Errorf("the lane did not fall back to its receipt: %q", got)
 	}
 	// A per-agent receipt is not the session's.
-	if m.receipt != nil {
+	if m.d.Receipt != nil {
 		t.Error("an agent's receipt was taken as the session's")
 	}
 }
