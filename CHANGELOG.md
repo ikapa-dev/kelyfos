@@ -307,6 +307,23 @@ reference described in the README and re-measured per release.
   "missing." Verified live in the Lima VM with the finding's own repro: two session directories, one
   `chmod 000`'d — `kelyfos runs --all` now lists the readable one and warns about the other, where
   the prior binary listed only the readable one with no warning at all.
+- **The host and supervisor MCP argument summarisers were two independent, byte-for-byte duplicated
+  implementations — `summariseArgs` (host/servemcpaudit.go) and `summarisePluginArgs`
+  (supervisor/pluginhost.go), each with its own copy of the `maxArgBytes`/`maxArgsBytes`/
+  `maxArrayBytes` constants and its own copy of `clipUTF8`.** They were in exact lock-step by
+  discipline rather than by construction: the shared low-level `proto.SafeText` the pair both call
+  is genuinely unified, but nothing stopped a future edit to one copy's redaction or bounding rules
+  from landing without the other, which would have made a supervisor-recorded plugin call redact
+  differently from a host-recorded tool call with no way to notice. The shared logic — key sorting,
+  `contentKeys` handling, the compact/clip rendering, the `maxArgsBytes` line budget, and `clipUTF8`
+  itself — now lives once, in a new `internal/argsummary` package both binaries import; only what is
+  genuinely caller-specific stayed local (host's `clipField`, which also bounds the tool name and
+  sandbox id fields `summariseArgs` never touched). `contentKeys` and the three size constants are
+  identical between the two callers, so those moved whole rather than being kept as two decisions
+  that happened to agree. Both `summariseArgs` and `summarisePluginArgs` are now one-line wrappers
+  over `argsummary.Summarise`; every existing test in both packages, and both fuzz targets, pass
+  unchanged against the shared implementation, and `internal/argsummary` carries its own test suite
+  covering the same guarantees directly.
 
 ---
 

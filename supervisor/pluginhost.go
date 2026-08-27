@@ -11,16 +11,15 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
-	"unicode/utf8"
 
 	"golang.org/x/sys/unix"
 
+	"github.com/p4r4n0rm4l/KelyfOS/internal/argsummary"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/mcp"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/proto"
 )
@@ -451,178 +450,28 @@ func builtinTool(name string) bool {
 	return false
 }
 
-// contentKeys are the arguments a record must never hold, because they carry
-// content rather than intent. The same list the outward door uses, for the same
-// reason: what was written is recorded by size, never by value.
-var contentKeys = map[string]bool{"content": true, "stdin": true, "data": true}
+// contentKeys, the size/line bounds, summarisePluginArgs and clipUTF8 all used
+// to be declared here in full, byte-for-byte duplicated in
+// host/servemcpaudit.go's summariseArgs and its own copy of every helper
+// underneath it. They now live once, in internal/argsummary, which both this
+// file and that one call — so an edit to the redaction or bounding rules can
+// no longer land in one door's record and not the other's (F12).
+//
+// The bound still matters here for its own reason: the agent's arguments
+// arrive on the MCP channel, whose frame limit is proto.MaxMCPLine — 16 MiB —
+// and this summary leaves on the events channel, whose limit is proto.MaxLine,
+// 1 MiB. proto.Writer.Write measures before it writes, so an oversized report
+// is refused with ErrLineTooLong, and pumpEvents (supervisor/main.go) keeps a
+// refused event as `pending` and sends it first on the next connection — where
+// it is refused again, for as long as the machine runs.
+var contentKeys = argsummary.ContentKeys
 
-// The bounds that keep a report sendable, and the record's line a line.
-//
-// The agent's arguments arrive on the MCP channel, whose frame limit is
-// proto.MaxMCPLine — 16 MiB — and this summary leaves on the events channel,
-// whose limit is proto.MaxLine, 1 MiB. The two do not meet, and the gap does
-// not merely lose the event: proto.Writer.Write measures before it writes, so
-// an oversized report is refused with ErrLineTooLong, and pumpEvents
-// (supervisor/main.go) keeps a refused event as `pending` and sends it first on
-// the next connection. The same frame is then refused again, for as long as the
-// machine runs. One call with a megabyte under any key would have cost the
-// sandbox its whole event lane — plugin crashes, OOM kills, every later call —
-// and the agent chose it.
-//
-// The host's copy of this summariser has the sharper version of the same
-// problem, and the same bounds (host/servemcpaudit.go): there the record is
-// written directly, with no frame limit between the summary and the chain, so
-// what an unbounded summary corrupts is the chain itself.
-//
-// Neither number changes what a real call renders. 120 bytes is the cap the
-// string branch has always applied, and no tool declares an object-valued
-// argument — every property of every InputSchema in supervisor/tools.go,
-// supervisor/teamtools.go, host/servemcptools.go and host/servemcpteam.go is a
-// string, an integer or an array of strings. A plugin may declare whatever it
-// likes, which is exactly why the bound is here and not in a schema check.
 const (
-	maxArgBytes  = 120
-	maxArgsBytes = 4 << 10
-	// An array's whole rendering, which is deliberately far above maxArgBytes:
-	// the egress allowlist arrives as an array and is recorded nowhere else, so
-	// cutting it short loses the only note of what an agent asked to reach.
-	// maxArgsBytes still bounds the joined line however this is spent.
-	maxArrayBytes = 1 << 10
+	maxArgBytes   = argsummary.MaxArgBytes
+	maxArgsBytes  = argsummary.MaxArgsBytes
+	maxArrayBytes = argsummary.MaxArrayBytes
 )
 
-func summarisePluginArgs(raw json.RawMessage) string {
-	if len(raw) == 0 {
-		return ""
-	}
-	var m map[string]any
-	if err := json.Unmarshal(raw, &m); err != nil {
-		return fmt.Sprintf("<unparseable, %d bytes>", len(raw))
-	}
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	parts := make([]string, 0, len(keys))
-	for _, k := range keys {
-		if contentKeys[k] {
-			parts = append(parts, k+"="+contentArgSize(m[k]))
-			continue
-		}
-		parts = append(parts, proto.SafeText(k)+"="+compactArg(m[k]))
-	}
-	out := strings.Join(parts, " ")
-	if len(out) > maxArgsBytes {
-		// The last bound, and the one that holds however the agent shaped the
-		// call: a key is as unbounded as a value, and an object may have as
-		// many of them as fit in the frame.
-		return fmt.Sprintf("%s…(%d bytes)", clipUTF8(out, maxArgsBytes), len(out))
-	}
-	return out
-}
+func summarisePluginArgs(raw json.RawMessage) string { return argsummary.Summarise(raw) }
 
-// clipUTF8 cuts s to at most n bytes without leaving half a rune at the end.
-//
-// A summary is marshalled onto the events channel and printed to a terminal by
-// `kelyfos log`. A trailing fragment of a multi-byte character is neither:
-// json.Marshal would replace it with U+FFFD in the line the host hashes, and
-// the terminal would show something else again. Dropping the fragment costs at
-// most three bytes of a summary that has already said how long the whole thing
-// was. The host's twin, for the same reason (host/servemcpaudit.go).
-func clipUTF8(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	s = s[:n]
-	for len(s) > 0 {
-		// DecodeLastRuneInString reports (RuneError, 1) for a broken tail and
-		// (U+FFFD, 3) for a replacement character that is genuinely there, so a
-		// character the JSON decoder already substituted is kept.
-		if r, size := utf8.DecodeLastRuneInString(s); r != utf8.RuneError || size > 1 {
-			break
-		}
-		s = s[:len(s)-1]
-	}
-	return s
-}
-
-// contentArgSize is what an argument carrying content is replaced by: its size,
-// and never its value. The outward door's rule, applied the same way, because a
-// plugin's arguments end up in the same record.
-//
-// The rule is about the key and not about the type the caller chose to put
-// under it. A string is measured as itself; anything else — an object, an
-// array, a number — is measured as the JSON it arrived as. Recognising only a
-// string would have left the guarantee decided by the agent, which picks the
-// shape as well as the bytes: the same content wrapped in an object fell
-// through to compactArg, whose last resort was json.Marshal with no length to
-// stop at, and was written into the record whole. That last resort is bounded
-// now too, but a bounded rendering of content is still content: the key is what
-// decides, and under these three names nothing is rendered at all.
-func contentArgSize(v any) string {
-	if s, ok := v.(string); ok {
-		return fmt.Sprintf("<%d bytes>", len(s))
-	}
-	blob, err := json.Marshal(v)
-	if err != nil {
-		return "<withheld>"
-	}
-	return fmt.Sprintf("<%d bytes>", len(blob))
-}
-
-// compactArg renders one argument, and every branch of it is bounded.
-//
-// The cap was the string branch's alone, which left an argument's size decided
-// by the type the agent chose to send: the same bytes inside an object went to
-// the default branch and were marshalled whole, and the same bytes spread
-// across an array were rendered element by element with nothing counting them.
-func compactArg(v any) string {
-	switch t := v.(type) {
-	case string:
-		if len(t) > maxArgBytes {
-			return fmt.Sprintf("%q…(%d bytes)", t[:maxArgBytes], len(t))
-		}
-		return proto.SafeText(t)
-	case []any:
-		parts := make([]string, 0, len(t))
-		used := 0
-		for i, e := range t {
-			// The budget is generous rather than tight, because the thing most
-			// often carried in an array here is the egress allowlist — and that
-			// is recorded nowhere else. recorder.Event has no allowlist field
-			// and session.start does not carry one, so this string is the only
-			// record of which domains an agent asked its sandbox to reach. A
-			// 120-byte budget spent across the whole array cut a real
-			// eight-domain list short, which is audit fidelity lost on ordinary
-			// traffic to bound a case the 4 KiB clip on the joined line already
-			// bounds (P6-28). Checked before the element rather than after it,
-			// so an array always renders at least its first.
-			if used >= maxArrayBytes {
-				parts = append(parts, fmt.Sprintf("…(%d more)", len(t)-i))
-				break
-			}
-			s := compactArg(e)
-			used += len(s) + 1
-			parts = append(parts, s)
-		}
-		return "[" + strings.Join(parts, ",") + "]"
-	case float64:
-		if t == float64(int64(t)) {
-			return fmt.Sprintf("%d", int64(t))
-		}
-		return fmt.Sprintf("%g", t)
-	default:
-		blob, err := json.Marshal(v)
-		if err != nil {
-			return "?"
-		}
-		if len(blob) > maxArgBytes {
-			// In practice an object: a bool renders in five bytes and a null in
-			// four, and nothing else reaches here. Quoted rather than cut raw,
-			// because %q escapes a rune the cut ran through as well as anything
-			// the marshalled JSON left unescaped.
-			return fmt.Sprintf("%q…(%d bytes)", blob[:maxArgBytes], len(blob))
-		}
-		return string(blob)
-	}
-}
+func clipUTF8(s string, n int) string { return argsummary.ClipUTF8(s, n) }
