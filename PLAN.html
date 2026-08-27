@@ -5407,6 +5407,23 @@ after:
         the store-rule glob-expansion logic (<code>expandStoreSpecs</code>) mirrors
         <code>internal/team/store.go</code>'s own <code>may()</code> without reopening how it works; everything
         else implements P7-7's task text without deviation.</td></tr>
+    <tr><td class="mono">2026-08-28</td><td class="mono">P7-7</td>
+        <td>Correction to the row above, added rather than edited (&sect;8 rule 6). Three files this task did
+        not think to check when it first ran <code>make docs</code> &mdash; <code>README.md</code>,
+        <code>docs/README.md</code>, <code>docs/integrating.md</code> &mdash; each still said &ldquo;fifteen
+        recipes&rdquo; in hand-written prose after the sixteenth (<code>team-graph</code>) was added;
+        <code>tools/cookbook</code>'s own <code>checkCount</code> only guards <code>docs/cookbook.md</code>'s own
+        opening sentence, so none of the three fail a build when they go stale &mdash; exactly the class of drift
+        <code>dev/docs-audit-2026-08-25.md</code> already caught once before, left unedited as the historical
+        record it is. Fixed, and <code>llms-full.txt</code> regenerated a second time since it concatenates all
+        three.</td>
+        <td><code>grep -rln "fifteen recipes\|fifteen complete\|fifteen things"</code> across every
+        <code>.md</code>/<code>.yml</code>/<code>.go</code> file (excluding the dated audit and exam transcripts)
+        &rarr; empty after the fix, three hits before it; <code>make docs</code> re-run &rarr; clean, then a
+        second time to confirm idempotence (no diff) &mdash; <code>gendocs: llms.txt 6749 bytes &middot;
+        llms-full.txt 620096 bytes, about 161077 tokens</code> is the figure that actually matches the tree, not
+        the 161030 the row above logged before this fix. <code>python3 tools/check-plan.py</code> (host) &rarr;
+        &ldquo;PLAN.html is coherent: 101 tasks, 84 checked, 68 decisions&rdquo;, unchanged.</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
