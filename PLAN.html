@@ -4343,7 +4343,7 @@ after:
         <code>host/fork.go</code>'s <code>recordFork</code>, the door that already got this right.
         <br><b>F3 (MEDIUM, fixed)</b> &mdash; a second, independent door-enumerating test,
         <code>TestEverySessionStartSiteHasAMatchingSessionPolicy</code>, added beside the existing
-        <code>WithPosture</code>-based one rather than replacing it (D65: the existing test's per-closure,
+        <code>WithPosture</code>-based one rather than replacing it (D68: the existing test's per-closure,
         mutation-tested coverage is real and not reproduced by the new one). It starts from every
         <code>recorder.Event</code> literal whose <code>Type</code> is <code>recorder.TypeSessionStart</code>,
         per &sect;9.3, and requires the enclosing top-level function to <i>reach</i>
@@ -5665,7 +5665,7 @@ after:
         verification (&ldquo;aarch64 is build-only here and boot-verified on the dev machine&rdquo;). Evidence and
         its scope limits are in the Progress Log entry beside this row. Real CI reconciliation resumes the session
         Actions is restored.</td></tr>
-    <tr><td class="mono">D65</td><td class="mono">2026-08-27</td>
+    <tr><td class="mono">D68</td><td class="mono">2026-08-27</td>
         <td><b>The door-enumerating test for <code>session.policy</code> runs two mechanisms, not the one
         <code>docs/policy-record.md</code> &sect;9.3 literally describes.</b> The review that reopened P7-2 (F3)
         found <code>host/policy_wiring_test.go</code>'s existing test starts from <code>WithPosture</code> call
