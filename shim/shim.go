@@ -52,7 +52,7 @@ type Policy struct {
 	// domains inside it. Both come from the file unless the operator who
 	// started the shim named them on the command line.
 	Allow   []string
-	Secrets []egress.Secret
+	Secrets []*egress.Secret
 
 	// The caps, exactly as [resources] declares them. There are no per-request
 	// knobs: an SDK client cannot ask for a bigger machine, which is the point.
@@ -301,10 +301,7 @@ func (s *Server) boot(parent context.Context) (*box, error) {
 			return nil, err
 		}
 		opts.Net = b.net
-		pol := egress.Policy{Allow: s.Policy.Allow}
-		for i := range s.Policy.Secrets {
-			pol.Secrets = append(pol.Secrets, &s.Policy.Secrets[i])
-		}
+		pol := egress.Policy{Allow: s.Policy.Allow, Secrets: s.Policy.Secrets}
 		if len(pol.Secrets) > 0 {
 			if ca, err = egress.NewCA(); err != nil {
 				return nil, err

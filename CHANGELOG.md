@@ -278,6 +278,22 @@ reference described in the README and re-measured per release.
   repro — a 9 MiB `EvError.Message` on an otherwise-empty event — which failed closed before this
   fix (confirmed by temporarily disabling the new code path) and now clips and keeps the event,
   verifying like any other clipped field.
+- **`shim.Policy.Secrets` held `[]egress.Secret` — values, not pointers — the one container in the
+  product that broke the pattern every other secret-holding container follows.** `Secret.String()`
+  deliberately has a pointer receiver so it can redact: a `*Secret` formats as
+  `Secret{NAME@domain scheme=Bearer}`, but a bare `Secret` value is outside that method's receiver
+  set, so a stray `%v`/`%+v` on it falls back to reflecting over the struct fields — including the
+  unexported `value` holding the plaintext credential — and prints it. Nothing formats
+  `shim.Policy` as a whole today, so the gap was dormant, but it stood next to `egress.Policy.Secrets`
+  and every other secret container in this codebase, all of which already carry `[]*egress.Secret`
+  for exactly this reason. `shim.Policy.Secrets` is now `[]*egress.Secret` too; `host/shim.go`'s
+  population of it (`shimCmd`, from `--secret` and the policy file) appends the already-owned
+  pointer instead of dereferencing it, and `shim/shim.go`'s use of the field when building the
+  sandbox's `egress.Policy` collapses to a plain slice assignment now that the two field types
+  match. `TestPolicySecretsNeverFormatTheirValue` (shim/policy_secrets_test.go) pins it: it builds a
+  `Policy` with a real parsed secret and asserts `%v`/`%+v` on the `Policy`, on `Policy.Secrets`, and
+  on a `Secrets` element never contain the token, the same shape `TestSecretValueNeverFormats`
+  already pins for a bare `Secret`.
 
 ---
 

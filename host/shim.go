@@ -102,7 +102,7 @@ commands. See docs/e2b-shim.md.
 				if !containsDomain(pol.Allow, sec.Domain) {
 					return denial.SecretUnallowed.Err(denial.V{"spec": spec, "domain": sec.Domain})
 				}
-				pol.Secrets = append(pol.Secrets, *sec)
+				pol.Secrets = append(pol.Secrets, sec)
 			}
 		}
 		if pol.ScratchBytes > 0 && pol.ScratchBytes > int64(pol.MemMiB)<<20 {
