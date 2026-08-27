@@ -160,6 +160,21 @@ reference described in the README and re-measured per release.
   next to `count`. `FuzzConfigParse` gained the finding's own reproduction as a seed and an
   invariant checking every parsed `Count` against the ceiling, alongside a dedicated unit test for
   the boundary itself.
+- **The guest-facing team and events channels' accept loops had no connection cap and no read
+  deadline, unlike the egress proxy's identical accept loop, fixed for exactly this shape by S5a —
+  the fix was never mirrored to these two sibling listeners.** Both are unix sockets any process
+  inside the guest can dial directly over vsock, not only through the supervisor's own
+  well-behaved clients, and `serveTeam`/`serveEvents` spawned one goroutine per `Accept` with
+  nothing bounding how many could be outstanding or how long one could sit open having sent
+  nothing at all — enough silent connections and no connection, including a real one, could ever
+  be served again. Both loops now acquire a 128-connection semaphore before `Accept`, the same cap
+  and the same before-not-after placement `internal/egress/proxy.go` uses, and set a 10-second read
+  deadline on an accepted connection that is cleared the moment its first frame parses — a
+  connection already mid-conversation is never punished for an idle gap before its next request,
+  which on the team channel can legitimately be arbitrarily long.
+  `TestSilentTeamConnectionsAreCappedAndReclaimed` and `TestSilentEventsConnectionsAreCappedAndReclaimed`
+  fill each cap with connections that never write and prove a legitimate connection queued behind
+  it is still served once the deadline reclaims a slot, rather than stuck for good.
 
 ---
 

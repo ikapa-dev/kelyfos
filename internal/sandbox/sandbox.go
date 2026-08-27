@@ -196,6 +196,16 @@ type Sandbox struct {
 	ready    chan proto.Ready
 	done     chan struct{}
 	waitErr  error
+	// teamSem and eventsSem bound how many connections serveTeam and serveEvents
+	// will service at once, the same shape internal/egress/proxy.go's Proxy.sem
+	// was given for the identical problem (S5a): both listeners are reachable
+	// directly over vsock by any process inside the guest, not only through the
+	// supervisor's own well-behaved client, so an accept loop with nothing
+	// upstream of it is a guest-controlled goroutine-per-connection budget (F5).
+	// Created lazily, the same way Proxy.sem is, so a Sandbox built without going
+	// through listenTeam/listenEvents still zero-values cleanly.
+	teamSem   chan struct{}
+	eventsSem chan struct{}
 	// profileError is why the guest could not confine what it spawns, when it
 	// could not. Kept off State because it is a fault to report rather than a
 	// fact to record: a machine that has one does not become a session.
@@ -361,19 +371,57 @@ func (s *Sandbox) listenTeam() error {
 	return nil
 }
 
+// maxConcurrentGuestConnections bounds how many connections serveTeam and
+// serveEvents will each service at once — internal/egress/proxy.go's
+// maxConcurrentConnections, mirrored here for the sibling listener that
+// finding F5 pointed out never got it. A guest that opens far more
+// connections than this to either channel cannot make either loop spawn more
+// than this many goroutines, however many it opens or however long it holds
+// them open without writing.
+const maxConcurrentGuestConnections = 128
+
+// guestFirstFrameTimeout bounds how long a newly accepted team or events
+// connection may sit silent before it has sent one complete, parseable frame.
+// It is cleared the moment that first frame is read, exactly like
+// proxy.go's readHeaderTimeout is cleared once http.ReadRequest returns
+// (S5a) — everything after that point is a legitimate, arbitrarily long idle
+// gap between requests (teamClient.call in supervisor/team.go holds one
+// connection open for the sandbox's whole life and calls it only when an
+// agent has something to send), and punishing that would just make a working
+// connection reconnect for no reason. What this bounds is the connection
+// that never speaks at all: without it, a semaphore slot taken by one and
+// never released would eventually be a slot never reclaimed, and the loop
+// would stop accepting anyone else's connections for good (F5).
+const guestFirstFrameTimeout = 10 * time.Second
+
 // serveTeam answers the guest's team requests, one connection at a time per
 // connection and strictly in order on each — the ordering the broker promises
 // is per-edge FIFO, and answering out of order would break it on the way in
 // rather than on the way out.
 func (s *Sandbox) serveTeam() {
+	if s.teamSem == nil {
+		s.teamSem = make(chan struct{}, maxConcurrentGuestConnections)
+	}
 	for {
+		// Acquired before Accept, not after, so the accept loop itself blocks
+		// at capacity rather than merely queuing an ever-growing pile of
+		// goroutines behind it (S5a).
+		s.teamSem <- struct{}{}
 		conn, err := s.teamLn.Accept()
 		if err != nil {
+			<-s.teamSem
 			return
 		}
 		go func() {
 			defer conn.Close()
+			defer func() { <-s.teamSem }()
 			r, w := proto.NewReader(conn), proto.NewWriter(conn)
+			// Set before anything is read, so a connection that never sends a
+			// frame is closed by the deadline rather than holding its
+			// semaphore slot forever (F5). Cleared below the first time
+			// r.Read succeeds.
+			_ = conn.SetReadDeadline(time.Now().Add(guestFirstFrameTimeout))
+			first := true
 			for {
 				var req proto.TeamRequest
 				if err := r.Read(&req); err != nil {
@@ -386,6 +434,10 @@ func (s *Sandbox) serveTeam() {
 						continue
 					}
 					return
+				}
+				if first {
+					_ = conn.SetReadDeadline(time.Time{})
+					first = false
 				}
 				// Before the broker acts on it, because acting on it is what
 				// makes it unrecoverable: a message the broker accepts is a
@@ -522,14 +574,29 @@ func (s *Sandbox) listenEvents() error {
 // the frames beyond their shape, because the guest runs untrusted code and this
 // is a report, not a record.
 func (s *Sandbox) serveEvents() {
+	if s.eventsSem == nil {
+		s.eventsSem = make(chan struct{}, maxConcurrentGuestConnections)
+	}
 	for {
+		// Same reasoning as serveTeam's semaphore: acquired before Accept so a
+		// guest that opens far more connections than this cannot make this
+		// loop spawn more than maxConcurrentGuestConnections goroutines (F5).
+		s.eventsSem <- struct{}{}
 		conn, err := s.eventsLn.Accept()
 		if err != nil {
+			<-s.eventsSem
 			return
 		}
 		go func() {
 			defer conn.Close()
+			defer func() { <-s.eventsSem }()
 			r := proto.NewReader(conn)
+			// Same reasoning as serveTeam's: bounds a connection that never
+			// sends a parseable frame, cleared the first time one arrives so a
+			// guest that reports events sparsely over the sandbox's life is
+			// never punished for the gaps (F5).
+			_ = conn.SetReadDeadline(time.Now().Add(guestFirstFrameTimeout))
+			first := true
 			for {
 				var ev proto.GuestEvent
 				if err := r.Read(&ev); err != nil {
@@ -546,6 +613,10 @@ func (s *Sandbox) serveEvents() {
 						continue
 					}
 					return
+				}
+				if first {
+					_ = conn.SetReadDeadline(time.Time{})
+					first = false
 				}
 				if s.opts.OnGuestEvent != nil {
 					s.opts.OnGuestEvent(ev)
