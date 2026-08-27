@@ -4032,6 +4032,172 @@ after:
         what this does <i>not</i> cover: an actual green <code>ci.yml</code>/<code>security.yml</code> run on
         GitHub&rsquo;s own runners, or x86_64 boot under GitHub&rsquo;s KVM. Re-run both workflows for real once
         Actions is restored for this account; until then this row is the CI reconciliation of record.</td></tr>
+    <tr><td class="mono">2026-08-27</td><td class="mono">P7-6</td>
+        <td><b>The layout, once &mdash; <code>internal/graph</code> added.</b> A pure function from agents, directed
+        edges and the resources they touch to placed nodes and routed edges (<code>Layout</code>, returning a
+        <code>Placement</code>), plus the transitive closure the reach view needs (<code>TransitiveClosure</code>,
+        returning a <code>Closure</code>). One implementation, two backends: <code>Terminal</code> renders a
+        <code>Placement</code> to a rune canvas with a legend, <code>SVG</code> scales the same
+        <code>Placement</code> to pixel coordinates only &mdash; numbers, never markup, so nothing it returns needs
+        escaping downstream.
+        <br><b>Deterministic by construction.</b> A shared <code>normalize</code> step sorts and validates before
+        either public function computes anything, so <code>Layout</code> and <code>TransitiveClosure</code> always
+        agree about which agents and resources exist. Order in the input slices never affects the output
+        (<code>TestNormalizeIsOrderIndependent</code>, <code>TestLayoutIsDeterministicAcrossInputOrder</code>,
+        <code>TestClosureIsDeterministicAcrossInputOrder</code>). A dangling edge or access reference is refused
+        rather than dropped &mdash; dropping it would make a reach view understate what a team can reach, the one
+        direction this must never fail silently in &mdash; while a self-loop edge is silently skipped, mirroring
+        <code>internal/team.NewTopology</code>&rsquo;s own precedent for the same case.
+        <br><b>The reach view answers the task text&rsquo;s own example.</b> A hub with a bidirectional edge to N
+        workers has no edge naming two workers together anywhere, and is not thereby isolation:
+        <code>TestStarTopologyIsNotIsolation</code> asserts every worker reaches every other in exactly two hops
+        through the hub. A second, quieter path is modelled too: a <code>StoreKey</code> resource one agent may
+        write and another may read opens a directed reach edge with no declared <code>team.edge</code> at all
+        (<code>TestSharedStoreKeyOpensAnIndirectChannel</code>); a <code>Domain</code> or <code>Secret</code>
+        resource deliberately does not, because those are destinations outside the team rather than state shared
+        between two agents inside it (<code>TestDomainAndSecretAccessDoNotOpenAChannel</code>).
+        <br>Four golden fixtures under <code>testdata/golden/</code> freeze <code>Terminal</code>&rsquo;s rune
+        output for a star with one resource of each kind, a pipeline, two disconnected components plus an isolated
+        agent, and a single agent &mdash; hand-verified against what <code>Layout</code>&rsquo;s placement and
+        routing rules should produce before being committed as golden. A byte-driven fuzz target
+        (<code>FuzzLayoutNeverPanicsAndIsDeterministic</code>) builds bounded random graphs from raw fuzz bytes over
+        a small ID pool, so duplicate IDs and dangling references &mdash; the two cases <code>normalize</code> is
+        written to catch &mdash; occur often rather than needing a lucky corpus; on every input it asserts
+        <code>Layout</code> and <code>TransitiveClosure</code> never disagree about validity, never panic, and are
+        byte-identical across a repeated call on the same <code>Input</code>.
+        <br><b>No files shared with any other lane</b> (D62): a new package, importing nothing from
+        <code>internal/recorder</code>, <code>internal/team</code> or <code>internal/config</code> &mdash; a caller
+        converts its own domain type into a <code>graph.Input</code>, which is what lets <code>kelyfos team
+        graph</code> reading <code>kelyfos.toml</code> (P7-7) and the exported report reading a session&rsquo;s fold
+        (P7-1/P7-8) agree about a topology without a third copy of this computation existing anywhere. Adds no CLI
+        command, flag, MCP tool or <code>kelyfos.toml</code> key, so &sect;8 rule 9&rsquo;s cookbook-recipe
+        obligation does not apply this task, and <code>make docs</code> produced no diff (checked below) &mdash; the
+        generated reference, <code>llms.txt</code> and <code>llms-full.txt</code> are unchanged, so no
+        re-measurement was needed. Per the brief&rsquo;s surface table this task gets light review (not one of
+        RECORD/PROXY/BROKER/RENDER) but is still not self-ticked &mdash; the checkbox is left unchecked for the
+        orchestrator&rsquo;s review dispatch.</td>
+        <td class="mono">commands run inside <code>limactl shell kelyfos-dev</code>, this worktree (branch
+        <code>phase7/lane3-layout</code> off <code>4a57db1</code>): <code>gofmt -l ./internal/graph/</code> &rarr;
+        clean; <code>go vet ./internal/graph/...</code> &rarr; clean; <code>go test ./internal/graph/... -v</code>
+        &rarr; 34 tests + 4 golden-fixture subtests, all <code>PASS</code>; <code>go test ./internal/graph/
+        -run=^$ -fuzz=FuzzLayoutNeverPanicsAndIsDeterministic -fuzztime=60s</code> &rarr;
+        &ldquo;15846963 execs, 280 interesting (total 287), PASS&rdquo;, 0 failures; <code>make test</code> (whole
+        repo: <code>go vet ./...</code> + <code>go test ./...</code>) &rarr; every package <code>ok</code> or
+        <code>[no test files]</code>, including the new <code>internal/graph</code>; <code>make vuln</code> &rarr;
+        &ldquo;No vulnerabilities found.&rdquo;; <code>make docs</code> &rarr; &ldquo;gendocs: wrote 8 files&rdquo;,
+        <code>git status --porcelain</code> before and after shows no change to any tracked file, only the new
+        untracked <code>internal/graph/</code>; <code>python3 tools/check-plan.py</code> &rarr; &ldquo;PLAN.html is
+        coherent: 99 tasks, 78 checked, 63 decisions&rdquo; both before and after this row was added.</td></tr>
+    <tr><td class="mono">2026-08-27</td><td class="mono">P7-6</td>
+        <td><b>Independent review response &mdash; two blocking findings fixed, two more done, one design note
+        adopted.</b> Reviewer hand-derived the golden fixtures independently, mutation-tested a scratch copy, and
+        confirmed the fuzz target is load-bearing (deleting the one sort in <code>Layout</code> passed the unit
+        suite but failed the fuzz target in under 10s). Verdict landed &ldquo;not ready to tick&rdquo;; the row above
+        this one is left as written, per &sect;8 rule 6 &mdash; this row corrects and extends it rather than editing
+        it.
+        <br><b>Correction: the prior row&rsquo;s test count was wrong.</b> It said &ldquo;34 tests + 4 golden
+        subtests&rdquo;; the actual count at that commit was <b>36</b> <code>Test*</code> functions, of which three
+        run subtests rather than one: <code>TestCornerGlyphAllFourBends</code> (4),
+        <code>TestGoldenTerminalLayout</code> (4) and <code>TestGoldenLayoutIsStableAcrossRuns</code> (4) &mdash;
+        the 4 golden fixtures are 8 subtests, not 4, because two different tests each run all 4 &mdash; plus one
+        fuzz target with 7 seed subtests, for 19 subtests total, not 4. &ldquo;Green is a number&rdquo; only holds
+        if the number is the one that was actually true.
+        <br><b>Finding 1 (blocking) &mdash; the terminal renderer could draw an edge that does not exist and hide
+        one that does.</b> <code>route</code> bends at a grid point that can coincide with another node&rsquo;s own
+        cell, and <code>Terminal</code> stamps node glyphs over everything drawn so far, so a corner landing on a
+        third node&rsquo;s cell vanishes under its glyph. Reviewer proved a star (a&harr;b, a&harr;c, no b-c edge)
+        and a chain (a&harr;b, b&harr;c, no a-c edge) render byte-identical <code>Cells</code> &mdash; the committed
+        <code>testdata/golden/star_with_resources.txt</code> has exactly this defect on its worker row, a star
+        reading as a chain, the precise &ldquo;isolation that isn&rsquo;t&rdquo; case this task exists to make
+        visible. <b>Fixed with the reviewer&rsquo;s cheaper option:</b> <code>Canvas</code> gains an authoritative
+        <code>Edges []TerminalEdge</code> field, a straight, order-preserving projection of the
+        <code>Placement</code>&rsquo;s own <code>RoutedEdges</code>, unaffected by anything <code>Cells</code> drew
+        or failed to draw &mdash; the same relationship <code>Legend</code> already has to node identity, extended
+        to edges. <code>Cells</code> is now documented as a sketch, never a source of truth, with the collision
+        explained in <code>Canvas</code>&rsquo;s own doc comment and flagged inline on the golden fixture that
+        demonstrates it. <code>TestDrawSegmentNeverOverwritesAGlyph</code>&rsquo;s comment, which had claimed this
+        exact collision &ldquo;never&rdquo; happens, is corrected to say precisely what the function does and does
+        not guard. New test <code>TestCanvasEdgesAreAuthoritativeEvenWhenCellsCollide</code> reproduces the
+        reviewer&rsquo;s star/chain pair, asserts the <code>Cells</code> collision is real (fails loudly if a future
+        routing change stops reproducing it, rather than passing silently), and asserts <code>Canvas.Edges</code>
+        names the right edges for each topology and no others.
+        <br><b>Finding 2 (blocking) &mdash; determinism was only asserted on rendered <code>Terminal</code> strings,
+        never on <code>Placement</code> or <code>SVG</code>.</b> Reviewer mutated <code>Layout</code>&rsquo;s
+        <code>return</code> to rebuild <code>Nodes</code> via unordered map iteration (identical positions,
+        nondeterministic slice order): all 36 tests, all 4 golden fixtures and 2.8M fuzz execs still passed, because
+        every check went through <code>Terminal(l).String()</code>, which draws by position and does not care about
+        slice order &mdash; while <code>SVG</code> maps <code>l.Nodes</code>/<code>l.Edges</code> index-for-index,
+        so that mutation would have made P7-8&rsquo;s exported report emit SVG elements in a different document
+        order every run. <b>Fixed:</b> <code>reflect.DeepEqual</code> now compares the <code>Placement</code>
+        structs directly (not just their rendered strings) in the fuzz target, <code>TestGoldenLayoutIsStableAcrossRuns</code>
+        and <code>TestLayoutIsDeterministicAcrossInputOrder</code>; the fuzz target additionally compares
+        <code>SVG(l1, DefaultSVGOptions())</code> against <code>SVG(l2, &hellip;)</code>, and upgrades its
+        <code>Closure</code> comparison from string formatting to <code>reflect.DeepEqual</code> on
+        <code>Agents</code>/<code>Hops</code> too, for the same reason.
+        <br><b>Finding 3 (worth fixing) &mdash; a map iteration in <code>reach.go</code> was exposed to an output
+        order, contradicting the package doc comment&rsquo;s own claim.</b> <code>for key, ws := range writers</code>
+        made the order adjacency entries were appended in nondeterministic; harmless today because BFS distance is
+        order-invariant, but real, and would have bitten the first caller that wanted to name which resource
+        explained a reach path. <b>Fixed:</b> the same computation now walks the already-sorted
+        <code>n.resources</code> instead of ranging the map, which (with <code>n.access</code>&rsquo;s own sort)
+        makes every per-resource writer/reader list arrive already ordered with nothing further to sort. The package
+        doc comment&rsquo;s claim is corrected to say precisely what is actually true: every map this package builds
+        is sorted, or walked in an already-sorted order, before a result is read out of it &mdash; and the fixed bug
+        is named inline as the reason that sentence is now exact rather than aspirational.
+        <br><b>Finding 4 (worth fixing) &mdash; <code>Terminal</code> could panic on a hand-built
+        <code>Placement</code>.</b> Zero <code>Width</code>/<code>Height</code> caused
+        <code>makeslice: len out of range</code>; a node position outside the declared
+        <code>Width</code>/<code>Height</code> caused an index-out-of-range panic. No <code>Placement</code>
+        <code>Layout</code> itself returns can trigger either (its <code>Width</code>/<code>Height</code> always
+        agree with its <code>Nodes</code>), but both fields are exported and <code>cornerGlyph</code>&rsquo;s own
+        comment already anticipated a hand-built one. <b>Fixed:</b> <code>Terminal</code> now derives the canvas
+        size from the actual maximum node and edge-path position in <code>l</code>, never from
+        <code>l.Width</code>/<code>l.Height</code> directly; two new tests construct exactly the two panicking
+        shapes and assert the node still renders at its real position.
+        <br><b>Finding 5 (cheap, done) &mdash; a caller obligation the package doc comment left unstated.</b> Per
+        <code>internal/team/store.go</code> (&ldquo;No rule mentions this key, so it belongs to the whole
+        team.&rdquo;), a <code>StoreKey</code> with no matching rule is open to the whole team by default; an
+        <code>Input</code> built only from declared <code>[[team.store.key]]</code> rules would miss that any-to-any
+        reach entirely and understate what the team can touch &mdash; exactly the failure direction the package doc
+        comment already says must never happen. A paragraph now states the caller&rsquo;s obligation to synthesize
+        an <code>Access</code> for every agent on every such key, and <code>Access</code>&rsquo;s own doc comment
+        points to it.
+        <br><b>Design note, adopted rather than deferred &mdash; <code>Closure.SharedResources(a, b)</code>.</b>
+        Reviewer flagged that excluding <code>Domain</code>/<code>Secret</code> from <code>Hops</code> is right
+        (neither is a host-mediated hop this package can bound), but that two agents sharing one often have a real
+        out-of-band channel this product cannot see (a shared domain is a plausible dead drop; a shared secret is
+        credential inheritance) that a reach matrix would otherwise read as silence. Implemented as a separate
+        signal, not folded into <code>Hops</code>: <code>SharedResources</code> returns every resource &mdash; any
+        <code>Kind</code>, read or write &mdash; both agents have an <code>Access</code> record for, sorted,
+        symmetric, empty for <code>a == b</code> or an unknown agent. The package doc comment&rsquo;s wording is
+        softened from &ldquo;do not thereby gain a path to each other&rdquo; (true only of this product&rsquo;s own
+        machinery) to naming <code>SharedResources</code> as what the exclusion does not have to mean silence.
+        <br><b>Not this task&rsquo;s obligation, flagged so it is not lost:</b> reviewer noted no fuzz seed corpus is
+        committed under <code>testdata/fuzz/</code> (seeds are in-code <code>f.Add</code> only, and nothing has ever
+        failed to create one) and that Phase 7 acceptance criterion 9 wants a committed corpus for every fuzz target
+        the phase touched &mdash; but assessed that as P7-13&rsquo;s exit-checkpoint obligation rather than a gap in
+        this task. Recorded here rather than assumed remembered.
+        <br>Checkbox still left unchecked &mdash; orchestrator routes final sign-off.</td>
+        <td class="mono">commands run inside <code>limactl shell kelyfos-dev</code>, same worktree/branch:
+        <code>gofmt -l ./internal/graph/</code> &rarr; clean; <code>go vet ./internal/graph/...</code> &rarr; clean;
+        <code>go test ./internal/graph/... -v</code> &rarr; <b>41</b> <code>Test*</code> functions total, 3 of which
+        run subtests (<code>TestCornerGlyphAllFourBends</code> 4, <code>TestGoldenTerminalLayout</code> 4,
+        <code>TestGoldenLayoutIsStableAcrossRuns</code> 4, the last two both over the same 4 golden fixtures) plus 1
+        fuzz target with 7 seed subtests &mdash; 19 subtests altogether, 60 <code>PASS</code> lines counted total
+        (<code>grep -c '^--- PASS: Test'</code> &rarr; 41, <code>grep -c '^    --- PASS:'</code> &rarr; 19), 0
+        failures; existing golden fixtures required <b>no regeneration</b>
+        &mdash; <code>Terminal</code>&rsquo;s size fix computes the identical canvas dimensions for any
+        <code>Layout</code>-produced <code>Placement</code>, only a hand-built one differs; <code>go test
+        ./internal/graph/ -run=^$ -fuzz=FuzzLayoutNeverPanicsAndIsDeterministic -fuzztime=90s</code> (second run,
+        stacked on the prior session&rsquo;s corpus) &rarr; &ldquo;20793507 execs, 65 new interesting (total 363),
+        PASS&rdquo;, 0 failures &mdash; combined with the prior session&rsquo;s 60s run, <b>~36.6M executions, 0
+        failures</b> across both blocking-fix commits; <code>find internal/graph/testdata -type f</code> &rarr; only
+        the 4 golden files, no fuzz failure corpus; <code>make test</code> (whole repo) &rarr; every package
+        <code>ok</code> or <code>[no test files]</code>; <code>make vuln</code> &rarr; &ldquo;No vulnerabilities
+        found.&rdquo;; <code>make docs</code> &rarr; &ldquo;gendocs: wrote 8 files&rdquo;,
+        <code>git status --porcelain</code> shows no change to any file outside <code>internal/graph/</code>;
+        <code>python3 tools/check-plan.py</code> &rarr; &ldquo;PLAN.html is coherent: 99 tasks, 78 checked, 63
+        decisions&rdquo; both before and after this row was added.</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
