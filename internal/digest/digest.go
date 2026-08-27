@@ -20,11 +20,11 @@
 // different constraints — the fold is what both need to agree on before
 // either starts drawing.
 //
-// session.policy and team.topology (P7-2, P7-3) are not folded here yet:
-// neither event type exists in today's schema. Absorb already forwards every
-// event it does not recognise into Digest.Timeline unrecognised, so the two
-// event types can be added to this file's switch the day they land, without
-// either consumer changing again.
+// session.policy and team.topology (P7-2, P7-3) land on Agent.Policy /
+// Digest.Policy and Digest.Topology respectively (P7-8) — the same
+// "store the raw event, let the reader format it" shape Receipt already
+// established for resource.summary, reused here rather than inventing a
+// second one for a second pair of once-per-machine/once-per-chain events.
 package digest
 
 import (
@@ -83,6 +83,12 @@ type Agent struct {
 	Name string
 	Counters
 	Receipt *recorder.Event
+	// Policy is this agent's session.policy (P7-2) — what it was declared
+	// permitted, nil until that event is absorbed. team.topology's own
+	// agent roster can name an agent this never fills in (a chain that
+	// ends before the policy event, or predates P7-2 entirely) — a reader
+	// must check for nil the same way it already must for Receipt.
+	Policy *recorder.Event
 }
 
 // SecretRef is one secret bound during the session, named but never valued —
@@ -200,6 +206,17 @@ type Digest struct {
 	// Receipt is the agentless resource.summary, nil until the session ends
 	// (or for a team, which writes one per agent instead — see Agents).
 	Receipt *recorder.Event
+
+	// Policy is the agentless session.policy (P7-2) — a single machine
+	// outside a team. Nil for a team, where session.policy always names an
+	// agent and lands on Agents[name].Policy instead, or for a chain that
+	// ended before its policy was declared.
+	Policy *recorder.Event
+	// Topology is the team's team.topology (P7-3), nil outside a team or
+	// before it is declared. Written once per chain — unlike Receipt and
+	// Policy, which a team writes one of per agent, this one is never
+	// per-agent (docs/policy-record.md §3).
+	Topology *recorder.Event
 
 	Secrets []SecretRef // de-duplicated by name+host, first-seen order
 	// SecretsTruncated is set once a distinct name+host past MaxDistinctKeys
@@ -659,6 +676,27 @@ func (d *Digest) Absorb(e recorder.Event) *Entry {
 		entry.Category = "plugin"
 		entry.Refused = true
 
+	case recorder.TypeSessionPolicy:
+		// Same bucketing rule as resource.summary just above: a team
+		// writes one of these per agent, an agentless machine writes one
+		// for itself, and the two must never collide (E2-9's reasoning,
+		// applied to a second once-per-machine event).
+		entry.Category = "policy"
+		ev := e
+		if agent != nil {
+			agent.Policy = &ev
+		} else {
+			d.Policy = &ev
+		}
+
+	case recorder.TypeTeamTopology:
+		// Always agentless (docs/policy-record.md §3) — team.topology
+		// describes the team, not one machine, so unlike Policy this never
+		// branches on agent.
+		entry.Category = "topology"
+		ev := e
+		d.Topology = &ev
+
 	case recorder.TypeMCPHostCall:
 		entry.Category = "client"
 
@@ -667,11 +705,10 @@ func (d *Digest) Absorb(e recorder.Event) *Entry {
 		entry.Refused = e.Outcome != "ok"
 
 	default:
-		// session.policy and team.topology (P7-2, P7-3) land here until
-		// those event types exist, and any future type does the same: the
-		// entry is still recorded, still visible in Timeline, and this
-		// package's own tests catch a category that never gets classified
-		// once the switch above is extended to it.
+		// A future event type this package's switch does not yet know
+		// about lands here: the entry is still recorded, still visible in
+		// Timeline, and this package's own tests catch a category that
+		// never gets classified once the switch above is extended to it.
 		entry.Category = "other"
 	}
 

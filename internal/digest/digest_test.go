@@ -407,11 +407,51 @@ func TestReceiptGoesToTheRightBucket(t *testing.T) {
 	}
 }
 
+// session.policy follows the exact same bucketing rule as resource.summary
+// (TestReceiptGoesToTheRightBucket, just above): a team writes one per
+// agent, a single machine writes one for itself, and the two must never
+// collide.
+func TestPolicyGoesToTheRightBucket(t *testing.T) {
+	d := Walk([]recorder.Event{
+		{Type: recorder.TypeSessionPolicy, Agent: "master", MemMiB: 512},
+		{Type: recorder.TypeSessionPolicy, MemMiB: 1024},
+	})
+	if d.Policy == nil || d.Policy.MemMiB != 1024 {
+		t.Errorf("session policy = %v, want MemMiB=1024", d.Policy)
+	}
+	if d.Agents["master"].Policy == nil || d.Agents["master"].Policy.MemMiB != 512 {
+		t.Errorf("master's policy = %v, want MemMiB=512", d.Agents["master"].Policy)
+	}
+}
+
+// team.topology is written once per chain, never per agent — unlike
+// Receipt and Policy, it must not branch on which agent (if any) the event
+// happens to carry.
+func TestTopologyIsCapturedOnceForTheWholeTeam(t *testing.T) {
+	d := Walk([]recorder.Event{
+		{Type: recorder.TypeTeamTopology,
+			Agents: []recorder.EvAgent{{Name: "master", Sandbox: "s1"}},
+			Edges:  []string{"master -> worker-1"}},
+	})
+	if d.Topology == nil {
+		t.Fatal("Topology is nil after absorbing a team.topology event")
+	}
+	if len(d.Topology.Agents) != 1 || d.Topology.Agents[0].Name != "master" {
+		t.Errorf("Topology.Agents = %v", d.Topology.Agents)
+	}
+	if len(d.Topology.Edges) != 1 || d.Topology.Edges[0] != "master -> worker-1" {
+		t.Errorf("Topology.Edges = %v", d.Topology.Edges)
+	}
+}
+
 // An event type this package's switch does not classify still lands in the
 // timeline, tagged "other" rather than silently dropped — the extension
-// point session.policy and team.topology (P7-2, P7-3) will use.
+// point a future event type would use. session.policy and team.topology
+// used to stand in for that future type; P7-8 gave both a real category
+// (below), so this now uses a type this package's switch genuinely has no
+// case for.
 func TestAnUnclassifiedTypeStillReachesTheTimeline(t *testing.T) {
-	d := Walk([]recorder.Event{{Type: "session.policy"}})
+	d := Walk([]recorder.Event{{Type: "future.event-type"}})
 	if len(d.Timeline) != 1 {
 		t.Fatalf("Timeline has %d entries, want 1", len(d.Timeline))
 	}
@@ -438,13 +478,6 @@ func TestEveryKnownEventTypeIsClassified(t *testing.T) {
 		recorder.TypeShellStart:     true,
 		recorder.TypeShellEnd:       true,
 		recorder.TypeForwardAccept:  true,
-		// session.policy and team.topology (P7-2, P7-3) both landed after this
-		// package did. Nothing here folds either yet — P7-7/P7-8's views are
-		// what actually need to read a machine's declared caps and a team's
-		// roster, and that is real work for whichever of them picks it up,
-		// not a one-line fix here.
-		recorder.TypeSessionPolicy: true,
-		recorder.TypeTeamTopology:  true,
 	}
 	for _, typ := range allEventTypes() {
 		// command.output and command.exit never append their own Timeline

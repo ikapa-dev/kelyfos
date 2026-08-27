@@ -6,6 +6,7 @@ const reportHTML = `<!DOCTYPE html>
 <html lang="en"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
 <title>KelyfOS session {{.SessionID}}</title>
 <style>
 .cards .l .qual{opacity:.62;font-weight:400}
@@ -118,7 +119,56 @@ const reportHTML = `<!DOCTYPE html>
   .flow.team-refused .title{color:var(--warn)}
   .lanes-note{color:var(--muted);font-size:12.5px;margin:0 0 14px}
   footer{margin-top:44px;color:var(--muted);font-size:12.5px;border-top:1px solid var(--line);padding-top:16px}
-  @media print{body{background:#fff;color:#111}.card,table.meta,pre{background:#fff}}
+
+  /* ---------- run section (P7-8): the declared shape of the run ---------- */
+  h3.run-sub{font:600 13px var(--sans);letter-spacing:.04em;color:var(--text);margin:24px 0 10px}
+  .run-note{color:var(--warn);font-size:12.5px;background:rgba(217,106,95,.08);
+            border:1px solid rgba(217,106,95,.35);border-radius:4px;padding:8px 12px;margin:8px 0}
+  .runmap{margin:8px 0 20px}
+  .runmap svg{width:100%;max-width:900px;height:auto;display:block;background:var(--panel);
+              border:1px solid var(--line);border-radius:6px}
+  .runmap .node{stroke-width:1.5}
+  .runmap .node.agent{fill:var(--amber);stroke:#3a2c12}
+  .runmap .node.domain{fill:var(--ok);stroke:#123a1f}
+  .runmap .node.store{fill:var(--client);stroke:#12293a}
+  .runmap .node.secret{fill:var(--warn);stroke:#3a1712}
+  .runmap .label{font:10px var(--mono);fill:var(--text);text-anchor:middle}
+  .runmap .edge{fill:none;stroke:var(--muted);stroke-width:1.5}
+  .runmap .edge.message{stroke:var(--text)}
+  .runmap .edge.read{stroke-dasharray:4,3}
+  .runmap .edge.write{stroke-dasharray:1,3;stroke-width:2}
+  .runmap-legend{color:var(--muted);font-size:12px;margin-top:6px}
+  .runmap-legend .swatch{display:inline-block;width:10px;height:10px;margin:0 3px -1px 0;border-radius:2px}
+  .sheets{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px;margin-bottom:8px}
+  .sheet{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:12px 14px}
+  .sheet-head{font:600 13px var(--mono);color:#e8eef4;margin-bottom:6px}
+  .sheet-tag,.sheet-sandbox{display:inline-block;margin-left:8px;font:11px var(--mono);
+                            color:var(--muted);font-weight:400}
+  .sheet-empty{color:var(--muted);font-size:12.5px}
+  table.sheet-table{width:100%;border-collapse:collapse}
+  table.sheet-table td{padding:3px 0;font:12px var(--mono);vertical-align:top;
+                        border-bottom:1px solid rgba(255,255,255,.04)}
+  table.sheet-table tr:last-child td{border-bottom:none}
+  table.sheet-table td:first-child{color:var(--muted);width:110px}
+  .reach-wrap{overflow-x:auto;margin-bottom:8px}
+  table.reach{border-collapse:collapse;font:12px var(--mono)}
+  table.reach th,table.reach td{padding:4px 8px;border:1px solid var(--line);text-align:center}
+  table.reach th{color:var(--muted);font-weight:600}
+  table.reach td.reach-self{color:var(--muted)}
+  table.reach td.reach-yes{color:var(--warn);font-weight:600}
+  table.reach td.reach-co{color:var(--client)}
+  table.reach td.reach-no{color:var(--muted)}
+  .reach-note{color:var(--muted);font-size:12px;margin:0 0 20px}
+  table.store-rules,table.store-keys{margin-bottom:14px}
+  table.store-rules th,table.store-keys th{text-align:left;padding:8px 16px;font:12px var(--mono);
+                                            color:var(--muted);border-bottom:1px solid var(--line)}
+
+  @media print{
+    body{background:#fff;color:#111}
+    .card,table.meta,pre{background:#fff}
+    pre{max-height:none;overflow:visible}
+    .runmap svg{max-width:100%}
+  }
 </style>
 </head><body class="{{if .Lanes}}team{{end}}"><div class="wrap">
 
@@ -173,8 +223,99 @@ That is this file reporting a problem with itself. Check it rather than take its
     <span style="color:var(--muted)">measured on the host, from the VMM's own counters — the guest was not asked</span>
   </td></tr>{{end}}
   <tr><td>ended by</td><td>{{if .Summary.TimedOut}}<span style="color:var(--warn)">the {{.Summary.TimedOut}} budget</span>{{else}}{{.Summary.EndReason}}{{end}}</td></tr>
-  <tr><td>secrets used</td><td>{{if .Summary.Secrets}}{{range .Summary.Secrets}}{{.}} {{end}}<br><span style="color:var(--muted)">values are never recorded</span>{{else}}none{{end}}</td></tr>
+  <tr><td>secrets used</td><td>{{if .Summary.Secrets}}{{range .Summary.Secrets}}{{safe .}} {{end}}<br><span style="color:var(--muted)">values are never recorded</span>{{else}}none{{end}}</td></tr>
 </table>
+
+{{if or .RunMap .AgentSheets .ReachMatrix .StorePanel .RunNote}}
+<h2>Run</h2>
+<p class="lanes-note">What the run was <i>declared</i> permitted, from <code>session.policy</code> and
+<code>team.topology</code> &mdash; not what happened, which is the timeline below. A run map with no
+edge to a peer means none was declared, whatever the timeline shows was attempted.</p>
+{{if .RunNote}}<p class="run-note">{{.RunNote}}</p>{{end}}
+
+{{if .RunMap}}
+<figure class="runmap">
+<svg viewBox="0 0 {{.RunMap.Width}} {{.RunMap.Height}}" width="{{.RunMap.Width}}" height="{{.RunMap.Height}}"
+     xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="runmap-title runmap-desc">
+<title id="runmap-title">Declared team topology</title>
+<desc id="runmap-desc">{{.RunMap.AgentCount}} agent(s), {{.RunMap.EdgeCount}} declared or spawned edge(s), {{.RunMap.DomainCount}} domain(s), {{.RunMap.StoreCount}} store key(s), {{.RunMap.SecretCount}} secret(s). Node shape marks kind: a circle is an agent; a diamond is a domain; a square is a store key; a triangle is a bound secret. Line style marks relation: a solid line is a message edge; short dashes are a read access; long dashes are a write access.</desc>
+{{range .RunMap.Edges}}<polyline points="{{.Points}}" class="edge {{.Kind}}"><title>{{safe .Title}}</title></polyline>
+{{end}}{{range .RunMap.Nodes}}{{if eq .Kind "agent"}}<circle cx="{{.CX}}" cy="{{.CY}}" r="{{.R}}" class="node agent"><title>{{safe .Label}}</title></circle>
+{{else}}<polygon points="{{.Points}}" class="node {{.Kind}}"><title>{{safe .Label}}</title></polygon>
+{{end}}<text x="{{.LX}}" y="{{.LY}}" class="label {{.Kind}}">{{safe .Label}}{{if .Sub}} ({{safe .Sub}}){{end}}</text>
+{{end}}</svg>
+<figcaption class="runmap-legend">
+<span class="swatch" style="background:var(--amber)"></span>&#9679; agent &nbsp;
+<span class="swatch" style="background:var(--ok)"></span>&#9670; domain &nbsp;
+<span class="swatch" style="background:var(--client)"></span>&#9632; store key &nbsp;
+<span class="swatch" style="background:var(--warn)"></span>&#9650; secret &nbsp;&middot;&nbsp;
+solid line = message &nbsp; short dashes = read &nbsp; long dashes = write
+</figcaption>
+</figure>
+{{end}}
+
+{{if .AgentSheets}}
+<h3 class="run-sub">Agent sheets &mdash; what each machine was permitted, declared once at boot</h3>
+<div class="sheets">
+{{range .AgentSheets}}
+<div class="sheet">
+  <div class="sheet-head">{{if .Name}}{{safe .Name}}{{else}}this machine{{end}}{{if .Sandbox}}<span class="sheet-sandbox">{{safe .Sandbox}}</span>{{end}}{{if .Group}}<span class="sheet-tag">fork group {{safe .Group}}</span>{{end}}{{if .SpawnedBy}}<span class="sheet-tag">spawned by {{safe .SpawnedBy}}</span>{{end}}</div>
+  {{if not .HasPolicy}}<p class="sheet-empty">no declared policy was recorded for this machine.</p>
+  {{else}}
+  <table class="sheet-table">
+    <tr><td>cpu</td><td>{{.Vcpus}} vcpu(s){{if .CPUQuota}} &middot; quota {{.CPUQuota}}% of one core{{end}}</td></tr>
+    <tr><td>memory</td><td>{{.MemMiB}} MiB{{if .Scratch}} &middot; {{.Scratch}} scratch{{end}}</td></tr>
+    {{if .Disk}}<tr><td>disk</td><td>{{.Disk}}{{if .DiskIOPS}} &middot; {{.DiskIOPS}} iops{{end}}{{if .DiskMbps}} &middot; {{.DiskMbps}} MB/s{{end}}</td></tr>{{end}}
+    {{if or .NetRxMbps .NetTxMbps}}<tr><td>network</td><td>{{.NetRxMbps}} Mbps in / {{.NetTxMbps}} Mbps out</td></tr>{{end}}
+    {{if .MaxRuntime}}<tr><td>max runtime</td><td>{{.MaxRuntime}}</td></tr>{{end}}
+    {{if .IdleTimeout}}<tr><td>idle timeout</td><td>{{.IdleTimeout}}</td></tr>{{end}}
+    <tr><td>allow</td><td>{{if .Allow}}{{range .Allow}}{{safe .}} {{end}}{{if .Ports}}&middot; ports {{range .Ports}}{{.}} {{end}}{{end}}{{else}}none{{end}}</td></tr>
+    <tr><td>secrets</td><td>{{if .Secrets}}{{range .Secrets}}{{safe .Name}} &rarr; {{safe .Host}}{{if .Path}} ({{safe .Path}}){{end}} {{end}}{{else}}none{{end}}</td></tr>
+    {{if .Workspace}}<tr><td>workspace</td><td>{{safe .Workspace}}</td></tr>{{end}}
+    {{if .Plugins}}<tr><td>plugins</td><td>{{range .Plugins}}{{safe .}} {{end}}</td></tr>{{end}}
+    {{if .Forwards}}<tr><td>forwards</td><td>{{range .Forwards}}{{safe .}} {{end}}</td></tr>{{end}}
+    <tr><td>image</td><td>rootfs {{safe .RootfsSHA256}} &middot; kernel {{safe .KernelSHA256}}</td></tr>
+    <tr><td>tools</td><td>{{range .Tools}}{{safe .}} {{end}}</td></tr>
+    {{if .ParentSession}}<tr><td>parent session</td><td>{{safe .ParentSession}}</td></tr>{{end}}
+    {{if .Traceparent}}<tr><td>traceparent</td><td>{{safe .Traceparent}}</td></tr>{{end}}
+  </table>
+  {{end}}
+</div>
+{{end}}
+</div>
+{{end}}
+
+{{if .ReachMatrix}}
+<h3 class="run-sub">Reach matrix &mdash; every hop a declared edge or a shared store key actually establishes</h3>
+<div class="reach-wrap">
+<table class="reach">
+<tr><th></th>{{range .ReachMatrix.Agents}}<th>{{safe .}}</th>{{end}}</tr>
+{{range .ReachMatrix.Rows}}<tr><th>{{safe .From}}</th>{{range .Cells}}{{if .Self}}<td class="reach-self">&middot;</td>{{else if .Reaches}}<td class="reach-yes">{{.Hops}}</td>{{else if .CoTenant}}<td class="reach-co" title="no reach path through this product, but a shared domain or secret exists">co</td>{{else}}<td class="reach-no">&ndash;</td>{{end}}{{end}}</tr>
+{{end}}</table>
+</div>
+<p class="reach-note">A cell is the number of hops from the row's agent to the column's, over declared
+edges and shared store keys &mdash; a key one agent writes and another reads is a hop with no edge
+drawn. <code>co</code> means no reach path through this product, but the two share a domain or a secret
+this cannot rule out as an out-of-band channel. <code>&ndash;</code> means neither.</p>
+{{end}}
+
+{{if .StorePanel}}
+<h3 class="run-sub">Store &mdash; declared ACLs beside what was actually touched</h3>
+{{if .StorePanel.Rules}}
+<table class="meta store-rules">
+<tr><th style="width:170px">rule</th><th>read</th><th>write</th></tr>
+{{range .StorePanel.Rules}}<tr><td>{{safe .Name}}</td><td>{{range .Read}}{{safe .}} {{end}}</td><td>{{range .Write}}{{safe .}} {{end}}</td></tr>
+{{end}}</table>
+{{end}}
+{{if .StorePanel.Keys}}
+<table class="meta store-keys">
+<tr><th>key</th><th>gets</th><th>puts</th><th>deletes</th><th>denied</th><th>bytes</th><th>covered by</th></tr>
+{{range .StorePanel.Keys}}<tr><td>{{safe .Key}}</td><td>{{.Gets}}</td><td>{{.Puts}}</td><td>{{.Deletes}}</td><td>{{.Denied}}</td><td>{{.Bytes}}</td><td>{{safe .Covered}}</td></tr>
+{{end}}</table>
+{{if .StorePanel.Truncated}}<p class="detail">the store activity list was capped; some keys are not shown individually.</p>{{end}}
+{{end}}
+{{end}}
+{{end}}
 
 {{if .Lanes}}
 <h2>{{if .Served}}Sandbox lanes{{else}}Team lanes{{end}}</h2>
@@ -192,13 +333,13 @@ foot of this page — one record for the whole team, not five to correlate.</p>
 {{end}}
 <div class="lanes" style="{{.LaneWidth}}">
   <div class="lane-head gutter">time</div>
-  {{range .Lanes}}<div class="lane-head">{{.}}</div>{{end}}
+  {{range .Lanes}}<div class="lane-head">{{safe .}}</div>{{end}}
   {{range .LaneRows}}
   <div class="t">{{.Time}}</div>
   <div class="{{if .Flow}}flow{{else}}cell{{end}} {{.Kind}}{{if .IsError}} err{{end}}" style="{{.Place}}">
-    <div class="title">{{.Title}}</div>
-    {{if .Detail}}<div class="detail">{{.Detail}}</div>{{end}}
-    {{if .Output}}<pre>{{.Output}}</pre>{{end}}
+    <div class="title">{{safe .Title}}</div>
+    {{if .Detail}}<div class="detail">{{safe .Detail}}</div>{{end}}
+    {{if .Output}}<pre>{{safeBody .Output}}</pre>{{end}}
   </div>
   {{end}}
 </div>
@@ -209,9 +350,9 @@ foot of this page — one record for the whole team, not five to correlate.</p>
 <div class="row {{.Kind}}{{if .IsError}} err{{end}}">
   <div class="t">{{.Time}}</div>
   <div class="b">
-    <div class="title">{{.Title}}</div>
-    {{if .Detail}}<div class="detail">{{.Detail}}</div>{{end}}
-    {{if .Output}}<pre>{{.Output}}</pre>{{end}}
+    <div class="title">{{safe .Title}}</div>
+    {{if .Detail}}<div class="detail">{{safe .Detail}}</div>{{end}}
+    {{if .Output}}<pre>{{safeBody .Output}}</pre>{{end}}
   </div>
 </div>
 {{end}}

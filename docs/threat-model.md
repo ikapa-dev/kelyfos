@@ -468,12 +468,30 @@ carrying content is never written into the record verbatim, that a shell-quoted
 string survives a shell unchanged.
 
 What is **not** fuzzed, and why: the image manifest is `encoding/json` decoding
-into a typed struct, so a harness there measures the standard library; *writing*
-the exported HTML report goes through `html/template`, which escapes by
-construction — reading one back does not, and that half is fuzzed; and the MCP
-observer's request/response pairing is state
-rather than parsing. These are named so the
-list above reads as a boundary rather than as everything somebody got to.
+into a typed struct, so a harness there measures the standard library; and the
+MCP observer's request/response pairing is state rather than parsing. These are
+named so the list above reads as a boundary rather than as everything somebody
+got to.
+
+*Writing* the exported HTML report goes through `html/template`, which escapes
+`< > & ' "` by construction — but P7-8 found that construction is not the whole
+claim: `html/template`'s contextual escaping does not touch a raw control byte
+(0x00-0x08, 0x0B, 0x0C, 0x0E-0x1F, 0x7F), so an agent name, a store key or a
+path carrying one reached the rendered page unescaped, in the flat timeline and
+the lane view exactly as much as in the run map, the agent sheets, the reach
+matrix and the store panel P7-8 adds. `internal/report/safe.go`'s `safe` (an
+identity-like value — an agent name, a domain, a key — goes through
+`proto.SafeText`, the same "quote the whole string" rule already used for a
+boot line) and `safeBody` (a command's captured output or a message body, kept
+multi-line: only the dangerous byte is replaced, with U+FFFD) are what stand
+between a guest-influenced string and the template now, and
+`FuzzRunSectionRendersHostileStringsSafely` fuzzes an agent name, a store key, a
+domain and a secret name through a real render and checks for a live
+`<script>`, an event-handler attribute, a `javascript:` URL and a raw control
+byte, tag boundary by tag boundary rather than by page-wide substring search
+(a payload deliberately planted as escaped *text* would otherwise read as a
+false positive). The *write* path is fuzzed now too, not only the *read*
+(extraction) path.
 
 Seven defects came out of writing them, and they are the reason this section
 does not simply say the parsers are careful. Two were silent-failure bugs rather
