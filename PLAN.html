@@ -1302,7 +1302,7 @@
         D59 settles the one irreversible question so this task does not reopen it: <b>typed fields on
         <code>Event</code></b>, not JSON inside a string, so <code>tools/gendocs</code> documents each one and
         <code>TestSchemaFieldsExist</code> covers it.</span></li>
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">P7-1</span><span class="tk"><b>One fold, not three.</b> <code>internal/digest</code> walks a chain once and returns the
         aggregate every view needs: per-agent counters, per-pair message counts, per-domain egress, store activity,
         the policy, the timeline. <code>kelyfos watch</code> and <code>internal/report</code> are rewritten onto it
@@ -4596,6 +4596,23 @@ after:
         <code>no_such_agent: ghost-agent is not in this team</code>, exported and verified
         (&ldquo;chain intact, 9 events verified&rdquo;), the rendered report carrying both
         <code>no_such_agent</code> and <code>ghost-agent</code></td></tr>
+    <tr><td class="mono">2026-08-27</td><td class="mono">P7-1</td>
+        <td><b>Ticked, by the orchestrator, after adversarial review confirmed GO.</b> Lane 2's three commits
+        (<code>2cc9b0e</code>, <code>2b4f630</code>, <code>94cdb5d</code>) reviewed by an agent that wrote none of
+        it, across three rounds: a differential test against real session chains (115, then 189, then 191) found
+        three real regressions in the live <code>kelyfos watch</code> path &mdash; a dropped exit
+        code/error message on a <code>nil</code> exit code, and two classes of unbounded growth (one with
+        quadratic per-insert cost) in collections keyed by guest-chosen strings. All fixed, each with a regression
+        test proven to fail against the pre-fix source, and the fold's output confirmed byte-identical to the
+        pre-P7-1 binary across every real chain diffed. Reviewer's final verdict: <b>GO</b>. Merged to
+        <code>main</code> as <code>phase7/lane2-fold</code>; whole-repo <code>go vet</code>/<code>go test</code>
+        re-run green on the merged tree. Checkbox ticked.</td>
+        <td class="mono">merge commit <code>d4ea4b8</code>; conflict in <code>PLAN.html</code> only (both branches
+        appended Progress Log rows independently), resolved by keeping both lanes' rows in full, neither edited;
+        post-merge <code>go vet ./...</code> and <code>go test -count=1 ./...</code> (Lima <code>kelyfos-dev</code>)
+        &rarr; every package <code>ok</code>, including the new <code>internal/digest</code> package;
+        <code>python3 tools/check-plan.py</code> &rarr; &ldquo;PLAN.html is coherent: 100 tasks, 81 checked, 66
+        decisions&rdquo;</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
