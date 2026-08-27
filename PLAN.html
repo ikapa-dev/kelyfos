@@ -1332,7 +1332,7 @@
         list exists only in <code>run/team.json</code>, which <code>team down</code> deletes, and a member&rsquo;s
         own sandbox id &mdash; the handle <code>kelyfos diff</code> and <code>kelyfos shell</code> take &mdash;
         lives nowhere else either.</span></li>
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">P7-4</span><span class="tk"><b>Two silences made loud.</b> <code>[[plugin]]</code> and <code>[[forward]]</code> parse in a
         team policy, load, and do nothing: <code>packPlugins</code> is called from <code>run</code> and
         <code>serve-mcp</code> and never from the team path, and <code>resolveForwards</code> from <code>run</code>
@@ -1353,7 +1353,7 @@
         <code>file.write</code> already records by digest rather than by content, so it is native rather than
         bolted on, and it is what lets a GDPR Article 17 erasure and an EU AI Act Article 12 record coexist instead
         of cancelling.</span></li>
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">P7-6</span><span class="tk"><b>The layout, once.</b> <code>internal/graph</code>: a pure function from agents, edges and the
         resources they touch to placed nodes and routed edges, plus the transitive closure the reach view needs
         &mdash; because a star topology in which every worker reaches every other in two hops through the hub is
@@ -4393,6 +4393,39 @@ after:
         <code>--- PASS</code><br>
         <code>git status --porcelain internal/egress/testdata</code> &rarr; empty, after both scratch files were
         removed</td></tr>
+    <tr><td class="mono">2026-08-27</td><td class="mono">P7-6</td>
+        <td><b>Ticked, by the orchestrator, after adversarial review confirmed GO.</b> Lane 3's two commits
+        (<code>e44023d</code>, <code>edf7b8e</code>) reviewed by an agent that wrote none of it: two blocking
+        findings (a terminal-renderer edge-ambiguity bug where a star topology could render identically to a
+        chain; determinism asserted only at the rendered-canvas level, not at the <code>Placement</code>/SVG level)
+        both confirmed real by mutation testing, fixed, and the fixes independently re-verified by the same
+        reviewer &mdash; including re-running both mutation experiments against the fix. Reviewer's final verdict:
+        <b>GO</b>. Merged to <code>main</code> as <code>phase7/lane3-layout</code> (merge commit
+        precedes this row); whole-repo <code>go vet</code>/<code>go test</code> re-run green on the merged tree.
+        Checkbox ticked.</td>
+        <td class="mono">merge commit: clean, no conflicts (first Phase 7 lane merged); post-merge
+        <code>go vet ./...</code> and <code>go test -count=1 ./...</code> (Lima <code>kelyfos-dev</code>) &rarr;
+        every package <code>ok</code> or <code>[no test files]</code>, including the new
+        <code>internal/graph</code> package; <code>python3 tools/check-plan.py</code> &rarr; coherent</td></tr>
+    <tr><td class="mono">2026-08-27</td><td class="mono">P7-4</td>
+        <td><b>Ticked, by the orchestrator, after adversarial review confirmed GO.</b> Lane 4's three commits
+        (<code>0210238</code>, <code>f5305d5</code>, <code>6793c10</code>) reviewed by an agent that wrote none of
+        it: the compatibility/semver question was escalated and ruled on (D66); a real mutation-hazard bug in
+        <code>EffectivePorts()</code>'s custom-<code>Ports</code> branch and two doc-accuracy findings were fixed
+        and re-verified, including an independent re-run of the reviewer's own mutation proof against the fix.
+        Reviewer's final verdict: <b>GO</b> (two cosmetic nits noted, not blocking). Merged to <code>main</code> as
+        <code>phase7/lane4-defects</code>, with a <code>PLAN.html</code> conflict against the just-merged P7-6
+        (both lanes appended Progress Log rows independently) resolved per &sect;8 rule 6: both lanes' rows kept in
+        full, neither edited. Whole-repo <code>go vet</code>/<code>go test</code> re-run green on the merged tree.
+        Checkbox ticked.
+        <br>The unrelated <code>internal/egress/scope.go</code> double-trailing-slash finding this task's
+        re-verification turned up (see the row above) is tracked separately, by the owner's decision, as a new
+        Phase 7 task rather than folded into P7-4 or left undocumented.</td>
+        <td class="mono">merge commit <code>d036ba5</code>; conflict in <code>PLAN.html</code> only, resolved by
+        keeping both lanes' Progress Log rows (P7-6 first, P7-4 after), no row edited; post-merge
+        <code>go vet ./...</code> and <code>go test -count=1 ./...</code> (Lima <code>kelyfos-dev</code>) &rarr;
+        every package <code>ok</code>; <code>python3 tools/check-plan.py</code> &rarr; &ldquo;PLAN.html is
+        coherent: 99 tasks, 80 checked, 65 decisions&rdquo;</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
