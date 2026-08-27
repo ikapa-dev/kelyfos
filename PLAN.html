@@ -4032,6 +4032,65 @@ after:
         what this does <i>not</i> cover: an actual green <code>ci.yml</code>/<code>security.yml</code> run on
         GitHub&rsquo;s own runners, or x86_64 boot under GitHub&rsquo;s KVM. Re-run both workflows for real once
         Actions is restored for this account; until then this row is the CI reconciliation of record.</td></tr>
+    <tr><td class="mono">2026-08-27</td><td class="mono">P7-0</td>
+        <td><code>docs/policy-record.md</code> written &mdash; the policy-record spec, before any of
+        <code>internal/recorder</code> is touched. Every field <code>session.policy</code> and
+        <code>team.topology</code> add: JSON key, Go type, which door writes it, and eight fields
+        <b>reused</b> rather than duplicated (<code>vcpu_count</code>, <code>mem_mib</code>,
+        <code>cpu_quota_percent</code> already exist on <code>Event</code> and carry the same
+        meaning here). <b>Placement decided, not assumed:</b> <code>session.policy</code> rides
+        <code>session.ready</code>, once per machine, at all eight doors uniformly &mdash; including
+        <code>run</code> &mdash; rather than repeating the asymmetry <code>jailed</code> carries
+        (<code>session.start</code> on <code>run</code> alone, <code>session.ready</code>
+        everywhere else). This follows directly from a rule <code>docs/events.md</code> &sect;4
+        already states for <code>session.start</code>, quoted and applied rather than restated from
+        memory. <b>The eight doors themselves were audited against the current source</b> rather
+        than taken from the brief handed to this agent: <code>recorder.TypeSessionStart</code> call
+        sites cross-checked against <code>Event.WithPosture</code>'s eight call sites and against
+        <code>internal/sandbox/jail.go</code>'s <code>requireJail</code> comment, which independently
+        names the same six CLI/protocol doors by verb. <code>kelyfos exec</code>, <code>kelyfos
+        shell</code>, <code>kelyfos resume</code> and <code>kelyfos bench</code> confirmed <b>not</b>
+        among the eight &mdash; each attaches to, continues, or (for <code>bench</code>) never opens
+        a chain at all &mdash; with the reasoning for each recorded in the doc rather than only
+        asserted. The &ldquo;longer half&rdquo; the task asks for: no secret value by any path
+        (&sect;8.1), plugin path/command/args deliberately not recorded (&sect;8.2),
+        <code>tools</code> named as a stated design decision with no code precedent to lean on
+        (&sect;8.3), why <code>resume</code> gets no <code>session.policy</code> of its own
+        (&sect;8.4), and P7-5's tombstone field shape explicitly deferred to P7-5's own design pass
+        rather than guessed at here (&sect;8.8). Landmine coverage for P7-2/P7-3: every new slice
+        field this spec adds (<code>allow</code>, <code>ports</code>, <code>secrets</code>,
+        <code>plugins</code>, <code>forwards</code>, <code>agents</code>, <code>edges</code>,
+        <code>store_keys</code>) named explicitly as invisible to <code>largestStringField</code>'s
+        reflection, with the <code>clipLargestField</code> extension required in the same commit
+        that adds them (&sect;9.1) &mdash; matching and slightly widening the list already in this
+        phase's own landmines. Registered in <code>tools/gendocs/llms.go</code>'s <code>docSet()</code>
+        (required by <code>TestEveryDocumentUnderDocsIsInTheLLMsSet</code>) and in
+        <code>docs/README.md</code>'s map, start-here and inventory tables, matching how
+        <code>hardening.md</code> and <code>qol.md</code> are registered. No code in
+        <code>internal/recorder</code> touched; no new command or flag, so no cookbook recipe is
+        owed by this task. Not self-ticked: P7-0's own task text requires review before P7-2 starts,
+        and &sect;8 rule 10 says the author does not tick their own box.</td>
+        <td class="mono">inside <code>kelyfos-dev</code>, repo at this branch (<code>phase7/lane1-record</code>,
+        based on <code>main</code> at <code>4a57db1</code>): <code>gofmt -l .</code> &rarr; clean (no
+        output)<br>
+        <code>go vet ./...</code> then <code>go test ./...</code> &rarr; every package
+        <code>ok</code> or <code>[no test files]</code>, including <code>tools/gendocs</code> (which
+        carries <code>TestEveryDocumentUnderDocsIsInTheLLMsSet</code> and
+        <code>TestLLMsIndexLinksResolve</code>)<br>
+        <code>make docs</code> &rarr; <code>gendocs: wrote 8 files to .../docs/reference</code> (zero
+        diff there &mdash; expected, since no event schema changed) &middot;
+        <code>gendocs: llms.txt 6749 bytes &middot; llms-full.txt 592053 bytes, about 153811 tokens</code><br>
+        <code>make tokens</code> &rarr; <code>measured 592053 bytes &middot; 589097 characters
+        &middot; 11560 lines</code>, <code>~153811 tokens</code> &mdash; up from ~148k before this
+        page was added, logged per &sect;8 rule 9<br>
+        <code>git diff --stat</code> &rarr; <code>docs/README.md | 15 +</code>,
+        <code>llms-full.txt | 407 +</code>, <code>llms.txt | 3 +-</code>,
+        <code>tools/gendocs/llms.go | 2 +</code>, plus the new <code>docs/policy-record.md</code>
+        &mdash; no file under <code>internal/recorder</code> or <code>docs/reference/</code> in the
+        diff<br>
+        <code>python3 tools/check-plan.py</code> (host, outside Lima), before and after this edit
+        &rarr; &ldquo;PLAN.html is coherent: 99 tasks, 78 checked, 63 decisions&rdquo; both times
+        (this row adds no decision and ticks no box)</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>

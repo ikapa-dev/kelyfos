@@ -24,6 +24,7 @@ hand-written half, and this page says where each is still thin.
 | deciding how much machine an agent gets | [`resources.md`](resources.md) |
 | running several agents together | [`teams.md`](teams.md) |
 | auditing what an agent did | [`events.md`](events.md) |
+| auditing what a run was *permitted* to do, not only what it did | [`policy-record.md`](policy-record.md) |
 | stuck on something KelyfOS refused | [`denials.md`](denials.md), then [`reference/denials.md`](reference/denials.md) for the exact one |
 | running something long and walking away | [`denials.md`](denials.md) on `--notify`, and [`events.md`](events.md) §6 for the history afterwards |
 | keeping an agent off the network | [`networking.md`](networking.md) |
@@ -47,6 +48,7 @@ hand-written half, and this page says where each is still thin.
 | [`teams.md`](teams.md) | mixed | The `[team]` schema, the host broker and its edge rules, the team store, the collective budget, and how a team boots. |
 | [`denials.md`](denials.md) | mixed | Why every refusal names its own fix, what the ID in brackets is for, what deliberately is not in the catalog, and how `--notify` reaches somebody who stopped watching. |
 | [`qol.md`](qol.md) | concept | The v0.8 specification, written before the code: named sessions and their store, the workspace manifest, the PTY channel, and why inbound forwarding does not touch the firewall. |
+| [`policy-record.md`](policy-record.md) | concept | The Phase 7 policy-record specification, written before the code: every field `session.policy` and `team.topology` add, its position in the frozen hash order, which of the eight doors writes it, and what it deliberately omits. |
 | [`mcp-surface.md`](mcp-surface.md) | concept | MCP in both directions: `serve-mcp` as a tool for any client, and `[[plugin]]` servers inside the guest. Specification, written before the code. |
 | [`hardening.md`](hardening.md) | concept | The v0.9 specification, written before the code: what a compromised agent reaches today, what the jailer and the guest profiles take away, and what remains reachable afterwards. |
 | [`host-seccomp.md`](host-seccomp.md) | mixed | The syscall filter around the VMM process: which one is in force and why that is settled, how it is proved from the kernel's own copy rather than from the absence of a flag, and every syscall it permits. |
@@ -257,6 +259,19 @@ single nftables rule.
 §2.2 carry "corrected after the epic" notes where the built thing differed from
 the plan. The four features that are wrappers over existing machinery are not in
 it, because there was nothing to decide about them.
+
+### `policy-record.md` — the Phase 7 specification
+
+*Concept, written before the code*, the way `qol.md` was at E5-0 and
+`hardening.md` was at P5-0: why `session.policy` rides `session.ready` rather
+than `session.start` (and how that reuses the rule `events.md`'s own
+`session.start` entry already states), the eight doors that open a chain
+audited against the current source, the field tables for both new event
+types, and — the longer half — what deliberately did not make the cut and
+why.
+*Reference:* none — every field it names is generated to
+[`reference/events.md`](reference/events.md) once P7-2/P7-3 land.
+*Thin:* written before its code exists; nothing to report yet.
 
 ### `hardening.md` — the v0.9 specification
 

@@ -89,6 +89,8 @@ func docSet() []doc {
 			Summary: "for putting KelyfOS inside something else: the four ways in, orchestrator patterns, and the mistakes people actually make"},
 		{Path: "docs/qol.md", Title: "Daily-driver quality of life", Full: true,
 			Summary: "the shell, the diff, pause and resume, port forwarding and notifications — written before the code, with the places the built thing differed marked"},
+		{Path: "docs/policy-record.md", Title: "The policy record", Full: true,
+			Summary: "session.policy and team.topology, written before the code: every field, its position in the frozen hash order, which door writes it, and what it omits"},
 		{Path: "docs/README.md", Title: "Documentation map", Full: true,
 			Summary: "what every document is, and — deliberately — where each is still thin"},
 	}

@@ -27,6 +27,7 @@ Apache-2.0. Single-host developer tool, not a multi-tenant sandbox for hostile c
 - [Cookbook](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/cookbook.md): complete recipes, each one a script CI runs on a real machine
 - [Building on KelyfOS](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/integrating.md): for putting KelyfOS inside something else: the four ways in, orchestrator patterns, and the mistakes people actually make
 - [Daily-driver quality of life](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/qol.md): the shell, the diff, pause and resume, port forwarding and notifications — written before the code, with the places the built thing differed marked
+- [The policy record](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/policy-record.md): session.policy and team.topology, written before the code: every field, its position in the frozen hash order, which door writes it, and what it omits
 - [Documentation map](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/README.md): what every document is, and — deliberately — where each is still thin
 
 ## Reference
@@ -41,6 +42,6 @@ Apache-2.0. Single-host developer tool, not a multi-tenant sandbox for hostile c
 
 ## Optional
 
-- [Everything in one file](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/llms-full.txt): every page above concatenated, roughly 148k tokens, for a client that would rather spend context than fetch
+- [Everything in one file](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/llms-full.txt): every page above concatenated, roughly 154k tokens, for a client that would rather spend context than fetch
 - [Build plan and decision log](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/PLAN.html): HTML. Every phase and every decision with its rationale, and the command output behind each claim
 - [Feature plan and decision log](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/PLAN-FEATURES.html): HTML. The epics after the build plan, same protocol
