@@ -175,6 +175,39 @@ reference described in the README and re-measured per release.
   `TestSilentTeamConnectionsAreCappedAndReclaimed` and `TestSilentEventsConnectionsAreCappedAndReclaimed`
   fill each cap with connections that never write and prove a legitimate connection queued behind
   it is still served once the deadline reclaims a slot, rather than stuck for good.
+- **An oversized or malformed MCP frame — one over the 16 MiB channel limit, or one carrying a
+  literal, unescaped newline — used to kill the whole session over a single bad frame, and could
+  lose even the one reply meant to explain why.** `mcpSession.serve`'s read loop answered any
+  non-EOF read error with a best-effort, id-less parse error and unconditionally closed the
+  connection; for an oversized frame, `bufio.Scanner` gives up having buffered exactly the frame
+  limit and no more, so the rest of that same line was still unread on the wire when the close
+  raced it — the close could interleave with, or be cut short by, those unread bytes, and the
+  reply was not guaranteed to arrive. Every call still in flight on the connection was lost with
+  it, for a defect in one frame that had nothing to do with them. The session now recovers instead
+  of closing: on `proto.ErrLineTooLong` it drains the rest of the oversized line first (a new
+  `proto.Reader.DrainOverlongLine`, reading straight off the connection since the scanner's own
+  buffer holds nothing past its limit) so the reply is never racing unread bytes, and on a frame
+  that decoded to a complete, newline-terminated line but failed `json.Unmarshal` (the embedded-
+  newline case, now reported as `*proto.MalformedFrame`) there was never anything to drain — the
+  stream was already back at a clean boundary. Both cases reply and keep serving. Getting the
+  first case right needed `proto.Reader` itself to stop reusing a `bufio.Scanner` after any error:
+  one does not resume cleanly — the very next `Scan()` hands back its already-buffered, oversized
+  data as if it were a normal final token, which is what a caller actually observed instead of the
+  `ErrLineTooLong` it expected — so a successful drain now rebuilds the scanner in place
+  (`resetScanner`) before resuming. The host bridge's own observer had the identical flaw one
+  level up: `tee` in `host/mcpobserve.go` drove the client→guest and guest→client copies through a
+  `bufio.Scanner` of its own for the flight recorder's sake, so the same oversized-line give-up
+  closed the pipe the real byte copy reads from — silently dropping every byte sent afterward on
+  that connection, from either side, regardless of how gracefully the guest handled the frame.
+  `tee` now relays an oversized line's remainder raw and rebuilds its own scanner to resume
+  observing what comes after, rather than ending the copy. `kelyfos mcp` also no longer exits 0
+  when the bridge closes with a call still outstanding: `answerOutstanding` already wrote the
+  client a synthetic error and a stderr line saying so, but returned nil regardless, so the one
+  thing a wrapper script or supervisor process checks — `$?` — said success; it now returns a
+  non-zero `exitError`. Verified against a real sandbox's MCP channel with both a frame just over
+  `proto.MaxMCPLine` and a frame with a literal embedded newline: the session now answers each and
+  keeps serving normal calls afterward, including a `write_file` whose event still lands in the
+  flight recorder, rather than the bridge exiting silently.
 
 ---
 

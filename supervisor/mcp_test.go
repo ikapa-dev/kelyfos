@@ -183,3 +183,96 @@ func TestMeasuringAnAnswerThatWillNotFitDoesNotBuildItAgain(t *testing.T) {
 		t.Errorf("measuring a %d byte answer allocated %d bytes, which is another copy of it", size, best)
 	}
 }
+
+// A frame over MaxMCPLine used to take the whole session with it: the read
+// failed, the session sent one best-effort parse-error reply and closed the
+// connection without draining what the peer was still sending on that same
+// oversized line — a close that could race those unread bytes and lose even
+// that one reply, leaving the caller with nothing but an unexplained EOF
+// (F6). The session now drains the rest of the line first, so the reply goes
+// out clean, and keeps serving past it: an oversized frame is refused the way
+// an oversized *answer* already was (the test above), not treated as a dead
+// connection.
+func TestAnOversizedIncomingFrameIsDrainedAndTheSessionSurvives(t *testing.T) {
+	conn, br := mcpTestSession(t)
+
+	// No newline anywhere in the first proto.MaxMCPLine bytes: the reader's
+	// scanner gives up at the limit having found no token, and everything
+	// from there to the real newline is still unread on the wire.
+	huge := strings.Repeat("x", proto.MaxMCPLine+4096) + "\n"
+	if _, err := io.WriteString(conn, huge); err != nil {
+		t.Fatalf("writing the oversized frame: %v", err)
+	}
+
+	line, err := br.ReadString('\n')
+	if err != nil {
+		t.Fatalf("the session closed instead of replying to the oversized frame: %v", err)
+	}
+	var reply struct {
+		ID    json.RawMessage `json:"id"`
+		Error *mcp.Error      `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(line), &reply); err != nil {
+		t.Fatalf("the reply is not JSON: %v (%q)", err, line)
+	}
+	if reply.Error == nil {
+		t.Fatalf("expected a JSON-RPC error for the unparseable oversized frame, got %q", line)
+	}
+	if string(reply.ID) != "null" {
+		t.Errorf("id = %s, want null: there was no request to answer against", reply.ID)
+	}
+
+	// The session survived, and — the part that requires the drain — it
+	// survived cleanly: nothing of the discarded line leaked into the next
+	// frame, so this ordinary request gets an ordinary answer.
+	id, _, rpcErr := mcpAnswer(t, conn, br, `{"jsonrpc":"2.0","id":"after-oversized","method":"ping"}`)
+	if rpcErr != nil {
+		t.Fatalf("the session did not survive the oversized frame: %+v", rpcErr)
+	}
+	if string(id) != `"after-oversized"` {
+		t.Errorf("id = %s, want the ping's own id", id)
+	}
+}
+
+// A frame carrying a literal, unescaped newline is not oversized — it is two
+// lines instead of one, from the reader's point of view, and neither of them
+// is valid JSON on its own. Before this, any frame the reader could not
+// decode was treated identically to a dead connection and closed. Since the
+// scanner had already consumed a complete, newline-terminated line before
+// json.Unmarshal rejected it, there was never anything to drain or resync:
+// the very next Read starts clean, and closing over it cost every other call
+// still on the connection for no reason tied to those calls at all.
+func TestAFrameWithALiteralEmbeddedNewlineDoesNotEndTheSession(t *testing.T) {
+	conn, br := mcpTestSession(t)
+
+	// One intended frame, split by a raw newline byte inside what was meant to
+	// be a single JSON string value. The reader sees this as two malformed
+	// lines, so two null-id parse errors come back before the connection
+	// reaches a request it can actually answer.
+	broken := "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":" +
+		"{\"name\":\"exec\",\"arguments\":{\"command\":\"echo\nhi\"}}}\n"
+	if _, err := io.WriteString(conn, broken); err != nil {
+		t.Fatalf("writing the broken frame: %v", err)
+	}
+
+	for i := 0; i < 2; i++ {
+		line, err := br.ReadString('\n')
+		if err != nil {
+			t.Fatalf("the session closed after %d malformed line(s) instead of replying: %v", i, err)
+		}
+		var reply struct {
+			Error *mcp.Error `json:"error"`
+		}
+		if err := json.Unmarshal([]byte(line), &reply); err != nil || reply.Error == nil {
+			t.Fatalf("line %d is not a JSON-RPC error: %v (%q)", i, err, line)
+		}
+	}
+
+	id, _, rpcErr := mcpAnswer(t, conn, br, `{"jsonrpc":"2.0","id":"after-embedded-newline","method":"ping"}`)
+	if rpcErr != nil {
+		t.Fatalf("the session did not survive the embedded newline: %+v", rpcErr)
+	}
+	if string(id) != `"after-embedded-newline"` {
+		t.Errorf("id = %s, want the ping's own id", id)
+	}
+}

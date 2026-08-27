@@ -1,13 +1,17 @@
 package main
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"os"
+	"sync"
 	"testing"
 
+	"github.com/p4r4n0rm4l/KelyfOS/internal/proto"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
 )
 
@@ -166,4 +170,46 @@ func TestACommandIsStillRecordedBeforeTheGuestAnswers(t *testing.T) {
 	if len(events) != 1 || events[0].Type != recorder.TypeCommandStart {
 		t.Fatalf("want a command.start before the answer, got %+v", events)
 	}
+}
+
+// A line over proto.MaxMCPLine used to be where tee's output reader ended for
+// good: its scanner gave up (bufio.ErrTooLong), the loop that only ran while
+// Scan kept returning true stopped there, and that closed the pipe the reader
+// this function returns is the read end of — the same pipe io.Copy(conn,
+// tee(...)) reads on the other side, one level up in mcpCmd. Nothing sent
+// afterward, on either side of that connection, was ever reaching the guest,
+// regardless of how gracefully the guest's own session handled the frame —
+// the fix in supervisor/mcp.go was unreachable through this door (F6). Every
+// byte has to come through whether or not this reader can make sense of it as
+// a line, and the sink has to keep hearing about what comes after rather than
+// staying silent for the rest of the connection over one oversized message.
+func TestTeeRelaysAnOversizedLineWholeAndKeepsObservingAfterIt(t *testing.T) {
+	huge := bytes.Repeat([]byte("x"), proto.MaxMCPLine+4096)
+	const small = `{"jsonrpc":"2.0","id":9,"method":"ping"}`
+	input := append(append(append([]byte{}, huge...), '\n'), append([]byte(small), '\n')...)
+
+	var mu sync.Mutex
+	var sunk []string
+	out := tee(bytes.NewReader(input), func(line []byte) {
+		mu.Lock()
+		defer mu.Unlock()
+		sunk = append(sunk, string(line))
+	})
+
+	got, err := io.ReadAll(out)
+	if err != nil {
+		t.Fatalf("relaying the oversized line stopped instead of reaching EOF: %v", err)
+	}
+	if !bytes.Equal(got, input) {
+		t.Fatalf("relayed %d bytes for %d bytes of input: the oversized line was not passed through whole", len(got), len(input))
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	for _, line := range sunk {
+		if line == small {
+			return
+		}
+	}
+	t.Errorf("the line after the oversized one was never observed, only: %q", sunk)
 }
