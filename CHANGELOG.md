@@ -15,6 +15,24 @@ reference described in the README and re-measured per release.
 
 ---
 
+## Unreleased
+
+### Fixed
+- **A single oversized, guest-influenced field could make the flight recorder
+  permanently unreadable from that line on.** The record is a hash chain read
+  with a bufio.Scanner capped at 8 MiB, and nothing bounded what a caller could
+  put in a line before it reached that cap. Two doors did: the egress proxy
+  validated a CONNECT target's characters but never its length, and the MCP
+  bridge base64-encoded a whole command's stdout or stderr into one
+  `command.output` event with no chunking at all. Both are closed now — the
+  proxy rejects a host over 253 bytes (RFC 1035) before it is ever considered
+  for recording, and exec output crossing the MCP bridge is chunked the same
+  way `kelyfos exec` already chunks it. `Append` itself also refuses,
+  unconditionally, to write a line its own readers could not read back,
+  whatever field made it that large and whatever door produced it.
+
+---
+
 ## v1.0 — 2026-08-25
 
 The promise release. Everything below is in it.

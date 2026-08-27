@@ -376,11 +376,25 @@ func splitTarget(req *http.Request) (string, int, error) {
 		return "", 0, fmt.Errorf("bad port %q", portStr)
 	}
 	host = strings.ToLower(host)
+	// RFC 1035 §3.1 bounds a hostname to 253 bytes. Nothing above checks
+	// length, only characters, and what comes back from here is eventually
+	// written into the flight recorder as an egress.attempt's Host — so a
+	// garbage "hostname" built from megabytes of `plausibleHost`-legal
+	// characters used to reach the record whole. Checked here, before
+	// plausibleHost's per-character loop, and with a message that never echoes
+	// the oversized string: a `%q` of a multi-megabyte host would balloon both
+	// this error and the body writeStatus sends back to the guest (S1).
+	if len(host) > maxHostnameBytes {
+		return "", 0, fmt.Errorf("host is %d bytes, over the %d-byte limit", len(host), maxHostnameBytes)
+	}
 	if !plausibleHost(host) {
 		return "", 0, fmt.Errorf("bad host %q", host)
 	}
 	return host, port, nil
 }
+
+// maxHostnameBytes is RFC 1035's limit on a fully-qualified hostname.
+const maxHostnameBytes = 253
 
 // plausibleHost reports whether a string can be a host at all.
 //

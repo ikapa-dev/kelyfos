@@ -3,6 +3,7 @@ package recorder
 import (
 	"bytes"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -48,6 +49,69 @@ func FuzzVerifyAgreesWithRead(f *testing.F) {
 		}
 		if len(events) != n {
 			t.Fatalf("Verify counted %d events and Read found %d in the same bytes", n, len(events))
+		}
+	})
+}
+
+// FuzzAppendFieldValues drives Append with fuzzer-chosen FIELD VALUES, rather
+// than fuzzer-chosen file bytes — the class FuzzVerifyAgreesWithRead above
+// cannot see, because it fuzzes an already-serialized chain and never asks
+// what happens when Append itself is handed a value too large to write back
+// out (S1). internal/egress's CONNECT host and host/mcpobserve.go's exec
+// output were two callers that could do exactly that, and Append had no guard
+// of its own against either.
+//
+// The property: for any string a caller puts in an event's guest-influenced
+// fields, appending it must never leave a session whose Verify and Read
+// disagree, and Verify must see every event this test believes it appended —
+// "believes," because Append is allowed to refuse a field it truly cannot
+// bring under MaxLine (fitUnderMaxLine's maxClipAttempts bound), just never by
+// writing a line no reader can get past.
+func FuzzAppendFieldValues(f *testing.F) {
+	f.Add("", "")
+	f.Add("short output", "github.com")
+	f.Add(strings.Repeat("a", 1<<10), "")
+	f.Add(strings.Repeat("x", 20<<20), strings.Repeat("y", 1<<20))
+	f.Add(string([]byte{0xff, 0xfe, 0x00, 0x80}), "")
+	f.Add(strings.Repeat("é", 5<<20), strings.Repeat("日", 5<<20))
+
+	f.Fuzz(func(t *testing.T, data, host string) {
+		root := t.TempDir()
+		rec, err := Open(root, "fuzzappend")
+		if err != nil {
+			t.Fatalf("open: %v", err)
+		}
+		// Bracketed by two ordinary events, so a gap left by a refused event in
+		// the middle — the bug this fuzz target is really aimed at — shows up as
+		// a broken chain rather than merely a short one.
+		_ = rec.Append(Event{Type: TypeSessionStart})
+		_ = rec.Append(Event{Type: TypeCommandOutput, Data: data, Bytes: len(data)})
+		_ = rec.Append(Event{Type: TypeEgressAttempt, Host: host})
+		_ = rec.Append(Event{Type: TypeSessionEnd})
+		if err := rec.Close(); err != nil {
+			t.Fatalf("close: %v", err)
+		}
+
+		blob, err := os.ReadFile(Path(root, "fuzzappend"))
+		if err != nil {
+			t.Fatalf("reading the chain back: %v", err)
+		}
+		for i, line := range bytes.Split(bytes.TrimRight(blob, "\n"), []byte("\n")) {
+			if len(line) > MaxLine {
+				t.Fatalf("line %d is %d bytes, over MaxLine (%d) — Append wrote something no reader can read back",
+					i+1, len(line), MaxLine)
+			}
+		}
+		n, _, verr := Verify(bytes.NewReader(blob))
+		if verr != nil {
+			t.Fatalf("append-then-verify must round-trip for any field value, but Verify failed: %v", verr)
+		}
+		events, rerr := Read(bytes.NewReader(blob))
+		if rerr != nil {
+			t.Fatalf("Verify accepted the chain but Read refused the same bytes: %v", rerr)
+		}
+		if len(events) != n {
+			t.Fatalf("Verify counted %d events and Read found %d in the same chain", n, len(events))
 		}
 	})
 }

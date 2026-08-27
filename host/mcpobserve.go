@@ -192,19 +192,45 @@ func (o *observer) fromGuest(line []byte) {
 			code = int(f)
 		}
 		for _, k := range []string{"stdout", "stderr"} {
-			if text := str(sc[k]); text != "" {
-				_ = o.rec.Append(recorder.Event{
-					Type: recorder.TypeCommandOutput, Call: pc.call, Stream: k,
-					Data: base64.StdEncoding.EncodeToString([]byte(text)), Bytes: len(text),
-					Agent: o.agent,
-				})
-			}
+			o.appendCommandOutput(pc.call, k, str(sc[k]))
 		}
 	} else if out.IsError {
 		code = -1
 	}
 	_ = o.rec.Append(recorder.Event{Type: recorder.TypeCommandExit, Call: pc.call, Code: &code,
 		Agent: o.agent})
+}
+
+// appendCommandOutput records one stream's text in outputFlushAt-sized
+// chunks, base64-encoding and appending each on its own — the same shape
+// host/exec.go's outputRecorder uses for `kelyfos exec`, and for the same
+// reason: a guest's stdout or stderr is unbounded, and the whole point of
+// coalescing is many small events instead of one giant one, never truncation.
+//
+// Before this chunked, a single command's output went into one event with no
+// size check at all. Guest output near the ~16 MiB MCP frame cap
+// (proto.MaxMCPLine), carried twice in the tool result (Content and
+// StructuredContent — supervisor/tools.go) and then expanded 4/3 by base64,
+// produced a line past every reader's recorder.MaxLine — durable,
+// guest-triggered destruction of the chain from there on, because the chain
+// is a chain (S1). recorder.Append now also guards this unconditionally, but
+// chunking here is the fix that keeps a legible log rather than one giant
+// line that merely survives.
+func (o *observer) appendCommandOutput(call, stream, text string) {
+	data := []byte(text)
+	for len(data) > 0 {
+		n := outputFlushAt
+		if n > len(data) {
+			n = len(data)
+		}
+		chunk := data[:n]
+		data = data[n:]
+		_ = o.rec.Append(recorder.Event{
+			Type: recorder.TypeCommandOutput, Call: call, Stream: stream,
+			Data: base64.StdEncoding.EncodeToString(chunk), Bytes: len(chunk),
+			Agent: o.agent,
+		})
+	}
 }
 
 // execArgv reconstructs the argv the guest will actually run, so the record

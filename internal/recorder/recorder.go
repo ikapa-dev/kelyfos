@@ -17,14 +17,26 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"golang.org/x/sys/unix"
 )
 
 // Version is the schema version stamped on every event.
 const Version = 1
+
+// MaxLine is the largest line the flight recorder guarantees to write, and the
+// size every reader of one bounds its scanner to: Verify and Read below, and
+// `kelyfos log`'s replay (host/log.go). One constant rather than the matching
+// literal `8<<20` written out three times, because three copies of a number
+// that must never drift can drift — Append's own writer guard (see
+// fitUnderMaxLine) is what makes the invariant "no writer of this file can
+// produce a line its own readers cannot read" hold, and it can only do that
+// against a number the readers actually use (S1).
+const MaxLine = 8 << 20
 
 // Event types.
 const (
@@ -328,20 +340,49 @@ func (r *Recorder) Append(e Event) error {
 	e.Prev = r.prev
 	e.Hash = ""
 
+	// Every reader of this file — Verify, Read, and host/log.go's replay — caps
+	// its scanner at MaxLine. Nothing upstream of Append enforces that on a
+	// caller's behalf: internal/egress's splitTarget used to let an oversized
+	// CONNECT host reach an egress.attempt's Host field, and
+	// host/mcpobserve.go's exec-output path used to hand a whole, unchunked
+	// command's stdout to Data. Both doors are closed now, but this guard is
+	// unconditional on purpose — the invariant is "no writer of this file can
+	// produce a line its own readers cannot read," not "no *known* writer" (S1).
+	//
+	// This has to run before hashOf: hashOf hashes exactly the struct Append is
+	// about to marshal and write, so a field clipped afterwards would make the
+	// written line disagree with its own digest, and Verify would report every
+	// clipped event as "modified."
+	//
+	// r.seq is rolled back on every error return from here on: it was bumped
+	// above so e.Seq could be stamped before it is known whether this line will
+	// actually be written, and a refused event must free its sequence number
+	// back up rather than leave a permanent gap for the *next* Append to land
+	// on — Verify treats a gap as "the chain has a gap or was reordered" and
+	// that would break every event after it, for a session that otherwise wrote
+	// nothing wrong.
+	if err := fitUnderMaxLine(&e); err != nil {
+		r.seq--
+		return err
+	}
+
 	digest, err := hashOf(e)
 	if err != nil {
+		r.seq--
 		return err
 	}
 	e.Hash = digest
 
 	line, err := json.Marshal(e)
 	if err != nil {
+		r.seq--
 		return err
 	}
 	line = append(line, '\n')
 	// O_APPEND makes the seek-and-write atomic, and the lock above keeps the
 	// chain consistent across processes.
 	if _, err := r.f.Write(line); err != nil {
+		r.seq--
 		return err
 	}
 	r.prev = digest
@@ -381,6 +422,127 @@ func hashOf(e Event) (string, error) {
 	return hex.EncodeToString(sum[:]), nil
 }
 
+// clipMargin is slack kept below MaxLine on top of the 64 bytes a real digest
+// adds once hashOf fills Hash in (see fitUnderMaxLine). It covers the
+// "...(clipped from N to M bytes)" note clipLargestField appends and the
+// escaping growth a clipped field can pick up when it is re-marshalled — both
+// small, but the loop re-measures after every clip precisely so a fixed margin
+// never has to be exact, only generous enough to converge quickly.
+const clipMargin = 4 << 10
+
+// maxClipAttempts bounds fitUnderMaxLine's loop. Halving the single largest
+// candidate field converges in one or two iterations for anything this
+// product's own doors could produce — a 16 MiB MCP frame's stdout, base64
+// expanded, is under 22 MiB, and two halvings already clear MaxLine — so the
+// bound exists only so a field this code does not yet know about cannot turn
+// "clip until it fits" into "loop forever." Exceeding it fails the Append
+// closed rather than write a line no reader could get past.
+const maxClipAttempts = 8
+
+// fitUnderMaxLine is Append's own backstop: whatever door let an oversized,
+// guest-influenced field reach here, the line Append is about to write must
+// still be one every reader — Verify, Read, `kelyfos log`'s replay — can read
+// back whole. It must run before hashOf; see the comment at its call site.
+func fitUnderMaxLine(e *Event) error {
+	for attempt := 0; ; attempt++ {
+		b, err := json.Marshal(e)
+		if err != nil {
+			return fmt.Errorf("measuring event %d before recording it: %w", e.Seq, err)
+		}
+		// e.Hash is "" here — the state Append is always in when this runs —
+		// and grows to a 64-character hex digest once hashOf fills it in, which
+		// is the only change left between this measurement and the line Append
+		// actually writes.
+		if len(b)+sha256.Size*2+clipMargin <= MaxLine {
+			return nil
+		}
+		if attempt >= maxClipAttempts {
+			return fmt.Errorf("event %d (%s) is still %d bytes after %d clips — refusing to write a line no reader could read back",
+				e.Seq, e.Type, len(b), attempt)
+		}
+		if !clipLargestField(e) {
+			return fmt.Errorf("event %d (%s) is %d bytes with nothing left to clip",
+				e.Seq, e.Type, len(b))
+		}
+	}
+}
+
+// clipLargestField halves whichever of the event's guest-influenced fields is
+// currently largest, noting the original size in-band rather than adding a
+// schema field — the same pattern host/servemcpaudit.go's summariseArgs uses
+// for the outward MCP audit lane, reused here as the last line of defense for
+// the flight recorder itself. It reports false when nothing is left worth
+// clipping, which fitUnderMaxLine treats as "cannot make this fit."
+//
+// Cmd is measured and clipped separately from the string fields because it is
+// a []string, not a string: an external review of this fix found that a
+// caller-supplied argv (host/mcpobserve.go, host/servemcptools.go,
+// host/exec.go all build Cmd from a request field with no upstream length
+// bound) could be the single largest thing on a command.start event while
+// every string field above was empty, and the pre-fix version of this
+// function then reported nothing to clip — so fitUnderMaxLine failed closed
+// and Append dropped the whole event. Dropping an event is the same failure
+// mode this file exists to close (a missing event is also a hole), so Cmd now
+// competes for "largest field" like everything else, and clips to a single
+// summarising element rather than being left unclippable.
+func clipLargestField(e *Event) bool {
+	fields := []*string{&e.Data, &e.Args, &e.Host, &e.Path, &e.Name}
+	var target *string
+	for _, f := range fields {
+		if target == nil || len(*f) > len(*target) {
+			target = f
+		}
+	}
+	best := 0
+	if target != nil {
+		best = len(*target)
+	}
+	if cmdLen := cmdBytes(e.Cmd); cmdLen > 0 && cmdLen > best {
+		orig := len(e.Cmd)
+		joined := strings.Join(e.Cmd, " ")
+		kept := clipUTF8(joined, cmdLen/2)
+		e.Cmd = []string{fmt.Sprintf("%s...(clipped from %d bytes across %d argv elements)", kept, cmdLen, orig)}
+		return true
+	}
+	if target == nil || len(*target) == 0 {
+		return false
+	}
+	orig := len(*target)
+	kept := clipUTF8(*target, orig/2)
+	*target = fmt.Sprintf("%s...(clipped from %d to %d bytes)", kept, orig, len(kept))
+	return true
+}
+
+// cmdBytes is the size clipLargestField and fitUnderMaxLine's marshalled
+// measurement both care about: the bytes Cmd's elements actually contribute,
+// not len(e.Cmd), which is the element count.
+func cmdBytes(cmd []string) int {
+	n := 0
+	for _, s := range cmd {
+		n += len(s)
+	}
+	return n
+}
+
+// clipUTF8 cuts s to at most n bytes without leaving half a rune at the end —
+// the same rule, for the same reason, as host/servemcpaudit.go's clipUTF8: a
+// trailing fragment of a multi-byte character would be replaced with U+FFFD by
+// json.Marshal, which is not the byte sequence hashOf would then be hashing
+// against what a reader sees.
+func clipUTF8(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	s = s[:n]
+	for len(s) > 0 {
+		if r, size := utf8.DecodeLastRuneInString(s); r != utf8.RuneError || size > 1 {
+			break
+		}
+		s = s[:len(s)-1]
+	}
+	return s
+}
+
 // Verify walks a flight recorder and reports the first place the chain breaks.
 //
 // It answers a narrow question honestly: has this file been edited in place
@@ -397,7 +559,7 @@ func hashOf(e Event) (string, error) {
 // file, which is what a reader comparing two reports needs it to be.
 func Verify(r io.Reader) (events int, head string, err error) {
 	sc := bufio.NewScanner(r)
-	sc.Buffer(make([]byte, 0, 64<<10), 8<<20)
+	sc.Buffer(make([]byte, 0, 64<<10), MaxLine)
 	prev := ""
 	line := 0
 	for sc.Scan() {
@@ -481,7 +643,7 @@ func short(h string) string {
 // Read parses a whole flight recorder without verifying it.
 func Read(r io.Reader) ([]Event, error) {
 	sc := bufio.NewScanner(r)
-	sc.Buffer(make([]byte, 0, 64<<10), 8<<20)
+	sc.Buffer(make([]byte, 0, 64<<10), MaxLine)
 	var out []Event
 	for sc.Scan() {
 		if len(sc.Bytes()) == 0 {

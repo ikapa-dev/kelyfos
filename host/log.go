@@ -370,7 +370,7 @@ func replayRecord(chain []byte, asJSON bool) error {
 
 func replay(r io.Reader, asJSON bool) error {
 	sc := bufio.NewScanner(r)
-	sc.Buffer(make([]byte, 0, 64<<10), 8<<20)
+	sc.Buffer(make([]byte, 0, 64<<10), recorder.MaxLine)
 	for sc.Scan() {
 		if len(sc.Bytes()) == 0 {
 			continue
