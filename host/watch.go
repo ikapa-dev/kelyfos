@@ -2,7 +2,6 @@ package main
 
 import (
 	"bufio"
-	"encoding/base64"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -14,6 +13,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
+	"github.com/p4r4n0rm4l/KelyfOS/internal/digest"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/report"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/sandbox"
@@ -84,21 +84,21 @@ type usageMsg struct {
 	at    time.Time
 }
 
-// lane is one agent's column in a team view: its own recent activity, its own
-// counters, and its own reading of what it is consuming.
+// lane is one agent's column in a team view: its own recent activity and its
+// own reading of what it is consuming, both readings of state that lives
+// elsewhere — the styled lines are this view's own, and the counters and the
+// usage receipt are internal/digest's, read off m.d.Agents by name rather than
+// duplicated here (P7-1).
 //
-// A team is one session (E2-7), so all of this comes out of one file — the lane
-// is a split of the chain by the `agent` field, not a second source of truth.
+// A team is one session (E2-7), so all of this comes out of one file — the
+// lane is a split of the chain by the `agent` field, not a second source of
+// truth.
 type lane struct {
-	name    string
-	sandbox string
-	lines   []string
-
-	commands, failed, files, egressOK, egressBlocked, secrets int
+	name  string
+	lines []string
 
 	live, prev *usageMsg
 	cpuPercent float64
-	receipt    *recorder.Event
 }
 
 type watchModel struct {
@@ -110,10 +110,22 @@ type watchModel struct {
 	width, height int
 	lines         []string
 
-	// The team view. order is first-appearance order, which is boot order, so
-	// the columns read like the file the user wrote. Empty until an event
-	// carrying an agent arrives, at which point the view becomes a team view —
-	// there is no flag to set and nothing to ask the user.
+	// d is the one fold (internal/digest), absorbed live as each event
+	// arrives off the tail of the running session — no call to digest.New
+	// needed, since a zero-value Digest is safe to absorb into. It carries
+	// every counter, the team's messages and refusals, the session header
+	// (image, kernel, boot time, end reason) and the usage receipts, so this
+	// model no longer keeps its own copies of any of them.
+	d digest.Digest
+
+	// The team view. lanes holds each agent's own styled buffer; order is
+	// first-appearance order, which is boot order, so the columns read like
+	// the file the user wrote. A lane is minted the moment an agent is
+	// *seen* — by an event or by a live sample, whichever comes first, which
+	// is why this is tracked here rather than read off d.AgentOrder: that
+	// slice is chain-derived only, and a sample is a reading, not a record
+	// (F-D14). Empty until then, at which point the view becomes a team
+	// view — there is no flag to set and nothing to ask the user.
 	order []string
 	lanes map[string]*lane
 	// flow is the message ticker: who told what to whom, most recent last. It
@@ -127,18 +139,10 @@ type watchModel struct {
 	teamCPU    float64
 	teamThrott float64
 
-	// counters for the status line
-	commands, failed, files, egressOK, egressBlocked, secrets int
-	// team-wide counters, which belong to no single lane
-	messages, refused        int
-	image, kernel, endReason string
-	bootMS                   int64
-
 	// the resources lane: a live sample while the sandbox runs, and the
 	// recorded receipt once it has stopped
 	live, prev *usageMsg
 	cpuPercent float64
-	receipt    *recorder.Event
 }
 
 func (m *watchModel) Init() tea.Cmd { return tea.Batch(tick(), sampleUsage(m.session)) }
@@ -274,7 +278,6 @@ func (m *watchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.teamCPU, m.teamThrott = msg.cpuSeconds, msg.throttled
 		for _, au := range msg.per {
 			l := m.lane(au.name)
-			l.sandbox = au.usage.state.ID
 			if l.live != nil {
 				if dt := au.usage.at.Sub(l.live.at).Seconds(); dt > 0 {
 					l.cpuPercent = 100 * (au.usage.usage.CPUSeconds - l.live.usage.CPUSeconds) / dt
@@ -299,9 +302,10 @@ func (m *watchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// lane returns an agent's lane, creating it the first time that agent is seen.
-// Creation order is the lane order, and the first lane created is what turns
-// this into a team view.
+// lane returns an agent's lane, creating it the first time that agent is seen
+// — by an event or by a live sample, whichever happens first. Creation order
+// is the lane order, and the first lane created is what turns this into a
+// team view.
 func (m *watchModel) lane(name string) *lane {
 	if m.lanes == nil {
 		m.lanes = map[string]*lane{}
@@ -315,6 +319,25 @@ func (m *watchModel) lane(name string) *lane {
 	return l
 }
 
+// agentCounters is what an agent's lane has done, read from the fold rather
+// than kept twice — nil-safe, because a lane can exist here (minted by a live
+// sample, see lane above) before the chain has recorded anything for it.
+func (m *watchModel) agentCounters(name string) digest.Counters {
+	if a := m.d.Agents[name]; a != nil {
+		return a.Counters
+	}
+	return digest.Counters{}
+}
+
+// agentReceipt is an agent's usage.receipt, or nil before one has been
+// written — the same nil-safety agentCounters needs, for the same reason.
+func (m *watchModel) agentReceipt(name string) *recorder.Event {
+	if a := m.d.Agents[name]; a != nil {
+		return a.Receipt
+	}
+	return nil
+}
+
 // bound keeps a line buffer to what can ever be shown. An unbounded slice in a
 // long session is a slow leak nobody would notice until it mattered.
 func bound(lines []string, max int) []string {
@@ -324,17 +347,15 @@ func bound(lines []string, max int) []string {
 	return lines
 }
 
+// absorb folds one event and draws the line it produces. The fold itself —
+// which counter this bumps, whether this is a refusal, which agent's bucket
+// it belongs to — is internal/digest's job now (P7-1): this method reads back
+// what Absorb decided (entry.Refused, entry.Text for a decoded command.output
+// chunk) rather than recomputing it, and keeps only what is genuinely this
+// view's own: the styled text and which buffer it goes in.
 func (m *watchModel) absorb(e recorder.Event) {
-	// A team writes one receipt per agent; only a single sandbox's receipt is
-	// the session's (E2-7).
-	if e.Type == recorder.TypeResourceSummary {
-		ev := e
-		if e.Agent != "" {
-			m.lane(e.Agent).receipt = &ev
-		} else {
-			m.receipt = &ev
-		}
-	}
+	entry := m.d.Absorb(e)
+
 	ts := e.TS
 	if len(ts) > 23 {
 		ts = ts[11:23]
@@ -364,31 +385,20 @@ func (m *watchModel) absorb(e recorder.Event) {
 	tick := func(text string) {
 		m.flow = bound(append(m.flow, dim.Render(ts)+" "+text), 200)
 	}
-	// counters: an agent's own when it has one, the session's otherwise.
-	commands, failed, files := &m.commands, &m.failed, &m.files
-	egressOK, egressBlocked, secrets := &m.egressOK, &m.egressBlocked, &m.secrets
-	if e.Agent != "" {
-		l := m.lane(e.Agent)
-		commands, failed, files = &l.commands, &l.failed, &l.files
-		egressOK, egressBlocked, secrets = &l.egressOK, &l.egressBlocked, &l.secrets
-	}
 
 	switch e.Type {
 	case recorder.TypeSessionStart:
-		m.image = e.Image + " · " + e.Arch
-		add(styleMuted, "session", "start "+m.image)
+		add(styleMuted, "session", "start "+e.Image+" · "+e.Arch)
 	case recorder.TypeSessionReady:
-		m.bootMS, m.kernel = e.BootMS, e.Kernel
 		add(styleOK, "ready", fmt.Sprintf("%d ms · kernel %s", e.BootMS, e.Kernel))
 	case recorder.TypeSessionEnd:
-		m.endReason = e.Reason
 		add(styleMuted, "session", "end "+e.Reason)
 	case recorder.TypeCommandStart:
-		*commands++
 		add(styleCmd, "$", strings.Join(e.Cmd, " "))
 	case recorder.TypeCommandOutput:
-		data, _ := base64.StdEncoding.DecodeString(e.Data)
-		for _, l := range strings.Split(strings.TrimRight(string(data), "\n"), "\n") {
+		// entry.Text is the base64 payload, already decoded once by
+		// digest.Absorb — this view no longer decodes it a second time.
+		for _, l := range strings.Split(strings.TrimRight(entry.Text, "\n"), "\n") {
 			if strings.TrimSpace(l) == "" {
 				continue
 			}
@@ -404,24 +414,19 @@ func (m *watchModel) absorb(e recorder.Event) {
 			code = *e.Code
 		}
 		style := styleOK
-		if code != 0 {
+		if entry.Refused {
 			style = styleWarn
-			*failed++
 		}
 		add(style, "exit", fmt.Sprintf("%d · %d ms", code, e.DurationMS))
 	case recorder.TypeFileWrite:
-		*files++
 		add(styleAmber, "write", fmt.Sprintf("%s · %d bytes", e.Path, e.Bytes))
 	case recorder.TypeEgressAttempt:
-		if e.Allowed != nil && *e.Allowed {
-			*egressOK++
+		if !entry.Refused {
 			add(styleOK, "egress", fmt.Sprintf("%s:%d · %s", e.Host, e.Port, e.Mode))
 		} else {
-			*egressBlocked++
 			add(styleWarn, "BLOCKED", fmt.Sprintf("%s:%d · %s", e.Host, e.Port, e.Reason))
 		}
 	case recorder.TypeSecretUse:
-		*secrets++
 		add(styleAmber, "secret", e.Name+" → "+e.Host)
 	case recorder.TypeTeamMessage, recorder.TypeTeamRefused:
 		// Named so the two ends are both visible: an ask points forward, a
@@ -431,28 +436,24 @@ func (m *watchModel) absorb(e recorder.Event) {
 			arrow = "←"
 		}
 		body := fmt.Sprintf("%s %s %s  %s · %d bytes", e.Agent, arrow, e.Peer, e.Kind, e.Bytes)
-		if e.Type == recorder.TypeTeamRefused {
-			m.refused++
+		if entry.Refused {
 			tick(styleWarn.Render("REFUSED ") + body + dim.Render("  ("+e.Reason+")"))
 			break
 		}
-		m.messages++
 		tick(styleMuted.Render("msg     ") + body)
 	case recorder.TypeTeamStore:
 		// A store access is something one agent did, so it goes in that
 		// agent's lane — and also in the ticker when it was refused, because a
 		// refusal is the thing a watcher is watching for.
 		style, label := styleAmber, "store"
-		if e.Outcome != "delivered" {
+		if entry.Refused {
 			style, label = styleWarn, "DENIED"
-			m.refused++
 			tick(styleWarn.Render("DENIED  ") +
 				fmt.Sprintf("%s %s %s", e.Agent, e.Kind, e.Peer) + dim.Render("  ("+e.Reason+")"))
 		}
 		add(style, label, fmt.Sprintf("%s %s", e.Kind, e.Peer))
 	case recorder.TypeTeamSpawn:
-		if e.Outcome != "delivered" {
-			m.refused++
+		if entry.Refused {
 			tick(styleWarn.Render("REFUSED ") + e.Agent + " may not spawn" + dim.Render("  ("+e.Reason+")"))
 			break
 		}
@@ -500,16 +501,17 @@ func (m *watchModel) render() string {
 	}
 
 	state := "running"
-	if m.endReason != "" {
-		state = "stopped (" + m.endReason + ")"
+	if m.d.EndReason != "" {
+		state = "stopped (" + m.d.EndReason + ")"
 	}
 	header := fmt.Sprintf("%s  sandbox %s  %s  %s",
-		titleStyle.Render("KelyfOS"), m.session, m.image, state)
+		titleStyle.Render("KelyfOS"), m.session, m.d.Image+" · "+m.d.Arch, state)
 
 	status := barStyle.Render(fmt.Sprintf(
 		"uptime %s · boot %d ms · %d commands (%d failed) · %d files · egress %d ok / %d blocked · %d secret uses",
-		time.Since(m.started).Truncate(time.Second), m.bootMS,
-		m.commands, m.failed, m.files, m.egressOK, m.egressBlocked, m.secrets))
+		time.Since(m.started).Truncate(time.Second), m.d.BootMS,
+		m.d.Session.Commands, m.d.Session.Failed, m.d.Session.Files,
+		m.d.Session.EgressOK, m.d.Session.EgressBlocked, m.d.Session.Secrets))
 
 	resources := m.resourceLane()
 
@@ -549,16 +551,17 @@ func (m *watchModel) teamView(width, height int) string {
 	narrow := laneW < laneMinWidth
 
 	state := "running"
-	if m.endReason != "" {
-		state = "stopped (" + m.endReason + ")"
+	if m.d.EndReason != "" {
+		state = "stopped (" + m.d.EndReason + ")"
 	}
 	header := fmt.Sprintf("%s  team session %s  %d agents  %s",
 		titleStyle.Render("KelyfOS"), m.session, n, state)
+	agentTot := m.d.AgentTotals()
 	status := barStyle.Render(fmt.Sprintf(
 		"uptime %s · %d messages · %d refused · %d commands (%d failed) · egress %d ok / %d blocked",
 		time.Since(m.started).Truncate(time.Second),
-		m.messages, m.refused, m.teamCommands(), m.teamFailed(),
-		m.teamEgressOK(), m.teamEgressBlocked()))
+		m.d.Messages, m.d.AllRefusals(), agentTot.Commands, agentTot.Failed,
+		agentTot.EgressOK, agentTot.EgressBlocked))
 	budget := m.teamBudgetLine()
 
 	// Chrome: header, status, budget, rule, lane headers (2), rule, ticker
@@ -625,7 +628,7 @@ func (m *watchModel) teamView(width, height int) string {
 func (m *watchModel) laneBlock(l *lane, laneW, laneH int) []string {
 	out := make([]string, 0, laneH+2)
 	out = append(out, titleStyle.Render(fit(l.name, laneW)))
-	out = append(out, barStyle.Render(fit(l.laneUsage(), laneW)))
+	out = append(out, barStyle.Render(fit(l.laneUsage(m.agentReceipt(l.name)), laneW)))
 	lines := bound(l.lines, laneH)
 	for _, ln := range lines {
 		out = append(out, fitStyled(ln, laneW))
@@ -637,7 +640,9 @@ func (m *watchModel) laneBlock(l *lane, laneW, laneH int) []string {
 }
 
 // laneUsage is one agent's consumption against its own caps, in one line.
-func (l *lane) laneUsage() string {
+// receipt is the agent's resource.summary, read out of the fold by the caller
+// (watchModel.agentReceipt) rather than kept a second time here.
+func (l *lane) laneUsage(receipt *recorder.Event) string {
 	if l.live != nil {
 		st, u := l.live.state, l.live.usage
 		cpu := "cpu —"
@@ -652,9 +657,9 @@ func (l *lane) laneUsage() string {
 		}
 		return fmt.Sprintf("%s  mem %s/%dM", cpu, report.HumanKiB(u.RSSKiB), st.MemMiB)
 	}
-	if l.receipt != nil {
+	if receipt != nil {
 		return fmt.Sprintf("final %.1fs cpu, peak %s",
-			l.receipt.CPUSeconds, report.HumanKiB(l.receipt.PeakRSSKiB))
+			receipt.CPUSeconds, report.HumanKiB(receipt.PeakRSSKiB))
 	}
 	return "waiting…"
 }
@@ -675,21 +680,6 @@ func (m *watchModel) teamBudgetLine() string {
 		line += fmt.Sprintf(" · %.1fs throttled", m.teamThrott)
 	}
 	return barStyle.Render(line)
-}
-
-func (m *watchModel) teamCommands() int { return m.sum(func(l *lane) int { return l.commands }) }
-func (m *watchModel) teamFailed() int   { return m.sum(func(l *lane) int { return l.failed }) }
-func (m *watchModel) teamEgressOK() int { return m.sum(func(l *lane) int { return l.egressOK }) }
-func (m *watchModel) teamEgressBlocked() int {
-	return m.sum(func(l *lane) int { return l.egressBlocked })
-}
-
-func (m *watchModel) sum(f func(*lane) int) int {
-	n := 0
-	for _, l := range m.lanes {
-		n += f(l)
-	}
-	return n
 }
 
 // fit pads or truncates a plain string to exactly w columns. Every line this
@@ -762,8 +752,8 @@ func (m *watchModel) resourceLane() string {
 		}
 		return barStyle.Render(strings.Join([]string{cpu, mem, net, disk}, " · "))
 	}
-	if m.receipt != nil {
-		e := m.receipt
+	if m.d.Receipt != nil {
+		e := m.d.Receipt
 		return barStyle.Render(fmt.Sprintf(
 			"final · %.2f CPU-seconds%s · peak RSS %s (VMM)%s · net %s in / %s out · disk %s written",
 			e.CPUSeconds, quotaSuffix(*e), report.HumanKiB(e.PeakRSSKiB), capSuffix(e.MemMiB),

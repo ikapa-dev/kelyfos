@@ -10,13 +10,13 @@ package report
 import (
 	"bytes"
 	"crypto/ed25519"
-	"encoding/base64"
 	"fmt"
 	"html/template"
 	"io"
 	"strings"
 	"time"
 
+	"github.com/p4r4n0rm4l/KelyfOS/internal/digest"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
 )
 
@@ -185,222 +185,16 @@ func RenderSigned(w io.Writer, sessionID string, chain []byte, key ed25519.Priva
 		v.Signed, v.Fingerprint = sig, sig.Fingerprint()
 	}
 
-	seenSecret := map[string]bool{}
-	// Output is attached to the command it belongs to rather than listed
-	// separately, because a transcript where output floats away from its
-	// command is not a transcript.
-	byCall := map[string]int{}
-
-	for _, e := range parsed {
-		ts := e.TS
-		if len(ts) > 23 {
-			ts = ts[11:23]
-		}
-		switch e.Type {
-		case recorder.TypeSessionStart:
-			v.Summary.Image, v.Summary.Arch, v.Summary.Kelyfos = e.Image, e.Arch, e.Kelyfos
-			v.Summary.Started = e.TS
-			// A team has no single flavor — each agent has its own, and each
-			// says so in its own session.ready. Saying that beats rendering a
-			// hole where a value should be (F-D33).
-			shown := e.Image
-			if shown == "" {
-				// A server's session has no single flavor either, and its
-				// machines are sandboxes rather than agents. Saying which
-				// beats rendering a hole (F-D33).
-				shown = "per agent"
-				if e.Reason == recorder.ReasonServeMCP {
-					shown, v.Served = "per sandbox", true
-				}
-				v.Summary.Image = shown
-			}
-			detail := fmt.Sprintf("image %s · arch %s · kelyfos %s", shown, e.Arch, e.Kelyfos)
-			// A restored or forked machine says what it came from here, and a
-			// cold boot records no reason at all, so this adds nothing to the
-			// common case and everything to the one that needs it.
-			if e.Reason != "" {
-				detail += " · " + e.Reason
-			}
-			v.Rows = append(v.Rows, Row{ts, "session", "session start", detail, "", false})
-		case recorder.TypeSessionReady:
-			// A team writes one of these per member, so the header's single set
-			// of boot figures would end up being whichever agent was last —
-			// with the kernel and supervisor blank, because the team's copy
-			// records how the machine started rather than what booted (E2-9).
-			if e.Agent != "" {
-				v.Rows = append(v.Rows, Row{ts, "session", e.Agent + " ready",
-					fmt.Sprintf("%d ms · %s · image %s", e.BootMS, bootPath(e.Via), e.Image), "", false})
-				break
-			}
-			v.Summary.BootMS, v.Summary.Kernel, v.Summary.Supervisor = e.BootMS, e.Kernel, e.Supervisor
-			overlay := "overlay unknown"
-			if e.Overlay != nil {
-				overlay = fmt.Sprintf("overlay %t", *e.Overlay)
-			}
-			v.Rows = append(v.Rows, Row{ts, "session", "ready",
-				fmt.Sprintf("%d ms · kernel %s · supervisor %s · %s", e.BootMS, e.Kernel, e.Supervisor, overlay), "", false})
-		case recorder.TypeSessionEnd:
-			v.Summary.Ended, v.Summary.EndReason = e.TS, e.Reason
-			v.Rows = append(v.Rows, Row{ts, "session", "session end",
-				fmt.Sprintf("%s after %d ms", e.Reason, e.DurationMS), "", false})
-		case recorder.TypeCommandStart:
-			v.Summary.Commands++
-			byCall[e.Call] = len(v.Rows)
-			v.Rows = append(v.Rows, Row{ts, "command", strings.Join(e.Cmd, " "),
-				"via " + e.Via, "", false})
-		case recorder.TypeCommandOutput:
-			if i, ok := byCall[e.Call]; ok {
-				data, _ := base64.StdEncoding.DecodeString(e.Data)
-				prefix := ""
-				if e.Stream == "stderr" {
-					prefix = "stderr: "
-				}
-				v.Rows[i].Output += prefix + string(data)
-			}
-		case recorder.TypeCommandExit:
-			code := -1
-			if e.Code != nil {
-				code = *e.Code
-			}
-			if code != 0 {
-				v.Summary.Failed++
-			}
-			if i, ok := byCall[e.Call]; ok {
-				v.Rows[i].IsError = code != 0
-				v.Rows[i].Detail += fmt.Sprintf(" · exit %d · %d ms", code, e.DurationMS)
-				if e.Error != nil {
-					v.Rows[i].Detail += fmt.Sprintf(" · %s: %s", e.Error.Kind, e.Error.Message)
-				}
-			}
-		case recorder.TypeFileWrite:
-			v.Summary.FilesWritten++
-			v.Rows = append(v.Rows, Row{ts, "file", "write " + e.Path,
-				fmt.Sprintf("%d bytes · sha256 %s · via %s", e.Bytes, short(e.SHA256), e.Via), "", false})
-		case recorder.TypeEgressAttempt:
-			allowed := e.Allowed != nil && *e.Allowed
-			kind, title := "egress-blocked", "BLOCKED "+e.Host
-			if allowed {
-				kind, title = "egress", "egress "+e.Host
-				v.Summary.EgressOK++
-				if e.Mode == "terminated" {
-					v.Summary.Terminated++
-				}
-			} else {
-				v.Summary.EgressBlock++
-			}
-			detail := fmt.Sprintf("port %d", e.Port)
-			if e.Mode != "" {
-				detail += " · " + e.Mode
-			}
-			if e.Reason != "" {
-				detail += " · " + e.Reason
-			}
-			if e.BytesIn > 0 || e.BytesOut > 0 {
-				detail += fmt.Sprintf(" · %d in / %d out", e.BytesIn, e.BytesOut)
-			}
-			v.Rows = append(v.Rows, Row{ts, kind, title, detail, "", !allowed})
-		case recorder.TypePluginCall:
-			detail := fmt.Sprintf("%s · %d ms", e.Outcome, e.DurationMS)
-			if e.Args != "" {
-				detail = e.Args + " · " + detail
-			}
-			v.Rows = append(v.Rows, Row{ts, "plugin", e.Name + "_" + e.Tool, detail, "",
-				e.Outcome != "ok"})
-		case recorder.TypePluginCrash:
-			v.Rows = append(v.Rows, Row{ts, "plugin", "plugin " + e.Name + " stopped",
-				e.Reason, "", true})
-		case recorder.TypeSecretUse:
-			if !seenSecret[e.Name+"@"+e.Host] {
-				seenSecret[e.Name+"@"+e.Host] = true
-				v.Summary.Secrets = append(v.Summary.Secrets, e.Name+" → "+e.Host)
-			}
-			v.Rows = append(v.Rows, Row{ts, "secret", "secret " + e.Name,
-				"sent to " + e.Host + " · the value is not recorded anywhere", "", false})
-		case recorder.TypeTeamMessage, recorder.TypeTeamRefused:
-			refused := e.Type == recorder.TypeTeamRefused
-			// The same arrow the lane view draws. A reply points back, because
-			// it travels the return path of the ask that provoked it — and the
-			// two views rendering one event in opposite directions is worse
-			// than either being wrong on its own (F-D33).
-			arrow := "→"
-			if e.Kind == "reply" {
-				arrow = "←"
-			}
-			kind, title := "team", fmt.Sprintf("%s %s %s", e.Agent, arrow, e.Peer)
-			if refused {
-				kind, title = "team-refused", fmt.Sprintf("REFUSED %s %s %s", e.Agent, arrow, e.Peer)
-				v.Summary.TeamRefused++
-			} else {
-				v.Summary.TeamMessages++
-			}
-			detail := fmt.Sprintf("%s · %d bytes · sha256 %s", e.Kind, e.Bytes, short(e.SHA256))
-			if e.Reason != "" {
-				detail += " · " + e.Reason
-			}
-			v.Rows = append(v.Rows, Row{ts, kind, title, detail, e.Data, refused})
-		case recorder.TypeTeamSpawn:
-			if e.Outcome != "delivered" {
-				v.Summary.TeamRefused++
-				v.Rows = append(v.Rows, Row{ts, "team-refused",
-					"REFUSED spawn by " + e.Agent, e.Reason, "", true})
-				break
-			}
-			v.Rows = append(v.Rows, Row{ts, "team",
-				fmt.Sprintf("%s %s", e.Kind, e.Peer), "requested by " + e.Agent, "", false})
-		case recorder.TypeTeamStore:
-			refused := e.Outcome != "delivered"
-			detail := e.Outcome
-			if e.Reason != "" {
-				detail += " · " + e.Reason
-			}
-			if e.Bytes > 0 {
-				detail += fmt.Sprintf(" · %d bytes", e.Bytes)
-			}
-			kind := "team"
-			if refused {
-				kind = "team-refused"
-			}
-			v.Rows = append(v.Rows, Row{ts,
-				kind, fmt.Sprintf("%s %s %s", e.Agent, e.Kind, e.Peer), detail, "", refused})
-		case recorder.TypeResourceSummary:
-			// A team writes one receipt per agent into the same chain, so the
-			// header's single receipt would show whichever machine stopped
-			// last and call it the session's. Those become timeline rows
-			// instead, and the header keeps the receipt only when there is
-			// exactly one machine to have one (E1-7, E2-7).
-			if e.Agent != "" {
-				v.Rows = append(v.Rows, Row{ts, "session", "usage receipt · " + e.Agent,
-					fmt.Sprintf("%.2f CPU-seconds%s · peak RSS %s · net %s in / %s out · disk %s written",
-						e.CPUSeconds, quotaNote(e), HumanKiB(e.PeakRSSKiB),
-						HumanBytes(e.NetInBytes), HumanBytes(e.NetOutBytes),
-						HumanBytes(e.DiskWriteBytes)), "", false})
-				break
-			}
-			v.Summary.Usage = &Usage{
-				CPUSeconds: e.CPUSeconds, CPUQuota: e.CPUQuota, Vcpus: e.VcpuCount,
-				PeakRSS: HumanKiB(e.PeakRSSKiB), MemMiB: e.MemMiB,
-				NetIn: HumanBytes(e.NetInBytes), NetOut: HumanBytes(e.NetOutBytes),
-				DiskRead: HumanBytes(e.DiskReadBytes), DiskWrite: HumanBytes(e.DiskWriteBytes),
-			}
-		case recorder.TypeResourceTimeout:
-			v.Summary.TimedOut = e.Budget
-			v.Rows = append(v.Rows, Row{ts, "oom", "timed out on " + e.Budget,
-				fmt.Sprintf("budget %s · ran %s",
-					time.Duration(e.BudgetMS)*time.Millisecond,
-					(time.Duration(e.ElapsedMS) * time.Millisecond).Round(time.Second)), "", true})
-		case recorder.TypeResourceOOM:
-			// Flagged the way a blocked egress attempt is: this is a limit
-			// firing, and a reader skimming the transcript should not have to
-			// hunt for it.
-			v.Summary.OOMKills++
-			detail := fmt.Sprintf("pid %d · %s resident", e.PID, HumanKiB(e.RSSKiB))
-			if e.MemMiB > 0 {
-				detail += fmt.Sprintf(" · the machine had %d MiB", e.MemMiB)
-			}
-			v.Rows = append(v.Rows, Row{ts, "oom", "OOM-killed " + e.Comm, detail, "", true})
-		}
-	}
-	v.Lanes, v.LaneRows = buildLanes(parsed)
+	// The fold. This used to be three loops — this one, and buildLanes'
+	// two — each independently deciding what a command.exit means and
+	// whether a team.store denial counts as a refusal. Now the chain is
+	// walked once (internal/digest), and the summary, the flat timeline and
+	// the lane view are three cheap translations of that one result rather
+	// than three re-interpretations of the raw events (P7-1).
+	d := digest.Walk(parsed)
+	fillSummary(&v, d)
+	v.Rows = timelineRows(d)
+	v.Lanes, v.LaneRows = buildLanes(d)
 	if n := len(v.Lanes); n > 0 {
 		v.LaneWidth = template.CSS(fmt.Sprintf("grid-template-columns:88px repeat(%d,minmax(0,1fr))", n))
 	}
@@ -415,40 +209,250 @@ func RenderSigned(w io.Writer, sessionID string, chain []byte, key ed25519.Priva
 	return len(parsed), nil
 }
 
-// buildLanes turns the same events into a per-agent view.
+// shownImage is what the header and the session-start row both say the
+// image was: the recorded flavor, or — when a team or a server left it blank
+// because no single flavor covers every machine — a fallback that names which
+// kind of hole this is rather than rendering an empty one (F-D33). A chain
+// that never carried a session.start at all gets neither: asserting "per
+// agent" about a fact the chain never stated would be the view inventing
+// something the record does not contain, on exactly the kind of malformed or
+// partial chain an audit artefact should stay silent about instead.
+func shownImage(d *digest.Digest) string {
+	if !d.SawSessionStart {
+		return ""
+	}
+	if d.Image != "" {
+		return d.Image
+	}
+	if d.Served {
+		return "per sandbox"
+	}
+	return "per agent"
+}
+
+// fillSummary is the at-a-glance header, built from the fold rather than by
+// re-walking the chain: every field here was already computed once by
+// digest.Walk.
+func fillSummary(v *View, d *digest.Digest) {
+	v.Served = d.Served
+	tot := d.Totals()
+	v.Summary = Summary{
+		Image: shownImage(d), Arch: d.Arch, Kelyfos: d.Kelyfos,
+		Kernel: d.Kernel, Supervisor: d.Supervisor, BootMS: d.BootMS,
+		Started: d.Started, Ended: d.Ended, EndReason: d.EndReason,
+		// Totals, not Session: the header has always counted every command,
+		// file write and egress attempt regardless of which agent (or none)
+		// made it — see digest.Digest.Totals.
+		Commands: tot.Commands, Failed: tot.Failed, FilesWritten: tot.Files,
+		EgressOK: tot.EgressOK, EgressBlock: tot.EgressBlocked,
+		Terminated: d.Terminated, OOMKills: d.OOMKills,
+		// TeamRefused, not AllRefusals: the header has never counted a
+		// denied store access as a "team refused", only a refused message or
+		// spawn (digest.Digest.TeamRefused documents the split).
+		TeamMessages: d.Messages, TeamRefused: d.TeamRefused(),
+		TimedOut: d.TimedOut,
+	}
+	for _, s := range d.Secrets {
+		v.Summary.Secrets = append(v.Summary.Secrets, s.Name+" → "+s.Host)
+	}
+	if d.Receipt != nil {
+		e := d.Receipt
+		v.Summary.Usage = &Usage{
+			CPUSeconds: e.CPUSeconds, CPUQuota: e.CPUQuota, Vcpus: e.VcpuCount,
+			PeakRSS: HumanKiB(e.PeakRSSKiB), MemMiB: e.MemMiB,
+			NetIn: HumanBytes(e.NetInBytes), NetOut: HumanBytes(e.NetOutBytes),
+			DiskRead: HumanBytes(e.DiskReadBytes), DiskWrite: HumanBytes(e.DiskWriteBytes),
+		}
+	}
+}
+
+// shortTS is the clock the flat timeline and the lane view have always
+// shown: HH:MM:SS.mmm, trimmed out of the full RFC 3339 timestamp.
+func shortTS(ts string) string {
+	if len(ts) > 23 {
+		return ts[11:23]
+	}
+	return ts
+}
+
+// timelineRows turns the fold's timeline into the flat view — the report
+// exactly as it read before teams existed, and as it still reads for a
+// session with no agents in it.
+//
+// Output is attached to the command it belongs to already: digest.Absorb
+// accumulated every command.output onto its command.start entry as the chain
+// was walked, so there is nothing left to correlate here — a transcript
+// where output floats away from its command is not a transcript, and now
+// that rule lives in one place rather than in this loop and buildLanes'.
+func timelineRows(d *digest.Digest) []Row {
+	var rows []Row
+	for _, en := range d.Timeline {
+		ts := shortTS(en.TS)
+		switch en.Type {
+		case recorder.TypeSessionStart:
+			detail := fmt.Sprintf("image %s · arch %s · kelyfos %s", shownImage(d), en.Arch, en.Kelyfos)
+			// A restored or forked machine says what it came from here, and a
+			// cold boot records no reason at all, so this adds nothing to the
+			// common case and everything to the one that needs it.
+			if en.Reason != "" {
+				detail += " · " + en.Reason
+			}
+			rows = append(rows, Row{ts, "session", "session start", detail, "", false})
+		case recorder.TypeSessionReady:
+			// A team writes one of these per member, so the header's single set
+			// of boot figures would end up being whichever agent was last —
+			// with the kernel and supervisor blank, because the team's copy
+			// records how the machine started rather than what booted (E2-9).
+			if en.Agent != "" {
+				rows = append(rows, Row{ts, "session", en.Agent + " ready",
+					fmt.Sprintf("%d ms · %s · image %s", en.BootMS, bootPath(en.Via), en.Image), "", false})
+				break
+			}
+			overlay := "overlay unknown"
+			if en.Overlay != nil {
+				overlay = fmt.Sprintf("overlay %t", *en.Overlay)
+			}
+			rows = append(rows, Row{ts, "session", "ready",
+				fmt.Sprintf("%d ms · kernel %s · supervisor %s · %s", en.BootMS, en.Kernel, en.Supervisor, overlay), "", false})
+		case recorder.TypeSessionEnd:
+			rows = append(rows, Row{ts, "session", "session end",
+				fmt.Sprintf("%s after %d ms", en.Reason, en.DurationMS), "", false})
+		case recorder.TypeCommandStart:
+			detail := "via " + en.Via
+			// Exited, not "en.Code != nil": a command can exit with no
+			// numeric code at all — a supervisor crash mid-exec — and still
+			// carry an Error worth showing. Gating on Code being non-nil
+			// silently dropped both the exit line and the error detail
+			// together on exactly that shape (caught by review, P7-1).
+			if en.Exited {
+				code := -1
+				if en.Code != nil {
+					code = *en.Code
+				}
+				detail += fmt.Sprintf(" · exit %d · %d ms", code, en.DurationMS)
+				if en.Error != nil {
+					detail += fmt.Sprintf(" · %s: %s", en.Error.Kind, en.Error.Message)
+				}
+			}
+			rows = append(rows, Row{ts, "command", strings.Join(en.Cmd, " "), detail, en.Output, en.Refused})
+		case recorder.TypeFileWrite:
+			rows = append(rows, Row{ts, "file", "write " + en.Path,
+				fmt.Sprintf("%d bytes · sha256 %s · via %s", en.Bytes, short(en.SHA256), en.Via), "", false})
+		case recorder.TypeEgressAttempt:
+			kind, title := "egress-blocked", "BLOCKED "+en.Host
+			if !en.Refused {
+				kind, title = "egress", "egress "+en.Host
+			}
+			detail := fmt.Sprintf("port %d", en.Port)
+			if en.Mode != "" {
+				detail += " · " + en.Mode
+			}
+			if en.Reason != "" {
+				detail += " · " + en.Reason
+			}
+			if en.BytesIn > 0 || en.BytesOut > 0 {
+				detail += fmt.Sprintf(" · %d in / %d out", en.BytesIn, en.BytesOut)
+			}
+			rows = append(rows, Row{ts, kind, title, detail, "", en.Refused})
+		case recorder.TypePluginCall:
+			detail := fmt.Sprintf("%s · %d ms", en.Outcome, en.DurationMS)
+			if en.Args != "" {
+				detail = en.Args + " · " + detail
+			}
+			rows = append(rows, Row{ts, "plugin", en.Name + "_" + en.Tool, detail, "", en.Refused})
+		case recorder.TypePluginCrash:
+			rows = append(rows, Row{ts, "plugin", "plugin " + en.Name + " stopped", en.Reason, "", true})
+		case recorder.TypeSecretUse:
+			rows = append(rows, Row{ts, "secret", "secret " + en.Name,
+				"sent to " + en.Host + " · the value is not recorded anywhere", "", false})
+		case recorder.TypeTeamMessage, recorder.TypeTeamRefused:
+			// The same arrow the lane view draws. A reply points back, because
+			// it travels the return path of the ask that provoked it — and the
+			// two views rendering one event in opposite directions is worse
+			// than either being wrong on its own (F-D33).
+			arrow := "→"
+			if en.Kind == "reply" {
+				arrow = "←"
+			}
+			kind, title := "team", fmt.Sprintf("%s %s %s", en.Agent, arrow, en.Peer)
+			if en.Refused {
+				kind, title = "team-refused", fmt.Sprintf("REFUSED %s %s %s", en.Agent, arrow, en.Peer)
+			}
+			detail := fmt.Sprintf("%s · %d bytes · sha256 %s", en.Kind, en.Bytes, short(en.SHA256))
+			if en.Reason != "" {
+				detail += " · " + en.Reason
+			}
+			rows = append(rows, Row{ts, kind, title, detail, en.Data, en.Refused})
+		case recorder.TypeTeamSpawn:
+			if en.Refused {
+				rows = append(rows, Row{ts, "team-refused", "REFUSED spawn by " + en.Agent, en.Reason, "", true})
+				break
+			}
+			rows = append(rows, Row{ts, "team", fmt.Sprintf("%s %s", en.Kind, en.Peer), "requested by " + en.Agent, "", false})
+		case recorder.TypeTeamStore:
+			detail := en.Outcome
+			if en.Reason != "" {
+				detail += " · " + en.Reason
+			}
+			if en.Bytes > 0 {
+				detail += fmt.Sprintf(" · %d bytes", en.Bytes)
+			}
+			kind := "team"
+			if en.Refused {
+				kind = "team-refused"
+			}
+			rows = append(rows, Row{ts, kind, fmt.Sprintf("%s %s %s", en.Agent, en.Kind, en.Peer), detail, "", en.Refused})
+		case recorder.TypeResourceSummary:
+			// A team writes one receipt per agent into the same chain, so the
+			// header's single receipt would show whichever machine stopped
+			// last and call it the session's. Those become timeline rows
+			// instead, and the header keeps the receipt only when there is
+			// exactly one machine to have one (E1-7, E2-7).
+			if en.Agent != "" {
+				rows = append(rows, Row{ts, "session", "usage receipt · " + en.Agent,
+					fmt.Sprintf("%.2f CPU-seconds%s · peak RSS %s · net %s in / %s out · disk %s written",
+						en.CPUSeconds, quotaNote(en.Event), HumanKiB(en.PeakRSSKiB),
+						HumanBytes(en.NetInBytes), HumanBytes(en.NetOutBytes),
+						HumanBytes(en.DiskWriteBytes)), "", false})
+			}
+		case recorder.TypeResourceTimeout:
+			rows = append(rows, Row{ts, "oom", "timed out on " + en.Budget,
+				fmt.Sprintf("budget %s · ran %s",
+					time.Duration(en.BudgetMS)*time.Millisecond,
+					(time.Duration(en.ElapsedMS) * time.Millisecond).Round(time.Second)), "", true})
+		case recorder.TypeResourceOOM:
+			// Flagged the way a blocked egress attempt is: this is a limit
+			// firing, and a reader skimming the transcript should not have to
+			// hunt for it.
+			detail := fmt.Sprintf("pid %d · %s resident", en.PID, HumanKiB(en.RSSKiB))
+			if en.MemMiB > 0 {
+				detail += fmt.Sprintf(" · the machine had %d MiB", en.MemMiB)
+			}
+			rows = append(rows, Row{ts, "oom", "OOM-killed " + en.Comm, detail, "", true})
+		}
+	}
+	return rows
+}
+
+// buildLanes turns the fold's timeline into a per-agent view.
 //
 // Lane order is first-appearance order, which for a team is boot order, so the
 // columns read like the file the user wrote. An event with no agent belongs to
 // the team rather than to any member and spans every lane; a message between
 // two agents spans exactly the columns it connects, which is the whole point of
 // drawing it this way instead of listing it (E2-7).
-func buildLanes(events []recorder.Event) ([]string, []LaneRow) {
-	col := map[string]int{}
-	var lanes []string
-	for _, e := range events {
-		if e.Agent != "" {
-			if _, ok := col[e.Agent]; !ok {
-				col[e.Agent] = len(lanes)
-				lanes = append(lanes, e.Agent)
-			}
-		}
-	}
-	if len(lanes) == 0 {
+func buildLanes(d *digest.Digest) ([]string, []LaneRow) {
+	if len(d.AgentOrder) == 0 {
 		return nil, nil
 	}
-	// A peer that never acted still needs a column, or a message to it would
-	// have nowhere to point.
-	for _, e := range events {
-		if e.Peer == "" {
-			continue
-		}
-		switch e.Type {
-		case recorder.TypeTeamMessage, recorder.TypeTeamRefused, recorder.TypeTeamSpawn:
-			if _, ok := col[e.Peer]; !ok {
-				col[e.Peer] = len(lanes)
-				lanes = append(lanes, e.Peer)
-			}
-		}
+	// AgentOrder first, then PeerOnly: an agent who acted gets a column from
+	// its own events; a peer who was only ever addressed — the other end of
+	// a message, refusal or spawn, never generating an event of its own —
+	// still needs one, or a message to them has nowhere to point.
+	lanes := append(append([]string{}, d.AgentOrder...), d.PeerOnly...)
+	col := make(map[string]int, len(lanes))
+	for i, name := range lanes {
+		col[name] = i
 	}
 
 	// grid-column is 1-based and column 1 is the time gutter, so a lane at
@@ -473,158 +477,146 @@ func buildLanes(events []recorder.Event) ([]string, []LaneRow) {
 		}
 		return template.CSS(fmt.Sprintf("grid-column:%d/%d", a+2, b+3))
 	}
-	var rows []LaneRow
-	byCall := map[string]int{}
-	for _, e := range events {
-		ts := e.TS
-		if len(ts) > 23 {
-			ts = ts[11:23]
-		}
-		add := func(r LaneRow) int { rows = append(rows, r); return len(rows) - 1 }
 
-		switch e.Type {
+	// Output is already attached to its command — digest.Absorb accumulated
+	// every command.output onto the command.start entry as the chain was
+	// walked — so there is no byCall bookkeeping left to do here either.
+	var rows []LaneRow
+	for _, en := range d.Timeline {
+		ts := shortTS(en.TS)
+		add := func(r LaneRow) { rows = append(rows, r) }
+
+		switch en.Type {
 		case recorder.TypeTeamMessage, recorder.TypeTeamRefused:
-			from, to := col[e.Agent], col[e.Peer]
-			arrow := "\u2192"
-			if e.Kind == "reply" {
-				arrow = "\u2190"
+			from, to := col[en.Agent], col[en.Peer]
+			arrow := "→"
+			if en.Kind == "reply" {
+				arrow = "←"
 			}
-			kind, title := "team", fmt.Sprintf("%s %s %s", e.Agent, arrow, e.Peer)
-			if e.Type == recorder.TypeTeamRefused {
+			kind, title := "team", fmt.Sprintf("%s %s %s", en.Agent, arrow, en.Peer)
+			if en.Refused {
 				kind = "team-refused"
 				title = "REFUSED " + title
 			}
-			detail := fmt.Sprintf("%s \u00b7 %d bytes \u00b7 sha256 %s", e.Kind, e.Bytes, short(e.SHA256))
-			if e.Reason != "" {
-				detail += " \u00b7 " + e.Reason
+			detail := fmt.Sprintf("%s · %d bytes · sha256 %s", en.Kind, en.Bytes, short(en.SHA256))
+			if en.Reason != "" {
+				detail += " · " + en.Reason
 			}
-			add(LaneRow{ts, kind, title, detail, e.Data,
-				e.Type == recorder.TypeTeamRefused, span(from, to), true})
+			add(LaneRow{ts, kind, title, detail, en.Data, en.Refused, span(from, to), true})
 
 		case recorder.TypeTeamStore:
 			// Inline in the acting agent's lane, because a store access is
 			// something one agent did, not a message between two.
-			refused := e.Outcome != "delivered"
 			kind := "store"
-			if refused {
+			if en.Refused {
 				kind = "team-refused"
 			}
-			detail := e.Outcome
-			if e.Reason != "" {
-				detail += " \u00b7 " + e.Reason
+			detail := en.Outcome
+			if en.Reason != "" {
+				detail += " · " + en.Reason
 			}
-			if e.Bytes > 0 {
-				detail += fmt.Sprintf(" \u00b7 %d bytes", e.Bytes)
+			if en.Bytes > 0 {
+				detail += fmt.Sprintf(" · %d bytes", en.Bytes)
 			}
-			add(LaneRow{ts, kind, fmt.Sprintf("store %s %s", e.Kind, e.Peer), detail, "",
-				refused, laneOf(e.Agent), false})
+			add(LaneRow{ts, kind, fmt.Sprintf("store %s %s", en.Kind, en.Peer), detail, "",
+				en.Refused, laneOf(en.Agent), false})
 
 		case recorder.TypeTeamSpawn:
-			if e.Outcome != "delivered" {
-				add(LaneRow{ts, "team-refused", "REFUSED spawn", e.Reason, "",
-					true, laneOf(e.Agent), false})
+			if en.Refused {
+				add(LaneRow{ts, "team-refused", "REFUSED spawn", en.Reason, "",
+					true, laneOf(en.Agent), false})
 				break
 			}
-			add(LaneRow{ts, "team", e.Kind + " " + e.Peer, "requested by " + e.Agent, "",
-				false, span(col[e.Agent], col[e.Peer]), true})
+			add(LaneRow{ts, "team", en.Kind + " " + en.Peer, "requested by " + en.Agent, "",
+				false, span(col[en.Agent], col[en.Peer]), true})
 
 		case recorder.TypeCommandStart:
-			byCall[e.Call] = add(LaneRow{ts, "command", strings.Join(e.Cmd, " "),
-				"via " + e.Via, "", false, laneOf(e.Agent), false})
-		case recorder.TypeCommandOutput:
-			if i, ok := byCall[e.Call]; ok {
-				data, _ := base64.StdEncoding.DecodeString(e.Data)
-				prefix := ""
-				if e.Stream == "stderr" {
-					prefix = "stderr: "
+			detail := "via " + en.Via
+			// Exited, not "en.Code != nil" — see the same guard in
+			// timelineRows above.
+			if en.Exited {
+				code := -1
+				if en.Code != nil {
+					code = *en.Code
 				}
-				rows[i].Output += prefix + string(data)
+				detail += fmt.Sprintf(" · exit %d", code)
 			}
-		case recorder.TypeCommandExit:
-			code := -1
-			if e.Code != nil {
-				code = *e.Code
-			}
-			if i, ok := byCall[e.Call]; ok {
-				rows[i].IsError = code != 0
-				rows[i].Detail += fmt.Sprintf(" \u00b7 exit %d", code)
-			}
+			add(LaneRow{ts, "command", strings.Join(en.Cmd, " "), detail, en.Output, en.Refused, laneOf(en.Agent), false})
 		case recorder.TypeFileWrite:
-			add(LaneRow{ts, "file", "write " + e.Path,
-				fmt.Sprintf("%d bytes \u00b7 %s", e.Bytes, short(e.SHA256)), "",
-				false, laneOf(e.Agent), false})
+			add(LaneRow{ts, "file", "write " + en.Path,
+				fmt.Sprintf("%d bytes · %s", en.Bytes, short(en.SHA256)), "",
+				false, laneOf(en.Agent), false})
 		case recorder.TypeEgressAttempt:
-			allowed := e.Allowed != nil && *e.Allowed
-			kind, title := "egress-blocked", "BLOCKED "+e.Host
-			if allowed {
-				kind, title = "egress", "egress "+e.Host
+			kind, title := "egress-blocked", "BLOCKED "+en.Host
+			if !en.Refused {
+				kind, title = "egress", "egress "+en.Host
 			}
-			detail := e.Mode
-			if e.Reason != "" {
-				detail += " " + e.Reason
+			detail := en.Mode
+			if en.Reason != "" {
+				detail += " " + en.Reason
 			}
-			add(LaneRow{ts, kind, title, detail, "", !allowed, laneOf(e.Agent), false})
+			add(LaneRow{ts, kind, title, detail, "", en.Refused, laneOf(en.Agent), false})
 		case recorder.TypeSecretUse:
-			add(LaneRow{ts, "secret", "secret " + e.Name, "sent to " + e.Host, "",
-				false, laneOf(e.Agent), false})
+			add(LaneRow{ts, "secret", "secret " + en.Name, "sent to " + en.Host, "",
+				false, laneOf(en.Agent), false})
 		case recorder.TypeResourceOOM:
-			add(LaneRow{ts, "oom", "OOM-killed " + e.Comm,
-				fmt.Sprintf("pid %d \u00b7 %s resident", e.PID, HumanKiB(e.RSSKiB)), "",
-				true, laneOf(e.Agent), false})
+			add(LaneRow{ts, "oom", "OOM-killed " + en.Comm,
+				fmt.Sprintf("pid %d · %s resident", en.PID, HumanKiB(en.RSSKiB)), "",
+				true, laneOf(en.Agent), false})
 		case recorder.TypeResourceTimeout:
-			add(LaneRow{ts, "oom", "timed out on " + e.Budget,
-				fmt.Sprintf("budget %s", time.Duration(e.BudgetMS)*time.Millisecond), "",
-				true, laneOf(e.Agent), false})
+			add(LaneRow{ts, "oom", "timed out on " + en.Budget,
+				fmt.Sprintf("budget %s", time.Duration(en.BudgetMS)*time.Millisecond), "",
+				true, laneOf(en.Agent), false})
 		case recorder.TypeResourceSummary:
-			if e.Agent == "" {
+			if en.Agent == "" {
 				break
 			}
 			add(LaneRow{ts, "session", "usage receipt",
-				fmt.Sprintf("%.2f CPU-seconds \u00b7 peak RSS %s", e.CPUSeconds, HumanKiB(e.PeakRSSKiB)),
-				"", false, laneOf(e.Agent), false})
+				fmt.Sprintf("%.2f CPU-seconds · peak RSS %s", en.CPUSeconds, HumanKiB(en.PeakRSSKiB)),
+				"", false, laneOf(en.Agent), false})
 		case recorder.TypePluginCall:
 			kind := "plugin"
-			if e.Outcome != "ok" {
+			if en.Refused {
 				kind = "team-refused"
 			}
-			detail := fmt.Sprintf("%s · %d ms", e.Outcome, e.DurationMS)
-			if e.Args != "" {
-				detail = e.Args + " · " + detail
+			detail := fmt.Sprintf("%s · %d ms", en.Outcome, en.DurationMS)
+			if en.Args != "" {
+				detail = en.Args + " · " + detail
 			}
-			add(LaneRow{ts, kind, e.Name + "_" + e.Tool, detail, "",
-				e.Outcome != "ok", laneOf(e.Agent), false})
+			add(LaneRow{ts, kind, en.Name + "_" + en.Tool, detail, "",
+				en.Refused, laneOf(en.Agent), false})
 		case recorder.TypePluginCrash:
-			add(LaneRow{ts, "team-refused", "plugin " + e.Name + " stopped", e.Reason, "",
-				true, laneOf(e.Agent), false})
+			add(LaneRow{ts, "team-refused", "plugin " + en.Name + " stopped", en.Reason, "",
+				true, laneOf(en.Agent), false})
 		case recorder.TypeMCPHostCall:
-			add(LaneRow{ts, "client", "client called " + e.Name, e.Args, "",
-				false, laneOf(e.Agent), false})
+			add(LaneRow{ts, "client", "client called " + en.Name, en.Args, "",
+				false, laneOf(en.Agent), false})
 		case recorder.TypeMCPHostResult:
 			// A refused call is drawn like a refused message, because it is the
 			// same thing: the wall saying no, where a reader can see it.
-			if e.Outcome != "ok" {
-				detail := fmt.Sprintf("%d ms", e.DurationMS)
-				if e.Error != nil {
-					detail = e.Error.Message
+			if en.Refused {
+				detail := fmt.Sprintf("%d ms", en.DurationMS)
+				if en.Error != nil {
+					detail = en.Error.Message
 				}
-				add(LaneRow{ts, "team-refused", "REFUSED " + e.Name, detail, "",
-					true, laneOf(e.Agent), false})
+				add(LaneRow{ts, "team-refused", "REFUSED " + en.Name, detail, "",
+					true, laneOf(en.Agent), false})
 				break
 			}
-			add(LaneRow{ts, "client", e.Name + " ok", fmt.Sprintf("%d ms", e.DurationMS), "",
-				false, laneOf(e.Agent), false})
+			add(LaneRow{ts, "client", en.Name + " ok", fmt.Sprintf("%d ms", en.DurationMS), "",
+				false, laneOf(en.Agent), false})
 		case recorder.TypeSessionReady:
 			// The one row that says how this machine came to exist. F-D19 asks
 			// for the two boot paths to be visible rather than inferred, and a
 			// transcript that does not carry it is where it would go missing.
-			add(LaneRow{ts, "session", "ready in " + fmt.Sprintf("%d ms", e.BootMS),
-				bootPath(e.Via), "", false, laneOf(e.Agent), false})
+			add(LaneRow{ts, "session", "ready in " + fmt.Sprintf("%d ms", en.BootMS),
+				bootPath(en.Via), "", false, laneOf(en.Agent), false})
 		case recorder.TypeSessionStart:
 			add(LaneRow{ts, "session", "team session start",
-				fmt.Sprintf("arch %s \u00b7 kelyfos %s", e.Arch, e.Kelyfos), "", false, wide, false})
+				fmt.Sprintf("arch %s · kelyfos %s", en.Arch, en.Kelyfos), "", false, wide, false})
 		case recorder.TypeSessionEnd:
 			add(LaneRow{ts, "session", "team session end",
-				fmt.Sprintf("%s after %d ms", e.Reason, e.DurationMS), "", false, wide, false})
+				fmt.Sprintf("%s after %d ms", en.Reason, en.DurationMS), "", false, wide, false})
 		}
 	}
 	return lanes, rows

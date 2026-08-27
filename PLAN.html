@@ -4446,6 +4446,156 @@ after:
         <code>go vet ./...</code> and <code>go test -count=1 ./...</code> (Lima <code>kelyfos-dev</code>) &rarr;
         every package <code>ok</code>; <code>python3 tools/check-plan.py</code> &rarr; &ldquo;PLAN.html is
         coherent: 99 tasks, 80 checked, 65 decisions&rdquo;</td></tr>
+    <tr><td class="mono">2026-08-27</td><td class="mono">P7-1</td>
+        <td><b>One fold, not three.</b> <code>internal/digest</code> (new package): <code>Digest.Absorb</code>
+        folds one event into per-agent counters, per-pair message counts, per-domain egress, store activity, the
+        session header and usage receipts, and an annotated <code>Timeline</code> entry &mdash; in exactly one
+        place. <code>Walk</code> runs it once over a whole chain (<code>internal/report</code>'s use);
+        <code>kelyfos watch</code> calls <code>Absorb</code> live, once per event, off its own tail. Both
+        <code>host/watch.go</code>'s <code>absorb()</code> and <code>internal/report</code>'s three loops (the
+        main switch and <code>buildLanes</code>' two passes) are rewritten onto it and lose their own copies:
+        <code>buildLanes</code> now takes a <code>*digest.Digest</code> instead of re-walking raw events, and
+        <code>watch.go</code> dropped its own counter bookkeeping and a second base64 decode of command output.
+        <b>Two divergences the old duplication had introduced without anyone noticing are now explicit instead of
+        forked a third time</b>: <code>internal/report</code>'s <code>Summary.TeamRefused</code> counts a refused
+        message or spawn only; <code>kelyfos watch</code>'s status line has always added a denied store access on
+        top. <code>Digest.TeamRefused()</code> and <code>Digest.AllRefusals()</code> are that difference, named and
+        tested, rather than left to re-diverge unnoticed a third time.
+        <b>A real regression caught before it landed:</b> retaining <code>Timeline</code> unconditionally would have
+        reintroduced exactly the unbounded per-session memory growth <code>host/watch.go</code>'s own
+        <code>bound()</code> helper exists to refuse &mdash; a long-running watch's <code>command.start</code>
+        entries kept forever, each still accumulating its command's whole output, for a view that never even reads
+        <code>Timeline</code> back. Fixed with <code>Digest.KeepTimeline</code> (false by default, which is what a
+        zero-value <code>Digest</code> &mdash; what <code>watchModel</code> embeds by value &mdash; gets for free;
+        <code>New</code>/<code>Walk</code> opt in for <code>internal/report</code>, which needs the whole record) and
+        <code>openCommands</code> (freed the moment a command's own exit is absorbed, so it stays bounded by commands
+        still running rather than by how many ever ran).</td>
+        <td class="mono"><code>go vet ./...</code> clean; <code>go test ./...</code> &rarr; 18 packages
+        <code>ok</code> (rest <code>[no test files]</code>), including <code>host</code> (17.9s, real KVM boots),
+        <code>internal/report</code>, <code>internal/digest</code><br>
+        <code>internal/digest</code> is new: 24 tests + <code>FuzzAbsorbNeverPanics</code>, all passing;
+        <code>go test -run='^$' -fuzz=FuzzAbsorbNeverPanics -fuzztime=10s</code> &rarr; ~2.5M execs, 0 failures.
+        <code>internal/report</code>'s four fuzz targets re-run at 10s each, clean<br>
+        every pre-existing <code>report_test.go</code> and <code>watch_test.go</code> assertion still passes:
+        <code>buildLanes</code>' 11 call sites became <code>buildLanes(digest.Walk(events))</code> (walking the
+        chain once per <code>Render</code> rather than twice), <code>watch_test.go</code>'s counter/receipt
+        assertions read <code>m.d.*</code> / <code>m.agentCounters()</code> / <code>m.agentReceipt()</code> instead
+        of duplicated fields &mdash; same behaviour, same numbers<br>
+        real-VM verification beyond the unit suite, inside <code>kelyfos-dev</code>: single sandbox &mdash;
+        <code>kelyfos run --image base</code>, mixed stdout/stderr exec, <code>kelyfos log --export report.html</code>
+        (8 events), <code>kelyfos verify report.html</code> &rarr; chain intact, <code>hello-from-guest</code>
+        present, no lanes section. Three-agent team (cookbook recipe 5's policy, <code>image = "base"</code>
+        substituted) &mdash; a send, a store put/get, a refused undeclared edge, <code>kelyfos team down</code>,
+        <code>kelyfos log --export team-report.html</code> (12 events) &rarr; chain intact and verified,
+        <code>class="lanes"</code> present with <code>master</code>/<code>worker-1</code>/<code>worker-2</code> all
+        present, 5 occurrences of the <code>team-refused</code> class<br>
+        <code>make docs</code> &rarr; same 8 files, <code>llms.txt</code> 6494 bytes /
+        <code>llms-full.txt</code> 567962 bytes &asymp; 147565 tokens, no diff (this task adds no command, flag or
+        event, confirmed rather than assumed); <code>make tokens</code> re-measured at the same figure<br>
+        <code>make cookbook</code>: 2 passed, 13 failed, every failure &ldquo;requested --image dev but &hellip;
+        holds the &lsquo;base&rsquo; image&rdquo; or cascading from it &mdash; a pre-existing gap in this Lima VM
+        (only the base flavour is built there), not a regression: <code>make image FLAVOR=dev</code> fails
+        independently, inside Buildroot's <code>target-finalize</code> step, before any Go code runs. The real-VM
+        checks above exercise the identical <code>kelyfos log --export</code> / <code>kelyfos verify</code> path
+        cookbook recipe 6 does, with <code>--image base</code> substituted, and pass</td></tr>
+    <tr><td class="mono">2026-08-27</td><td class="mono">P7-1</td>
+        <td><b>Adversarial review of P7-1 found three blocking regressions the fold's own tests never reached, and
+        one non-blocking one; all four fixed, plus two hygiene findings, in this pass.</b> The review built both
+        the pre-P7-1 and post-P7-1 <code>kelyfos</code> binaries and diffed 115 real session chains through both
+        report renderers &mdash; 31 differed, every difference traced to one of these.
+        <b>Finding 1 (blocking):</b> the flat and lane views had come to gate a command's whole exit line, error
+        message included, on <code>en.Code != nil</code> &mdash; but a command can exit with <i>no</i> numeric
+        code at all (a supervisor crash mid-exec; <code>host/servemcptools.go</code>'s exec-failure path writes
+        exactly this shape), and the old code always showed the line, defaulting the code to -1, regardless.
+        Fixed with a new <code>Entry.Exited</code> flag, set once a command's exit is absorbed, independent of
+        whether that exit carried a code &mdash; the flat and lane views now gate on <code>Exited</code> and
+        default <code>code := -1</code> inside it, exactly as before P7-1.
+        <b>Finding 2 (blocking):</b> <code>Entry.Output</code> accumulated every command.output chunk onto its
+        command's entry regardless of <code>KeepTimeline</code>, so a live <code>kelyfos watch</code>
+        (<code>KeepTimeline</code> false, which never reads <code>Output</code> back) still grew that string
+        without bound for any still-running, still-printing command &mdash; the same defect class
+        <code>KeepTimeline</code> was added to close, left half-open in the one place that accumulates by
+        volume rather than by event count. Fixed: the accumulation itself is now gated on
+        <code>KeepTimeline</code>.
+        <b>Finding 3 (blocking):</b> <code>Domains</code>, <code>Store</code> and <code>Pairs</code> mint one map
+        entry per distinct host, store key or message pair and never free one &mdash; every key at least partly a
+        guest's choice, every attempt recorded whether allowed or refused. A hostile session naming an unbounded
+        number of distinct hosts or keys grew a long-running watcher's own heap linearly and forever. Fixed with
+        <code>MaxDistinctKeys</code> (4096): past the cap a key already tracked keeps accumulating, a genuinely
+        new one sets a <code>*Truncated</code> flag instead of minting another entry &mdash; bounded, and saying
+        so, per the RENDER checklist's own words.
+        <b>Finding 4 (non-blocking):</b> <code>shownImage</code> asserted &ldquo;per agent&rdquo; for any chain
+        with a blank <code>Image</code>, including one that never carried a <code>session.start</code> at all.
+        Fixed with <code>Digest.SawSessionStart</code>, set only by an agentless <code>session.start</code>;
+        the fallback text now requires it.
+        <b>Two hygiene findings also fixed:</b> <code>digest_test.go</code>'s <code>allEventTypes</code> was a
+        hand-kept slice whose comment claimed it read <code>internal/recorder</code>'s own type list &mdash; it
+        now actually does, via <code>recorder.Types()</code>, with a test pinning that it stays in sync; and
+        <code>FuzzAbsorbNeverPanics</code> never generated a nil <code>Code</code> (finding 1's exact shape), so
+        6.5M prior fuzz execs could not have caught it &mdash; a <code>codeIsNil</code> fuzz parameter and a
+        dedicated seed close that gap. <b>An evidence nit in the row above is also reconciled here</b> rather than
+        edited there: that row's &ldquo;8 events&rdquo; was captured mid-teardown, before
+        <code>session.end</code>/<code>resource.summary</code> were appended; a fresh export of the same kind of
+        session after full teardown reads 10, matching what the review found on disk.</td>
+        <td class="mono">every fix has a direct, non-fuzz regression test naming the finding it closes:
+        <code>TestExitWithNoCodeStillMarksExitedAndKeepsItsError</code> and (rendered, both views)
+        <code>TestExitWithNoCodeStillShowsItsErrorEverywhere</code>;
+        <code>TestOutputDoesNotAccumulateWithoutKeepTimeline</code> (5000 chunks, 1 KiB each, <code>Output</code>
+        stays 0 bytes unkept vs. accumulates correctly when kept);
+        <code>TestDistinctDomainsAreBoundedAndSayWhenTruncated</code> and
+        <code>TestDistinctStoreKeysAreBoundedAndSayWhenTruncated</code> (<code>MaxDistinctKeys</code>+100 distinct
+        keys &rarr; capped at <code>MaxDistinctKeys</code>, <code>*Truncated</code> set, an already-tracked key
+        still accumulates past the cap); <code>TestSawSessionStartIsFalseWithoutOne</code> and
+        <code>TestNoSessionStartMeansNoImageClaim</code>; <code>TestAllEventTypesTracksTheRecorderPackage</code><br>
+        <code>go vet ./...</code> clean; <code>go test ./...</code> &rarr; 18 packages <code>ok</code>
+        (<code>internal/digest</code> now 30 tests + <code>FuzzAbsorbNeverPanics</code>,
+        <code>internal/report</code> now 17); every test from the prior row's pass still passes unmodified<br>
+        <code>go test -run='^$' -fuzz=FuzzAbsorbNeverPanics -fuzztime=15s</code> &rarr; ~2.0M execs, 0 failures
+        (now exercising the nil-Code path every iteration <code>codeIsNil</code> fuzzes true); the four
+        <code>internal/report</code> fuzz targets re-run at 15s each, clean; <code>make vuln</code> &rarr; no
+        vulnerabilities found; <code>make docs</code> &rarr; still no diff<br>
+        real-VM re-verification inside <code>kelyfos-dev</code>: a fresh single-sandbox run, exported only after
+        full teardown (<code>kelyfos verify</code> &rarr; &ldquo;chain intact, 10 events verified&rdquo;),
+        confirms both the reconciled event count and that the happy path (a normal, non-nil exit code) still
+        renders &ldquo;exit 5&rdquo; correctly with these changes in place</td></tr>
+    <tr><td class="mono">2026-08-27</td><td class="mono">P7-1</td>
+        <td><b>Re-review (189 real chains this time, up from 115) confirmed the three blocking fixes hold
+        byte-identical, and found one sibling collection the cap pass missed.</b> <code>PeerOnly</code> &mdash;
+        the peer of a message or spawn that never generated an event of its own, minted for a grid view's benefit
+        &mdash; sat one line above the now-capped <code>Pairs</code> in the same <code>case</code> block and did
+        not get <code>MaxDistinctKeys</code>: <code>peer()</code> de-duplicated with a linear scan of
+        <code>d.PeerOnly</code> before an unbounded <code>append</code>, so it was quadratic on top of being
+        unbounded. Reachable with a guest-chosen key exactly like its four siblings:
+        <code>internal/team/broker.go</code> writes a <code>team.refused</code> carrying whatever recipient name a
+        guest sent, verbatim, for any name outside the team, so <code>team_send</code> in a loop to an invented
+        name mints one <code>PeerOnly</code> entry per call, forever, on a collection <code>host/watch.go</code>
+        never even reads back (grepped: the only reader is <code>internal/report/report.go</code>'s
+        <code>buildLanes</code>). Fixed the same way as its siblings &mdash; capped at
+        <code>MaxDistinctKeys</code> with a <code>PeerOnlyTruncated</code> flag &mdash; and the de-duplication
+        switched from the scan to a <code>peerSeen</code> set at the same time, closing the quadratic cost as
+        well as the unboundedness; the promotion path in <code>agent()</code> (a peer that later acts becomes a
+        real agent) now keeps <code>peerSeen</code> in sync when it splices <code>PeerOnly</code>.</td>
+        <td class="mono"><code>TestDistinctPeersAreBoundedAndSayWhenTruncated</code> added, in the shape of the
+        three tests already covering <code>Domains</code>/<code>Store</code>: <code>MaxDistinctKeys</code>+75
+        distinct <code>team.refused</code> peers &rarr; <code>PeerOnly</code> capped at <code>MaxDistinctKeys</code>,
+        <code>PeerOnlyTruncated</code> set, a peer already tracked is not re-added or duplicated past the cap<br>
+        quadratic-to-linear confirmed directly, mirroring the review's own methodology (fresh <code>Digest</code>,
+        <code>n</code> distinct <code>team.refused</code> peers, wall-clock per <code>n</code>): n=10000 &rarr;
+        3.97 ms, n=20000 &rarr; 6.11 ms, n=40000 &rarr; 11.71 ms, n=80000 &rarr; 20.89 ms &mdash; each doubling of
+        <code>n</code> roughly doubles the time (linear), against the review's measured quadratic growth on the
+        pre-fix scan (91 ms / 233 ms / 946 ms at n=10000/20000/40000); past the cap the remaining insertions are
+        O(1) rejections, so the absolute times are lower again on top of no longer being quadratic<br>
+        <code>go vet ./...</code> clean; <code>go test ./...</code> &rarr; 18 packages <code>ok</code>
+        (<code>internal/digest</code> now 31 tests + <code>FuzzAbsorbNeverPanics</code>); every test from both
+        prior passes still passes unmodified; <code>FuzzAbsorbNeverPanics</code> re-run at 15s (3.85M execs, 0
+        failures) and the four <code>internal/report</code> fuzz targets re-run at 15s each, all clean;
+        <code>make vuln</code> clean; <code>make docs</code> still no diff<br>
+        real-VM re-verification inside <code>kelyfos-dev</code>, exercising the exact
+        <code>internal/team/broker.go</code> path cited: a two-agent team, <code>master</code> sends to an unknown
+        recipient <code>ghost-agent</code> &rarr; MCP call returns
+        <code>no_such_agent: ghost-agent is not in this team</code>, exported and verified
+        (&ldquo;chain intact, 9 events verified&rdquo;), the rendered report carrying both
+        <code>no_such_agent</code> and <code>ghost-agent</code></td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
