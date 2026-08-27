@@ -130,6 +130,23 @@ reference described in the README and re-measured per release.
   guest starts reporting the instant the machine resumes, and a recorder opened only once every
   fork in a batch had finished, or only long enough to append a single resume event and close
   again, missed whatever the guest said in between.
+- **`kelyfos snapshot restore` read no policy file at all, unlike `run` and `fork` (which enforce
+  `[resources]` ceilings) and unlike `serve-mcp`'s `sandbox_restore` — the identical operation
+  through the MCP door, which already calls `checkSnapshotFits` and `restoreAllow` before
+  restoring.** A restored machine got no ceiling, no allowlist narrowing and no secrets from
+  `kelyfos.toml`, a gap `docs/compatibility.md` and `docs/resources.md` already disclosed by name
+  but the asymmetry with the MCP door was undocumented. `snapshot restore` now takes `-policy`,
+  resolved by `loadPolicyAt` exactly the way `run` and `fork` resolve it — a named file that does
+  not exist is an error, and with nothing named it walks up from the working directory and applies
+  whatever `kelyfos.toml` it finds. Found or named, a restore is held to it the same three ways
+  `sandbox_restore` already holds one to it: `checkSnapshotCeiling` refuses a frozen machine whose
+  recorded vcpu or memory is over the ceiling (Firecracker takes both from the state file, so
+  there is nothing to clamp — only allow or refuse), `restoreAllowCeiling` refuses reaching a
+  domain the policy does not permit, and `restoreSecrets` defaults `--secret` from the policy's
+  own `secrets` when none are typed, dropping rather than erroring on the ones this particular
+  restore cannot reach. This is a real default-behaviour change: a working directory with a
+  `kelyfos.toml` above it — this repository's own included — now gets its restores held to it by
+  default, the way its `run`s and `fork`s already were.
 
 ---
 
