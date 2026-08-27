@@ -4175,6 +4175,40 @@ after:
         Progress Log addition, not a Decision Log row, and none was added<br>
         still not self-ticked, still not pushed or merged; standing by for the coordinator to confirm
         the fix before P7-2 starts</td></tr>
+    <tr><td class="mono">2026-08-27</td><td class="mono">P7-0</td>
+        <td><code>llms.txt</code>/<code>llms-full.txt</code> regenerated after the F1&ndash;F6 fix
+        commit (<code>6d9b6bb</code>), which had touched <code>docs/policy-record.md</code>'s content
+        without re-running <code>make docs</code> &mdash; caught by the reviewer, not by this agent:
+        the previously-committed <code>llms-full.txt</code> still carried all six original errors
+        verbatim (the false &ldquo;enumerations agree&rdquo; claim, the runtime-spawned-worker
+        overclaim, the pre-fix <code>tools</code> vocabulary, &ldquo;eight fields not new&rdquo;, and
+        the hedged field-order section) into the LLM-facing bundle, since the fix commit only carried
+        the source-of-truth Markdown forward and never the generated artifact rule 9 requires beside
+        it. &sect;8 rule 9 requires the regenerated pair committed <i>with</i> the change that altered
+        the generated set, and the token count re-measured and logged when it moved &mdash; both done
+        here, one commit later than they should have landed in. No other content changed: this is
+        purely the regeneration <code>docs/policy-record.md</code>'s own F1&ndash;F6 edits already
+        earned.</td>
+        <td class="mono">inside <code>kelyfos-dev</code>: <code>make docs</code> &rarr;
+        <code>gendocs: wrote 8 files to .../docs/reference</code> (zero diff there, as before &mdash;
+        still no event schema changed) &middot; <code>gendocs: llms.txt 6749 bytes &middot;
+        llms-full.txt 599715 bytes, about 155792 tokens</code><br>
+        <code>make tokens</code> &rarr; <code>measured 599715 bytes &middot; 596687 characters
+        &middot; 11672 lines</code>, <code>~155793 tokens</code> &mdash; up from ~153811 (rounds to
+        154k &rarr; 156k in <code>llms.txt</code>'s own one-line summary, matching the reviewer's
+        estimate), logged per &sect;8 rule 9<br>
+        <code>grep -c "Eight fields are not new" llms-full.txt</code> &rarr; <code>0</code>;
+        <code>grep -c "\*\*Three\*\* fields are not new" llms-full.txt</code> &rarr; <code>1</code>;
+        <code>grep -c "enumerations agree" llms-full.txt</code> &rarr; <code>0</code>;
+        <code>grep -c "The ninth site" llms-full.txt</code> &rarr; <code>1</code> &mdash; the stale
+        errors are gone from the published bundle and the fixes are in it<br>
+        <code>git diff llms.txt</code> &rarr; the one-line token estimate moved
+        &ldquo;roughly 154k&rdquo; &rarr; &ldquo;roughly 156k&rdquo;; <code>git status --porcelain
+        docs/reference/</code> &rarr; empty (no drift)<br>
+        <code>python3 tools/check-plan.py</code> (host) &rarr; &ldquo;PLAN.html is coherent: 99
+        tasks, 78 checked, 63 decisions&rdquo;, unchanged<br>
+        reviewer confirmed this is the only remaining item and is a go once it lands; still not
+        self-ticked &mdash; the checkbox is the coordinator's to set</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
