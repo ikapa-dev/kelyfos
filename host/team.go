@@ -712,23 +712,15 @@ func memberOptions(a plannedAgent, id, arch string, broker *team.Broker,
 		},
 		// An OOM kill inside a team member is the RAM cap being reached by one
 		// machine, and without this it would be the one thing that happened in
-		// the team nobody could see afterwards (E1-4).
+		// the team nobody could see afterwards (E1-4). The recorder write is
+		// guestEventRecorder, shared with every other door that resumes a
+		// machine (F3); the stderr line stays here because it names the member.
 		OnGuestEvent: func(ev proto.GuestEvent) {
-			switch ev.Type {
-			case proto.GuestEventOOM:
-				_ = rec.Append(recorder.Event{
-					Type: recorder.TypeResourceOOM, Source: recorder.SourceGuest, Agent: a.name,
-					PID: ev.PID, Comm: ev.Comm, RSSKiB: ev.RSSKiB, MemMiB: a.res.MemMiB,
-				})
+			guestEventRecorder(rec, a.name, a.res.MemMiB)(ev)
+			if ev.Type == proto.GuestEventOOM {
 				fmt.Fprintf(os.Stderr,
 					"\nkelyfos: %s ran out of memory and killed %s (pid %d, %s resident of a %d MiB machine)\n",
 					a.name, ev.Comm, ev.PID, report.HumanKiB(ev.RSSKiB), a.res.MemMiB)
-			case proto.GuestEventPluginCall, proto.GuestEventPluginCrash:
-				// Carries the agent, so a team's one transcript says which
-				// member's plugin did what (E2-7).
-				e := pluginEvent(ev)
-				e.Agent = a.name
-				_ = rec.Append(e)
 			}
 		},
 	}

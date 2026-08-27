@@ -117,6 +117,19 @@ reference described in the README and re-measured per release.
   real loopback test servers by address. The refusal is recorded in the flight recorder the same
   way any other egress denial is, as a new `unsafe_resolved_address` reason with an
   `egress.resolved_addr` catalog entry naming the address and explaining why retrying will not help.
+- **A guest OOM kill or a plugin call/crash on a restored, forked or resumed sandbox left no trace
+  in the flight recorder.** `sandbox.Options.OnGuestEvent` is what turns a guest's report into a
+  recorder line, and `sandbox.go`'s `serveEvents` drops the frame outright, silently, when it is
+  nil. That was correct for a fresh `sandbox.New` boot and for a team member forked from a
+  template — `host/team.go`'s `memberOptions` already solved exactly this problem once, per its
+  own comment — but every other door that resumes a machine with `sandbox.Restore` built a bare
+  `sandbox.Options{}` with no handler at all: `kelyfos fork`, `kelyfos snapshot restore`,
+  `kelyfos resume`, and `serve-mcp`'s `sandbox_restore` and `sandbox_fork` tools. `memberOptions`'s
+  inline closure is now `guestEventRecorder`, one function shared by all six call sites. Three of
+  them also had to open their recorder before calling `sandbox.Restore` rather than after: the
+  guest starts reporting the instant the machine resumes, and a recorder opened only once every
+  fork in a batch had finished, or only long enough to append a single resume event and close
+  again, missed whatever the guest said in between.
 
 ---
 

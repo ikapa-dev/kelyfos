@@ -67,3 +67,32 @@ func pluginEvent(ev proto.GuestEvent) recorder.Event {
 	}
 	return out
 }
+
+// guestEventRecorder builds the sandbox.Options.OnGuestEvent handler for any
+// door that resumes a machine into a recorder it already has open: an OOM kill
+// or a plugin call/crash goes into that machine's own chain, the same two
+// cases memberOptions has always handled for a team member.
+//
+// It exists because memberOptions was the only place that got this right.
+// host/fork.go, host/snapshot.go, host/sessions.go and host/servemcpstate.go's
+// restore and fork tools each built a bare sandbox.Options{} for
+// sandbox.Restore with no OnGuestEvent at all — sandbox.go's serveEvents drops
+// a guest frame silently when the handler is nil, so a guest OOM kill or
+// plugin crash on any restored, forked or resumed session left no trace in the
+// flight recorder (F3). agent tags the event the way a team member's name
+// does; pass "" where the door has no such concept.
+func guestEventRecorder(rec *recorder.Recorder, agent string, memMiB int) func(proto.GuestEvent) {
+	return func(ev proto.GuestEvent) {
+		switch ev.Type {
+		case proto.GuestEventOOM:
+			_ = rec.Append(recorder.Event{
+				Type: recorder.TypeResourceOOM, Source: recorder.SourceGuest, Agent: agent,
+				PID: ev.PID, Comm: ev.Comm, RSSKiB: ev.RSSKiB, MemMiB: memMiB,
+			})
+		case proto.GuestEventPluginCall, proto.GuestEventPluginCrash:
+			e := pluginEvent(ev)
+			e.Agent = agent
+			_ = rec.Append(e)
+		}
+	}
+}

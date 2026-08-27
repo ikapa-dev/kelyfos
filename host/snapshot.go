@@ -149,6 +149,15 @@ func snapshotRestore(argv []string) error {
 		Type: recorder.TypeSessionStart, Image: *flavor, Arch: *arch,
 		Kelyfos: Version, Argv: os.Args, Reason: "restored from " + *name,
 	})
+	// Wired before Restore for the same reason the egress audit hooks a few
+	// lines down are: the guest is live and reporting well before Restore
+	// returns, and a handler wired only afterward is a handler that missed
+	// whatever it said first (F3).
+	var memMiB int
+	if metaErr == nil {
+		memMiB = meta.MemMiB
+	}
+	opts.OnGuestEvent = guestEventRecorder(rec, "", memMiB)
 	// A restored machine records its egress like any other. It did not until
 	// P6-4 went looking: this is the fifth of five proxies in the product and
 	// the only one whose audit hooks were never wired, so a restore wrote a
