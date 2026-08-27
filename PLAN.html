@@ -4171,6 +4171,62 @@ after:
         11180 lines &middot; ~148125 tokens (re-measured, generated set changed again)<br>
         <code>python3 tools/check-plan.py</code> &rarr; &ldquo;PLAN.html is coherent: 99 tasks, 78 checked, 65
         decisions&rdquo; (64&rarr;65 with D66)</td></tr>
+    <tr><td class="mono">2026-08-27</td><td class="mono">P7-4</td>
+        <td><b>Correction to the incidental <code>FuzzScopeCovers</code> finding in the row above: the finding is
+        real and reproduces, but its prose description had the two fuzz arguments swapped.</b> The coordinator
+        could not reproduce &ldquo;<code>covers(prefix=&quot;/repos/&quot;, target=&quot;/repos//&quot;)</code>
+        approves&rdquo; against current source (commit <code>f5305d5</code>) and asked for a clean
+        re-verification rather than either side guessing &mdash; correctly: that exact ordering does not fail, and
+        neither did a fresh, unseeded <code>go test -fuzz=FuzzScopeCovers -fuzztime=15s</code> rediscover any
+        failure in the window given (expected: the earlier regression seed was deleted rather than committed, so a
+        fresh run has to blindly rediscover the same needle rather than replaying it).
+        <b>The error: the original Progress Log row named the fuzz function's two string arguments backwards.</b>
+        <code>FuzzScopeCovers</code>'s corpus format lists them in declaration order &mdash;
+        <code>f.Fuzz(func(t *testing.T, prefix, target string)</code>, and <code>scope := Scope{Path: prefix}</code>
+        &mdash; so the corpus file's first line is <code>prefix</code> (the credential's bound scope,
+        <code>Scope.Path</code>) and its second is <code>target</code> (the incoming request path being checked
+        against it). The original corpus file, read verbatim before it was deleted, was:
+        <code>string("/repos//")</code> then <code>string("/repos/")</code> &mdash; <code>prefix = "/repos//"</code>
+        (double trailing slash), <code>target = "/repos/"</code> (single trailing slash). Converting that into
+        prose, the two got transposed: the row said <code>covers("/repos/", "/repos//")</code>, i.e.
+        <code>prefix</code> and <code>target</code> swapped. <b>Re-verified deterministically, not just re-argued:</b>
+        a corpus file holding the two possible orderings was written by hand into
+        <code>internal/egress/testdata/fuzz/FuzzScopeCovers/</code> and each run against commit <code>f5305d5</code>
+        in isolation. <code>prefix="/repos//"</code>, <code>target="/repos/"</code> (the actual original corpus)
+        &mdash; <code>FAIL</code>, the identical message originally logged, word for word.
+        <code>prefix="/repos/"</code>, <code>target="/repos//"</code> (what the row's prose said) &mdash;
+        <code>PASS</code>, exactly matching the coordinator's own trace (<code>literalAndNormal</code> correctly
+        rejects that ordering as <code>path_not_literal</code> before <code>covers()</code> ever reaches the
+        prefix check). <b>Corrected description of the finding:</b> a secret scope bound to path
+        <code>/repos//</code> (as <code>--secret NAME@host/repos//</code> would write it) is judged by
+        <code>Scope.covers</code> to cover a request whose path is <code>/repos/</code> &mdash; but the
+        Tomcat/Jetty matrix-parameter-strip simulation the fuzz property already checks resolves that same
+        escaped path to <code>/repos</code>, which is not beneath the literal prefix <code>/repos//</code>; a real
+        origin server applying that normalisation could route the request outside the bound scope while this
+        package still believed it was covered. Same risk family as the path-scoping fix already in
+        <code>CHANGELOG.md</code>'s Unreleased section, this time a double-trailing-slash case that fix did not
+        cover. Still not committed (unrelated to P7-4, and <code>dev/fuzz.sh</code>'s own convention commits a
+        failing input only with its fix); the hand-written reproduction files were removed after confirming both
+        orderings, so <code>internal/egress</code> is clean again. Nothing else in the review-fixes commit
+        (D66, the <code>EffectivePorts</code> copy fix, the <code>schema.go</code>/<code>docs/networking.md</code>
+        wording fixes) is affected by this correction &mdash; it touches only the wording of the incidental
+        finding.</td>
+        <td class="mono">all run inside <code>limactl shell kelyfos-dev</code>, repo at <code>f5305d5</code>,
+        clean tree before and after:<br>
+        <code>go test -run=FuzzScopeCovers -fuzz=FuzzScopeCovers -fuzztime=15s ./internal/egress/...</code> &rarr;
+        <code>PASS</code> (240&rarr;242 corpus entries, 0 failures in the window)<br>
+        hand-written seed, prefix/target as originally found &mdash; file contents verbatim:<br>
+        <code>go test fuzz v1\nstring(&quot;/repos//&quot;)\nstring(&quot;/repos/&quot;)</code> &rarr;
+        <code>go test -run "FuzzScopeCovers/manual-repro-swapped" -v ./internal/egress/...</code> &rarr;
+        <code>--- FAIL</code>: <code>covers(&quot;/repos/&quot;) approved escaped path &quot;/repos/&quot;, but
+        under matrix-param strip (Tomcat/Jetty) it resolves to &quot;/repos&quot;, which is not beneath
+        &quot;/repos//&quot;</code> (identical to the string originally logged)<br>
+        hand-written seed, arguments as the row's prose had them &mdash; file contents verbatim:<br>
+        <code>go test fuzz v1\nstring(&quot;/repos/&quot;)\nstring(&quot;/repos//&quot;)</code> &rarr;
+        <code>go test -run "FuzzScopeCovers/manual-repro-as-i-wrote-it" -v ./internal/egress/...</code> &rarr;
+        <code>--- PASS</code><br>
+        <code>git status --porcelain internal/egress/testdata</code> &rarr; empty, after both scratch files were
+        removed</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
