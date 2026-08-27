@@ -403,5 +403,5 @@ The resolved shape of a team, written once at boot, after every agent's own sess
 | `agents` | object array | every resolved agent: name, its own sandbox id, its fork-template group |
 | `edges` | string array | the resolved, expanded "from -> to" pairs |
 | `store_keys` | object array | every [[team.store.key]] rule: its name, read list and write list *(the team's store is enabled)* |
-| `cpu_quota_percent` | integer | the collective slice's cap — [team.resources] cpu_quota; absent when the team has no shared cgroup |
+| `cpu_quota_percent` | integer | the collective slice's cap — [team.resources] cpu_quota; absent when [team.resources] cpu_quota is not set (a team can still have a shared cgroup for another reason — a per-agent or per-spawn cpu_quota — with this field absent even so) |
 | `record_payloads` | boolean | whether [team] record_payloads is set |

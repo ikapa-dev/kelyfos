@@ -703,6 +703,7 @@ rather than five that have to be correlated afterwards.
 
 | type | meaning |
 | --- | --- |
+| `team.topology` | The roster at boot, written once: every agent's name, its own sandbox id and fork-template group; the declared edges, fully expanded; the store's ACL rules; the collective CPU cap; whether payloads are captured. Everything below is what happened *after* the team came up — this is the shape it came up *as* (`docs/policy-record.md` §6). |
 | `team.message` | One delivery: from, to, size, body hash, and whether it was an ask, a reply or a send. |
 | `team.refused` | A refused message. Its own type, because it is the interesting one — but it covers three refusals, not one: a message the edge list did not permit (`reason: no_edge`), one addressed to a name that is not in the team (`no_such_agent`), and a `team_reply` nobody was waiting for (`missing_correlation` or `unknown_correlation`) — which covers a second reply to a question that has already been answered, since a question takes exactly one. Read the reason before counting edge violations. |
 | `team.store` | A store access: key, agent, read or write, permitted or not. |

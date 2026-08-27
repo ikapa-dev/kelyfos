@@ -383,7 +383,7 @@ func Types() []EventType {
 				{Name: "agents", Type: "object array", Doc: "every resolved agent: name, its own sandbox id, its fork-template group"},
 				{Name: "edges", Type: "string array", Doc: "the resolved, expanded \"from -> to\" pairs"},
 				{Name: "store_keys", Type: "object array", Doc: "every [[team.store.key]] rule: its name, read list and write list", When: "the team's store is enabled"},
-				{Name: "cpu_quota_percent", Type: "integer", Doc: "the collective slice's cap — [team.resources] cpu_quota; absent when the team has no shared cgroup"},
+				{Name: "cpu_quota_percent", Type: "integer", Doc: "the collective slice's cap — [team.resources] cpu_quota; absent when [team.resources] cpu_quota is not set (a team can still have a shared cgroup for another reason — a per-agent or per-spawn cpu_quota — with this field absent even so)"},
 				{Name: "record_payloads", Type: "boolean", Doc: "whether [team] record_payloads is set"},
 			}},
 	}

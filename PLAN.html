@@ -4526,6 +4526,108 @@ after:
         hand-list-to-reflection refactors (F1&rsquo;s clip guard, this task&rsquo;s
         <code>typeConstants</code>) are bug fixes and hardening within existing tests, not a change of
         approach against a spec.</td></tr>
+    <tr><td class="mono">2026-08-28</td><td class="mono">P7-3</td>
+        <td>Review-fix round on the independent review of P7-3. Verdict was &ldquo;not ready to tick&rdquo;:
+        the core work (all four fields, positions 20&ndash;23, clipping, the constructor, wiring, <code>Group</code>&rsquo;s
+        content-hash semantics) was confirmed correct by mutation testing and three real boots &mdash;
+        including one the reviewer ran and this lane did not, two different fork templates producing two
+        different <code>Group</code> values &mdash; but two structural gaps and three doc-accuracy items had
+        to close first. F1 (an <code>internal/digest</code> classification gap main will hit at merge time,
+        the same class already fixed for <code>session.policy</code>) is explicitly the orchestrator&rsquo;s
+        to handle at merge; no action taken here.
+        <br><b>F2 (structural, fixed)</b> &mdash; nothing asserted <code>team.topology</code> gets written at
+        all: one <code>recorder.NewTeamTopology</code> call in the whole tree
+        (<code>host/team.go</code>&rsquo;s <code>raiseTeam</code>) and zero tests referenced it; the reviewer
+        deleted the line and the whole suite stayed green. New
+        <code>host/topology_wiring_test.go</code>, <code>team.topology</code>&rsquo;s counterpart to
+        <code>TestEverySessionStartSiteHasAMatchingSessionPolicy</code>: <code>TestEveryRaiseTeamCallerReachesTeamTopology</code>
+        asserts every function that calls <code>raiseTeam</code> (found by scanning the source, not a
+        hardcoded list &mdash; today <code>teamUp</code> and <code>toolTeamUp</code>) transitively reaches
+        <code>recorder.NewTeamTopology</code>; <code>TestRaiseTeamWritesTeamTopologyExactlyOnce</code> counts
+        the literal call sites inside <code>raiseTeam</code>&rsquo;s own body and requires exactly one, so a
+        duplicate hidden in the per-agent loop or a spawn closure would fail even though it would still be
+        &ldquo;reachable.&rdquo; <code>reachesSessionPolicy</code> generalised to <code>reachesFunction</code>
+        (a <code>target</code> parameter) so both tests reuse the one transitive-call-graph walk rather than a
+        second copy of it &mdash; the same structural instinct as F1&rsquo;s reflection guard and this
+        task&rsquo;s own <code>typeConstants</code> refactor, applied a fourth time.
+        <br><b>F3 (structural, fixed)</b> &mdash; nested struct field order (inside <code>EvAgent</code>,
+        <code>EvStoreKey</code>, and pre-existing for <code>EvError</code>/<code>EvSecret</code>) was
+        completely unpinned: <code>TestTheEventFieldOrderIsFrozen</code>&rsquo;s <code>keysInOrder</code>
+        decodes every object-valued field as an opaque <code>json.RawMessage</code> and discards it, so no
+        test ever looked inside one. The reviewer proved it by swapping <code>EvAgent.Name</code> and
+        <code>EvAgent.Sandbox</code> and watching the whole suite stay green, despite that changing the hash
+        digest of every <code>team.topology</code> event ever written. Fixed by extending
+        <code>TestTheEventFieldOrderIsFrozen</code> with a second pass: a literal, hand-written
+        <code>nestedFieldOrder</code> map (deliberately <i>not</i> derived from
+        <code>reflect.TypeOf(EvAgent{})</code> or similar &mdash; a reflection-derived expectation would
+        reorder itself in lockstep with a reordered struct and could never catch the reordering it exists to
+        catch, the same reasoning the top-level <code>want</code> slice already rests on) checked against
+        each nested object or object-array field's own key order via <code>keysInOrder</code> itself, which
+        turned out to already be fully generic over any JSON object and needed no change.
+        <br><b>F4&ndash;F6 (doc accuracy, fixed)</b> &mdash; <code>docs/events.md</code>&rsquo;s <code>agent</code>
+        prose named only <code>session.start</code>/<code>session.end</code> as the exceptions;
+        <code>team.topology</code> added as the third. <code>docs/teams.md</code> &sect;8&rsquo;s
+        &ldquo;what the record contains&rdquo; table gained a <code>team.topology</code> row &mdash; the one
+        event that actually carries the roster, sandbox ids, expanded edges and store ACLs, previously
+        omitted. <code>internal/recorder/schema.go</code>&rsquo;s <code>cpu_quota_percent</code> doc string
+        said &ldquo;absent when the team has no shared cgroup&rdquo;; wrong condition, proven by
+        <code>host/teamplan.go</code>&rsquo;s <code>needsSlice()</code> (a shared cgroup exists whenever
+        <i>any</i> of the team, a per-agent or a per-spawn <code>cpu_quota</code> is set, not only the
+        team-wide one) &mdash; corrected to &ldquo;absent when <code>[team.resources] cpu_quota</code> is not
+        set,&rdquo; with the same fix mirrored into <code>docs/events.md</code>&rsquo;s own
+        <code>team.topology</code> row so the two do not disagree. <code>docs/policy-record.md</code> &sect;6
+        carries the identical imprecision and is left as-is: it is P7-0&rsquo;s original spec, framed by its
+        own text as a changelog of what was decided rather than a live reference, and the review named
+        <code>schema.go</code> specifically as what ships the wording into the generated, user-facing
+        reference.
+        <br><b>F7 (log correction)</b> &mdash; the P7-3 row above describes an earlier
+        <code>FuzzAppendFieldValues</code> failure as &ldquo;an external signal mid-run with no crash
+        recorded &mdash; an environment blip, not a code fault.&rdquo; That explanation was wrong and is
+        corrected here rather than edited there. The reviewer investigated and reproduced a real, OOM kill of
+        the fuzz worker process three times &mdash; twice on this branch, once independently on
+        <code>main</code> with the same shared corpus &mdash; always around 12s into baseline coverage
+        gathering, with syslog showing <code>Out of memory: Killed process ... recorder.test</code>. It does
+        not reproduce on a fresh fuzz corpus and is not caused by anything in the P7-3 diff (it reproduces
+        identically on <code>main</code>); it is a real, reproducible problem with
+        <code>FuzzAppendFieldValues</code>&rsquo;s memory profile once the corpus this session grew is large
+        (267 entries at the time of the original failure). Independently re-confirmed here:
+        <code>go clean -fuzzcache</code> then <code>go test -fuzz=FuzzAppendFieldValues -fuzztime=30s
+        ./internal/recorder/</code> &rarr; PASS, 77547 execs, 0 crashers, corpus regrown to 84 entries; a
+        second run at <code>-fuzztime=45s</code> against that same regrown-but-still-small corpus &rarr; PASS,
+        102164 execs, 0 crashers, corpus at 132 entries &mdash; both clean, corroborating &ldquo;fresh/small
+        corpus passes clean&rdquo; directly rather than only citing the reviewer&rsquo;s own numbers. The
+        original row&rsquo;s positive result (0 crashers) was and remains real; only its explanation of the
+        earlier failure was wrong. The reviewer suggested this OOM issue is worth its own tracked task or
+        decision row of its own (this branch has not been rebased onto <code>main</code>, where a comparable
+        precedent for tracking a found-mid-phase defect this way already exists) &mdash; the orchestrator will
+        consider opening one at merge time; not opened here.</td>
+        <td>Inside <code>kelyfos-dev</code>, this branch: <code>gofmt -l .</code> &rarr; clean;
+        <code>go vet ./...</code> &rarr; clean; <code>go test ./...</code> &rarr; every package
+        <code>ok</code> or <code>[no test files]</code><br>
+        <code>go test -v ./host/...</code> &rarr; 197 <code>--- PASS</code> lines (up from 195: two new
+        tests in <code>topology_wiring_test.go</code>), 0 fail; <code>go test -v ./internal/recorder/...</code>
+        &rarr; 58 <code>--- PASS</code> lines, 0 fail<br>
+        <b>F2 mutation-tested against the reviewer's own proof</b>: the <code>recorder.NewTeamTopology</code>
+        call deleted from <code>raiseTeam</code> &rarr; <code>TestEveryRaiseTeamCallerReachesTeamTopology</code>
+        failed for both <code>teamUp</code> and <code>toolTeamUp</code>,
+        <code>TestRaiseTeamWritesTeamTopologyExactlyOnce</code> failed with &ldquo;calls
+        recorder.NewTeamTopology 0 times, want exactly 1&rdquo;; line restored, both PASS, <code>git diff</code>
+        confirms <code>host/team.go</code> is back to the committed state exactly<br>
+        <b>F3 mutation-tested against the reviewer's own proof</b>: <code>EvAgent.Name</code>/<code>.Sandbox</code>
+        swapped in the struct &rarr; <code>TestTheEventFieldOrderIsFrozen</code> failed with
+        &ldquo;agents[0]&rsquo;s field order changed at position 0: &quot;sandbox&quot; where &quot;name&quot;
+        was expected&rdquo;; swap reverted, PASS again, <code>git diff</code> confirms
+        <code>internal/recorder/recorder.go</code> matches the committed state exactly<br>
+        <code>make docs</code> &rarr; <code>docs/reference/events.md</code>&rsquo;s <code>cpu_quota_percent</code>
+        row updated to the corrected wording automatically; <code>gendocs: llms.txt 6749 bytes &middot;
+        llms-full.txt 610500 bytes, about 158593 tokens</code> (up from 158409), logged per &sect;8 rule 9<br>
+        <code>python3 tools/check-plan.py</code> (host) &rarr; &ldquo;PLAN.html is coherent: 99 tasks, 78
+        checked, 64 decisions&rdquo;<br>
+        not self-ticked, not pushed, not merged; still holding for RECORD-surface review before P7-5 starts
+        (Lane 1 is strictly serial). No Decision Log row: F2/F3 are test coverage for behaviour
+        <code>docs/policy-record.md</code> already specifies, not a change of approach; F4&ndash;F6 are doc
+        corrections; F7 is a correction to this file's own log, covered by &sect;8 rule 6's append-only rule
+        rather than rule 5.</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>

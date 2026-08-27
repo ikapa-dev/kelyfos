@@ -2,6 +2,7 @@ package recorder
 
 import (
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -152,6 +153,77 @@ func TestTheEventFieldOrderIsFrozen(t *testing.T) {
 				"  makes every existing chain report as modified — which is tamper detection firing\n"+
 				"  on legitimate records, the loudest wrong answer this product can give.\n"+
 				"  got:  %v\n  want: %v", i, got[i], want[i], got, want)
+		}
+	}
+
+	// The check above only ever looked at Event's own top-level keys:
+	// keysInOrder decodes each value as an opaque json.RawMessage and
+	// discards it, so an object-valued field (error) or an object-array
+	// field (secrets, agents, store_keys) had its own internal key order
+	// checked by nothing here. The review that reopened P7-3 (F3) proved
+	// the gap: swapping EvAgent.Name and EvAgent.Sandbox left this whole
+	// test green, even though it changes the hash digest of every
+	// team.topology event ever written — the identical "field appended and
+	// never inserted" question this test already asks at the top level,
+	// one type down. Pre-existing for EvError/EvSecret since P6-14/P7-2;
+	// P7-3 doubled the exposed surface by adding EvAgent and EvStoreKey,
+	// which is what surfaced it.
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(body, &top); err != nil {
+		t.Fatal(err)
+	}
+	for key, nestedWant := range nestedFieldOrder {
+		raw, ok := top[key]
+		if !ok {
+			t.Fatalf("the fixture's %q is absent from the marshalled event — this check needs it set", key)
+		}
+		if key == "error" {
+			checkNestedOrder(t, key, raw, nestedWant)
+			continue
+		}
+		var elems []json.RawMessage
+		if err := json.Unmarshal(raw, &elems); err != nil {
+			t.Fatalf("%s: %v", key, err)
+		}
+		if len(elems) == 0 {
+			t.Fatalf("the fixture's %q is an empty array — this check needs at least one element", key)
+		}
+		for i, el := range elems {
+			checkNestedOrder(t, fmt.Sprintf("%s[%d]", key, i), el, nestedWant)
+		}
+	}
+}
+
+// nestedFieldOrder pins the key order EvError, EvSecret, EvAgent and
+// EvStoreKey each marshal in. Each list is literal, deliberately not
+// derived from reflect.TypeOf(EvAgent{}) or similar, for the same reason
+// `want` above is literal: a reflection-derived expectation reorders itself
+// in lockstep with a reordered struct and could never catch the reordering
+// it exists to catch — it would still "expect" whatever order the same
+// reordered struct actually produces.
+var nestedFieldOrder = map[string][]string{
+	"error":      {"kind", "message"},
+	"secrets":    {"name", "host", "path"},
+	"agents":     {"name", "sandbox", "group"},
+	"store_keys": {"name", "read", "write"},
+}
+
+// checkNestedOrder asserts one JSON object's own key order matches want —
+// keysInOrder is generic over any JSON object, not only Event's own top
+// level, so this is the identical comparison TestTheEventFieldOrderIsFrozen
+// makes above, applied one level down.
+func checkNestedOrder(t *testing.T, path string, raw json.RawMessage, want []string) {
+	t.Helper()
+	got := keysInOrder(t, string(raw))
+	if len(got) != len(want) {
+		t.Fatalf("%s has %d fields and this test knows %d.\n  got:  %v\n  want: %v",
+			path, len(got), len(want), got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("%s's field order changed at position %d: %q where %q was expected — every\n"+
+				"  digest computed over an event carrying this object just changed.\n"+
+				"  got:  %v\n  want: %v", path, i, got[i], want[i], got, want)
 		}
 	}
 }
