@@ -4770,6 +4770,86 @@ after:
         checked, 64 decisions&rdquo;<br>
         not self-ticked, not pushed, not merged; holding for RECORD-surface review. This is the last task in
         Lane 1&rsquo;s serial chain (D62): a GO here clears the lane entirely.</td></tr>
+    <tr><td class="mono">2026-08-28</td><td class="mono">P7-5</td>
+        <td><b>The RECORD-surface review of <code>c365fed</code>, and its fixes in <code>fa68981</code>, per
+        &sect;8 rule 10 &mdash; appended here since the fix commit did not carry this row itself.</b>
+        Five blockers, all reproduced on real running code, not from reading:
+        <b>B1</b> &mdash; erasing a chain a writer still held open silently lost every event the writer appended
+        afterward: <code>Erase</code> wrote a temp file and renamed over the chain, leaving any other open file
+        descriptor pointing at the unlinked old inode, whose next <code>catchUp</code> saw no size change and
+        returned <code>nil</code>. The liveness guard (<code>hasLiveRunDir</code>) also could not see a team's
+        chain or a <code>serve-mcp</code> audit chain, both opened under an id that names no sandbox's own run
+        directory.
+        <b>B2</b> &mdash; running <code>erase</code> twice hashed the placeholder from the first run instead of
+        refusing, permanently losing the real content digest.
+        <b>B3</b> &mdash; the redaction target list was a fifth hand-maintained list bitten by the exact failure
+        class this phase had already hit four times (<code>Tools</code>, <code>session.policy</code>,
+        <code>team.topology</code>, this task's own first-pass miss of <code>Argv</code>): a field-by-field walk
+        found <code>Cwd</code>, <code>Path</code>, <code>Peer</code>, <code>Comm</code>, <code>Workspace</code>,
+        <code>Host</code>, <code>Name</code>, <code>Allow</code>, <code>Agents</code>, <code>Edges</code>,
+        <code>StoreKeys</code> all surviving erasure with content intact &mdash; including <code>Cwd</code>, the
+        host launch directory, on a real Firecracker session.
+        <b>B4</b> &mdash; <code>session.erasure</code> was built as a struct literal bypassing
+        <code>Append</code>, so it carried <code>v:0</code> and an empty <code>ts</code> on the one event whose
+        purpose is accountability.
+        <b>B5</b> &mdash; <code>kelyfos verify</code> checked only whether the <i>last</i> event was
+        <code>session.end</code>; since <code>session.erasure</code> is appended after it, every erased session
+        &mdash; however cleanly it closed &mdash; started reading as possibly cut short.
+        <br>Six should-fix items: <b>S1</b> &mdash; <code>session.erasure</code> carried no anchor to the
+        pre-erasure chain head, so erasure was honest-by-convention rather than honest-by-construction (a
+        hand-tampered, naively-rehashed chain with no erasure event verified exactly as clean as a real one).
+        <b>S2</b> &mdash; prune aged sessions from their directory's mtime, which does not advance on append,
+        contradicting the stated &ldquo;from session close&rdquo; floor. <b>S3</b> &mdash; the size-bound
+        <code>doctor</code> check failed the exit code for an advisory-only condition. <b>S4</b> &mdash;
+        <code>-reason</code> only parsed before the positional id, unlike <code>verify</code>'s own
+        <code>parseAround</code> convention. <b>S5</b> &mdash; the <code>[]string</code> fingerprint rule
+        (space-joined before hashing) was undocumented and collision-prone. <b>S6</b> &mdash; the erase command's
+        own usage text overclaimed &ldquo;not backed up anywhere&rdquo;, ignoring an export taken before the
+        erasure.
+        <br><b>All eleven fixed and independently re-verified by the reviewer, who re-ran every original repro
+        against the fix rather than trusting its own tests</b>: B1's live-writer repro now lands all three
+        post-erasure events and verifies (the fix needed two changes, not one &mdash; the in-place
+        <code>WriteAt</code>+<code>Truncate</code> rewrite <i>and</i> a <code>catchUp</code> fix to re-derive
+        <code>seq</code>/<code>prev</code> from byte 0 on any size mismatch, since the rewrite alone would still
+        have left a live writer chaining from a stale <code>prev</code>); B1's team-chain gap closed by a real
+        three-layer guard, each layer independently confirmed to cover a case the others miss; B2's placeholder
+        detection verified live through the real CLI; B3's reflection guard confirmed bidirectional (a field
+        missing from the exemption map must be redacted, a field present must keep its marker) so the map and
+        the code cannot drift apart in either direction, and every originally-leaking field re-checked redacted
+        on a real session; B4/B5 confirmed on a real erased chain; S1's anchor confirmed real and its
+        documentation confirmed <i>not</i> overclaiming the property it provides (correctly states the limit: a
+        self-contained chain cannot detect tampering with no prior copy to compare against, and names
+        <code>kelyfos verify --extract</code> or an earlier export as what makes the anchor actionable); S2
+        confirmed live (an appended-to session's mtime now advances correctly, prune re-tested from
+        &ldquo;would prune 1&rdquo; to &ldquo;nothing eligible&rdquo;); S3's warn tier confirmed excluded from
+        the fail tally with a dedicated test; S4-S6 confirmed directly.
+        <br>Four non-blocking observations from the review, not required before ticking: a crashed session (no
+        <code>session.end</code>) can never be erased, which is the correct default for a destructive operation
+        but should be named in <code>docs/retention.md</code> &sect;5's own refusal list rather than left
+        implicit; no command currently surfaces an erasure or its anchor to a reader (<code>kelyfos verify</code>
+        prints nothing about it) &mdash; a one-line addition would close the loop S1's anchor exists for;
+        <code>catchUp</code>'s size-equality fast path is a residual, contrived-only edge where a rewrite landing
+        on exactly the prior byte length could in principle skip re-derivation, defence-in-depth only given the
+        three guards make a live writer across an erase unreachable in practice; and two small doc precision
+        points (an anchor proves succession from a specific predecessor, not absence of over-deletion, without
+        the full prior chain to compare; <code>secret.use</code>'s name is now redacted while
+        <code>session.policy</code>'s <code>secrets[].name</code> is exempt, harmless but asymmetric). None block
+        this tick; worth picking up whenever this area is next touched.
+        <br>Reviewer's final verdict: <b>GO on the code.</b> Lane 1's entire serial chain (P7-0 &rarr; P7-2 &rarr;
+        P7-3 &rarr; P7-5) is now clear.</td>
+        <td class="mono">reviewer's re-verification, inside <code>kelyfos-dev</code> on <code>fa68981</code>:
+        <code>gofmt -l .</code> clean, <code>go vet ./...</code> clean, <code>go test ./...</code> every package
+        <code>ok</code> (host 225, recorder 122, config 148, sandbox 131, all up from before); <code>make
+        vuln</code> &rarr; &ldquo;No vulnerabilities found.&rdquo;; <code>go clean -fuzzcache &amp;&amp; go test
+        -fuzz=FuzzAppendFieldValues -fuzztime=45s</code> &rarr; PASS, 88621 execs, fresh corpus, no OOM (a known
+        grown-corpus OOM in this same fuzz target, tracked separately on <code>main</code>, avoided here by
+        clearing the corpus first); <code>make docs</code> &rarr; zero diff; real Firecracker session:
+        <code>cwd</code> before erasure <code>/tmp/p7rev2</code>, after
+        <code>(erased &mdash; sha256:8399...)</code>; real team boot: <code>kelyfos sessions erase</code> against
+        a live team's session id refused with &ldquo;has a live sandbox writing into it right now&rdquo;, exit 1;
+        double-erasure through the real CLI refused with &ldquo;nothing to erase&rdquo; on the second run;
+        <code>python3 tools/check-plan.py</code> &rarr; &ldquo;PLAN.html is coherent: 99 tasks, 78 checked, 64
+        decisions&rdquo; (unchanged &mdash; append-only, no checkbox ticked by the reviewer).</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
