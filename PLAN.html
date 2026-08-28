@@ -1401,7 +1401,7 @@
         do not adopt it. A second mapping to the IETF agent-audit-trail draft rides on the same machinery and is
         worth having ready rather than shipping &mdash; it is an individual submission at <code>-01</code> that
         expires in February 2027.</span></li>
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">P7-12</span><span class="tk"><b><code>kelyfos view</code> &mdash; the localhost read-only viewer</b> (D60). The same page as
         P7-8, served live over server-sent events. <b>These are conditions on the task, not suggestions</b>, and
         every other process on the host is treated as hostile: binds <code>127.0.0.1</code> on a kernel-assigned
@@ -6474,6 +6474,35 @@ after:
         <code>TestDirtyPathsStillGoThroughEveryCheckBeforeServeMuxsOwnRedirect</code> failed on all 15
         sub-cases with the real <code>307</code> (&ldquo;got 307, want 401/403/405&rdquo;); restored the fix
         &rarr; <code>PASS</code> again.</td></tr>
+    <tr><td class="mono">2026-08-28</td><td class="mono">P7-12</td>
+        <td><b>Ticked, by the orchestrator, after a third review round confirmed GO.</b> The regression test's
+        fix was proven non-tautological independently a second time: the reviewer built two scratch copies on
+        the VM's local disk (never the shared virtiofs mount), reverted only the production fix in one of
+        them, and watched <code>TestDirtyPathsStillGoThroughEveryCheckBeforeServeMuxsOwnRedirect</code> fail
+        for real &mdash; 15 of 15 sub-cases, each showing the actual raw <code>307</code> status
+        (&ldquo;got 307, want 401/403/405&rdquo;) &mdash; then restored the fix and watched it pass clean.
+        Confirmed <code>host/view.go</code> byte-identical to the round-2-approved version by diff across both
+        the fix commit and the current HEAD. Read every other test in the file for the same implicit
+        redirect-following exposure and found none &mdash; the other tests only ever exercise already-clean
+        paths, where a <code>3xx</code> was never a plausible outcome. Live security posture reconfirmed once
+        more against a freshly-booted real Firecracker session (original repro variants still refused with the
+        correct status and full header set; positive-control token still succeeds; listener still bound only
+        to <code>127.0.0.1</code>). No new finding, however small. Third reviewer's own words: this task
+        &ldquo;doesn't need a fourth round to manufacture one&rdquo; &mdash; and didn't get one.
+        <br>This closes out the last build task in Phase 7. What remains: P7-13 (the whole-phase read-back, by
+        an agent that wrote none of it) and the phase exit checkpoint; P7-14/P7-15/P7-16 stay open as deferred,
+        non-blocking side-tasks, and the P7-16-adjacent <code>internal/sandbox</code> race the P7-12 re-review
+        surfaced (Progress Log, two rows up) is a candidate for whichever of those (or a new task) picks up
+        Lane 1 follow-up work.</td>
+        <td class="mono"><code>gofmt -l .</code> clean; <code>go vet ./...</code> clean; <code>go build
+        ./...</code> clean; <code>go test -count=1 ./...</code> 25 packages <code>ok</code> (43s);
+        <code>go test -race -count=5 ./host/...</code> clean (105.6s); <code>govulncheck</code> &rarr;
+        &ldquo;No vulnerabilities found.&rdquo; Live: real sandbox booted, real <code>kelyfos view</code>
+        process, <code>ss -tlnp</code> confirms the listener bound to <code>127.0.0.1</code> only; the
+        original dirty-path repro (unauthenticated, wrong-Host <code>POST //</code> and
+        <code>POST //events</code>) &rarr; <code>405 Method Not Allowed</code> with the full security-header
+        set; no-token dirty-path <code>GET</code> &rarr; <code>401</code>; correct token &rarr;
+        <code>200 OK</code>, real page served.</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
