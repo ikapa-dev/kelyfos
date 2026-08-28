@@ -126,9 +126,18 @@ wrong:
    climbs out.
 2. **The extraction cannot leave the tree even if it is.** `debugfs` no longer
    chooses a destination: it dumps into staging files the host names, and every
-   guest-chosen name is used through an `os.Root`, which is `openat2` with
-   `RESOLVE_BENEATH` and `RESOLVE_NO_SYMLINKS`. The kernel is what refuses, not
-   this code's arithmetic.
+   guest-chosen name is used through an `os.Root`. Go walks such a path one
+   component at a time with `openat(O_NOFOLLOW)` and resolves each symlink
+   itself, refusing at that point any resolution that would leave the root — so
+   the refusal is the runtime's, not this code's arithmetic. A relative link
+   that stays inside the tree is **followed**; a link that climbs out, and any
+   absolute link at all, is refused.
+
+   This entry previously said `os.Root` was "`openat2` with `RESOLVE_BENEATH`
+   and `RESOLVE_NO_SYMLINKS`". It is neither — Go 1.27 never calls `openat2` —
+   and the two flags named contradict each other about the case that matters,
+   which is exactly how a reader concludes that a symlink the guest planted
+   cannot matter. It can: see below.
 3. **What comes back is checked against what the image says it holds.**
    `debugfs dump` opens its destination `O_CREAT|O_TRUNC` and copies block by
    block, and it reports a failed command on stderr while still exiting 0. So a
@@ -837,7 +846,7 @@ from the name it is asked about and the domain kept the other, so `0..` bound
 | guest → network | no NIC, or TAP + nftables + proxy | active |
 | guest → credentials | injection at the proxy | active |
 | guest → audit record | host-side, hash-chained | active, including under `kelyfos shim` |
-| guest → host filesystem, via the workspace disk | the image is enumerated and validated before it is read, and extracted through `openat2(RESOLVE_BENEATH\|RESOLVE_NO_SYMLINKS)` | active since v1.0. **This row did not exist until an external audit found what its absence cost** — see below |
+| guest → host filesystem, via the workspace disk | the image is enumerated and validated before it is read, every symlink chain is resolved against the whole entry set, every file is checked against the size its inode records, and the writes go through an `os.Root` | active since v1.0. **This row did not exist until an external audit found what its absence cost** — see below |
 | a report → whoever received it | the record travels in the file; `kelyfos verify`, and `--sign-key` / `--key` when the reader already holds the key | active since v1.0; covers the record, not the rendering, and a chain cut short at its end still verifies |
 | guest → guest (team) | host broker + declared edge list | active |
 | guest → host CPU/RAM/IO | KVM config, cgroup v2, rate limiters | active, and only when configured |

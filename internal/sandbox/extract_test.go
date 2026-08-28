@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -174,6 +175,213 @@ func mkdirT(t *testing.T, dir string) string {
 		t.Fatal(err)
 	}
 	return dir
+}
+
+// packImage builds an ext4 image from a directory, the way a guest hands one
+// back.
+func packImage(t *testing.T, src, img string) {
+	t.Helper()
+	if out, err := exec.Command("mke2fs", "-q", "-t", "ext4", "-F",
+		"-d", src, img, "8192k").CombinedOutput(); err != nil {
+		t.Fatalf("mke2fs: %v %s", err, out)
+	}
+}
+
+// extractInto runs the real enumeration and extraction into a fresh tree and
+// hands back whichever of the two refused, if either did.
+func extractInto(t *testing.T, img, tree string) error {
+	t.Helper()
+	entries, err := listImage(img)
+	if err != nil {
+		return err
+	}
+	r, err := os.OpenRoot(tree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	return extractImage(img, entries, r)
+}
+
+// F18. A chain of symlinks walks out of the workspace past a check that judges
+// each link on its own.
+//
+// validLink asked one question per link, lexically, as though every other name
+// in the tree were a real directory: does path.Join(dir(from), target) begin
+// with ".."? Three links, none of which does, compose into one that leaves:
+//
+//	sub/d1   -> ..                joins to "."         accepted
+//	sub/d2   -> d1/..             joins to "sub"       accepted
+//	sub/leak -> d2/secret.txt     joins to "sub/d2/…"  accepted
+//
+// and really: sub/d1 is the tree, so sub/d1/.. is the tree's parent, so
+// sub/leak is <parent>/secret.txt. The extraction itself cannot write through
+// it — os.Root refuses a link that escapes — but the link is left in the
+// person's directory for the next thing that follows it: an editor, `tar -h`,
+// `rsync -L`, or `kelyfos diff`'s own os.ReadFile on an added entry. That is
+// what this reads with.
+//
+// The fix resolves a target through the entry set instead of guessing at it,
+// so a link is judged by where it actually lands. The subtests below are the
+// two halves of that: what must be refused, and what must not be.
+func TestF18_ASymlinkChainCannotBeLeftInTheProject(t *testing.T) {
+	needsImageTools(t)
+
+	t.Run("chain-climbs-out", func(t *testing.T) {
+		root := t.TempDir()
+		const secret = "a host file the guest was never given\n"
+		if err := os.WriteFile(filepath.Join(root, "secret.txt"), []byte(secret), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		src := mkdirT(t, filepath.Join(root, "src", "sub"))
+		for _, l := range []struct{ target, name string }{
+			{"..", "d1"},
+			{"d1/..", "d2"},
+			{"d2/secret.txt", "leak"},
+		} {
+			if err := os.Symlink(l.target, filepath.Join(src, l.name)); err != nil {
+				t.Fatal(err)
+			}
+		}
+		img := filepath.Join(root, "ws.ext4")
+		packImage(t, filepath.Join(root, "src"), img)
+
+		// The tree's parent is `root`, which is where secret.txt is.
+		tree := mkdirT(t, filepath.Join(root, "tree"))
+		err := extractInto(t, img, tree)
+		if err == nil {
+			got, readErr := os.ReadFile(filepath.Join(tree, "sub", "leak"))
+			if readErr == nil {
+				t.Fatalf("the extraction accepted the chain and sub/leak reads %q — a link the "+
+					"guest planted, left in the person's project, pointing at a file outside it", got)
+			}
+			t.Fatalf("the extraction accepted the chain (following it gave %v); each link passes the "+
+				"lexical check and together they leave the workspace", readErr)
+		}
+		if !errors.Is(err, ErrHostileImage) {
+			t.Errorf("the refusal is %v, which does not wrap ErrHostileImage", err)
+		}
+		// sub/d2 rather than sub/leak: d2 is the link that actually steps above
+		// the tree, and naming the first one that does is what tells somebody
+		// which entry to go and look at.
+		if !strings.Contains(err.Error(), "sub/d2") {
+			t.Errorf("the refusal does not name the link that climbs: %v", err)
+		}
+	})
+
+	// A link that climbs and stays inside is ordinary, and refusing it would
+	// cost more than the defect does. `node_modules/<pkg> -> ../../packages/x`
+	// is what every pnpm and npm workspace looks like, and a refusal here
+	// refuses the *whole image* — which on the resume path is the person's
+	// session, since the workspace image is removed either way.
+	t.Run("legitimate-climb-inside", func(t *testing.T) {
+		root := t.TempDir()
+		src := filepath.Join(root, "src")
+		mkdirT(t, filepath.Join(src, "packages", "core"))
+		mkdirT(t, filepath.Join(src, "app", "node_modules"))
+		if err := os.WriteFile(filepath.Join(src, "packages", "core", "index.js"),
+			[]byte("module.exports = 1\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink("../../packages/core",
+			filepath.Join(src, "app", "node_modules", "core")); err != nil {
+			t.Fatal(err)
+		}
+		img := filepath.Join(root, "ws.ext4")
+		packImage(t, src, img)
+
+		tree := mkdirT(t, filepath.Join(root, "tree"))
+		if err := extractInto(t, img, tree); err != nil {
+			t.Fatalf("an ordinary workspace symlink was refused, and a refusal costs the person "+
+				"the whole image: %v", err)
+		}
+		b, err := os.ReadFile(filepath.Join(tree, "app", "node_modules", "core", "index.js"))
+		if err != nil || string(b) != "module.exports = 1\n" {
+			t.Errorf("the link came back unusable: %q, %v", b, err)
+		}
+	})
+
+	// A cycle cannot leave the tree — it just cannot be followed, by anybody.
+	// Accepted for that reason: the refusal is for leaving the workspace, and
+	// inventing one for a broken-but-contained link would cost an image for
+	// something every tool on the host already answers with ELOOP.
+	t.Run("two-link-cycle-stays-inside", func(t *testing.T) {
+		root := t.TempDir()
+		if err := os.WriteFile(filepath.Join(root, "secret.txt"), []byte("no\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		src := mkdirT(t, filepath.Join(root, "src", "sub"))
+		if err := os.Symlink("c2", filepath.Join(src, "c1")); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink("c1", filepath.Join(src, "c2")); err != nil {
+			t.Fatal(err)
+		}
+		img := filepath.Join(root, "ws.ext4")
+		packImage(t, filepath.Join(root, "src"), img)
+
+		tree := mkdirT(t, filepath.Join(root, "tree"))
+		if err := extractInto(t, img, tree); err != nil {
+			t.Fatalf("a cycle inside the workspace was refused, which costs the whole image for a "+
+				"link that reaches nothing: %v", err)
+		}
+		if _, err := os.ReadFile(filepath.Join(tree, "sub", "c1")); err == nil {
+			t.Error("the cycle resolved to something, which it must not")
+		}
+		if got, err := os.Readlink(filepath.Join(tree, "sub", "c1")); err != nil || got != "c2" {
+			t.Errorf("sub/c1 came back as %q, %v", got, err)
+		}
+	})
+
+	// What os.Root actually does, measured, because two comments and the threat
+	// model all said it was `openat2` with `RESOLVE_BENEATH` and
+	// `RESOLVE_NO_SYMLINKS` and it is neither. Go 1.27 never calls openat2 —
+	// `openat2Trap` is a syscall number in the tree that nothing uses — and
+	// os.Root walks a path one component at a time with
+	// openat(O_NOFOLLOW|O_CLOEXEC), resolving each link itself in checkSymlink.
+	//
+	// The two named flags disagree about the one case that matters, and a reader
+	// who took RESOLVE_NO_SYMLINKS at its word concludes that a link the guest
+	// planted cannot matter. That is the reasoning this finding was missed by,
+	// so the behaviour is pinned here rather than described anywhere.
+	t.Run("what-os.Root-really-does-with-a-link", func(t *testing.T) {
+		tree := t.TempDir()
+		mkdirT(t, filepath.Join(tree, "real"))
+		outside := t.TempDir()
+		for _, l := range []struct{ target, name string }{
+			{"real", "rel-inside"},                          // followed
+			{filepath.Join(tree, "real"), "abs-inside"},     // refused anyway
+			{"../" + filepath.Base(outside), "rel-outside"}, // refused
+			{outside, "abs-outside"},                        // refused
+		} {
+			if err := os.Symlink(l.target, filepath.Join(tree, l.name)); err != nil {
+				t.Fatal(err)
+			}
+		}
+		r, err := os.OpenRoot(tree)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer r.Close()
+
+		f, err := r.OpenFile("rel-inside/f.txt", os.O_CREATE|os.O_WRONLY, 0o644)
+		if err != nil {
+			t.Fatalf("os.Root refused a relative link that stays inside the tree, so it does "+
+				"behave like RESOLVE_NO_SYMLINKS after all: %v", err)
+		}
+		f.Close()
+		if _, err := os.Stat(filepath.Join(tree, "real", "f.txt")); err != nil {
+			t.Errorf("the write did not land through the link: %v", err)
+		}
+		// An absolute link is refused even when it points back inside the root,
+		// which is stricter than RESOLVE_BENEATH would be — another reason not
+		// to describe this by a flag name it does not use.
+		for _, name := range []string{"abs-inside", "rel-outside", "abs-outside"} {
+			if _, err := r.OpenFile(name+"/f.txt", os.O_CREATE|os.O_WRONLY, 0o644); err == nil {
+				t.Errorf("os.Root wrote through %s", name)
+			}
+		}
+	})
 }
 
 // handBack puts owner-write back on a directory once the test is over.

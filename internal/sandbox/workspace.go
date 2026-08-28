@@ -166,8 +166,13 @@ func (w *Workspace) Stage() (*Staged, error) {
 	// debugfs reads the image without mounting it, so the write-back needs no
 	// privileges. What it no longer does is choose where anything lands: it
 	// dumps into staging files this package names, and every guest-chosen name
-	// is used through the root below, which is openat2 with RESOLVE_BENEATH and
-	// RESOLVE_NO_SYMLINKS underneath.
+	// is used through the root below.
+	//
+	// This used to say the root was "openat2 with RESOLVE_BENEATH and
+	// RESOLVE_NO_SYMLINKS underneath". os.Root is neither — extract.go's package
+	// comment has what it is — and the two named flags mean opposite things
+	// about the case that matters, which is how a reader came away believing a
+	// planted symlink could not matter (F18).
 	root, err := os.OpenRoot(s.tree)
 	if err != nil {
 		_ = removeTree(s.tree)

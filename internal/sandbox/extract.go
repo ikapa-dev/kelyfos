@@ -38,12 +38,28 @@ import (
 //     repaired is a name somebody built to be repaired, and the repaired version
 //     is a guess about what they meant.
 //
-//  2. The extraction writes through an *os.Root, which is openat2 with
-//     RESOLVE_BENEATH and RESOLVE_NO_SYMLINKS underneath. debugfs never chooses
-//     a destination again: it dumps into staging files this package names, and
-//     the guest's own names are only ever used through the root. So a name that
-//     slips past the first layer still cannot reach outside the tree, and the
-//     kernel is what says so rather than this code.
+//  2. The extraction writes through an *os.Root. debugfs never chooses a
+//     destination again: it dumps into staging files this package names, and the
+//     guest's own names are only ever used through the root. So a name that
+//     slips past the first layer still cannot reach outside the tree.
+//
+//     What os.Root is, since this comment twice said something it is not: it is
+//     **not** openat2, and there is no RESOLVE_BENEATH or RESOLVE_NO_SYMLINKS
+//     anywhere in it. Go 1.27 walks the path one component at a time with
+//     openat(O_NOFOLLOW|O_CLOEXEC) and resolves each symlink itself, in
+//     checkSymlink, restarting the walk against the link's contents; a resolved
+//     path that would leave the root is refused at that point, with no window.
+//     `openat2Trap` exists in the tree as a syscall number and is never called.
+//
+//     The guarantee, which is what actually matters here: a relative link that
+//     stays inside the tree is followed, and everything else — a link that
+//     climbs out, and *any* absolute link, even one pointing back inside — is
+//     refused with "path escapes from parent". Asserted rather than believed, in
+//     TestF18_ASymlinkChainCannotBeLeftInTheProject.
+//
+//     So it covers where the extraction *writes* and says nothing about what it
+//     *leaves behind* for the next tool to follow — which is F18, and is why
+//     validLinkChain exists.
 
 // maxImageEntries bounds what enumeration will hold in memory.
 //
@@ -345,6 +361,10 @@ func extractMode(m os.FileMode, dir bool) os.FileMode {
 // climbs out, is the guest leaving something behind that reads a host file when
 // the person whose directory this becomes later follows it. They did not put it
 // there.
+//
+// This is the per-link half. It cannot see a chain, because it is looking at one
+// link with no idea what the others are — that is validLinkChain's job, and F18
+// is what happens when only this half exists.
 func validLink(from, target string) error {
 	switch {
 	case target == "":
@@ -363,13 +383,133 @@ func validLink(from, target string) error {
 	return nil
 }
 
+// A chain of links walks out of the workspace past a per-link check (F18).
+//
+// validLink judges each link alone and lexically, as though every other name in
+// the tree were a real directory. Three links, none of which fails that
+// question, compose into one that leaves:
+//
+//	sub/d1   -> ..              joins to "."          accepted
+//	sub/d2   -> d1/..           joins to "sub"        accepted
+//	sub/leak -> d2/etc/shadow   joins to "sub/d2/…"   accepted
+//
+// and really: sub/d1 is the tree, so sub/d1/.. is above it, so sub/leak points
+// outside. The extraction cannot write through the chain — os.Root refuses a
+// resolution that escapes — but the link is left in the person's directory for
+// whatever follows it next: an editor, `tar -h`, `rsync -L`, or `kelyfos diff`'s
+// own os.ReadFile on an added entry.
+//
+// The rule the review proposed first — refuse any target containing a ".."
+// segment — is sound and is deliberately not what this does. `node_modules/x ->
+// ../../packages/x` is what every pnpm and npm workspace looks like, and a
+// refusal here refuses the *whole image*; on the resume path that is the
+// person's session, because the workspace image is removed whether the
+// write-back happened or not. The review's own second answer is the one taken:
+// resolve the target through the entry set, which is the only lexical check
+// that is also true, and refuse the links that actually leave.
+
+// maxLinkHops bounds how far a chain is followed while it is being checked.
+//
+// Above the kernel's own limit — Linux stops at 40 links in one path resolution
+// — so a chain this stops following is already ELOOP for every tool on the
+// host. That is why running out of budget is **not** a refusal: the refusal is
+// for leaving the tree, that is checked at every single step, and a resolution
+// is deterministic, so a walk that spent its whole budget without leaving has no
+// second path it could have taken. A cycle is contained by definition; it just
+// cannot be followed, by anybody.
+const maxLinkHops = 64
+
+var (
+	errLinkEscapes = errors.New("the link leaves the workspace")
+	errLinkTooDeep = errors.New("the chain is longer than anything can follow")
+)
+
+// linkResolver answers, for one image, where a name inside the tree really
+// lands once every symlink on the way has been followed.
+//
+// It holds the whole set, which is why the check that uses it runs after every
+// target has been read rather than link by link during extraction.
+type linkResolver struct {
+	links map[string]string // entry path -> target, symlinks only
+}
+
+// walk resolves p starting from the directory cur — a list of components below
+// the tree root — the way the kernel would.
+func (r *linkResolver) walk(cur []string, p string, hops *int) ([]string, error) {
+	if path.IsAbs(p) {
+		// validLink refuses these before this ever runs. Answered anyway,
+		// because the whole point of this layer is that the one above it will
+		// one day be wrong: an absolute target is the host's root, which is not
+		// inside the tree.
+		return nil, errLinkEscapes
+	}
+	for _, seg := range strings.Split(p, "/") {
+		switch seg {
+		case "", ".":
+			continue
+		case "..":
+			if len(cur) == 0 {
+				return nil, errLinkEscapes
+			}
+			cur = cur[:len(cur)-1]
+			continue
+		}
+		next := append(append([]string(nil), cur...), seg)
+		target, isLink := r.links[strings.Join(next, "/")]
+		if !isLink {
+			// A file, a directory, or a name that is not in the image at all.
+			// A dangling link is ordinary and is not this function's business.
+			cur = next
+			continue
+		}
+		*hops++
+		if *hops > maxLinkHops {
+			return cur, errLinkTooDeep
+		}
+		// A link is resolved from its own directory, which is where the walk
+		// currently stands.
+		resolved, err := r.walk(cur, target, hops)
+		if err != nil {
+			return nil, err
+		}
+		cur = resolved
+	}
+	return cur, nil
+}
+
+// validLinkChain refuses a symlink whose chain leaves the workspace.
+func validLinkChain(r *linkResolver, from, target string) error {
+	hops := 0
+	// The link's own directory is resolved first: a component of it may itself
+	// be a symlink, and the check has to start where the kernel would start.
+	cur, err := r.walk(nil, path.Dir(from), &hops)
+	if err == nil {
+		_, err = r.walk(cur, target, &hops)
+	}
+	switch {
+	case errors.Is(err, errLinkEscapes):
+		return refuse("%s points at %s, which leaves the workspace once the links on the way are "+
+			"followed; each link on its own looks like it stays", from, target)
+	case errors.Is(err, errLinkTooDeep):
+		return nil // see maxLinkHops: contained, and unfollowable by anything
+	}
+	return err
+}
+
 // extractImage writes the entries beneath root.
 //
 // Nothing here joins a guest-chosen name to a host path by hand. Directories and
-// files are created through the root, which is openat2 with RESOLVE_BENEATH and
-// RESOLVE_NO_SYMLINKS: a name that escaped the validation above still cannot
-// escape the kernel, and a symlink planted earlier in the same extraction cannot
-// be written through.
+// files are created through the root: a name that escaped the validation above
+// still cannot escape it.
+//
+// This comment used to say the root was "openat2 with RESOLVE_BENEATH and
+// RESOLVE_NO_SYMLINKS". It is neither — see the package comment for what os.Root
+// actually does — and the two halves of that sentence contradicted each other,
+// which is how a reader came away believing a planted symlink could not matter.
+// What it does give: a link that stays inside the tree is **followed**, and one
+// that leaves is refused at the open. That is the whole of F18 — the root stops
+// the extraction writing *through* a chain, and says nothing about the chain
+// being left behind for the next tool to follow.
 func extractImage(imagePath string, entries []imageEntry, root *os.Root) error {
 	// Shallowest first, so a parent exists before anything inside it.
 	sorted := append([]imageEntry(nil), entries...)
@@ -392,6 +532,35 @@ func extractImage(imagePath string, entries []imageEntry, root *os.Root) error {
 	}
 	defer cleanup()
 
+	// Every symlink's target is read and checked before any of them is created,
+	// and before a single file byte is written. A chain is only judgeable against
+	// the whole set — the link that makes `sub/d2` climb may be enumerated after
+	// the link that uses it — so there is no order in which a per-link check
+	// could have been enough (F18).
+	targets := map[string]string{}
+	for _, e := range sorted {
+		if e.kind != kindSymlink {
+			continue
+		}
+		target, err := readLink(imagePath, e, staged[e.path])
+		if err != nil {
+			return err
+		}
+		if err := validLink(e.path, target); err != nil {
+			return err
+		}
+		targets[e.path] = target
+	}
+	resolver := &linkResolver{links: targets}
+	for _, e := range sorted {
+		if e.kind != kindSymlink {
+			continue
+		}
+		if err := validLinkChain(resolver, e.path, targets[e.path]); err != nil {
+			return err
+		}
+	}
+
 	for _, e := range sorted {
 		switch e.kind {
 		case kindFile:
@@ -399,14 +568,7 @@ func extractImage(imagePath string, entries []imageEntry, root *os.Root) error {
 				return err
 			}
 		case kindSymlink:
-			target, err := readLink(imagePath, e, staged[e.path])
-			if err != nil {
-				return err
-			}
-			if err := validLink(e.path, target); err != nil {
-				return err
-			}
-			if err := root.Symlink(target, e.path); err != nil && !os.IsExist(err) {
+			if err := root.Symlink(targets[e.path], e.path); err != nil && !os.IsExist(err) {
 				return fmt.Errorf("create the symlink %s: %w", e.path, err)
 			}
 		}
