@@ -103,6 +103,11 @@ func teamUp(argv []string) error {
 	if err != nil {
 		return err
 	}
+	if cfg != nil {
+		// What this file reaches, before any of the team's machines boot
+		// (P7-17/F21).
+		printPolicyReach(os.Stdout, cfg)
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

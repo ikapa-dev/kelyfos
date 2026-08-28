@@ -141,7 +141,11 @@ func Schema() []Key {
 		{Name: "arch", Type: TypeString, Default: "the build host's architecture", Sample: `"x86_64"`,
 			Doc: "guest architecture: aarch64 or x86_64"},
 		{Name: "workspace", Type: TypeString, Default: "no /work device", Sample: `"."`,
-			Doc: "host directory to pack and attach at /work, resolved against this file"},
+			Doc: "host directory to pack and attach at /work, resolved against this file. " +
+				"It must be inside this file's own directory tree: the directory is packed " +
+				"into the guest and written back over on shutdown, and a policy file " +
+				"describes its own project. Pass --workspace with the same value to use one " +
+				"outside it, which makes it the operator's decision rather than the file's"},
 		{Name: "allow", Type: TypeStrings, Default: "no network interface at all", Sample: `["github.com"]`,
 			Doc: "egress allowlist; a bare hostname also matches its subdomains"},
 		{Name: "secrets", Type: TypeStrings, Default: "none", Sample: `["GITHUB_TOKEN@api.github.com"]`,

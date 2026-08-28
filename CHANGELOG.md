@@ -493,6 +493,35 @@ reference described in the README and re-measured per release.
   S2/P6-4 works correctly on real hardware and this was always a test bug.
 
 ### Changed
+- **A `kelyfos.toml` found by walking up must be owned by you, and no policy
+  file may be writable by anybody else.** `kelyfos` finds a policy file the way
+  `git` finds a repository, and that file names a host directory to pack into
+  the guest and sync back over, host directories to expose read-only to it, the
+  domains it may reach, and which of your environment variables are attached to
+  requests — with no check on who wrote it. A discovered file owned by another
+  user is now refused by name, with `--policy` named as the way to use it
+  deliberately; `--policy` skips the ownership rule and not the writability one,
+  because naming a file does not make a file anybody can rewrite safe. A symlink
+  is checked on both ends. World-writable is refused unconditionally; the group
+  bit is refused only when the file's group is not your own user-private group,
+  so a `umask 0002` machine — where `cat > kelyfos.toml` produces `0664` — is
+  unaffected. **This can break a working setup**: a `kelyfos.toml` under a
+  directory owned by another account, one left mode `0666`, or one whose group
+  is a shared group with other members now stops the run instead of configuring
+  it. The fix is in the message (`chmod go-w`, or `--policy`).
+- **A `workspace` a policy file names outside its own directory tree is
+  refused** unless `--workspace` names the same value on the command line. That
+  directory is packed into the guest and written back over the host directory
+  when the run ends, and a policy file describes its own project — a cloned
+  repository does not get to name your home directory. Passing the flag is the
+  escape hatch and makes the path your decision rather than the file's. Symlinks
+  are resolved on both sides before the comparison.
+- **Every run now says what its policy file reaches before anything boots**:
+  the file's path, the workspace, every `[[plugin]] path`, and every secret by
+  name with the domain it is bound to. Secret values are never read for this and
+  never printed. Replaces the bare `policy: <path>` line on `kelyfos run`,
+  `kelyfos team up`, `kelyfos sessions resume` and `kelyfos snapshot restore`
+  (P7-17/F21).
 - **`kelyfos shim` refuses to serve a non-loopback `--addr` unless
   `KELYFOS_SHIM_TOKEN` is set.** `--addr` accepted any address, and a shim
   bound off loopback with no credential is reachable from the LAN by a surface

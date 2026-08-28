@@ -535,7 +535,7 @@ you still need to keep, see 'kelyfos sessions erase'.
 		return cfgErr
 	}
 	if cfg != nil {
-		fmt.Printf("policy: %s\n", cfg.Path)
+		printPolicyReach(os.Stdout, cfg)
 	}
 	floor := retentionFloor(cfg)
 	fmt.Printf("retention floor: %.0f day(s)\n", floor.Hours()/24)

@@ -134,7 +134,7 @@ func snapshotRestore(argv []string) error {
 		return cfgErr
 	}
 	if cfg != nil {
-		fmt.Printf("policy: %s\n", cfg.Path)
+		printPolicyReach(os.Stdout, cfg)
 	}
 
 	dir, err := snapshotDir(*name)

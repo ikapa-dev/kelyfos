@@ -160,7 +160,10 @@ status. This is how you hand an agent a sandbox and nothing else:
 		return cfgErr
 	}
 	if cfg != nil {
-		fmt.Printf("policy: %s\n", cfg.Path)
+		// Before any of it is applied and long before anything boots: what
+		// this file reaches is the thing a reader has to be able to see
+		// (P7-17/F21).
+		printPolicyReach(os.Stdout, cfg)
 		if cfg.Image != "" && !typed["image"] {
 			*flavor = cfg.Image
 		}
@@ -203,6 +206,13 @@ status. This is how you hand an agent a sandbox and nothing else:
 		if cfg.Workspace != "" && !typed["workspace"] {
 			// Relative to the policy file, not the working directory: the file
 			// describes its own project, wherever it is invoked from.
+			//
+			// And only inside its own tree, unless the operator typed the same
+			// value — which they did not, or this branch would not run
+			// (P7-17/F21).
+			if err := checkWorkspaceScope(cfg.Path, cfg.Workspace); err != nil {
+				return err
+			}
 			ws := cfg.Workspace
 			if !filepath.IsAbs(ws) {
 				ws = filepath.Join(filepath.Dir(cfg.Path), ws)
@@ -1064,6 +1074,11 @@ func loadPolicyAt(named string) (*config.Config, error) {
 				"    a named policy that is not there is an error, never a run with no ceiling",
 				named, err)
 		}
+		// discovered=false: naming a file is the decision the ownership rule
+		// exists to ask for. The writability half still applies (P7-17/F21).
+		if err := config.Trust(named, false); err != nil {
+			return nil, err
+		}
 		return config.Load(named)
 	}
 	cwd, err := os.Getwd()
@@ -1073,6 +1088,12 @@ func loadPolicyAt(named string) (*config.Config, error) {
 	path, found := config.Find(cwd)
 	if !found {
 		return nil, nil
+	}
+	// Every door in this CLI reaches a policy file through here, which is why
+	// the check is here and not at the eight callers — the same argument F7
+	// makes about snapshotDir (P7-17/F21).
+	if err := config.Trust(path, true); err != nil {
+		return nil, err
 	}
 	return config.Load(path)
 }
@@ -1119,4 +1140,107 @@ func ceiling(key, flagName string, cfg *config.Config, limit int, flagVal *int, 
 			"file": cfg.Path, "line": strconv.Itoa(line)})
 	}
 	return nil
+}
+
+// checkWorkspaceScope refuses a workspace a policy file names outside its own
+// directory tree (P7-17/F21).
+//
+// The workspace is the sharpest of the host paths a kelyfos.toml can name: it
+// is packed into the guest and, on shutdown, synced back over that host
+// directory. A cloned repository — or a file another local user left in a
+// parent directory, which the ownership rule in config.Trust now catches —
+// does not get to name the operator's home.
+//
+// Typing --workspace is the escape hatch, and it is the right one: the value is
+// then the operator's decision rather than the file's, which is the whole
+// distinction this rule draws. Handled by the caller, which knows whether the
+// flag was typed; this function answers only "is it inside the tree".
+//
+// The comparison is on resolved, symlink-free paths on both sides, because a
+// symlink inside the project pointing at /home is exactly how a lexical check
+// gets walked around — the same lesson F18 in this review taught the workspace
+// extractor one layer down.
+func checkWorkspaceScope(policyPath, ws string) error {
+	root := filepath.Dir(policyPath)
+	abs := ws
+	if !filepath.IsAbs(abs) {
+		abs = filepath.Join(root, abs)
+	}
+	realRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		realRoot = filepath.Clean(root)
+	}
+	// The workspace itself may not exist yet, so resolve the deepest ancestor
+	// that does rather than failing on the leaf.
+	realWS := filepath.Clean(abs)
+	for probe := realWS; ; probe = filepath.Dir(probe) {
+		if resolved, err := filepath.EvalSymlinks(probe); err == nil {
+			realWS = filepath.Join(resolved, strings.TrimPrefix(realWS, probe))
+			break
+		}
+		if parent := filepath.Dir(probe); parent == probe {
+			break
+		}
+	}
+	rel, err := filepath.Rel(realRoot, realWS)
+	if err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return nil
+	}
+	return fmt.Errorf("%s names workspace %s, which is outside %s.\n"+
+		"    A policy file describes its own project. The workspace is packed into the guest\n"+
+		"    and synced back over that host directory when the run ends, so a file that names\n"+
+		"    a directory outside its own tree is asking to write somewhere it does not describe.\n"+
+		"    Pass --workspace %s if that is what you meant — then it is your decision, not the\n"+
+		"    file's", policyPath, abs, root, abs)
+}
+
+// printPolicyReach says what a policy file is about to reach, before anything
+// boots (P7-17/F21).
+//
+// Every host path and every credential this file decides, named once, at the
+// top of the run. It is the part of the finding that costs nothing and helps
+// most: a hostile or merely surprising kelyfos.toml is only dangerous while
+// nobody has read it, and "policy: /path/to/kelyfos.toml" on its own did not
+// say that the file had named a workspace, a plugin directory and an
+// environment variable to hand to a domain.
+//
+// Secret values are never read here and never printed — only the name and the
+// domain it is bound to, which is the same rule the flight recorder follows.
+func printPolicyReach(w io.Writer, cfg *config.Config) {
+	fmt.Fprintf(w, "policy: %s\n", cfg.Path)
+	root := filepath.Dir(cfg.Path)
+	abs := func(p string) string {
+		if filepath.IsAbs(p) {
+			return filepath.Clean(p)
+		}
+		return filepath.Join(root, p)
+	}
+	if cfg.Workspace != "" {
+		fmt.Fprintf(w, "  workspace   %s — packed into the guest, and written back over on shutdown\n",
+			abs(cfg.Workspace))
+	}
+	for _, p := range cfg.Plugins {
+		if p.Path == "" {
+			continue
+		}
+		fmt.Fprintf(w, "  plugin %-5s %s — packed read-only into the guest\n", proto.SafeText(p.Name), abs(p.Path))
+	}
+	for _, spec := range cfg.Secrets {
+		// Split textually rather than through egress.ParseSecret, which reads
+		// the host environment to find the value: this block must be able to
+		// say what the file asked for without touching a credential, and it
+		// must say it even when the variable is not set — which is exactly the
+		// moment somebody is about to be asked to set one.
+		name, rest, ok := strings.Cut(spec, "@")
+		if !ok {
+			fmt.Fprintf(w, "  secret      %s\n", proto.SafeText(spec))
+			continue
+		}
+		where := rest
+		if host, _, cut := strings.Cut(rest, "/"); cut {
+			where = host + " (path " + strings.TrimPrefix(rest, host) + ")"
+		}
+		fmt.Fprintf(w, "  secret      $%s of your environment, attached to requests to %s\n",
+			proto.SafeText(name), proto.SafeText(where))
+	}
 }

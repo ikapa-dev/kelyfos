@@ -15,7 +15,7 @@ What to boot, and what it may reach.
 | --- | --- | --- | --- |
 | `image` | string | "base" | image flavor to boot; refused at boot if it does not match the image's manifest |
 | `arch` | string | the build host's architecture | guest architecture: aarch64 or x86_64 |
-| `workspace` | string | no /work device | host directory to pack and attach at /work, resolved against this file |
+| `workspace` | string | no /work device | host directory to pack and attach at /work, resolved against this file. It must be inside this file's own directory tree: the directory is packed into the guest and written back over on shutdown, and a policy file describes its own project. Pass --workspace with the same value to use one outside it, which makes it the operator's decision rather than the file's |
 | `allow` | string array | no network interface at all | egress allowlist; a bare hostname also matches its subdomains |
 | `secrets` | string array | none | NAME@host[:bearer\|basic][/path] — names only; a value here is refused. A path binds the credential to that endpoint on that host exactly, instead of to the domain and every subdomain of it |
 | `vcpus` | integer | 2 | pre-v0.4 spelling of a cpus default; kept working, prefer [resources] cpus |

