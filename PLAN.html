@@ -1499,7 +1499,7 @@
         <ul class="tasks">
           <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
               <span class="tid">F8</span><span class="tk"><b>High.</b> Any binary named <code>kelyfos-confine</code> runs unconfined as root &mdash; the re-entrancy guard in <code>confine()</code> tests <code>cmd.Path</code>, which the agent chooses. <code>supervisor/confine.go:104</code>.</span></li>
-          <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+          <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
               <span class="tid">F9</span><span class="tk"><b>High.</b> The egress proxy is reachable by any local process, with the operator&rsquo;s bound credentials attached &mdash; the input chain filters by <code>iifname</code>, and a local connection to the TAP address never crosses the TAP. <code>internal/egress/proxy.go:251</code> &middot; <code>internal/sandbox/network.go:190</code>.</span></li>
           <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
               <span class="tid">F10</span><span class="tk">A confined process can <code>mknod</code> its way to the raw disks: <code>writeRights</code> grants <code>MAKE_CHAR</code>/<code>MAKE_BLOCK</code> and the merged overlay carries neither <code>MS_NODEV</code> nor <code>MS_NOSUID</code>. <code>supervisor/profile.go:130</code> &middot; <code>supervisor/mount.go:73</code>.</span></li>
@@ -6803,6 +6803,94 @@ after:
         <i>every</i> firecracker on the box, and three peer microVMs were live throughout. P7-16/D70, exactly;
         equivalent evidence taken from private-cache runs stopped by recorded pid. The new
         <code>accept-profile.sh</code> block is committed but has not itself been executed.</td></tr>
+    <tr><td class="mono">2026-08-29</td><td class="mono">P7-17/F9</td>
+        <td><b>The egress proxy answered any process on the host, with the operator&rsquo;s bound credentials
+        attached; now two independent layers refuse a peer that is not the guest.</b> The proxy binds the
+        host&rsquo;s TAP address, and the comment above <code>Listen</code> concluded from that it was
+        &ldquo;reachable from exactly one sandbox and from nothing else on the machine&rdquo;. A local connection
+        to that address is routed over <code>lo</code>, never crosses the TAP, and the input chain only jumps to
+        inspection on <code>iifname</code> &mdash; so any local process could <code>CONNECT</code> and have the
+        credential spent for it. <b>Layer 1:</b> <code>Proxy.Peer</code>, set from <code>Network.GuestAddr()</code>
+        at all six construction sites, refused at the top of <code>handle</code> before a byte is read, recorded
+        and never answered. <b>Layer 2:</b> <code>ip daddr &lt;HostIP&gt; iifname != &lt;tap&gt; counter drop</code>
+        above the jump, which also closes the unconfirmed ARP/LAN extension with nothing extra.
+        <code>(*Network).up()</code> now refuses a network whose guest address cannot arm the check, because a
+        zero <code>Peer</code> means &ldquo;serve everyone&rdquo;. Docs: <code>docs/networking.md</code> &sect;3
+        and &sect;6, a new <code>docs/threat-model.md</code> proxy entry carrying the residual in the words the
+        shim and viewer entries use, the <code>Listen</code> comment rewritten, and
+        <code>dev/accept-forward.sh</code>&rsquo;s ruleset diff.
+        <br><b>Reviewed twice</b> by an agent that wrote none of it (&sect;8 rule 10, PROXY + RECORD). Four
+        rounds. <b>Six findings accepted in round 1</b> &mdash; including a real defect the fix had introduced:
+        overloading <code>Attempt.Host</code> to carry the source address fed
+        <code>internal/digest/digest.go:743</code>, entering it in the digest&rsquo;s <code>Domains</code> table
+        with <code>Blocked++</code>, consuming <code>MaxDistinctKeys</code> and able to <i>evict the guest&rsquo;s
+        real blocked-domain records</i>. Fixed by appending <code>Attempt.Peer</code> and mapping it to the
+        pre-existing <code>Event.Peer</code>. <b>Four more in round 2</b>, the worst being that
+        <code>TestF9_ThePeerAuditCatchesEveryEvasionShape</code> &mdash; the test written to prove the
+        guarantee &mdash; <i>could not fail</i>: its &ldquo;found nothing&rdquo; sentinel was itself appended as
+        a finding, so a shape that stopped being caught yielded exactly one finding and passed. Also
+        <code>shim/shim.go:401</code>, which builds <code>wireProxyAudit</code>&rsquo;s twin and never mapped
+        <code>Peer</code> &mdash; one more call site, in the file the new audit exists to see. <b>Eleven findings
+        rejected in round 1 with reasons</b>, the most valuable being an exhaustive refutation that a
+        <code>Network</code> can reach a <code>Proxy</code> without passing <code>up()</code>: both constructors
+        call it and discard on error, <code>Network</code> has an unexported field so no other package can build
+        one, and <b>nothing unmarshals a <code>Network</code></b> &mdash; so F19&rsquo;s attacker-writable
+        <code>sandbox.json</code> cannot produce one. <b>Nine more rejected in round 2.</b> One reviewer finding
+        was <b>not</b> adopted: that the refusal should also print to the terminal. Kept record-only, on the
+        condition the reviewer itself set &mdash; defensible exactly as long as the record shows who knocked,
+        which F20 will render. Both positions logged; the author agreed the reviewer&rsquo;s reading of
+        <code>blockedOnce.say</code> was the better one.</td>
+        <td class="mono">Hole executed at the parent before it was fixed &mdash; the review never ran it.
+        <code>TestF9_HostIPIsUnreachableFromAHostProcess</code> on <code>a393b2e</code>, real TAP and real
+        ruleset &rarr; <code>--- FAIL: a host process reached the proxy's port at 169.254.79.181:46823 and was
+        answered "served 169.254.79.181:55402"</code>; on branch &rarr;
+        <code>PASS &mdash; refused, as it must be: dial tcp 169.254.37.245:45421: i/o timeout</code><br>
+        the other F9 tests fail to <i>build</i> at the parent (<code>unknown field Peer</code>,
+        <code>undefined: ReasonForeignPeer</code>), which is stated rather than dressed up as a behavioural
+        failure<br>
+        live nft, parent vs branch: shipped ruleset &rarr; <code>served 169.254.99.1</code>; with the drop line
+        &rarr; <code>REFUSED/TIMEOUT (exit 124)</code>, counter
+        <code>packets 3 bytes 180</code><br>
+        <b>The guarantee proven by mutation, not assertion.</b> Round 2 reviewer broke
+        <code>isProxy</code> to match <code>"ProxyREGRESSIONPROBE"</code> &mdash; deleting dot-import and
+        in-package detection &mdash; and all six fixture subtests still <b>passed</b>. After the fix,
+        <b>lead re-ran that exact mutation</b>: <code>--- FAIL &hellip; /dotimport &hellip; the walker recognised
+        0 construction sites, want 1: it no longer sees this shape at all, which is the failure a finding count
+        cannot show</code>, and <code>/inpackage</code> likewise. Restored; tree clean.<br>
+        13 evasion fixtures under <code>internal/egress/testdata/f9evasion/</code>, one per shape, all caught:
+        aliasimport, dotimport, newcall, vardecl, inpackage, prearmed, sliceelided, ptrsliceelided, mapelided,
+        arrayelided, embedded, structfield, namedtype<br>
+        <code>BlockedPackets</code> split verified against a real <code>nft -j</code> dump rule by rule: the only
+        counter in <code>input</code> is the F9 rule, and a guest packet never matches it because it arrives on
+        the TAP<br>
+        256-address cap measured under <code>-race</code>: 400 distinct sources &times; 2 knocks, 32 concurrent
+        &rarr; <code>entries=256 (cap 256), total-events=256, addrs-recorded-twice=0</code>, no data race; the cap
+        bounds the record and never the refusal<br>
+        <code>make test</code> 20 packages ok / 0 fail &middot; <code>make vuln</code> clean &middot;
+        <code>make docs</code> no diff &middot; <code>gofmt</code>, <code>go vet</code> clean &middot;
+        <code>go test -race ./internal/egress/</code> ok &middot; five RECORD door tests green &middot;
+        re-run by the lead after rebasing onto <code>fa7f867</code><br>
+        <code>dev/accept-forward.sh</code> 16 passed / 5 failed on branch against 14/5 at the parent &mdash;
+        <i>same five failures</i>, pre-existing, caused by <code>halt()</code> leaking tables and by peer
+        sandboxes; the delta is exactly the two added checks<br>
+        <b>Four corrections to the security review:</b> its fix snippet dereferences <code>ra</code> before
+        testing <code>ok</code> and would panic on the exact input the check exists for; its
+        <code>report(...)</code> call touches <code>lastActive</code> and would have let any local process keep
+        an idle sandbox alive by knocking (closed with a separate path and its own test); its quoted threat-model
+        residual &ldquo;loopback is shared with every local user&rdquo; <b>does not appear in the file</b>; and its
+        instruction to set <code>Peer</code> &ldquo;from <code>Network.GuestIP</code>&rdquo; implies the wiring
+        lives near <code>Network</code>, when in fact <code>Network</code> never reaches the egress package and
+        all six sites are in <code>host/</code> and <code>shim/</code> &mdash; which is why layer 1 first shipped
+        unarmed and had to be granted a scoped ownership extension.<br>
+        <b>Found on the way, corrected:</b> <code>ReasonUnsafeResolvedAddr</code> existed in code but was absent
+        from the <code>egress.attempt</code> <code>reason</code> enumeration in <code>schema.go</code>, so the
+        generated audit reference had been describing a false list of refusal reasons since F2 shipped.<br>
+        <b>Pre-existing, triaged not fixed:</b> <code>FuzzScopeCovers</code> fails
+        (<code>prefix="/repos//"</code>, <code>target="/repos/"</code>) &mdash; that is <b>P7-14</b>, deferred by
+        the owner, and <code>scope.go</code>/<code>fuzz_test.go</code> are byte-identical between
+        <code>a393b2e</code> and the branch. <code>go test -race ./internal/sandbox/</code> fails on
+        <code>TestSilentTeamConnectionsAreCappedAndReclaimed</code>, also pre-existing and invisible to the gate
+        because <code>make test</code> does not run <code>-race</code>.</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
