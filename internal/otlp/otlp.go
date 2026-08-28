@@ -314,7 +314,7 @@ func rootSpanAttrs(d *digest.Digest) []Attr {
 	attrs = append(attrs, boolAttr("kelyfos.team", d.Team))
 	attrs = append(attrs, boolAttr("kelyfos.served", d.Served))
 	if d.EndReason != "" {
-		attrs = append(attrs, strAttr("kelyfos.session.end_reason", d.EndReason))
+		attrs = append(attrs, strAttr("kelyfos.session.end_reason", safe(d.EndReason)))
 	}
 	return attrs
 }
@@ -508,7 +508,7 @@ func buildCommandSpan(sessionID, traceID, parentID string, entry *digest.Entry) 
 		attrs = append(attrs, strAttr("kelyfos.command.cwd", safe(entry.Cwd)))
 	}
 	if entry.Via != "" {
-		attrs = append(attrs, strAttr("kelyfos.command.via", entry.Via))
+		attrs = append(attrs, strAttr("kelyfos.command.via", safe(entry.Via)))
 	}
 	if entry.Code != nil {
 		attrs = append(attrs, intAttr("kelyfos.command.exit_code", int64(*entry.Code)))
@@ -570,7 +570,7 @@ func buildEgressEvent(entry *digest.Entry) Event {
 		attrs = append(attrs, intAttr("server.port", int64(entry.Port)))
 	}
 	if entry.Mode != "" {
-		attrs = append(attrs, strAttr("kelyfos.egress.mode", entry.Mode))
+		attrs = append(attrs, strAttr("kelyfos.egress.mode", safe(entry.Mode)))
 	}
 	if entry.Reason != "" {
 		attrs = append(attrs, strAttr("kelyfos.egress.reason", safe(entry.Reason)))
