@@ -405,6 +405,13 @@ func timelineRows(d *digest.Digest) []Row {
 			if en.Reason != "" {
 				detail += " · " + en.Reason
 			}
+			// Who connected. Only a foreign_peer refusal carries this, and it
+			// carries nothing else — the request was never parsed, so there is
+			// no host and no port and the row read "BLOCKED " with an empty
+			// host and "port 0" (P7-17/F9, rendered in F20).
+			if en.Peer != "" {
+				detail += " · from " + en.Peer
+			}
 			if en.BytesIn > 0 || en.BytesOut > 0 {
 				detail += fmt.Sprintf(" · %d in / %d out", en.BytesIn, en.BytesOut)
 			}
@@ -609,6 +616,9 @@ func buildLanes(d *digest.Digest) ([]string, []LaneRow) {
 			detail := en.Mode
 			if en.Reason != "" {
 				detail += " " + en.Reason
+			}
+			if en.Peer != "" {
+				detail += " from " + en.Peer
 			}
 			add(LaneRow{ts, kind, title, detail, "", en.Refused, laneOf(en.Agent), false})
 		case recorder.TypeSecretUse:

@@ -5,6 +5,8 @@ import (
 	"bytes"
 	"errors"
 	"io"
+	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -78,13 +80,28 @@ func FuzzReaderRead(f *testing.F) {
 	f.Add([]byte("\r\n\r\n{}\r\n"))
 	f.Add([]byte("{\n{\n{\n"))
 	f.Add([]byte(`{"v":99999999999999999999}` + "\n"))
+	// The two shapes P7-17/F20 and F1 exist for, as raw bytes inside a string
+	// field: an OSC title-set, and a right-to-left override.
+	f.Add([]byte("{\"v\":1,\"kernel\":\"\x1b]0;pwned\x07\"}\n"))
+	f.Add([]byte("{\"v\":1,\"type\":\"resource.oom\",\"comm\":\"‮elbatpecca\"}\n"))
 
 	f.Fuzz(func(t *testing.T, data []byte) {
 		decode := func(next func() any) {
 			p := NewReader(bytes.NewReader(data))
 			for i := 0; i < 256; i++ {
-				if err := p.Read(next()); err != nil {
+				v := next()
+				if err := p.Read(v); err != nil {
 					return
+				}
+				// P7-17/F20: Read is the edge, so a frame it accepted must
+				// carry no string the host could not safely print. Asserted on
+				// the decoded struct rather than at any one print site,
+				// because the print sites are exactly what this defence exists
+				// to stop having to enumerate.
+				if _, ok := v.(Sanitizer); ok {
+					if field, bad := unsafeStringField(v); bad {
+						t.Fatalf("%T.%s survived Read carrying %q", v, field, data)
+					}
 				}
 			}
 		}
@@ -96,6 +113,59 @@ func FuzzReaderRead(f *testing.F) {
 		decode(func() any { return new(Heartbeat) })
 		decode(func() any { return new(Error) })
 	})
+}
+
+// unsafeStringField walks v — a pointer to one of the frame structs above —
+// and names the first string field, at any depth, that still carries a
+// character SafeText would have escaped.
+//
+// Reflection rather than a hand-written field list on purpose: a string field
+// added to one of these structs later is covered without anybody remembering
+// to add it here, and "somebody has to remember" is the failure mode F20 is.
+//
+// The base64 fields are skipped: they are bytes on the wire, decoded by the
+// caller, and SafeBody's business rather than SafeText's.
+func unsafeStringField(v any) (string, bool) {
+	skip := map[string]bool{"Data": true, "Stdin": true, "Entropy": true, "CAPEM": true}
+	var walk func(reflect.Value, string) (string, bool)
+	walk = func(rv reflect.Value, path string) (string, bool) {
+		switch rv.Kind() {
+		case reflect.Pointer, reflect.Interface:
+			if rv.IsNil() {
+				return "", false
+			}
+			return walk(rv.Elem(), path)
+		case reflect.Struct:
+			for i := 0; i < rv.NumField(); i++ {
+				f := rv.Type().Field(i)
+				if !f.IsExported() || skip[f.Name] {
+					continue
+				}
+				if where, bad := walk(rv.Field(i), path+"."+f.Name); bad {
+					return where, true
+				}
+			}
+		case reflect.Slice, reflect.Array:
+			for i := 0; i < rv.Len(); i++ {
+				if where, bad := walk(rv.Index(i), path); bad {
+					return where, true
+				}
+			}
+		case reflect.Map:
+			for _, k := range rv.MapKeys() {
+				if where, bad := walk(rv.MapIndex(k), path); bad {
+					return where, true
+				}
+			}
+		case reflect.String:
+			if s := rv.String(); SafeText(s) != s {
+				return path, true
+			}
+		}
+		return "", false
+	}
+	where, bad := walk(reflect.ValueOf(v), "")
+	return strings.TrimPrefix(where, "."), bad
 }
 
 // FuzzReadForwardOpen drives the first frame of an inbound port forward, which

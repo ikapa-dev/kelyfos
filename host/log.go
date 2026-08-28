@@ -780,15 +780,19 @@ func printEvent(line []byte, asJSON bool) {
 		// is not (E2-9, F-D19).
 		if e.Agent != "" {
 			fmt.Printf("%s  ready           %s%d ms  via=%s image=%s\n",
-				ts, who, e.BootMS, e.Via, e.Image)
+				ts, who, e.BootMS, proto.SafeText(e.Via), proto.SafeText(e.Image))
 			break
 		}
 		overlay := "overlay=?"
 		if e.Overlay != nil {
 			overlay = fmt.Sprintf("overlay=%t", *e.Overlay)
 		}
+		// The boot line is SafeText's own worked example — "where a person
+		// reads which walls are around their sandbox" — and until P7-17/F20
+		// it was the one line in this switch that did not use it, two cases
+		// above one that did.
 		fmt.Printf("%s  ready           %d ms  kernel=%s supervisor=%s %s\n",
-			ts, e.BootMS, e.Kernel, e.Supervisor, overlay)
+			ts, e.BootMS, proto.SafeText(e.Kernel), proto.SafeText(e.Supervisor), overlay)
 	case recorder.TypeSessionEnd:
 		fmt.Printf("%s  session end     %s after %d ms\n", ts, proto.SafeText(e.Reason), e.DurationMS)
 	case recorder.TypeCommandStart:
@@ -799,7 +803,14 @@ func printEvent(line []byte, asJSON bool) {
 		if e.Stream == "stderr" {
 			prefix = "  ! "
 		}
-		for _, l := range strings.Split(strings.TrimRight(string(data), "\n"), "\n") {
+		// proto.SafeBody rather than SafeText: this is the one field that is
+		// legitimately multi-line and legitimately coloured, so quoting the
+		// whole blob on one stray byte would cost more than it bought. It
+		// keeps \n, \t and SGR colour and replaces everything else — OSC,
+		// the screen controls, and a \r that would otherwise drive the cursor
+		// back over the fixed prefix below and let the guest print in the
+		// host's own voice (P7-17/F20).
+		for _, l := range strings.Split(strings.TrimRight(proto.SafeBody(string(data)), "\n"), "\n") {
 			fmt.Printf("%s%s%s\n", strings.Repeat(" ", len(ts)), prefix, l)
 		}
 	case recorder.TypeCommandExit:
@@ -809,7 +820,7 @@ func printEvent(line []byte, asJSON bool) {
 		}
 		extra := ""
 		if e.Error != nil {
-			extra = fmt.Sprintf("  (%s: %s)", e.Error.Kind, proto.SafeText(e.Error.Message))
+			extra = fmt.Sprintf("  (%s: %s)", proto.SafeText(e.Error.Kind), proto.SafeText(e.Error.Message))
 		}
 		fmt.Printf("%s  exit %-3d        %d ms%s\n", ts, code, e.DurationMS, extra)
 	case recorder.TypeFileWrite:
@@ -820,8 +831,17 @@ func printEvent(line []byte, asJSON bool) {
 		if e.Allowed != nil && *e.Allowed {
 			verdict = "allowed"
 		}
-		fmt.Printf("%s  egress %-7s %s%s:%d  mode=%s %s\n", ts, verdict, who,
-			proto.SafeText(e.Host), e.Port, e.Mode, proto.SafeText(e.Reason))
+		// Who connected, when the record knows. A foreign_peer refusal never
+		// parsed a request, so it carries no host and no port and printed as
+		// `egress BLOCKED :0` — indistinguishable from an ordinary blocked
+		// egress with an empty host, with the one fact that made it worth
+		// recording sitting unread in the chain (P7-17/F9, rendered in F20).
+		from := ""
+		if e.Peer != "" {
+			from = "  from " + proto.SafeText(e.Peer)
+		}
+		fmt.Printf("%s  egress %-7s %s%s:%d  mode=%s %s%s\n", ts, verdict, who,
+			proto.SafeText(e.Host), e.Port, proto.SafeText(e.Mode), proto.SafeText(e.Reason), from)
 	case recorder.TypeSecretUse:
 		fmt.Printf("%s  secret          %s%s -> %s\n", ts, who, proto.SafeText(e.Name), proto.SafeText(e.Host))
 	case recorder.TypeTeamMessage, recorder.TypeTeamRefused:

@@ -1212,6 +1212,41 @@ paragraphs up (a record that might still be open) means erasure refuses
 rather than guessing. `kelyfos sessions prune` is unrelated and coarser:
 whole directories past the retention floor, never a rewrite.
 
+### The operator's terminal, which the guest also writes to (P7-17, F20/F1)
+A guest chooses the bytes in its own process names, its plugin names and crash
+messages, its kernel and supervisor strings, and its command output. All of
+them are printed to a terminal — live during the run, and again on every
+`kelyfos log`, `kelyfos watch` and `kelyfos view` replay afterwards. A terminal
+acts on some of those bytes rather than displaying them, so a process named
+`\x1b[1A\x1b[2K\r` erases the line the host printed immediately before it,
+which on the boot path is the line saying which walls are around the sandbox.
+That is not a display nuisance: it is the guest deciding what the operator
+reads about the guest.
+
+The defence is applied **at the edge** rather than at each print. `proto.Reader`
+— the one function every host-side channel decodes a frame through — calls
+`Sanitize` on the decoded value, so a guest-chosen string is cleaned once,
+before it is either shown or appended to the flight recorder. Cleaning it
+before the append is the half that matters longest: an escape sequence written
+into the chain outlives the run and comes back on every later replay, and
+`strconv.Quote` is reversible, so the record loses nothing by carrying the
+escaped form.
+
+Replay is defended separately, because a chain on disk may have been written by
+an older build, hand-edited, or torn by a crash: every field the three
+renderers draw goes through `proto.SafeText`, and a command's captured output —
+legitimately multi-line and legitimately coloured — through `proto.SafeBody`,
+which keeps `\n`, `\t` and SGR colour and replaces everything else. What
+`SafeBody` never passes through is `ESC ]` (OSC: window titles and hyperlinks),
+`ESC [ … J` and `ESC [ … H` (erase and cursor movement), and a bare `\r`, which
+would otherwise drive the cursor back over the fixed prefix each output line is
+printed behind and let the guest speak in the host's own voice.
+
+What this does **not** cover: a terminal emulator with its own parsing bugs,
+and the bytes an interactive `kelyfos shell` session carries, which are a
+terminal stream by definition and are passed through as the shell's own
+(`docs/protocol.md` §5.7).
+
 ### One agent reaching another, in a team
 A team is several sandboxes on one host, and **no guest ever has a network path
 to another guest**: there is no route, no shared bridge and no address to

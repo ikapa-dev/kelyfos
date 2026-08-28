@@ -11,6 +11,8 @@ import (
 	"fmt"
 	"io"
 	"strconv"
+	"strings"
+	"unicode/utf8"
 )
 
 // Version is the protocol version carried by every message (docs/protocol.md §4).
@@ -189,6 +191,16 @@ type Error struct {
 // six places is a rule with six chances to be forgotten.
 func (e *Error) Error() string { return SafeText(e.Kind) + ": " + SafeText(e.Message) }
 
+// Sanitize replaces every string field the far side of a channel chose with
+// its SafeText form, in place. Nil-safe, because an Error is carried as a
+// pointer on every frame that has one and is absent on most of them.
+func (e *Error) Sanitize() {
+	if e == nil {
+		return
+	}
+	e.Kind, e.Message = SafeText(e.Kind), SafeText(e.Message)
+}
+
 // Error kinds. Anything reported to the host is one of these.
 const (
 	ErrBadRequest = "bad_request"
@@ -258,6 +270,14 @@ type ExecResponse struct {
 	Error  *Error `json:"error,omitempty"`
 }
 
+// Sanitize is Sanitizer for the exec channel's response frame. Data is base64
+// and is decoded by the caller, which is what SafeBody is for; every other
+// field here is a short string the guest chose.
+func (r *ExecResponse) Sanitize() {
+	r.Stream, r.Signal = SafeText(r.Stream), SafeText(r.Signal)
+	r.Error.Sanitize()
+}
+
 // Ready and Heartbeat travel on the guest-initiated ready channel (§5.3). The
 // host times the arrival of Ready itself and never trusts the guest's clock,
 // which before a post-restore resync may be arbitrarily wrong.
@@ -283,6 +303,17 @@ type Ready struct {
 	// confined one — a limit that is quietly not applied is worse than no
 	// limit, because somebody is relying on it (docs/hardening.md §4.3).
 	ProfileError string `json:"profile_error,omitempty"`
+}
+
+// Sanitize is Sanitizer for the ready frame. Every field here is a string the
+// guest chose, and the boot line is where a person reads which walls are
+// around their sandbox — SafeText's own doc comment calls it the sharpest
+// case, and until P7-17/F20 the ready frame was the one that reached the
+// terminal without it.
+func (r *Ready) Sanitize() {
+	r.Type, r.BootID, r.Arch = SafeText(r.Type), SafeText(r.BootID), SafeText(r.Arch)
+	r.Kernel, r.Supervisor = SafeText(r.Kernel), SafeText(r.Supervisor)
+	r.Profile, r.ProfileError = SafeText(r.Profile), SafeText(r.ProfileError)
 }
 
 type Heartbeat struct {
@@ -320,6 +351,22 @@ type GuestEvent struct {
 	// shape the outward door records: every key, with anything carrying content
 	// replaced by its size.
 	Args string `json:"args,omitempty"`
+}
+
+// Sanitize is Sanitizer for a guest event. Every string here is the guest's
+// own choice of bytes — a process name, a plugin's name and its crash message
+// — and host/run.go both prints them live and appends them to the flight
+// recorder, which is why they are cleaned here at the edge rather than at each
+// of those (P7-17/F20).
+//
+// Type is included even though it is only ever compared against the constants
+// below: a clean value is returned unchanged, and a hostile one no longer
+// matches, which routes it to the "unknown guest event type" branch that
+// already refuses to record it.
+func (e *GuestEvent) Sanitize() {
+	e.Type, e.Comm, e.Name = SafeText(e.Type), SafeText(e.Comm), SafeText(e.Name)
+	e.Tool, e.Outcome = SafeText(e.Tool), SafeText(e.Outcome)
+	e.Message, e.Args = SafeText(e.Message), SafeText(e.Args)
 }
 
 // Guest event types. Deliberately the same strings the flight recorder uses:
@@ -420,6 +467,14 @@ type ControlResponse struct {
 	// which is the case that matters: it means no confinement, not no answer.
 	Profile      string `json:"profile,omitempty"`
 	ProfileError string `json:"profile_error,omitempty"`
+}
+
+// Sanitize is Sanitizer for the control channel's response. A restored machine
+// never sends a ready frame, so this is the only place its profile string
+// reaches the host — the same field, and so the same rule.
+func (r *ControlResponse) Sanitize() {
+	r.Profile, r.ProfileError = SafeText(r.Profile), SafeText(r.ProfileError)
+	r.Error.Sanitize()
 }
 
 // Control operations.
@@ -550,9 +605,36 @@ func (p *Reader) Read(v any) error {
 		if err := json.Unmarshal(line, v); err != nil {
 			return &MalformedFrame{Err: err}
 		}
+		if s, ok := v.(Sanitizer); ok {
+			s.Sanitize()
+		}
 		return nil
 	}
 }
+
+// Sanitizer is implemented by every frame type whose string fields the far
+// side of the channel chose. Read calls it on the decoded value, which is the
+// single point where bytes off a socket become Go strings the host will print,
+// record and render.
+//
+// This is where the rule lives because it is the only place that sees every
+// one of them. P7-17/F20 counted eight print sites for these fields across
+// four commands plus one rec.Append — and the append is the reason a
+// per-print fix is not enough: host/run.go recorded a guest-chosen process
+// name into the hash chain verbatim, so the escape sequence outlived the run
+// and came back on every later replay. Cleaning it here means it is never
+// recorded in the first place, and strconv.Quote is reversible, so the record
+// loses nothing by carrying the escaped form.
+//
+// It also reaches readers this package cannot see: internal/sandbox's
+// serveEvents and serveReady decode into a GuestEvent and into an anonymous
+// struct embedding Ready, and Go promotes the embedded method, so both get
+// the sanitiser without either knowing it exists.
+//
+// A Sanitize implementation must be idempotent — SafeText's output contains no
+// character SafeText reacts to — because a value may be read, forwarded and
+// read again.
+type Sanitizer interface{ Sanitize() }
 
 // maxDrainOverlong bounds how many bytes DrainOverlongLine will read past the
 // frame it already refused. It is a small multiple of the reader's own frame
@@ -636,4 +718,113 @@ func SafeText(s string) string {
 		}
 	}
 	return s
+}
+
+// SafeBody is SafeText's counterpart for the one field shape SafeText is the
+// wrong fit for: a command's captured output, printed to a terminal on replay.
+//
+// Quoting the whole blob on one stray byte would turn genuinely useful,
+// multi-line, coloured output into an unreadable single-line wall of
+// backslashes — a larger regression than the property being defended, which is
+// the same judgement internal/report's safeBody already made for the HTML page.
+// So this keeps what output legitimately contains and removes what it does not:
+//
+//   - \n and \t survive. A body is multi-line; that is what makes it a body.
+//   - SGR — ESC [ … m, the colour and attribute sequences — survives, so a
+//     test runner's red FAIL still reads as one.
+//   - Everything else becomes U+FFFD: every other C0 byte, DEL, an ESC
+//     introducing anything but SGR, and any byte that is not valid UTF-8.
+//
+// The exclusions are the point. ESC ] is OSC, which sets the window title and
+// mints hyperlinks; ESC [ … J and ESC [ … H erase the screen and move the
+// cursor, which is how a guest rewrites lines the host already printed; and a
+// bare \r drives the cursor back over the fixed prefix `kelyfos log` puts in
+// front of every output line, which is how a guest gets to speak in the host's
+// own voice. \r is therefore NOT in the keep list even though \n and \t are —
+// the one deliberate difference from internal/report's safeBody, which renders
+// into a <pre> where \r moves nothing.
+func SafeBody(s string) string {
+	if !bodyNeedsSanitising(s) {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); {
+		if c := s[i]; c < utf8.RuneSelf {
+			switch {
+			case c == '\n' || c == '\t':
+				b.WriteByte(c)
+			case c == esc:
+				if n := sgrLen(s[i:]); n > 0 {
+					b.WriteString(s[i : i+n])
+					i += n
+					continue
+				}
+				b.WriteRune(utf8.RuneError)
+			case c < 0x20 || c == 0x7f:
+				b.WriteRune(utf8.RuneError)
+			default:
+				b.WriteByte(c)
+			}
+			i++
+			continue
+		}
+		r, size := utf8.DecodeRuneInString(s[i:])
+		if r == utf8.RuneError && size == 1 {
+			// Not valid UTF-8. Command output is arbitrary bytes, so this is
+			// an ordinary case, not a hostile one; it is replaced rather than
+			// passed through because a terminal decoding it is anyone's guess.
+			b.WriteRune(utf8.RuneError)
+			i++
+			continue
+		}
+		b.WriteRune(r)
+		i += size
+	}
+	return b.String()
+}
+
+const esc = 0x1b
+
+// maxSGRParams bounds how far sgrLen will scan for a terminating 'm'. Real
+// colour sequences are a handful of bytes; an ESC [ followed by a megabyte of
+// digits is not one, and treating it as SGR would mean copying it through.
+const maxSGRParams = 64
+
+// sgrLen returns the length of the SGR sequence at the start of s, or 0 if
+// what is there is not one. The shape is ESC [ P* I* F where P is 0x30-0x3f,
+// I is 0x20-0x2f and F — the final byte, the one that says what the sequence
+// does — must be 'm'.
+func sgrLen(s string) int {
+	if len(s) < 3 || s[0] != esc || s[1] != '[' {
+		return 0
+	}
+	i := 2
+	for i < len(s) && i < 2+maxSGRParams && s[i] >= 0x30 && s[i] <= 0x3f {
+		i++
+	}
+	for i < len(s) && i < 2+maxSGRParams && s[i] >= 0x20 && s[i] <= 0x2f {
+		i++
+	}
+	if i < len(s) && s[i] == 'm' {
+		return i + 1
+	}
+	return 0
+}
+
+// bodyNeedsSanitising is the fast path: a body of plain ASCII with no control
+// bytes but \n and \t is returned as it came, without allocating. Anything
+// else — a control byte, or any non-ASCII at all — takes the walk above, which
+// rewrites clean UTF-8 to itself.
+func bodyNeedsSanitising(s string) bool {
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c == '\n' || c == '\t' {
+			continue
+		}
+		if c < 0x20 || c == 0x7f || c >= utf8.RuneSelf {
+			return true
+		}
+	}
+	return false
 }

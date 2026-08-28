@@ -791,7 +791,8 @@ func memberOptions(a plannedAgent, id, arch string, broker *team.Broker,
 			if ev.Type == proto.GuestEventOOM {
 				fmt.Fprintf(os.Stderr,
 					"\nkelyfos: %s ran out of memory and killed %s (pid %d, %s resident of a %d MiB machine)\n",
-					a.name, ev.Comm, ev.PID, report.HumanKiB(ev.RSSKiB), a.res.MemMiB)
+					proto.SafeText(a.name), proto.SafeText(ev.Comm), ev.PID,
+					report.HumanKiB(ev.RSSKiB), a.res.MemMiB)
 			}
 		},
 	}

@@ -502,19 +502,33 @@ func (m *watchModel) absorb(e recorder.Event) {
 		m.flow = bound(append(m.flow, dim.Render(ts)+" "+text), 200)
 	}
 
+	// Every value below came out of the chain, which means a guest, a
+	// teammate or a tampered file chose it, and lipgloss emits exactly what it
+	// is handed — fitStyled trims runes and is not a sanitiser. `kelyfos log`
+	// and `kelyfos view` have routed these through proto.SafeText since P6-28;
+	// this view routed none of them until P7-17/F20, so an OOM victim named
+	// "\x1b[2J" cleared the operator's screen mid-run and repainted whatever
+	// it liked. safe is named short because it is used on every line here.
+	safe := proto.SafeText
+
 	switch e.Type {
 	case recorder.TypeSessionStart:
-		add(styleMuted, "session", "start "+e.Image+" · "+e.Arch)
+		add(styleMuted, "session", "start "+safe(e.Image)+" · "+safe(e.Arch))
 	case recorder.TypeSessionReady:
-		add(styleOK, "ready", fmt.Sprintf("%d ms · kernel %s", e.BootMS, e.Kernel))
+		add(styleOK, "ready", fmt.Sprintf("%d ms · kernel %s", e.BootMS, safe(e.Kernel)))
 	case recorder.TypeSessionEnd:
-		add(styleMuted, "session", "end "+e.Reason)
+		add(styleMuted, "session", "end "+safe(e.Reason))
 	case recorder.TypeCommandStart:
-		add(styleCmd, "$", strings.Join(e.Cmd, " "))
+		add(styleCmd, "$", safe(strings.Join(e.Cmd, " ")))
 	case recorder.TypeCommandOutput:
 		// entry.Text is the base64 payload, already decoded once by
 		// digest.Absorb — this view no longer decodes it a second time.
-		for _, l := range strings.Split(strings.TrimRight(entry.Text, "\n"), "\n") {
+		// proto.SafeBody rather than safe, for the same reason the replay
+		// uses it: output is legitimately multi-line and legitimately
+		// coloured, and quoting the whole chunk would cost more than it
+		// bought. Applied to the whole chunk before the split, so a sequence
+		// straddling a newline cannot be reassembled by the terminal.
+		for _, l := range strings.Split(strings.TrimRight(proto.SafeBody(entry.Text), "\n"), "\n") {
 			if strings.TrimSpace(l) == "" {
 				continue
 			}
@@ -535,15 +549,22 @@ func (m *watchModel) absorb(e recorder.Event) {
 		}
 		add(style, "exit", fmt.Sprintf("%d · %d ms", code, e.DurationMS))
 	case recorder.TypeFileWrite:
-		add(styleAmber, "write", fmt.Sprintf("%s · %d bytes", e.Path, e.Bytes))
+		add(styleAmber, "write", fmt.Sprintf("%s · %d bytes", safe(e.Path), e.Bytes))
 	case recorder.TypeEgressAttempt:
+		// from names who connected, which only a foreign_peer refusal carries
+		// — and it carries nothing else, so without this the line reads
+		// `BLOCKED :0 · foreign_peer` (P7-17/F9, rendered in F20).
+		from := ""
+		if e.Peer != "" {
+			from = " from " + safe(e.Peer)
+		}
 		if !entry.Refused {
-			add(styleOK, "egress", fmt.Sprintf("%s:%d · %s", e.Host, e.Port, e.Mode))
+			add(styleOK, "egress", fmt.Sprintf("%s:%d · %s%s", safe(e.Host), e.Port, safe(e.Mode), from))
 		} else {
-			add(styleWarn, "BLOCKED", fmt.Sprintf("%s:%d · %s", e.Host, e.Port, e.Reason))
+			add(styleWarn, "BLOCKED", fmt.Sprintf("%s:%d · %s%s", safe(e.Host), e.Port, safe(e.Reason), from))
 		}
 	case recorder.TypeSecretUse:
-		add(styleAmber, "secret", e.Name+" → "+e.Host)
+		add(styleAmber, "secret", safe(e.Name)+" → "+safe(e.Host))
 	case recorder.TypeTeamMessage, recorder.TypeTeamRefused:
 		// Named so the two ends are both visible: an ask points forward, a
 		// reply back, and a refusal says so before it says anything else.
@@ -551,9 +572,9 @@ func (m *watchModel) absorb(e recorder.Event) {
 		if e.Kind == "reply" {
 			arrow = "←"
 		}
-		body := fmt.Sprintf("%s %s %s  %s · %d bytes", e.Agent, arrow, e.Peer, e.Kind, e.Bytes)
+		body := fmt.Sprintf("%s %s %s  %s · %d bytes", safe(e.Agent), arrow, safe(e.Peer), safe(e.Kind), e.Bytes)
 		if entry.Refused {
-			tick(styleWarn.Render("REFUSED ") + body + dim.Render("  ("+e.Reason+")"))
+			tick(styleWarn.Render("REFUSED ") + body + dim.Render("  ("+safe(e.Reason)+")"))
 			if l, ok := refusalLine(e); ok {
 				m.pushRefusal(l)
 			}
@@ -568,23 +589,26 @@ func (m *watchModel) absorb(e recorder.Event) {
 		if entry.Refused {
 			style, label = styleWarn, "DENIED"
 			tick(styleWarn.Render("DENIED  ") +
-				fmt.Sprintf("%s %s %s", e.Agent, e.Kind, e.Peer) + dim.Render("  ("+e.Reason+")"))
+				fmt.Sprintf("%s %s %s", safe(e.Agent), safe(e.Kind), safe(e.Peer)) +
+				dim.Render("  ("+safe(e.Reason)+")"))
 			if l, ok := refusalLine(e); ok {
 				m.pushRefusal(l)
 			}
 		}
-		add(style, label, fmt.Sprintf("%s %s", e.Kind, e.Peer))
+		add(style, label, fmt.Sprintf("%s %s", safe(e.Kind), safe(e.Peer)))
 	case recorder.TypeTeamSpawn:
 		if entry.Refused {
-			tick(styleWarn.Render("REFUSED ") + e.Agent + " may not spawn" + dim.Render("  ("+e.Reason+")"))
+			tick(styleWarn.Render("REFUSED ") + safe(e.Agent) + " may not spawn" +
+				dim.Render("  ("+safe(e.Reason)+")"))
 			if l, ok := refusalLine(e); ok {
 				m.pushRefusal(l)
 			}
 			break
 		}
-		tick(styleOK.Render("spawn   ") + fmt.Sprintf("%s %s by %s", e.Kind, e.Peer, e.Agent))
+		tick(styleOK.Render("spawn   ") + fmt.Sprintf("%s %s by %s", safe(e.Kind), safe(e.Peer), safe(e.Agent)))
 	case recorder.TypeResourceOOM:
-		add(styleWarn, "OOM", fmt.Sprintf("%s (pid %d) holding %s", e.Comm, e.PID, report.HumanKiB(e.RSSKiB)))
+		add(styleWarn, "OOM", fmt.Sprintf("%s (pid %d) holding %s",
+			safe(e.Comm), e.PID, report.HumanKiB(e.RSSKiB)))
 	}
 }
 
@@ -720,7 +744,7 @@ func (m *watchModel) teamView(width, height int) string {
 		var merged []string
 		for _, name := range m.order {
 			for _, ln := range m.lanes[name].lines {
-				merged = append(merged, dim.Render("["+name+"]")+" "+ln)
+				merged = append(merged, dim.Render("["+proto.SafeText(name)+"]")+" "+ln)
 			}
 		}
 		body = dim.Render(fmt.Sprintf(
@@ -766,7 +790,10 @@ func (m *watchModel) teamView(width, height int) string {
 // that are only usually the same width are not columns.
 func (m *watchModel) laneBlock(l *lane, laneW, laneH int) []string {
 	out := make([]string, 0, laneH+2)
-	out = append(out, titleStyle.Render(fit(l.name, laneW)))
+	// The lane's heading is an agent name off the chain — the sheet pane has
+	// routed it through SafeText since it was written; this one had not
+	// (P7-17/F20).
+	out = append(out, titleStyle.Render(fit(proto.SafeText(l.name), laneW)))
 	out = append(out, barStyle.Render(fit(l.laneUsage(m.agentReceipt(l.name)), laneW)))
 	lines := bound(l.lines, laneH)
 	for _, ln := range lines {
@@ -990,7 +1017,7 @@ func (m *watchModel) sheetPane(width, height int) string {
 			sandboxID = m.session
 		}
 		fmt.Fprintf(&b, "%-18s %-10s %-16s %6s %6d %6d %8d %8d %6d\n",
-			fit(proto.SafeText(name), 18), fit(sandboxID, 10), caps, allow,
+			fit(proto.SafeText(name), 18), fit(proto.SafeText(sandboxID), 10), caps, allow,
 			c.Commands, c.Failed, c.EgressOK, c.EgressBlocked, c.Secrets)
 	}
 

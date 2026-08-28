@@ -582,7 +582,19 @@ func viewLogLine(e recorder.Event) string {
 		if e.Allowed != nil && *e.Allowed {
 			verdict = "allowed"
 		}
-		return fmt.Sprintf("%s  %segress %s %s:%d", ts, who, verdict, proto.SafeText(e.Host), e.Port)
+		// Why, and who — neither of which this line said. A refusal that does
+		// not say why is a refusal the reader has to go to `kelyfos log` for,
+		// and a foreign_peer refusal has nothing else to show: it carries no
+		// host and no port, so `egress BLOCKED :0` was the whole line
+		// (P7-17/F9, rendered in F20).
+		detail := ""
+		if e.Reason != "" {
+			detail += " · " + proto.SafeText(e.Reason)
+		}
+		if e.Peer != "" {
+			detail += " from " + proto.SafeText(e.Peer)
+		}
+		return fmt.Sprintf("%s  %segress %s %s:%d%s", ts, who, verdict, proto.SafeText(e.Host), e.Port, detail)
 	case recorder.TypeSecretUse:
 		return fmt.Sprintf("%s  %ssecret %s -> %s", ts, who, proto.SafeText(e.Name), proto.SafeText(e.Host))
 	case recorder.TypeTeamMessage, recorder.TypeTeamRefused:

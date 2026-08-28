@@ -149,7 +149,12 @@ to close.
 			_ = rec.Append(ev)
 
 			if resp.Error != nil {
-				fmt.Fprintf(os.Stderr, "kelyfos: %s: %s\n", resp.Error.Kind, resp.Error.Message)
+				// resp.Error's own Error() renders both fields through
+				// SafeText — "applied here, at the one place every one of
+				// them formats a guest's error, rather than at each caller"
+				// (proto.Error's doc comment). This caller was formatting the
+				// two fields by hand and so was not getting it (P7-17/F20).
+				fmt.Fprintf(os.Stderr, "kelyfos: %s\n", resp.Error)
 				return &exitError{code: exitCodeFor(resp.Error.Kind)}
 			}
 			code := -1

@@ -514,16 +514,22 @@ status. This is how you hand an agent a sandbox and nothing else:
 				Type: recorder.TypeResourceOOM, Source: recorder.SourceGuest,
 				PID: ev.PID, Comm: ev.Comm, RSSKiB: ev.RSSKiB, MemMiB: *memMiB,
 			})
+			// proto.Reader.Read has already sanitised every string on this
+			// frame at the edge (P7-17/F20), which is what keeps the
+			// rec.Append above from writing an escape sequence into the
+			// chain. SafeText here as well because this handler is reachable
+			// from a test and from any future caller that builds the event
+			// itself, and idempotent, so the second call costs nothing.
 			fmt.Fprintf(os.Stderr,
 				"\nkelyfos: the guest ran out of memory and killed %s (pid %d, %s resident "+
 					"of a %d MiB machine)\n         raise --mem, or lower what the agent is asked to hold\n",
-				ev.Comm, ev.PID, report.HumanKiB(ev.RSSKiB), *memMiB)
+				proto.SafeText(ev.Comm), ev.PID, report.HumanKiB(ev.RSSKiB), *memMiB)
 		case proto.GuestEventPluginCall, proto.GuestEventPluginCrash:
 			_ = rec.Append(pluginEvent(ev))
 			if ev.Type == proto.GuestEventPluginCrash {
 				fmt.Fprintf(os.Stderr, "\nkelyfos: plugin %s stopped: %s\n"+
 					"         its tools now fail and say so; nothing else in the sandbox is affected\n",
-					ev.Name, ev.Message)
+					proto.SafeText(ev.Name), proto.SafeText(ev.Message))
 			}
 		default:
 			// Unknown guest event types are ignored rather than recorded: the
@@ -671,8 +677,12 @@ status. This is how you hand an agent a sandbox and nothing else:
 
 	fmt.Printf("sandbox %s ready in %d ms (vmm %d ms + guest %d ms)\n",
 		sb.State.ID, sb.State.BootReadyMS, sb.State.BootReadyMS-guestMS, guestMS)
-	fmt.Printf("  kernel      %s (%s)\n", ready.Kernel, ready.Arch)
-	fmt.Printf("  supervisor  %s\n", ready.Supervisor)
+	// The boot line SafeText's own doc comment is written about: where a
+	// person reads which walls are around their sandbox. Sanitised at the edge
+	// by proto.Reader.Read (P7-17/F20) and again here, because this is the
+	// line the finding names.
+	fmt.Printf("  kernel      %s (%s)\n", proto.SafeText(ready.Kernel), proto.SafeText(ready.Arch))
+	fmt.Printf("  supervisor  %s\n", proto.SafeText(ready.Supervisor))
 	if !ready.Overlay {
 		fmt.Fprintln(os.Stderr, "  warning: the guest is running on a READ-ONLY root — the overlay failed")
 	}
