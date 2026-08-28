@@ -1339,7 +1339,7 @@ func readTeamBudget(st *teamState) *teamBudget {
 func teamPS(argv []string) error {
 	fs := flag.NewFlagSet("kelyfos team ps", flag.ExitOnError)
 	showGraph := fs.Bool("graph", false,
-		"draw the running team's topology (P7-7) instead of the table below")
+		"draw the topology this team was declared with at boot (P7-7) instead of the table below")
 	if err := fs.Parse(argv); err != nil {
 		return err
 	}

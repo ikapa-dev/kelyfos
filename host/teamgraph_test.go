@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -34,7 +35,7 @@ func TestBuildGraphInputSynthesizesAccessForUnmatchedStoreKeys(t *testing.T) {
 	agents := []graphAgent{{Name: "master"}, {Name: "worker-1"}}
 	store := []graphStoreRule{{Name: "findings", Read: []string{"master"}, Write: []string{"worker-1"}}}
 
-	in, err := buildGraphInput(agents, nil, store)
+	in, err := buildGraphInput(agents, nil, store, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,15 +70,58 @@ func TestBuildGraphInputSynthesizesAccessForUnmatchedStoreKeys(t *testing.T) {
 		}
 	}
 
-	// A team with no store rules at all gets no synthetic resource: there is
-	// nothing declared for it to stand in for.
-	empty, err := buildGraphInput(agents, nil, nil)
+	// A team with the store OFF gets no synthetic resource: there is nothing
+	// declared for it to stand in for.
+	off, err := buildGraphInput(agents, nil, nil, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, r := range empty.Resources {
+	for _, r := range off.Resources {
 		if r.ID == unmatchedStoreKeyID {
-			t.Error("a team with zero store rules still got the synthetic unmatched-key resource")
+			t.Error("a team with the store off still got the synthetic unmatched-key resource")
+		}
+	}
+}
+
+// A store enabled with ZERO [[team.store.key]] rules is not the same as no
+// store at all: per internal/team/store.go, every key is then team-wide by
+// default, and a review caught buildGraphInput gating the synthetic
+// resource on len(store) > 0 instead of the real, independent storeEnabled
+// flag — a live 3-agent team with an empty, enabled store drew no store
+// node at all. storeEnabled and store are deliberately independent
+// parameters (host/teamplan.go's teamPlan draws them as two separate
+// fields) so this case is representable.
+func TestBuildGraphInputSynthesizesAccessForAnEnabledStoreWithZeroRules(t *testing.T) {
+	agents := []graphAgent{{Name: "master"}, {Name: "worker-1"}}
+
+	in, err := buildGraphInput(agents, nil, nil, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sawUnmatched bool
+	for _, r := range in.Resources {
+		if r.ID == unmatchedStoreKeyID {
+			sawUnmatched = true
+		}
+	}
+	if !sawUnmatched {
+		t.Fatal("an enabled store with zero rules got no store resource at all — every key is " +
+			"team-wide by default here, and this view drew nothing for it")
+	}
+	for _, agentName := range []string{"master", "worker-1"} {
+		var read, write bool
+		for _, a := range in.Access {
+			if a.Agent == graph.AgentID(agentName) && a.Resource == unmatchedStoreKeyID {
+				if a.Write {
+					write = true
+				} else {
+					read = true
+				}
+			}
+		}
+		if !read || !write {
+			t.Errorf("%s does not have both read and write access to the open store: read=%v write=%v",
+				agentName, read, write)
 		}
 	}
 }
@@ -87,7 +131,7 @@ func TestBuildGraphInputResolvesDomainsAndSecretsPerAgent(t *testing.T) {
 		{Name: "master", Allow: []string{"example.com"}, Secrets: []recorder.EvSecret{{Name: "TOK", Host: "example.com"}}},
 		{Name: "worker"},
 	}
-	in, err := buildGraphInput(agents, []string{"master -> worker"}, nil)
+	in, err := buildGraphInput(agents, []string{"master -> worker"}, nil, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,7 +164,7 @@ func TestBuildGraphInputResolvesDomainsAndSecretsPerAgent(t *testing.T) {
 
 func TestBuildGraphInputRefusesAMalformedEdge(t *testing.T) {
 	agents := []graphAgent{{Name: "a"}, {Name: "b"}}
-	if _, err := buildGraphInput(agents, []string{"a --- b"}, nil); err == nil {
+	if _, err := buildGraphInput(agents, []string{"a --- b"}, nil, false); err == nil {
 		t.Error("an edge with no \" -> \" was accepted")
 	}
 }
@@ -190,6 +234,83 @@ func TestRenderTeamGraphDrawsTheCanvasEdgesAndIndirectReach(t *testing.T) {
 	// through master.
 	if !strings.Contains(out, "worker-1 -> worker-2 (2 hops") {
 		t.Errorf("indirect reach through the hub was not reported:\n%s", out)
+	}
+}
+
+// The bug a review caught: internal/graph.TransitiveClosure makes a shared
+// StoreKey a ONE-hop relation (a write->read pair), the same as a declared
+// edge — but the old filter only reported a pair as "indirect reach" when
+// hops > 1, so every store-mediated reach, including the whole-team default
+// access unmatchedStoreKeyID grants, was silently dropped. Two agents with
+// NO declared edges and one store both may read and write: they reach each
+// other in exactly one hop, through no edge at all, and the section must
+// say so.
+func TestRenderTeamGraphReportsOneHopStoreMediatedReachAsIndirect(t *testing.T) {
+	in, err := buildGraphInput(
+		[]graphAgent{{Name: "worker-1"}, {Name: "worker-2"}},
+		nil, // no declared edges at all
+		[]graphStoreRule{{Name: "shared", Read: []string{"*"}, Write: []string{"*"}}},
+		true,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var b strings.Builder
+	if err := renderTeamGraph(&b, in, "title"); err != nil {
+		t.Fatal(err)
+	}
+	out := b.String()
+	if !strings.Contains(out, "indirect reach") {
+		t.Fatalf("no indirect-reach section for a store-only, edge-free pair:\n%s", out)
+	}
+	for _, want := range []string{"worker-1 -> worker-2 (1 hop", "worker-2 -> worker-1 (1 hop"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q — a one-hop, store-mediated reach was not reported:\n%s", want, out)
+		}
+	}
+}
+
+// Every pair NOT in in.Edges and reachable at all is reported, regardless
+// of hop count — direct edges themselves must never appear in the
+// "indirect reach" section (they are not indirect).
+func TestRenderTeamGraphNeverReportsADirectEdgeAsIndirectReach(t *testing.T) {
+	in := graph.Input{
+		Agents: []graph.Agent{{ID: "a"}, {ID: "b"}},
+		Edges:  []graph.Edge{{From: "a", To: "b"}},
+	}
+	var b strings.Builder
+	if err := renderTeamGraph(&b, in, "title"); err != nil {
+		t.Fatal(err)
+	}
+	out := b.String()
+	if strings.Contains(out, "indirect reach") {
+		t.Errorf("a two-agent team with only a direct edge got an indirect-reach section:\n%s", out)
+	}
+}
+
+// Bounded, and saying so when it truncates: a large team makes this list
+// close to quadratic once a store is enabled (every pair reaches in one
+// hop), and it must not be allowed to print without limit.
+func TestRenderTeamGraphIndirectReachIsBoundedAndSaysSoWhenTruncated(t *testing.T) {
+	var agents []graphAgent
+	for i := 0; i < 30; i++ {
+		agents = append(agents, graphAgent{Name: fmt.Sprintf("worker-%02d", i)})
+	}
+	in, err := buildGraphInput(agents, nil,
+		[]graphStoreRule{{Name: "shared", Read: []string{"*"}, Write: []string{"*"}}}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var b strings.Builder
+	if err := renderTeamGraph(&b, in, "title"); err != nil {
+		t.Fatal(err)
+	}
+	out := b.String()
+	if got := strings.Count(out, "hop"); got > maxIndirectReachLines {
+		t.Errorf("printed %d indirect-reach lines, want at most the bound of %d", got, maxIndirectReachLines)
+	}
+	if !strings.Contains(out, "more pair(s) not shown") {
+		t.Errorf("no truncation notice for a 30-agent, fully-open store:\n%s", out)
 	}
 }
 
@@ -269,5 +390,130 @@ func TestPrintRecentRefusalsIsBoundedAndSaysSoWhenTruncated(t *testing.T) {
 	}
 	if strings.Count(out, "add [[team.edge]]") != maxRefusalLines {
 		t.Errorf("printed %d fix lines, want the bound of %d", strings.Count(out, "add [[team.edge]]"), maxRefusalLines)
+	}
+}
+
+// "refused since boot" used to cover only two of the reasons
+// team.refused/team.store/team.spawn can carry, which reads as complete
+// when it is not — a review's finding. refusalLine now covers every real
+// refusal reason each of the three event types can carry; this proves each
+// one is recognised (ok == true) and, where internal/denial has a matching
+// entry, carries that exact fix line.
+func TestRefusalLineCoversEveryRefusalReason(t *testing.T) {
+	cases := []struct {
+		name string
+		e    recorder.Event
+		want string // substring the line must contain
+	}{
+		{"no_edge", recorder.Event{Type: recorder.TypeTeamRefused, Agent: "a", Peer: "b", Reason: "no_edge"},
+			"add [[team.edge]]"},
+		{"no_such_agent", recorder.Event{Type: recorder.TypeTeamRefused, Agent: "a", Peer: "ghost", Reason: "no_such_agent"},
+			"is not in this team"},
+		{"missing_correlation", recorder.Event{Type: recorder.TypeTeamRefused, Agent: "a", Reason: "missing_correlation"},
+			"carried no correlate tag"},
+		{"unknown_correlation", recorder.Event{Type: recorder.TypeTeamRefused, Agent: "a", Reason: "unknown_correlation"},
+			"matched no outstanding question"},
+		{"store denied", recorder.Event{Type: recorder.TypeTeamStore, Agent: "a", Peer: "k", Kind: "get",
+			Outcome: "refused", Reason: "denied"}, "add \"a\" to read"},
+		{"store key_too_long", recorder.Event{Type: recorder.TypeTeamStore, Agent: "a", Kind: "put",
+			Outcome: "refused", Reason: "key_too_long"}, "tried a store key over"},
+		{"store value_too_large", recorder.Event{Type: recorder.TypeTeamStore, Agent: "a", Kind: "put",
+			Outcome: "refused", Reason: "value_too_large"}, "more than"},
+		{"store too_many_keys", recorder.Event{Type: recorder.TypeTeamStore, Agent: "a", Kind: "put",
+			Outcome: "refused", Reason: "too_many_keys"}, "key store limit"},
+		{"store store_full", recorder.Event{Type: recorder.TypeTeamStore, Agent: "a", Kind: "put",
+			Outcome: "refused", Reason: "store_full"}, "byte store limit"},
+		{"spawn no_spawn_budget", recorder.Event{Type: recorder.TypeTeamSpawn, Agent: "a", Kind: "spawn",
+			Outcome: "refused", Reason: "no_spawn_budget"}, "has no spawn budget"},
+		{"spawn budget_exhausted", recorder.Event{Type: recorder.TypeTeamSpawn, Agent: "a", Kind: "spawn",
+			Outcome: "refused", Reason: "budget_exhausted"}, "budget allows"},
+		{"spawn image_not_permitted", recorder.Event{Type: recorder.TypeTeamSpawn, Agent: "a", Kind: "spawn",
+			Outcome: "refused", Reason: "image_not_permitted"}, "does not permit"},
+		{"spawn name_taken", recorder.Event{Type: recorder.TypeTeamSpawn, Agent: "a", Peer: "a-spawn-1", Kind: "spawn",
+			Outcome: "refused", Reason: "name_taken"}, "collided with an existing agent name"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			line, ok := refusalLine(tc.e)
+			if !ok {
+				t.Fatalf("refusalLine did not recognise reason %q", tc.e.Reason)
+			}
+			if !strings.Contains(line, tc.want) {
+				t.Errorf("line = %q, want it to contain %q", line, tc.want)
+			}
+		})
+	}
+}
+
+// Two reasons are deliberately excluded, and this pins that they stay
+// excluded rather than reappearing by accident: team.store's "no_such_key"
+// is an absence, not a refusal (docs/teams.md's own words), and
+// team.spawn's despawn-side "not_a_spawned_worker" is an internal condition
+// nobody watching a team's policy file can act on. A delivered event of any
+// type is excluded too.
+func TestRefusalLineExcludesAbsenceAndInternalConditions(t *testing.T) {
+	cases := []recorder.Event{
+		{Type: recorder.TypeTeamStore, Agent: "a", Kind: "get", Outcome: "refused", Reason: "no_such_key"},
+		{Type: recorder.TypeTeamSpawn, Kind: "despawn", Outcome: "refused", Reason: "not_a_spawned_worker"},
+		{Type: recorder.TypeTeamStore, Agent: "a", Kind: "get", Outcome: "delivered"},
+		{Type: recorder.TypeTeamSpawn, Agent: "a", Kind: "spawn", Outcome: "delivered"},
+		{Type: recorder.TypeTeamMessage, Agent: "a", Peer: "b", Kind: "send"},
+	}
+	for _, e := range cases {
+		if line, ok := refusalLine(e); ok {
+			t.Errorf("reason %q (type %s) was not excluded: %q", e.Reason, e.Type, line)
+		}
+	}
+}
+
+// A worker spawned at runtime (broker.OnSpawn) is real but never appears in
+// the boot-time team.topology event — spawnedAgentsNotInTopology is what
+// lets the view say so explicitly instead of silently blending "declared"
+// and "actual" into one answer (a review's finding).
+func TestSpawnedAgentsNotInTopology(t *testing.T) {
+	topo := recorder.NewTeamTopology(recorder.TopologyFields{
+		Agents: []recorder.EvAgent{{Name: "master"}, {Name: "worker-1"}},
+	})
+	agents := map[string]*digest.Agent{
+		"master":         {Name: "master"},
+		"worker-1":       {Name: "worker-1"},
+		"master-spawn-1": {Name: "master-spawn-1"},
+		"master-spawn-2": {Name: "master-spawn-2"},
+	}
+	got := spawnedAgentsNotInTopology(&topo, agents)
+	if strings.Join(got, ",") != "master-spawn-1,master-spawn-2" {
+		t.Errorf("spawnedAgentsNotInTopology = %v, want just the two spawned workers, sorted", got)
+	}
+
+	// Every declared agent present and nobody spawned: nothing extra.
+	none := spawnedAgentsNotInTopology(&topo, map[string]*digest.Agent{
+		"master": {Name: "master"}, "worker-1": {Name: "worker-1"},
+	})
+	if len(none) != 0 {
+		t.Errorf("declared-only agents reported as spawned: %v", none)
+	}
+}
+
+// fitToBudget must never emit more than budget lines, note included — the
+// off-by-one a review caught: the old per-pane logic picked a full budget's
+// worth of content and then appended a truncation note on top, emitting
+// budget+1 lines every time it truncated.
+func TestFitToBudgetNeverExceedsItsBudget(t *testing.T) {
+	lines := []string{"a", "b", "c", "d", "e", "f", "g", "h", "i", "j"}
+	note := "…more"
+	for budget := 0; budget <= len(lines)+2; budget++ {
+		got := fitToBudget(lines, budget, note)
+		if len(got) > budget {
+			t.Errorf("budget %d: got %d lines (%v), want at most %d", budget, len(got), got, budget)
+		}
+	}
+	// Under budget: nothing is cut, and the note never appears.
+	if got := fitToBudget(lines, 100, note); len(got) != len(lines) {
+		t.Errorf("a budget larger than the content still truncated: %v", got)
+	}
+	// Over budget: the note is present and is the last line.
+	got := fitToBudget(lines, 3, note)
+	if len(got) != 3 || got[2] != note {
+		t.Errorf("fitToBudget(lines, 3, note) = %v, want 3 lines ending in the note", got)
 	}
 }

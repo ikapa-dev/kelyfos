@@ -825,20 +825,40 @@ orchestrator waiting on a quiet agent should not expect the record to say so.
 
 ### 8.4 `kelyfos team graph` and `kelyfos team ps --graph` (P7-7)
 
-Three questions about a team, three commands, and P7-7 names them so the rest
-of this document — and everything built on top of it — can keep the names
-straight: **declared** (what `kelyfos.toml` says, nothing booted), **aggregate**
-(a fold of what has actually happened) and **as-it-ran** (the live or replayed
-timeline, `kelyfos watch` and `kelyfos log` above). Only *declared* is
-something anyone else — an auditor, a teammate reading the file over your
-shoulder — can currently answer without this feature.
+Three questions about a team, and P7-7 names them so the rest of this
+document — and everything built on top of it — can keep the names straight.
+They are *modes*, not a one-to-one map to commands: more than one surface can
+answer the same question, and this section's own two commands both answer
+the same one of the three.
+
+- **Declared** — what a policy says is permitted, independent of whether
+  anything has run. `kelyfos.toml` itself is the original; `kelyfos team
+  graph` reads it with nothing booted, and `kelyfos team ps --graph`, against
+  a *running* team, still answers this question rather than a different one —
+  it reads back the `team.topology`/`session.policy` the team recorded **at
+  boot**, not anything that happened since, so "running" describes the team,
+  not the freshness of the picture. A worker spawned after boot
+  (`broker.OnSpawn`) is real and current but is not in that recorded
+  declaration, and this view says so explicitly (§8.4.1) rather than quietly
+  blending the two questions into one answer.
+- **Aggregate** — a fold of what has actually happened, summed up:
+  `kelyfos watch`'s agent sheet pane (declared caps beside live counters,
+  §8.2) is the first reader of this question; the exported report's run
+  section (P7-8) is the next.
+- **As-it-ran** — the live or replayed timeline, in order: `kelyfos watch`'s
+  activity pane and `kelyfos log`, both already discussed above, unchanged by
+  this task.
+
+Only *declared* is something anyone else — an auditor, a teammate reading the
+file over your shoulder — can currently answer without this feature.
 
 `kelyfos team graph` renders the **declared** topology straight from
 `kelyfos.toml`, with nothing booted: a pre-flight lint in the same category as
 `kelyfos doctor`, not a monitor. It runs the exact plan-time checks
 `kelyfos team up` runs before it boots anything — the same file that combines
 `[team]` with `[[plugin]]` or `[[forward]]` is refused here with the same
-sentence (§1.1's `checkTeamFileScope`), before it costs anybody an afternoon.
+sentence `kelyfos team up` refuses it with (`host/teamplan.go`'s
+`checkTeamFileScope`), before it costs anybody an afternoon.
 The picture: every agent, the resolved edges, the domains and secrets each
 agent reaches, and the store's rules — including one entry standing for
 *every key no `[[team.store.key]]` rule names*, because such a key is
@@ -861,19 +881,43 @@ edges — read from the authoritative table, not the picture above
   ...
 ```
 
-`kelyfos team ps --graph` draws the same picture for a **running** team,
-sourced from that team's own recorded `team.topology` and `session.policy`
-events rather than from `kelyfos.toml` (which somebody can edit after the
-team came up) or `run/team.json` (which does not outlive the run) — D59's own
-reasoning for putting the declaration in the chain applies here too. A
-declared graph and a running one are never two independent readings of one
-file: both go through the same conversion (`host/teamgraph.go`'s
-`buildGraphInput`), so `kelyfos team graph` in a project directory and
-`kelyfos team ps --graph` against the team it boots print the identical
-topology. It also lists every refusal recorded since boot — a `team.refused`
-with no edge, a `team.store` denied — each with the fix line
-`internal/denial`'s catalog already writes for it, bounded to the most recent
-twenty with a note when more happened.
+`kelyfos team ps --graph` draws the same declared picture against a running
+team, sourced from that team's own recorded `team.topology` and
+`session.policy` events rather than from `kelyfos.toml` (which somebody can
+edit after the team came up) or `run/team.json` (which does not outlive the
+run) — D59's own reasoning for putting the declaration in the chain applies
+here too. A declared graph and a running one are never two independent
+readings of one file: both go through the same conversion
+(`host/teamgraph.go`'s `buildGraphInput`), so `kelyfos team graph` in a
+project directory and `kelyfos team ps --graph` against the team it boots
+print the identical topology. It also lists every refusal recorded since
+boot — every reason `team.refused`, `team.store` and `team.spawn` can carry
+except an absence (`no_such_key`, which §8.3 above already says is not a
+refusal) and an internal despawn condition nobody watching the policy file
+can act on — each with the fix line `internal/denial`'s catalog already
+writes for it where one exists, bounded to the most recent twenty with a
+note when more happened.
+
+#### 8.4.1 What this view cannot know from the record alone
+
+Two honest gaps, both stated in the view itself rather than left silent:
+
+- **A worker spawned at runtime is not in the declared topology.**
+  `team.topology` is written once, at boot; a worker a running agent spawns
+  afterwards (§3.6) attaches with a real edge and store access that event can
+  never carry. `kelyfos team ps --graph` and `kelyfos watch`'s map pane both
+  name any such agent in a separate line — "N agent(s) spawned at runtime,
+  not in the topology declared at boot" — rather than quietly merging it into
+  the picture, which would blur declared and aggregate into one answer.
+- **A store enabled with no rules looks the same as no store at all, from
+  the record.** `team.topology`'s `store_keys` field is only ever the
+  declared `[[team.store.key]]` rules (§8); it carries no separate flag for
+  whether `[team.store]` itself is enabled. A store with rules is
+  unambiguous. A store enabled with zero rules is real and, per §4, wide open
+  to the whole team — and looks identical, from this one recorded event, to
+  a team with no store at all. This view says so when the rule list is
+  empty, rather than guessing either way; `kelyfos team graph`, reading
+  `kelyfos.toml` directly, does not have this gap.
 
 ---
 

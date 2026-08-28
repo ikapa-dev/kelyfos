@@ -29,8 +29,8 @@ usage:
   kelyfos shell [flags]            an interactive terminal inside a sandbox
   kelyfos fork [flags]             restore one snapshot into several sandboxes
   kelyfos team up|ps|down|graph    run several agents with the paths between
-                                   them written down and enforced;
-                                   graph draws the topology, nothing booted
+                                   them written down and enforced, and inspect
+                                   that topology with or without booting it
   kelyfos shim [flags]             serve an E2B-compatible REST subset
   kelyfos runs [flags]             what has run here, from the records themselves
   kelyfos rerun <id>               run a recorded session again, under its own policy

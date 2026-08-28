@@ -29,9 +29,13 @@ reference described in the README and re-measured per release.
   recorded `team.topology` and `session.policy` events rather than from the
   file. `kelyfos watch` gains two panes alongside the existing one — a map
   (`2`/`m`) and an agent sheet (`3`/`s`, caps beside live counters) — both
-  read off the same fold, and the map's "refused since boot" section carries
-  the fix line `internal/denial`'s catalog already writes for each refusal
-  (P7-7).
+  read off the same fold, and the map's "refused since boot" section covers
+  every real `team.refused`/`team.store`/`team.spawn` reason, each with the
+  fix line `internal/denial`'s catalog already writes for it where one
+  exists. Both graph commands also say, explicitly, what a recorded
+  `team.topology` cannot tell them: a worker spawned at runtime after boot,
+  and whether an empty store rule list means the store is off or open to the
+  whole team (P7-7).
 
 ### Fixed
 - **A single oversized, guest-influenced field could make the flight recorder

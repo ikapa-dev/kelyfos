@@ -5424,6 +5424,127 @@ after:
         llms-full.txt 620096 bytes, about 161077 tokens</code> is the figure that actually matches the tree, not
         the 161030 the row above logged before this fix. <code>python3 tools/check-plan.py</code> (host) &rarr;
         &ldquo;PLAN.html is coherent: 101 tasks, 84 checked, 68 decisions&rdquo;, unchanged.</td></tr>
+    <tr><td class="mono">2026-08-28</td><td class="mono">P7-7</td>
+        <td><b>Review-fix round: NO-GO verdict answered, two HIGH and four MEDIUM findings fixed, every LOW
+        folded in.</b> Not self-ticked; still holding for the same reviewer to re-check, as instructed.
+        <br><b>HIGH-1, fixed.</b> The indirect-reach section filtered on <code>hops &gt; 1</code>, but a shared
+        <code>StoreKey</code> is a ONE-hop relation in <code>graph.TransitiveClosure</code> (a writer&rarr;reader
+        edge, same as a declared <code>team.edge</code>) &mdash; so every store-mediated reach, including the
+        whole-team default access <code>unmatchedStoreKeyID</code> itself grants, was silently dropped, and the
+        section vanished entirely for any team with a store enabled. Fixed: build a set from
+        <code>in.Edges</code>, report every ordered pair that reaches at all (any hop count) and is not already a
+        direct edge. Two new tests prove it &mdash; a store-only, edge-free pair now reports at 1 hop; a
+        direct-edge pair never appears as &ldquo;indirect&rdquo; &mdash; plus a cap
+        (<code>maxIndirectReachLines</code>, 40) with a truncation note, since the fix makes this list closer to
+        quadratic for a team with a store.
+        <br><b>HIGH-2, fixed on the declared path; the recorded-path gap is flagged, not silently patched
+        over.</b> <code>buildGraphInput</code> gated the synthetic <code>(any other key)</code> resource on
+        <code>len(store) &gt; 0</code>, but <code>storeEnabled</code> and the rule list are independent booleans
+        (<code>host/teamplan.go</code>'s <code>teamPlan</code>) &mdash; a store enabled with zero rules is fully
+        open per <code>internal/team/store.go</code> and drew no store node at all. <code>buildGraphInput</code>
+        now takes <code>storeEnabled</code> as its own parameter; <code>kelyfos team graph</code> threads
+        <code>plan.storeEnabled</code> through directly (exact fix). <code>kelyfos team ps --graph</code> and
+        <code>kelyfos watch</code>'s map pane cannot: <code>team.topology</code> (P7-3) carries no
+        store-enabled flag independent of its rule count, so &ldquo;store off&rdquo; and &ldquo;store on, no
+        rules&rdquo; are indistinguishable from that one recorded event. Best-effort
+        (<code>len(store) &gt; 0</code>) with an explicit, printed caveat rather than a silent guess either way
+        &mdash; documented in code, in the CLI output, and in <code>docs/teams.md</code> new &sect;8.4.1.
+        <b>Flagging this to the orchestrator as instructed:</b> this is a real P7-3 recorder gap (a
+        <code>StoreEnabled</code>-shaped field <code>team.topology</code> does not carry), not something P7-7 can
+        close from inside <code>internal/graph</code>/<code>host/teamgraph.go</code> without touching
+        <code>internal/recorder</code>, which is off-limits to this task. Candidate for a P7-14/P7-15-shaped
+        follow-up task or a decision-log note; not attempted here. The test that asserted the old (wrong)
+        behaviour is corrected and a new test proves the fix for an enabled, empty store.
+        <br><b>MEDIUM-3, fixed.</b> <code>team.topology</code> is written once at boot; a worker spawned at
+        runtime (<code>broker.OnSpawn</code>) attaches with a real edge and store access that event never
+        carries. New <code>spawnedAgentsNotInTopology</code> names any such agent — present in
+        <code>internal/digest</code>'s fold, absent from the recorded roster — in its own explicit line in both
+        <code>kelyfos team ps --graph</code> and the live map pane, rather than silently merging it into the
+        declared picture. <code>teamPSGraph</code>'s title reworded from &ldquo;running topology&rdquo; to
+        &ldquo;topology as declared at boot&rdquo; for the same honesty.
+        <br><b>MEDIUM-4, fixed.</b> Both panes had an off-by-one (a truncation note was appended on top of an
+        already-full budget, emitting height+1 lines every time they truncated), and the map pane truncated one
+        monolithic string from the top, which meant the refusals section — the whole point of the pane — was the
+        first thing cut on a real terminal size, along with the edge table and the pane hint. New
+        <code>fitToBudget</code> helper (never emits more than its budget, note included, proven for budgets 0
+        through 12 against 10 lines of content) replaces the old logic in both panes; the map pane now lays out
+        the graph body and the refusals/notes as two separate budgets, refusals guaranteed up to half of what
+        remains so a short refusal list is never starved by a long graph. New tests assert no pane ever exceeds
+        its own height across heights 1&ndash;30, and that a real refusal survives truncation at a realistic
+        120&times;24 terminal against an 8-worker team (the reviewer's own reproduction shape).
+        <br><b>MEDIUM-5, fixed.</b> The live (<code>kelyfos watch</code>) refusal list capped at
+        <code>maxRefusalLines</code> but never said so, unlike the one-shot <code>printRecentRefusals</code>. New
+        <code>watchModel.refusalsTruncated</code> flag, set by <code>pushRefusal</code>, surfaces a truncation
+        note in the map pane.
+        <br><b>MEDIUM-6, fixed.</b> &ldquo;refused since boot&rdquo; covered only <code>no_edge</code> and store
+        <code>denied</code>, reading as complete when it was a small subset. New <code>refusalLine</code>
+        function is the one place both <code>printRecentRefusals</code> and the live
+        <code>watchModel.absorb</code> now read from, covering every real refusal reason
+        <code>team.refused</code>/<code>team.store</code>/<code>team.spawn</code> can carry &mdash;
+        <code>no_such_agent</code>, <code>missing_correlation</code>, <code>unknown_correlation</code>,
+        <code>key_too_long</code>, <code>value_too_large</code>, <code>too_many_keys</code>,
+        <code>store_full</code>, <code>no_spawn_budget</code>, <code>budget_exhausted</code>,
+        <code>image_not_permitted</code>, <code>name_taken</code> &mdash; with the exact
+        <code>internal/denial</code> fix line where the recorded event carries every field that fix line needs
+        (three cases: <code>no_edge</code>, store <code>denied</code>, <code>no_spawn_budget</code>), and a
+        plain, honest sentence with its own fix hint where the catalog has no entry or the recorded event is
+        missing a value the full message needs (a refused <code>team.spawn</code> records only the spawner and
+        the reason, never the image or the live/max counts the in-process error saw &mdash; checked against
+        <code>internal/team/spawn.go</code>'s actual <code>rec.Append</code> call sites, not assumed). Two
+        reasons stay deliberately excluded and are pinned by their own test: <code>no_such_key</code> (an
+        absence, not a refusal — docs/teams.md's own words) and despawn's <code>not_a_spawned_worker</code> (an
+        internal condition nobody watching a policy file can act on).
+        <br><b>LOW findings, all folded in.</b> (7) <code>clampWidth</code> + <code>nodeLabelWidth</code> (60
+        runes) applied to every legend entry, edge line, indirect-reach line and refusal substitution, plus a
+        capped, clamped <code>safeJoinNames</code> for the spawned-agent note. (8) covered by HIGH-1's own cap.
+        (9) <code>proto.SafeText</code> now wraps <code>plan.name</code>/<code>st.Name</code> in both graph
+        titles &mdash; <code>kelyfos team ps</code>'s own plain table header keeps its pre-existing gap, per the
+        review's own instruction not to touch what this task did not introduce. (10)
+        <code>checkTeamFileScope</code>'s <code>[[plugin]]</code> fix line no longer claims <code>kelyfos team
+        up</code> is the only refuser or that no <code>--policy</code> flag exists anywhere &mdash; touches
+        <code>host/teamplan.go</code>, outside this task's original file boundary, done anyway because the
+        staleness is this task's own doing and the review asked for it by name. (11) <code>host/main.go</code>'s
+        shared usage blurb reworded so it reads true for <code>up</code>/<code>ps</code>/<code>down</code>/<code>graph</code>
+        alike, rather than stamping graph's own sentence onto all four in the generated reference. (12)
+        <code>kelyfos watch --help</code> now lists the three panes and their keys. (13)
+        <code>docs/teams.md</code> &sect;8.4 rewritten: the three names are modes, not commands, with a
+        bullet each naming which surface(s) answer that question, and a new &sect;8.4.1 stating the two honest
+        gaps in prose (mirrors the two CLI caveats).
+        <br><b>LOW-14 (progress-log test-count correction): not completed this round.</b> See the verification
+        note below.</td>
+        <td><b>Every fix reviewed by re-reading the actual source it touches</b> (denial catalog entries,
+        <code>internal/team</code>'s real event-construction call sites down to which fields each one sets,
+        <code>graph.TransitiveClosure</code>'s hop computation) rather than assumed from the finding text alone
+        &mdash; the same discipline &sect;8 rule 10 asks of a reviewer, applied here by the author while fixing,
+        because several findings turned out to have a sharper edge on inspection than the summary alone showed
+        (budget_exhausted/image_not_permitted's recorded events lack the fields their own denial templates need;
+        <code>no_such_key</code> is explicitly not a refusal by this project's own stated design).
+        <b>Fifteen new/changed tests added</b> for the fixes above (host/teamgraph_test.go,
+        host/watch_test.go), each hand-traced against the implementation for correctness, including one that
+        reproduces the reviewer's own scenario mathematically (a store with <code>read=["*"] write=["*"]</code>
+        and zero declared edges must show 1-hop indirect reach both ways) and one that mirrors the exact real
+        boot the reviewer captured (an 8-worker star at 120&times;24, refusal surviving truncation).
+        <br><b>Automated verification (go build/vet/test, real boots) could not be completed and is the honest
+        gap in this row.</b> The shared <code>kelyfos-dev</code> Lima VM has been unreachable for this whole
+        review-fix session: <code>limactl shell</code> fails with &ldquo;Session open refused by peer&rdquo;
+        (the SSH ControlMaster multiplexer's session cap, saturated by concurrent sibling agents' own builds and
+        real-VM tests sharing this one box); a direct, non-multiplexed SSH connection bypasses that specific
+        limit but then hangs on anything touching this repository's working tree specifically (confirmed:
+        <code>ls</code> on one known file, <code>cd</code>, <code>go vet -C &lt;dir&gt;</code> all hang past 90s,
+        while a bare command with no path under the tree, e.g. <code>pwd</code>, <code>go version</code>,
+        returns instantly) — consistent with virtiofs contention from other agents' concurrent, I/O-heavy work
+        in sibling worktrees under the same mount, not a config mistake on this task's part. The stale
+        ControlMaster process (alive since before this session, per <code>ps</code>) was confirmed dead and its
+        socket file removed as a safe, non-destructive step; connections still hang afterward, which is what
+        narrows this to guest-side saturation rather than a stuck local multiplexer. Every file's brace/paren
+        count was checked by script as a crude proxy (`host/teamgraph_test.go`'s apparent imbalance traced by
+        hand to intentional partial-string substring assertions, e.g. <code>"...( 1 hop"</code>, not a real
+        syntax error). <b>Not claiming green here</b> &mdash; this row states what could and could not be
+        checked, honestly, rather than asserting a build/test result nobody watched happen. Re-verification
+        (build, vet, the full suite, and the real-VM boots this task's own done-checklist requires) is needed
+        before this can be considered for a checkbox, and is requested explicitly: either by this task once the
+        shared VM is reachable again, or by the reviewer directly when they re-check, since they will need
+        working VM access for that regardless.</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>

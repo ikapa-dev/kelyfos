@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -16,6 +17,7 @@ import (
 	"github.com/p4r4n0rm4l/KelyfOS/internal/proto"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/sandbox"
+	"github.com/p4r4n0rm4l/KelyfOS/internal/team"
 )
 
 // P7-7: the terminal views. `kelyfos team graph` renders a team's topology
@@ -79,13 +81,13 @@ sentence, before it costs somebody an afternoon.
 		return err
 	}
 
-	in, err := buildGraphInput(graphAgentsFromPlan(plan), plan.edgeText, graphStoreFromPlan(plan))
+	in, err := buildGraphInput(graphAgentsFromPlan(plan), plan.edgeText, graphStoreFromPlan(plan), plan.storeEnabled)
 	if err != nil {
 		return err
 	}
 
 	title := fmt.Sprintf("team %s — declared topology (kelyfos team graph), nothing booted: %d agents, %d edges",
-		plan.name, len(plan.agents), len(plan.edgeText))
+		proto.SafeText(plan.name), len(plan.agents), len(plan.edgeText))
 	if err := renderTeamGraph(os.Stdout, in, title); err != nil {
 		return err
 	}
@@ -120,21 +122,85 @@ func teamPSGraph(st *teamState) error {
 
 	agents := graphAgentsFromTopology(d.Topology, d.Agents)
 	store := graphStoreFromTopology(d.Topology)
-	in, err := buildGraphInput(agents, d.Topology.Edges, store)
+	// See buildGraphInput's own doc comment: team.topology carries no
+	// "store enabled" flag independent of its rule count, so a store
+	// enabled with zero [[team.store.key]] rules cannot be told apart from
+	// no store at all, from this event alone. Best-effort here, and the
+	// caveat below says so rather than leaving the gap silent.
+	storeEnabled := len(store) > 0
+	in, err := buildGraphInput(agents, d.Topology.Edges, store, storeEnabled)
 	if err != nil {
 		return err
 	}
 
-	title := fmt.Sprintf("team %s — running topology (kelyfos team ps --graph): %d agents, %d edges",
-		st.Name, len(d.Topology.Agents), len(d.Topology.Edges))
+	title := fmt.Sprintf("team %s — topology as declared at boot (kelyfos team ps --graph): %d agents, %d edges",
+		proto.SafeText(st.Name), len(d.Topology.Agents), len(d.Topology.Edges))
 	if err := renderTeamGraph(os.Stdout, in, title); err != nil {
 		return err
 	}
 	fmt.Println()
 	fmt.Printf("egress ports: every reachable domain, %s only — the fixed default (docs/networking.md, P7-4)\n",
 		portList(egress.DefaultPorts()))
+	if len(store) == 0 {
+		fmt.Println()
+		fmt.Println("note: this session's team.topology names no [[team.store.key]] rule, and the record")
+		fmt.Println("does not say whether [team.store] is even enabled (a P7-3 recorder gap, not this")
+		fmt.Println("view's). If the store IS enabled, every key is team-wide by default and would not")
+		fmt.Println("appear as a resource above.")
+	}
+	if extra := spawnedAgentsNotInTopology(d.Topology, d.Agents); len(extra) > 0 {
+		fmt.Println()
+		fmt.Printf("+%d agent(s) spawned at runtime, not in the topology declared at boot above "+
+			"(team.spawn only, no team.topology entry): %s\n", len(extra), safeJoinNames(extra, maxSpawnedNamesShown))
+	}
 	printRecentRefusals(os.Stdout, d)
 	return nil
+}
+
+// spawnedAgentsNotInTopology names every agent internal/digest has seen —
+// meaning it generated at least one event of its own, such as its own
+// session.ready/session.policy once P7-2's OnSpawn extension writes them —
+// that the boot-time team.topology event does not list. team.topology is
+// written once, at boot (docs/policy-record.md §3); a worker a running agent
+// spawns afterwards (broker.OnSpawn) attaches with a real edge and store
+// access that event can never carry, and merging it silently into the
+// declared picture would blur exactly the declared-vs-actual distinction
+// this task's three-mode naming exists to keep clear. Sorted, for a stable
+// and testable order.
+func spawnedAgentsNotInTopology(topo *recorder.Event, agentDigests map[string]*digest.Agent) []string {
+	known := map[string]bool{}
+	for _, a := range topo.Agents {
+		known[a.Name] = true
+	}
+	var extra []string
+	for name := range agentDigests {
+		if !known[name] {
+			extra = append(extra, name)
+		}
+	}
+	sort.Strings(extra)
+	return extra
+}
+
+// maxSpawnedNamesShown bounds safeJoinNames, so a runtime-spawn loop cannot
+// make this note's own line grow without bound.
+const maxSpawnedNamesShown = 20
+
+// safeJoinNames renders a list of agent names — each safe on its own,
+// clamped to nodeLabelWidth — as one comma-separated, bounded line, with a
+// trailing count of what was left out rather than growing forever.
+func safeJoinNames(names []string, max int) string {
+	shown := names
+	var suffix string
+	if len(shown) > max {
+		suffix = fmt.Sprintf(", … and %d more", len(shown)-max)
+		shown = shown[:max]
+	}
+	safe := make([]string, len(shown))
+	for i, n := range shown {
+		safe[i] = clampWidth(proto.SafeText(n), nodeLabelWidth)
+	}
+	return strings.Join(safe, ", ") + suffix
 }
 
 // graphAgent is one team member as internal/graph needs it, gathered from
@@ -175,7 +241,18 @@ const unmatchedStoreKeyID = "(any other key)"
 // a StoreKey resource is added for every declared rule, and one more for
 // every key no rule names (see unmatchedStoreKeyID), with the whole team
 // granted access to it.
-func buildGraphInput(agents []graphAgent, edges []string, store []graphStoreRule) (graph.Input, error) {
+//
+// storeEnabled and store are independent (host/teamplan.go's teamPlan draws
+// them as two separate fields, storeEnabled and storeRules): a team can have
+// [team.store] enabled with zero [[team.store.key]] rules, in which case
+// EVERY key is team-wide by default (internal/team/store.go) and the
+// unmatched-key resource has to appear even though store is empty — gating
+// it on len(store) > 0 alone was the bug a review caught (a 3-agent team
+// with an empty, enabled store drew no store node at all). Passing
+// storeEnabled := len(store) > 0 at a call site that cannot know the real
+// flag (team.topology carries none) is a documented, honest approximation,
+// not silently wrong — see teamPSGraph's own caveat to the reader.
+func buildGraphInput(agents []graphAgent, edges []string, store []graphStoreRule, storeEnabled bool) (graph.Input, error) {
 	var in graph.Input
 	names := make([]string, 0, len(agents))
 	for _, a := range agents {
@@ -223,7 +300,7 @@ func buildGraphInput(agents []graphAgent, edges []string, store []graphStoreRule
 			in.Access = append(in.Access, graph.Access{Agent: graph.AgentID(name), Resource: rid, Write: true})
 		}
 	}
-	if len(store) > 0 {
+	if storeEnabled {
 		rid := graph.ResourceID(unmatchedStoreKeyID)
 		addResource(rid, graph.StoreKey)
 		for _, name := range names {
@@ -359,32 +436,70 @@ func renderTeamGraph(w io.Writer, in graph.Input, title string) error {
 				verb = edgeArrow(e.Kind, resKind[graph.ResourceID(e.To.ID)])
 			}
 			fmt.Fprintf(w, "  %s %s %s\n",
-				proto.SafeText(e.From.ID), verb, proto.SafeText(e.To.ID))
+				clampWidth(proto.SafeText(e.From.ID), nodeLabelWidth), verb,
+				clampWidth(proto.SafeText(e.To.ID), nodeLabelWidth))
 		}
 	}
 
+	// A pair reaches indirectly when TransitiveClosure says it reaches at
+	// all and that pair is not one of the input's own declared edges —
+	// checked against Hops's own reachability (hops > 0), never against a
+	// hop count above one. A shared StoreKey resource is a ONE-hop relation
+	// in TransitiveClosure (internal/graph/reach.go's writer->reader edge),
+	// the same as a declared team.edge, so filtering on hops > 1 silently
+	// dropped every store-mediated reach — including the whole-team default
+	// access unmatchedStoreKeyID grants, which makes every ordered pair
+	// reach in exactly one hop the moment a store is enabled. That bug
+	// hid the entire section for any team with a store (found by review).
+	direct := map[[2]graph.AgentID]bool{}
+	for _, e := range in.Edges {
+		direct[[2]graph.AgentID{e.From, e.To}] = true
+	}
 	var indirect []string
 	for _, from := range closure.Agents {
 		for _, to := range closure.Agents {
-			if from == to {
+			if from == to || direct[[2]graph.AgentID{from, to}] {
 				continue
 			}
 			hops, ok := closure.HopsBetween(from, to)
-			if ok && hops > 1 {
-				indirect = append(indirect, fmt.Sprintf("  %s -> %s (%d hops, no direct edge)",
-					proto.SafeText(string(from)), proto.SafeText(string(to)), hops))
+			if !ok {
+				continue
 			}
+			indirect = append(indirect, fmt.Sprintf("  %s -> %s (%d hop%s, no direct edge)",
+				clampWidth(proto.SafeText(string(from)), nodeLabelWidth),
+				clampWidth(proto.SafeText(string(to)), nodeLabelWidth), hops, plural(hops)))
 		}
 	}
 	if len(indirect) > 0 {
 		fmt.Fprintln(w)
 		fmt.Fprintln(w, "indirect reach — reachable through another agent or a shared store key, not a")
 		fmt.Fprintln(w, "declared edge: a star topology is not the isolation it looks like")
+		// Bounded, and saying so when it truncates: this list is close to
+		// quadratic in agent count once a team-wide store default resource
+		// makes every ordered pair reach in one hop (a 31-agent star with no
+		// store prints 870 lines unbounded before this cap).
+		if len(indirect) > maxIndirectReachLines {
+			fmt.Fprintf(w, "  … %d more pair(s) not shown\n", len(indirect)-maxIndirectReachLines)
+			indirect = indirect[:maxIndirectReachLines]
+		}
 		for _, l := range indirect {
 			fmt.Fprintln(w, l)
 		}
 	}
 	return nil
+}
+
+// maxIndirectReachLines bounds the indirect-reach list for the same reason
+// maxRefusalLines bounds the refusal list: a large team (or a hostile one,
+// via a large declared agent count) must not make this view's own output
+// unbounded.
+const maxIndirectReachLines = 40
+
+func plural(n int) string {
+	if n == 1 {
+		return ""
+	}
+	return "s"
 }
 
 // nodeGlyph mirrors internal/graph's own unexported glyphFor: the same four
@@ -406,19 +521,45 @@ func nodeGlyph(n graph.TerminalNode) string {
 	}
 }
 
+// nodeLabelWidth is how many runes of an identifier nodeLabel shows before
+// clamping with an ellipsis. A store key is bounded at 1 KiB
+// (internal/team.MaxKeyBytes) and an agent name at 64 characters
+// (internal/team.ValidAgentName) — both far wider than one legend line
+// should ever spend on a single value, and both at least partly a config
+// author's or a guest's choice.
+const nodeLabelWidth = 60
+
+// clampWidth truncates s to at most max runes, marking that it did with a
+// trailing "…" — the same truncate-with-ellipsis shape host/watch.go's fit
+// uses for a fixed-width table cell, applied here to a value with no cell to
+// pad into. Always called after proto.SafeText, never before: SafeText's
+// quoting can grow a string with a control byte in it, and clamping first
+// would let that growth push the final line past max anyway.
+func clampWidth(s string, max int) string {
+	r := []rune(s)
+	if len(r) <= max {
+		return s
+	}
+	if max <= 1 {
+		return "…"
+	}
+	return string(r[:max-1]) + "…"
+}
+
 // nodeLabel names one legend entry. Every value here can be guest-influenced
 // only through host-authored config today (an agent name, a domain, a store
 // rule's own name) — proto.SafeText is applied anyway, with no exception,
-// per P7-7's own rule.
+// per P7-7's own rule, and clamped afterward so a long one cannot wrap the
+// line across several rows on its own.
 func nodeLabel(n graph.TerminalNode) string {
 	if n.Node.Kind == graph.NodeAgent {
-		s := proto.SafeText(n.Node.ID)
+		s := clampWidth(proto.SafeText(n.Node.ID), nodeLabelWidth)
 		if n.Group != "" {
-			s += " (fork group " + proto.SafeText(n.Group) + ")"
+			s += " (fork group " + clampWidth(proto.SafeText(n.Group), nodeLabelWidth) + ")"
 		}
 		return s
 	}
-	return proto.SafeText(n.Node.ID) + " (" + n.ResourceKind.String() + ")"
+	return clampWidth(proto.SafeText(n.Node.ID), nodeLabelWidth) + " (" + n.ResourceKind.String() + ")"
 }
 
 // edgeArrow labels one agent-resource access. Write is meaningless for a
@@ -457,32 +598,99 @@ func portList(ports []int) string {
 // recipient must not be able to make this view's own output unbounded.
 const maxRefusalLines = 20
 
-// printRecentRefusals lists refused team.refused (no edge) and team.store
-// (denied) attempts recorded so far, each with the fix line internal/denial
-// already writes for it — the view answers "now what" and not only "what"
-// (P7-7).
+// refusalLine returns the display line for one refused team.refused,
+// team.store or team.spawn event: the fix line internal/denial's catalog
+// already writes for it when the recorded event carries every field that
+// fix line needs, or — for a reason the catalog has no entry for at all, or
+// whose full message needs a value the recorded event does not carry (a
+// refused team.spawn records only the spawner's name and the reason, never
+// the image or the live/max counts the in-process error saw) — a plain,
+// honest sentence naming what happened and, where one exists, the fix.
+//
+// Every refusal reason team.refused/team.store/team.spawn can carry is
+// covered here except two, deliberately: team.store's "no_such_key" is an
+// absence, not a refusal — docs/teams.md's own words, "Absence is not a
+// refusal and must not look like one" — and team.spawn's despawn-side
+// "not_a_spawned_worker" is an internal condition nobody watching a team's
+// policy file can act on. ok is false for both of those, for a delivered
+// event, and for anything this function does not recognise.
+func refusalLine(e recorder.Event) (line string, ok bool) {
+	agent := clampWidth(proto.SafeText(e.Agent), nodeLabelWidth)
+	peer := clampWidth(proto.SafeText(e.Peer), nodeLabelWidth)
+	switch e.Type {
+	case recorder.TypeTeamRefused:
+		switch e.Reason {
+		case "no_edge":
+			return denial.TeamEdge.Render(denial.V{"from": agent, "to": peer}), true
+		case "no_such_agent":
+			return fmt.Sprintf("%s addressed %s, who is not in this team [team.refused]\n"+
+				"    check the name, or add %s to the team file", agent, peer, peer), true
+		case "missing_correlation":
+			return fmt.Sprintf("%s's team_reply carried no correlate tag [team.refused]\n"+
+				"    team_reply needs the correlate value team_recv returned", agent), true
+		case "unknown_correlation":
+			return fmt.Sprintf("%s's team_reply matched no outstanding question [team.refused]\n"+
+				"    the question it names has already been answered, or was never asked", agent), true
+		}
+	case recorder.TypeTeamStore:
+		if e.Outcome == "delivered" {
+			return "", false
+		}
+		verb := "read"
+		if e.Kind == "put" || e.Kind == "delete" {
+			verb = "write"
+		}
+		switch e.Reason {
+		case "denied":
+			return denial.TeamStore.Render(denial.V{"agent": agent, "verb": verb, "key": peer}), true
+		case "key_too_long":
+			return fmt.Sprintf("%s tried a store key over %d bytes [team.store]\n"+
+				"    shorten the key — a store key may be at most %d bytes",
+				agent, team.MaxKeyBytes, team.MaxKeyBytes), true
+		case "value_too_large":
+			return fmt.Sprintf("%s tried to write more than %d bytes to one store key [team.store]\n"+
+				"    write a smaller value, or split it across more than one key",
+				agent, team.MaxValueBytes), true
+		case "too_many_keys":
+			return fmt.Sprintf("%s's team has reached its %d-key store limit [team.store]\n"+
+				"    write an empty value to a key nobody needs, to free one",
+				agent, team.MaxStoreKeys), true
+		case "store_full":
+			return fmt.Sprintf("%s's team has reached its %d-byte store limit [team.store]\n"+
+				"    write an empty value to a key nobody needs, to free space",
+				agent, team.MaxStoreBytes), true
+		}
+	case recorder.TypeTeamSpawn:
+		if e.Kind != "spawn" || e.Outcome == "delivered" {
+			return "", false
+		}
+		switch e.Reason {
+		case "no_spawn_budget":
+			return denial.TeamSpawnNone.Render(denial.V{"agent": agent}), true
+		case "budget_exhausted":
+			return fmt.Sprintf("%s already has as many spawned workers as its budget allows [team.spawn]\n"+
+				"    raise max in [team.agent.spawn] for %s in the team file, or let one finish",
+				agent, agent), true
+		case "image_not_permitted":
+			return fmt.Sprintf("%s tried to spawn an image its budget does not permit [team.spawn]\n"+
+				"    add the image to [team.agent.spawn] images for %s in the team file",
+				agent, agent), true
+		case "name_taken":
+			return fmt.Sprintf("%s's spawned worker %s collided with an existing agent name [team.spawn]\n"+
+				"    rename the declared agent %s in the team file", agent, peer, peer), true
+		}
+	}
+	return "", false
+}
+
+// printRecentRefusals lists every refusal refusalLine recognises, recorded
+// so far, each with the fix line it carries — the view answers "now what"
+// and not only "what" (P7-7).
 func printRecentRefusals(w io.Writer, d *digest.Digest) {
 	var lines []string
 	for _, entry := range d.Timeline {
-		switch entry.Type {
-		case recorder.TypeTeamRefused:
-			if entry.Reason != "no_edge" {
-				continue
-			}
-			lines = append(lines, denial.TeamEdge.Render(denial.V{
-				"from": proto.SafeText(entry.Agent), "to": proto.SafeText(entry.Peer),
-			}))
-		case recorder.TypeTeamStore:
-			if !entry.Refused || entry.Reason != "denied" {
-				continue
-			}
-			verb := "read"
-			if entry.Kind == "put" || entry.Kind == "delete" {
-				verb = "write"
-			}
-			lines = append(lines, denial.TeamStore.Render(denial.V{
-				"agent": proto.SafeText(entry.Agent), "verb": verb, "key": proto.SafeText(entry.Peer),
-			}))
+		if l, ok := refusalLine(entry.Event); ok {
+			lines = append(lines, l)
 		}
 	}
 	if len(lines) == 0 {
