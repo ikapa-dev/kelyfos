@@ -49,6 +49,16 @@ reference described in the README and re-measured per release.
   the same way the live view already is — and exits, instead of opening the
   TUI; it carries no timeline, which `kelyfos log --json` already is. Documented
   in `docs/teams.md` §8.5 (P7-10).
+- **`kelyfos log --export-otlp`**: maps a session's chain to an OTLP-JSON
+  trace export — `invoke_agent` per agent (or the sole implicit agent of a
+  non-team session), `execute_tool` per command, every egress attempt or
+  refusal as a span event on the agent it belongs to. Versioned apart from
+  the flight recorder and never an input to `kelyfos verify` (D59): the
+  `gen_ai.*` semantic conventions this targets are still marked
+  "Development" with no stabilisation timeline, so a future revision of them
+  changes only this mapping, never a hashed byte. An inbound W3C
+  `traceparent` on `session.policy` continues that trace instead of starting
+  a new one (`docs/otlp.md`, P7-11).
 
 ### Fixed
 - **A single oversized, guest-influenced field could make the flight recorder

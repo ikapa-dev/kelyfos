@@ -26,6 +26,7 @@ hand-written half, and this page says where each is still thin.
 | auditing what an agent did | [`events.md`](events.md) |
 | auditing what a run was *permitted* to do, not only what it did | [`policy-record.md`](policy-record.md) |
 | deciding how long records are kept, or erasing what one holds | [`retention.md`](retention.md) |
+| feeding a run into Jaeger, Tempo or an OTel Collector | [`otlp.md`](otlp.md) — `kelyfos log --export-otlp` |
 | stuck on something KelyfOS refused | [`denials.md`](denials.md), then [`reference/denials.md`](reference/denials.md) for the exact one |
 | running something long and walking away | [`denials.md`](denials.md) on `--notify`, and [`events.md`](events.md) §6 for the history afterwards |
 | keeping an agent off the network | [`networking.md`](networking.md) |
@@ -51,11 +52,12 @@ hand-written half, and this page says where each is still thin.
 | [`qol.md`](qol.md) | concept | The v0.8 specification, written before the code: named sessions and their store, the workspace manifest, the PTY channel, and why inbound forwarding does not touch the firewall. |
 | [`policy-record.md`](policy-record.md) | concept | The Phase 7 policy-record specification, written before the code: every field `session.policy` and `team.topology` add, its position in the frozen hash order, which of the eight doors writes it, and what it deliberately omits. |
 | [`retention.md`](retention.md) | mixed | P7-5 (D61): the `[sessions] retention_days` floor, `kelyfos sessions prune`, the size warning, and `kelyfos sessions erase` — the replacement-record pattern that lets an EU AI Act Article 12 retention floor and a GDPR Article 17 erasure request coexist by separating a chain's structure from its content. |
+| [`otlp.md`](otlp.md) | mixed | P7-11: how `kelyfos log --export-otlp` maps a session's chain to OTLP-JSON spans, why that mapping is versioned apart from the flight recorder and never an input to `kelyfos verify`, what is deliberately not mapped, and why the IETF `agent-audit-trail` draft's own mapping is ready rather than shipped. |
 | [`mcp-surface.md`](mcp-surface.md) | concept | MCP in both directions: `serve-mcp` as a tool for any client, and `[[plugin]]` servers inside the guest. Specification, written before the code. |
 | [`hardening.md`](hardening.md) | concept | The v0.9 specification, written before the code: what a compromised agent reaches today, what the jailer and the guest profiles take away, and what remains reachable afterwards. |
 | [`host-seccomp.md`](host-seccomp.md) | mixed | The syscall filter around the VMM process: which one is in force and why that is settled, how it is proved from the kernel's own copy rather than from the absence of a flag, and every syscall it permits. |
 | [`threat-model.md`](threat-model.md) | concept | What KelyfOS defends against and — the longer half — what it does not. |
-| [`cookbook.md`](cookbook.md) | recipes | Sixteen complete, copy-pasteable recipes. Every one is a script CI extracts and runs on a real machine. |
+| [`cookbook.md`](cookbook.md) | recipes | Eighteen complete, copy-pasteable recipes. Every one is a script CI extracts and runs on a real machine. |
 | [`integrating.md`](integrating.md) | mixed | For building on KelyfOS: the four ways in, orchestrator patterns, and a long list of the mistakes people actually make. |
 | [`e2b-shim.md`](e2b-shim.md) | mixed | The E2B-compatible REST subset: what it implements, what it does not, and why. |
 | [`../llms.txt`](../llms.txt) | **generated** | The index a machine reads first: every page above as a link with a one-line description, per the llmstxt.org spec. |
@@ -202,7 +204,7 @@ neither refusal mentions the other, so a user who follows the first message hits
 the second; `team ps` has no sample output; the store's `not_found` is described as
 "not a refusal" and is recorded as one.
 
-### `cookbook.md` — sixteen things that work
+### `cookbook.md` — eighteen things that work
 
 *Recipes:* one sandbox; an allowlist and an injected credential; a workspace
 round-trip; snapshot and fork; a three-agent team with an ask round-trip and a
@@ -222,7 +224,9 @@ was frozen with; seeing what an agent changed before keeping it, including what
 sandbox that has no network, including how to start a long-running process
 through `kelyfos exec` without hanging on it; and a team's declared topology,
 drawn with nothing booted and then confirmed to match the same team once it
-is actually running (`team graph`, `team ps --graph`).
+is actually running (`team graph`, `team ps --graph`); and exporting the same
+chain as OTLP-JSON, with its span names and shape checked out of the file
+rather than eyeballed.
 *Thin:* nothing hidden — every script is extracted and executed by
 `dev/cookbook.sh` and by the `cookbook` workflow, so a recipe that stops working
 fails rather than misleading anyone.
@@ -295,6 +299,28 @@ like `sessions rm`, they are subcommands of `kelyfos sessions` rather than
 top-level commands, and the generator's discovery only reaches the
 top-level usage block; `-h` on each, and this page, are where their flags
 are written down.
+*Thin:* written once, against the code that already existed; nothing to
+report yet.
+
+### `otlp.md` — mapping the chain to a standard, without adopting it
+
+*Mixed, written after the code, the same way `retention.md` was*: this is a
+projection off an already-frozen record, so there was no field to specify
+ahead of a real mapping. *Concept:* why the OTLP export is versioned apart
+from the flight recorder and never an input to `kelyfos verify` (D59); which
+`gen_ai.*` attributes this mapping uses and which two it deliberately skips
+(`gen_ai.provider.name`, `gen_ai.tool.type`) because KelyfOS has no honest
+value for either; how an inbound W3C `traceparent` on `session.policy`
+continues an existing trace instead of starting a new one; why the IETF
+`agent-audit-trail` draft's own mapping is ready — the same `digest.Walk` plus
+per-agent/per-command grouping this package already does — rather than
+shipped, and what specifically about that draft (a `trust_level` scale and an
+`action_type` enum with no KelyfOS equivalent) makes shipping it now a
+guess rather than a mapping.
+*Reference:* none — `--export-otlp` itself is a flag on `kelyfos log`, in
+[`reference/cli.md`](reference/cli.md); the shape it writes is OTLP's own,
+not this project's, so there is nothing of this project's own schema for a
+generator to extract.
 *Thin:* written once, against the code that already existed; nothing to
 report yet.
 
