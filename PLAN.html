@@ -131,7 +131,7 @@
   <div class="meta">
     owner: <b>John</b> &nbsp;·&nbsp; developer: <b>Claude Code</b> &nbsp;·&nbsp;
     status: <b class="amber" id="meta-status">ACTIVE &mdash; <b>Phase 7</b>, the declared shape of a run, opened 2026-08-27 on the owner&rsquo;s ruling (D59). v1.0 is tagged and every earlier phase is closed; this one exits at <code>v1.1</code>. P7-0 through P7-13 are done and reviewed; P7-14, P7-15 and P7-16 are deferred, non-blocking side-tasks (D67, D69, D70). P7-17 opened 2026-08-28 (D71): the twenty-one findings of the independent security review of that date, two of them High, remediated as a block ahead of the rest.</b> &nbsp;&middot;&nbsp;
-    last updated: <b id="meta-updated">2026-08-28</b><br>
+    last updated: <b id="meta-updated">2026-08-29</b><br>
     repo file: <b>PLAN.html</b> (commit this document at the repository root — it is the single source of truth)<br>
     <span class="quiet">KelyfOS — from κέλυφος (kélyfos), "shell": the guest OS wrapped around the agent. Formerly working-titled "agos" (D4 → D10).</span>
   </div>
@@ -1497,7 +1497,7 @@
         follow-up task the owner opens or declines. Order below is the report&rsquo;s own <i>Order of work</i>: what an attacker
         reaches first.
         <ul class="tasks">
-          <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+          <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
               <span class="tid">F8</span><span class="tk"><b>High.</b> Any binary named <code>kelyfos-confine</code> runs unconfined as root &mdash; the re-entrancy guard in <code>confine()</code> tests <code>cmd.Path</code>, which the agent chooses. <code>supervisor/confine.go:104</code>.</span></li>
           <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
               <span class="tid">F9</span><span class="tk"><b>High.</b> The egress proxy is reachable by any local process, with the operator&rsquo;s bound credentials attached &mdash; the input chain filters by <code>iifname</code>, and a local connection to the TAP address never crosses the TAP. <code>internal/egress/proxy.go:251</code> &middot; <code>internal/sandbox/network.go:190</code>.</span></li>
@@ -6746,6 +6746,63 @@ after:
         <br>Not yet done, deliberately: the <code>v1.1</code> tag, and flipping this section's badge/status and
         <code>#focus</code> to closed. Those are the owner's call, held for explicit confirmation before acting
         &mdash; a visible, hard-to-reverse release milestone, not a verification step.</td></tr>
+    <tr><td class="mono">2026-08-29</td><td class="mono">P7-17/F8</td>
+        <td><b>Any binary named <code>kelyfos-confine</code> ran unconfined as root; now nothing starts that the
+        rewrite did not reach.</b> The re-entrancy guard in <code>confine()</code> tested
+        <code>strings.HasSuffix(cmd.Path, confineHelperMarker)</code> &mdash; a property of the <i>target</i>,
+        which is the agent&rsquo;s own argv[0] resolved. It could never fire for the case it was written for (an
+        already-wrapped command has <code>Path == "/proc/self/exe"</code>, which never ends in the marker) and
+        fired for exactly one case it was not written for. The guard is deleted; <code>isConfineWrapper</code>
+        keys on the wrapper&rsquo;s own identity instead, which is a pair the agent cannot produce; and
+        <code>reaper.startAndRegister</code> now asserts <code>confinementHolds(cmd)</code> and returns
+        <code>errNotConfined</code> rather than spawning. That assertion is the part that matters: the guarantee
+        no longer rests on <code>confine()</code> having no reachable early return, which is a property that had
+        in fact been false since the function was written. Docs: <code>docs/threat-model.md</code>&rsquo;s guest
+        confinement entry (the &sect;266 promise was false and now says what makes it true, with the three D32
+        cases separated so a Landlock-less guest is not misread as spawning unconfined),
+        <code>docs/hardening.md</code> &sect;4.4, and a new <code>dev/accept-profile.sh</code> block.
+        <br><b>Reviewed</b> by an agent that wrote none of it (&sect;8 rule 10). No blocking findings; three
+        informational items, all three accepted and fixed before merge &mdash; the D32 conflation above, a loose
+        <code>argv[0]</code>/<code>Path</code> argument that does not survive a bare name, and the unwritten
+        three-fact chain the <code>guestProfile == nil</code> early return depends on. No findings rejected.</td>
+        <td class="mono">Escape executed on a live Firecracker microVM under a private
+        <code>KELYFOS_CACHE</code> &mdash; the review itself never ran it (its Limits section says so).<br>
+        pre-fix: <code>NoNewPrivs: 0 &middot; Seccomp: 0 &middot; WROTE /etc/should-not-work &middot; MOUNTED
+        tmpfs on /mnt</code>; reviewer independently reached <code>REMOUNTED-RW &middot; MKNOD-OK &middot; dd
+        if=/dev/vda</code><br>
+        post-fix, same inputs: <code>NoNewPrivs: 1 &middot; Seccomp: 2 &middot; /etc refused &middot; mount
+        refused</code><br>
+        <code>go test ./supervisor/ -run TestF8_ -v</code> on parent <code>a393b2e</code> &rarr;
+        <code>--- FAIL: TestF8_ConfineWrapsABinaryNamedLikeTheHelper</code> (4 subtests: /root, /tmp, /work/build,
+        /run) and <code>--- FAIL: TestF8_ConfineDoesNotWrapItsOwnWrapper</code> &mdash; the second is the other
+        half of the finding, the guard never firing for its own case<br>
+        on branch &rarr; 7 tests / 10 subtests <code>PASS</code>,
+        <code>ok github.com/p4r4n0rm4l/KelyfOS/supervisor 0.002s</code><br>
+        <code>make test</code> &rarr; <code>go vet</code> clean, every package <code>ok</code>;
+        <code>make vuln</code> &rarr; <code>No vulnerabilities found.</code>; <code>make docs</code> &rarr; 8
+        files, no drift; <code>gofmt -l .</code> clean; <code>make test-integration</code> &rarr; 6/6 PASS<br>
+        reviewer re-ran all of the above independently, plus 4 supervisor fuzz targets at 10s &rarr; 0 failures,
+        and confirmed from <code>$(go env GOROOT)/src/os/exec/exec.go</code> that <code>Start()</code> returns
+        <code>c.Err</code> before any fork &mdash; which is what makes the one <code>return nil</code> in
+        <code>confinementHolds</code> safe rather than merely untested<br>
+        reviewer tried six routes at the fix (symlink at <code>/root/kelyfos-confine</code> &rarr;
+        <code>/proc/self/exe</code>, a copy of the supervisor under that name, <code>/proc/1/exe</code>,
+        agent-supplied <code>--confine</code>/<code>--path</code>, both shell modes, grandchild-of-impostor)
+        &mdash; every one wrapped and confined, or refused<br>
+        <b>Three corrections to the security review</b>, all reproduced: its published PoC
+        <code>cp /bin/sh /root/kelyfos-confine</code> <b>does not work</b> &mdash; <code>/bin/sh</code> is a
+        7-byte symlink to BusyBox, which dispatches on argv[0] and answers
+        <code>kelyfos-confine: applet not found</code>, exit 127 (the finding is unaffected: the guard read the
+        path, not the program); the blast radius was wider than stated, since <code>HasSuffix</code> matched any
+        path ending in the marker, e.g. <code>/tmp/evil-kelyfos-confine</code>; and the review&rsquo;s literal
+        fail-closed line would have broken a documented behaviour, refusing
+        <code>kelyfos exec nosuchthing</code> that <code>dev/accept-profile.sh</code> requires to still read as
+        not-found<br>
+        <b>Not run:</b> <code>dev/accept-profile.sh</code>, <code>accept-seccomp.sh</code>,
+        <code>accept-jail.sh</code> &mdash; each installs <code>trap cleanup EXIT</code> that kills
+        <i>every</i> firecracker on the box, and three peer microVMs were live throughout. P7-16/D70, exactly;
+        equivalent evidence taken from private-cache runs stopped by recorded pid. The new
+        <code>accept-profile.sh</code> block is committed but has not itself been executed.</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
