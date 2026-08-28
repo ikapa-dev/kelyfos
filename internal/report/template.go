@@ -7,6 +7,7 @@ const reportHTML = `<!DOCTYPE html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
+{{if .RefreshSeconds}}<meta http-equiv="refresh" content="{{.RefreshSeconds}}">{{end}}
 <title>KelyfOS session {{safe .SessionID}}</title>
 <style>
 .cards .l .qual{opacity:.62;font-weight:400}
@@ -202,7 +203,7 @@ const reportHTML = `<!DOCTYPE html>
 </head><body class="{{if .Lanes}}team{{end}}"><div class="wrap">
 
 <h1>Kelyf<span>OS</span> session report</h1>
-<div class="sub">session <span id="kelyfos-session">{{safe .SessionID}}</span> · {{.Events}} events · generated {{.Generated}}</div>
+<div class="sub">session <span id="kelyfos-session">{{safe .SessionID}}</span> · {{.Events}} events · generated {{.Generated}}{{if .RefreshSeconds}} · this tab reloads itself every {{.RefreshSeconds}}s while <code>kelyfos log --refresh</code> keeps rewriting this file — no server, no socket, just the file changing under it{{end}}</div>
 {{if .SelfCheck}}
 <div class="chain bad">The exporter's own check of this record failed — {{safe .SelfCheck}}.
 That is this file reporting a problem with itself. Check it rather than take its word:

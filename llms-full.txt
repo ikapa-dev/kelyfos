@@ -512,7 +512,7 @@ And the parts that make it a thing you reach for rather than tolerate (v0.8):
 | [`llms.txt`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/llms.txt) · [`llms-full.txt`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/llms-full.txt) | for machine readers: an index per the llmstxt.org spec, and the whole set in one file, whose current size `llms.txt` states |
 | [`docs/reference/`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/reference/README.md) | every command, flag, toml key, MCP tool, event and exit code — generated from the source |
 | [`PLAN.html`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/PLAN.html) · [`PLAN-FEATURES.html`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/PLAN-FEATURES.html) | the living plan — every decision and the full progress log, phases then epics |
-| [`docs/cookbook.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/cookbook.md) | sixteen recipes that work: run one, allowlist a domain, fork, build a team, point a client at it, write a plugin, verify the log, pause and resume, review a diff, forward a port, draw a team's topology |
+| [`docs/cookbook.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/cookbook.md) | seventeen recipes that work: run one, allowlist a domain, fork, build a team, point a client at it, write a plugin, verify the log, pause and resume, review a diff, forward a port, draw a team's topology, follow a running team through a live-refreshed export |
 | [`docs/integrating.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/integrating.md) | building on it: the four ways in, orchestrator patterns, common mistakes |
 | [`docs/mcp-surface.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/mcp-surface.md) | MCP in both directions: `serve-mcp` as a tool for any client, `[[plugin]]` servers inside the guest |
 | [`docs/threat-model.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/threat-model.md) | what is defended, and what is not |
@@ -6939,7 +6939,7 @@ description: complete recipes, each one a script CI runs on a real machine
 
 # KelyfOS cookbook
 
-Sixteen recipes, each one complete, each one runnable as it stands.
+Seventeen recipes, each one complete, each one runnable as it stands.
 
 These are not illustrations. `bash dev/cookbook.sh` extracts every script below
 and runs it on a real machine. Every commit checks that each recipe still
@@ -8577,6 +8577,113 @@ grep -o '"type":"session.erasure"[^}]*}' "$record"
 
 ---
 
+## 17. Follow a running team from a file, with no server behind it
+
+`kelyfos log --export` has never needed a session to be finished — it renders
+whatever the flight recorder holds right now, a still-running team included,
+and the page says "still running" rather than inventing an ending. `--refresh`
+is what turns that into something worth leaving open in a tab: it rewrites
+the same file atomically, on a timer, for as long as the session keeps going,
+and the page it writes carries a `<meta http-equiv="refresh">` — the one
+mechanism that makes an already-open browser tab reload itself and pick up
+what the last rewrite wrote. There is still no server and no socket anywhere
+in that path: the browser is polling a local file, and the only thing on a
+clock is this one CLI process rewriting it. It stops on its own once the
+session ends, or on Ctrl-C.
+
+<!-- recipe: live-export-refresh -->
+
+```bash
+set -euo pipefail
+work="$(mktemp -d)"
+cd "$work"
+REFRESH_PID=""
+trap '[ -n "$REFRESH_PID" ] && kill "$REFRESH_PID" 2>/dev/null; kelyfos team down >/dev/null 2>&1 || true; pkill -f "kelyfos team up" 2>/dev/null || true; rm -rf "$work"' EXIT
+
+cat > kelyfos.toml <<'TOML'
+[team]
+name = "cookbook-live"
+
+[[team.agent]]
+name  = "master"
+image = "dev"
+
+[[team.agent]]
+name  = "worker"
+image = "dev"
+count = 2                 # worker-1 and worker-2, with no edge to each other
+
+[[team.edge]]
+from = "master"
+to   = "worker-*"
+TOML
+
+kelyfos team up >up.log 2>&1 &
+for _ in $(seq 1 600); do grep -q 'team up in' up.log && break; sleep 0.25; done
+grep -q 'team up in' up.log || { cat up.log; exit 1; }
+
+echo
+echo "== --export against the team while it is still running, not a finished one =="
+kelyfos log --export live.html
+grep -q 'still running' live.html
+echo "the export says so, because it is"
+
+echo
+echo "== --refresh: the same file, rewritten atomically as the team keeps going =="
+kelyfos log --export watch.html --refresh --refresh-every 1s >refresh.log 2>&1 &
+REFRESH_PID=$!
+for _ in $(seq 1 120); do [ -s watch.html ] && grep -q 'meta http-equiv="refresh"' watch.html && break; sleep 0.25; done
+grep -q 'meta http-equiv="refresh"' watch.html
+echo "the exported page carries the tag that makes an open tab follow it"
+
+# Checked, not assumed: every fd the --refresh process holds, none a socket.
+# The property this recipe exists to prove — a browser polling a local file
+# needs nothing on the write side either.
+echo
+echo "== no socket anywhere in that path =="
+sockets="$(find "/proc/$REFRESH_PID/fd" -lname 'socket:*' 2>/dev/null | wc -l || true)"
+echo "open socket fds held by the --refresh process: $sockets"
+[ "$sockets" -eq 0 ]
+echo "zero, as D60/D63 require of everything outside kelyfos view (P7-12)"
+
+# Driving the team by hand needs one helper — see recipe 5 for why.
+sandbox() { python3 -c "
+import json
+a=json.load(open('$HOME/.cache/kelyfos/run/team.json'))['agents']
+print([x['sandbox'] for x in a if x['name']=='$1'][0])"; }
+call() {  # call <agent> <tool> <args-json> [seconds to hold the channel open]
+  { printf '%s\n' \
+    '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"cookbook","version":"1"}}}' \
+    '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
+    "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"$2\",\"arguments\":$3}}"
+    sleep "${4:-5}"
+  } | timeout 90 kelyfos mcp --sandbox "$(sandbox "$1")" 2>/dev/null | tail -1
+}
+text() { python3 -c 'import json,sys
+d=json.load(sys.stdin); c=d.get("result",{}).get("content",[])
+print(c[0].get("text","") if c else d)'; }
+
+echo
+echo "== a real change to the team's state: worker-1 messages an edge that was never declared =="
+call worker-1 team_send '{"to":"worker-2","body":"psst"}' 3 | text
+
+echo
+echo "== and the open file picks it up on its own — nobody re-ran the export =="
+for _ in $(seq 1 60); do grep -q 'no_edge' watch.html && break; sleep 1; done
+grep -q 'no_edge' watch.html
+echo "watch.html now carries the refusal, written by the loop already running"
+
+kill "$REFRESH_PID" 2>/dev/null || true
+wait "$REFRESH_PID" 2>/dev/null || true
+REFRESH_PID=""
+grep -q '^stopped$' refresh.log
+echo "the loop stopped cleanly on its own signal"
+
+kelyfos team down
+```
+
+---
+
 ## Running them yourself
 
 ```
@@ -9182,8 +9289,8 @@ different protocol stack from the REST endpoints the shim serves. Use
 
 ## 7. Where to look next
 
-- [`cookbook.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/cookbook.md) — sixteen recipes that run, including the Python
-  client above
+- [`cookbook.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/cookbook.md) — seventeen recipes that run, including the
+  Python client above
 - [`reference/`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/reference/README.md) — every command, flag, key, tool, event and exit
   code, generated from the source
 - [`teams.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/teams.md) — the full account of the schema, the broker and the
@@ -10548,7 +10655,7 @@ hand-written half, and this page says where each is still thin.
 | stuck on something KelyfOS refused | [`denials.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/denials.md), then [`reference/denials.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/reference/denials.md) for the exact one |
 | running something long and walking away | [`denials.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/denials.md) on `--notify`, and [`events.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/events.md) §6 for the history afterwards |
 | keeping an agent off the network | [`networking.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/networking.md) |
-| after something that works, right now | [`cookbook.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/cookbook.md) — sixteen recipes, each one runnable as it stands |
+| after something that works, right now | [`cookbook.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/cookbook.md) — seventeen recipes, each one runnable as it stands |
 | putting KelyfOS inside something else | [`integrating.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/integrating.md) |
 | building KelyfOS into something else | [`protocol.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/protocol.md), then [`e2b-shim.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/e2b-shim.md) |
 | driving KelyfOS from an MCP client | [`mcp-surface.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/mcp-surface.md) — `serve-mcp` and `[[plugin]]`, and [recipe 9](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/cookbook.md) for the configuration |
@@ -10574,7 +10681,7 @@ hand-written half, and this page says where each is still thin.
 | [`hardening.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/hardening.md) | concept | The v0.9 specification, written before the code: what a compromised agent reaches today, what the jailer and the guest profiles take away, and what remains reachable afterwards. |
 | [`host-seccomp.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/host-seccomp.md) | mixed | The syscall filter around the VMM process: which one is in force and why that is settled, how it is proved from the kernel's own copy rather than from the absence of a flag, and every syscall it permits. |
 | [`threat-model.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/threat-model.md) | concept | What KelyfOS defends against and — the longer half — what it does not. |
-| [`cookbook.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/cookbook.md) | recipes | Sixteen complete, copy-pasteable recipes. Every one is a script CI extracts and runs on a real machine. |
+| [`cookbook.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/cookbook.md) | recipes | Seventeen complete, copy-pasteable recipes. Every one is a script CI extracts and runs on a real machine. |
 | [`integrating.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/integrating.md) | mixed | For building on KelyfOS: the four ways in, orchestrator patterns, and a long list of the mistakes people actually make. |
 | [`e2b-shim.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/e2b-shim.md) | mixed | The E2B-compatible REST subset: what it implements, what it does not, and why. |
 | [`../llms.txt`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/llms.txt) | **generated** | The index a machine reads first: every page above as a link with a one-line description, per the llmstxt.org spec. |
@@ -10721,7 +10828,7 @@ neither refusal mentions the other, so a user who follows the first message hits
 the second; `team ps` has no sample output; the store's `not_found` is described as
 "not a refusal" and is recorded as one.
 
-### `cookbook.md` — sixteen things that work
+### `cookbook.md` — seventeen things that work
 
 *Recipes:* one sandbox; an allowlist and an injected credential; a workspace
 round-trip; snapshot and fork; a three-agent team with an ask round-trip and a
@@ -10739,9 +10846,13 @@ machine and picking the same one up with its scratch intact, under the policy it
 was frozen with; seeing what an agent changed before keeping it, including what
 `--review` does when there is nobody to ask; reaching a server inside a
 sandbox that has no network, including how to start a long-running process
-through `kelyfos exec` without hanging on it; and a team's declared topology,
+through `kelyfos exec` without hanging on it; a team's declared topology,
 drawn with nothing booted and then confirmed to match the same team once it
-is actually running (`team graph`, `team ps --graph`).
+is actually running (`team graph`, `team ps --graph`); and exporting a report
+against a team that has not stopped, `--refresh` rewriting it atomically on a
+clock so an open browser tab follows along through its own
+`<meta http-equiv="refresh">` — checked for the one property that matters,
+that the process doing the rewriting holds no socket at all.
 *Thin:* nothing hidden — every script is extracted and executed by
 `dev/cookbook.sh` and by the `cookbook` workflow, so a recipe that stops working
 fails rather than misleading anyone.
@@ -11270,6 +11381,8 @@ kelyfos log [flags]
 | `--follow` | boolean | — | stream events as they are recorded |
 | `--json` | boolean | — | print the raw events instead of a readable replay |
 | `--list` | boolean | — | list recorded sessions |
+| `--refresh` | boolean | — | keep rewriting --export as the session continues, atomically, with a meta-refresh tag — no server, no socket; Ctrl-C to stop |
+| `--refresh-every` | duration | 2s | how often --refresh rewrites the export (only meaningful with --refresh) |
 | `--session` | string | the most recent | session id |
 | `--sign-key` | string | — | sign the exported report with this ed25519 private key (PEM PKCS#8) |
 | `--verify` | boolean | — | check the hash chain and report the first break |

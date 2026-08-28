@@ -1,6 +1,6 @@
 # KelyfOS cookbook
 
-Sixteen recipes, each one complete, each one runnable as it stands.
+Seventeen recipes, each one complete, each one runnable as it stands.
 
 These are not illustrations. `bash dev/cookbook.sh` extracts every script below
 and runs it on a real machine. Every commit checks that each recipe still
@@ -1634,6 +1634,113 @@ echo
 echo "== what took its place =="
 grep -o '"data":"[^"]*"' "$record" | tail -1
 grep -o '"type":"session.erasure"[^}]*}' "$record"
+```
+
+---
+
+## 17. Follow a running team from a file, with no server behind it
+
+`kelyfos log --export` has never needed a session to be finished — it renders
+whatever the flight recorder holds right now, a still-running team included,
+and the page says "still running" rather than inventing an ending. `--refresh`
+is what turns that into something worth leaving open in a tab: it rewrites
+the same file atomically, on a timer, for as long as the session keeps going,
+and the page it writes carries a `<meta http-equiv="refresh">` — the one
+mechanism that makes an already-open browser tab reload itself and pick up
+what the last rewrite wrote. There is still no server and no socket anywhere
+in that path: the browser is polling a local file, and the only thing on a
+clock is this one CLI process rewriting it. It stops on its own once the
+session ends, or on Ctrl-C.
+
+<!-- recipe: live-export-refresh -->
+
+```bash
+set -euo pipefail
+work="$(mktemp -d)"
+cd "$work"
+REFRESH_PID=""
+trap '[ -n "$REFRESH_PID" ] && kill "$REFRESH_PID" 2>/dev/null; kelyfos team down >/dev/null 2>&1 || true; pkill -f "kelyfos team up" 2>/dev/null || true; rm -rf "$work"' EXIT
+
+cat > kelyfos.toml <<'TOML'
+[team]
+name = "cookbook-live"
+
+[[team.agent]]
+name  = "master"
+image = "dev"
+
+[[team.agent]]
+name  = "worker"
+image = "dev"
+count = 2                 # worker-1 and worker-2, with no edge to each other
+
+[[team.edge]]
+from = "master"
+to   = "worker-*"
+TOML
+
+kelyfos team up >up.log 2>&1 &
+for _ in $(seq 1 600); do grep -q 'team up in' up.log && break; sleep 0.25; done
+grep -q 'team up in' up.log || { cat up.log; exit 1; }
+
+echo
+echo "== --export against the team while it is still running, not a finished one =="
+kelyfos log --export live.html
+grep -q 'still running' live.html
+echo "the export says so, because it is"
+
+echo
+echo "== --refresh: the same file, rewritten atomically as the team keeps going =="
+kelyfos log --export watch.html --refresh --refresh-every 1s >refresh.log 2>&1 &
+REFRESH_PID=$!
+for _ in $(seq 1 120); do [ -s watch.html ] && grep -q 'meta http-equiv="refresh"' watch.html && break; sleep 0.25; done
+grep -q 'meta http-equiv="refresh"' watch.html
+echo "the exported page carries the tag that makes an open tab follow it"
+
+# Checked, not assumed: every fd the --refresh process holds, none a socket.
+# The property this recipe exists to prove — a browser polling a local file
+# needs nothing on the write side either.
+echo
+echo "== no socket anywhere in that path =="
+sockets="$(find "/proc/$REFRESH_PID/fd" -lname 'socket:*' 2>/dev/null | wc -l || true)"
+echo "open socket fds held by the --refresh process: $sockets"
+[ "$sockets" -eq 0 ]
+echo "zero, as D60/D63 require of everything outside kelyfos view (P7-12)"
+
+# Driving the team by hand needs one helper — see recipe 5 for why.
+sandbox() { python3 -c "
+import json
+a=json.load(open('$HOME/.cache/kelyfos/run/team.json'))['agents']
+print([x['sandbox'] for x in a if x['name']=='$1'][0])"; }
+call() {  # call <agent> <tool> <args-json> [seconds to hold the channel open]
+  { printf '%s\n' \
+    '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"cookbook","version":"1"}}}' \
+    '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
+    "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"$2\",\"arguments\":$3}}"
+    sleep "${4:-5}"
+  } | timeout 90 kelyfos mcp --sandbox "$(sandbox "$1")" 2>/dev/null | tail -1
+}
+text() { python3 -c 'import json,sys
+d=json.load(sys.stdin); c=d.get("result",{}).get("content",[])
+print(c[0].get("text","") if c else d)'; }
+
+echo
+echo "== a real change to the team's state: worker-1 messages an edge that was never declared =="
+call worker-1 team_send '{"to":"worker-2","body":"psst"}' 3 | text
+
+echo
+echo "== and the open file picks it up on its own — nobody re-ran the export =="
+for _ in $(seq 1 60); do grep -q 'no_edge' watch.html && break; sleep 1; done
+grep -q 'no_edge' watch.html
+echo "watch.html now carries the refusal, written by the loop already running"
+
+kill "$REFRESH_PID" 2>/dev/null || true
+wait "$REFRESH_PID" 2>/dev/null || true
+REFRESH_PID=""
+grep -q '^stopped$' refresh.log
+echo "the loop stopped cleanly on its own signal"
+
+kelyfos team down
 ```
 
 ---
