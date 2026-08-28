@@ -233,13 +233,30 @@ func TestDirtyPathsStillGoThroughEveryCheckBeforeServeMuxsOwnRedirect(t *testing
 	sessionID, path, _ := newFixtureSession(t)
 	tv := newTestView(t, sessionID, path)
 
+	// The default client (tv.ts.Client()) follows redirects transparently —
+	// 307 preserves method and body, so Client.Do silently re-sends the
+	// request to the redirect target and resp.StatusCode ends up being the
+	// *final*, post-redirect status. Against the bug this test exists to
+	// catch, that final status coincidentally matches what's asserted below
+	// (401/403/405), so the test gave a false PASS on the exact vulnerable
+	// code it names in its own title — found by re-review, confirmed by
+	// reverting the fix in a scratch clone and watching this client mask a
+	// real 307 fifteen times out of fifteen. A client with CheckRedirect
+	// short-circuited returns the raw first-hop response instead.
+	client := &http.Client{
+		Transport: tv.ts.Client().Transport,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+
 	dirtyPaths := []string{"//", "//events", "/a/../b", "/./", "///"}
 
 	for _, dirty := range dirtyPaths {
 		// No token, correct Host: must not be answered by a bare redirect —
 		// the missing-token refusal has to fire first.
 		req := tv.req(t, http.MethodGet, dirty, "")
-		resp, err := tv.ts.Client().Do(req)
+		resp, err := client.Do(req)
 		if err != nil {
 			t.Fatalf("%s (no token): %v", dirty, err)
 		}
@@ -255,7 +272,7 @@ func TestDirtyPathsStillGoThroughEveryCheckBeforeServeMuxsOwnRedirect(t *testing
 		// either — the Host check has to fire regardless of path shape.
 		req = tv.req(t, http.MethodGet, dirty, tv.token)
 		req.Host = "evil.example.com:1234"
-		resp, err = tv.ts.Client().Do(req)
+		resp, err = client.Do(req)
 		if err != nil {
 			t.Fatalf("%s (wrong Host): %v", dirty, err)
 		}
@@ -271,7 +288,7 @@ func TestDirtyPathsStillGoThroughEveryCheckBeforeServeMuxsOwnRedirect(t *testing
 		// redirect either — the method check has to fire regardless of path
 		// shape, matching the structural "GET/HEAD only" requirement.
 		req = tv.req(t, http.MethodPost, dirty, tv.token)
-		resp, err = tv.ts.Client().Do(req)
+		resp, err = client.Do(req)
 		if err != nil {
 			t.Fatalf("%s (POST): %v", dirty, err)
 		}
