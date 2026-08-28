@@ -325,16 +325,23 @@ func atomicWriteReport(dest, id string, chain []byte, key ed25519.PrivateKey, re
 // changing on disk and a browser polling it, which is the whole point — it
 // is the honest answer for anyone who does not want a listener, and it works
 // whether or not P7-12's viewer ever runs.
+// minRefreshInterval is the floor on --refresh-every. Below it the loop stops
+// being a "how often does the export change" knob and becomes a syscall
+// storm: an unbounded --refresh-every 1ns measured at over a full CPU-second
+// of work per wall-second, against a meta tag whose own content is whole
+// seconds — no browser could ever observe anything below this floor either.
+const minRefreshInterval = 100 * time.Millisecond
+
 func refreshExportSession(ctx context.Context, id, path, dest, signKey string, interval time.Duration) error {
+	if interval < minRefreshInterval {
+		return fmt.Errorf("--refresh-every must be at least %s, got %s", minRefreshInterval, interval)
+	}
 	var key ed25519.PrivateKey
 	if signKey != "" {
 		var err error
 		if key, err = report.LoadSigningKey(signKey); err != nil {
 			return err
 		}
-	}
-	if interval <= 0 {
-		return fmt.Errorf("--refresh-every must be positive, got %s", interval)
 	}
 	// The meta tag's content is whole seconds; a sub-second interval still
 	// rewrites the file that often, it just asks the browser to reload no
@@ -349,6 +356,18 @@ func refreshExportSession(ctx context.Context, id, path, dest, signKey string, i
 	fmt.Println("  atomic rewrite + <meta refresh> — no server, no socket. Ctrl-C to stop.")
 
 	var last []byte
+	var lastLog string
+	wrote := false
+	log := func(line string) {
+		// A vanished record or a permanently-invalid export repeats the same
+		// diagnostic every tick — at the floor above that is up to ten lines a
+		// second. One line per new problem, not one per poll.
+		if line == lastLog {
+			return
+		}
+		lastLog = line
+		fmt.Println(line)
+	}
 	for {
 		blob, err := os.ReadFile(path)
 		switch {
@@ -357,26 +376,44 @@ func refreshExportSession(ctx context.Context, id, path, dest, signKey string, i
 			// started in the same breath as `team up` races its own first
 			// event. Transient either way: say so and keep polling rather
 			// than exiting a loop the caller asked to run "until it's done."
-			fmt.Printf("  %s waiting for the flight recorder: %v\n", refreshStamp(), err)
-		case bytes.Equal(blob, last):
+			log(fmt.Sprintf("  %s waiting for the flight recorder: %v", refreshStamp(), err))
+		case wrote && bytes.Equal(blob, last):
 			// Nothing new since the last rewrite. The meta tag already has an
 			// open tab polling dest on its own schedule, so there is nothing
 			// this tick needs to redo — an unconditional rewrite here would
 			// mean an atomic rename every interval for a team that is simply
 			// idle between messages.
+			//
+			// wrote guards this: bytes.Equal(nil, nil) is true, so without it
+			// a session file that exists but is still empty (created by
+			// recorder.Open, nothing Appended yet) would match a nil `last`
+			// on the very first tick and the loop would sit there forever,
+			// silently, never writing dest and never saying why.
 		default:
 			ended, n, werr := writeRefreshedReport(dest, id, blob, key, refreshSecs)
 			if werr != nil {
+				var wfe *refreshWriteError
+				if errors.As(werr, &wfe) {
+					// Unlike a parse race, a write failure — a destination
+					// directory that does not exist, a read-only filesystem,
+					// no space left — will not resolve itself on the next
+					// tick. The one-shot --export exits 1 on the identical
+					// error; --refresh does the same rather than retrying it
+					// forever under "export not yet valid," which is
+					// actively wrong for a write-side fault.
+					return fmt.Errorf("writing %s: %w", dest, wfe.err)
+				}
 				// A read racing an in-flight Append could in principle catch
 				// a torn final line; Append writes each event with one
 				// O_APPEND syscall, so the kernel does not hand a concurrent
 				// reader a half-written line in practice, but treating a
 				// parse failure as fatal here would turn a one-tick race
 				// into the whole command exiting. Try again next tick.
-				fmt.Printf("  %s export not yet valid, retrying: %v\n", refreshStamp(), werr)
+				log(fmt.Sprintf("  %s export not yet valid, retrying: %v", refreshStamp(), werr))
 			} else {
 				last = blob
-				fmt.Printf("  %s wrote %s (%d events, %d bytes)\n", refreshStamp(), dest, n, len(blob))
+				wrote = true
+				log(fmt.Sprintf("  %s wrote %s (%d events, %d chain bytes)", refreshStamp(), dest, n, len(blob)))
 				if ended {
 					fmt.Println("session ended — that was the final export, with no further meta-refresh; stopping")
 					return nil
@@ -385,12 +422,35 @@ func refreshExportSession(ctx context.Context, id, path, dest, signKey string, i
 		}
 		select {
 		case <-ctx.Done():
-			fmt.Println("\nstopped")
+			if wrote {
+				// A tab left open on dest still carries the refresh tag from
+				// its last rewrite and will keep re-fetching a file nothing
+				// will ever change again unless this last write drops it —
+				// the same reason session.end drops it, applied to the other
+				// way the loop can stop.
+				if _, werr := atomicWriteReport(dest, id, last, key, 0); werr == nil {
+					fmt.Println("\nstopped — wrote a final export with no further meta-refresh")
+				} else {
+					fmt.Printf("\nstopped (final export failed: %v)\n", werr)
+				}
+			} else {
+				fmt.Println("\nstopped")
+			}
 			return nil
 		case <-time.After(interval):
 		}
 	}
 }
+
+// refreshWriteError marks an error as coming from atomicWriteReport rather
+// than from parsing blob, so refreshExportSession's loop can tell a
+// transient read/parse race (retry next tick) apart from a write-side fault
+// like a missing destination directory or a full disk (not going away on its
+// own — surface it and stop, the way the one-shot --export already does).
+type refreshWriteError struct{ err error }
+
+func (e *refreshWriteError) Error() string { return e.err.Error() }
+func (e *refreshWriteError) Unwrap() error { return e.err }
 
 // writeRefreshedReport folds blob to learn whether the session it came from
 // has already ended, then writes it — dropping the refresh tag on that last
@@ -409,7 +469,7 @@ func writeRefreshedReport(dest, id string, blob []byte, key ed25519.PrivateKey, 
 	}
 	n, err = atomicWriteReport(dest, id, blob, key, secs)
 	if err != nil {
-		return false, 0, err
+		return false, 0, &refreshWriteError{err}
 	}
 	return ended, n, nil
 }

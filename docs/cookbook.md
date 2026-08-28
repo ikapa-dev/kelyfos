@@ -1,6 +1,6 @@
 # KelyfOS cookbook
 
-Seventeen recipes, each one complete, each one runnable as it stands.
+Eighteen recipes, each one complete, each one runnable as it stands.
 
 These are not illustrations. `bash dev/cookbook.sh` extracts every script below
 and runs it on a real machine. Every commit checks that each recipe still

@@ -114,7 +114,7 @@ func TestRefreshExportSessionFollowsAGrowingSessionAndStopsWhenItEnds(t *testing
 
 	ctx := context.Background()
 	done := make(chan error, 1)
-	go func() { done <- refreshExportSession(ctx, "s1", path, dest, "", 20*time.Millisecond) }()
+	go func() { done <- refreshExportSession(ctx, "s1", path, dest, "", 150*time.Millisecond) }()
 
 	waitForFile(t, dest, func(s string) bool { return strings.Contains(s, "still running") })
 
@@ -162,7 +162,7 @@ func TestRefreshExportSessionStopsOnContextCancelWithNoSessionEnd(t *testing.T) 
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- refreshExportSession(ctx, "s1", path, dest, "", 20*time.Millisecond) }()
+	go func() { done <- refreshExportSession(ctx, "s1", path, dest, "", 150*time.Millisecond) }()
 
 	waitForFile(t, dest, func(s string) bool { return strings.Contains(s, "still running") })
 	cancel()
@@ -175,10 +175,122 @@ func TestRefreshExportSessionStopsOnContextCancelWithNoSessionEnd(t *testing.T) 
 	case <-time.After(5 * time.Second):
 		t.Fatal("refreshExportSession did not stop after its context was cancelled")
 	}
+
+	// A tab left open on dest polls forever on whatever tag its last rewrite
+	// carried. Ctrl-C is not session.end, but a page nothing will update
+	// again should still stop asking to be refreshed.
+	final, err := os.ReadFile(dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(final), `http-equiv="refresh"`) {
+		t.Errorf("the loop's final write after a context cancel still carries a refresh tag:\n%s", final)
+	}
 }
 
 func TestRefreshExportSessionRejectsANonPositiveInterval(t *testing.T) {
 	if err := refreshExportSession(context.Background(), "s1", "/dev/null", "/dev/null", "", 0); err == nil {
 		t.Fatal("a zero --refresh-every was accepted")
+	}
+}
+
+// A positive interval that is merely tiny is not "the caller wants a fast
+// refresh" — measured at over a full CPU-second of syscalls per wall-second,
+// against a <meta refresh> tag whose own content is whole seconds. Below
+// minRefreshInterval is rejected the same way zero is.
+func TestRefreshExportSessionRejectsAnIntervalBelowTheFloor(t *testing.T) {
+	if err := refreshExportSession(context.Background(), "s1", "/dev/null", "/dev/null", "", time.Nanosecond); err == nil {
+		t.Fatal("a 1ns --refresh-every was accepted")
+	}
+	if err := refreshExportSession(context.Background(), "s1", "/dev/null", "/dev/null", "", 50*time.Millisecond); err == nil {
+		t.Fatal("a 50ms --refresh-every was accepted, below the 100ms floor")
+	}
+}
+
+// A destination the loop cannot write to (here: a directory that does not
+// exist, the same fault the one-shot --export already exits 1 on) is not a
+// parse race that resolves itself on the next tick. Before this fix the loop
+// printed "export not yet valid, retrying" forever; it must instead return
+// the error and stop, the way --export does for the identical fault.
+func TestRefreshExportSessionStopsOnAPermanentWriteFailure(t *testing.T) {
+	root := t.TempDir()
+	rec, err := recorder.Open(root, "s1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := rec.Append(recorder.Event{Type: recorder.TypeSessionStart}); err != nil {
+		t.Fatal(err)
+	}
+	path := recorder.Path(root, "s1")
+	dest := filepath.Join(t.TempDir(), "no-such-directory", "watch.html")
+
+	done := make(chan error, 1)
+	go func() { done <- refreshExportSession(context.Background(), "s1", path, dest, "", 150*time.Millisecond) }()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("refreshExportSession returned no error against an unwritable destination")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("refreshExportSession retried a permanent write failure forever instead of stopping")
+	}
+}
+
+// recorder.Open creates events.jsonl with O_CREATE before the first Append
+// lands, so a refresh that starts in that window sees a file that exists and
+// is empty. bytes.Equal(nil, nil) is true, so without the `wrote` guard the
+// loop's own "nothing new since last time" branch matches on tick one and
+// never writes dest at all — not an error, not a retry message, nothing: the
+// loop just sits there, forever, on a session that has genuinely started.
+//
+// The fix renders the empty chain immediately, same as the one-shot --export
+// already does for an empty record — a report saying "nothing happened yet"
+// is a valid, honest state to show, and it means a browser tab opened early
+// sees *something* rather than a blank page nothing will ever fill in. This
+// pins that: dest exists (with 0 events) before anything is ever recorded,
+// and updates once real content lands.
+func TestRefreshExportSessionRecoversFromAnEmptyChainFile(t *testing.T) {
+	root := t.TempDir()
+	rec, err := recorder.Open(root, "s1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := recorder.Path(root, "s1")
+	dest := filepath.Join(t.TempDir(), "watch.html")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- refreshExportSession(ctx, "s1", path, dest, "", 150*time.Millisecond) }()
+
+	// The empty chain is written on its own — this is the tick-one write the
+	// bug used to skip via bytes.Equal(nil, nil). "still running" is true of
+	// an empty-but-unended chain too (Summary.Ended is unset either way), so
+	// existence — not content — is what distinguishes the fix from the bug:
+	// before it, dest was never created at all.
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if _, err := os.Stat(dest); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("timed out waiting for dest to be written from the empty chain file")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	if err := rec.Append(recorder.Event{Type: recorder.TypeSessionStart}); err != nil {
+		t.Fatal(err)
+	}
+	waitForFile(t, dest, func(s string) bool { return strings.Contains(s, "still running") })
+
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("refreshExportSession returned an error: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("refreshExportSession did not stop after its context was cancelled")
 	}
 }
