@@ -2,6 +2,7 @@ package report
 
 import (
 	"strings"
+	"unicode"
 
 	"github.com/p4r4n0rm4l/KelyfOS/internal/proto"
 )
@@ -56,9 +57,22 @@ func safeBody(s string) string {
 	return b.String()
 }
 
+// isDangerousControl also rejects every rune unicode.IsPrint rejects
+// (P7-17/F1). The finding is that the ASCII range missed the whole Cf
+// category, so a right-to-left override — U+202E, the Trojan Source class —
+// reached the page, where it reorders how a line renders without changing a
+// byte of its logical content and html/template's `< > & ' "` does nothing
+// about it. safeBody replaces one the way it already replaces a stray ESC:
+// with U+FFFD, visible and inert.
+//
+// A body legitimately contains non-ASCII, and this keeps all of it — every
+// letter, mark, number, punctuation and symbol in Unicode is printable. What
+// it also removes is a no-break space and the other non-U+0020 spaces, which
+// is a small fidelity cost in genuinely international output and the same
+// trade this function has always made for a \x01.
 func isDangerousControl(r rune) bool {
 	if r == '\t' || r == '\n' || r == '\r' {
 		return false
 	}
-	return r < 0x20 || r == 0x7f
+	return r < 0x20 || r == 0x7f || !unicode.IsPrint(r)
 }

@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"unicode"
 
 	"github.com/p4r4n0rm4l/KelyfOS/internal/digest"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
@@ -22,6 +23,19 @@ func isRawControlByte(b byte) bool {
 		return false
 	}
 	return b < 0x20 || b == 0x7f
+}
+
+// isDangerousRune is the same restatement one level up, on a decoded rune, for
+// the half of safe.go's predicate a byte loop structurally cannot see
+// (P7-17/F1): a right-to-left override is three bytes of UTF-8, none of them a
+// control byte, and it reorders how the whole line renders. Kept beside the
+// byte loop rather than replacing it, because the byte loop is what catches an
+// invalid-UTF-8 stray that never decodes to a rune at all.
+func isDangerousRune(r rune) bool {
+	if r == '\t' || r == '\n' || r == '\r' {
+		return false
+	}
+	return r < 0x20 || r == 0x7f || !unicode.IsPrint(r)
 }
 
 // The RENDER checklist (PLAN.html §8 rule 10) and P7-8's own task text both
@@ -40,6 +54,13 @@ func isRawControlByte(b byte) bool {
 // internal/graph's numeric-only drawing has never been asked to carry
 // before.
 const scriptPayload = `<script>alert(document.cookie)</script>`
+
+// bidiPayload is the Trojan Source fixture (P7-17/F1): U+202E, the
+// right-to-left override, in front of a word that then renders as
+// "acceptable" and compares as its reverse. Every other fixture in this file
+// is markup or an ASCII control byte, which is exactly why the Cf category
+// went unnoticed until the review named it.
+const bidiPayload = "\u202eelbatpecca"
 
 func hostileEvents() []recorder.Event {
 	agentName := `<img src=x onerror="alert(1)">`
@@ -113,6 +134,32 @@ func hostileEvents() []recorder.Event {
 	add(recorder.Event{Type: recorder.TypeTeamMessage, Agent: "worker-2", Peer: agentName,
 		Kind: "reply", Data: controlPayload,
 		SHA256: "f00dbaad", Bytes: len(controlPayload), TS: "2026-08-27T10:00:03.400Z"})
+
+	// P7-17/F1: the same corpus, in the Trojan Source shape rather than the
+	// markup one. A right-to-left override reorders how a line renders
+	// without changing a byte of its logical content, so a reader of this
+	// report sees a command, a key and a body that are not the ones the
+	// record holds — and until F1 widened the predicate to unicode.IsPrint,
+	// every fixture in this file was ASCII and nothing here would have
+	// noticed. Routed through all three shapes the review named: a store key,
+	// a command, and a body.
+	add(recorder.Event{Type: recorder.TypeCommandStart, Agent: agentName,
+		Call: "c2", Cmd: []string{"rm", "-rf", "/work/" + bidiPayload},
+		Via: "exec", TS: "2026-08-27T10:00:03.500Z"})
+	add(recorder.Event{Type: recorder.TypeCommandOutput, Agent: agentName,
+		Call: "c2", Stream: "stdout",
+		Data: base64.StdEncoding.EncodeToString([]byte("removed " + bidiPayload + "\n")),
+		TS:   "2026-08-27T10:00:03.600Z"})
+	add(recorder.Event{Type: recorder.TypeCommandExit, Agent: agentName,
+		Call: "c2", Code: &exitCode, TS: "2026-08-27T10:00:03.700Z"})
+	add(recorder.Event{Type: recorder.TypeTeamStore, Agent: agentName, Peer: bidiPayload,
+		Kind: "put", Outcome: "delivered", Bytes: 9, TS: "2026-08-27T10:00:03.800Z"})
+	add(recorder.Event{Type: recorder.TypeTeamMessage, Agent: agentName, Peer: "worker-2",
+		Kind: "send", Data: "the change is " + bidiPayload,
+		SHA256: "b1d1b1d1", Bytes: 24, TS: "2026-08-27T10:00:03.900Z"})
+	add(recorder.Event{Type: recorder.TypeEgressAttempt, Agent: agentName,
+		Host: bidiPayload + ".example.com", Port: 443, Mode: "tunnelled",
+		Reason: "not_in_allowlist", TS: "2026-08-27T10:00:03.950Z"})
 
 	// A store key that is a <script> tag — put once (so it's a resource
 	// the run map/reach matrix actually draws), then a refusal against the
@@ -192,6 +239,14 @@ func TestHostileValuesReachTextContentOnly(t *testing.T) {
 	for _, b := range []byte(page) {
 		if isRawControlByte(b) {
 			t.Fatalf("the report contains a raw control byte: 0x%02x", b)
+		}
+	}
+	// And the rune-level half of the same predicate (P7-17/F1): every fixture
+	// in this file was ASCII until the bidi ones above, so a byte loop was the
+	// whole check and the Cf category went unseen.
+	for _, r := range page {
+		if isDangerousRune(r) {
+			t.Fatalf("the report contains U+%04X, which safe.go's own predicate rejects", r)
 		}
 	}
 
@@ -279,6 +334,9 @@ func FuzzRunSectionRendersHostileStringsSafely(f *testing.F) {
 	f.Add("javascript:alert(1)", "javascript:alert(2)", "javascript:alert(3)", "javascript:alert(4)")
 	f.Add("a\x00b", "c\x01d", "e\x1fg", "h")
 	f.Add("", "", "", "")
+	// P7-17/F1: the Trojan Source shape, in all four fields at once.
+	f.Add(bidiPayload, bidiPayload, bidiPayload+".example.com", bidiPayload)
+	f.Add("worker\u2068-1", "findings/\u2069", "exam\u200bple.com", "TOKEN\u00ad")
 
 	f.Fuzz(func(t *testing.T, agent, storeKey, domain, secretName string) {
 		// recorder.Append does not refuse a raw control byte — it measures
@@ -316,6 +374,12 @@ func FuzzRunSectionRendersHostileStringsSafely(f *testing.F) {
 			if isRawControlByte(b) {
 				t.Fatalf("a raw control byte 0x%02x reached the page for agent=%q key=%q domain=%q secret=%q",
 					b, agent, storeKey, domain, secretName)
+			}
+		}
+		for _, r := range page {
+			if isDangerousRune(r) {
+				t.Fatalf("U+%04X reached the page for agent=%q key=%q domain=%q secret=%q",
+					r, agent, storeKey, domain, secretName)
 			}
 		}
 		for _, tag := range tagSpans(page) {

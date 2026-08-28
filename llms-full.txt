@@ -1242,6 +1242,17 @@ which keeps `\n`, `\t` and SGR colour and replaces everything else. What
 would otherwise drive the cursor back over the fixed prefix each output line is
 printed behind and let the guest speak in the host's own voice.
 
+The predicate is `unicode.IsPrint`, not an ASCII control-byte range. The
+Trojan Source characters — `U+202E` and the bidirectional isolates `U+2066`
+to `U+2069` — reorder how a line renders without changing a byte of its
+logical content, in a terminal and in a browser alike, and zero-width joiners,
+soft hyphens and every space other than `U+0020` make two different strings
+read identically. For an identity-like field — a domain in a blocked-egress
+line, a store key, a path, a command — that is the side to err on. The same
+clause is in the HTML report's own `safeBody`, so a direction override in a
+command's captured output is replaced with U+FFFD there the way a stray `ESC`
+already was.
+
 What this does **not** cover: a terminal emulator with its own parsing bugs,
 and the bytes an interactive `kelyfos shell` session carries, which are a
 terminal stream by definition and are passed through as the shell's own
@@ -1670,7 +1681,9 @@ identity-like value — an agent name, a domain, a key — goes through
 `proto.SafeText`, the same "quote the whole string" rule already used for a
 boot line) and `safeBody` (a command's captured output or a message body, kept
 multi-line: only the dangerous byte is replaced, with U+FFFD) are what stand
-between a guest-influenced string and the template now, and
+between a guest-influenced string and the template now. Both predicates were
+ASCII-only until P7-17/F1, which is a second thing construction did not cover:
+`html/template` does not touch a `U+202E` either, and neither did they. and
 `FuzzRunSectionRendersHostileStringsSafely` fuzzes an agent name, a store key, a
 domain and a secret name through a real render and checks for a live
 `<script>`, an event-handler attribute, a `javascript:` URL and a raw control

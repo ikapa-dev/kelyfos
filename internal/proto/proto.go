@@ -12,6 +12,7 @@ import (
 	"io"
 	"strconv"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -711,9 +712,21 @@ func (p *Reader) DrainOverlongLine() error {
 // One copy on purpose. Three had appeared by the end of P6-3 — in the host's
 // audit summariser, the supervisor's, and here — which is how the same class of
 // bug turned up three times in one task.
+//
+// The predicate is unicode.IsPrint and not an ASCII control range, which is
+// P7-17/F1: the range missed the whole Cf category. The bidirectional
+// overrides and isolates — U+202E, U+2066 to U+2069, the Trojan Source class —
+// reorder how a line renders without changing a byte of its logical content,
+// in a terminal and in a browser alike, so a guest gets to choose how its own
+// audit record reads to a person while the record itself says something else.
+// IsPrint also rejects zero-width joiners, soft hyphens, and every space other
+// than U+0020, all of which are invisible and all of which make two different
+// strings read identically. For an identity-like field — a domain in a blocked
+// -egress line, a path, a store key, a command — that is the right side to err
+// on. strconv.Quote already renders U+202E as \u202e; it only needed calling.
 func SafeText(s string) string {
 	for _, r := range s {
-		if r < 0x20 || r == 0x7f {
+		if r < 0x20 || r == 0x7f || !unicode.IsPrint(r) {
 			return strconv.Quote(s)
 		}
 	}
@@ -733,7 +746,8 @@ func SafeText(s string) string {
 //   - SGR — ESC [ … m, the colour and attribute sequences — survives, so a
 //     test runner's red FAIL still reads as one.
 //   - Everything else becomes U+FFFD: every other C0 byte, DEL, an ESC
-//     introducing anything but SGR, and any byte that is not valid UTF-8.
+//     introducing anything but SGR, any rune unicode.IsPrint rejects, and any
+//     byte that is not valid UTF-8.
 //
 // The exclusions are the point. ESC ] is OSC, which sets the window title and
 // mints hyperlinks; ESC [ … J and ESC [ … H erase the screen and move the
@@ -776,6 +790,16 @@ func SafeBody(s string) string {
 			// passed through because a terminal decoding it is anyone's guess.
 			b.WriteRune(utf8.RuneError)
 			i++
+			continue
+		}
+		// P7-17/F1: the same clause SafeText got. Output legitimately
+		// contains non-ASCII; it does not legitimately contain direction
+		// overrides. The cost is that a no-break space or another
+		// non-U+0020 space in genuine output is replaced too — visible,
+		// inert, and the same trade this function already makes for a \r.
+		if !unicode.IsPrint(r) {
+			b.WriteRune(utf8.RuneError)
+			i += size
 			continue
 		}
 		b.WriteRune(r)
