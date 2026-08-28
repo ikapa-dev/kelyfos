@@ -306,6 +306,53 @@ func TestARecordCutShortAtItsEndStillVerifies(t *testing.T) {
 	}
 }
 
+// TestErasedSessionStillEndsCleanly is B5's direct repro: kelyfos sessions
+// erase appends session.erasure AFTER session.end, so a session that
+// closed perfectly cleanly and was later erased used to have endsCleanly
+// look only at the last event — session.erasure — and report exactly the
+// sentence a genuinely truncated record gets: "the chain cannot tell those
+// apart." That is the wrong answer on precisely the records most likely to
+// be scrutinised, and docs/retention.md's own claim that "kelyfos verify
+// after an erasure reports the chain intact, the same as before" was false
+// until this was fixed.
+func TestErasedSessionStillEndsCleanly(t *testing.T) {
+	root := t.TempDir()
+	rec, err := recorder.Open(root, "erased-clean")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := rec.Append(recorder.Event{Type: recorder.TypeSessionStart}); err != nil {
+		t.Fatal(err)
+	}
+	if err := rec.Append(recorder.Event{Type: recorder.TypeCommandOutput, Data: "hello"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := rec.Append(recorder.Event{Type: recorder.TypeSessionEnd, Reason: "shutdown"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := rec.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := recorder.Erase(root, "erased-clean", "test"); err != nil {
+		t.Fatalf("Erase: %v", err)
+	}
+	blob, err := os.ReadFile(recorder.Path(root, "erased-clean"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	events, err := recorder.Read(bytes.NewReader(blob))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if events[len(events)-1].Type != recorder.TypeSessionErasure {
+		t.Fatalf("last event is %q, want %q — this test needs an erased chain to mean anything",
+			events[len(events)-1].Type, recorder.TypeSessionErasure)
+	}
+	if !endsCleanly(blob) {
+		t.Error("an erased chain whose session actually ended cleanly was reported as possibly cut short")
+	}
+}
+
 // An empty file is an empty flight recorder, which is what a process that died
 // before its first append leaves behind — recorder.Open creates one. It used to
 // be refused as "not a flight recorder", which sends its owner looking for the

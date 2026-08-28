@@ -734,22 +734,52 @@ the moment the team came up, not a live view of it.
 
 ### `session.erasure`
 Appended by `kelyfos sessions erase` (`docs/retention.md`, D61) once, as the
-new last event, after every `data`, `args`, `cmd` and `argv` field elsewhere
-in the chain that carried content has been replaced with a fingerprint of
-what was there — its own sha256 — and the whole chain rehashed from the
-first event so it still verifies. Carries no `agent` field: it is about the
-chain as a whole, the same scope `session.start`, `session.end` and
-`team.topology` already use.
+new last event, after every field elsewhere in the chain known to carry
+guest-influenced or operator-supplied content has been replaced with a
+fingerprint of what was there — its own sha256 — and the whole chain
+rehashed from the first event so it still verifies. Carries no `agent`
+field: it is about the chain as a whole, the same scope `session.start`,
+`session.end` and `team.topology` already use.
+
+The redacted fields are `data`, `cmd`, `argv`, `args`, `cwd`, `path`, `host`,
+`peer`, `comm`, `name`, `tool`, `allow`, `workspace`, `traceparent`, and
+`store_keys[].name` — every field on `Event` known to carry guest-influenced
+or operator-supplied content, walked by reflection and checked field by
+field rather than trusted to a hand-maintained list (`docs/retention.md` §5
+has the complete list with the reasoning for each, including which fields
+are deliberately exempt and why — a session id, an agent's own declared
+name, and a handful of fixed enumerations are not content and survive
+unchanged).
 
 | Field | Type | Meaning |
 | --- | --- | --- |
 | `reason` | string | Why — the operator-supplied `-reason` the command requires, e.g. a GDPR Article 17 request. |
 | `modified` | integer | How many events had a field replaced. Not how many fields — an event with more than one redacted field still counts once. Reused from `run.review`'s own `modified`, disambiguated by `type` the same way `cpu_quota_percent` already is across four other event types. |
+| `sha256` | string | The chain head — the previous last event's own `hash` — immediately before this rewrite began, so a reader already holding an earlier export of this chain (`kelyfos verify --extract`, or a report's own embedded record) can confirm the erased chain is its honest successor rather than a fabrication. Reused from `file.write`'s own `sha256`, the same cross-type reuse `modified` and `cpu_quota_percent` already have. |
 
 A redacted field reads `"(erased — sha256:<64 hex chars>)"` in place of what
 was there — the same in-band-note shape `clipLargestField` already uses for
 a clipped one, applied to a deliberate removal instead of an accidental
-oversize.
+oversize. For a `[]string` field the digest is computed over a
+length-prefixed encoding of the elements — each element's own byte length
+as a fixed 8-byte big-endian integer, followed by the element's bytes,
+concatenated across the whole slice — rather than the elements simply
+joined with a delimiter first: `["a b", "c"]` and `["a", "b", "c"]` used to
+fingerprint identically when joined with a space, because a fixed
+delimiter can appear inside an element unless something upstream forbids
+it, and nothing does. Length-prefixing is injective instead of merely
+unlikely to collide: the encoded bytes for one slice split back into
+elements exactly one way, so two slices that are not element-for-element
+identical can never encode to the same bytes. Running erase again on an
+already-erased chain recognises its own placeholder shape and refuses
+rather than hashing the placeholder itself — a fingerprint set by one
+erasure is never overwritten by a later one.
+
+`session.erasure` is not necessarily the last event a reader should use to
+decide whether a session's own work finished — see §5's note on
+`session.end` below: a session that closed cleanly and was later erased
+still has a `session.end` earlier in the chain, and `kelyfos verify` looks
+for one anywhere rather than only at the very end.
 
 ---
 
@@ -804,7 +834,12 @@ oversize.
   ```
 
 A session that is still running has no `session.end`. That is not corruption:
-a reader should present the session as open rather than truncated.
+a reader should present the session as open rather than truncated. This is
+checked by looking for a `session.end` **anywhere** in the chain, not only
+as the last event — `kelyfos sessions erase` appends `session.erasure` after
+it, so a session that closed perfectly cleanly and was later erased still
+has its `session.end` earlier in the chain, and reads as closed rather than
+possibly cut short.
 
 A `serve-mcp` session exports the same way, with **one lane per sandbox** —
 the same machinery a team's transcript uses, because it is the same question.

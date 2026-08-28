@@ -430,14 +430,27 @@ func sessionIsLive(id string, live map[string]bool) bool {
 
 // pruneEligible is prune's own age question, split out from the directory
 // walk so it can be tested without a filesystem: a session is eligible once
-// it has gone untouched for at least the retention floor, measured from its
-// own directory's mtime (the last thing anything wrote into it) rather than
-// from a session.end timestamp inside its chain — the same reason
-// pruneTemplates ages the fork-template cache by mtime: it is cheap, and it
-// treats a cleanly closed session and an orphaned/crashed one the same way,
-// where the chain's own session.end may not exist for the second kind at
-// all (docs/events.md: "a session that is still running has no
+// it has gone untouched for at least the retention floor, measured from
+// events.jsonl's own mtime rather than from a session.end timestamp inside
+// its chain — cheap (no chain has to be parsed to decide what to prune),
+// and it treats a cleanly closed session and an orphaned/crashed one the
+// same way, where the chain's own session.end may not exist for the second
+// kind at all (docs/events.md: "a session that is still running has no
 // session.end... the chain cannot tell those apart").
+//
+// events.jsonl's own mtime, not the session DIRECTORY's (S2): appending to
+// an existing file does not advance its parent directory's own mtime on
+// POSIX — only creating or removing an entry inside that directory does —
+// so ageing by the directory aged a session from when its directory was
+// first created (session START) while docs/retention.md described "twelve
+// months from session close." events.jsonl is the one file every write to
+// this session touches, including the last one, so its own mtime is
+// genuinely last-write with the same no-chain-parse cost pruneTemplates'
+// own mtime-based aging already accepts for the fork-template cache. One
+// consequence worth being explicit about, not a defect: kelyfos sessions
+// erase also writes events.jsonl, so an Article 17 erasure resets this
+// clock the same way any other write to the chain would — consistent with
+// "age since last write," not an exception to it.
 func pruneEligible(mtime, now time.Time, floor time.Duration) bool {
 	return now.Sub(mtime) >= floor
 }
@@ -507,7 +520,15 @@ you still need to keep, see 'kelyfos sessions erase'.
 		if sessionIsLive(id, live) {
 			continue
 		}
-		info, err := e.Info()
+		// events.jsonl's own mtime, not the directory's own (S2) — see
+		// pruneEligible's comment for why: appending never advances a
+		// directory's own mtime on POSIX, only creating or removing an
+		// entry inside it does, so this is what makes "age" mean "since
+		// last write" rather than "since the session started." root here
+		// is already recorder.SessionsDir(sandbox.Root()), so the file is
+		// joined directly rather than through recorder.Path (which itself
+		// appends "sessions").
+		info, err := os.Stat(filepath.Join(root, id, "events.jsonl"))
 		if err != nil {
 			continue
 		}
@@ -549,36 +570,43 @@ func sessionsErase(argv []string) error {
 		fmt.Fprint(fs.Output(), `usage: kelyfos sessions erase -reason "<why>" <id>
 
 Rewrites one recorded session's own chain in place: every field known to
-carry guest-influenced or operator-supplied content — command output, an
-MCP call's argument summary, a command's own argv, and the host's own
-argv (what a trailing "-- <command>" carries, e.g. kelyfos run -- claude
-"...") — is replaced with a fingerprint of what was there, its sha256,
-rather than left alone or deleted. The chain still verifies afterward, and
-what changed is recorded in it too, as the new last event, session.erasure
-— an erasure that could not itself be audited would undercut the reason
-this record exists at all.
+carry guest-influenced or operator-supplied content — command output, a
+file path, a connection's peer, an MCP call's argument summary and tool
+name, a command's own argv, the host's own argv (what a trailing
+"-- <command>" carries, e.g. kelyfos run -- claude "...") and more — is
+replaced with a fingerprint of what was there, its sha256, rather than left
+alone or deleted (the full list, and why each field is or is not covered,
+is docs/retention.md §5). The chain still verifies afterward, and what
+changed is recorded in it too, as the new last event, session.erasure —
+an erasure that could not itself be audited would undercut the reason this
+record exists at all. That event also anchors the exact chain head this
+rewrite replaced, so a reader who already holds an earlier export of this
+session can confirm the erased chain is its honest successor rather than a
+fabrication.
 
-This is destructive and cannot be undone: the content is gone, not backed up
-anywhere, which is the point (GDPR Article 17). What survives is exactly
-enough to answer "what shape did this session have," not "what did it say."
+This is destructive and cannot be undone from this record: the content is
+gone, not kept anywhere by KelyfOS. That does not reach a copy this record
+was never involved in — a report already exported before the erasure ran
+carries the original chain, signed or not, and this command has no way to
+know one exists.
 
--reason must come before <id>: Go's flag package stops looking for flags at
-the first positional argument, so "erase <id> -reason ..." would silently
-treat -reason as a second id rather than a flag.
+Flags may go on either side of the id, the same as `+"`kelyfos verify`"+`.
 
 `)
 		fs.PrintDefaults()
 	}
-	if err := fs.Parse(argv); err != nil {
+	ids, err := parseAround(fs, argv)
+	if err != nil {
 		return err
 	}
-	if fs.NArg() == 0 {
-		return errors.New(`usage: kelyfos sessions erase -reason "<why>" <id>`)
+	if len(ids) != 1 {
+		fs.Usage()
+		return &exitError{code: 2}
 	}
 	if *reason == "" {
 		return errors.New("-reason is required: an erasure is worth saying why, in the record itself")
 	}
-	id := fs.Arg(0)
+	id := ids[0]
 
 	live, err := livePausedSessions()
 	if err != nil {
@@ -591,6 +619,27 @@ treat -reason as a second id rather than a flag.
 	if hasLiveRunDir(id) {
 		return fmt.Errorf("%s has a live run directory and may still be running — erasing a chain "+
 			"still being written to would race the writer", id)
+	}
+	// hasLiveRunDir alone only sees a sandbox whose OWN id names its run
+	// directory. A team's chain and a `kelyfos serve-mcp` process's own
+	// audit chain are both opened under an id sandbox.NewID() mints that is
+	// never any sandbox's own id, so no run directory is ever named for
+	// either — invisible to the check above even while very much alive
+	// (B1). RunningSessions asks the other direction: is any live
+	// sandbox's own RecordSession() this id, whichever sandbox actually
+	// holds a run directory. It still cannot see a live serve-mcp
+	// process's own audit session, which names no sandbox's Session field
+	// at all — recorder.Erase's own refusal of a chain with no
+	// session.end anywhere in it is what catches that case, underneath
+	// this one.
+	running, err := sandbox.RunningSessions()
+	if err != nil {
+		return err
+	}
+	if running[id] {
+		return fmt.Errorf("%s has a live sandbox writing into it right now (a team member, or a "+
+			"machine kelyfos serve-mcp created) — erasing a chain still being written to would "+
+			"race the writer", id)
 	}
 
 	redacted, err := recorder.Erase(sandbox.Root(), id, *reason)

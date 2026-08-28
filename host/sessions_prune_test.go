@@ -104,9 +104,11 @@ func TestLivePausedSessionsReadsTheSessionField(t *testing.T) {
 // --- recorded-session fixtures for the end-to-end tests ----------------------
 
 // writeRecordedSession builds a real, hash-chained session under
-// KELYFOS_CACHE/sessions/<id>, aged to look like it was last touched
-// ageDays ago, the way a session prune considers would actually look on
-// disk. Content is real enough to be erasable (Data on a command.output).
+// KELYFOS_CACHE/sessions/<id>, aged to look like its own events.jsonl was
+// last written ageDays ago — what a session prune now actually considers
+// (S2: events.jsonl's own mtime, not the directory's, since appending never
+// advances a directory's own mtime on POSIX). Content is real enough to be
+// erasable (Data on a command.output).
 func writeRecordedSession(t *testing.T, id string, ageDays int) {
 	t.Helper()
 	root := sandbox.Root()
@@ -126,8 +128,14 @@ func writeRecordedSession(t *testing.T, id string, ageDays int) {
 	if err := rec.Close(); err != nil {
 		t.Fatal(err)
 	}
-	dir := filepath.Join(recorder.SessionsDir(root), id)
 	old := time.Now().Add(-time.Duration(ageDays) * 24 * time.Hour)
+	if err := os.Chtimes(recorder.Path(root, id), old, old); err != nil {
+		t.Fatal(err)
+	}
+	// The directory itself is aged too, so a test that still looks at it
+	// for any reason sees a consistent picture — prune no longer reads
+	// this, but nothing should depend on it disagreeing with the file.
+	dir := filepath.Join(recorder.SessionsDir(root), id)
 	if err := os.Chtimes(dir, old, old); err != nil {
 		t.Fatal(err)
 	}
@@ -166,6 +174,41 @@ func TestSessionsPruneDeletesOnlyPastTheFloor(t *testing.T) {
 	}
 	if !sessionExists(t, "too-new") {
 		t.Error("a session inside the floor was pruned")
+	}
+}
+
+// TestSessionsPruneAgesByEventsFileNotDirectory is S2's direct repro:
+// appending to events.jsonl does not advance its parent directory's own
+// mtime on POSIX (only creating or removing a directory ENTRY does), so
+// ageing by the directory aged a session from when it was first created —
+// session START — while docs/retention.md described "twelve months from
+// session close." Here the directory is deliberately left with a FRESH
+// mtime (as it always was, in practice, on every real session prune ever
+// ran against) while events.jsonl itself is aged past the floor — proving
+// prune follows the file, not the directory.
+func TestSessionsPruneAgesByEventsFileNotDirectory(t *testing.T) {
+	isolateFromAmbientPolicy(t)
+	t.Setenv("KELYFOS_CACHE", t.TempDir())
+	writeRecordedSession(t, "old-file-fresh-dir", 200)
+
+	// Un-age the directory back to now, the way it would actually be after
+	// a real session: nothing ever touches a session directory's own mtime
+	// again after it is created, so on a real machine it stays at creation
+	// time forever while events.jsonl keeps moving forward with every
+	// write. This simulates that gap directly rather than relying on the
+	// OS to reproduce it inside a single test run.
+	dir := filepath.Join(recorder.SessionsDir(sandbox.Root()), "old-file-fresh-dir")
+	now := time.Now()
+	if err := os.Chtimes(dir, now, now); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := sessionsPrune(nil); err != nil {
+		t.Fatalf("sessionsPrune: %v", err)
+	}
+	if sessionExists(t, "old-file-fresh-dir") {
+		t.Error("a session whose events.jsonl is 200 days old was not pruned, even though its " +
+			"directory's own mtime (never aged by the age-by-directory bug) reads as fresh")
 	}
 }
 
@@ -264,6 +307,56 @@ func TestSessionsEraseThroughTheCLI(t *testing.T) {
 	}
 }
 
+// TestSessionsEraseAcceptsTheIDBeforeTheFlag is S4: kelyfos verify already
+// takes flags on either side of its path argument (host/flags.go's
+// parseAround), and erase now uses the same helper rather than a plain
+// fs.Parse, so `erase <id> -reason ...` — the order Go's own flag package
+// would otherwise silently misparse as two positional arguments — works
+// the same as `erase -reason ... <id>`.
+func TestSessionsEraseAcceptsTheIDBeforeTheFlag(t *testing.T) {
+	t.Setenv("KELYFOS_CACHE", t.TempDir())
+	writeRecordedSession(t, "erase-me", 0)
+
+	if err := sessionsErase([]string{"erase-me", "-reason", "test erasure"}); err != nil {
+		t.Fatalf("sessionsErase with the id before -reason: %v", err)
+	}
+	blob, err := os.ReadFile(recorder.Path(sandbox.Root(), "erase-me"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := recorder.Verify(bytes.NewReader(blob)); err != nil {
+		t.Fatalf("chain does not verify after erasure through the CLI: %v", err)
+	}
+}
+
+// TestSessionsEraseRefusesExtraPositionalArgs is S4's second half: before
+// this fix, `erase -reason x a b` silently erased only "a" and said nothing
+// about "b" — parseAround makes both positionals visible, and erase now
+// refuses rather than guessing which one was meant.
+func TestSessionsEraseRefusesExtraPositionalArgs(t *testing.T) {
+	t.Setenv("KELYFOS_CACHE", t.TempDir())
+	writeRecordedSession(t, "erase-me", 0)
+	writeRecordedSession(t, "erase-me-too", 0)
+
+	if err := sessionsErase([]string{"-reason", "test", "erase-me", "erase-me-too"}); err == nil {
+		t.Fatal("erase with two positional ids was accepted")
+	}
+	blob, err := os.ReadFile(recorder.Path(sandbox.Root(), "erase-me"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := recorder.Verify(bytes.NewReader(blob)); err != nil {
+		t.Fatal(err)
+	}
+	events, err := recorder.Read(bytes.NewReader(blob))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if events[len(events)-1].Type == recorder.TypeSessionErasure {
+		t.Fatal("erase with extra positional args still erased the first one silently")
+	}
+}
+
 func TestSessionsEraseRefusesWithNoReason(t *testing.T) {
 	t.Setenv("KELYFOS_CACHE", t.TempDir())
 	writeRecordedSession(t, "erase-me", 0)
@@ -302,5 +395,36 @@ func TestSessionsEraseRefusesALiveRunDirectory(t *testing.T) {
 
 	if err := sessionsErase([]string{"-reason", "test", "live-chain"}); err == nil {
 		t.Fatal("erase accepted a session with a live-looking run directory")
+	}
+}
+
+// TestSessionsEraseRefusesALiveTeamsChain is B1's second gap, closed: a
+// team's own chain is opened under an id from sandbox.NewID() that is
+// never any sandbox's own id (host/team.go's raiseTeam), so no run
+// directory is ever named for it and hasLiveRunDir alone cannot see the
+// team is still running — only each MEMBER sandbox's own run directory
+// exists, with that member's State.Session naming the team's chain. This
+// simulates exactly that shape: a recorded chain under a team-style id,
+// and a live sandbox whose own id differs but whose Session names that
+// chain, the way host/team.go actually wires up a member.
+func TestSessionsEraseRefusesALiveTeamsChain(t *testing.T) {
+	t.Setenv("KELYFOS_CACHE", t.TempDir())
+	writeRecordedSession(t, "team-chain-id", 0)
+	runningSandbox(t, sandbox.State{ID: "member-own-id", Session: "team-chain-id",
+		PID: os.Getpid(), Arch: "aarch64", Flavor: "dev"})
+
+	if err := sessionsErase([]string{"-reason", "test", "team-chain-id"}); err == nil {
+		t.Fatal("erase accepted a team's own chain while a live member sandbox was still writing into it")
+	}
+	blob, err := os.ReadFile(recorder.Path(sandbox.Root(), "team-chain-id"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	events, err := recorder.Read(bytes.NewReader(blob))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if events[len(events)-1].Type == recorder.TypeSessionErasure {
+		t.Fatal("the team's chain was erased despite a live member sandbox writing into it")
 	}
 }

@@ -160,7 +160,18 @@ than against the one the file supplied itself.
 	return nil
 }
 
-// endsCleanly reports whether the last event is a session.end.
+// endsCleanly reports whether the chain carries a session.end anywhere in
+// it — not only as the last event, because an erased chain's last event is
+// session.erasure instead (P7-5, D61): kelyfos sessions erase appends that
+// event AFTER session.end, so a session that closed perfectly cleanly and
+// was later erased used to have its own last-event check see
+// session.erasure and report the same "the chain cannot tell those apart"
+// line an actually-truncated record gets — on precisely the records most
+// likely to be scrutinised (B5). A chain still has at most one
+// session.end regardless: nothing after it but session.pause/resume pairs
+// or an erasure ever gets appended, so scanning for one anywhere is exactly
+// as precise as checking only the last event, on every chain that is not
+// erased, and correct on the ones that are.
 //
 // A cut-short chain verifies: nothing after the cut exists to break, so the
 // truncated record is byte-for-byte what a shorter session would have written.
@@ -172,7 +183,12 @@ func endsCleanly(chain []byte) bool {
 	if err != nil || len(events) == 0 {
 		return false
 	}
-	return events[len(events)-1].Type == recorder.TypeSessionEnd
+	for _, e := range events {
+		if e.Type == recorder.TypeSessionEnd {
+			return true
+		}
+	}
+	return false
 }
 
 // verifiedChain is the walk plus the one rule the walk does not have: a chain
