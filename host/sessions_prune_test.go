@@ -208,6 +208,92 @@ func TestSessionsPruneSkipsALiveTeamsChain(t *testing.T) {
 	}
 }
 
+// P7-13: a `kelyfos serve-mcp` process's own audit session names no
+// sandbox's own run directory and no sandbox's RunningSessions() entry —
+// running[id], the check the previous fix added, cannot see it either. This
+// was live-reproduced against the real fix above: the process kept running
+// with its own session directory deleted out from under it by prune, no
+// error anywhere. openAudit's marker file is the fourth, and last, check.
+func TestSessionsPruneSkipsALiveServeMCPAuditChain(t *testing.T) {
+	isolateFromAmbientPolicy(t)
+	t.Setenv("KELYFOS_CACHE", t.TempDir())
+	writeRecordedSession(t, "audit-chain-id", 200) // well past the default floor
+	if err := os.MkdirAll(auditMarkerDir(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(auditMarkerPath("audit-chain-id"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := sessionsPrune(nil); err != nil {
+		t.Fatalf("sessionsPrune: %v", err)
+	}
+	if !sessionExists(t, "audit-chain-id") {
+		t.Fatal("prune deleted a live serve-mcp process's own audit chain")
+	}
+}
+
+// Once the marker is gone — the same shutdown path closeAudit takes — the
+// session prunes normally, same as any other ended session past the floor.
+func TestSessionsPruneDeletesAServeMCPAuditChainOnceItsMarkerIsGone(t *testing.T) {
+	isolateFromAmbientPolicy(t)
+	t.Setenv("KELYFOS_CACHE", t.TempDir())
+	writeRecordedSession(t, "audit-chain-id", 200)
+
+	if err := sessionsPrune(nil); err != nil {
+		t.Fatalf("sessionsPrune: %v", err)
+	}
+	if sessionExists(t, "audit-chain-id") {
+		t.Fatal("a session with no marker, past the floor, was not pruned")
+	}
+}
+
+func TestSessionsEraseRefusesALiveServeMCPAuditChain(t *testing.T) {
+	t.Setenv("KELYFOS_CACHE", t.TempDir())
+	writeRecordedSession(t, "audit-chain-id", 0)
+	if err := os.MkdirAll(auditMarkerDir(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(auditMarkerPath("audit-chain-id"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := sessionsErase([]string{"-reason", "test", "audit-chain-id"}); err == nil {
+		t.Fatal("erase accepted a live serve-mcp process's own audit chain")
+	}
+	blob, err := os.ReadFile(recorder.Path(sandbox.Root(), "audit-chain-id"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	events, err := recorder.Read(bytes.NewReader(blob))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if events[len(events)-1].Type == recorder.TypeSessionErasure {
+		t.Fatal("the serve-mcp audit chain was erased despite its live marker")
+	}
+}
+
+// openAudit/closeAudit are the two places this marker is actually
+// maintained in production; this exercises them directly rather than only
+// the sessions.go side of the contract the tests above assume.
+func TestOpenAuditMarksTheSessionLiveAndCloseAuditClearsIt(t *testing.T) {
+	t.Setenv("KELYFOS_CACHE", t.TempDir())
+	s := &hostServer{arch: "aarch64"}
+
+	if err := s.openAudit(); err != nil {
+		t.Fatal(err)
+	}
+	if !hasLiveAuditMarker(s.auditID) {
+		t.Fatal("openAudit did not mark its own session live")
+	}
+
+	s.closeAudit()
+	if hasLiveAuditMarker(s.auditID) {
+		t.Fatal("closeAudit did not clear its own session's live marker")
+	}
+}
+
 // TestSessionsPruneAgesByEventsFileNotDirectory is S2's direct repro:
 // appending to events.jsonl does not advance its parent directory's own
 // mtime on POSIX (only creating or removing a directory ENTRY does), so

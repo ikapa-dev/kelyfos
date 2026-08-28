@@ -107,6 +107,7 @@ func TestTheReplayEscapesControlBytesOnEveryFieldItPrints(t *testing.T) {
 		{"team.spawn reason", recorder.Event{Type: recorder.TypeTeamSpawn, Outcome: "refused", Reason: hostile}},
 		{"resource.oom comm", recorder.Event{Type: recorder.TypeResourceOOM, Comm: hostile}},
 		{"mcp.host_call name", recorder.Event{Type: recorder.TypeMCPHostCall, Name: hostile}},
+		{"mcp.host_result name", recorder.Event{Type: recorder.TypeMCPHostResult, Name: hostile}},
 		{"mcp.host_result error", recorder.Event{Type: recorder.TypeMCPHostResult,
 			Error: &recorder.EvError{Message: hostile}}},
 		{"plugin.call name", recorder.Event{Type: recorder.TypePluginCall, Name: hostile}},
@@ -118,6 +119,7 @@ func TestTheReplayEscapesControlBytesOnEveryFieldItPrints(t *testing.T) {
 		{"session.pause name", recorder.Event{Type: recorder.TypeSessionPause, Name: hostile}},
 		{"session.resume name", recorder.Event{Type: recorder.TypeSessionResume, Name: hostile}},
 		{"session.resume reason", recorder.Event{Type: recorder.TypeSessionResume, Reason: hostile}},
+		{"team.store peer", recorder.Event{Type: recorder.TypeTeamStore, Peer: hostile}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -130,5 +132,35 @@ func TestTheReplayEscapesControlBytesOnEveryFieldItPrints(t *testing.T) {
 				t.Errorf("a raw carriage return reached the replay unescaped:\n  %q", line)
 			}
 		})
+	}
+}
+
+// P7-13/G2: kelyfos log's default path never checks the hash chain before
+// replaying it, so a corrupted or hand-edited line reaches printEvent's
+// "unparseable event" fallback with none of the frozen schema's own
+// guarantees — the one path in this function that used to print the raw,
+// on-disk bytes verbatim rather than what json.Unmarshal produced. A real
+// json.Marshal call would always control-escape a string field before it
+// ever reached disk; feeding printEvent a literal, unescaped control byte
+// directly simulates the only way one could actually arrive here — direct
+// tampering, or a line torn by a crash mid-write.
+func TestTheReplayEscapesAnUnparseableLine(t *testing.T) {
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved := os.Stdout
+	os.Stdout = w
+	printEvent([]byte("not json \x1b[31mFAKE\x1b[0m"), false)
+	os.Stdout = saved
+	w.Close()
+	out, err := io.ReadAll(r)
+	r.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	line := string(out)
+	if strings.ContainsRune(line, 0x1b) {
+		t.Errorf("a raw ESC byte reached the replay from an unparseable line:\n  %q", line)
 	}
 }

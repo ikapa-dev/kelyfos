@@ -668,7 +668,14 @@ func printEvent(line []byte, asJSON bool) {
 	}
 	var e recorder.Event
 	if err := json.Unmarshal(line, &e); err != nil {
-		fmt.Printf("  ?? unparseable event: %s\n", strings.TrimSpace(string(line)))
+		// A malformed line reaches here with none of the frozen schema's own
+		// guarantees — kelyfos log's default path never checks the hash
+		// chain before replaying it, so a corrupted or tampered line is not
+		// ruled out. proto.SafeText on the raw bytes closes the same gap
+		// the rest of this function does: an unparseable line is exactly
+		// where a guest-controlled or hand-edited byte sequence is least
+		// constrained.
+		fmt.Printf("  ?? unparseable event: %s\n", proto.SafeText(strings.TrimSpace(string(line))))
 		return
 	}
 	ts := e.TS
