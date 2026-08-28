@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync/atomic"
+	"time"
 )
 
 // terminate handles a CONNECT to a domain that has a secret bound to it.
@@ -173,12 +174,36 @@ func (p *Proxy) terminate(client net.Conn, host string, port int, bound []*Secre
 // secret-bound domain that is DNS-hijacked onto loopback, link-local or other
 // private/reserved space is refused here too, before the connect syscall
 // that would otherwise let a bound credential reach it (F2).
+//
+// Proxy is absent, and stays absent: this transport was already built from a
+// zero value rather than cloned, which is why it never had F15's inherited
+// HTTP_PROXY. The bounds below are new with F15 all the same — a zero-value
+// transport gets no MaxIdleConns, no idle reaping and no TLS handshake
+// timeout, and zero means unbounded for each. The forward transport had those
+// by accident, from the clone; this one had never had them at all.
+//
+// ExpectContinueTimeout is not one of them, and saying otherwise was a mistake
+// worth correcting rather than quietly deleting: Go's doc says zero means no
+// timeout "and causes the body to be sent immediately, without waiting for the
+// server to approve". Zero is the absence of a wait. One second is still the
+// right value; it just is not closing a hole.
+//
+// ResponseHeaderTimeout was in neither transport and is in neither Go default.
+// It is the one that matters most here: this is the leg carrying the
+// credential, and an origin that accepts, completes TLS and then says nothing
+// would otherwise hold the slot and the credential indefinitely.
 var terminatedTransport = &http.Transport{
 	DisableCompression:  true,
 	ForceAttemptHTTP2:   false,
+	MaxIdleConns:        100,
 	MaxIdleConnsPerHost: 4,
 	TLSClientConfig:     &tls.Config{MinVersion: tls.VersionTLS12},
 	DialContext:         dialContextSafe,
+
+	IdleConnTimeout:       90 * time.Second,
+	TLSHandshakeTimeout:   10 * time.Second,
+	ExpectContinueTimeout: 1 * time.Second,
+	ResponseHeaderTimeout: 30 * time.Second,
 }
 
 func (p *Proxy) upstream() http.RoundTripper {

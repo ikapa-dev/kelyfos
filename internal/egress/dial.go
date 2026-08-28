@@ -2,6 +2,7 @@ package egress
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
@@ -213,6 +214,18 @@ func dialerFor(host string, timeout time.Duration) *net.Dialer {
 	return d
 }
 
+// upstreamDialTimeout bounds how long an egress transport waits for a TCP
+// connection to an origin.
+//
+// It exists because there was no bound at all: dialContextSafe built its
+// dialer with dialerFor(host, 0), neither transport supplies a dial timeout of
+// its own, and the requests forwardHTTP re-issues carry context.Background —
+// so an origin that accepted nothing held a goroutine and a socket until the
+// kernel gave up, which on Linux is over two minutes. The same 15 seconds
+// Proxy.DialTimeout already defaults to for the CONNECT tunnel and the
+// terminated leg's own dial, so the three paths now agree (F15).
+const upstreamDialTimeout = 15 * time.Second
+
 // dialContextSafe is the DialContext shared by every egress http.Transport
 // (terminatedTransport and forwardTransport): addr is "host:port" exactly as
 // the request named it, ahead of the transport's own resolution, so
@@ -222,7 +235,7 @@ func dialContextSafe(ctx context.Context, network, addr string) (net.Conn, error
 	if err != nil {
 		host = addr
 	}
-	return dialerFor(host, 0).DialContext(ctx, network, addr)
+	return dialerFor(host, upstreamDialTimeout).DialContext(ctx, network, addr)
 }
 
 // reportDialFailure records and answers a failed upstream dial, telling a
@@ -251,12 +264,7 @@ func (p *Proxy) reportDialFailure(w io.Writer, host string, port int, err error)
 
 // forwardTransport is what forwardHTTP fetches through: a plain-HTTP
 // request, and an absolute-form https:// request that reached this proxy
-// without a CONNECT first (ModeDirectTLS, S5d). A clone of
-// http.DefaultTransport, not the package var itself, with DialContext
-// replaced by the same resolved-address check every other egress dial path
-// uses (F2) — this function shared tunnel's and terminate's exposure to the
-// gap until now, since nothing about a plain or direct-TLS request ever
-// validated where its name actually resolved to before dialling it.
+// without a CONNECT first (ModeDirectTLS, S5d).
 //
 // A var, not a literal call at each request, so a test can still swap it for
 // the length of one test to trust a self-signed certificate — the same
@@ -264,8 +272,69 @@ func (p *Proxy) reportDialFailure(w io.Writer, host string, port int, err error)
 // forwardHTTP a transport of its own to swap instead.
 var forwardTransport http.RoundTripper = newForwardTransport()
 
+// newForwardTransport builds the transport field by field from a zero value.
+//
+// It used to be http.DefaultTransport.Clone(), and the field that clone
+// carried and nobody looked at was Proxy: ProxyFromEnvironment. On any host
+// with HTTPS_PROXY or HTTP_PROXY set — every corporate laptop — that sent the
+// sandbox's plain-HTTP and direct-TLS traffic to the corporate proxy, and it
+// was the corporate proxy that then resolved the name. dialContextSafe was
+// still installed and still ran; it was simply handed the corporate proxy's
+// address, so the resolved-address table never saw where the allowlisted name
+// actually pointed. An allowlisted domain hijacked onto 169.254.169.254 was
+// dialled by the upstream proxy, unchecked. The CONNECT tunnel and the
+// terminated leg dial directly, so the behaviour differed by path with nothing
+// saying so (F15).
+//
+// Building from a zero value rather than fixing Proxy alone is the point: a
+// clone is not this transport, it is this transport plus whatever the standard
+// library decides to add later, and Proxy is the field that already arrived
+// that way. The cost is that everything the clone silently supplied has to be
+// supplied deliberately — DefaultTransport's MaxIdleConns 100, IdleConnTimeout
+// 90s and TLSHandshakeTimeout 10s are all zero on a zero value, and zero means
+// "no limit" for the first three. Dropping them by omission would have traded a
+// proxy leak for unbounded idle connections and a TLS handshake that can hang
+// forever, which is why TestF15_BothEgressTransportsSetTheirOwnFields names
+// each one. ExpectContinueTimeout is set below for a different reason, given
+// at the field: zero there means no wait at all, not an unbounded one.
 func newForwardTransport() *http.Transport {
-	t := http.DefaultTransport.(*http.Transport).Clone()
-	t.DialContext = dialContextSafe
-	return t
+	return &http.Transport{
+		// Proxy is deliberately left nil, and this comment is the reason:
+		// the egress proxy IS the proxy. It must never chain to one it did
+		// not configure, and it must never inherit one from the environment
+		// of whoever started the CLI (F15).
+		Proxy: nil,
+		// The resolved-address check, on this path as on every other (F2, F14).
+		DialContext:     dialContextSafe,
+		TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12},
+		// HTTP/1.1 upstream. forwardHTTP writes the response it gets straight
+		// back to the guest, and keeping one protocol on that leg keeps the
+		// framing it re-emits the framing it received. Matches
+		// terminatedTransport, which has always been explicit about this.
+		ForceAttemptHTTP2: false,
+		// The four DefaultTransport used to supply. Zero is unbounded for
+		// the first three, so each is stated.
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 4,
+		IdleConnTimeout:     90 * time.Second,
+		TLSHandshakeTimeout: 10 * time.Second,
+		// ExpectContinueTimeout is the exception to that sentence, and the
+		// first version of this comment had it backwards. Go's own doc: zero
+		// means no timeout "and causes the body to be sent immediately,
+		// without waiting for the server to approve". Zero is the absence of a
+		// wait, not an unbounded one. One second is right anyway — it is how
+		// long to wait for a 100-continue before sending the body regardless —
+		// but it is set for that reason and not to close a hole.
+		ExpectContinueTimeout: 1 * time.Second,
+		// And the one that was missing from "everything the clone silently
+		// supplied", because DefaultTransport does not supply it either: an
+		// origin that accepts the connection, completes TLS and then says
+		// nothing holds a goroutine and a socket — and on the terminated leg
+		// the credential with them — for as long as it likes. forwardHTTP
+		// re-issues with context.Background, so no context covers this. Thirty
+		// seconds is longer than any origin worth reaching takes to begin a
+		// reply, and it bounds only the wait for the first byte of the
+		// response head, never the body behind it.
+		ResponseHeaderTimeout: 30 * time.Second,
+	}
 }

@@ -2644,6 +2644,17 @@ and the v6 equivalents. Two entries are not ranges in the ordinary sense:
   reverse — a host with 6to4 configured really does put IPv4 packets on the wire
   to the embedded address.
 
+**The proxy never chains to another proxy.** Both upstream transports are built
+field by field from a zero value, with `Proxy` deliberately nil, so a host whose
+environment carries `HTTPS_PROXY` or `HTTP_PROXY` — every corporate laptop —
+does not send the sandbox's traffic there. This is not only a routing
+preference: an upstream proxy is what would then resolve the name, so the
+address check above would be asked about the corporate proxy rather than about
+where the allowlisted domain actually points, and the whole of §4.1 would be
+routed around on the plain-HTTP and direct-TLS paths. The `CONNECT` tunnel and
+the terminated leg always dialled directly, so the behaviour used to differ by
+path with nothing saying so (F15).
+
 **The refusal names no address to the guest.** It says the name "resolved to an
 address this proxy will not dial", and the address goes to the flight recorder
 as the attempt's `resolved_addr`. A guest that is told where an allowlisted name
