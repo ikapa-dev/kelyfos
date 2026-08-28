@@ -113,6 +113,14 @@ func main() {
 		logf("egress via proxy %s", proxy)
 	}
 
+	// Where a refused vsock peer is reported. The package's own default writes
+	// to stderr so the refusal is never silent, but the console format belongs
+	// to the supervisor (F3).
+	vsock.OnRefusedPeer = func(cid, peerPort, localPort uint32) {
+		logf("vsock: refused a connection on port %d from CID %d:%d — only the host (CID %d) may connect",
+			localPort, cid, peerPort, unix.VMADDR_CID_HOST)
+	}
+
 	rp := newReaper()
 	if isPID1 {
 		rp.start()

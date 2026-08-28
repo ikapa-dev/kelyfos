@@ -30,6 +30,20 @@ CONFIG_VIRTIO_VSOCKETS_COMMON=y
 # The guest is never a vsock *host*. Firecracker's hybrid vsock terminates on a
 # Unix socket on the host side and no vhost code is involved anywhere.
 # CONFIG_VHOST_VSOCK is not set
+# And the guest never speaks vsock to itself. The supervisor's channels — exec,
+# MCP, control, shell, forward — are bound for the host and serve nothing else,
+# and `socket` is not on the seccomp refusal list and cannot be, so a loopback
+# transport would put a confined process one connect() away from the operator's
+# own interface. internal/vsock refuses a peer that is not CID 2 as well; this is
+# the layer that means such a peer cannot exist.
+#
+# This line is why the fragment restates the base config rather than inheriting
+# it, and F3 of the 2026-08-28 review is the case in point:
+# net/vmw_vsock/Kconfig marks VSOCKETS_LOOPBACK `default y` (checked in 6.12.105
+# and 6.19.14), the vendored base config turns it off *against* that default, and
+# check-kernel.sh verifies these fragments and not the base — so an olddefconfig
+# over a kernel bump would quietly turn it back on.
+# CONFIG_VSOCKETS_LOOPBACK is not set
 
 # --- filesystems -----------------------------------------------------------
 # ext4 read-only root on /dev/vda, tmpfs for everything writable, overlayfs so

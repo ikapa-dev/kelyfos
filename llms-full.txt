@@ -6407,6 +6407,36 @@ No path from guest to host exists except the vsock channels the supervisor
 serves and the egress proxy, both of which are the host's own code deciding what
 to do. That is the design and it holds.
 
+*Written after F3, the security review of 2026-08-28: the channels now check who
+is on the other end.* They serve the host — `exec` runs commands, `control` stops
+the machine, MCP is the whole tool surface — and they are bound on
+`VMADDR_CID_ANY`, because a guest's own CID can change across a snapshot restore
+and a listener pinned to the old one would quietly stop accepting. `Accept` read
+the peer's CID into a remote address and then never looked at it, so any peer
+that could reach the socket was served as though it were the operator.
+
+Nothing inside the guest can be that peer, and that was measured on a booted
+guest rather than assumed: `vsock_loopback` is absent from `/proc/kallsyms`, and
+a `connect` to `VMADDR_CID_LOCAL` times out. But a confined process *can* create
+an `AF_VSOCK` socket — `socket` is not on the seccomp refusal list and will not
+be, since a denylist that refuses `socket` refuses the network — so the only
+thing in the way was one kernel config symbol, and
+`net/vmw_vsock/Kconfig` marks that symbol **`default y`** (checked in 6.12.105,
+the kernel this image ships, and in 6.19.14). The vendored base config turns it
+off *against* the upstream default, and `check-kernel.sh` verifies the two
+KelyfOS fragments and not the base — so an `olddefconfig` over a kernel bump
+would have turned it back on with nothing to notice.
+
+Both halves are closed. `kelyfos.fragment` pins
+`# CONFIG_VSOCKETS_LOOPBACK is not set`, which puts it inside what
+`check-config.sh` asserts — a build where it returns as `=y` or `=m` now fails.
+And `internal/vsock` refuses a peer whose CID is not `VMADDR_CID_HOST`, closes
+it, reports it on the console and carries on accepting, so the guarantee does
+not rest on a build staying correct. CID 2 is what Firecracker's hybrid vsock
+actually delivers, which was read off a running guest before the check was
+written, because a check on the wrong constant would refuse every channel this
+machine has.
+
 What is *not* defended is the case where the boundary itself fails. Today the
 Firecracker process runs:
 
