@@ -6370,6 +6370,68 @@ after:
         ./...</code> &rarr; clean; <code>go build ./...</code> &rarr; clean; <code>go test -count=1 ./...</code>
         &rarr; every package <code>ok</code> or <code>[no test files]</code>, <code>host</code> package 17.189s;
         the 18 <code>host/view_test.go</code> tests (17 from the previous row plus this one) all <code>PASS</code>.</td></tr>
+    <tr><td class="mono">2026-08-28</td><td class="mono">P7-12</td>
+        <td><b>Adversarial review's findings, fixed by the orchestrator.</b> The reviewer live-tested this
+        task against the harder-than-usual bar it names for itself &mdash; the one deliberate exception to
+        the project's no-socket rule &mdash; building the real binary, booting a real sandbox, and attacking
+        the running server with <code>curl</code> for every one of the 12 binding conditions in the task text
+        and D60. Nine of twelve passed outright on first read, live-verified (loopback/no relaxing flag; never
+        implicit/no browser; token minting, constant-time comparison via <code>crypto/subtle</code>, never a
+        CLI arg; CSP hash independently recomputed and matched; no <code>innerHTML</code> anywhere in the
+        served script, confirmed by full source read and a live hostile-content SSE round-trip; read-only file
+        access, confirmed no write-mode <code>os.Open</code>/<code>OpenFile</code>/<code>Create</code> call
+        exists anywhere in the file; no URL-derived filesystem path; exit-on-<code>session.end</code> and
+        exit-on-idle-timeout both live-timed against a real process; no mutating route). Verdict: <b>NO-GO</b>
+        on the other three.
+        <br><b>F1 (high, the one that mattered):</b> <code>wrap()</code> &mdash; the method/Host/token gate
+        &mdash; was applied to each registered <code>mux.HandleFunc</code> pattern individually, but
+        <code>http.ServeMux.ServeHTTP</code> runs its own path-cleaning redirect (double slashes,
+        <code>.</code>/<code>..</code> segments) <i>before</i> dispatching to any handler, wrapped or not.
+        Live-reproduced: an unauthenticated, wrong-Host, <code>POST</code> to <code>//etc/passwd</code>
+        (routed through the <code>//</code> catch-all) got a bare <code>307</code>, with none of
+        <code>wrap</code>'s own headers set &mdash; a genuine, live break of &ldquo;required on every
+        route&rdquo; and &ldquo;regardless of token validity,&rdquo; even though the concrete blast radius
+        was narrow (the redirect body carries no session data; its target still goes through the checks
+        normally). Fixed by wrapping the mux itself
+        (<code>http.Server{Handler: wrap(mux.ServeHTTP)}</code>) rather than each pattern, so every request
+        &mdash; dirty path included &mdash; clears the checks before <code>ServeMux</code>'s own routing runs
+        at all. The test harness (<code>newTestView</code>) had independently built the same
+        vulnerable per-pattern wiring, so no test had ever exercised this path; fixed the harness to match
+        <code>runView</code>'s real code, and added a regression test driving five dirty-path shapes through
+        all three failure modes (no token, wrong Host, wrong method) and asserting none of them ever produce
+        a redirect.
+        <br><b>F2 (medium, test-only):</b> <code>go test -race</code> found four distinct data races, all
+        confined to test code, none reachable in production. Three tests started
+        <code>newTestView</code> (which immediately spawns <code>poll()</code>'s goroutine, reading the
+        package-level <code>viewPollInterval</code> once for its ticker) and only afterward set
+        <code>viewPollInterval</code>, racing the read against the write &mdash; reordered to match the two
+        tests in the same file that already set it first. A fourth, independent race the reviewer's own
+        <code>-race -count=3</code> run didn't happen to hit but a full-package <code>-race -count=1</code>
+        run after this fix did: <code>TestRunViewExitsWhenTheSessionEnds</code> polled a plain
+        <code>bytes.Buffer</code>'s <code>.String()</code> while <code>runView</code>'s own goroutine
+        concurrently wrote to it, ahead of the channel receive that would have synchronized the two &mdash;
+        given a <code>String()</code> method on the project's existing <code>syncBuffer</code> type
+        (<code>host/servemcpteam.go</code>, already built for the identical problem elsewhere) instead of a
+        second, duplicate type.
+        <br>Live re-verification of the reviewer's exact repro against a fresh real sandbox and a fresh real
+        <code>kelyfos view</code> process: the identical <code>//etc/passwd</code> request that returned an
+        unauthenticated <code>307</code> before this fix now returns <code>405 Method Not Allowed</code> with
+        <code>wrap</code>'s own headers (<code>Cache-Control</code>, <code>Content-Security-Policy</code>,
+        <code>X-Content-Type-Options</code>) present &mdash; identical to every other refused request.
+        <br>Not self-ticked: still holding for the reviewer to confirm F1 and F2 are actually closed before
+        this task ticks.</td>
+        <td class="mono">fix commit <code>0604a58</code>. <code>gofmt -l .</code> clean; <code>go vet
+        ./...</code> clean; <code>go build ./...</code> clean; <code>go test -count=1 ./host/...</code> and
+        the full suite (25 packages) <code>ok</code>; <code>go test -race -count=3 ./host/...</code> clean
+        (was failing on 3&ndash;4 distinct races before this commit, both under <code>-count=3</code> and a
+        broader <code>-count=1</code> full-package sweep); <code>govulncheck</code> &rarr; &ldquo;No
+        vulnerabilities found.&rdquo;
+        <br>Live: real sandbox booted, real <code>kelyfos view --session &lt;id&gt; --idle-timeout 60s</code>
+        process, then <code>curl --path-as-is -X POST -H &quot;Host: evil.example.com:9999&quot;
+        &quot;http://$HOST//etc/passwd&quot;</code> &rarr; <code>405 Method Not Allowed</code> with
+        <code>Allow: GET, HEAD</code> and the full security-header set, versus the control case
+        (<code>curl</code> a clean path with no token) &rarr; <code>401 Unauthorized</code> with the
+        identical header set &mdash; same defense, same headers, dirty path or clean.</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
