@@ -5986,6 +5986,41 @@ after:
         <code>govulncheck</code> &rarr; &ldquo;No vulnerabilities found.&rdquo;, <code>make docs</code> regenerated
         cleanly; <code>python3 tools/check-plan.py</code> &rarr; &ldquo;PLAN.html is coherent: 101 tasks, 87
         checked, 68 decisions&rdquo;.</td></tr>
+    <tr><td class="mono">2026-08-28</td><td class="mono">P7-9</td>
+        <td>Exporting a running session, stage three's first task. <code>--export</code> now works against a
+        live team, not only a finished one, and gains <code>--refresh</code>/<code>--refresh-every</code>:
+        rewrites the export file atomically on a timer and emits a <code>&lt;meta http-equiv="refresh"&gt;</code>
+        tag, so a browser tab left open follows a running team with no server and no socket anywhere in the
+        path &mdash; the honest answer to &ldquo;live&rdquo; for anyone who doesn't want a listener, independent
+        of whether P7-12 ever lands. <code>internal/report</code> gained <code>View.RefreshSeconds</code> and
+        <code>RenderRefreshable</code>, sharing a body with the existing <code>RenderSigned</code>;
+        <code>host/log.go</code> gained the two flags, <code>atomicWriteReport</code> (factored out of the
+        existing export path), and a context-driven poll loop that stops cleanly on <code>session.end</code> or
+        Ctrl-C/SIGTERM. Cookbook recipe 17 boots a real team, exports live, runs <code>--refresh</code>, checks
+        the refreshing process's own <code>/proc/*/fd</code> for zero sockets, triggers a real refusal, and
+        confirms the open file picks it up unassisted.
+        <br>This task shared the shared <code>kelyfos-dev</code> VM with P7-10 and P7-11 running concurrently
+        (stage three's three tasks), and hit a severe instance of the P7-16/D70 hazard: accumulated stuck
+        processes from all three agents' repeated connection retries drove the VM's load average to 15 on 6
+        vCPUs (uninterruptible-I/O-state processes piling up, not active computation), making SSH access
+        effectively unusable for roughly 90 minutes across all three worktrees. The orchestrator diagnosed this
+        directly (ruled out disk space and raw CPU, found the D-state process pile via <code>ps aux</code>), and
+        applied the same remedy the owner had already authorized once before for this exact class of problem: a
+        full VM restart. Verification proceeded normally afterward. Worth folding into P7-16's own scope when it
+        is picked up &mdash; this session's severity (a sustained multi-worktree SSH deadlock, not just a
+        `team.json` or cache collision) is worse than D70 currently describes.</td>
+        <td class="mono">commit <code>75d1ca7</code> on the author's worktree branch, verified by the
+        orchestrator after the VM restart: <code>gofmt -l .</code> clean, <code>go vet ./...</code> clean,
+        <code>go test -count=1 ./...</code> every package <code>ok</code>, <code>govulncheck</code> &rarr;
+        &ldquo;No vulnerabilities found.&rdquo;, <code>make docs</code> regenerated cleanly (llms.txt/
+        llms-full.txt updated for the new flags and recipe)<br>
+        real end-to-end: booted a real 2-agent <code>dev</code>-image team, ran <code>kelyfos log --export
+        --refresh --refresh-every 1s</code> against it &mdash; log shows &ldquo;wrote &hellip;refresh.html (6
+        events, 2653 bytes)&rdquo;; <code>ls /proc/&lt;pid&gt;/fd</code> on the refreshing process during the
+        run: no socket file descriptors; grepped the whole diff for <code>net.</code>/<code>http.</code>/
+        <code>Listen</code>/<code>Dial</code>: no matches outside prose; <code>kelyfos verify
+        refresh.html</code> &rarr; &ldquo;chain intact, 6 events verified&rdquo;; the exported page carries
+        <code>&lt;meta http-equiv="refresh" content="1"&gt;</code>, matching the configured interval.</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
