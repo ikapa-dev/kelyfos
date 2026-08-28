@@ -415,4 +415,5 @@ Every field somewhere in this chain known to carry guest-influenced or operator-
 | --- | --- | --- |
 | `reason` | string | why — an operator-supplied string, e.g. a GDPR Article 17 request |
 | `modified` | integer | how many events had a field replaced (not how many fields) |
+| `redacted_fields` | integer | how many fields were replaced, across every event — the other half of `modified`, so an auditor has a number to compare against what a redaction should have touched (F6). An event with three redactable fields set moves `modified` by one and this by three |
 | `sha256` | string | the chain head — the last event's own hash — immediately before this rewrite began, so a reader already holding an earlier export of this chain can confirm the erased chain is its honest successor rather than a fabrication |

@@ -402,6 +402,7 @@ func Types() []EventType {
 			Fields: []Field{
 				{Name: "reason", Type: "string", Doc: "why — an operator-supplied string, e.g. a GDPR Article 17 request"},
 				{Name: "modified", Type: "integer", Doc: "how many events had a field replaced (not how many fields)"},
+				{Name: "redacted_fields", Type: "integer", Doc: "how many fields were replaced, across every event — the other half of `modified`, so an auditor has a number to compare against what a redaction should have touched (F6). An event with three redactable fields set moves `modified` by one and this by three"},
 				{Name: "sha256", Type: "string", Doc: "the chain head — the last event's own hash — immediately before this rewrite began, so a reader already holding an earlier export of this chain can confirm the erased chain is its honest successor rather than a fabrication"},
 			}},
 	}

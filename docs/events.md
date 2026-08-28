@@ -768,7 +768,9 @@ field: it is about the chain as a whole, the same scope `session.start`,
 `session.end` and `team.topology` already use.
 
 The redacted fields are `data`, `cmd`, `argv`, `args`, `cwd`, `path`, `host`,
-`peer`, `comm`, `name`, `tool`, `allow`, `workspace`, `traceparent`, and
+`peer`, `comm`, `name`, `tool`, `allow`, `workspace`, `traceparent`,
+`error.message` (since v1.1 — see `docs/retention.md` §5 for why it was
+exempt before, and why that was wrong), and
 `store_keys[].name` — every field on `Event` known to carry guest-influenced
 or operator-supplied content, walked by reflection and checked field by
 field rather than trusted to a hand-maintained list (`docs/retention.md` §5
@@ -781,6 +783,7 @@ unchanged).
 | --- | --- | --- |
 | `reason` | string | Why — the operator-supplied `-reason` the command requires, e.g. a GDPR Article 17 request. |
 | `modified` | integer | How many events had a field replaced. Not how many fields — an event with more than one redacted field still counts once. Reused from `run.review`'s own `modified`, disambiguated by `type` the same way `cpu_quota_percent` already is across four other event types. |
+| `redacted_fields` | integer | How many fields were replaced, across every event — the other half of `modified`, so an auditor has a number to compare against what a redaction over this chain should have touched. An event with three redactable fields set moves `modified` by one and this by three. |
 | `sha256` | string | The chain head — the previous last event's own `hash` — immediately before this rewrite began, so a reader already holding an earlier export of this chain (`kelyfos verify --extract`, or a report's own embedded record) can confirm the erased chain is its honest successor rather than a fabrication. Reused from `file.write`'s own `sha256`, the same cross-type reuse `modified` and `cpu_quota_percent` already have. |
 
 A redacted field reads `"(erased — sha256:<64 hex chars>)"` in place of what
@@ -800,6 +803,20 @@ identical can never encode to the same bytes. Running erase again on an
 already-erased chain recognises its own placeholder shape and refuses
 rather than hashing the placeholder itself — a fingerprint set by one
 erasure is never overwritten by a later one.
+
+**The rewrite is lossless, and refuses a chain it cannot understand.** An
+erasure rewrites every line, and until v1.1 it did so by parsing each one into
+this build's own `Event` struct and marshalling it back — which silently
+dropped every member the struct did not carry. An older `kelyfos` erasing a
+chain a newer one wrote deleted part of the record, the result verified, and
+nothing said so. That is the failure the digest-from-the-raw-bytes rule (§5)
+exists to prevent on *reads*, and erase now inherits it: each line is rewritten
+member by member, so anything not being redacted — including members this build
+has never heard of, at the top level or inside an object — comes out exactly as
+it went in, and the digest is taken over the bytes actually written. Before any
+of that, an event carrying a `v` higher than this build writes is refused
+outright: a schema version it has never seen is one whose fields it cannot
+classify, so it cannot know what to redact.
 
 `session.erasure` is not necessarily the last event a reader should use to
 decide whether a session's own work finished — see §5's note on

@@ -1,6 +1,7 @@
 package recorder
 
 import (
+	"bufio"
 	"bytes"
 	"crypto/sha256"
 	"encoding/binary"
@@ -10,6 +11,7 @@ import (
 	"io"
 	"os"
 	"reflect"
+	"strconv"
 	"strings"
 	"time"
 
@@ -106,6 +108,22 @@ func Erase(root, sandboxID, reason string) (redacted int, err error) {
 	if len(events) == 0 {
 		return 0, fmt.Errorf("%s: empty chain, nothing to erase", sandboxID)
 	}
+	// Refuse a chain from a build ahead of this one before anything is
+	// rewritten (F6). A schema version this binary has never seen means it
+	// cannot know which of that version's fields carry content, so it cannot
+	// know what to redact — and rewriting anyway is guessing at the one
+	// operation that must not guess. The lossless rewrite below would survive
+	// an unknown *field*, which is the ordinary case docs/events.md promises
+	// ("adding a field is not breaking", so v does not move for one); this
+	// catches the case where v did move, and makes the skew impossible to hit
+	// silently rather than leaving it to be survived.
+	for _, e := range events {
+		if e.V > Version {
+			return 0, fmt.Errorf("%s: event %d was written by a newer kelyfos (v%d, this build writes v%d); "+
+				"upgrade before erasing — this build cannot know which of that version's fields carry content",
+				sandboxID, e.Seq, e.V, Version)
+		}
+	}
 	if !hasSessionEnd(events) {
 		return 0, fmt.Errorf("%s: this chain has no session.end anywhere in it — it may still be "+
 			"open, or a live process may still be writing to it, and erasing it would risk racing "+
@@ -113,21 +131,84 @@ func Erase(root, sandboxID, reason string) (redacted int, err error) {
 			"is refused for the same reason before this is ever reached)", sandboxID)
 	}
 
+	// The rewrite works on the raw lines, not on the events Read parsed out of
+	// them (F6). Read is json.Unmarshal into Event, so a member this build's
+	// struct does not carry is gone the moment it is used as the source of a
+	// rewrite: the chain comes out short a field, it verifies, and nothing
+	// anywhere says so. Verify does not have that problem — digestOfLine
+	// recomputes from the bytes as written precisely so an older build reading
+	// a newer chain does not call a legitimate record modified (D44) — and
+	// this is Erase inheriting the same property.
+	//
+	// So each line is held as its own members, in the order the line carries
+	// them, and only the members redaction actually changes are written back.
+	// Everything else comes out byte-for-byte as it went in: unknown members,
+	// members inside objects whose own struct this build does not fully know,
+	// key order, and values a struct round trip would have normalised away
+	// (an explicit zero that `omitempty` would drop). Only seq, prev and hash
+	// are rewritten besides, because the whole chain is rehashed.
+	//
+	// The one thing that does not survive verbatim is an exotic encoding of a
+	// member NAME — "data" comes back as "data" — since names are
+	// re-encoded from their decoded form. No encoder in this project produces
+	// one, the value behind it is untouched, and the chain is rehashed anyway.
+	sc := bufio.NewScanner(bytes.NewReader(blob))
+	sc.Buffer(make([]byte, 0, 64<<10), MaxLine)
+	var objs []*rawObject
 	// redacted counts events touched, not fields touched: an event with more
-	// than one redactable field set still counts once.
-	for i := range events {
-		if redactEventFields(&events[i]) {
+	// than one redactable field set still counts once. fields is the second
+	// count the same question needs asked the other way — how much was
+	// actually replaced — so an auditor has a number to compare against what a
+	// redaction should have touched.
+	fields := 0
+	for sc.Scan() {
+		if len(sc.Bytes()) == 0 {
+			continue
+		}
+		raw := append([]byte(nil), sc.Bytes()...)
+		obj, err := parseObject(raw)
+		if err != nil {
+			return 0, fmt.Errorf("%s: event %d: %w", sandboxID, len(objs)+1, err)
+		}
+		// Two independent parses: redactEventFields mutates in place, and a
+		// shallow copy would share *EvError and every slice with the original,
+		// leaving nothing to compare against.
+		var before, after Event
+		if err := json.Unmarshal(raw, &before); err != nil {
+			return 0, err
+		}
+		if err := json.Unmarshal(raw, &after); err != nil {
+			return 0, err
+		}
+		touched := redactEventFields(&after)
+		n, err := applyRedaction(obj, reflect.ValueOf(before), reflect.ValueOf(after))
+		if err != nil {
+			return 0, fmt.Errorf("%s: event %d: %w", sandboxID, len(objs)+1, err)
+		}
+		// The two walks answer the same question by different routes — one
+		// mutates the struct, one compares it against the line — so they
+		// cannot be allowed to disagree without somebody being told.
+		if touched != (n > 0) {
+			return 0, fmt.Errorf("%s: event %d: redaction touched=%v but %d fields changed on the line — "+
+				"applyRedaction and redactEventFields disagree about what was redacted", sandboxID, len(objs)+1, touched, n)
+		}
+		if touched {
 			redacted++
 		}
+		fields += n
+		objs = append(objs, obj)
+	}
+	if err := sc.Err(); err != nil {
+		return 0, err
 	}
 	if redacted == 0 {
 		return 0, fmt.Errorf("%s: nothing to erase — no event carries a redactable field, or every "+
 			"redactable field is already a fingerprint from an earlier erasure", sandboxID)
 	}
 
-	events = append(events, Event{
+	erasure := Event{
 		Type: TypeSessionErasure, Source: SourceHost, Sandbox: sandboxID,
-		Reason: reason, Modified: redacted,
+		Reason: reason, Modified: redacted, RedactedFields: fields,
 		// SHA256 anchors this event to the exact chain it replaces (S1):
 		// the Hash of the last event before this rewrite began, the same
 		// value Verify returned above. Anyone holding an earlier export of
@@ -147,33 +228,48 @@ func Erase(root, sandboxID, reason string) (redacted int, err error) {
 		// every event on the chain.
 		V:  Version,
 		TS: time.Now().UTC().Format("2006-01-02T15:04:05.000Z07:00"),
-	})
+	}
+	erasureLine, err := json.Marshal(erasure)
+	if err != nil {
+		return redacted, err
+	}
+	erasureObj, err := parseObject(erasureLine)
+	if err != nil {
+		return redacted, err
+	}
+	objs = append(objs, erasureObj)
 
+	// Rebuild seq, prev and hash for the whole chain. The digest is taken over
+	// the bytes this loop is about to write, with `hash` emptied in place —
+	// the same preimage digestOfLine reconstructs when it reads the line back,
+	// which is what makes a line assembled from its own members verify like
+	// one Append marshalled from a struct. hashOf cannot be used here: it
+	// hashes a re-marshalled Event, and the whole point of this rewrite is
+	// that the line holds more than the Event does.
+	var buf bytes.Buffer
 	prev := ""
-	for i := range events {
-		events[i].Seq = i + 1
-		events[i].Prev = prev
-		events[i].Hash = ""
-		digest, err := hashOf(events[i])
+	for i, obj := range objs {
+		obj.set("seq", []byte(strconv.Itoa(i+1)))
+		obj.set("prev", mustQuote(prev))
+		obj.set("hash", []byte(`""`))
+		pre, err := obj.marshal()
 		if err != nil {
 			return redacted, err
 		}
-		events[i].Hash = digest
-		prev = digest
-	}
-
-	var buf bytes.Buffer
-	for _, e := range events {
-		line, err := json.Marshal(e)
+		sum := sha256.Sum256(pre)
+		digest := hex.EncodeToString(sum[:])
+		obj.set("hash", mustQuote(digest))
+		line, err := obj.marshal()
 		if err != nil {
 			return redacted, err
 		}
 		if len(line)+1 > MaxLine {
 			return redacted, fmt.Errorf("event %d is %d bytes after erasure, over MaxLine — refusing to write a line no reader could read back",
-				e.Seq, len(line)+1)
+				i+1, len(line)+1)
 		}
 		buf.Write(line)
 		buf.WriteByte('\n')
+		prev = digest
 	}
 
 	// Rewritten in place, on the same fd this already holds locked — not via
@@ -203,6 +299,230 @@ func Erase(root, sandboxID, reason string) (redacted int, err error) {
 		return redacted, fmt.Errorf("sync the rewritten chain: %w", err)
 	}
 	return redacted, nil
+}
+
+// rawObject is one JSON object held as its members in the order the bytes
+// carried them, each value kept as the raw bytes it was written as.
+//
+// This is what makes Erase's rewrite lossless (F6). json.Unmarshal into a
+// struct answers "what does this build understand of this line"; a rewrite
+// needs "what does this line say", which is a different question and the one
+// digestOfLine has always asked on reads. map[string]json.RawMessage would
+// keep the unknown members but lose their order, and order is what every
+// digest in this file is computed over.
+type rawObject struct {
+	keys   []string
+	values map[string]json.RawMessage
+}
+
+// parseObject reads one JSON object into a rawObject.
+//
+// A duplicate member name is refused rather than resolved: json.Unmarshal
+// keeps the last and this keeps the first, so a line carrying one cannot be
+// rewritten without deciding which of two answers the record meant. Erase is
+// not the place to decide that.
+func parseObject(raw []byte) (*rawObject, error) {
+	o := &rawObject{values: map[string]json.RawMessage{}}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	tok, err := dec.Token()
+	if err != nil {
+		return nil, err
+	}
+	if d, ok := tok.(json.Delim); !ok || d != '{' {
+		return nil, fmt.Errorf("not a JSON object")
+	}
+	for dec.More() {
+		kt, err := dec.Token()
+		if err != nil {
+			return nil, err
+		}
+		key, ok := kt.(string)
+		if !ok {
+			return nil, fmt.Errorf("expected a member name, got %v", kt)
+		}
+		var v json.RawMessage
+		if err := dec.Decode(&v); err != nil {
+			return nil, err
+		}
+		if _, dup := o.values[key]; dup {
+			return nil, fmt.Errorf("member %q appears twice", key)
+		}
+		o.keys = append(o.keys, key)
+		o.values[key] = v
+	}
+	if _, err := dec.Token(); err != nil { // the closing brace
+		return nil, err
+	}
+	return o, nil
+}
+
+// set replaces a member's value, keeping its position. A member the object
+// does not have is appended, never inserted — the same rule the schema itself
+// follows, and the one that keeps a rewritten line's key order predictable.
+func (o *rawObject) set(key string, v json.RawMessage) {
+	if _, ok := o.values[key]; !ok {
+		o.keys = append(o.keys, key)
+	}
+	o.values[key] = v
+}
+
+func (o *rawObject) marshal() ([]byte, error) {
+	var buf bytes.Buffer
+	buf.WriteByte('{')
+	for i, k := range o.keys {
+		if i > 0 {
+			buf.WriteByte(',')
+		}
+		kb, err := json.Marshal(k)
+		if err != nil {
+			return nil, err
+		}
+		buf.Write(kb)
+		buf.WriteByte(':')
+		buf.Write(o.values[k])
+	}
+	buf.WriteByte('}')
+	return buf.Bytes(), nil
+}
+
+func mustQuote(s string) json.RawMessage {
+	// A Go string always marshals; the error return exists for types that can
+	// fail, and a string is not one of them.
+	b, _ := json.Marshal(s)
+	return b
+}
+
+// jsonName is the member name a struct field is written under.
+func jsonName(f reflect.StructField) string {
+	tag := f.Tag.Get("json")
+	if i := strings.IndexByte(tag, ','); i >= 0 {
+		tag = tag[:i]
+	}
+	if tag == "" {
+		return f.Name
+	}
+	return tag
+}
+
+// applyRedaction walks a struct before and after redactEventFields ran over
+// it, and writes every changed leaf into obj — leaving every member obj holds
+// that redaction did not touch exactly as it was. It reports how many leaf
+// fields changed, which is the second count session.erasure carries.
+//
+// It descends the same shapes redactEventFields does — a pointed-to struct
+// (*EvError), a slice of structs (Secrets, Agents, StoreKeys) — but by
+// reflection over whatever those shapes are, not by naming them: a shape added
+// to Event next month is descended into the day it lands. The nested case is
+// where being lossless matters most, because a newer build adding a member to
+// EvError or EvAgent does not bump the schema version either.
+func applyRedaction(obj *rawObject, before, after reflect.Value) (int, error) {
+	changed := 0
+	t := before.Type()
+	for i := 0; i < t.NumField(); i++ {
+		name := jsonName(t.Field(i))
+		b, a := before.Field(i), after.Field(i)
+
+		switch a.Kind() {
+		case reflect.String:
+			if b.String() == a.String() {
+				continue
+			}
+			obj.set(name, mustQuote(a.String()))
+			changed++
+
+		case reflect.Slice:
+			if reflect.DeepEqual(b.Interface(), a.Interface()) {
+				continue
+			}
+			switch a.Type().Elem().Kind() {
+			case reflect.String:
+				v, err := json.Marshal(a.Interface())
+				if err != nil {
+					return changed, err
+				}
+				obj.set(name, v)
+				changed++
+			case reflect.Struct:
+				n, err := applyRedactionToSlice(obj, name, b, a)
+				if err != nil {
+					return changed, err
+				}
+				changed += n
+			default:
+				// Ports is []int: redactEventFields never touches it, so
+				// reaching here means something changed that this function
+				// has no way to write back faithfully.
+				return changed, fmt.Errorf("field %s changed but is a slice of %s, which this rewrite cannot express", name, a.Type().Elem().Kind())
+			}
+
+		case reflect.Ptr:
+			if b.IsNil() || a.IsNil() || a.Type().Elem().Kind() != reflect.Struct {
+				continue
+			}
+			if reflect.DeepEqual(b.Interface(), a.Interface()) {
+				continue
+			}
+			raw, ok := obj.values[name]
+			if !ok {
+				return changed, fmt.Errorf("field %s was redacted but the line has no %q member", name, name)
+			}
+			nested, err := parseObject(raw)
+			if err != nil {
+				return changed, fmt.Errorf("member %q: %w", name, err)
+			}
+			n, err := applyRedaction(nested, b.Elem(), a.Elem())
+			if err != nil {
+				return changed, err
+			}
+			v, err := nested.marshal()
+			if err != nil {
+				return changed, err
+			}
+			obj.set(name, v)
+			changed += n
+		}
+	}
+	return changed, nil
+}
+
+// applyRedactionToSlice is applyRedaction for a slice of structs, element by
+// element, so an element's own untouched members survive the way a top-level
+// one does.
+func applyRedactionToSlice(obj *rawObject, name string, before, after reflect.Value) (int, error) {
+	raw, ok := obj.values[name]
+	if !ok {
+		return 0, fmt.Errorf("field %s was redacted but the line has no %q member", name, name)
+	}
+	var elems []json.RawMessage
+	if err := json.Unmarshal(raw, &elems); err != nil {
+		return 0, fmt.Errorf("member %q: %w", name, err)
+	}
+	if len(elems) != before.Len() || before.Len() != after.Len() {
+		return 0, fmt.Errorf("member %q has %d elements on the line and %d in the event — "+
+			"a redaction that changes an element count cannot be written back faithfully",
+			name, len(elems), before.Len())
+	}
+	changed := 0
+	for j := range elems {
+		nested, err := parseObject(elems[j])
+		if err != nil {
+			return changed, fmt.Errorf("member %q element %d: %w", name, j, err)
+		}
+		n, err := applyRedaction(nested, before.Index(j), after.Index(j))
+		if err != nil {
+			return changed, err
+		}
+		if elems[j], err = nested.marshal(); err != nil {
+			return changed, err
+		}
+		changed += n
+	}
+	v, err := json.Marshal(elems)
+	if err != nil {
+		return changed, err
+	}
+	obj.set(name, v)
+	return changed, nil
 }
 
 // hasSessionEnd reports whether any event in the chain is a session.end —

@@ -268,6 +268,39 @@ real erasure, and fails with the field's own name if the marker survives
 a field the table does not name. A field added to `Event` next month is
 covered, or the test that added it fails, on the day it lands.
 
+**The rewrite is lossless, and refuses a chain from a newer build.** Until
+v1.1 the rewrite went read → redact → hash → re-marshal, and the read was
+`json.Unmarshal` into this build's own `Event`: every member the struct did
+not carry was dropped on the way through. An older `kelyfos` erasing a chain
+a newer one wrote deleted part of the record, the rewritten chain verified,
+and `modified` did not reflect it — the exact failure `digestOfLine` exists
+to prevent on reads, where a digest is recomputed from the bytes as written
+so an older build never calls a legitimate record modified.
+
+Erase inherits that property now. Each line is held as its own members, in
+the order the line carries them, and only the members a redaction actually
+changes are written back; everything else comes out byte-for-byte, including
+members this build has never heard of, members inside objects whose own
+struct it only partly knows, and values a struct round trip would have
+normalised away. The digest is taken over the bytes actually written.
+
+And before any of it: an event carrying a `v` higher than this build writes
+is refused, naming the event and both versions. A schema version this binary
+has never seen is one whose fields it cannot classify as content or not, so
+it cannot know what to redact — and guessing is not available to the one
+operation whose whole promise is that it removed exactly what it said it
+removed. Adding a *field* does not move `v` (`docs/events.md` says adding one
+is not breaking), which is why the lossless rewrite above is the part that
+carries the ordinary case; this covers the case where `v` really did move.
+
+**Two counts, not one.** `modified` is how many events were touched;
+`redacted_fields` is how many fields were replaced across all of them. An
+event with three redactable fields set moves the first by one and the second
+by three. The second exists so an auditor has a number to compare against
+what a redaction over a given chain should have touched — the comparison that
+catches a field quietly falling out of coverage, which is the failure this
+section's own history is made of.
+
 **Why the chain still verifies afterward.** Every event's `hash` covers
 `prev`, and `prev` is the previous event's `hash`, so a content change to
 one event changes the digest of every event chained after it whether or

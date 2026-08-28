@@ -283,6 +283,16 @@ type Event struct {
 	Edges          []string     `json:"edges,omitempty"`
 	StoreKeys      []EvStoreKey `json:"store_keys,omitempty"`
 	RecordPayloads *bool        `json:"record_payloads,omitempty"`
+
+	// session.erasure (P7-17, F6). Modified counts events touched; this
+	// counts the fields actually replaced, which is a different number and
+	// the one an auditor can compare against what a redaction should have
+	// touched — an event with three redactable fields set moves Modified by
+	// one and this by three. Appended at the end, like every field since
+	// Jailed, because the field order in this struct is the order the hash is
+	// computed over. An integer, so there is nothing here for
+	// clipLargestField to clip and nothing for an erasure to redact.
+	RedactedFields int `json:"redacted_fields,omitempty"`
 }
 
 // WithPosture fills the two fields that say which walls were around a machine.
