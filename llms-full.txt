@@ -3339,7 +3339,10 @@ here too. A declared graph and a running one are never two independent
 readings of one file: both go through the same conversion
 (`host/teamgraph.go`'s `buildGraphInput`), so `kelyfos team graph` in a
 project directory and `kelyfos team ps --graph` against the team it boots
-print the identical topology. It also lists every refusal recorded since
+print the identical topology, except in the one case §8.4.1 names — a
+store enabled with no `[[team.store.key]]` rule, which the recorded
+`team.topology` cannot currently distinguish from the store being off at
+all. It also lists every refusal recorded since
 boot — every reason `team.refused`, `team.store` and `team.spawn` can carry
 except an absence (`no_such_key`, which §8.3 above already says is not a
 refusal) and an internal despawn condition nobody watching the policy file

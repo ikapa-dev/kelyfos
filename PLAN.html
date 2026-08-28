@@ -5545,6 +5545,30 @@ after:
         before this can be considered for a checkbox, and is requested explicitly: either by this task once the
         shared VM is reachable again, or by the reviewer directly when they re-check, since they will need
         working VM access for that regardless.</td></tr>
+    <tr><td class="mono">2026-08-28</td><td class="mono">P7-7</td>
+        <td><b>Two corrections to prior rows in this task's own history, per &sect;8 rule 6 (append, never
+        edit).</b> The row above (and one before it) cited &ldquo;<code>--- PASS</code> lines&rdquo; counts that
+        were actually top-level <code>Test</code> function counts, an inconsistency the second review round's
+        reviewer caught while re-verifying for real. The true numbers, measured directly: <code>host</code> has
+        194 top-level <code>Test</code> functions and 241 <code>--- PASS</code> lines;
+        <code>internal/digest</code> has 34 and 67. Both packages: 0 failures. Separately: the row above's
+        &ldquo;not claiming green here&rdquo; disclaimer was accurate when written (the shared VM was down) and
+        is now stale &mdash; the orchestrator ran the full re-verification once the VM recovered
+        (<code>gofmt</code>/<code>go vet</code>/<code>go test ./...</code>/<code>govulncheck</code>/<code>make
+        docs</code> all clean), and the reviewer independently re-verified everything a second time, including
+        rebooting a real 3-agent team and driving <code>watch</code> under tmux at 120x24. Also fixed in this
+        pass: <code>docs/teams.md</code>'s claim that <code>team graph</code> and <code>team ps --graph</code>
+        &ldquo;print the identical topology&rdquo; unconditionally, which contradicted &sect;8.4.1 two paragraphs
+        later &mdash; now states the one documented exception (a store enabled with no key rule, which
+        <code>team.topology</code> cannot currently distinguish from the store being off).</td>
+        <td class="mono"><code>go test -v ./host/...</code> &rarr; grep-counted both ways:
+        <code>grep -c '^func Test' host/*_test.go</code> &rarr; 194; <code>grep -c '\-\-\- PASS'</code> on the
+        <code>-v</code> output &rarr; 241, 0 <code>FAIL</code>; same for <code>internal/digest</code> &rarr; 34
+        funcs, 67 <code>--- PASS</code>, 0 <code>FAIL</code>; full re-verification (post-VM-recovery):
+        <code>gofmt -l .</code> clean, <code>go vet ./...</code> clean, <code>go test -count=1 ./...</code> every
+        package <code>ok</code>, <code>govulncheck</code> &rarr; &ldquo;No vulnerabilities found.&rdquo;,
+        <code>make docs</code> &rarr; zero diff (idempotent); <code>python3 tools/check-plan.py</code> &rarr;
+        &ldquo;PLAN.html is coherent: 101 tasks, 84 checked, 68 decisions&rdquo;</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
