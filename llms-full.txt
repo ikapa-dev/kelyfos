@@ -12096,7 +12096,9 @@ Go's `flag` accepts one dash or two, so `-image` and `--image` are the same flag
 | [`kelyfos snapshot restore`](#kelyfos-snapshot-restore) | save a sandbox's state, or bring it back |
 | [`kelyfos pause`](#kelyfos-pause) | freeze a running sandbox under a name |
 | [`kelyfos resume`](#kelyfos-resume) | bring a paused session back |
-| [`kelyfos sessions`](#kelyfos-sessions) | list paused sessions; rm, prune or erase one (-h on each for more) |
+| [`kelyfos sessions rm`](#kelyfos-sessions-rm) | list paused sessions; rm, prune or erase one (-h on each for more) |
+| [`kelyfos sessions prune`](#kelyfos-sessions-prune) | list paused sessions; rm, prune or erase one (-h on each for more) |
+| [`kelyfos sessions erase`](#kelyfos-sessions-erase) | list paused sessions; rm, prune or erase one (-h on each for more) |
 | [`kelyfos diff`](#kelyfos-diff) | what a sandbox has done to its workspace |
 | [`kelyfos shell`](#kelyfos-shell) | an interactive terminal inside a sandbox |
 | [`kelyfos fork`](#kelyfos-fork) | restore one snapshot into several sandboxes |
@@ -12264,15 +12266,40 @@ kelyfos resume <name>
 | `--console` | boolean | — | stream the guest serial console |
 | `--no-sync-back` | boolean | — | leave the workspace image alone at the end |
 
-## kelyfos sessions
+## kelyfos sessions rm
 
 List paused sessions; rm, prune or erase one (-h on each for more).
 
 ```
-kelyfos sessions [rm <name>]
+kelyfos sessions rm
 ```
 
 No flags.
+
+## kelyfos sessions prune
+
+List paused sessions; rm, prune or erase one (-h on each for more).
+
+```
+kelyfos sessions prune
+```
+
+| Flag | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `--dry-run` | boolean | — | report what would be pruned without deleting anything |
+| `--policy` | string | the nearest one, found by walking up | the kelyfos.toml whose [sessions] retention_days applies |
+
+## kelyfos sessions erase
+
+List paused sessions; rm, prune or erase one (-h on each for more).
+
+```
+kelyfos sessions erase
+```
+
+| Flag | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `--reason` | string | — | why — recorded in the session.erasure event this writes (required) |
 
 ## kelyfos diff
 
