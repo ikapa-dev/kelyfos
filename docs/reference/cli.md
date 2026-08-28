@@ -337,6 +337,7 @@ kelyfos log [flags]
 | Flag | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `--export` | string | — | write a self-contained HTML report to this path |
+| `--export-otlp` | string | — | write an OTLP-JSON trace export to this path (one-way, never read back — docs/otlp.md) |
 | `-f` | boolean | — | alias for --follow |
 | `--follow` | boolean | — | stream events as they are recorded |
 | `--json` | boolean | — | print the raw events instead of a readable replay |

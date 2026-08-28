@@ -126,7 +126,7 @@ type Value struct {
 	IntValue *string `json:"intValue,omitempty"`
 }
 
-func strAttr(key, val string) Attr { return Attr{Key: key, Value: Value{StringValue: &val}} }
+func strAttr(key, val string) Attr       { return Attr{Key: key, Value: Value{StringValue: &val}} }
 func boolAttr(key string, val bool) Attr { return Attr{Key: key, Value: Value{BoolValue: &val}} }
 func intAttr(key string, val int64) Attr {
 	s := strconv.FormatInt(val, 10)

@@ -29,6 +29,7 @@ Apache-2.0. Single-host developer tool, not a multi-tenant sandbox for hostile c
 - [Daily-driver quality of life](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/qol.md): the shell, the diff, pause and resume, port forwarding and notifications — written before the code, with the places the built thing differed marked
 - [The policy record](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/policy-record.md): session.policy and team.topology, written before the code: every field, its position in the frozen hash order, which door writes it, and what it omits
 - [Retention and erasure](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/retention.md): the [sessions] retention_days floor, kelyfos sessions prune, the size warning, and kelyfos sessions erase's replacement-record pattern
+- [Mapping the chain to a standard, without adopting it](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/otlp.md): how kelyfos log --export-otlp maps a session's chain to OTLP-JSON spans, why the mapping is versioned apart from the flight recorder and never an input to kelyfos verify, and what is deliberately not mapped
 - [Documentation map](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/README.md): what every document is, and — deliberately — where each is still thin
 
 ## Reference
@@ -43,6 +44,6 @@ Apache-2.0. Single-host developer tool, not a multi-tenant sandbox for hostile c
 
 ## Optional
 
-- [Everything in one file](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/llms-full.txt): every page above concatenated, roughly 171k tokens, for a client that would rather spend context than fetch
+- [Everything in one file](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/llms-full.txt): every page above concatenated, roughly 176k tokens, for a client that would rather spend context than fetch
 - [Build plan and decision log](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/PLAN.html): HTML. Every phase and every decision with its rationale, and the command output behind each claim
 - [Feature plan and decision log](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/PLAN-FEATURES.html): HTML. The epics after the build plan, same protocol
