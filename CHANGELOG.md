@@ -73,6 +73,20 @@ reference described in the README and re-measured per release.
   coming) or on Ctrl-C (P7-9).
 
 ### Fixed
+- **`kelyfos connect` created MCP client configuration files world-readable.**
+  `~/.codex/config.toml` and `~/.gemini/settings.json` are files that commonly
+  grow an API key later, and `os.WriteFile` only applies its mode on creation —
+  so where `kelyfos connect` was the first thing to create one, which is the
+  common case for a fresh setup, the client that later wrote a credential into
+  it kept the `0644` it found. A file under `$HOME` is now created `0600` inside
+  directories created `0700`; project-local files (`.mcp.json`,
+  `.cursor/mcp.json`, `.vscode/mcp.json`, `.junie/mcp/mcp.json`) keep the
+  umask-derived mode because they are meant to be committed. The rule is by path
+  prefix rather than by client name, so a client added later inherits it, and an
+  existing file is never widened — whatever mode is already stricter wins. The
+  write is now atomic as well (temp file beside the target, fsync, rename),
+  which it needed to be regardless: it is a read-modify-write of a file another
+  program may have open (P7-17/F5).
 - **A web page you visited could write files into a running shim sandbox and
   boot microVMs.** `kelyfos shim` serves on `127.0.0.1:3000` with no
   authentication by default, which is the exact configuration a browser can

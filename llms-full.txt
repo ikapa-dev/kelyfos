@@ -9671,6 +9671,24 @@ kelyfos connect generic         # prints the snippet, for anything else
 It is idempotent, `--remove` uninstalls, and it is a guest in somebody else's
 file: other servers and keys it has never heard of both survive.
 
+**The mode it writes depends on where the file lives, not on which client it
+is.** A configuration under your home directory — `~/.codex/config.toml`,
+`~/.gemini/settings.json` — is created `0600` inside directories created `0700`,
+because those are files that commonly grow an API key later and `kelyfos
+connect` is often the first thing to create them; a mode set at creation is the
+mode the client that writes the key into it will keep. A project-local file
+(`.mcp.json`, `.cursor/mcp.json`, `.vscode/mcp.json`, `.junie/mcp/mcp.json`) is
+meant to be committed and keeps the ordinary mode your umask gives everything
+else. **An existing file is never widened**: whatever is already stricter wins,
+so a file you tightened yourself stays that way. Deciding by path prefix rather
+than by client name is what makes a client added later inherit the rule.
+
+**The write is atomic.** It goes to a temporary file beside the target, is
+fsynced, and is renamed over it — this is a read-modify-write of a file another
+program may have open, and a rename is the only atomic replacement available. A
+file that will not parse is refused before anything is written and is left
+exactly as it was.
+
 **Two things it gets right that a copied snippet gets right by luck.** The policy
 path is written **absolutely**, because a server that has to find its own policy
 can find none and run with no ceiling at all — and the working-directory and

@@ -163,9 +163,9 @@ one can find none and run with no ceiling at all.
 	path := c.Path(root, home)
 
 	if *remove {
-		return removeFrom(c, path)
+		return removeFrom(c, path, home)
 	}
-	if err := writeTo(c, path, cmd); err != nil {
+	if err := writeTo(c, path, home, cmd); err != nil {
 		return err
 	}
 	if *check {
@@ -210,19 +210,54 @@ func serverCommand(project, policy, bin string) (command, error) {
 	return command{Bin: abs, Args: []string{"serve-mcp", "--policy", policy}, Policy: policy}, nil
 }
 
-func writeTo(c client, path string, cmd command) error {
+// underHome decides how a configuration file is protected, and it decides by
+// path prefix rather than by client name (P7-17/F5).
+//
+// Two of the six targets live under $HOME — ~/.codex/config.toml and
+// ~/.gemini/settings.json — and both are files that commonly grow credentials
+// later. os.WriteFile only applies its perm on creation, so the exposure is the
+// case where KelyfOS is the first thing to create the file, which is the common
+// case for a fresh setup: the client that later writes an API key into it keeps
+// the mode it found. The project-local files (.mcp.json, .cursor/mcp.json,
+// .vscode/mcp.json, .junie/mcp/mcp.json) are meant to be committed and shared
+// and keep the ordinary umask-derived mode.
+//
+// By prefix, so a client added to the catalog later inherits the rule without
+// anybody remembering to apply it — which is what a rule enforced per name
+// would ask for, and what F7 in this same review is about somebody forgetting.
+func underHome(path, home string) bool {
+	if home == "" {
+		return false
+	}
+	return path == home || strings.HasPrefix(path, home+string(filepath.Separator))
+}
+
+// configModes is the file and directory mode for a path, before the existing
+// file is consulted.
+func configModes(path, home string) (file, dir os.FileMode) {
+	if underHome(path, home) {
+		return 0o600, 0o700
+	}
+	return createMode() & 0o666, 0o777 &^ processUmask()
+}
+
+func writeTo(c client, path, home string, cmd command) error {
 	existing, err := os.ReadFile(path)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
+	// Before anything is created or replaced: a file this writer will not
+	// rewrite must leave no directory, no temp file and no half-written
+	// content behind.
 	updated, err := c.Write(existing, cmd)
 	if err != nil {
 		return fmt.Errorf("%s: %w", path, err)
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	mode, dirMode := configModes(path, home)
+	if err := os.MkdirAll(filepath.Dir(path), dirMode); err != nil {
 		return err
 	}
-	if err := os.WriteFile(path, updated, 0o644); err != nil {
+	if err := writeConfigAtomic(path, updated, mode); err != nil {
 		return err
 	}
 	verb := "wrote"
@@ -234,7 +269,55 @@ func writeTo(c client, path string, cmd command) error {
 	return nil
 }
 
-func removeFrom(c client, path string) error {
+// writeConfigAtomic replaces path with body, through a sibling temp file, an
+// fsync and a rename — the pattern host/log.go's exports already use
+// (atomicWriteReport), for a stronger reason here: this is a read-modify-write
+// of a file another program may be editing at the same moment, and a rename is
+// the only atomic replacement available. A partial write over a client's
+// configuration is not a lost KelyfOS entry, it is a client that no longer
+// starts.
+//
+// The mode is the stricter of what the caller asked for and what the file
+// already has. Somebody who tightened their own configuration, or a client that
+// created it 0600 itself, must not have that undone by `kelyfos connect` —
+// this command is a guest in that file, which is the same rule the JSON writers
+// already follow for its contents.
+func writeConfigAtomic(path string, body []byte, mode os.FileMode) error {
+	if fi, err := os.Stat(path); err == nil {
+		mode &= fi.Mode().Perm()
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".kelyfos-connect-*")
+	if err != nil {
+		return err
+	}
+	defer func() {
+		tmp.Close()
+		_ = os.Remove(tmp.Name()) // a no-op once the rename has happened
+	}()
+	if _, err := tmp.Write(body); err != nil {
+		return err
+	}
+	// Before the rename, not after: a rename is atomic with respect to a
+	// reader, not with respect to a power cut, and a configuration file that
+	// comes back as zero bytes is a client that no longer starts.
+	if err := tmp.Sync(); err != nil {
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	// os.CreateTemp makes a 0600 file and a rename carries that mode with it,
+	// so a project-local file needs this to be readable at all.
+	if err := os.Chmod(tmp.Name(), mode); err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), path)
+}
+
+func removeFrom(c client, path, home string) error {
 	existing, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		fmt.Printf("%s does not exist; nothing to remove\n", path)
@@ -251,7 +334,8 @@ func removeFrom(c client, path string) error {
 		fmt.Printf("%s does not mention kelyfos; nothing to remove\n", path)
 		return nil
 	}
-	if err := os.WriteFile(path, updated, 0o644); err != nil {
+	mode, _ := configModes(path, home)
+	if err := writeConfigAtomic(path, updated, mode); err != nil {
 		return err
 	}
 	fmt.Printf("removed kelyfos from %s\n", path)
