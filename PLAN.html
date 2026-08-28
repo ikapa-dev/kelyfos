@@ -6357,6 +6357,19 @@ after:
         P7-8 and P7-9's authors left their own rows before review &mdash; this is the one task in the whole
         project allowed to open a socket, and the review that follows should be adversarial about exactly the
         binding conditions above, not about whether the feature is convenient.</td></tr>
+    <tr><td class="mono">2026-08-28</td><td class="mono">P7-12</td>
+        <td>Small self-found hardening fix on top of <code>c942402</code>, before review: <code>http.ServeMux</code>'s
+        bare <code>&quot;/&quot;</code> pattern is a catch-all for any path with no more specific registered
+        match, so an arbitrary path (e.g. <code>/some/other/path</code>) was silently rendered as the same index
+        page instead of a <code>404</code>. Not a path-traversal issue &mdash; <code>handleIndex</code> never
+        read <code>r.URL.Path</code>, so no request path has ever reached the filesystem &mdash; but the honest
+        answer for a path that names nothing is <code>404</code>, and it is what an adversarial review scanning
+        routes for &ldquo;does a URL fragment reach the filesystem&rdquo; should find. One new test,
+        <code>TestUnknownPathIsRefusedNotSilentlyRenderedAsTheIndex</code>.</td>
+        <td class="mono">commit <code>e0b82c2</code>. <code>gofmt -l .</code> &rarr; clean; <code>go vet
+        ./...</code> &rarr; clean; <code>go build ./...</code> &rarr; clean; <code>go test -count=1 ./...</code>
+        &rarr; every package <code>ok</code> or <code>[no test files]</code>, <code>host</code> package 17.189s;
+        the 18 <code>host/view_test.go</code> tests (17 from the previous row plus this one) all <code>PASS</code>.</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
