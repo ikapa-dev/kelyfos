@@ -121,21 +121,44 @@ func profileFor(flavor string) Profile {
 // Landlock denies every rename or link that changes a file's parent directory,
 // so `mv /tmp/x /work/x` would stop working — the exact shape of breakage §4.2
 // warns about.
+//
+// MAKE_CHAR and MAKE_BLOCK are deliberately absent, which is F10 of the
+// 2026-08-28 review. They were granted here on every writable tree, /root
+// included, and a confined process is root: reading the workspace disk's
+// major:minor out of /proc/partitions and running `mknod /root/disk b 254 16`
+// put the raw block device in front of it, past the nosuid,nodev mount that
+// guards /work and past the sentence twenty lines above saying the disks are
+// not on the list. Nothing a build tool, package manager or test runner does
+// creates a device node; MAKE_FIFO and MAKE_SOCK are the two programs really
+// need, and they stay.
 const writeRights = unix.LANDLOCK_ACCESS_FS_EXECUTE |
 	unix.LANDLOCK_ACCESS_FS_WRITE_FILE |
 	unix.LANDLOCK_ACCESS_FS_READ_FILE |
 	unix.LANDLOCK_ACCESS_FS_READ_DIR |
 	unix.LANDLOCK_ACCESS_FS_REMOVE_DIR |
 	unix.LANDLOCK_ACCESS_FS_REMOVE_FILE |
-	unix.LANDLOCK_ACCESS_FS_MAKE_CHAR |
 	unix.LANDLOCK_ACCESS_FS_MAKE_DIR |
 	unix.LANDLOCK_ACCESS_FS_MAKE_REG |
 	unix.LANDLOCK_ACCESS_FS_MAKE_SOCK |
 	unix.LANDLOCK_ACCESS_FS_MAKE_FIFO |
-	unix.LANDLOCK_ACCESS_FS_MAKE_BLOCK |
 	unix.LANDLOCK_ACCESS_FS_MAKE_SYM |
 	unix.LANDLOCK_ACCESS_FS_REFER |
 	unix.LANDLOCK_ACCESS_FS_TRUNCATE
+
+// deviceCreation is handled by the ruleset and granted by no rule in it, which
+// is the only arrangement that refuses it.
+//
+// This is the trap in fixing F10 and it is worth spelling out, because getting
+// it backwards looks identical in a diff and does the opposite. handledRights is
+// the ruleset's Access_fs: the set of actions Landlock has an opinion about.
+// An action outside that set is not restricted, it is *ignored*. So deleting
+// MAKE_CHAR and MAKE_BLOCK from writeRights while handledRights was still
+// defined as `= writeRights` would have taken device-node creation out of the
+// ruleset's vocabulary and permitted it everywhere — including under /etc and
+// /usr, which the old grant did not reach. Removed from what is granted, kept
+// in what is governed.
+const deviceCreation = unix.LANDLOCK_ACCESS_FS_MAKE_CHAR |
+	unix.LANDLOCK_ACCESS_FS_MAKE_BLOCK
 
 // The rights a named device node gets: exactly what a program does to
 // /dev/null. No MAKE_* — nothing creates device nodes here — and no REFER,
@@ -157,7 +180,12 @@ const readRights = unix.LANDLOCK_ACCESS_FS_EXECUTE |
 // program makes — TCGETS on a pty is how a shell decides it is a shell — and
 // granting it on /dev would make handling it a no-op. It restricts ioctls on
 // device nodes, which is not the surface this profile is about.
-const handledRights = writeRights
+//
+// deviceCreation is handled and granted nowhere, so mknod of a character or
+// block device is refused with EACCES on every path, writable trees included
+// (F10). Every other right here is granted somewhere, which is what makes this
+// one line the whole of the difference.
+const handledRights = writeRights | deviceCreation
 
 // minLandlockABI is the oldest Landlock this refuses to run without. The guest
 // kernel is built at 6.12 and reports 6; the floor is 2 because REFER, which

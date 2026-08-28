@@ -268,7 +268,12 @@ is confined by Landlock and a seccomp refusal list, declared per flavor and
 generated into [`reference/profiles.md`](reference/profiles.md) from the code
 that enforces it. Writes go to `/work`, `/tmp`, `/run`, `$HOME`, `/dev/pts` and
 `/dev/shm`, plus seven named device nodes, and nowhere else — so an agent can no
-longer edit the toolbox it was handed. `/dev/shm` is worth naming on its own: it
+longer edit the toolbox it was handed. "Nowhere else" was not true until F10 of
+the same review: what a writable tree granted included creating a device node,
+and a confined process is root, so `mknod /root/disk b 254 16` on the workspace
+disk's major:minor opened it raw. Device-node creation is now granted on no path
+and the merged root is mounted `nodev`, so the two block devices are reachable
+only as the mounts the host attached. `/dev/shm` is worth naming on its own: it
 is a tmpfs the guest kernel sizes at half the machine's RAM, so it is a
 general-purpose writable area, bounded by `mem` rather than by the profile. The
 seccomp half refuses a list of syscalls with `EPERM` — 28 of them on the `base`

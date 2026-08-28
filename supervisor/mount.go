@@ -49,6 +49,29 @@ func setupRoot() (overlay bool) {
 	return overlay
 }
 
+// overlayFlags is what the merged root — the filesystem the guest actually runs
+// on — is mounted with. It was 0 until F10 of the 2026-08-28 review.
+//
+// A mount's flags are its own. The lower layer is the read-only image and the
+// upper is a tmpfs already carrying MS_NOSUID|MS_NODEV, and neither lends
+// anything to the merged mount on top, so this needed saying separately.
+//
+//	MS_NODEV   the second layer under F10. Landlock refuses the mknod, and if
+//	           a node ever exists anyway — a future grant, a bug, a path the
+//	           ruleset does not cover — the kernel will not open it as a
+//	           device. The image ships no device node outside /dev, and /dev
+//	           is a devtmpfs moved across afterwards with its own flags, so
+//	           this takes nothing away from the guest.
+//	MS_NOSUID  /bin/busybox in this image is mode 4755. Every process here is
+//	           already root, so today the bit buys an attacker nothing and
+//	           costs the guest nothing to drop — which is exactly when to drop
+//	           it, rather than after something in this guest first runs as a
+//	           uid that is not 0.
+//
+// MS_NOEXEC is not here and must not be: this is the filesystem the programs
+// are on.
+const overlayFlags = uintptr(unix.MS_NODEV | unix.MS_NOSUID)
+
 // setupOverlay puts a tmpfs-backed overlayfs over the read-only root and moves
 // into it. /mnt and /.oldroot already exist in the image because nothing can
 // create a directory on a read-only root.
@@ -70,7 +93,7 @@ func setupOverlay() error {
 			return fmt.Errorf("mkdir %s: %w", d, err)
 		}
 	}
-	if err := unix.Mount("overlay", "/mnt/merged", "overlay", 0,
+	if err := unix.Mount("overlay", "/mnt/merged", "overlay", overlayFlags,
 		"lowerdir=/,upperdir=/mnt/upper,workdir=/mnt/work"); err != nil {
 		return fmt.Errorf("overlay mount: %w", err)
 	}

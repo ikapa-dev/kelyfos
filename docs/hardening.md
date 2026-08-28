@@ -224,6 +224,41 @@ before it does anything else. The release notes live only in the GitHub release
 body: this repository has no `CHANGELOG.md` yet, so nothing in the tree carries
 that statement and nothing keeps the two in step. P6-16.
 
+*Written after F10, the security review of 2026-08-28: what "writable" grants
+no longer includes making a device node.* It did, on every tree in that list,
+and a confined process is root — so `awk '/vdb$/ {print $1, $2}' /proc/partitions`
+followed by `mknod /root/disk b 254 16` produced a working block device for the
+workspace disk, and `dd` read it raw. That is past the `nosuid,nodev` mount that
+guards `/work`, past `/dev` never being granted wholesale, and past the sentence
+in `profile.go` saying the raw disks are not on the list. Reproduced on a booted
+guest before it was fixed, because as a non-root user the `CAP_MKNOD` check
+answers `EPERM` first and hides whatever Landlock would have said.
+
+Two layers now, because one of them is a grant and grants get widened:
+
+- **`MAKE_CHAR` and `MAKE_BLOCK` are no longer granted.** They are still
+  *handled* by the ruleset, which is the whole of the difference: a right the
+  ruleset does not name is not restricted but ignored, so removing them from
+  what is governed rather than from what is granted would have permitted device
+  nodes everywhere, `/etc` and `/usr` included. `MAKE_FIFO` and `MAKE_SOCK`
+  stay — `mkfifo(3)` and a unix socket are things real programs create, and both
+  are checked in the acceptance run.
+- **The merged root is mounted `MS_NODEV|MS_NOSUID`.** It was mounted with no
+  flags at all. A mount's flags are its own: the lower layer is the read-only
+  image and the upper is a tmpfs already carrying both, and neither lends
+  anything to the merged mount on top. The image ships no device node outside
+  `/dev`, and `/dev` is a devtmpfs moved across afterwards with its own flags,
+  so `nodev` costs the guest nothing; `nosuid` retires the setuid bit on
+  `/bin/busybox`, which buys nothing today because every process here is already
+  root, and is therefore exactly the moment to drop it.
+
+**`mknod` and `mknodat` are deliberately not on the seccomp refusal list**, and
+a test pins them off it. `mkfifo(3)` *is* `mknodat` with `S_IFIFO`, and this
+filter compares syscall numbers with no sight of the mode argument, so refusing
+the number would refuse every named pipe in the guest — a far larger break than
+the hole it closes. Landlock and `nodev` both see the file type; the number-only
+filter cannot.
+
 ### 4.3 Per flavor, and refusing rather than degrading
 
 The profile is declared per image flavor, because `base` and `dev` are different
