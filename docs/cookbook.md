@@ -1940,7 +1940,13 @@ echo "watch.html now carries the refusal, written by the loop already running"
 kill "$REFRESH_PID" 2>/dev/null || true
 wait "$REFRESH_PID" 2>/dev/null || true
 REFRESH_PID=""
-grep -q '^stopped$' refresh.log
+# host/log.go prints a bare "stopped" only when the loop never wrote — by
+# this point it already has (the no_edge refusal above proves it), so the
+# branch that actually fires is "stopped — wrote a final export with no
+# further meta-refresh". Both start with "stopped"; anchoring the end as
+# well made this assertion fail on every real run that reaches here with
+# something already written, which is every real run.
+grep -q '^stopped' refresh.log
 echo "the loop stopped cleanly on its own signal"
 
 kelyfos team down
