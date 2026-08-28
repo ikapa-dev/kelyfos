@@ -491,6 +491,11 @@ func TestEveryKnownEventTypeIsClassified(t *testing.T) {
 		recorder.TypeShellStart:     true,
 		recorder.TypeShellEnd:       true,
 		recorder.TypeForwardAccept:  true,
+		// session.erasure (P7-5) landed after this package did. Nothing
+		// here folds it yet — a reader of an erased chain should be told
+		// plainly that it was erased, and that's real work for whichever
+		// view picks it up, not a one-line fix here.
+		recorder.TypeSessionErasure: true,
 	}
 	for _, typ := range allEventTypes() {
 		// command.output and command.exit never append their own Timeline

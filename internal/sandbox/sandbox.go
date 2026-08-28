@@ -1718,6 +1718,44 @@ func (s *Sandbox) drainConsole(r io.Reader) {
 	}
 }
 
+// RunningSessions is the set of flight-recorder session ids with a live
+// sandbox writing into them right now — every currently-alive sandbox's own
+// RecordSession(), which is a team's or a serve-mcp process's session id for
+// a member sandbox and the sandbox's own id otherwise.
+//
+// It exists for `kelyfos sessions erase`'s own guard (P7-5, D61, B1). A
+// guard that only checks whether a run directory is named for the id being
+// erased — RunDirOf(id) — sees an ordinary `kelyfos run` sandbox fine,
+// because that sandbox's own id names its own run directory. It cannot see
+// a running team: `host/team.go`'s raiseTeam opens the team's chain under a
+// fresh sandbox.NewID() that is never any sandbox's own id, so no run
+// directory is ever named for it, even while every member sandbox in the
+// team is alive and writing into that exact chain. This answers the
+// question RunDirOf(id) alone cannot: is ANY live sandbox's own
+// RecordSession() this id, whichever sandbox actually holds the run
+// directory.
+func RunningSessions() (map[string]bool, error) {
+	live := map[string]bool{}
+	entries, err := os.ReadDir(filepath.Join(RunRoot(), "firecracker"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return live, nil
+		}
+		return nil, err
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		st, err := readState(RunDirOf(e.Name()))
+		if err != nil || !alive(st.PID) {
+			continue
+		}
+		live[st.RecordSession()] = true
+	}
+	return live, nil
+}
+
 // Load reads the state of a running sandbox. With an empty id it finds the only
 // running sandbox, and refuses to guess when there is more than one.
 func Load(id string) (*State, error) {

@@ -112,6 +112,7 @@ func Sections() []Section {
 	return []Section{
 		{Name: "", Header: "(bare) or [sandbox]", Doc: "what to boot, and what it may reach"},
 		{Name: "resources", Header: "[resources]", Doc: "hard ceilings for a single run, and the value when no flag asks: a flag may ask for less, never more"},
+		{Name: "sessions", Header: "[sessions]", Doc: "retention for the flight recorder's own history, read by kelyfos sessions prune"},
 		{Name: "team", Header: "[team]", Doc: "several agents on one host, and the paths between them"},
 		{Name: "mcp", Header: "[mcp]", Doc: "limits on the outward MCP server, kelyfos serve-mcp"},
 		{Name: "team.resources", Header: "[team.resources]", Doc: "the collective budget — cpu_quota is the only cap a team can share"},
@@ -156,6 +157,14 @@ func Schema() []Key {
 	}
 	out := inSection("", keys)
 	out = append(out, inSection("resources", resourceKeys())...)
+
+	out = append(out,
+		Key{Section: "sessions", Name: "retention_days", Type: TypeInt,
+			Default: "180 (the EU AI Act's own floor for a general-purpose system, D61)", Sample: "365",
+			Doc: "the floor kelyfos sessions prune reads: it never deletes a recorded session younger " +
+				"than this, however it is invoked. 0 (including an absent key) means the built-in " +
+				"180-day default applies, not that every session is immediately prunable"},
+	)
 
 	out = append(out,
 		Key{Section: "mcp", Name: "max_sandboxes", Type: TypeInt, Default: "4", Sample: "2",

@@ -144,6 +144,12 @@ func (c *Config) header(line, where string) (string, error) {
 	case !array && (name == "sandbox" || name == "resources" || name == "mcp"):
 		return name, nil
 
+	case !array && name == "sessions":
+		if c.Sessions == nil {
+			c.Sessions = &Sessions{}
+		}
+		return name, nil
+
 	case !array && name == "team":
 		c.ensureTeam()
 		return name, nil

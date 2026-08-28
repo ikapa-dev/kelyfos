@@ -42,6 +42,56 @@ mem_mib = 2048
 	}
 }
 
+// [sessions] retention_days (P7-5, D61): absent means nil Sessions, which
+// kelyfos sessions prune reads as "use the built-in default" — the same
+// nil-means-absent convention Team already uses, and the same
+// zero-means-not-set convention every other numeric field in this package's
+// own doc comment states for itself.
+func TestSessionsSectionAbsentByDefault(t *testing.T) {
+	cfg, err := Load(write(t, `[sandbox]
+image = "dev"
+`))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.Sessions != nil {
+		t.Errorf("Sessions = %+v, want nil when the file has no [sessions] section", cfg.Sessions)
+	}
+}
+
+func TestSessionsSectionParsesRetentionDays(t *testing.T) {
+	cfg, err := Load(write(t, `[sessions]
+retention_days = 365
+`))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.Sessions == nil || cfg.Sessions.RetentionDays != 365 {
+		t.Errorf("Sessions = %+v, want RetentionDays 365", cfg.Sessions)
+	}
+}
+
+func TestSessionsSectionRefusesUnknownKey(t *testing.T) {
+	_, err := Load(write(t, `[sessions]
+max_age = 30
+`))
+	if err == nil {
+		t.Fatal("an unknown key in [sessions] was accepted")
+	}
+	if !strings.Contains(err.Error(), "max_age") || !strings.Contains(err.Error(), "retention_days") {
+		t.Errorf("the refusal does not name both the bad key and the real one: %v", err)
+	}
+}
+
+func TestSessionsSectionRefusesNegativeRetention(t *testing.T) {
+	_, err := Load(write(t, `[sessions]
+retention_days = -1
+`))
+	if err == nil {
+		t.Fatal("a negative retention_days was accepted")
+	}
+}
+
 // A policy file is committed to a repository. A secret value in one would be
 // committed with it, so this must be refused rather than merely discouraged.
 func TestRefusesASecretValue(t *testing.T) {

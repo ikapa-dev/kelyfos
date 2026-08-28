@@ -25,6 +25,7 @@ hand-written half, and this page says where each is still thin.
 | running several agents together | [`teams.md`](teams.md) |
 | auditing what an agent did | [`events.md`](events.md) |
 | auditing what a run was *permitted* to do, not only what it did | [`policy-record.md`](policy-record.md) |
+| deciding how long records are kept, or erasing what one holds | [`retention.md`](retention.md) |
 | stuck on something KelyfOS refused | [`denials.md`](denials.md), then [`reference/denials.md`](reference/denials.md) for the exact one |
 | running something long and walking away | [`denials.md`](denials.md) on `--notify`, and [`events.md`](events.md) §6 for the history afterwards |
 | keeping an agent off the network | [`networking.md`](networking.md) |
@@ -49,6 +50,7 @@ hand-written half, and this page says where each is still thin.
 | [`denials.md`](denials.md) | mixed | Why every refusal names its own fix, what the ID in brackets is for, what deliberately is not in the catalog, and how `--notify` reaches somebody who stopped watching. |
 | [`qol.md`](qol.md) | concept | The v0.8 specification, written before the code: named sessions and their store, the workspace manifest, the PTY channel, and why inbound forwarding does not touch the firewall. |
 | [`policy-record.md`](policy-record.md) | concept | The Phase 7 policy-record specification, written before the code: every field `session.policy` and `team.topology` add, its position in the frozen hash order, which of the eight doors writes it, and what it deliberately omits. |
+| [`retention.md`](retention.md) | mixed | P7-5 (D61): the `[sessions] retention_days` floor, `kelyfos sessions prune`, the size warning, and `kelyfos sessions erase` — the replacement-record pattern that lets an EU AI Act Article 12 retention floor and a GDPR Article 17 erasure request coexist by separating a chain's structure from its content. |
 | [`mcp-surface.md`](mcp-surface.md) | concept | MCP in both directions: `serve-mcp` as a tool for any client, and `[[plugin]]` servers inside the guest. Specification, written before the code. |
 | [`hardening.md`](hardening.md) | concept | The v0.9 specification, written before the code: what a compromised agent reaches today, what the jailer and the guest profiles take away, and what remains reachable afterwards. |
 | [`host-seccomp.md`](host-seccomp.md) | mixed | The syscall filter around the VMM process: which one is in force and why that is settled, how it is proved from the kernel's own copy rather than from the absence of a flag, and every syscall it permits. |
@@ -274,6 +276,27 @@ why.
 *Reference:* none — every field it names is generated to
 [`reference/events.md`](reference/events.md) once P7-2/P7-3 land.
 *Thin:* written before its code exists; nothing to report yet.
+
+### `retention.md` — retention, pruning and erasure
+
+*Mixed, and written after the code rather than before it* — P7-0's own scope
+note left this decision for P7-5 to make against a real mechanism, unlike
+`policy-record.md`'s. *Concept:* why a retention floor and an erasure
+request are not actually in tension once the record's structure and its
+content are separated; why age is measured by directory mtime rather than a
+`session.end` timestamp; why the two guards (a paused session, a live-looking
+run directory) apply identically to `prune` and `erase`; what `erase`
+deliberately does not redact and why.
+*Reference:* the `[sessions] retention_days` key is in
+[`reference/config.md`](reference/config.md); the `session.erasure` event is
+in [`reference/events.md`](reference/events.md). `kelyfos sessions prune`
+and `erase`'s own flags are not in [`reference/cli.md`](reference/cli.md) —
+like `sessions rm`, they are subcommands of `kelyfos sessions` rather than
+top-level commands, and the generator's discovery only reaches the
+top-level usage block; `-h` on each, and this page, are where their flags
+are written down.
+*Thin:* written once, against the code that already existed; nothing to
+report yet.
 
 ### `hardening.md` — the v0.9 specification
 

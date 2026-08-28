@@ -5594,6 +5594,228 @@ after:
         <code>go test -count=1 ./...</code> (Lima <code>kelyfos-dev</code>) &rarr; every package <code>ok</code>;
         <code>python3 tools/check-plan.py</code> &rarr; &ldquo;PLAN.html is coherent: 101 tasks, 85 checked, 68
         decisions&rdquo;</td></tr>
+    <tr><td class="mono">2026-08-28</td><td class="mono">P7-5</td>
+        <td>P7-3&rsquo;s GO verdict landed (F1&ndash;F7 all confirmed, F1&rsquo;s <code>internal/digest</code>
+        gap fixed by the orchestrator at merge, P7-3 ticked, D62&rsquo;s barrier cleared) and the orchestrator
+        moved this lane to <b>P7-5, retention, pruning and tombstones (D61)</b> &mdash; the last task in Lane
+        1&rsquo;s serial chain. Unlike P7-2/P7-3 there is no pre-written spec doc: P7-0&rsquo;s own scope note
+        left the field-level shape for P7-5 to decide &ldquo;when its mechanism is designed against real
+        code.&rdquo; That design is now <code>docs/retention.md</code>, a new concept doc, written alongside
+        the implementation rather than before it, and it is what a review should read as this task&rsquo;s
+        spec.
+        <br><b>The retention floor</b> &mdash; a new <code>[sessions]</code> section,
+        <code>retention_days</code> (plain <code>int</code>, not a pointer: <code>internal/config</code>&rsquo;s
+        own package doc already states &ldquo;zero values mean not set&rdquo; for every other numeric key,
+        and the pointer convention <code>Event.RecordPayloads</code> uses exists for a JSON
+        <code>omitempty</code> concern this TOML-parsed, read-once struct does not have). Defaults to 180
+        days (six months, the EU AI Act&rsquo;s own floor for a general-purpose system, D61&rsquo;s own
+        citation) when absent or written as <code>0</code>. Wired into <code>internal/config</code>&rsquo;s
+        existing section-header/key-switch machinery exactly like <code>[mcp]</code>; <code>schema.go</code>
+        gained a <code>Sections()</code>/<code>Schema()</code> row so
+        <code>TestSchemaCoversTheParser</code>/<code>TestSchemaKeysAllParse</code> cover it automatically,
+        and <code>schema_test.go</code>&rsquo;s own <code>sectionHeader()</code> helper gained the one case
+        it needed to stop panicking on it.
+        <br><b><code>kelyfos sessions prune</code></b> (new subcommand of the existing <code>kelyfos
+        sessions</code>, alongside the pre-existing <code>rm</code>) deletes whole recorded-session
+        directories under <code>internal/recorder.SessionsDir</code> older than the floor, aged by directory
+        mtime rather than a <code>session.end</code> timestamp &mdash; cheap, and it treats a crashed session
+        with no <code>session.end</code> the same as a cleanly closed one, matching
+        <code>pruneTemplates</code>&rsquo; own aging rule for the fork-template cache. Two guards, shared
+        with <code>erase</code> below via <code>sessionIsLive</code>/<code>hasLiveRunDir</code>: a
+        currently-paused session (cross-referenced against <code>named/*/named.json</code>&rsquo;s own
+        <code>Session</code> field) and a session with a live-looking run directory are never touched,
+        however old. <code>-dry-run</code> reports without deleting; <code>-policy</code> resolves the floor
+        the same way <code>run</code>/<code>fork</code>/<code>snapshot restore</code> already do.
+        <br><b><code>kelyfos doctor</code></b> gained a <b>session records</b> check, the same FAIL/fix shape
+        <code>disk space</code> already uses (a constant 1 GiB bound, like <code>templateCacheBytes</code>,
+        not a setting &mdash; crossing it changes nothing about behaviour, only what <code>doctor</code>
+        says), pointing at <code>kelyfos sessions prune</code> when it fires.
+        <br><b><code>kelyfos sessions erase</code></b> is the tombstone mechanism, in a new
+        <code>internal/recorder/erase.go</code> (a RECORD-surface change, &sect;8 rule 10 applies): every
+        <code>Data</code>, <code>Args</code>, <code>Cmd</code> <i>and</i> <code>Argv</code> field in a
+        session&rsquo;s chain is replaced with an in-band fingerprint of what was there
+        (<code>&quot;(erased &mdash; sha256:...)&quot;</code>, the same note shape
+        <code>clipLargestField</code> already uses for a clip), and the whole chain&rsquo;s
+        <code>seq</code>/<code>prev</code>/<code>hash</code> is rebuilt from event 1 &mdash; not only from
+        the first touched event &mdash; because <code>Hash</code> covers <code>Prev</code> and there is no
+        way to redact one event without every later one&rsquo;s digest changing too; that rebuild is what
+        &ldquo;replacement record&rdquo; (D61&rsquo;s own phrase) means. A new
+        <code>TypeSessionErasure = &quot;session.erasure&quot;</code> event is appended once, recording
+        <code>reason</code> (required) and <code>modified</code> (reused from <code>run.review</code>, the
+        same cross-type reuse <code>cpu_quota_percent</code> already has). Refuses a chain that does not
+        already verify, an empty chain, and a chain with nothing to redact. No new <code>Event</code> struct
+        fields at all &mdash; <code>reason</code>/<code>modified</code> both already existed &mdash; so
+        <code>TestTheEventFieldOrderIsFrozen</code> needed no change, and the two AST-based schema tests
+        (<code>TestSchemaCoversEveryType</code>/<code>TestSchemaDescribesNothingExtra</code>, P7-3&rsquo;s
+        own <code>typeConstants</code> refactor) picked up the new type automatically.
+        <br><b>Argv was not in the first draft, and a real recipe run is what found the gap</b>: writing
+        cookbook recipe 16 with <code>kelyfos run -- claude &quot;...jane&#39;s email...&quot;</code>
+        proved a version of <code>Erase</code> that redacted only <code>Data</code>/<code>Args</code>/
+        <code>Cmd</code> left the value recoverable, because a trailing <code>-- &lt;command&gt;</code>
+        becomes part of <code>session.start</code>&rsquo;s own <code>Argv</code> &mdash; the host&rsquo;s
+        <code>os.Args</code>, not a guest&rsquo;s, but exactly as capable of carrying what Article 17
+        targets. Fixed, with the finding kept as
+        <code>TestEraseRedactsAndTheChainStillVerifies</code>&rsquo;s own regression comment, and every
+        doc/schema string that named the three fields corrected to four.
+        <br><b>A second real bug the recipe found</b>: the recipe&rsquo;s own first draft wrote
+        <code>erase &quot;$session&quot; -reason &quot;...&quot;</code> (id before the flag) and failed with
+        &ldquo;-reason is required&rdquo; even though it was given &mdash; Go&rsquo;s <code>flag</code>
+        package stops looking for flags at the first positional argument, so everything after
+        <code>&quot;$session&quot;</code> was read as more positional args. Fixed by reordering to
+        <code>erase -reason &quot;...&quot; &lt;id&gt;</code> everywhere (the command&rsquo;s own usage text,
+        <code>docs/retention.md</code>, the recipe), and the usage text now says why, so the next person who
+        gets this backwards is told instead of guessing.
+        <br><code>docs/cookbook.md</code> gained recipe 16 (&ldquo;Keep the record, erase what it said,&rdquo;
+        Sixteen recipes now); <code>docs/events.md</code> gained <code>### session.erasure</code> and a
+        fourth exception to its <code>agent</code>-field sentence; <code>docs/README.md</code>&rsquo;s
+        inventory gained <code>retention.md</code>&rsquo;s row and section;
+        <code>tools/gendocs/llms.go</code>&rsquo;s <code>docSet()</code> gained it too (caught by
+        <code>TestEveryDocumentUnderDocsIsInTheLLMsSet</code>, which failed until it did).
+        <br>No Decision Log row: every deliverable matches D61&rsquo;s own four-part text
+        (&ldquo;a retention floor in <code>kelyfos.toml</code>, <code>kelyfos sessions prune</code>, a size
+        warning, and an erasure path that writes a replacement record preserving chain integrity while
+        keeping a content fingerprint&rdquo;) without deviation; the field-level design D61 deferred to this
+        task is recorded in <code>docs/retention.md</code> itself, the same role
+        <code>docs/policy-record.md</code> played for P7-2/P7-3.
+        <br>Not self-ticked: RECORD-surface task, held for review by an agent that did not write it per
+        &sect;8 rule 10 &mdash; and this is Lane 1&rsquo;s <b>last</b> task, so a GO here clears Lane 1
+        entirely.</td>
+        <td>Inside <code>kelyfos-dev</code>, this branch: <code>gofmt -l .</code> &rarr; clean;
+        <code>go vet ./...</code> &rarr; clean; <code>go test ./...</code> &rarr; every package
+        <code>ok</code> or <code>[no test files]</code><br>
+        <code>go test -v ./host/...</code> &rarr; 214 <code>--- PASS</code> lines (up from 197);
+        <code>go test -v ./internal/recorder/...</code> &rarr; 63 (up from 58);
+        <code>go test -v ./internal/config/...</code> &rarr; 148, all 0 fail<br>
+        <code>go clean -fuzzcache &amp;&amp; go test -fuzz=FuzzAppendFieldValues -fuzztime=45s
+        ./internal/recorder/</code> &rarr; PASS, 10380 execs, 0 crashers (fresh corpus, matching the known-good
+        shape the tracked fuzz-OOM finding (a separate task on <code>main</code>, not yet in this
+        branch) already separated from a real code fault)<br>
+        <code>make vuln</code> &rarr; &ldquo;No vulnerabilities found.&rdquo;<br>
+        <b>Erase unit tests</b>: <code>TestEraseRedactsAndTheChainStillVerifies</code> (all four fields
+        fingerprinted, raw file grepped for the original values and finding nothing, chain verifies, the
+        erasure event lands last with the right <code>reason</code>/<code>modified</code>);
+        <code>TestEraseCascadesTheHashForward</code> (an untouched <code>session.end</code>&rsquo;s own hash
+        proven to change after an earlier event was redacted &mdash; the property that makes &ldquo;chain
+        integrity preserved&rdquo; true rather than assumed); <code>TestEraseRefusesAChainThatDoesNotVerify</code>,
+        <code>...AnEmptyChain</code>, <code>...WhenNothingToRedact</code> &mdash; all PASS<br>
+        <b>Prune/erase CLI tests</b> (<code>host/sessions_prune_test.go</code>): <code>TestPruneEligible</code>
+        and <code>TestRetentionFloorDefaultsAndOverrides</code> (pure, no filesystem);
+        <code>TestSessionsPruneDeletesOnlyPastTheFloor</code>, <code>...DryRunDeletesNothing</code>,
+        <code>...RespectsAPolicysRetentionFloor</code>, <code>...SkipsAPausedSessionsChain</code>,
+        <code>...SkipsALiveRunDirectory</code>, and the <code>erase</code>-side equivalents &mdash; all PASS,
+        isolated from this repository&rsquo;s own <code>kelyfos.toml</code> via <code>t.Chdir</code> so &ldquo;no
+        policy found&rdquo; is genuinely tested rather than accidentally passing because the ambient file has
+        no <code>[sessions]</code> section today<br>
+        <b>Real boot, prune</b>: a throwaway sandbox (<code>kelyfos run --image base -- true</code>) aged 10
+        days via <code>touch -d</code>, a policy with <code>retention_days = 5</code> &rarr;
+        <code>-dry-run</code> reports it eligible, a real run deletes the directory, confirmed gone by
+        <code>stat</code><br>
+        <b>Real boot, <code>kelyfos doctor</code></b>: the new <b>session records</b> check reports
+        &ldquo;2327 session(s), 82.7 MiB&hellip;&rdquo; (this branch&rsquo;s own accumulated verification
+        history) and passes, well under the 1 GiB bound<br>
+        <b>Real boot, the full cookbook recipe</b> (extracted via <code>tools/cookbook</code>, run with
+        <code>--image base</code> substituted for <code>dev</code> since only <code>base</code> is built in
+        this environment): boot, write a real email address into the guest and read it back;
+        <code>kelyfos sessions prune -dry-run</code> &rarr; &ldquo;nothing eligible&rdquo; (the floor
+        protects a session seconds old); the raw file greps for the value twice before erasure;
+        <code>kelyfos sessions erase -reason ... &lt;id&gt;</code> &rarr; &ldquo;erased ...: 4 event(s)
+        redacted, 11 events, chain intact&rdquo;; the raw file no longer contains the value;
+        <code>kelyfos verify</code> &rarr; &ldquo;chain intact, 11 events verified&rdquo;; the fingerprint
+        and the <code>session.erasure</code> event (<code>reason</code>, <code>modified:4</code>) both
+        visible in the rewritten record. This run is what found both the missing-<code>Argv</code> bug and
+        the flag-order bug above &mdash; fixed, then re-run clean end to end<br>
+        <code>make docs</code> &rarr; <code>docs/reference/config.md</code> gained <code>[sessions]</code>,
+        <code>docs/reference/events.md</code> gained <code>session.erasure</code>,
+        <code>docs/reference/cli.md</code>&rsquo;s <code>kelyfos sessions</code> row updated automatically;
+        <code>gendocs: llms.txt 6988 bytes &middot; llms-full.txt 628225 bytes, about 163191 tokens</code>
+        (up from 158593), logged per &sect;8 rule 9<br>
+        <code>go run ./tools/cookbook -in docs/cookbook.md -list</code> &rarr; 16 names, ending in
+        <code>retention-and-erasure</code>; <code>go run ./tools/cookbook -in docs/cookbook.md</code> &rarr;
+        &ldquo;16 recipes, all extractable&rdquo;<br>
+        <code>python3 tools/check-plan.py</code> (host) &rarr; &ldquo;PLAN.html is coherent: 99 tasks, 78
+        checked, 64 decisions&rdquo;<br>
+        not self-ticked, not pushed, not merged; holding for RECORD-surface review. This is the last task in
+        Lane 1&rsquo;s serial chain (D62): a GO here clears the lane entirely.</td></tr>
+    <tr><td class="mono">2026-08-28</td><td class="mono">P7-5</td>
+        <td><b>The RECORD-surface review of <code>c365fed</code>, and its fixes in <code>fa68981</code>, per
+        &sect;8 rule 10 &mdash; appended here since the fix commit did not carry this row itself.</b>
+        Five blockers, all reproduced on real running code, not from reading:
+        <b>B1</b> &mdash; erasing a chain a writer still held open silently lost every event the writer appended
+        afterward: <code>Erase</code> wrote a temp file and renamed over the chain, leaving any other open file
+        descriptor pointing at the unlinked old inode, whose next <code>catchUp</code> saw no size change and
+        returned <code>nil</code>. The liveness guard (<code>hasLiveRunDir</code>) also could not see a team's
+        chain or a <code>serve-mcp</code> audit chain, both opened under an id that names no sandbox's own run
+        directory.
+        <b>B2</b> &mdash; running <code>erase</code> twice hashed the placeholder from the first run instead of
+        refusing, permanently losing the real content digest.
+        <b>B3</b> &mdash; the redaction target list was a fifth hand-maintained list bitten by the exact failure
+        class this phase had already hit four times (<code>Tools</code>, <code>session.policy</code>,
+        <code>team.topology</code>, this task's own first-pass miss of <code>Argv</code>): a field-by-field walk
+        found <code>Cwd</code>, <code>Path</code>, <code>Peer</code>, <code>Comm</code>, <code>Workspace</code>,
+        <code>Host</code>, <code>Name</code>, <code>Allow</code>, <code>Agents</code>, <code>Edges</code>,
+        <code>StoreKeys</code> all surviving erasure with content intact &mdash; including <code>Cwd</code>, the
+        host launch directory, on a real Firecracker session.
+        <b>B4</b> &mdash; <code>session.erasure</code> was built as a struct literal bypassing
+        <code>Append</code>, so it carried <code>v:0</code> and an empty <code>ts</code> on the one event whose
+        purpose is accountability.
+        <b>B5</b> &mdash; <code>kelyfos verify</code> checked only whether the <i>last</i> event was
+        <code>session.end</code>; since <code>session.erasure</code> is appended after it, every erased session
+        &mdash; however cleanly it closed &mdash; started reading as possibly cut short.
+        <br>Six should-fix items: <b>S1</b> &mdash; <code>session.erasure</code> carried no anchor to the
+        pre-erasure chain head, so erasure was honest-by-convention rather than honest-by-construction (a
+        hand-tampered, naively-rehashed chain with no erasure event verified exactly as clean as a real one).
+        <b>S2</b> &mdash; prune aged sessions from their directory's mtime, which does not advance on append,
+        contradicting the stated &ldquo;from session close&rdquo; floor. <b>S3</b> &mdash; the size-bound
+        <code>doctor</code> check failed the exit code for an advisory-only condition. <b>S4</b> &mdash;
+        <code>-reason</code> only parsed before the positional id, unlike <code>verify</code>'s own
+        <code>parseAround</code> convention. <b>S5</b> &mdash; the <code>[]string</code> fingerprint rule
+        (space-joined before hashing) was undocumented and collision-prone. <b>S6</b> &mdash; the erase command's
+        own usage text overclaimed &ldquo;not backed up anywhere&rdquo;, ignoring an export taken before the
+        erasure.
+        <br><b>All eleven fixed and independently re-verified by the reviewer, who re-ran every original repro
+        against the fix rather than trusting its own tests</b>: B1's live-writer repro now lands all three
+        post-erasure events and verifies (the fix needed two changes, not one &mdash; the in-place
+        <code>WriteAt</code>+<code>Truncate</code> rewrite <i>and</i> a <code>catchUp</code> fix to re-derive
+        <code>seq</code>/<code>prev</code> from byte 0 on any size mismatch, since the rewrite alone would still
+        have left a live writer chaining from a stale <code>prev</code>); B1's team-chain gap closed by a real
+        three-layer guard, each layer independently confirmed to cover a case the others miss; B2's placeholder
+        detection verified live through the real CLI; B3's reflection guard confirmed bidirectional (a field
+        missing from the exemption map must be redacted, a field present must keep its marker) so the map and
+        the code cannot drift apart in either direction, and every originally-leaking field re-checked redacted
+        on a real session; B4/B5 confirmed on a real erased chain; S1's anchor confirmed real and its
+        documentation confirmed <i>not</i> overclaiming the property it provides (correctly states the limit: a
+        self-contained chain cannot detect tampering with no prior copy to compare against, and names
+        <code>kelyfos verify --extract</code> or an earlier export as what makes the anchor actionable); S2
+        confirmed live (an appended-to session's mtime now advances correctly, prune re-tested from
+        &ldquo;would prune 1&rdquo; to &ldquo;nothing eligible&rdquo;); S3's warn tier confirmed excluded from
+        the fail tally with a dedicated test; S4-S6 confirmed directly.
+        <br>Four non-blocking observations from the review, not required before ticking: a crashed session (no
+        <code>session.end</code>) can never be erased, which is the correct default for a destructive operation
+        but should be named in <code>docs/retention.md</code> &sect;5's own refusal list rather than left
+        implicit; no command currently surfaces an erasure or its anchor to a reader (<code>kelyfos verify</code>
+        prints nothing about it) &mdash; a one-line addition would close the loop S1's anchor exists for;
+        <code>catchUp</code>'s size-equality fast path is a residual, contrived-only edge where a rewrite landing
+        on exactly the prior byte length could in principle skip re-derivation, defence-in-depth only given the
+        three guards make a live writer across an erase unreachable in practice; and two small doc precision
+        points (an anchor proves succession from a specific predecessor, not absence of over-deletion, without
+        the full prior chain to compare; <code>secret.use</code>'s name is now redacted while
+        <code>session.policy</code>'s <code>secrets[].name</code> is exempt, harmless but asymmetric). None block
+        this tick; worth picking up whenever this area is next touched.
+        <br>Reviewer's final verdict: <b>GO on the code.</b> Lane 1's entire serial chain (P7-0 &rarr; P7-2 &rarr;
+        P7-3 &rarr; P7-5) is now clear.</td>
+        <td class="mono">reviewer's re-verification, inside <code>kelyfos-dev</code> on <code>fa68981</code>:
+        <code>gofmt -l .</code> clean, <code>go vet ./...</code> clean, <code>go test ./...</code> every package
+        <code>ok</code> (host 225, recorder 122, config 148, sandbox 131, all up from before); <code>make
+        vuln</code> &rarr; &ldquo;No vulnerabilities found.&rdquo;; <code>go clean -fuzzcache &amp;&amp; go test
+        -fuzz=FuzzAppendFieldValues -fuzztime=45s</code> &rarr; PASS, 88621 execs, fresh corpus, no OOM (a known
+        grown-corpus OOM in this same fuzz target, tracked separately on <code>main</code>, avoided here by
+        clearing the corpus first); <code>make docs</code> &rarr; zero diff; real Firecracker session:
+        <code>cwd</code> before erasure <code>/tmp/p7rev2</code>, after
+        <code>(erased &mdash; sha256:8399...)</code>; real team boot: <code>kelyfos sessions erase</code> against
+        a live team's session id refused with &ldquo;has a live sandbox writing into it right now&rdquo;, exit 1;
+        double-erasure through the real CLI refused with &ldquo;nothing to erase&rdquo; on the second run;
+        <code>python3 tools/check-plan.py</code> &rarr; &ldquo;PLAN.html is coherent: 99 tasks, 78 checked, 64
+        decisions&rdquo; (unchanged &mdash; append-only, no checkbox ticked by the reviewer).</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>

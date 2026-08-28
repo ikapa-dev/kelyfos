@@ -79,6 +79,14 @@ const (
 	// its agents, edges and store rules — written once at boot
 	// (docs/policy-record.md §3, §6).
 	TypeTeamTopology = "team.topology"
+	// TypeSessionErasure is P7-5's addition (D61): appended by Erase, the one
+	// place this type is ever written, recording that a session's own
+	// guest-influenced content fields were replaced with a fingerprint of
+	// what was there. Reason carries why (an operator-supplied string, e.g.
+	// a GDPR Article 17 request); Modified carries how many events were
+	// touched — reused rather than a new field, the same way session.policy
+	// and team.topology already reuse VcpuCount/MemMiB/CPUQuota.
+	TypeSessionErasure = "session.erasure"
 )
 
 // ReasonServeMCP marks a session.start as a server's own session rather than a
@@ -451,8 +459,32 @@ func Open(root, sandboxID string) (*Recorder, error) {
 	return &Recorder{f: f, sandbox: sandboxID, started: time.Now()}, nil
 }
 
-// catchUp reads everything appended since this process last looked, so seq and
-// prev reflect the true end of the chain. The caller holds the file lock.
+// catchUp reads the whole chain and re-derives seq and prev from it whenever
+// the file no longer ends where this process last left it. The caller holds
+// the file lock.
+//
+// It re-reads from byte 0 rather than only the span since r.off, because
+// r.off is a byte offset into the file as THIS PROCESS last saw it, and
+// Erase (P7-5) can rewrite every byte before that offset: a redacted
+// field's fingerprint is rarely the same length as the content it replaced,
+// so an old offset is no longer guaranteed to land on a line boundary at
+// all, let alone the same event. Trusting it anyway is exactly the bug an
+// adversarial review reproduced on real, running code: Erase used to
+// rename a freshly rewritten file over the chain, this Recorder's own fd
+// kept pointing at the old, now-unlinked inode, its next catchUp saw no
+// size change on THAT fd and returned nil, and three events Append went on
+// to "write" afterward landed on an inode nothing could ever read again —
+// no error, silent loss, and `kelyfos verify` reported the truncated chain
+// as clean (B1). Erase now rewrites the same inode in place (see its own
+// comment), which removes the stale-fd half of that bug, but a live
+// writer's cached r.off still cannot be trusted to be a line boundary in
+// content that has been rewritten out from under it — so this always
+// re-derives from the start on any size mismatch, rather than trying to
+// detect which mismatches are "just" a rewrite and which are a plain
+// append. Re-parsing the whole chain once per Append when another process
+// is interleaving writes costs an O(n) read of what a session actually
+// holds — cheap for what this project's own sessions run to — in exchange
+// for a Recorder that can never go stale.
 func (r *Recorder) catchUp() error {
 	info, err := r.f.Stat()
 	if err != nil {
@@ -461,20 +493,23 @@ func (r *Recorder) catchUp() error {
 	if info.Size() == r.off {
 		return nil
 	}
-	buf := make([]byte, info.Size()-r.off)
-	if _, err := r.f.ReadAt(buf, r.off); err != nil && err != io.EOF {
-		return err
-	}
-	for _, line := range bytes.Split(buf, []byte{'\n'}) {
-		if len(bytes.TrimSpace(line)) == 0 {
+	sc := bufio.NewScanner(io.NewSectionReader(r.f, 0, info.Size()))
+	sc.Buffer(make([]byte, 0, 64<<10), MaxLine)
+	seq, prev := 0, ""
+	for sc.Scan() {
+		if len(sc.Bytes()) == 0 {
 			continue
 		}
 		var e Event
-		if err := json.Unmarshal(line, &e); err != nil {
-			return fmt.Errorf("flight recorder is corrupt after byte %d: %w", r.off, err)
+		if err := json.Unmarshal(sc.Bytes(), &e); err != nil {
+			return fmt.Errorf("flight recorder is corrupt: %w", err)
 		}
-		r.seq, r.prev = e.Seq, e.Hash
+		seq, prev = e.Seq, e.Hash
 	}
+	if err := sc.Err(); err != nil {
+		return err
+	}
+	r.seq, r.prev = seq, prev
 	r.off = info.Size()
 	return nil
 }

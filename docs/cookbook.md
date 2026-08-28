@@ -1567,6 +1567,77 @@ kelyfos team down
 
 ---
 
+## 16. Keep the record, erase what it said
+
+A retention floor and a deletion request pull in opposite directions on the
+same file until the record separates two claims: that a session happened,
+and what it said while it did. `kelyfos sessions prune` deletes whole
+sessions once they are older than the floor — never one still inside it.
+`kelyfos sessions erase` answers the other half: it does not delete
+anything, it rewrites a session's own content fields to a fingerprint of
+what they were, in place, and the chain still verifies afterward.
+
+<!-- recipe: retention-and-erasure -->
+
+```bash
+set -euo pipefail
+work="$(mktemp -d)"
+cd "$work"
+trap 'rm -rf "$work"' EXIT
+
+# A session with something worth erasing: real command output.
+kelyfos run --image dev -- bash -c '
+  set -e
+  kelyfos exec "echo my-email-is-jane@example.com > /tmp/note.txt"
+  kelyfos exec "cat /tmp/note.txt"
+'
+
+session="$(kelyfos log --verify | sed -n 's/^session \([0-9a-f]*\):.*/\1/p')"
+record="$HOME/.cache/kelyfos/sessions/$session/events.jsonl"
+
+# The retention floor protects a session this fresh: -dry-run finds nothing
+# eligible, because prune's own floor is 180 days by default (D61 — six
+# months, the EU AI Act's own floor for a general-purpose system) and this
+# one is seconds old.
+echo
+echo "== prune leaves a fresh session alone =="
+kelyfos sessions prune -dry-run
+
+echo
+echo "== before erasure, the record holds the value =="
+grep -c 'jane@example.com' "$record"
+
+# GDPR Article 17 in one command: the content goes. The shape of what
+# happened, and the fact that this ran, does not.
+echo
+echo "== erase it =="
+kelyfos sessions erase -reason "cookbook demo — GDPR Article 17" "$session"
+
+echo
+echo "== the value is unrecoverable from the raw file =="
+if grep -q 'jane@example.com' "$record"; then
+  echo "the erased value is still in the file, which must never happen"
+  exit 1
+fi
+echo "not found, as it must be"
+
+# What erase wrote is a replacement record, not a broken one: the whole
+# chain was rehashed from the first event, and it verifies end to end.
+echo
+echo "== the chain still verifies =="
+kelyfos verify "$record"
+
+# A fingerprint in place of the content, and the erasure itself recorded —
+# an erasure that could not itself be audited would undercut the reason
+# this record exists at all.
+echo
+echo "== what took its place =="
+grep -o '"data":"[^"]*"' "$record" | tail -1
+grep -o '"type":"session.erasure"[^}]*}' "$record"
+```
+
+---
+
 ## Running them yourself
 
 ```

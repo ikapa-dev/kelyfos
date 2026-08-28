@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -245,16 +246,29 @@ func refuseEgressPause(st *sandbox.State, name string) error {
 // --- kelyfos sessions --------------------------------------------------------
 
 func sessionsCmd(argv []string) error {
-	if len(argv) > 0 && argv[0] == "rm" {
-		return sessionsRemove(argv[1:])
+	if len(argv) > 0 {
+		switch argv[0] {
+		case "rm":
+			return sessionsRemove(argv[1:])
+		case "prune":
+			return sessionsPrune(argv[1:])
+		case "erase":
+			return sessionsErase(argv[1:])
+		}
 	}
 	fs := flag.NewFlagSet("kelyfos sessions", flag.ExitOnError)
 	fs.Usage = func() {
-		fmt.Fprint(fs.Output(), `usage: kelyfos sessions [rm <name>]
+		fmt.Fprint(fs.Output(), `usage: kelyfos sessions [rm <name>] [prune] [erase <id>]
 
 Lists the paused sessions this machine is holding, with what each one costs on
 disk. A paused session holds its workspace inside it, which is why the size is
 in the listing rather than somewhere you have to go and look.
+
+rm discards a paused session. prune deletes recorded sessions (the flight
+recorder's own history under ~/.cache/kelyfos/sessions/) older than the
+retention floor — see 'kelyfos sessions prune -h'. erase rewrites one
+recorded session's content fields to a fingerprint in place, without
+deleting the session — see 'kelyfos sessions erase -h'.
 
 `)
 	}
@@ -342,6 +356,312 @@ func dirKiB(dir string) int64 {
 		return nil
 	})
 	return total / 1024
+}
+
+// --- kelyfos sessions prune (P7-5, D61) --------------------------------------
+
+// defaultRetentionDays is the floor kelyfos sessions prune applies when
+// neither a policy file nor an explicit [sessions] retention_days key says
+// otherwise — six months, the EU AI Act's own floor for a general-purpose
+// system's records (D61's own rationale).
+const defaultRetentionDays = 180
+
+// retentionFloor turns [sessions] retention_days into the duration prune
+// actually compares ages against. cfg may be nil (no policy file found),
+// and cfg.Sessions may be nil (a policy with no [sessions] section) — both
+// get the built-in default, the same way an absent retention_days key does
+// (config.Sessions's own doc comment).
+func retentionFloor(cfg *config.Config) time.Duration {
+	days := defaultRetentionDays
+	if cfg != nil && cfg.Sessions != nil && cfg.Sessions.RetentionDays > 0 {
+		days = cfg.Sessions.RetentionDays
+	}
+	return time.Duration(days) * 24 * time.Hour
+}
+
+// livePausedSessions is the set of recorder session ids a currently paused
+// session still needs. A pause's own metadata (NamedMeta.Session) names the
+// chain a later resume writes session.resume into — "one chain covers the
+// whole life of the machine rather than one per resume" — so pruning that
+// chain out from under a pause would either break the resume or make it
+// silently start a fresh one. Checked by kelyfos sessions prune and erase
+// alike, so neither can touch a session the other half of this file still
+// considers alive.
+func livePausedSessions() (map[string]bool, error) {
+	live := map[string]bool{}
+	entries, err := os.ReadDir(filepath.Join(sandbox.Root(), "named"))
+	if errors.Is(err, os.ErrNotExist) {
+		return live, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		meta, err := readNamedMeta(namedDir(e.Name()))
+		if err != nil {
+			continue
+		}
+		if meta.Session != "" {
+			live[meta.Session] = true
+		}
+	}
+	return live, nil
+}
+
+// hasLiveRunDir reports whether id has a run directory at all — the
+// jailer's own chroot, created the moment a sandbox is asked to boot and
+// removed on a clean teardown. A leftover one after a crash is a false
+// positive prune/erase would rather have than the alternative: touching a
+// session something might still be writing to.
+func hasLiveRunDir(id string) bool {
+	_, err := os.Stat(sandbox.RunDirOf(id))
+	return err == nil
+}
+
+// sessionIsLive is prune's single skip-or-not question, combining both
+// guards erase asks separately (and reports separately, since a paused
+// session and a possibly-running one call for different advice).
+func sessionIsLive(id string, live map[string]bool) bool {
+	return live[id] || hasLiveRunDir(id)
+}
+
+// pruneEligible is prune's own age question, split out from the directory
+// walk so it can be tested without a filesystem: a session is eligible once
+// it has gone untouched for at least the retention floor, measured from
+// events.jsonl's own mtime rather than from a session.end timestamp inside
+// its chain — cheap (no chain has to be parsed to decide what to prune),
+// and it treats a cleanly closed session and an orphaned/crashed one the
+// same way, where the chain's own session.end may not exist for the second
+// kind at all (docs/events.md: "a session that is still running has no
+// session.end... the chain cannot tell those apart").
+//
+// events.jsonl's own mtime, not the session DIRECTORY's (S2): appending to
+// an existing file does not advance its parent directory's own mtime on
+// POSIX — only creating or removing an entry inside that directory does —
+// so ageing by the directory aged a session from when its directory was
+// first created (session START) while docs/retention.md described "twelve
+// months from session close." events.jsonl is the one file every write to
+// this session touches, including the last one, so its own mtime is
+// genuinely last-write with the same no-chain-parse cost pruneTemplates'
+// own mtime-based aging already accepts for the fork-template cache. One
+// consequence worth being explicit about, not a defect: kelyfos sessions
+// erase also writes events.jsonl, so an Article 17 erasure resets this
+// clock the same way any other write to the chain would — consistent with
+// "age since last write," not an exception to it.
+func pruneEligible(mtime, now time.Time, floor time.Duration) bool {
+	return now.Sub(mtime) >= floor
+}
+
+func sessionsPrune(argv []string) error {
+	fs := flag.NewFlagSet("kelyfos sessions prune", flag.ExitOnError)
+	dryRun := fs.Bool("dry-run", false, "report what would be pruned without deleting anything")
+	policyPath := fs.String("policy", "",
+		"the kelyfos.toml whose [sessions] retention_days applies (default: the nearest one, found by walking up)")
+	fs.Usage = func() {
+		fmt.Fprint(fs.Output(), `usage: kelyfos sessions prune [-dry-run] [-policy <file>]
+
+Deletes recorded sessions under ~/.cache/kelyfos/sessions/ that are older
+than the retention floor — [sessions] retention_days in kelyfos.toml, or 180
+days (six months, the EU AI Act's own floor for a general-purpose system)
+when no policy sets one. A session younger than the floor is never touched,
+however this is invoked: the floor is a minimum, not a target.
+
+A session still paused (kelyfos pause) or with a run directory that looks
+live is skipped, however old it is — deleting either would break a resume
+or race a process still writing to it.
+
+Whole directories, not surgical edits: this deletes what the retention
+floor no longer requires keeping. To remove specific content from a session
+you still need to keep, see 'kelyfos sessions erase'.
+
+`)
+		fs.PrintDefaults()
+	}
+	if err := fs.Parse(argv); err != nil {
+		return err
+	}
+
+	cfg, cfgErr := loadPolicyAt(*policyPath)
+	if cfgErr != nil {
+		return cfgErr
+	}
+	if cfg != nil {
+		fmt.Printf("policy: %s\n", cfg.Path)
+	}
+	floor := retentionFloor(cfg)
+	fmt.Printf("retention floor: %.0f day(s)\n", floor.Hours()/24)
+
+	live, err := livePausedSessions()
+	if err != nil {
+		return err
+	}
+
+	root := recorder.SessionsDir(sandbox.Root())
+	entries, err := os.ReadDir(root)
+	if errors.Is(err, os.ErrNotExist) {
+		fmt.Println("no recorded sessions")
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+
+	now := time.Now()
+	var prunedN int
+	var prunedKiB int64
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		id := e.Name()
+		if sessionIsLive(id, live) {
+			continue
+		}
+		// events.jsonl's own mtime, not the directory's own (S2) — see
+		// pruneEligible's comment for why: appending never advances a
+		// directory's own mtime on POSIX, only creating or removing an
+		// entry inside it does, so this is what makes "age" mean "since
+		// last write" rather than "since the session started." root here
+		// is already recorder.SessionsDir(sandbox.Root()), so the file is
+		// joined directly rather than through recorder.Path (which itself
+		// appends "sessions").
+		info, err := os.Stat(filepath.Join(root, id, "events.jsonl"))
+		if err != nil {
+			continue
+		}
+		if !pruneEligible(info.ModTime(), now, floor) {
+			continue
+		}
+		age := now.Sub(info.ModTime())
+		dir := filepath.Join(root, id)
+		size := dirKiB(dir)
+		verb := "pruned "
+		if *dryRun {
+			verb = "would prune"
+		} else if err := os.RemoveAll(dir); err != nil {
+			fmt.Fprintf(os.Stderr, "kelyfos: could not prune %s: %v\n", id, err)
+			continue
+		}
+		fmt.Printf("%s  %s  %s old, %s\n", verb, id, age.Truncate(time.Hour), report.HumanKiB(size))
+		prunedN++
+		prunedKiB += size
+	}
+	if prunedN == 0 {
+		fmt.Println("nothing eligible — every recorded session is inside the retention floor")
+		return nil
+	}
+	verb := "pruned"
+	if *dryRun {
+		verb = "would prune"
+	}
+	fmt.Printf("%s %d session(s), %s\n", verb, prunedN, report.HumanKiB(prunedKiB))
+	return nil
+}
+
+// --- kelyfos sessions erase (P7-5, D61) --------------------------------------
+
+func sessionsErase(argv []string) error {
+	fs := flag.NewFlagSet("kelyfos sessions erase", flag.ExitOnError)
+	reason := fs.String("reason", "", "why — recorded in the session.erasure event this writes (required)")
+	fs.Usage = func() {
+		fmt.Fprint(fs.Output(), `usage: kelyfos sessions erase -reason "<why>" <id>
+
+Rewrites one recorded session's own chain in place: every field known to
+carry guest-influenced or operator-supplied content — command output, a
+file path, a connection's peer, an MCP call's argument summary and tool
+name, a command's own argv, the host's own argv (what a trailing
+"-- <command>" carries, e.g. kelyfos run -- claude "...") and more — is
+replaced with a fingerprint of what was there, its sha256, rather than left
+alone or deleted (the full list, and why each field is or is not covered,
+is docs/retention.md §5). The chain still verifies afterward, and what
+changed is recorded in it too, as the new last event, session.erasure —
+an erasure that could not itself be audited would undercut the reason this
+record exists at all. That event also anchors the exact chain head this
+rewrite replaced, so a reader who already holds an earlier export of this
+session can confirm the erased chain is its honest successor rather than a
+fabrication.
+
+This is destructive and cannot be undone from this record: the content is
+gone, not kept anywhere by KelyfOS. That does not reach a copy this record
+was never involved in — a report already exported before the erasure ran
+carries the original chain, signed or not, and this command has no way to
+know one exists.
+
+Flags may go on either side of the id, the same as `+"`kelyfos verify`"+`.
+
+`)
+		fs.PrintDefaults()
+	}
+	ids, err := parseAround(fs, argv)
+	if err != nil {
+		return err
+	}
+	if len(ids) != 1 {
+		fs.Usage()
+		return &exitError{code: 2}
+	}
+	if *reason == "" {
+		return errors.New("-reason is required: an erasure is worth saying why, in the record itself")
+	}
+	id := ids[0]
+
+	live, err := livePausedSessions()
+	if err != nil {
+		return err
+	}
+	if live[id] {
+		return fmt.Errorf("%s is a currently paused session's own chain — resume it or discard it "+
+			"(kelyfos sessions rm) before erasing its record", id)
+	}
+	if hasLiveRunDir(id) {
+		return fmt.Errorf("%s has a live run directory and may still be running — erasing a chain "+
+			"still being written to would race the writer", id)
+	}
+	// hasLiveRunDir alone only sees a sandbox whose OWN id names its run
+	// directory. A team's chain and a `kelyfos serve-mcp` process's own
+	// audit chain are both opened under an id sandbox.NewID() mints that is
+	// never any sandbox's own id, so no run directory is ever named for
+	// either — invisible to the check above even while very much alive
+	// (B1). RunningSessions asks the other direction: is any live
+	// sandbox's own RecordSession() this id, whichever sandbox actually
+	// holds a run directory. It still cannot see a live serve-mcp
+	// process's own audit session, which names no sandbox's Session field
+	// at all — recorder.Erase's own refusal of a chain with no
+	// session.end anywhere in it is what catches that case, underneath
+	// this one.
+	running, err := sandbox.RunningSessions()
+	if err != nil {
+		return err
+	}
+	if running[id] {
+		return fmt.Errorf("%s has a live sandbox writing into it right now (a team member, or a "+
+			"machine kelyfos serve-mcp created) — erasing a chain still being written to would "+
+			"race the writer", id)
+	}
+
+	redacted, err := recorder.Erase(sandbox.Root(), id, *reason)
+	if err != nil {
+		return err
+	}
+
+	// Re-read and re-verify rather than trusting Erase's own return value —
+	// the same "check what you just wrote" rule every other destructive
+	// door in this product follows, applied to a rewrite instead of an
+	// append.
+	blob, err := os.ReadFile(recorder.Path(sandbox.Root(), id))
+	if err != nil {
+		return err
+	}
+	n, head, verr := recorder.Verify(bytes.NewReader(blob))
+	if verr != nil {
+		return fmt.Errorf("erased %s but the rewritten chain does not verify: %w", id, verr)
+	}
+	fmt.Printf("erased %s: %d event(s) redacted, %d events, chain intact\n", id, redacted, n)
+	fmt.Printf("  chain head  %s\n", head)
+	return nil
 }
 
 // policyDifference describes what changed between the frozen policy and the one

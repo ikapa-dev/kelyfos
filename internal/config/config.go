@@ -87,9 +87,29 @@ type Config struct {
 	// is an ordinary single-sandbox policy, which is most files.
 	Team *Team
 
+	// Sessions is the [sessions] section, when the file has one (P7-5, D61).
+	// Nil means the file says nothing about retention, which gets the
+	// built-in default rather than "no floor at all" — the same reason
+	// Team being nil means "not a team" rather than "an empty one."
+	Sessions *Sessions
+
 	// Path is where this was read from, for error messages that say which file
 	// is wrong.
 	Path string
+}
+
+// Sessions is [sessions]: retention for the flight recorder's own history
+// under ~/.cache/kelyfos/sessions/, which `kelyfos sessions prune` reads
+// (P7-5, D61).
+type Sessions struct {
+	// RetentionDays is a floor, not a target: kelyfos sessions prune never
+	// touches a session younger than this, however it is invoked. Zero
+	// means "not set" and gets the built-in default (180 days) — the same
+	// convention this file's own package doc states for every other
+	// numeric field here, kept rather than switching to a pointer the way
+	// internal/recorder does for its own JSON omitempty concern, which does
+	// not apply to a TOML file this package only ever reads once.
+	RetentionDays int
 }
 
 // Find walks up from a directory looking for a policy file, so running kelyfos
@@ -172,6 +192,19 @@ func parse(blob []byte, path string) (*Config, error) {
 
 		if section == "forward" {
 			if err := cfg.forwardKey(key, value, where); err != nil {
+				return nil, err
+			}
+			continue
+		}
+
+		if section == "sessions" {
+			switch key {
+			case "retention_days":
+				cfg.Sessions.RetentionDays, err = parseCount(value, where, key)
+			default:
+				return nil, unknownKey(where, key, "sessions")
+			}
+			if err != nil {
 				return nil, err
 			}
 			continue
