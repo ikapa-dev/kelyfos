@@ -6021,6 +6021,63 @@ after:
         <code>Listen</code>/<code>Dial</code>: no matches outside prose; <code>kelyfos verify
         refresh.html</code> &rarr; &ldquo;chain intact, 6 events verified&rdquo;; the exported page carries
         <code>&lt;meta http-equiv="refresh" content="1"&gt;</code>, matching the configured interval.</td></tr>
+    <tr><td class="mono">2026-08-28</td><td class="mono">P7-9</td>
+        <td><b>Adversarial RENDER-surface review's findings, fixed by the orchestrator.</b> The reviewer
+        confirmed the task's central, non-negotiable claim &mdash; zero sockets anywhere in the
+        <code>--refresh</code> path &mdash; three independent ways (static grep of the whole diff, a live
+        <code>/proc/*/fd</code> census on a running <code>--refresh</code> process, and a full
+        <code>strace -f -e trace=socket,connect,bind,listen,accept,...</code> across the process tree during six
+        seconds of live refreshing: zero matches on any of them). It then found five real defects in the loop
+        around that sound core, verdict <b>NO-GO</b>. All five fixed:
+        <br><b>F1 (blocking):</b> the cookbook's opening recipe count and its true
+        <code>&lt;!-- recipe: --&gt;</code> marker count have been off by one since before this task (recipe 9's
+        embedded <code>connect-a-client</code> block was never counted in the prose); this task's own new recipe
+        carried the pre-existing gap forward instead of closing it, so <code>go run ./tools/cookbook</code>
+        refused to extract and the very recipe (17) this task's evidence rests on could not run through the
+        harness. Fixed the prose to the true count and extended <code>countWords</code>.
+        <br><b>F2 (high):</b> a permanent write-side fault (missing destination directory, read-only
+        filesystem) was indistinguishable from a transient parse race on a growing chain, so
+        <code>--refresh</code> against a bad path retried forever under &ldquo;export not yet valid&rdquo; instead
+        of the error the one-shot <code>--export</code> already exits 1 on for the identical fault. Added a
+        distinct error type so the loop now returns write-side failures immediately.
+        <br><b>F3 (high):</b> <code>recorder.Open</code>'s <code>O_CREATE</code> leaves a zero-byte chain file
+        between open and the first <code>Append</code>; <code>bytes.Equal(nil, nil)</code> being true meant a
+        refresh started in that window matched its own &ldquo;nothing new&rdquo; branch on tick one and sat
+        there, silently, forever &mdash; no error, no retry line, <code>dest</code> never created. Added a
+        <code>wrote</code> guard so tick one is never skipped regardless of what <code>last</code> still holds.
+        <br><b>F4 (medium):</b> <code>--refresh-every</code> had no floor; <code>1ns</code> measured at over a
+        full CPU-second of syscalls per wall-second against a <code>&lt;meta refresh&gt;</code> tag whose own
+        content is whole seconds. Added a 100ms floor.
+        <br><b>F5 (medium):</b> Ctrl-C/SIGTERM stopped the loop with no final write, so a browser tab left open
+        kept polling a file nothing would ever change again &mdash; the same lie <code>session.end</code>'s own
+        handling exists to avoid, on the other path that ends the loop. Added a best-effort final write (tag
+        dropped) on context cancellation.
+        <br>Two low-severity items folded in as one-line fixes since they were directly adjacent: flag
+        validation order (interval checked before loading the signing key, so a bad interval now reports as a
+        bad interval even when <code>--sign-key</code> is also wrong), and a message-clarity fix (the refresh
+        loop's byte count is the source chain's size, not <code>dest</code>'s written size &mdash; the one-shot
+        path reports the latter under the same words; relabelled &ldquo;chain bytes&rdquo; to stop it reading as
+        the same number). The unbounded-repeat-diagnostics low item is fixed too, via a one-line dedup on the
+        loop's own log lines, since it sat directly adjacent to the F2/F3 rewrite anyway.</td>
+        <td class="mono">fix commit <code>4585f1a</code>. <code>gofmt -l .</code> clean; <code>go vet
+        ./...</code> clean; <code>go test -timeout 60s -count=1 -run Refresh -v ./host/...</code> all 7 cases
+        <code>PASS</code> (including three new ones pinning F2/F3/F4 against the real loop, not just
+        <code>writeRefreshedReport</code> in isolation); <code>go test -race -count=5 -run Refresh
+        ./host/...</code> clean; <code>go test -count=1 ./...</code> 25 packages <code>ok</code>;
+        <code>govulncheck</code> &rarr; &ldquo;No vulnerabilities found.&rdquo;; <code>make docs</code>
+        regenerates cleanly; <code>go run ./tools/cookbook -in docs/cookbook.md</code> &rarr; &ldquo;18 recipes,
+        all extractable&rdquo; (was refusing before the fix).
+        <br>Hit the P7-16/D70 shared-host hazard again mid-verification &mdash; a single stuck
+        <code>go test ./tools/cookbook/...</code> process wedged the VM's <code>/Users/&hellip;</code> virtiofs
+        mount for <i>all</i> worktrees (native guest paths like <code>/tmp</code> stayed responsive throughout,
+        isolating it to the shared mount rather than the whole VM), with load climbing 0.81&rarr;2.00 and stuck
+        SSH sessions piling up 5&rarr;15 over several minutes with no sign of self-healing. Forced a VM restart
+        under the standing authorization from the earlier P7-9 incident this same day; verification above is
+        entirely from after that restart. This is the third such incident today (after the two documented
+        against this same task's live-verification pass) &mdash; folding into P7-16's scope becomes more
+        pressing with each recurrence.
+        <br>Not self-ticked: still holding for the reviewer to confirm F1&ndash;F5 are actually closed before
+        this task ticks.</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
