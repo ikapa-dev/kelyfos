@@ -1382,7 +1382,7 @@
         content only &mdash; every SVG attribute is a number computed in Go, and there is no
         <code>&lt;foreignObject&gt;</code>, <code>href</code> or <code>style</code> attribute anywhere in the
         drawing.</span></li>
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">P7-9</span><span class="tk"><b>Exporting a running session.</b> <code>--export</code> against a live team, and
         <code>--refresh</code>, which rewrites the file atomically and emits a meta-refresh so a browser tab
         follows a running team with <b>no socket anywhere in the path</b>. This is the honest answer to
@@ -6078,6 +6078,37 @@ after:
         pressing with each recurrence.
         <br>Not self-ticked: still holding for the reviewer to confirm F1&ndash;F5 are actually closed before
         this task ticks.</td></tr>
+    <tr><td class="mono">2026-08-28</td><td class="mono">P7-9</td>
+        <td><b>Ticked, by the orchestrator, after a re-review confirmed GO.</b> The re-reviewer did not take the
+        fix commit's claims on faith: it independently re-counted every real <code>&lt;!-- recipe: --&gt;</code>
+        marker in <code>docs/cookbook.md</code> (18, matching), and for three of the five findings &mdash;
+        F2, F3 and F5 &mdash; it proved the new regression tests are not tautological by reverting each fix
+        in isolation inside a scratch clone on the VM and watching the original bug reproduce exactly
+        (<code>TestRefreshExportSessionStopsOnAPermanentWriteFailure</code> retries forever again without the
+        <code>errors.As</code> branch; <code>TestRefreshExportSessionRecoversFromAnEmptyChainFile</code> times
+        out again without the <code>wrote</code> guard; the SIGTERM tag-drop test fails again without the final
+        write). It re-verified F4's 100ms floor live at the exact boundary (<code>99ms</code> rejected,
+        <code>100ms</code> accepted) and F5 with two real scenarios against an actual booted team (SIGTERM
+        mid-session, and a natural <code>session.end</code>), both dropping the refresh tag correctly.
+        <br>It also found what the first round missed: three hand-written docs (<code>README.md</code>,
+        <code>docs/README.md</code> &times;2, <code>docs/integrating.md</code>) still said &ldquo;seventeen
+        recipes&rdquo; &mdash; <code>make docs</code> only reconciles generated output against these files as
+        source, so a wrong number in the prose itself was invisible to it, the same failure class
+        <code>P7-7</code> already had to fix once. And it proved, by removing just the floor check in a scratch
+        clone, that <code>TestRefreshExportSessionRejectsAnIntervalBelowTheFloor</code> and its sibling
+        non-positive-interval test passed anyway &mdash; both used <code>/dev/null</code> as both path and
+        dest and asserted only <code>err != nil</code>, and a write into <code>/dev</code> fails with
+        <code>EACCES</code> regardless of the interval, masking a removed check entirely. Neither was called a
+        merge blocker (the shipped runtime behavior was independently verified correct either way), but both
+        closed before ticking: the four stale mentions fixed to &ldquo;eighteen&rdquo;, and both tests now
+        assert the error message actually names the interval floor rather than merely being non-nil.
+        Re-reviewer's final verdict: <b>GO.</b></td>
+        <td class="mono">fix-round-2 commit <code>0ad58a6</code>. <code>gofmt -l .</code> clean; <code>go vet
+        ./...</code> clean; <code>go test -timeout 60s -count=1 -run Refresh -v ./host/...</code> all 7
+        <code>PASS</code>; <code>go test -race -count=5 -run Refresh ./host/...</code> clean; <code>go test
+        -count=1 ./...</code> 25 packages <code>ok</code>; <code>govulncheck</code> &rarr; &ldquo;No
+        vulnerabilities found.&rdquo;; <code>make docs</code> regenerates cleanly; grep for &ldquo;seventeen
+        recipes/complete/things&rdquo; across the repo &rarr; zero hits.</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
