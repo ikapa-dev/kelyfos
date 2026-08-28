@@ -63,17 +63,25 @@ func TestRetentionFloorDefaultsAndOverrides(t *testing.T) {
 func TestSessionIsLive(t *testing.T) {
 	t.Setenv("KELYFOS_CACHE", t.TempDir())
 
-	if sessionIsLive("nothing-here", map[string]bool{}) {
+	if sessionIsLive("nothing-here", map[string]bool{}, map[string]bool{}) {
 		t.Error("a session with no run directory and no paused-session reference reads as live")
 	}
 
 	runningSandbox(t, sandbox.State{ID: "sb-live", PID: os.Getpid(), Arch: "aarch64", Flavor: "dev"})
-	if !sessionIsLive("sb-live", map[string]bool{}) {
+	if !sessionIsLive("sb-live", map[string]bool{}, map[string]bool{}) {
 		t.Error("a session with a run directory did not read as live")
 	}
 
-	if !sessionIsLive("sb-paused", map[string]bool{"sb-paused": true}) {
+	if !sessionIsLive("sb-paused", map[string]bool{"sb-paused": true}, map[string]bool{}) {
 		t.Error("a session named by a paused session's own metadata did not read as live")
+	}
+
+	// P7-13/F1: a team's own chain (or a serve-mcp audit chain) is opened
+	// under an id that names no sandbox's own run directory, so neither of
+	// the two checks above ever sees it — only RunningSessions (a live
+	// sandbox's own RecordSession() naming this id) can.
+	if !sessionIsLive("team-chain-id", map[string]bool{}, map[string]bool{"team-chain-id": true}) {
+		t.Error("a session named by a live sandbox's RecordSession(), but with no run directory of its own, did not read as live")
 	}
 }
 
@@ -174,6 +182,29 @@ func TestSessionsPruneDeletesOnlyPastTheFloor(t *testing.T) {
 	}
 	if !sessionExists(t, "too-new") {
 		t.Error("a session inside the floor was pruned")
+	}
+}
+
+// P7-13/F1: prune shared sessionIsLive's two original checks with erase, but
+// not the third erase's own review already found it needed (B1) — a team's
+// chain (or a serve-mcp audit chain) is opened under an id that names no
+// sandbox's own run directory, so hasLiveRunDir never sees it live no matter
+// how recently a member sandbox wrote to it. Past the retention floor with a
+// live member sandbox still attached, prune would delete the directory out
+// from under that writer — the same silent-audit-loss failure B1 named,
+// just left open on this path.
+func TestSessionsPruneSkipsALiveTeamsChain(t *testing.T) {
+	isolateFromAmbientPolicy(t)
+	t.Setenv("KELYFOS_CACHE", t.TempDir())
+	writeRecordedSession(t, "team-chain-id", 200) // well past the default floor
+	runningSandbox(t, sandbox.State{ID: "member-own-id", Session: "team-chain-id",
+		PID: os.Getpid(), Arch: "aarch64", Flavor: "dev"})
+
+	if err := sessionsPrune(nil); err != nil {
+		t.Fatalf("sessionsPrune: %v", err)
+	}
+	if !sessionExists(t, "team-chain-id") {
+		t.Fatal("prune deleted a team's own chain while a live member sandbox was still writing into it")
 	}
 }
 

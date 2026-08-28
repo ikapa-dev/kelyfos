@@ -421,11 +421,20 @@ func hasLiveRunDir(id string) bool {
 	return err == nil
 }
 
-// sessionIsLive is prune's single skip-or-not question, combining both
+// sessionIsLive is prune's single skip-or-not question, combining all three
 // guards erase asks separately (and reports separately, since a paused
 // session and a possibly-running one call for different advice).
-func sessionIsLive(id string, live map[string]bool) bool {
-	return live[id] || hasLiveRunDir(id)
+//
+// P7-13: hasLiveRunDir alone only sees a sandbox whose own id names its run
+// directory. A team's chain and a `kelyfos serve-mcp` process's own audit
+// chain are both opened under an id sandbox.NewID() mints that is never any
+// sandbox's own id, so no run directory is ever named for either — prune
+// could delete one out from under a writer still appending to it, the same
+// B1 gap erase's own review already found and closed for erase, left open
+// here. running is sandbox.RunningSessions(), computed once by the caller
+// rather than per session.
+func sessionIsLive(id string, live, running map[string]bool) bool {
+	return live[id] || hasLiveRunDir(id) || running[id]
 }
 
 // pruneEligible is prune's own age question, split out from the directory
@@ -498,6 +507,10 @@ you still need to keep, see 'kelyfos sessions erase'.
 	if err != nil {
 		return err
 	}
+	running, err := sandbox.RunningSessions()
+	if err != nil {
+		return err
+	}
 
 	root := recorder.SessionsDir(sandbox.Root())
 	entries, err := os.ReadDir(root)
@@ -517,7 +530,7 @@ you still need to keep, see 'kelyfos sessions erase'.
 			continue
 		}
 		id := e.Name()
-		if sessionIsLive(id, live) {
+		if sessionIsLive(id, live, running) {
 			continue
 		}
 		// events.jsonl's own mtime, not the directory's own (S2) — see
