@@ -276,6 +276,34 @@ flavor on x86_64, 27 on `dev`, which keeps `ptrace` out of the list, and one
 fewer again on arm64, which has no `settimeofday` — among them `mount`,
 `reboot`, the clock-setting family, the keyring calls and module loading.
 
+*"Every" is asserted rather than intended, since the security review of
+2026-08-28.* It was not true when this paragraph was first written. `confine`
+skipped any program whose path ended in `kelyfos-confine` — the name its own
+wrapper runs under — so putting an executable at `/root/kelyfos-confine`, which
+is a tree every flavor makes writable and executable, and running it by that
+path bought a child of PID 1 with no Landlock domain and no seccomp filter (F8).
+What makes the sentence true now is not a narrower guard but a check in the
+other direction: the guard is keyed on the wrapper's own identity, which is not
+a name a file can be given, and `reaper.startAndRegister` — the one place any
+child is started — verifies *after* rewriting that what it holds is the wrapper,
+and refuses to spawn rather than spawn unconfined. So "every process the
+supervisor spawns" is now a property of the code path every child takes, rather
+than of a reader's confidence that no early return in one function is reachable.
+A command that was never found is still reported as not found rather than as a
+confinement failure.
+
+**"Every" does not quietly except a machine with no profile, and the three D32
+cases are not one case.** A *current* supervisor always resolves a profile
+object, so on a kernel that cannot give it Landlock it does not spawn things
+unconfined — the host refuses the cold boot with `[profile.not_enforced]` and
+the confining step refuses every spawn with exit 126. That machine runs nothing;
+it is the least dangerous of the three and
+[`upgrading.md`](upgrading.md) §1 says so. The unconfined-but-still-spawning
+default belongs to the other two — a **pre-v0.9 image** and a **pre-v0.9
+snapshot** — and neither is this code: those machines run their own old
+supervisor, which has no `confine` in it at all. The host warns and the flight
+recorder carries the absence either way. See [`hardening.md`](hardening.md) §4.4.
+
 What that leaves:
 
 - **The agent is root in its own guest.** It always was, and §6 of

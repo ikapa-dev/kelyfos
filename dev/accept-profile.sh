@@ -28,6 +28,11 @@ fail() { FAILURES=$((FAILURES+1)); SUMMARY+=("FAIL  $*"); printf '  \033[31mFAIL
 skip() { SKIPS=$((SKIPS+1));   SUMMARY+=("SKIP  $*"); printf '  \033[33mSKIP\033[0m  %s\n' "$*"; }
 check() { if [ "$1" = "yes" ]; then pass "$2"; else fail "$2"; fi; }
 
+# The argv[0] the confining step runs under, and therefore the one name F8 let
+# an agent give a file to be started without a profile. Kept as a variable so
+# the check below reads as "the helper's name" rather than as a magic string.
+IMPOSTOR_NAME="kelyfos-confine"
+
 WORK="$(mktemp -d)"
 halt() {
   pkill -f "kelyfos run" 2>/dev/null
@@ -98,6 +103,41 @@ out="$(kelyfos exec 'busybox reboot -f' 2>&1 | tail -1)"
 echo "  reboot -> $out"
 check "$(grep -qiE 'not permitted|permission denied' <<<"$out" && echo yes || echo no)" \
       "and only the supervisor may power this machine off"
+
+say "it confines: a binary the agent named after the confining helper (F8)"
+# The re-entrancy guard in confine() used to test a suffix of the *target's*
+# path against the argv[0] the wrapper itself runs under. It never fired for the
+# case it was written for and fired for exactly one it was not, so a file placed
+# at /root/kelyfos-confine — /root is writable and executable under every flavor
+# — was started by PID 1 with no Landlock domain and no seccomp filter. As here,
+# the child reports on itself out of the kernel's own file; nothing asks the
+# supervisor whether it confined anything.
+#
+# Two details the shape of this check turns on, both of which make the obvious
+# version of it pass for the wrong reason:
+#
+#   a shebang script, not `cp /bin/sh`.  /bin/sh in this image is a symlink to
+#   BusyBox, and BusyBox dispatches on argv[0] — a copy of it under any other
+#   name answers "applet not found" and exits 127 before running anything.
+#
+#   --shell=false.  A single argument is wrapped by the CLI into `/bin/sh -c
+#   <arg>`, so the process the supervisor spawns would be /bin/sh and the
+#   impostor would be its child, inheriting a confinement that was applied to
+#   something else. The impostor has to be argv[0] of the spawned process.
+Q="'"
+kelyfos exec "rm -f /root/$IMPOSTOR_NAME" >/dev/null 2>&1
+kelyfos exec "printf ${Q}#!/bin/sh\ngrep -E \"^(Seccomp|NoNewPrivs):\" /proc/self/status\necho nope > /etc/should-not-work\nmount -t tmpfs none /mnt\n${Q} > /root/$IMPOSTOR_NAME && chmod +x /root/$IMPOSTOR_NAME" >/dev/null 2>&1
+st="$(kelyfos exec --shell=false "/root/$IMPOSTOR_NAME" 2>&1)"
+sed 's/^/  /' <<<"$st"
+check "$(grep -qE '^Seccomp:[[:space:]]*2' <<<"$st" && echo yes || echo no)" \
+      "a program at /root/$IMPOSTOR_NAME is in SECCOMP_MODE_FILTER like anything else"
+check "$(grep -qE '^NoNewPrivs:[[:space:]]*1' <<<"$st" && echo yes || echo no)" \
+      "and cannot regain what the profile took away"
+check "$(grep -qi 'permission denied' <<<"$st" && echo yes || echo no)" \
+      "and its Landlock domain refuses the write to /etc every other child's does"
+check "$(grep -qiE 'permission denied|operation not permitted' <<<"$st" && echo yes || echo no)" \
+      "and its seccomp filter refuses mount, which was the point of naming it that"
+kelyfos exec "rm -f /root/$IMPOSTOR_NAME" >/dev/null 2>&1
 
 say "the flavor decides one of them"
 out="$(kelyfos exec 'strace -V 2>&1 | sed -n "1,1p"; true' 2>&1 | tail -1)"

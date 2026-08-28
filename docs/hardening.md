@@ -258,6 +258,54 @@ It is applied in `reaper.startAndRegister`, the single place every child is
 started, for the reason `requireJail` lives in `sandbox.New` — a confinement
 three call sites have to remember is one that a fourth will not.
 
+*Written after F8, the security review of 2026-08-28: "every child" was the
+design and not the behaviour.* `confine` carried a re-entrancy guard that asked
+whether the target's path ended in `kelyfos-confine` — the `argv[0]` the wrapper
+runs under, but a property of the program being started rather than of the
+wrapper. It never once fired for the case it was written for, because a command
+already rewritten has the path `/proc/self/exe`, which does not end in the
+marker. It fired for one case nobody wanted: a program the agent had named after
+the helper. A file placed at `/root/kelyfos-confine` — `/root` is writable and
+executable under both flavors — and then `exec`'d by that path produced a child
+of PID 1 with no Landlock domain and no seccomp filter, which is every syscall
+on the refusal list and every tree the profile withholds. The review that found
+this wrote the step as `cp /bin/sh /root/kelyfos-confine`, which does not work
+on this image: `/bin/sh` is a symlink to BusyBox, and BusyBox decides what to be
+from `argv[0]`, so a copy of it under that name answers `applet not found` and
+exits 127. A shebang script under the same name does work, and needs nothing
+installed — the kernel runs `/bin/sh` for it, unconfined, because the process
+that was never confined is the one that `exec`'d it.
+
+Two changes close it, and the second is the one that matters. The guard is now
+keyed on the wrapper's own identity — `cmd.Path == "/proc/self/exe"` **and**
+`cmd.Args[0] == "kelyfos-confine"` — which is not a pair an agent can produce.
+`Args[0]` is the string the caller passed; `Path` is what `exec.Command` made of
+it. The two do diverge — a bare name is resolved against `PATH` — but never into
+that pair. A name containing a separator is taken verbatim, so a `Path` of
+`/proc/self/exe` means `Args[0]` is `/proc/self/exe` too, which is not the
+marker. A bare name is resolved by `LookPath`, which joins a `PATH` directory to
+that same name, so a `Path` of `/proc/self/exe` would require the name `exe` —
+and then `Args[0]` is `exe`, which is not the marker either. There is no argv
+that produces both halves. And `startAndRegister` no longer
+believes `confine`: it asserts the invariant afterwards and returns
+`errNotConfined` instead of starting anything that fails it. The first makes this
+hole closed; the second makes the *class* of it closed, because the next early
+return somebody adds to `confine` now stops a process rather than releasing one.
+The supervisor already refuses to report ready on a profile it could not
+enforce; this is the same refusal one step earlier.
+
+Two things it deliberately does not refuse. A command that was never found is
+still reported as not found rather than as a confinement failure — the assertion
+reads `cmd.Err` first. And a supervisor holding no profile at all still spawns,
+which is the pre-v0.9 image and the pre-v0.9 snapshot of D32 rather than a
+current guest on a Landlock-less kernel: that one resolves a profile object, the
+host refuses its cold boot, and the confining step refuses every spawn with exit
+126. §4.3 above and [`upgrading.md`](upgrading.md) §1 keep the three apart.
+`supervisor/confine_test.go` is the proof by unit test;
+`dev/accept-profile.sh` puts that program at `/root/kelyfos-confine` in a real
+microVM, runs it, and reads the answer out of the child's own
+`/proc/self/status`.
+
 **And a consequence worth stating, because it is a protection nobody asked
 for.** Each confined process gets its own Landlock domain, and Landlock's
 `ptrace` hook refuses introspection *between sibling domains*. So two commands

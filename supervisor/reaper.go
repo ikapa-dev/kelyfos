@@ -78,6 +78,14 @@ func (r *reaper) startAndRegister(cmd *exec.Cmd) (chan syscall.WaitStatus, error
 	// Every process this supervisor starts passes through here, which is why
 	// the profile is applied here and not at the three call sites (P5-3).
 	confine(cmd)
+	// And why the result is checked here rather than assumed. A confinement
+	// that is applied by one function and believed by its caller is one that
+	// stops being applied the day that function grows an early return somebody
+	// can reach — which is exactly what F8 was. Nothing is spawned unless the
+	// command in hand is the confining wrapper.
+	if err := confinementHolds(cmd); err != nil {
+		return nil, err
+	}
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
