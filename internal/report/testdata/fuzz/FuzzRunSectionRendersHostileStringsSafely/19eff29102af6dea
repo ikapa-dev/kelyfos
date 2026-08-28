@@ -1,0 +1,5 @@
+go test fuzz v1
+string("0")
+string("0")
+string("ǜ\"\xfd&&&&&&&&&&&&&&&&&nc\x04R&\xc7͍")
+string("0")

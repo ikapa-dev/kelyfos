@@ -1,0 +1,5 @@
+go test fuzz v1
+string("\xee")
+string("\xed\xae\xd5\xc5\xf9\x8c\xd9\xda\xcd\xc2\"\xa0\xb1")
+string("0")
+string("0")

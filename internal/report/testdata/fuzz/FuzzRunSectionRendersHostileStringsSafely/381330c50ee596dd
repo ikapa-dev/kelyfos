@@ -1,0 +1,5 @@
+go test fuzz v1
+string("000008B\"XABZA912\"8AAAXYB\"")
+string("\"YBAAZC>BCZAX072<7ZAAACC\"")
+string("\"AC!ipt>alertA09<A0BBBYx\"")
+string("AB0xYB\"x0eCt(b00\"2BC9\"1CXABB0>")

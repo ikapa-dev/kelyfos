@@ -1,0 +1,5 @@
+go test fuzz v1
+string("\"\xae\xcf")
+string("\x90\x86")
+string("\xa3\xac\xad\xc0\"\xa2\x8c\x95\xc8\xd3\xda")
+string("")

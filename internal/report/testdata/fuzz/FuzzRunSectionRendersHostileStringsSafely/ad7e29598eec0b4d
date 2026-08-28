@@ -1,0 +1,5 @@
+go test fuzz v1
+string("<(0rip)>*0erb(X)<9s,20pa>")
+string("<11rip.2a%+rC(AB2/scr#pb>")
+string("%#72>a8!rt(0920s,p8(")
+string("<cY ipC&0802t(b)<0scBi%2>")

@@ -1,0 +1,5 @@
+go test fuzz v1
+string("0")
+string("ۢƁ\x7f΄Ȣڋ\f\x7f\x7f\fƐ튫\fΙΎ\f\x7fѮӣ")
+string("0")
+string("0")

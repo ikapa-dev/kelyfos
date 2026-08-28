@@ -1,0 +1,5 @@
+go test fuzz v1
+string("0\"&0A08AAA1X7BAXCCB000>")
+string("c")
+string("Y")
+string("0")

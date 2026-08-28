@@ -1,0 +1,5 @@
+go test fuzz v1
+string("\"\"\"\"\"")
+string("\x0e\"\xa1\x1bZ=\xe0\xe7X\"\"\"")
+string("\"\"\"\"\"")
+string("C\x06#\"1")

@@ -1,0 +1,5 @@
+go test fuzz v1
+string("0\xc50\x04\xb9")
+string("\xda00\xb4\xec\xa00")
+string("")
+string("\xb60\xe9\xbd0\xaf0\x8e")

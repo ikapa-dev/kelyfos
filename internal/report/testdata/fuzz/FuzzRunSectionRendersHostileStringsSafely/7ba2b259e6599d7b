@@ -1,0 +1,5 @@
+go test fuzz v1
+string("0000000010100000000")
+string("000\x7f000100100100001")
+string("7")
+string("0")

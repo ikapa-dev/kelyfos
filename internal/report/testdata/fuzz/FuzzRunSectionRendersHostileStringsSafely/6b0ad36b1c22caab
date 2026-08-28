@@ -1,0 +1,5 @@
+go test fuzz v1
+string("\uf4f2")
+string("0")
+string("\x16")
+string("0")

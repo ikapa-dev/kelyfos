@@ -1,0 +1,5 @@
+go test fuzz v1
+string("<xcr0pt>+l+rtX1*</s%Bipt>")
+string("<%BriX$>al%rt(ZX</7$r)px>")
+string("<scr$+tB>>C,er#)3)</sc0BpZ>")
+string("<101it>aA,8t(Y)</sc7i1a>")

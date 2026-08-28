@@ -1,0 +1,5 @@
+go test fuzz v1
+string("\xb0")
+string("0\r")
+string("00000000000FFFFF00000\x15008000")
+string("Z")

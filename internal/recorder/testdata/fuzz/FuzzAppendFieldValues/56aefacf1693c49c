@@ -1,0 +1,3 @@
+go test fuzz v1
+string("\xf1\x94\x800")
+string("0")

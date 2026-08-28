@@ -1,0 +1,5 @@
+go test fuzz v1
+string("0")
+string("0")
+string("\x7f")
+string("\x18\"\xf8\xc0\xb0\x85\xcc0\x82\xf800\"")

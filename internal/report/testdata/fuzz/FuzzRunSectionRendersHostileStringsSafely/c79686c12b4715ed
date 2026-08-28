@@ -1,0 +1,5 @@
+go test fuzz v1
+string("0")
+string("Ж\x01")
+string("ǫƗ\x7f")
+string("0")

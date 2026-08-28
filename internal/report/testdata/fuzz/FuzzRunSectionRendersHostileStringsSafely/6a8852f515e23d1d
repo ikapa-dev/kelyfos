@@ -1,0 +1,5 @@
+go test fuzz v1
+string("z2z12010a0)009\xc42#07")
+string("XB,*$%x10zx08x0zC1b")
+string("7A29Z0by2Ac  20)210A002)7")
+string("2!7Y0A0(00Y081c")
