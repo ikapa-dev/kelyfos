@@ -188,9 +188,19 @@ func TestRefreshExportSessionStopsOnContextCancelWithNoSessionEnd(t *testing.T) 
 	}
 }
 
+// "/dev/null" as both path and dest is deliberate: the interval check has to
+// reject before either is ever touched, so a passing test here can only mean
+// the floor fired — not, say, atomicWriteReport failing to CreateTemp under
+// /dev (which a non-root user gets EACCES on, and which returns non-nil
+// regardless of the interval, quietly masking a removed floor check). That
+// is checked, not assumed: matching the error message, not just err != nil.
 func TestRefreshExportSessionRejectsANonPositiveInterval(t *testing.T) {
-	if err := refreshExportSession(context.Background(), "s1", "/dev/null", "/dev/null", "", 0); err == nil {
+	err := refreshExportSession(context.Background(), "s1", "/dev/null", "/dev/null", "", 0)
+	if err == nil {
 		t.Fatal("a zero --refresh-every was accepted")
+	}
+	if !strings.Contains(err.Error(), "--refresh-every must be at least") {
+		t.Fatalf("rejected for the wrong reason (not the interval floor): %v", err)
 	}
 }
 
@@ -199,11 +209,20 @@ func TestRefreshExportSessionRejectsANonPositiveInterval(t *testing.T) {
 // against a <meta refresh> tag whose own content is whole seconds. Below
 // minRefreshInterval is rejected the same way zero is.
 func TestRefreshExportSessionRejectsAnIntervalBelowTheFloor(t *testing.T) {
-	if err := refreshExportSession(context.Background(), "s1", "/dev/null", "/dev/null", "", time.Nanosecond); err == nil {
+	err := refreshExportSession(context.Background(), "s1", "/dev/null", "/dev/null", "", time.Nanosecond)
+	if err == nil {
 		t.Fatal("a 1ns --refresh-every was accepted")
 	}
-	if err := refreshExportSession(context.Background(), "s1", "/dev/null", "/dev/null", "", 50*time.Millisecond); err == nil {
+	if !strings.Contains(err.Error(), "--refresh-every must be at least") {
+		t.Fatalf("1ns rejected for the wrong reason (not the interval floor): %v", err)
+	}
+
+	err = refreshExportSession(context.Background(), "s1", "/dev/null", "/dev/null", "", 50*time.Millisecond)
+	if err == nil {
 		t.Fatal("a 50ms --refresh-every was accepted, below the 100ms floor")
+	}
+	if !strings.Contains(err.Error(), "--refresh-every must be at least") {
+		t.Fatalf("50ms rejected for the wrong reason (not the interval floor): %v", err)
 	}
 }
 
