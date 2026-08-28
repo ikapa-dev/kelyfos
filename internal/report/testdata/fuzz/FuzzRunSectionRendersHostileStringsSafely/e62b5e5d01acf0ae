@@ -1,0 +1,5 @@
+go test fuzz v1
+string("\"&&0000#0700Xyx0000zz0!0XB.00&")
+string("\x81\x9b0䂻")
+string("0")
+string(" 0&7&c&ՠ")

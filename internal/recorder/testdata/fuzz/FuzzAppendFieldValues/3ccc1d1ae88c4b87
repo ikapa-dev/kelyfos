@@ -1,0 +1,3 @@
+go test fuzz v1
+string("\xff(\"\x80")
+string("0\x89>0\x800%000\"y\"")

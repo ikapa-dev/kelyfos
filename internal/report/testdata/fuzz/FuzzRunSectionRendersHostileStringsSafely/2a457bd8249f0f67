@@ -1,0 +1,5 @@
+go test fuzz v1
+string("\xfe")
+string("\xbe")
+string("\xc7")
+string("\xcf")

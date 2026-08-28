@@ -1,0 +1,5 @@
+go test fuzz v1
+string("\xae\xae\xae\xae\xae\xae\xae\xe2\xe0\x93")
+string("0")
+string("0")
+string("0")

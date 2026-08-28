@@ -1,0 +1,5 @@
+go test fuzz v1
+string("\"><i9b!xr.=x aAerAor=alZr2(1z2")
+string("a")
+string("b")
+string("\x18Xn\xd5\xf3\xb8\xe0c")

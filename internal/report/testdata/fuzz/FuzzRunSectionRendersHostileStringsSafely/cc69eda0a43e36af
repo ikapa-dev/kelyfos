@@ -1,0 +1,5 @@
+go test fuzz v1
+string("Ż\xc9\x1f\xd6")
+string("\xd60\x9d\r\xad")
+string("0")
+string("0")

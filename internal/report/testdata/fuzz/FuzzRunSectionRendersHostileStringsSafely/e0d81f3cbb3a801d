@@ -1,0 +1,5 @@
+go test fuzz v1
+string("0\x000")
+string("1\x010")
+string("\x10\x1f1")
+string("C")

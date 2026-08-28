@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -469,6 +470,197 @@ func TestDomainAndStoreKeySharingALiteralNameStayDistinct(t *testing.T) {
 	}
 	if !sawStore {
 		t.Error("no store node labelled " + shared)
+	}
+}
+
+// Phase 7's own exit checkpoint (acceptance item 8) names three fixtures
+// this file did not yet have, none of them a new escaping mechanism — a key
+// at the documented 1 KiB ceiling, a 64-character agent name, and a session
+// whose aggregate size is around 200 MB. All three exercise safe/safeBody
+// and html/template's own contextual escaping exactly the way every fixture
+// above does; they are here because length and aggregate scale are their
+// own dimension a single short adversarial string does not cover — a
+// truncation, an off-by-one in a length-prefixed buffer, or a fast path that
+// skips escaping past some size would all be invisible to the fixtures
+// above and visible to these.
+
+// A store key name at exactly docs/teams.md §3's own ceiling ("a key at
+// most 1 KiB"), built from scriptPayload plus padding rather than a
+// hand-counted literal so the length is right even if scriptPayload's own
+// text changes. Run through the store panel, the run map and the reach
+// matrix — every surface that draws a store key.
+func TestOneKiBStoreKeyRendersSafely(t *testing.T) {
+	const storeKeyCeiling = 1024
+	if len(scriptPayload) > storeKeyCeiling {
+		t.Fatal("scriptPayload no longer fits under the 1 KiB ceiling this fixture assumes")
+	}
+	hostileKey := scriptPayload + strings.Repeat("k", storeKeyCeiling-len(scriptPayload))
+	if len(hostileKey) != storeKeyCeiling {
+		t.Fatalf("fixture key is %d bytes, want exactly %d", len(hostileKey), storeKeyCeiling)
+	}
+
+	events := []recorder.Event{
+		{Type: recorder.TypeSessionReady, Agent: "alice", TS: "2026-08-27T10:00:00.000Z"},
+		recorder.NewSessionPolicy("alice", recorder.PolicyFields{VcpuCount: 1, MemMiB: 256}),
+		recorder.NewTeamTopology(recorder.TopologyFields{
+			Agents:    []recorder.EvAgent{{Name: "alice"}},
+			StoreKeys: []recorder.EvStoreKey{{Name: hostileKey, Read: []string{"alice"}, Write: []string{"alice"}}},
+		}),
+		{Type: recorder.TypeTeamStore, Agent: "alice", Peer: hostileKey, Kind: "put", Outcome: "delivered", Bytes: 1, TS: "2026-08-27T10:00:01.000Z"},
+		{Type: recorder.TypeSessionEnd, TS: "2026-08-27T10:00:02.000Z"},
+	}
+	html := render(t, events)
+	if !strings.Contains(html, "alert(document.cookie)") {
+		t.Fatal("the 1 KiB key's payload never reached the rendered page at all")
+	}
+	page := stripIsland(t, html)
+	for _, b := range []byte(page) {
+		if isRawControlByte(b) {
+			t.Fatalf("a raw control byte 0x%02x reached the page via a 1 KiB store key", b)
+		}
+	}
+	for _, tag := range tagSpans(page) {
+		low := strings.ToLower(tag)
+		if strings.HasPrefix(low, "<script") {
+			t.Errorf("a live <script> tag from a 1 KiB store key: %s", tag)
+		}
+		if onAttrRE.MatchString(tag) {
+			t.Errorf("an event-handler attribute from a 1 KiB store key: %s", tag)
+		}
+		if strings.Contains(low, "javascript:") {
+			t.Errorf("a javascript: URL from a 1 KiB store key: %s", tag)
+		}
+	}
+	if !strings.Contains(page, "&lt;script&gt;alert(document.cookie)&lt;/script&gt;") {
+		t.Error("the 1 KiB key's escaped payload never appeared — it may have been truncated or dropped rather than rendered")
+	}
+}
+
+// A 64-character agent name — long enough to be a real "long identifier"
+// case distinct from every short fixture above, through the run map, the
+// agent sheets and the reach matrix all at once (every surface that draws
+// an agent node).
+func Test64CharacterAgentNameRendersSafely(t *testing.T) {
+	const agentNameLen = 64
+	onerrorPayload := `<img src=x onerror=alert(98)>`
+	if len(onerrorPayload) > agentNameLen {
+		t.Fatal("onerrorPayload no longer fits under the 64-character length this fixture assumes")
+	}
+	hostileAgent := onerrorPayload + strings.Repeat("a", agentNameLen-len(onerrorPayload))
+	if len(hostileAgent) != agentNameLen {
+		t.Fatalf("fixture agent name is %d bytes, want exactly %d", len(hostileAgent), agentNameLen)
+	}
+
+	events := []recorder.Event{
+		{Type: recorder.TypeSessionReady, Agent: hostileAgent, TS: "2026-08-27T10:00:00.000Z"},
+		recorder.NewSessionPolicy(hostileAgent, recorder.PolicyFields{
+			VcpuCount: 1, MemMiB: 256, Allow: []string{"example.com"},
+		}),
+		recorder.NewTeamTopology(recorder.TopologyFields{
+			Agents: []recorder.EvAgent{{Name: hostileAgent}},
+		}),
+		{Type: recorder.TypeSessionEnd, TS: "2026-08-27T10:00:01.000Z"},
+	}
+	html := render(t, events)
+	if !strings.Contains(html, "onerror=alert(98)") {
+		t.Fatal("the 64-character agent name's payload never reached the rendered page at all")
+	}
+	page := stripIsland(t, html)
+	for _, b := range []byte(page) {
+		if isRawControlByte(b) {
+			t.Fatalf("a raw control byte 0x%02x reached the page via a 64-character agent name", b)
+		}
+	}
+	for _, tag := range tagSpans(page) {
+		low := strings.ToLower(tag)
+		if strings.HasPrefix(low, "<script") {
+			t.Errorf("a live <script> tag from a 64-character agent name: %s", tag)
+		}
+		if onAttrRE.MatchString(tag) {
+			t.Errorf("an event-handler attribute from a 64-character agent name: %s", tag)
+		}
+	}
+	if !strings.Contains(page, "&lt;img src=x onerror=alert(98)&gt;") {
+		t.Error("the 64-character agent name's escaped payload never appeared — it may have been truncated or dropped rather than rendered")
+	}
+}
+
+// A session whose aggregate recorded size is around 200 MB — not a single
+// line over recorder.MaxLine (8 MiB), which clipLargestField already guards
+// and internal/recorder's own hostile tests already cover, but a chain this
+// package's renderer has to walk, decode and escape in full. Built from
+// forty command.output events at 5 MiB raw each (comfortably under MaxLine
+// once base64-encoded), one of which buries a real hostile payload and a
+// real control byte in the middle of several megabytes of benign filler —
+// checking both that rendering does not fail or silently truncate at this
+// scale, and that the same escaping still applies when the payload is
+// nowhere near the start or end of the text it sits in.
+func TestTwoHundredMegabyteSessionRendersSafely(t *testing.T) {
+	if testing.Short() {
+		t.Skip("short mode: skipping the ~200 MB fixture")
+	}
+	const (
+		eventCount  = 40
+		fillerBytes = 5 << 20 // 5 MiB raw per event
+	)
+	hostile := "\x1b]0;pwned\x07" + scriptPayload + `"><img src=x onerror=alert(200)>`
+
+	events := []recorder.Event{
+		{Type: recorder.TypeSessionStart, TS: "2026-08-27T10:00:00.000Z"},
+		{Type: recorder.TypeSessionReady, Agent: "bulk-agent", TS: "2026-08-27T10:00:01.000Z"},
+	}
+	var totalRaw int
+	for i := 0; i < eventCount; i++ {
+		filler := strings.Repeat("x", fillerBytes)
+		if i == eventCount/2 {
+			// Buried well inside the chunk, not at either edge.
+			half := fillerBytes / 2
+			filler = filler[:half] + hostile + filler[half:]
+		}
+		totalRaw += len(filler)
+		call := "c" + strconv.Itoa(i)
+		events = append(events,
+			recorder.Event{Type: recorder.TypeCommandStart, Agent: "bulk-agent",
+				Call: call, Cmd: []string{"cat"}, Via: "exec", TS: "2026-08-27T10:00:02.000Z"},
+			recorder.Event{Type: recorder.TypeCommandOutput, Agent: "bulk-agent",
+				Call: call, Stream: "stdout",
+				Data: base64.StdEncoding.EncodeToString([]byte(filler)),
+				TS:   "2026-08-27T10:00:02.100Z"},
+		)
+	}
+	events = append(events, recorder.Event{Type: recorder.TypeSessionEnd, TS: "2026-08-27T10:00:03.000Z"})
+
+	if totalRaw < 200<<20-(10<<20) {
+		t.Fatalf("fixture only assembled %d raw bytes, want around 200 MB", totalRaw)
+	}
+
+	html := render(t, events)
+	if len(html) < totalRaw {
+		t.Fatalf("rendered page is only %d bytes for %d bytes of raw content — content may have been silently truncated at scale", len(html), totalRaw)
+	}
+	if !strings.Contains(html, "alert(document.cookie)") {
+		t.Fatal("the buried payload never reached the rendered page at ~200 MB scale — it may have been dropped or truncated")
+	}
+	page := stripIsland(t, html)
+	for _, b := range []byte(page) {
+		if isRawControlByte(b) {
+			t.Fatalf("a raw control byte 0x%02x reached a ~200 MB page", b)
+		}
+	}
+	for _, tag := range tagSpans(page) {
+		low := strings.ToLower(tag)
+		if strings.HasPrefix(low, "<script") {
+			t.Errorf("a live <script> tag buried in a ~200 MB page: %.80s", tag)
+		}
+		if onAttrRE.MatchString(tag) {
+			t.Errorf("an event-handler attribute buried in a ~200 MB page: %.80s", tag)
+		}
+		if strings.Contains(low, "javascript:") {
+			t.Errorf("a javascript: URL buried in a ~200 MB page: %.80s", tag)
+		}
+	}
+	if !strings.Contains(page, "&lt;script&gt;alert(document.cookie)&lt;/script&gt;") {
+		t.Error("the buried payload's escaped form never appeared — it may have been dropped rather than rendered")
 	}
 }
 

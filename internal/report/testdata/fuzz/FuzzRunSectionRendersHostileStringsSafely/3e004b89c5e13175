@@ -1,0 +1,5 @@
+go test fuzz v1
+string("1\x00B")
+string("XaC")
+string("Z\x1fA")
+string("9")

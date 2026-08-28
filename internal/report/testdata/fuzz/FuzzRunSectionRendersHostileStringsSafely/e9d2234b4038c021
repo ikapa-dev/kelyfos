@@ -1,0 +1,5 @@
+go test fuzz v1
+string("0\xa8\xa8\xa8\xa8\xa800000")
+string("11")
+string("0")
+string("A\x1787\x1c000\x15A")

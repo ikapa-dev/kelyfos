@@ -1,0 +1,5 @@
+go test fuzz v1
+string("00\a0\r\x0e0\x150")
+string("0")
+string("")
+string("0\x0e00")

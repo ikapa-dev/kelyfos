@@ -1,0 +1,5 @@
+go test fuzz v1
+string("z2z12010a0)00922#07")
+string("XB,*$%x10zx08x0zC1b")
+string("C\x8b87\xd90\x84\xf40%yC20007%00c00.07")
+string("1 200+0z0aB\x10&z0810")

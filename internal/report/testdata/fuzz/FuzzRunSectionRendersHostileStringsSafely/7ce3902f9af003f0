@@ -1,0 +1,5 @@
+go test fuzz v1
+string("0")
+string("0")
+string("ǜ\t\xfd\xc7͍")
+string("\t")

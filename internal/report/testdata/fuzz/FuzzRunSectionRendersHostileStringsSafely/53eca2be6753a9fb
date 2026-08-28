@@ -1,0 +1,5 @@
+go test fuzz v1
+string("<script>alert(1)</script>")
+string("<script>alert(2)</script>")
+string("<script>alert(3)</script>")
+string("<script>al6666666666666666ert(4)</script>")

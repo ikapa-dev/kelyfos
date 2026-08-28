@@ -1,0 +1,5 @@
+go test fuzz v1
+string("0XZAYCY1BACXB07 7Z1ripcA")
+string("21cXyZtalCrA8a10%BA7XXtA")
+string("0C1aCxXbCBAAB1ayeCt0220A8CBxzCA")
+string("Z212XYB18cBrtyX0101ca!CtB")

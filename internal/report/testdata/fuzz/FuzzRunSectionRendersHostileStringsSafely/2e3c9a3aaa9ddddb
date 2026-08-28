@@ -1,0 +1,5 @@
+go test fuzz v1
+string("\"><img src=x onerror=alert(1)>")
+string("a")
+string("b")
+string("c1\xfc#\x14\xd0\x0eՠ")

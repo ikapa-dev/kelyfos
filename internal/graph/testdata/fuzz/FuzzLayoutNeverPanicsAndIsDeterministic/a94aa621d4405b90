@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("\"%1$Za9171*#C7x+cB90292+X7Ca7a$(A12XA,X+")

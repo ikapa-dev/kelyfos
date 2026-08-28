@@ -1,0 +1,5 @@
+go test fuzz v1
+string("0")
+string("0\r")
+string("0000000000000000\x15000000")
+string("0")

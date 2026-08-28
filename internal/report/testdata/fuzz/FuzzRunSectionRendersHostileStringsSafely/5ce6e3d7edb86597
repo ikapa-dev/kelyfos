@@ -1,0 +1,5 @@
+go test fuzz v1
+string("c0A0.791B0120080001")
+string("0B82A1Z\x17\x04 9A102C1ck\x16C\xc4\xdezB0B")
+string("A\x8b7&19\xf40C70YB0910")
+string("088\"&1719Y&&2c211")

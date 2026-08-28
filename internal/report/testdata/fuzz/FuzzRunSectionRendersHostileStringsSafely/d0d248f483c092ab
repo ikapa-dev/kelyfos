@@ -1,0 +1,5 @@
+go test fuzz v1
+string("<scr0p'>y)ert)$)</YcXi'9>")
+string("<sc%8pt>AleX072)<7 2.&p%2")
+string("<2c+i20\"alBr*(Z1<&Bc#228>")
+string("7scr%pt>lC7(4)</bc0ip\"0")

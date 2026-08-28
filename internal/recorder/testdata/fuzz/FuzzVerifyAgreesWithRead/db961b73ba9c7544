@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("{\"v\":1,\"seq\":1,\"ts\":\"2026-08T11:00:21.987Z\",\"sandbox\":\"fuzzs.01\",\"type\":\"sess&on.start\",\"sou\":\"host\",\"prev\":\"\",\"hash\":\"2bd791681646fb10f4d73618a7276094f3C9c3cbaf7b1eca2c5b098328\"}\n{e8c9a66106\"}\n")

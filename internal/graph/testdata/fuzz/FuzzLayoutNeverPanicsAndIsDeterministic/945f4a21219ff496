@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("X$9C&01#7AB1%10170B001C0c81X020727bC* 1*1CC)17A\"a")

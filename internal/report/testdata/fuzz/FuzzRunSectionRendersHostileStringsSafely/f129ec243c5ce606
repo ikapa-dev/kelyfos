@@ -1,0 +1,5 @@
+go test fuzz v1
+string("\x02\xb0\x8f")
+string("0")
+string("\xd6\xd1")
+string("ʁ")

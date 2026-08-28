@@ -1,0 +1,5 @@
+go test fuzz v1
+string("\xc4\xeb\xfc\xfe\"")
+string("\xf0\xf0\xf0\xf0\xf0\xf0\xf0\"")
+string("\"\xbd\xc7")
+string("\xcf\"")

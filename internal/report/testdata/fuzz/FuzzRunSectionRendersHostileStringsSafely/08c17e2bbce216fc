@@ -1,0 +1,5 @@
+go test fuzz v1
+string("ab(")
+string("c\x01d")
+string("e\x1fg")
+string("h")

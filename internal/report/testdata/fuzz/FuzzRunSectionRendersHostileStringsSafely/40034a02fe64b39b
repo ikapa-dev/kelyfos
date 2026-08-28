@@ -1,0 +1,5 @@
+go test fuzz v1
+string("\xc4\xeb\xfc\xfe\x1e")
+string("CB")
+string("A\x95\xbd9\xc7f")
+string("\xcf&\ta\"BZ\"")

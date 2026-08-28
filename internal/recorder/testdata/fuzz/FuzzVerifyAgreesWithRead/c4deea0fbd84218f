@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("{\"v\":\"\",\"sandbox\":\"\",\"type\":\"se$b.Yta&sir0\",\"source\":\"0ost\",\"prev\":\"\",\"hash\":\"\"}\n")
