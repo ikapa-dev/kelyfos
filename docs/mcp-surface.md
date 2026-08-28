@@ -238,7 +238,11 @@ the wall rather than a person at a shell:
 
 - **A snapshot name is checked, not trusted.** A name becomes a directory, so it
   is letters, digits, dot, dash and underscore, at most 64 of them, not starting
-  with a dot. `../evil` is refused for the slash it contains.
+  with a dot. `../evil` is refused for the slash it contains. Since P7-17 the
+  check lives in the function that builds the path rather than at each door, so
+  the CLI (`kelyfos snapshot save|restore`, `kelyfos fork`, `kelyfos bench`) and
+  `kelyfos pause --as` are held to the identical rule; before that it was
+  applied on this door only.
 - **A restored machine is held to the policy's ceiling.** Firecracker takes vcpu
   and memory from the state file, so a restore cannot shrink a machine to fit:
   the only honest answers are to allow it or refuse it. Snapshots record what

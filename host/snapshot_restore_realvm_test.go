@@ -61,7 +61,10 @@ func TestSnapshotRestoreRealVMWiresAuditBeforeResume(t *testing.T) {
 	// than failing, the same as every other environmental precondition here.
 	upstream := newPort80Server(t)
 
-	dir := snapshotDir("realvm-audit-test")
+	dir, err := snapshotDir("realvm-audit-test")
+	if err != nil {
+		t.Fatal(err)
+	}
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 
 	// The machine the snapshot is taken from needs a network of its own —

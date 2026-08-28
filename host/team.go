@@ -1023,7 +1023,17 @@ func bootTemplate(ctx context.Context, a plannedAgent, sessionID, arch string,
 	}
 	boot = time.Since(started)
 	snapped := time.Now()
-	snapDir = filepath.Join(sandbox.Root(), "snapshots", "team-"+sessionID+"-"+id)
+	// Through snapshotDir like every other snapshot path, rather than joining
+	// the directory by hand — which is what this line did until P7-17/F7, and
+	// is the shape the finding is about. Every component here is host-minted
+	// (a literal, the session id, sandbox.NewID's hex), so this cannot fail
+	// today; it is routed through the gate so that it still cannot on the day
+	// one of them stops being host-minted.
+	snapDir, err = snapshotDir("team-" + sessionID + "-" + id)
+	if err != nil {
+		stopNow()
+		return nil, "", 0, 0, err
+	}
 	if _, _, err := sb.Snapshot(snapDir); err != nil {
 		stopNow()
 		_ = os.RemoveAll(snapDir)

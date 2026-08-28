@@ -149,7 +149,10 @@ func oneBoot(opts sandbox.Options, timeout time.Duration) (int64, error) {
 // oneRestore measures one restore, from launching Firecracker to the guest
 // answering the resync round trip.
 func oneRestore(name string, opts sandbox.Options) (int64, error) {
-	dir := snapshotDir(name)
+	dir, err := snapshotDir(name)
+	if err != nil {
+		return 0, err
+	}
 	sb, elapsed, err := sandbox.Restore(dir, opts)
 	if err != nil {
 		return 0, err

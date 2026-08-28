@@ -74,7 +74,11 @@ unique guest network identity, which is backlog work.
 
 	// Refuse before starting rather than failing partway through the third
 	// copy. Without reflink support each fork is a full copy of the workspace.
-	meta, err := sandbox.ReadSnapshotMeta(snapshotDir(*name))
+	sdir, err := snapshotDir(*name)
+	if err != nil {
+		return err
+	}
+	meta, err := sandbox.ReadSnapshotMeta(sdir)
 	if err != nil {
 		return err
 	}
@@ -163,7 +167,10 @@ unique guest network identity, which is backlog work.
 				Kelyfos: Version, Argv: os.Args, Reason: "forked from " + *name,
 			})
 			opts.OnGuestEvent = guestEventRecorder(rec, "", meta.MemMiB)
-			sb, elapsed, err := sandbox.Restore(snapshotDir(*name), opts)
+			// sdir, not a second snapshotDir call: the name is the same for
+			// every fork in the batch and was validated once above, before
+			// anything was built (P7-17/F7).
+			sb, elapsed, err := sandbox.Restore(sdir, opts)
 			if err != nil {
 				_ = rec.Append(recorder.Event{Type: recorder.TypeSessionEnd, Reason: "error",
 					DurationMS: rec.Since().Milliseconds()})

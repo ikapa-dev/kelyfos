@@ -71,10 +71,14 @@ func (s *hostServer) toolSnapshot(raw json.RawMessage) *mcp.CallToolResult {
 	if err != nil {
 		return mcp.Errorf("%v", err)
 	}
-	if err := validSnapshotName(a.Name); err != nil {
+	// snapshotDir is the gate now (P7-17/F7): it calls validSnapshotName
+	// itself, so the check is not repeated here — a rule enforced at some call
+	// sites is the finding, and a rule enforced at the call site AND in the
+	// function is the same rule twice with two places to drift.
+	dir, err := snapshotDir(a.Name)
+	if err != nil {
 		return mcp.Errorf("%v", err)
 	}
-	dir := snapshotDir(a.Name)
 	started := time.Now()
 	statePath, memPath, err := sandbox.SnapshotRunning(&b.sb.State, dir)
 	if err != nil {
@@ -105,10 +109,14 @@ func (s *hostServer) toolRestore(raw json.RawMessage) *mcp.CallToolResult {
 	if err := json.Unmarshal(raw, &a); err != nil {
 		return mcp.Errorf("sandbox_restore: %v", err)
 	}
-	if err := validSnapshotName(a.Name); err != nil {
+	// snapshotDir is the gate now (P7-17/F7): it calls validSnapshotName
+	// itself, so the check is not repeated here — a rule enforced at some call
+	// sites is the finding, and a rule enforced at the call site AND in the
+	// function is the same rule twice with two places to drift.
+	dir, err := snapshotDir(a.Name)
+	if err != nil {
 		return mcp.Errorf("%v", err)
 	}
-	dir := snapshotDir(a.Name)
 	meta, err := sandbox.ReadSnapshotMeta(dir)
 	if err != nil {
 		return mcp.Errorf("no snapshot named %q: %v", a.Name, err)
@@ -325,13 +333,15 @@ func (s *hostServer) toolFork(raw json.RawMessage) *mcp.CallToolResult {
 	if err := json.Unmarshal(raw, &a); err != nil {
 		return mcp.Errorf("sandbox_fork: %v", err)
 	}
-	if err := validSnapshotName(a.Name); err != nil {
+	// The name before the count, which is the order this tool has always
+	// reported them in; snapshotDir is what checks it now (P7-17/F7).
+	dir, err := snapshotDir(a.Name)
+	if err != nil {
 		return mcp.Errorf("%v", err)
 	}
 	if a.Count < 1 {
 		return mcp.Errorf("sandbox_fork needs a `count` of at least 1")
 	}
-	dir := snapshotDir(a.Name)
 	meta, err := sandbox.ReadSnapshotMeta(dir)
 	if err != nil {
 		return mcp.Errorf("no snapshot named %q: %v", a.Name, err)

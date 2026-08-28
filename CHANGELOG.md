@@ -73,6 +73,15 @@ reference described in the README and re-measured per release.
   coming) or on Ctrl-C (P7-9).
 
 ### Fixed
+- **A snapshot name was checked on the MCP path and not on the CLI path.**
+  `validSnapshotName` — a character allowlist, a length bound and a leading-dot
+  refusal — was called by every MCP tool before it built a path and by none of
+  `kelyfos snapshot save`, `kelyfos snapshot restore`, `kelyfos fork` or
+  `kelyfos bench`. Both paths are driven by the local user's own flags, so no
+  privilege boundary was crossed; it is closed because a rule enforced at some
+  call sites is a rule the next call site misses. The check now lives in
+  `snapshotDir`, which every call site already went through, with a
+  `filepath.Rel` assertion after the join as belt and braces (P7-17/F7).
 - **`kelyfos connect` created MCP client configuration files world-readable.**
   `~/.codex/config.toml` and `~/.gemini/settings.json` are files that commonly
   grow an API key later, and `os.WriteFile` only applies its mode on creation —

@@ -26,7 +26,10 @@ func writeSnapshot(t *testing.T, name string, meta sandbox.SnapshotMeta) {
 
 func mkdirSnapshot(t *testing.T, name string) string {
 	t.Helper()
-	dir := snapshotDir(name)
+	dir, err := snapshotDir(name)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}

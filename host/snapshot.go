@@ -35,11 +35,37 @@ func snapshotCmd(argv []string) error {
 	}
 }
 
-// snapshotDir is where a named snapshot lives. Snapshots outlive the sandbox
-// that produced them, so they sit alongside sessions rather than in a run
-// directory that is deleted on teardown.
-func snapshotDir(name string) string {
-	return filepath.Join(sandbox.Root(), "snapshots", name)
+// snapshotDir is where a named snapshot lives, and it is the gate on what a
+// name may be. Snapshots outlive the sandbox that produced them, so they sit
+// alongside sessions rather than in a run directory that is deleted on
+// teardown.
+//
+// The check moved in here in P7-17/F7. validSnapshotName was applied by every
+// MCP tool and by none of the CLI call sites, and the review that found that
+// miscounted the CLI ones: it said four and there were five. A rule enforced at
+// some call sites is a rule the next call site will miss, so the gate belongs
+// in the one function every call site already has to go through — and once it
+// returns an error, the compiler finds them all, including the one the review
+// missed and the one in host/team.go that this function did not even know
+// about, which joined the directory by hand.
+//
+// The filepath.Rel assertion is belt and braces. It cannot fire while the
+// character rule above it holds — a validated name has no separator and no
+// dots to walk with — and that is exactly why it is here: it is what makes the
+// next change to validSnapshotName safe rather than merely careful.
+func snapshotDir(name string) (string, error) {
+	if err := validSnapshotName(name); err != nil {
+		return "", err
+	}
+	root := filepath.Join(sandbox.Root(), "snapshots")
+	dir := filepath.Join(root, name)
+	rel, err := filepath.Rel(root, dir)
+	if err != nil || rel != name || rel == ".." ||
+		strings.HasPrefix(rel, ".."+string(filepath.Separator)) ||
+		strings.ContainsRune(rel, filepath.Separator) {
+		return "", fmt.Errorf("snapshot name %q does not resolve to a directory inside %s", name, root)
+	}
+	return dir, nil
 }
 
 func snapshotSave(argv []string) error {
@@ -56,7 +82,10 @@ func snapshotSave(argv []string) error {
 	if err != nil {
 		return err
 	}
-	dir := snapshotDir(*name)
+	dir, err := snapshotDir(*name)
+	if err != nil {
+		return err
+	}
 	started := time.Now()
 	state, mem, err := sandbox.SnapshotRunning(st, dir)
 	if err != nil {
@@ -108,7 +137,10 @@ func snapshotRestore(argv []string) error {
 		fmt.Printf("policy: %s\n", cfg.Path)
 	}
 
-	dir := snapshotDir(*name)
+	dir, err := snapshotDir(*name)
+	if err != nil {
+		return err
+	}
 	opts := sandbox.Options{Arch: *arch, Flavor: *flavor, Quiet: true}
 	if *console {
 		opts.Console = prefixWriter{os.Stderr, "[guest] "}
