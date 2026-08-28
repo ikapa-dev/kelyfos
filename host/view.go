@@ -359,6 +359,17 @@ func (v *viewServer) broadcast(f sseFrame) {
 // The file is opened read-only by os.ReadFile (which opens O_RDONLY); no
 // write handle to the flight recorder exists anywhere in this command.
 func (v *viewServer) handleIndex(w http.ResponseWriter, r *http.Request) {
+	// http.ServeMux treats a bare "/" pattern as a catch-all for any path
+	// with no more specific match, so without this an arbitrary path would
+	// silently render the same report instead of a 404. Harmless either way
+	// — nothing here ever reads r.URL.Path — but a real 404 is the honest
+	// answer for a path that names nothing, and it is what a reviewer
+	// scanning routes for "does a URL fragment reach the filesystem" should
+	// find: nowhere, not even here.
+	if r.URL.Path != "/" {
+		http.NotFound(w, r)
+		return
+	}
 	blob, err := os.ReadFile(v.path)
 	if err != nil {
 		http.Error(w, "no flight recorder for this session", http.StatusInternalServerError)

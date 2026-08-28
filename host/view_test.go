@@ -214,6 +214,24 @@ func TestMismatchedHostRefusedEvenWithACorrectToken(t *testing.T) {
 	}
 }
 
+// http.ServeMux's "/" pattern is a catch-all for anything not more
+// specifically registered; handleIndex refuses that rather than silently
+// rendering the report for an arbitrary path.
+func TestUnknownPathIsRefusedNotSilentlyRenderedAsTheIndex(t *testing.T) {
+	sessionID, path, _ := newFixtureSession(t)
+	tv := newTestView(t, sessionID, path)
+
+	req := tv.req(t, http.MethodGet, "/some/other/path", tv.token)
+	resp, err := tv.ts.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("GET /some/other/path: got %d, want %d", resp.StatusCode, http.StatusNotFound)
+	}
+}
+
 // --- GET and HEAD only, structurally: every other method refused on every
 // route regardless of token or Host validity ---
 
