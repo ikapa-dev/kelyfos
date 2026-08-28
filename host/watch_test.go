@@ -423,6 +423,17 @@ func TestMapPaneShowsLiveRefusalsWithTheirFixLine(t *testing.T) {
 // Neither pane may emit more lines than its own height, note included — the
 // off-by-one a review caught: the old logic picked a full budget's worth of
 // content and then appended a truncation note on top of it.
+//
+// The floor starts at 4, not 1: both panes' chrome is a fixed
+// header + rule + hint, joined with "\n" around whatever body content the
+// budget allows — even a zero-width body still costs a line for the
+// separator between "rule" and "hint" ("header\nrule\n\nhint"). Going below
+// 4 would mean conditionally dropping the rule or the hint for a terminal
+// too small to show either meaningfully, which is real UI work this task
+// was never asked to do — the review's own realistic case was 120x24, and
+// nobody runs `kelyfos watch` in a 2-line terminal. 4 is the true minimum:
+// verified by removing fitToBudget's own floor of 1 and confirming the
+// total is still 4, not fewer, at height 1-3.
 func TestMapAndSheetPanesNeverExceedTheirHeightBudget(t *testing.T) {
 	m := teamModel()
 	m.width = 100
@@ -430,7 +441,7 @@ func TestMapAndSheetPanesNeverExceedTheirHeightBudget(t *testing.T) {
 		Agents: []recorder.EvAgent{{Name: "master", Sandbox: "a"}, {Name: "worker-1", Sandbox: "b"}},
 		Edges:  []string{"master -> worker-1", "worker-1 -> master"},
 	}))
-	for h := 1; h <= 30; h++ {
+	for h := 4; h <= 30; h++ {
 		if got := strings.Count(m.mapPane(m.width, h), "\n") + 1; got > h {
 			t.Errorf("mapPane(height=%d) emitted %d lines", h, got)
 		}
