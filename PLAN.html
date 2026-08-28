@@ -130,7 +130,7 @@
      injected secrets, full audit replay, and millisecond forking.</p>
   <div class="meta">
     owner: <b>John</b> &nbsp;·&nbsp; developer: <b>Claude Code</b> &nbsp;·&nbsp;
-    status: <b class="amber" id="meta-status">ACTIVE &mdash; <b>Phase 7</b>, the declared shape of a run, opened 2026-08-27 on the owner&rsquo;s ruling (D59). v1.0 is tagged and every earlier phase is closed; this one exits at <code>v1.1</code>. Fifteen tasks; P7-4 and P7-6 done and reviewed, P7-14 added mid-phase (D67) for a defect P7-4's own re-verification found.</b> &nbsp;&middot;&nbsp;
+    status: <b class="amber" id="meta-status">ACTIVE &mdash; <b>Phase 7</b>, the declared shape of a run, opened 2026-08-27 on the owner&rsquo;s ruling (D59). v1.0 is tagged and every earlier phase is closed; this one exits at <code>v1.1</code>. P7-0 through P7-13 are done and reviewed; P7-14, P7-15 and P7-16 are deferred, non-blocking side-tasks (D67, D69, D70). P7-17 opened 2026-08-28 (D71): the twenty-one findings of the independent security review of that date, two of them High, remediated as a block ahead of the rest.</b> &nbsp;&middot;&nbsp;
     last updated: <b id="meta-updated">2026-08-28</b><br>
     repo file: <b>PLAN.html</b> (commit this document at the repository root — it is the single source of truth)<br>
     <span class="quiet">KelyfOS — from κέλυφος (kélyfos), "shell": the guest OS wrapped around the agent. Formerly working-titled "agos" (D4 → D10).</span>
@@ -185,7 +185,7 @@
     <span class="bl-name">Overall</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">P7-0 &mdash; the policy-record spec, written before the code.</b> <code>docs/policy-record.md</code>: every field Phase 7 adds, its key, its Go type, its position in the frozen hash order, which of the eight doors writes it, and what it deliberately omits. D59 has already settled the one irreversible question &mdash; typed fields, not JSON in a string &mdash; so this task specifies rather than decides. It is reviewed before P7-2 touches <code>internal/recorder</code>, for the reason P5-0 existed: a schema argued about after it is hashed is a migration rather than an argument.</div>
+  <div class="focusline">Current focus: <b id="focus">P7-17 &mdash; the 2026-08-28 security review, remediated as a block (D71).</b> Twenty-one findings, in the report&rsquo;s own order of work: <b>F8</b> first &mdash; delete the guard in <code>confine()</code>, because a binary the agent names <code>kelyfos-confine</code> is spawned by PID 1 unconfined and as root &mdash; then <b>F9</b>, the peer check in <code>handle</code> and the <code>iifname != tap</code> drop, because the proxy that carries the operator&rsquo;s credentials answers any process on the host. Both contradict a written guarantee, which is why they come before P7-14/15/16. Five workstreams in isolated worktrees, exclusive file ownership, one commit per finding, and every fix proven by a test that fails on the parent commit.</div>
 </div>
 
 <!-- ====================================================== 1. END GOAL -->
@@ -1482,6 +1482,64 @@
         either scope each one per-team/per-session, or add real locking</b> &mdash; a design pass, not
         necessarily a large one, since the shape of the fix (S20's own precedent) is already known. Not gated by
         D62's barrier and not owned by any of the four lanes.</span></li>
+      <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P7-17</span><div class="tk"><b>Security review 2026-08-28 remediation.</b> The
+        twenty-one findings of the independent source review at <code>SECURITY-REVIEW-2026-08-28.html</code>
+        (commit <code>6e55190</code>; seven from the first pass, fourteen added on verification), remediated as
+        one block ahead of the remaining Phase 7 tasks per <b>D71</b>. Each sub-item is closed only when the
+        report&rsquo;s failure scenario is impossible by construction rather than by example, with a test named
+        after the finding that is <i>proven to fail on the parent commit</i>, docs carrying every guarantee that
+        changed (&sect;8 rule 9), and an adversarial review by an agent that did not write it against the
+        matching &sect;8 rule 10 checklist. One commit per finding, <code>P7-17/F&lt;n&gt;: &hellip;</code>. Where
+        a fix would weaken an existing test, bound, refusal or documented property, it stops and takes a Decision
+        Log row instead. The report&rsquo;s ten &ldquo;Also noted&rdquo; items are out of scope here and are
+        logged in one Progress Log row at close, as candidates for a
+        follow-up task the owner opens or declines. Order below is the report&rsquo;s own <i>Order of work</i>: what an attacker
+        reaches first.
+        <ul class="tasks">
+          <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+              <span class="tid">F8</span><span class="tk"><b>High.</b> Any binary named <code>kelyfos-confine</code> runs unconfined as root &mdash; the re-entrancy guard in <code>confine()</code> tests <code>cmd.Path</code>, which the agent chooses. <code>supervisor/confine.go:104</code>.</span></li>
+          <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+              <span class="tid">F9</span><span class="tk"><b>High.</b> The egress proxy is reachable by any local process, with the operator&rsquo;s bound credentials attached &mdash; the input chain filters by <code>iifname</code>, and a local connection to the TAP address never crosses the TAP. <code>internal/egress/proxy.go:251</code> &middot; <code>internal/sandbox/network.go:190</code>.</span></li>
+          <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+              <span class="tid">F10</span><span class="tk">A confined process can <code>mknod</code> its way to the raw disks: <code>writeRights</code> grants <code>MAKE_CHAR</code>/<code>MAKE_BLOCK</code> and the merged overlay carries neither <code>MS_NODEV</code> nor <code>MS_NOSUID</code>. <code>supervisor/profile.go:130</code> &middot; <code>supervisor/mount.go:73</code>.</span></li>
+          <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+              <span class="tid">F11</span><span class="tk"><code>write_file</code> re-checks for symlinks and still opens through one &mdash; a lexical <code>Lstat</code> walk followed by an ordinary <code>os.WriteFile</code>, with the swap window between them. <code>supervisor/tools.go:413</code>.</span></li>
+          <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+              <span class="tid">F13</span><span class="tk">The flight recorder fails open: 77 <code>Append</code> errors are discarded, so a full disk or one corrupt line leaves the sandbox executing while nothing is recorded. Fail closed in the recorder (<b>13a</b>) and wire <code>Broken()</code> into the run loop (<b>13b</b>). <code>internal/recorder/recorder.go:504</code> &middot; <code>host/run.go</code>.</span></li>
+          <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+              <span class="tid">F12</span><span class="tk">Erase leaves guest stdout behind in <code>Error.Message</code>, which the exemption map excuses as system-generated. <code>internal/recorder/erase.go:280</code> &middot; <code>host/servemcpaudit.go:170</code>.</span></li>
+          <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+              <span class="tid">F14</span><span class="tk">The resolved-address check misses CGNAT and other reserved space &mdash; 100.64/10, 192.0.0/24, 198.18/15, 240/4, NAT64. <code>internal/egress/dial.go:79</code>.</span></li>
+          <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+              <span class="tid">F15</span><span class="tk">The forward transport inherits the host&rsquo;s <code>HTTP_PROXY</code> by cloning <code>http.DefaultTransport</code>, so the resolved-address hook never sees the real destination. <code>internal/egress/dial.go:148</code>.</span></li>
+          <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+              <span class="tid">F16</span><span class="tk">The terminated leg has no header budget and no deadline: <code>handle</code> clears both before <code>terminate</code> parses every subsequent request itself. <code>internal/egress/terminate.go:53</code>.</span></li>
+          <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+              <span class="tid">F17</span><span class="tk">A partially dumped file is committed over the user&rsquo;s project &mdash; &ldquo;nothing staged&rdquo; is the wrong test for a <code>debugfs dump</code> that failed midway. <code>internal/sandbox/extract.go:477</code>.</span></li>
+          <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+              <span class="tid">F18</span><span class="tk">Symlink chains escape the lexical target check: each link is judged alone, as though every other name in the tree were a real directory. <code>internal/sandbox/extract.go:334</code>.</span></li>
+          <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+              <span class="tid">F19</span><span class="tk">Host-trusted state lives inside the VMM&rsquo;s chroot: <code>sandbox.json</code> and the paused marker sit in the jailed run directory at the invoking uid. <code>internal/sandbox/sandbox.go:1678</code> &middot; <code>jail.go:57</code>.</span></li>
+          <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+              <span class="tid">F20</span><span class="tk">Guest strings reach the terminal without <code>SafeText</code> &mdash; the live OOM and plugin lines, <code>kelyfos log</code>, and <code>watch</code>&rsquo;s <code>absorb</code>. <code>host/run.go:517</code> &middot; <code>host/log.go:790</code> &middot; <code>host/watch.go</code>.</span></li>
+          <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+              <span class="tid">F1</span><span class="tk">The guest text sanitiser misses Unicode format characters: <code>SafeText</code> and <code>isDangerousControl</code> test ASCII only, so the Trojan Source class passes. <code>internal/proto/proto.go:632</code> &middot; <code>internal/report/safe.go:59</code>.</span></li>
+          <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+              <span class="tid">F2</span><span class="tk">The E2B shim HTTP API has no cross-site request defence, and its token is opt-in: a web page can <code>POST /files</code> and <code>POST /sandboxes</code> without a preflight. <code>shim/shim.go:148</code>.</span></li>
+          <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+              <span class="tid">F21</span><span class="tk">A discovered <code>kelyfos.toml</code> is trusted with host-wide powers &mdash; no ownership or writability check on the walk up to <code>/</code>, and the file may name an absolute workspace, an absolute plugin path and bound secrets. <code>internal/config/config.go:117</code>.</span></li>
+          <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+              <span class="tid">F3</span><span class="tk">The guest vsock listener never checks the peer CID, and <code>CONFIG_VSOCKETS_LOOPBACK</code> is disabled against the upstream default in a config the fragment does not pin. <code>internal/vsock/vsock.go:101</code>.</span></li>
+          <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+              <span class="tid">F4</span><span class="tk">Workspace contents are lost for a directory name ending in whitespace: the <code>debugfs</code> script line is unquoted and the echo-attribution trims. <code>internal/sandbox/extract.go:155</code>.</span></li>
+          <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+              <span class="tid">F5</span><span class="tk">MCP client config files are created world-readable under <code>$HOME</code>, and the client that later writes an API key keeps the mode it found. <code>host/connect.go:225</code>.</span></li>
+          <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+              <span class="tid">F6</span><span class="tk">Erase silently drops chain fields an older build cannot parse, because it round-trips through the typed struct rather than redacting at the raw-JSON level the way <code>digestOfLine</code> reads. <code>internal/recorder/erase.go:76</code>.</span></li>
+          <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+              <span class="tid">F7</span><span class="tk">Snapshot names are validated on the MCP path and not the CLI path &mdash; five unvalidated callers of <code>snapshotDir</code>, which is the finding&rsquo;s own point demonstrated. <code>host/snapshot.go:59</code> &middot; <code>host/bench.go:152</code>.</span></li>
+        </ul></div></li>
   </ul>
 
   <div class="accept">
@@ -8044,6 +8102,28 @@ after:
         several agent-driven teams running concurrently on one development machine, which this phase's own
         multi-lane, multi-reviewer structure made routine rather than exceptional. Not gated by D62's barrier:
         it touches no lane's feature code, only host-level state shared across sessions and teams.</td></tr>
+    <tr><td class="mono">D71</td><td class="mono">2026-08-28</td>
+        <td>The twenty-one findings of the independent security review of 2026-08-28
+        (<code>SECURITY-REVIEW-2026-08-28.html</code>, read at commit <code>6e55190</code>) are remediated as one
+        block, <b>P7-17</b>, ahead of the remaining Phase 7 tasks &mdash; a deviation from &sect;8 rule 1&rsquo;s
+        top-down order, logged here before implementation as rule 5 requires. Numbered P7-17 and not P7-15 as the
+        remediation brief asked, because P7-15 is already D69&rsquo;s fuzz-target OOM and &sect;8 rule 2 makes
+        task ids stable labels; branches are <code>p7-17/&lt;workstream&gt;</code> and commits
+        <code>P7-17/F&lt;n&gt;</code>. Five workstreams with exclusive file ownership &mdash; guest, egress,
+        record, integrity, surface &mdash; each reviewed by an agent that did not write it.</td>
+        <td>Two of the fourteen findings added on verification are High, and both sit in areas that had been
+        marked sound &mdash; by the review&rsquo;s own first pass and by this project&rsquo;s threat model.
+        <code>supervisor/confine.go</code>&rsquo;s re-entrancy guard keys on <code>cmd.Path</code>, which is the
+        agent&rsquo;s own argv[0]: a binary the agent names <code>kelyfos-confine</code> is started by PID 1 with
+        no Landlock ruleset and no seccomp filter, against <code>docs/threat-model.md</code>&rsquo;s written
+        promise that every process the supervisor spawns is confined. The egress proxy binds the host&rsquo;s TAP
+        address and the input chain filters only by <code>iifname</code>, so a local connection is routed over
+        <code>lo</code>, never inspected, and served with the operator&rsquo;s bound credentials attached &mdash;
+        against the comment above <code>Proxy.Listen</code> that says it is reachable from one sandbox and nothing
+        else. A finding that contradicts a written guarantee is worse than one that fills a gap, because
+        everything downstream was designed on the guarantee. The three Phase 7 tasks this jumps ahead of
+        (P7-14, P7-15, P7-16) are already logged as deferred and non-blocking, and none of them is what an
+        attacker reaches first.</td></tr>
     <!-- Claude Code: append rows above this line. -->
   </table>
 </section>
