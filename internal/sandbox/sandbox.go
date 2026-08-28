@@ -1565,7 +1565,12 @@ func RunDirOf(id string) string { return jailRunDir(id) }
 // (docs/qol.md §1.3). The marker is how the owner learns which kind of stop
 // this was, and it names the session so the message can say where the files
 // went instead.
-func PauseMarker(st *State) string { return filepath.Join(st.RunDir, "paused") }
+//
+// Beside the state file rather than inside the chroot, and for the same reason
+// (F19): a VMM that could plant one would make the run holding it skip its
+// sync-back for ever, and print that the workspace travelled with a session
+// nothing ever stored.
+func PauseMarker(st *State) string { return filepath.Join(stateDir(st.RunDir), "paused") }
 
 // PausedAs reports the name a pause stored this machine under, or "" if the
 // stop was not a pause. Read rather than signalled, because the run directory is
@@ -1670,12 +1675,31 @@ func (s *Sandbox) cleanup() {
 	_ = removeJail(filepath.Dir(s.State.RunDir))
 }
 
+// stateDir is where the host keeps its own record of a sandbox: one level above
+// the chroot (F19).
+//
+// The jailer chroots Firecracker into the run directory and drops it to the
+// invoking uid — the same uid that owns this file, at 0600. So a file inside the
+// run directory is a file a compromised VMM can rewrite, and a compromised VMM
+// is the exact threat the jail exists for: docs/threat-model.md calls the jail
+// "depth, not a boundary", and this was the one path that handed the host's own
+// files back. Everything a later kelyfos process does with a sandbox starts by
+// reading this file. pause copies WorkspaceHost into the stored session and the
+// resume renames the guest's tree over that host directory; `snapshot save`
+// copies the addressing into the snapshot the next guest boots from; exec and
+// shell dial UDSPath.
+//
+// jailDir(id) is the level above the chroot, and a chrooted process cannot walk
+// above its own root at all. Everything the VMM legitimately needs — the vsock
+// socket, the API socket, config.json, the images — stays exactly where it was.
+func stateDir(runDir string) string { return filepath.Dir(runDir) }
+
 func (s *Sandbox) writeState() error {
 	blob, err := json.MarshalIndent(s.State, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(s.State.RunDir, stateFile), blob, 0o600)
+	return os.WriteFile(filepath.Join(stateDir(s.State.RunDir), stateFile), blob, 0o600)
 }
 
 // serveReady accepts the guest's ready channel and forwards the first ready
@@ -1799,7 +1823,8 @@ func Load(id string) (*State, error) {
 	}
 }
 
-func readState(dir string) (*State, error) {
+func readState(runDir string) (*State, error) {
+	dir := stateDir(runDir)
 	blob, err := os.ReadFile(filepath.Join(dir, stateFile))
 	if err != nil {
 		return nil, err
@@ -1808,7 +1833,173 @@ func readState(dir string) (*State, error) {
 	if err := json.Unmarshal(blob, &st); err != nil {
 		return nil, fmt.Errorf("corrupt sandbox state in %s: %w", dir, err)
 	}
+	if err := st.validate(runDir); err != nil {
+		return nil, err
+	}
 	return &st, nil
+}
+
+// validate is what a state file has to survive before anything acts on it.
+//
+// stateDir is what closes F19 — a chrooted process cannot reach a file above its
+// own root — and this is the half that does not depend on that being true.
+// `--no-jail` exists, another process running as this user is not the VMM but is
+// not the host either, and a defence that is only correct while one other
+// defence holds is the shape most of this review's findings had. So every field
+// a later process turns into a host action is checked against something this
+// process can work out for itself.
+//
+// The rule throughout is derivation, not plausibility: the id names its own
+// directory, the run directory is the one the id produces, the sockets are
+// inside it, the images are under the cache root, and the addressing is a /30
+// this package derives. A value that could not have come from here is refused
+// with a message rather than obeyed, which is the difference between a file
+// being data and a file being an instruction.
+func (st *State) validate(runDir string) error {
+	dir := stateDir(runDir)
+	bad := func(format string, args ...any) error {
+		return fmt.Errorf("%s in %s is not a state this host will act on: %s",
+			stateFile, dir, fmt.Sprintf(format, args...))
+	}
+	if id := filepath.Base(dir); st.ID != id {
+		return bad("it is the record of sandbox %q and it is stored under %q", st.ID, id)
+	}
+	if filepath.Clean(st.RunDir) != filepath.Clean(runDir) {
+		return bad("its run directory is %q, and sandbox %s's is %q", st.RunDir, st.ID, runDir)
+	}
+	// The channels a second process dials, and the API socket `snapshot save`
+	// and `pause` drive the VMM through. Both are created inside the run
+	// directory by New, so both are inside it here.
+	for _, f := range []struct{ name, path string }{
+		{"uds_path", st.UDSPath},
+		{"api_path", st.APIPath},
+	} {
+		if f.path != "" && !withinDir(f.path, runDir) {
+			return bad("its %s is %q, which is outside the sandbox's own directory", f.name, f.path)
+		}
+	}
+	// The two block devices. `snapshot save` copies the workspace into the
+	// snapshot the next guest boots from, and the plugins device is packed into
+	// the guest read-only; every path either can legitimately hold is one this
+	// tool built under its own cache root.
+	for _, f := range []struct{ name, path string }{
+		{"workspace", st.Workspace},
+		{"plugins", st.Plugins},
+	} {
+		if f.path != "" && !withinDir(f.path, Root()) {
+			return bad("its %s image is %q, which is outside %s", f.name, f.path, Root())
+		}
+	}
+	if st.CGroupPath != "" && !withinDir(st.CGroupPath, "/sys/fs/cgroup") {
+		return bad("its cgroup is %q, which is not under /sys/fs/cgroup", st.CGroupPath)
+	}
+	// WorkspaceHost is the one path here that is genuinely the person's own and
+	// so cannot be derived. What can be said about it is said: a resume renames
+	// the guest's tree over this directory, so it has to be an absolute, clean
+	// path, and it is not allowed to be anywhere inside this tool's own cache —
+	// kelyfos's state is not somebody's project.
+	if p := st.WorkspaceHost; p != "" {
+		if !filepath.IsAbs(p) || filepath.Clean(p) != p {
+			return bad("its workspace_host is %q, which is not an absolute, clean path", p)
+		}
+		if r := filepath.Clean(Root()); p == r || withinDir(p, r) {
+			return bad("its workspace_host is %q, inside %s — a resume renames the guest's tree "+
+				"over that directory, and kelyfos's own state is not a project", p, r)
+		}
+	}
+	return st.validateNetwork(bad)
+}
+
+// tapName is the interface a sandbox id produces.
+//
+// It mirrors the derivation newNetwork and newNetworkAt each do inline, and it
+// is written out a third time here rather than shared because network.go is
+// mid-merge in another workstream. That is a drift risk and is recorded as one:
+// the two constructors should call this. The bound is IFNAMSIZ-1, and for a real
+// id — eight hex characters — nothing is ever cut.
+func tapName(id string) string {
+	tap := "kelyfos" + id
+	if len(tap) > 15 {
+		tap = tap[:15]
+	}
+	return tap
+}
+
+// validateNetwork checks the addressing, which the review's list did not
+// include and which is where this file reaches furthest.
+//
+// F9 gives the egress proxy a Peer address and refuses a connection from
+// anywhere else. On the restore path that address comes from here: SnapshotRunning
+// copies HostIP/GuestIP/Netmask/HostMAC/ProxyPort out of this file into the
+// snapshot's meta.json, and host/snapshot.go's restoreNetwork feeds them back
+// through NewNetworkFor into newNetworkAt. A compromised VMM cannot write a
+// *malformed* address — up() refuses that — but it can write a valid and wrong
+// one, and 127.0.0.1 is the one that matters: it is an address any local process
+// can source from, so the peer check would pass for the wrong peer and only the
+// nftables layer would still be refusing. The proxy binds on HostIP too, so a
+// loopback host address makes the proxy — with the operator's credentials
+// attached — reachable by every process on the machine, which is the whole of F9
+// re-opened through a file.
+//
+// So the pair is checked against deriveAddrs' own arithmetic rather than merely
+// parsed: link-local, a /30, host at .1 and guest at .2 of it, and not the /30
+// holding the cloud metadata address, which deriveAddrs itself refuses.
+func (st *State) validateNetwork(bad func(string, ...any) error) error {
+	if st.HostIP == "" && st.GuestIP == "" {
+		// A sandbox with no allowlist has no NIC at all — not a firewalled one,
+		// not an empty allowlist, none (docs/networking.md §1). New writes the
+		// six network fields together or writes none of them, so half of them is
+		// not a state this package produces.
+		if st.TAP != "" {
+			return bad("it names the interface %q and no addressing at all; a sandbox's network "+
+				"is recorded whole or not at all", st.TAP)
+		}
+		return nil
+	}
+	host, guest := net.ParseIP(st.HostIP).To4(), net.ParseIP(st.GuestIP).To4()
+	if host == nil || guest == nil {
+		return bad("its addressing is unusable (host %q, guest %q)", st.HostIP, st.GuestIP)
+	}
+	if host[0] != 169 || host[1] != 254 {
+		return bad("its host address %s is outside the link-local range every sandbox address "+
+			"is derived from", host)
+	}
+	if !sameSlash30(host, guest) || host[3]&0x03 != 1 || guest[3] != host[3]+1 {
+		return bad("host %s and guest %s are not the two halves of a /30 this host derives", host, guest)
+	}
+	if sameSlash30(host, metadataIP) {
+		return bad("its /30 holds the cloud metadata address %s, which no sandbox is given", metadataIP)
+	}
+	if st.Netmask != "" && st.Netmask != "255.255.255.252" {
+		// It becomes the guest's own `ip=` boot argument, so it is what the
+		// guest treats as on-link. Every sandbox gets a /30.
+		return bad("its netmask is %q and every sandbox is a /30", st.Netmask)
+	}
+	if st.TAP != "" && st.TAP != tapName(st.ID) {
+		// Derivable, so nothing else is legitimate. Read back as a path under
+		// /sys/class/net to sample this machine's byte counters, so a rewritten
+		// one puts another interface's traffic in the flight recorder under
+		// this sandbox's name.
+		return bad("its interface is %q and sandbox %s's is %q", st.TAP, st.ID, tapName(st.ID))
+	}
+	if st.HostMAC != "" {
+		// Not bound to the id: a restore deliberately keeps the address the
+		// snapshot was taken with, so the guest's ARP entry still matches (D22).
+		// What is checked is the class — unicast and locally administered, which
+		// is all hostMAC ever mints — because this is the argument to
+		// `ip link set … address`.
+		mac, err := net.ParseMAC(st.HostMAC)
+		if err != nil || len(mac) != 6 {
+			return bad("its host MAC %q is not an address", st.HostMAC)
+		}
+		if mac[0]&0x01 != 0 || mac[0]&0x02 == 0 {
+			return bad("its host MAC %s is not a locally administered unicast address", mac)
+		}
+	}
+	if st.ProxyPort < 0 || st.ProxyPort > 65535 {
+		return bad("its proxy port is %d", st.ProxyPort)
+	}
+	return nil
 }
 
 func alive(pid int) bool {

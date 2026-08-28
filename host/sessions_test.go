@@ -117,11 +117,17 @@ func runningSandbox(t *testing.T, st sandbox.State) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
+	// RunDir is part of what a real machine writes, and readState checks the
+	// record it finds against the directory it found it in (F19).
+	st.RunDir = dir
 	blob, err := json.Marshal(st)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "sandbox.json"), blob, 0o600); err != nil {
+	// Beside the chroot, not inside it: the run directory is the VMM's own
+	// filesystem root, and the host's record of a sandbox is not something the
+	// VMM gets to rewrite (F19).
+	if err := os.WriteFile(filepath.Join(filepath.Dir(dir), "sandbox.json"), blob, 0o600); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -135,10 +141,17 @@ func runningSandbox(t *testing.T, st sandbox.State) {
 // named/<name>.
 func TestAPauseRefusesTheMachineNoResumeCouldOpen(t *testing.T) {
 	t.Setenv("KELYFOS_CACHE", t.TempDir())
-	runningSandbox(t, sandbox.State{ID: "sb-egress", PID: os.Getpid(), Arch: "aarch64",
-		Flavor: "dev", TAP: "kf0", Allow: []string{"example.com"}})
+	// The whole network block, because that is how a machine with a NIC is
+	// recorded — New writes the six fields together or writes none of them, and
+	// readState refuses half of them (F19). The id is eight hex characters for
+	// the same reason a real one is: the interface name is derived from it.
+	const egressID = "0901977d"
+	runningSandbox(t, sandbox.State{ID: egressID, PID: os.Getpid(), Arch: "aarch64",
+		Flavor: "dev", TAP: "kelyfos" + egressID, HostIP: "169.254.36.5", GuestIP: "169.254.36.6",
+		Netmask: "255.255.255.252", HostMAC: "02:01:09:01:97:7d", ProxyPort: 41809,
+		Allow: []string{"example.com"}})
 
-	err := pauseCmd([]string{"--sandbox", "sb-egress", "--as", "before-the-migration"})
+	err := pauseCmd([]string{"--sandbox", egressID, "--as", "before-the-migration"})
 	if err == nil {
 		t.Fatal("a sandbox with egress was paused into a session nothing can bring back")
 	}
@@ -158,7 +171,7 @@ func TestAPauseRefusesTheMachineNoResumeCouldOpen(t *testing.T) {
 	if _, err := os.Stat(namedDir("before-the-migration")); !os.IsNotExist(err) {
 		t.Errorf("the refused pause left a stored session behind at %s", namedDir("before-the-migration"))
 	}
-	if _, err := os.Stat(filepath.Join(sandbox.RunDirOf("sb-egress"), "paused")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(filepath.Dir(sandbox.RunDirOf(egressID)), "paused")); !os.IsNotExist(err) {
 		t.Error("the refused pause left the pause marker down, so the machine's own run would skip its sync-back")
 	}
 

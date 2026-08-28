@@ -15,11 +15,16 @@ func writeRunningState(t *testing.T, st State) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
+	// RunDir is what readState checks the file's own location against, and the
+	// state a real machine writes always carries it (F19).
+	st.RunDir = dir
 	blob, err := json.Marshal(st)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, stateFile), blob, 0o600); err != nil {
+	// Beside the chroot rather than inside it — where writeState puts it, and
+	// where readState looks.
+	if err := os.WriteFile(filepath.Join(stateDir(dir), stateFile), blob, 0o600); err != nil {
 		t.Fatal(err)
 	}
 }

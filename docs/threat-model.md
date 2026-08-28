@@ -340,6 +340,25 @@ That is depth, not a boundary. Two things it does not do:
   service account closes this and costs one setup step; the trade is priced in
   D29 and is revisitable.
 
+What the jail **is** relied on for is that the host's own record of a sandbox is
+not inside it. `sandbox.json` and the pause marker used to live in the run
+directory, which *is* the chroot root, at a mode owned by the same uid the VMM
+drops to — so the one file every later `kelyfos` process reads before doing
+anything was a file a compromised VMM could rewrite. It names the host directory
+a resume renames the guest's tree over, the socket `exec` and `shell` dial, the
+image `snapshot save` copies into the next guest's snapshot, and the addressing
+the restored egress proxy binds and accepts from. Both files now sit one level
+above the chroot, where a chrooted process cannot reach them at all.
+
+They are also **validated on read**, so the guarantee does not rest on the jail
+being intact — `--no-jail` exists, and a defence that is only correct while
+another defence holds is not a defence. Every field that becomes a host action is
+checked against something the reading process can derive for itself: the id names
+its own directory, the run directory is the one that id produces, the sockets are
+inside it, the block devices are under the cache root, and the addressing is the
+`/30` this tool derives. A value that could not have come from here is refused
+with a message rather than obeyed.
+
 ### A compromised guest is confined, and still root (v0.9)
 
 Every process the supervisor spawns — `exec`, a plugin, the interactive shell —

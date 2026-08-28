@@ -1,6 +1,7 @@
 package sandbox
 
 import (
+	"encoding/json"
 	"net"
 	"os"
 	"path/filepath"
@@ -143,7 +144,14 @@ func TestRecordSessionFallsBackToTheSandboxID(t *testing.T) {
 // process that reads it back — `kelyfos exec` — is a different one from the
 // process that wrote it.
 func TestSessionSurvivesTheStateFile(t *testing.T) {
-	dir := t.TempDir()
+	t.Setenv("KELYFOS_CACHE", t.TempDir())
+	// Through RunDirOf rather than a bare temp directory, because the state file
+	// now lives beside the chroot and readState checks that the record it finds
+	// there is the record of the sandbox that directory is named for (F19).
+	dir := RunDirOf("abc")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	s := &Sandbox{State: State{ID: "abc", Agent: "worker-1", Session: "team-1", RunDir: dir}}
 	if err := s.writeState(); err != nil {
 		t.Fatal(err)
@@ -157,12 +165,15 @@ func TestSessionSurvivesTheStateFile(t *testing.T) {
 	}
 	// A file written before the field existed has no session and must load
 	// with an empty one rather than failing.
-	older := t.TempDir()
-	if err := os.WriteFile(filepath.Join(older, stateFile),
-		[]byte(`{"id":"xyz","run_dir":"/tmp"}`), 0o600); err != nil {
+	olderDir := RunDirOf("xyz")
+	if err := os.MkdirAll(olderDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	prev, err := readState(older)
+	if err := os.WriteFile(filepath.Join(stateDir(olderDir), stateFile),
+		[]byte(`{"id":"xyz","run_dir":"`+olderDir+`"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	prev, err := readState(olderDir)
 	if err != nil {
 		t.Fatalf("a sandbox.json without a session field failed to load: %v", err)
 	}
@@ -196,4 +207,202 @@ func TestASnapshotIsNotReadableByAnyoneElse(t *testing.T) {
 	// A file that is not there is not an error: a snapshot that failed halfway
 	// should report the failure, not a chmod complaint about its debris.
 	restrictSnapshot(filepath.Join(dir, "absent"))
+}
+
+// F19. The host's own record of a sandbox lived inside the VMM's chroot.
+//
+// The jailer chroots Firecracker into the run directory and drops it to the
+// invoking uid — the same uid that owns sandbox.json and the pause marker, both
+// at 0600, both in that directory. A VMM that has been compromised (the threat
+// the jail exists for, and the one docs/threat-model.md calls "depth, not a
+// boundary") could rewrite either, and every later kelyfos process obeyed what
+// it read: pause copies WorkspaceHost into the stored session and resume renames
+// the guest's tree over that host directory; `snapshot save` copies the
+// addressing into the snapshot the next guest boots from; exec and shell dial
+// UDSPath.
+//
+// jailDir(id) is one level above the chroot and is not reachable from inside it.
+// That is where the host's own record belongs.
+func TestF19_TheStateFileIsOutsideTheVMMsChroot(t *testing.T) {
+	t.Setenv("KELYFOS_CACHE", t.TempDir())
+	const id = "abc12345"
+	runDir := RunDirOf(id)
+	if err := os.MkdirAll(runDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	s := &Sandbox{State: State{
+		ID: id, RunDir: runDir,
+		UDSPath: filepath.Join(runDir, "v.sock"),
+		APIPath: filepath.Join(runDir, "fc.sock"),
+	}}
+	if err := s.writeState(); err != nil {
+		t.Fatal(err)
+	}
+
+	// The chroot root is runDir. A file inside it is a file the VMM can open.
+	if _, err := os.Stat(filepath.Join(runDir, stateFile)); err == nil {
+		t.Errorf("%s is inside the chroot (%s), where the VMM can rewrite it — and every later "+
+			"kelyfos process trusts what it reads there", stateFile, runDir)
+	}
+	outside := filepath.Join(jailDir(id), stateFile)
+	if _, err := os.Stat(outside); err != nil {
+		t.Fatalf("the state is not at %s either: %v", outside, err)
+	}
+	if withinDir(outside, runDir) {
+		t.Errorf("%s is still under the chroot root %s", outside, runDir)
+	}
+
+	// The pause marker is the other half: it is what tells the process holding
+	// the sandbox that this stop is a pause and the workspace must not be
+	// written back.
+	if withinDir(PauseMarker(&s.State), runDir) {
+		t.Errorf("the pause marker %s is inside the chroot; a VMM that plants one makes a run "+
+			"skip its sync-back for ever", PauseMarker(&s.State))
+	}
+
+	// And it still round-trips, which is the whole point of moving rather than
+	// removing it.
+	back, err := readState(runDir)
+	if err != nil {
+		t.Fatalf("readState: %v", err)
+	}
+	if back.ID != id || back.UDSPath != s.State.UDSPath {
+		t.Errorf("state came back as %+v", back)
+	}
+}
+
+// F19, the second part: validate on read regardless.
+//
+// The move above is what closes the finding — a chrooted process cannot walk
+// above its own root — but the file is still the one thing several commands
+// believe without question, and `--no-jail` exists. So every field a later
+// process turns into a host action is checked against something this process
+// can derive for itself.
+//
+// The network half is not in the review and belongs here anyway. F9 gives the
+// egress proxy a Peer address and refuses a connection from anywhere else; on
+// the restore path that address comes from this file, through SnapshotRunning
+// into the snapshot's meta.json and out again through restoreNetwork into
+// newNetworkAt. A compromised VMM cannot write a *malformed* address — F9's
+// up() refuses that — but it can write a valid and wrong one. 127.0.0.1 is the
+// example that matters: it is an address a local host process can source from,
+// which turns the peer check into a check that passes for the wrong peer and
+// leaves only the nftables layer refusing.
+func TestF19_ARewrittenStateFileIsRefusedRatherThanObeyed(t *testing.T) {
+	cache := t.TempDir()
+	t.Setenv("KELYFOS_CACHE", cache)
+	const id = "0901977d"
+	runDir := RunDirOf(id)
+	if err := os.MkdirAll(runDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	// The shape a live sandbox actually writes, taken from a running machine's
+	// own sandbox.json. It has to keep loading, or this check is a way to lose
+	// every running sandbox rather than a way to distrust a rewritten one.
+	sound := func() State {
+		return State{
+			ID: id, PID: os.Getpid(), Arch: "aarch64", Flavor: "dev",
+			UDSPath: filepath.Join(runDir, "v.sock"),
+			APIPath: filepath.Join(runDir, "fc.sock"),
+			TAP:     "kelyfos" + id,
+			HostIP:  "169.254.36.5", GuestIP: "169.254.36.6",
+			Netmask: "255.255.255.252", HostMAC: "02:01:09:01:97:7d",
+			ProxyPort: 41809, VcpuCount: 2, MemMiB: 512,
+			Allow: []string{"example.com"}, RunDir: runDir, Jailed: true,
+		}
+	}
+	// Written to both places on purpose. The parent commit reads the copy inside
+	// the chroot and this one reads the copy above it, so every case below
+	// reports what it is really about — the value being obeyed — on either side
+	// of the fix, rather than reporting a missing file on one of them.
+	write := func(t *testing.T, st State) {
+		t.Helper()
+		blob, err := json.Marshal(st)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, dir := range []string{jailDir(id), runDir} {
+			if err := os.WriteFile(filepath.Join(dir, stateFile), blob, 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+
+	write(t, sound())
+	if _, err := readState(runDir); err != nil {
+		t.Fatalf("a state file a real machine wrote was refused: %v", err)
+	}
+
+	for _, c := range []struct {
+		name string
+		bend func(*State)
+		why  string
+	}{
+		{"run-dir-elsewhere", func(st *State) { st.RunDir = "/home/somebody" },
+			"RunDir is derivable from the id; a rewritten one aims every path built from it"},
+		{"id-not-its-own-directory", func(st *State) { st.ID = "deadbeef" },
+			"the file at <id>/sandbox.json claiming to be another sandbox is one machine answering for another"},
+		{"uds-outside-the-run-dir", func(st *State) { st.UDSPath = "/tmp/anywhere.sock" },
+			"exec and shell dial this"},
+		{"api-outside-the-run-dir", func(st *State) { st.APIPath = "/tmp/anywhere.sock" },
+			"snapshot save and pause drive the VMM through this"},
+		{"workspace-image-outside-the-cache", func(st *State) { st.Workspace = "/etc/passwd" },
+			"snapshot save copies this file into the snapshot the next guest boots from"},
+		{"plugins-outside-the-cache", func(st *State) { st.Plugins = "/etc/shadow" },
+			"the plugins device is packed into the guest"},
+		{"workspace-host-inside-the-cache", func(st *State) {
+			st.WorkspaceHost = filepath.Join(cache, "sessions")
+		},
+			"resume renames the guest's tree over WorkspaceHost; kelyfos's own state is not a project"},
+		{"workspace-host-relative", func(st *State) { st.WorkspaceHost = "proj/../../etc" },
+			"a path that is not absolute and clean is not a directory anybody chose"},
+		{"guest-ip-is-loopback", func(st *State) { st.GuestIP = "127.0.0.1" },
+			"the restore hands this to the egress proxy as its Peer, and a local process can source from it (F9)"},
+		{"host-ip-is-loopback", func(st *State) { st.HostIP = "127.0.0.1" },
+			"the proxy binds here and the nftables rule is written for it"},
+		{"guest-ip-not-the-pair-of-the-host-ip", func(st *State) { st.GuestIP = "169.254.36.9" },
+			"the addressing is a derived /30; a pair that is not one was not derived"},
+		{"host-ip-off-the-link-local-range", func(st *State) {
+			st.HostIP, st.GuestIP = "10.0.0.1", "10.0.0.2"
+		},
+			"deriveAddrs only ever produces 169.254.0.0/16"},
+		{"host-ip-in-the-metadata-slash-30", func(st *State) {
+			st.HostIP, st.GuestIP = "169.254.169.253", "169.254.169.254"
+		},
+			"deriveAddrs refuses this one index; a state file naming it did not come from it"},
+		{"netmask-widened", func(st *State) { st.Netmask = "255.255.0.0" },
+			"a /16 handed to `ip addr add` claims the whole link-local range for this sandbox"},
+		{"tap-not-the-derived-name", func(st *State) { st.TAP = "eth0" },
+			"Sample() reads /sys/class/net/<tap>/statistics from this, so a rewritten one files " +
+				"another interface's traffic in the flight recorder under this sandbox's name"},
+		{"host-mac-malformed", func(st *State) { st.HostMAC = "not-a-mac" },
+			"this is the argument to `ip link set … address`"},
+		{"host-mac-not-locally-administered", func(st *State) { st.HostMAC = "01:00:5e:00:00:01" },
+			"a multicast MAC on a TAP is not something this package mints"},
+		{"proxy-port-out-of-range", func(st *State) { st.ProxyPort = 70000 },
+			"this goes into the nftables rule as the one reachable port"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			st := sound()
+			c.bend(&st)
+			write(t, st)
+			if _, err := readState(runDir); err == nil {
+				t.Errorf("a rewritten sandbox.json was obeyed rather than refused — %s", c.why)
+			}
+		})
+	}
+
+	// A state file written before a field existed still loads. The check is
+	// about values a VMM could have chosen, not about being new.
+	t.Run("older-state-file-still-loads", func(t *testing.T) {
+		st := sound()
+		st.TAP, st.HostIP, st.GuestIP, st.Netmask, st.HostMAC, st.ProxyPort = "", "", "", "", "", 0
+		st.Seccomp, st.Profile = "", ""
+		write(t, st)
+		if _, err := readState(runDir); err != nil {
+			t.Errorf("a sandbox with no network was refused: %v", err)
+		}
+	})
 }
