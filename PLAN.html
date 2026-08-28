@@ -1392,7 +1392,7 @@
         the digest, as a documented stable shape. Today only <code>bench</code>, <code>log</code> and
         <code>verify</code> can be piped, so somebody who wants a view this phase did not think of has to parse a
         table. This is the extensibility surface, and it is cheaper than any plugin system.</span></li>
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">P7-11</span><span class="tk"><b>OTLP export.</b> <code>kelyfos log --export-otlp</code>, mapping a session to OTLP-JSON spans:
         <code>invoke_agent</code> per agent, <code>execute_tool</code> per command, egress attempts and refusals as
         span events. <b>Versioned apart from the chain and never an input to verification</b>, because as of the
@@ -6040,6 +6040,40 @@ after:
         Re-ran against a team with a JSON/HTML-hostile string in the team name
         (<code>adv"&lt;/script&gt;&lt;script&gt;alert(1)&lt;/script&gt;team</code>) &mdash; export still produced
         valid JSON (Python <code>json.load</code> round-trip clean).</td></tr>
+    <tr><td class="mono">2026-08-28</td><td class="mono">P7-11</td>
+        <td><b>Ticked, by the orchestrator, after adversarial review confirmed GO with no blocking findings.</b>
+        The reviewer traced every string reaching <code>internal/otlp</code>'s JSON output back to its origin
+        across the whole repository (not just this diff), confirming every guest-adjacent value &mdash; command
+        argv/cwd, error messages, egress hostnames &mdash; passes through <code>safe()</code>. It independently
+        re-verified the orchestrator's own earlier claim about <code>kelyfos.command.via</code> by re-tracing
+        every <code>TypeCommandStart</code> construction site itself, and found two more fields with the same
+        shape (<code>kelyfos.session.end_reason</code>, <code>kelyfos.egress.mode</code>) &mdash; all three
+        confirmed non-guest-reachable today (host literals/enums only) via exhaustive call-site tracing, then
+        confirmed again live: a hand-crafted hostile chain with quotes, backslashes, NUL, ESC, BEL, a script
+        tag and an astral-plane emoji across every string field, exported for real through the compiled binary,
+        produced valid JSON with every control byte defused by <code>strconv.Quote</code> and every
+        <code>"</code>/<code>\</code> correctly escaped by <code>encoding/json</code> itself. 559K-iteration
+        <code>FuzzBuild</code> run, zero crashes, byte-identical determinism confirmed. Traceparent forgery,
+        unbounded chain size, and malformed/corrupt-chain handling all separately checked and rejected as
+        non-findings, each with a documented reason. Reviewer's final verdict: <b>GO.</b>
+        <br>Applied the reviewer's low-severity defense-in-depth recommendation before merge: wrapped the three
+        currently-safe-but-unwrapped fields (<code>Via</code>, <code>EndReason</code>, <code>Mode</code>) in
+        <code>safe()</code> anyway, closing the asymmetry the reviewer flagged (<code>EndReason</code> was
+        already wrapped when used as <code>Status.Message</code> three lines below its unwrapped use as an
+        attribute) and removing the fragility of a future call site silently inheriting an unescaped path.
+        Commit <code>a19f756</code>.
+        <br>Reviewer's one non-blocking note (F8): <code>docs/reference/cli.md</code>/<code>llms.txt</code>/
+        <code>llms-full.txt</code> have drifted from this branch's merge-base since <code>main</code> advanced
+        with P7-10's now-merged <code>--json</code> flags &mdash; confirmed a sibling-branch divergence, not a
+        P7-11 regression (<code>02d0c81</code>/<code>c8892f1</code> touch neither); resolved by a post-merge
+        <code>make docs</code> regeneration below.</td>
+        <td class="mono"><code>gofmt -l .</code> clean; <code>go vet ./...</code> clean; <code>go test
+        -count=1 ./...</code> 25 packages <code>ok</code> (including <code>internal/otlp</code>'s 12 unit
+        tests and 4 fuzz seed corpus cases); <code>govulncheck</code> &rarr; &ldquo;No vulnerabilities
+        found.&rdquo;. Reviewer's own run: 559,082-exec <code>FuzzBuild</code> pass at 20s
+        (&ldquo;fuzz: elapsed 21s &hellip; new interesting: 190, PASS&rdquo;), live hostile-chain export
+        (<code>python3 json.load</code> clean, <code>jq</code> shape check, raw byte scan &mdash; zero control
+        bytes outside <code>\t\n\r</code>).</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
