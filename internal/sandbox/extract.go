@@ -447,13 +447,24 @@ func validLink(from, target string) error {
 
 // maxLinkHops bounds how far a chain is followed while it is being checked.
 //
-// Above the kernel's own limit — Linux stops at 40 links in one path resolution
-// — so a chain this stops following is already ELOOP for every tool on the
-// host. That is why running out of budget is **not** a refusal: the refusal is
-// for leaving the tree, that is checked at every single step, and a resolution
-// is deterministic, so a walk that spent its whole budget without leaving has no
-// second path it could have taken. A cycle is contained by definition; it just
-// cannot be followed, by anybody.
+// **This number must stay above 40, and the inequality is the whole soundness
+// argument — do not lower it to match the kernel and do not tidy it away.**
+//
+// Linux stops at 40 links in one path resolution. Sitting above that means every
+// chain anything on this host could actually follow is resolved here to its end,
+// so nothing is ever abandoned half-checked. That is what makes running out of
+// budget **not** a refusal: the refusal is for leaving the tree, that is checked
+// at every single step, and a resolution is deterministic — a walk that spent
+// its whole budget without leaving has no second path it could have taken, and a
+// chain long enough to exhaust this is ELOOP for every tool that meets it.
+//
+// Lower it below the kernel's limit and that inverts: a chain the kernel would
+// happily follow all the way out of the workspace would be dropped unexamined
+// and accepted.
+//
+// A cycle is contained by the same argument. It cannot be followed, by anybody,
+// and refusing an image over one would cost somebody their session for a link
+// that reaches nothing.
 const maxLinkHops = 64
 
 var (

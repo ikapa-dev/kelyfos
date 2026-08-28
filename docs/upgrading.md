@@ -129,7 +129,69 @@ not recognise:
 
 ---
 
-## 5. What has never broken
+## 5. A sandbox started by one version, read by another
+
+**A running sandbox is readable only by the version that started it.** The host's
+own record of a machine — `sandbox.json`, and the marker a pause leaves — used to
+live in the sandbox's run directory. That directory *is* the chroot the jailer
+builds for Firecracker, at a uid the VMM drops to, so the one file every later
+`kelyfos` process reads before doing anything was a file a compromised VMM could
+rewrite. Both files moved one level up, to `<cache>/run/firecracker/<id>/`, where
+a chrooted process cannot reach them at all.
+
+The consequence is a two-way break for the length of an upgrade, and there is no
+compatible middle: a fallback that still read the copy inside the chroot would be
+the hole itself.
+
+- A **new** `kelyfos exec`, `pause`, `snapshot save` or `shell` cannot see a
+  sandbox an **older** one started. It reports no running sandbox rather than
+  doing something wrong.
+- An **older** one cannot see a sandbox a **newer** one started, the same way.
+- While both are installed, `kelyfos sessions prune` and `sessions erase` lose
+  the id→session mapping for machines started by the *other* version. Their other
+  guards still hold — a live run directory, a paused session, a `serve-mcp`
+  marker — so the risk is a chain being pruned while a team member from the other
+  version is still writing into it.
+
+**What to do:** stop the sandboxes you have running before upgrading, or leave
+them alone until they finish. Nothing on disk needs migrating; a machine that has
+stopped leaves nothing behind. If you run both versions side by side, do not run
+`sessions prune` or `sessions erase` until only one is left.
+
+The record is also **checked** when it is read now, whichever version wrote it:
+every path and every address in it has to be one this host could have derived.
+A file that fails those checks is refused with a message naming the field rather
+than obeyed.
+
+---
+
+## 6. The workspace write-back can now refuse, and says so
+
+Since v1.0 the whole ext4 image is refused if any entry is a socket, fifo or
+device node, an absolute or climbing symlink, or a name containing a separator,
+a NUL, a control character, `.` or `..`. That was documented as a security
+improvement and not as a break; it is both, and these joined it:
+
+- a **symlink chain** that leaves the workspace once every link on the way is
+  followed, even where each link alone looks like it stays. A relative link that
+  climbs and lands back inside — `node_modules/x -> ../../packages/x`, which is
+  what every pnpm and npm workspace looks like — is still fine.
+- a **file that came out of the image short** of the size its own inode records,
+  which is what a failed `debugfs dump` leaves behind.
+- a **directory the image would not list**, which is how a name like `notes ` or
+  `my notes` used to come back created and empty.
+
+**A refusal changes nothing.** The host directory is left exactly as it is, and
+on the resume path the workspace image is **kept** rather than cleared up — it is
+the only copy of what the sandbox did, and the refusal names its path so you can
+go and read it with `debugfs` yourself. Nothing is written back and nothing is
+removed. Previously the third case above was not a refusal at all: the workspace
+came back missing a subtree, or holding a truncated file, and said `workspace
+written back`.
+
+---
+
+## 7. What has never broken
 
 Stated because "nothing changed" is only useful if somebody checked:
 

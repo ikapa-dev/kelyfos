@@ -994,13 +994,42 @@ func syncResumedWorkspace(sb *sandbox.Sandbox, hostDir string) {
 				"    Nothing was written back and nothing was removed.\n", image)
 		return
 	}
-	defer os.Remove(image)
 	ws := sandbox.AdoptWorkspace(hostDir, image)
 	dest, diverted, err := ws.SyncBack()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "kelyfos: workspace sync-back failed: %v\n", err)
+		// The image stays. It is the only copy of what the sandbox did, and this
+		// is the path where that matters most.
+		fmt.Fprintf(os.Stderr,
+			"kelyfos: the workspace could not be written back: %v\n"+
+				"    The host directory was left exactly as it is. Nothing was written back and\n"+
+				"    nothing was removed: the sandbox's own copy is still at\n"+
+				"      %s\n"+
+				"    and it is the only one, so it is kept rather than cleared up.\n", err, image)
 		return
 	}
+	// Removed only now, and the placement is the whole of this fix.
+	//
+	// It was a `defer os.Remove(image)` two lines above the call, so it also
+	// fired on the error return — the one path where the image is the only copy
+	// of the agent's work. That was survivable while a damaged image extracted
+	// silently and wrongly: the failure looked like success, so the removal
+	// followed something that had at least written *a* tree. It stopped being
+	// survivable the moment extraction learned to refuse. F17 refuses an image
+	// whose dump came back short, F18 one carrying a symlink chain that leaves
+	// the workspace — so the very defect that used to hand somebody a truncated
+	// file would instead have deleted their whole workspace, and the fix would
+	// have been what caused it.
+	//
+	// The stat above already states the rule and this contradicted it two lines
+	// later: "the directory on disk is worth more than the sync, and refusing is
+	// the only outcome that keeps it. Nothing was written back and nothing was
+	// removed."
+	//
+	// Above the branch below, so both outcomes of a sync-back that actually
+	// happened behave exactly as they did before. A diverted commit wrote the
+	// work to `<dir>.kelyfos-out` rather than over the project — it is on disk
+	// either way, and the image is then a second copy of it.
+	_ = os.Remove(image)
 	if diverted {
 		fmt.Printf("\nthe host directory changed while this session was paused, so it was NOT "+
 			"overwritten.\nresults written to %s instead\n", dest)
