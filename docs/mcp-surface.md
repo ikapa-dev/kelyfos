@@ -262,12 +262,15 @@ are measured on the bare-KVM reference (D15).
 **`team_up`** — raise the team the project's `kelyfos.toml` declares.
 No parameters: the topology is the file's, not the caller's. There is no
 argument that adds an agent or an edge, for the reason in §1.
-**`team_ps`** — the roster, as structured data. This is deliberately the
-machine-readable form `kelyfos team ps` does not have, and it is where an
-orchestrator gets the mapping it needs:
+**`team_ps`** — the roster, as structured data, for a caller who is already an
+MCP client rather than a shell: an orchestrator gets the mapping it needs
+without spawning `kelyfos` and parsing its stdout.
 `{team, session, owner, started_at, edges, budget, agents: [{agent, sandbox, via,
 alive, sampled, cpu_seconds, cpu_quota_percent, vcpus, rss_kib, mem_mib,
-disk_write_bytes, allow, reaches}]}`.
+disk_write_bytes, allow, reaches}]}` — the identical shape `kelyfos team ps
+--json` now also prints (P7-10, `docs/teams.md` §8.5), built from the same
+`teamMember`/`teamPSJSON` mapping in `host/team.go` so the tool and the flag
+can never disagree about what a team is doing.
 `alive` is whether the machine is still there, and `sampled` is whether its usage
 could be read at all — a genuinely idle agent and one whose sample failed are two
 different facts and would otherwise both be zeroes.

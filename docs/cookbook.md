@@ -1,6 +1,6 @@
 # KelyfOS cookbook
 
-Sixteen recipes, each one complete, each one runnable as it stands.
+Eighteen recipes, each one complete, each one runnable as it stands.
 
 These are not illustrations. `bash dev/cookbook.sh` extracts every script below
 and runs it on a real machine. Every commit checks that each recipe still
@@ -1634,6 +1634,133 @@ echo
 echo "== what took its place =="
 grep -o '"data":"[^"]*"' "$record" | tail -1
 grep -o '"type":"session.erasure"[^}]*}' "$record"
+```
+
+---
+
+## 17. Pipe a team's roster, its topology and its digest as JSON
+
+`kelyfos team ps`, `kelyfos team graph` and `kelyfos watch` all gain `--json`
+(P7-10): the extensibility surface for a view this phase did not think of,
+and cheaper than a plugin system. `kelyfos team ps --json` returns the same
+shape the `team_ps` MCP tool has always returned as `structuredContent`.
+`kelyfos team graph --json` and `kelyfos team ps --graph --json` return the
+resolved topology — agents, edges, resources, access and the indirect-reach
+pairs the picture in recipe 15 draws — as data instead of a drawing.
+`kelyfos watch --json` prints one snapshot of the digest — every counter, the
+policy and topology events verbatim — and exits, instead of opening the live
+view. `docs/teams.md` §8.5 documents every field.
+
+<!-- recipe: team-json -->
+
+```bash
+set -euo pipefail
+work="$(mktemp -d)"
+cd "$work"
+trap 'kelyfos team down >/dev/null 2>&1 || true; pkill -f "kelyfos team up" 2>/dev/null || true; rm -rf "$work"' EXIT
+
+cat > kelyfos.toml <<'TOML'
+[team]
+name = "cookbook-json"
+
+[[team.agent]]
+name  = "master"
+image = "dev"
+allow = ["example.com"]
+
+[[team.agent]]
+name  = "worker"
+image = "dev"
+count = 2
+
+[[team.edge]]
+from = "master"
+to   = "worker-*"
+
+[team.store]
+enabled = true
+
+[[team.store.key]]
+name  = "findings"
+write = ["worker-*"]
+read  = ["master"]
+TOML
+
+echo "== declared topology, nothing booted =="
+kelyfos team graph --json > declared.json
+python3 -c "
+import json
+d = json.load(open('declared.json'))
+assert d['mode'] == 'declared', d
+assert d['team'] == 'cookbook-json', d
+assert len(d['agents']) == 3, d['agents']
+assert any(e['from'] == 'master' for e in d['edges']), d['edges']
+assert any(r['kind'] == 'store_key' for r in d['resources']), d['resources']
+assert d['egress_ports'] == [80, 443], d['egress_ports']
+print('declared.json: mode=declared, %d agents, %d edges, %d resources' %
+      (len(d['agents']), len(d['edges']), len(d['resources'])))
+"
+
+echo
+echo "== boot it =="
+kelyfos team up >up.log 2>&1 &
+for _ in $(seq 1 600); do grep -q 'team up in' up.log && break; sleep 0.25; done
+grep -q 'team up in' up.log || { cat up.log; exit 1; }
+
+echo
+echo "== kelyfos team ps --json — the same shape the team_ps MCP tool returns =="
+kelyfos team ps --json > ps.json
+python3 -c "
+import json
+d = json.load(open('ps.json'))
+assert d['team'] == 'cookbook-json', d
+names = sorted(a['agent'] for a in d['agents'])
+assert names == ['master', 'worker-1', 'worker-2'], names
+assert all(a['alive'] for a in d['agents']), d['agents']
+print('ps.json: %d agents, all alive' % len(d['agents']))
+"
+
+echo
+echo "== kelyfos team ps --graph --json — the running topology, as data =="
+kelyfos team ps --graph --json > running.json
+python3 -c "
+import json
+d = json.load(open('running.json'))
+assert d['mode'] == 'running', d
+assert d['team'] == 'cookbook-json', d
+assert len(d['agents']) == 3, d['agents']
+print('running.json: mode=running, %d agents, %d indirect reach pair(s)' %
+      (len(d['agents']), len(d.get('indirect_reach') or [])))
+"
+
+echo
+echo "== declared and running agree on agents, edges and resources =="
+python3 -c "
+import json
+a = json.load(open('declared.json'))
+b = json.load(open('running.json'))
+norm = lambda d: (sorted(x['id'] for x in d['agents']),
+                   sorted((e['from'], e['to']) for e in d['edges']),
+                   sorted(x['id'] for x in d['resources']))
+assert norm(a) == norm(b), (norm(a), norm(b))
+print('agents, edges and resources match between declared and running')
+"
+
+echo
+echo "== kelyfos watch --json — a one-shot snapshot of the digest, not the live view =="
+kelyfos watch --json > digest.json
+python3 -c "
+import json
+d = json.load(open('digest.json'))
+assert d['team'] is True, d
+assert d['events'] > 0, d
+assert d['topology'] is not None, 'no team.topology in the digest'
+assert any(a.get('policy') for a in d['agents']), 'no agent carries its session.policy'
+print('digest.json: team=%s, %d events, topology present, %d agent(s) with a policy' %
+      (d['team'], d['events'], sum(1 for a in d['agents'] if a.get('policy'))))
+"
+
+kelyfos team down
 ```
 
 ---

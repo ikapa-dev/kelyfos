@@ -32,9 +32,10 @@ const teamUsage = `usage: kelyfos team up | ps | down | graph
   up     boot the team declared in kelyfos.toml and hold it until Ctrl-C
   ps     show the running team: agents, edges, and what each is consuming
          --graph draws the topology instead (see graph, below)
+         --json emits structured data instead of a table (P7-10)
   down   stop a running team, syncing every workspace on the way out
   graph  draw the topology declared in kelyfos.toml, with nothing booted —
-         a pre-flight lint, not a monitor (P7-7)
+         a pre-flight lint, not a monitor (P7-7); --json emits it structured
 
 A team is several sandboxes on one host with the paths between them written
 down. No guest has a network path to any other guest: every message travels the
@@ -1305,6 +1306,31 @@ type teamBudget struct {
 	ThrottledSec float64 `json:"throttled_seconds,omitempty"`
 }
 
+// teamPSJSON is `kelyfos team ps --json`'s shape (P7-10) — deliberately
+// identical to what the team_ps MCP tool already returns as
+// StructuredContent (docs/mcp-surface.md §2.2's Teams section,
+// toolTeamPS in host/servemcpteam.go), so a script reading one has read
+// the other and docs/teams.md documents the pair once rather than twice.
+type teamPSJSON struct {
+	Team      string       `json:"team"`
+	Session   string       `json:"session"`
+	Owner     string       `json:"owner"`
+	StartedAt string       `json:"started_at"`
+	Edges     []string     `json:"edges"`
+	Budget    *teamBudget  `json:"budget"`
+	Agents    []teamMember `json:"agents"`
+}
+
+// printJSON is the one place `kelyfos team ps --json`, `kelyfos team graph
+// --json` and `kelyfos team ps --graph --json` each write their output —
+// indented the same way `kelyfos bench --json` already does, so every
+// --json-carrying command in this product formats the same way.
+func printJSON(v any) error {
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	return enc.Encode(v)
+}
+
 func teamMembers(st *teamState) []teamMember {
 	out := make([]teamMember, 0, len(st.Agents))
 	for _, a := range st.Agents {
@@ -1340,6 +1366,8 @@ func teamPS(argv []string) error {
 	fs := flag.NewFlagSet("kelyfos team ps", flag.ExitOnError)
 	showGraph := fs.Bool("graph", false,
 		"draw the topology this team was declared with at boot (P7-7) instead of the table below")
+	asJSON := fs.Bool("json", false,
+		"emit structured data instead of a table — the same shape the team_ps MCP tool already returns (P7-10)")
 	if err := fs.Parse(argv); err != nil {
 		return err
 	}
@@ -1348,7 +1376,14 @@ func teamPS(argv []string) error {
 		return err
 	}
 	if *showGraph {
-		return teamPSGraph(st)
+		return teamPSGraph(st, *asJSON)
+	}
+	if *asJSON {
+		return printJSON(teamPSJSON{
+			Team: st.Name, Session: st.Session, Owner: st.Owner,
+			StartedAt: st.StartedAt.UTC().Format(time.RFC3339),
+			Edges:     st.Edges, Budget: readTeamBudget(st), Agents: teamMembers(st),
+		})
 	}
 	fmt.Printf("team %s — up %s, session %s\n\n", st.Name,
 		time.Since(st.StartedAt).Truncate(time.Second), st.Session)

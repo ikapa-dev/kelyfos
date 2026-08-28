@@ -50,6 +50,7 @@ import (
 func teamGraphCmd(argv []string) error {
 	fs := flag.NewFlagSet("kelyfos team graph", flag.ExitOnError)
 	named := fs.String("policy", "", "a specific kelyfos.toml, instead of the one found by walking up from here")
+	asJSON := fs.Bool("json", false, "emit the resolved topology as JSON (P7-10) instead of drawing it")
 	fs.Usage = func() {
 		fmt.Fprint(fs.Output(), `usage: kelyfos team graph [flags]
 
@@ -86,6 +87,14 @@ sentence, before it costs somebody an afternoon.
 		return err
 	}
 
+	if *asJSON {
+		out, err := buildTeamGraphJSON("declared", plan.name, in, false, nil)
+		if err != nil {
+			return err
+		}
+		return printJSON(out)
+	}
+
 	title := fmt.Sprintf("team %s — declared topology (kelyfos team graph), nothing booted: %d agents, %d edges",
 		proto.SafeText(plan.name), len(plan.agents), len(plan.edgeText))
 	if err := renderTeamGraph(os.Stdout, in, title); err != nil {
@@ -103,8 +112,9 @@ sentence, before it costs somebody an afternoon.
 // event (P7-3) and every agent's session.policy (P7-2) through
 // internal/digest — the same fold kelyfos watch absorbs live — so a running
 // team's graph and a declared one are never two independent readings of the
-// same file.
-func teamPSGraph(st *teamState) error {
+// same file. asJSON (P7-10) short-circuits to buildTeamGraphJSON before any
+// of the rendering below runs.
+func teamPSGraph(st *teamState, asJSON bool) error {
 	f, err := os.Open(recorder.Path(sandbox.Root(), st.Session))
 	if err != nil {
 		return fmt.Errorf("reading session %s: %w", st.Session, err)
@@ -131,6 +141,19 @@ func teamPSGraph(st *teamState) error {
 	in, err := buildGraphInput(agents, d.Topology.Edges, store, storeEnabled)
 	if err != nil {
 		return err
+	}
+
+	if asJSON {
+		// storeEnabledUnknown mirrors the text view's own caveat below: an
+		// empty store list here means "no rule", not "no store" — see
+		// buildGraphInput's doc comment for why storeEnabled itself is only a
+		// best-effort reading of a flag team.topology does not carry.
+		out, err := buildTeamGraphJSON("running", st.Name, in, len(store) == 0,
+			spawnedAgentsNotInTopology(d.Topology, d.Agents))
+		if err != nil {
+			return err
+		}
+		return printJSON(out)
 	}
 
 	title := fmt.Sprintf("team %s — topology as declared at boot (kelyfos team ps --graph): %d agents, %d edges",
@@ -390,6 +413,138 @@ func graphStoreFromTopology(topo *recorder.Event) []graphStoreRule {
 		out[i] = graphStoreRule{Name: k.Name, Read: k.Read, Write: k.Write}
 	}
 	return out
+}
+
+// teamGraphJSON is the documented, stable shape `kelyfos team graph --json`
+// and `kelyfos team ps --graph --json` both emit (P7-10, docs/teams.md
+// §8.5): the resolved topology itself, never a picture of it — no
+// coordinates, no terminal glyphs, nothing internal/graph's two rendering
+// backends decided. Built by buildTeamGraphJSON from the same graph.Input
+// buildGraphInput already produces for the two text renderers, so a declared
+// topology and a running one can never draw two different JSON shapes any
+// more than they can draw two different pictures.
+type teamGraphJSON struct {
+	// Mode is "declared" (kelyfos team graph, from kelyfos.toml, nothing
+	// booted) or "running" (kelyfos team ps --graph, from the record) — P7-7's
+	// own names for these two questions.
+	Mode string `json:"mode"`
+	Team string `json:"team"`
+
+	Agents    []teamGraphAgentJSON    `json:"agents"`
+	Edges     []teamGraphEdgeJSON     `json:"edges"`
+	Resources []teamGraphResourceJSON `json:"resources"`
+	Access    []teamGraphAccessJSON   `json:"access"`
+
+	// IndirectReach is every ordered agent pair internal/graph's
+	// TransitiveClosure finds reachable through another agent or a shared
+	// store key, with no direct edge between them — the terminal view's own
+	// "a star topology is not the isolation it looks like" section,
+	// structured. Bounded the same way (maxIndirectReachLines); Truncated
+	// says when it was.
+	IndirectReach          []teamGraphReachJSON `json:"indirect_reach,omitempty"`
+	IndirectReachTruncated bool                 `json:"indirect_reach_truncated,omitempty"`
+
+	// EgressPorts is the fixed default every sandbox in this product reaches
+	// on (egress.DefaultPorts, P7-4/D65) — not a property of this team, but
+	// printed beside its topology in both text renderers, so it is here too.
+	EgressPorts []int `json:"egress_ports"`
+
+	// SpawnedNotInTopology names every agent the record has seen that the
+	// team.topology event at boot did not declare (host/teamgraph.go's
+	// spawnedAgentsNotInTopology) — always empty in "declared" mode, since
+	// nothing has booted for a runtime spawn to have happened.
+	SpawnedNotInTopology []string `json:"spawned_not_in_topology,omitempty"`
+	// StoreEnabledUnknown is set in "running" mode when team.topology names no
+	// [[team.store.key]] rule at all — the record cannot then say whether
+	// [team.store] was even enabled (teamPSGraph's own caveat, a P7-3 recorder
+	// gap). Never set in "declared" mode, which reads the actual file.
+	StoreEnabledUnknown bool `json:"store_enabled_unknown,omitempty"`
+}
+
+type teamGraphAgentJSON struct {
+	ID    string `json:"id"`
+	Group string `json:"group,omitempty"`
+}
+
+type teamGraphEdgeJSON struct {
+	From string `json:"from"`
+	To   string `json:"to"`
+}
+
+type teamGraphResourceJSON struct {
+	ID   string `json:"id"`
+	Kind string `json:"kind"`
+}
+
+type teamGraphAccessJSON struct {
+	Agent    string `json:"agent"`
+	Resource string `json:"resource"`
+	Write    bool   `json:"write"`
+}
+
+type teamGraphReachJSON struct {
+	From string `json:"from"`
+	To   string `json:"to"`
+	Hops int    `json:"hops"`
+}
+
+// buildTeamGraphJSON converts a resolved graph.Input — already built by
+// buildGraphInput, from either mode — into teamGraphJSON: the same
+// direct-edges-plus-indirect-reach split renderTeamGraph draws, computed
+// once here so the JSON and the picture can never disagree about what
+// reaches what.
+func buildTeamGraphJSON(mode, teamName string, in graph.Input, storeEnabledUnknown bool, spawnedNotInTopology []string) (teamGraphJSON, error) {
+	closure, err := graph.TransitiveClosure(in)
+	if err != nil {
+		return teamGraphJSON{}, err
+	}
+
+	out := teamGraphJSON{
+		Mode: mode, Team: teamName,
+		EgressPorts:          egress.DefaultPorts(),
+		SpawnedNotInTopology: spawnedNotInTopology,
+		StoreEnabledUnknown:  storeEnabledUnknown,
+	}
+	for _, a := range in.Agents {
+		out.Agents = append(out.Agents, teamGraphAgentJSON{ID: string(a.ID), Group: a.Group})
+	}
+	for _, e := range in.Edges {
+		out.Edges = append(out.Edges, teamGraphEdgeJSON{From: string(e.From), To: string(e.To)})
+	}
+	for _, r := range in.Resources {
+		out.Resources = append(out.Resources, teamGraphResourceJSON{ID: string(r.ID), Kind: r.Kind.String()})
+	}
+	for _, a := range in.Access {
+		out.Access = append(out.Access, teamGraphAccessJSON{Agent: string(a.Agent), Resource: string(a.Resource), Write: a.Write})
+	}
+
+	// Same rule renderTeamGraph's own indirect-reach section follows: a pair
+	// reaches indirectly when the closure says it reaches at all (hops > 0)
+	// and that pair is not one of the input's own declared edges — see that
+	// function's comment for why hops > 1 would silently drop every
+	// store-mediated, one-hop reach instead.
+	direct := map[[2]graph.AgentID]bool{}
+	for _, e := range in.Edges {
+		direct[[2]graph.AgentID{e.From, e.To}] = true
+	}
+	for _, from := range closure.Agents {
+		for _, to := range closure.Agents {
+			if from == to || direct[[2]graph.AgentID{from, to}] {
+				continue
+			}
+			hops, ok := closure.HopsBetween(from, to)
+			if !ok {
+				continue
+			}
+			if len(out.IndirectReach) >= maxIndirectReachLines {
+				out.IndirectReachTruncated = true
+				continue
+			}
+			out.IndirectReach = append(out.IndirectReach, teamGraphReachJSON{From: string(from), To: string(to), Hops: hops})
+		}
+	}
+
+	return out, nil
 }
 
 // renderTeamGraph draws in to w: the canvas, a legend naming every glyph

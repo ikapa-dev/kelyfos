@@ -262,6 +262,7 @@ kelyfos team ps
 | Flag | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `--graph` | boolean | — | draw the topology this team was declared with at boot (P7-7) instead of the table below |
+| `--json` | boolean | — | emit structured data instead of a table — the same shape the team_ps MCP tool already returns (P7-10) |
 
 ## kelyfos team down
 
@@ -283,6 +284,7 @@ kelyfos team graph
 
 | Flag | Type | Default | Meaning |
 | --- | --- | --- | --- |
+| `--json` | boolean | — | emit the resolved topology as JSON (P7-10) instead of drawing it |
 | `--policy` | string | — | a specific kelyfos.toml, instead of the one found by walking up from here |
 
 ## kelyfos shim
@@ -387,6 +389,7 @@ kelyfos watch [flags]
 
 | Flag | Type | Default | Meaning |
 | --- | --- | --- | --- |
+| `--json` | boolean | — | print one snapshot of the digest — every counter, the policy and the topology (P7-10) — as JSON, instead of opening the live view |
 | `--session` | string | the most recent | session id |
 
 ## kelyfos bench

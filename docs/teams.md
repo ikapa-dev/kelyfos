@@ -922,6 +922,67 @@ Two honest gaps, both stated in the view itself rather than left silent:
   empty, rather than guessing either way; `kelyfos team graph`, reading
   `kelyfos.toml` directly, does not have this gap.
 
+### 8.5 `--json` (P7-10)
+
+Until this task, only `kelyfos bench`, `kelyfos log` and `kelyfos verify` could
+be piped. The three views above answer three different questions and none of
+them had a machine-readable form — a script that wanted any of it had to parse
+a table, or a terminal drawing meant for a person. `--json` on each is the
+extensibility surface for a view this phase did not think of, and it is
+cheaper than a plugin system.
+
+**`kelyfos team ps --json`** returns exactly the shape the `team_ps` MCP tool
+has always returned as `structuredContent` (§2.2 of `docs/mcp-surface.md`'s
+Teams section):
+`{team, session, owner, started_at, edges, budget, agents: [{agent, sandbox,
+via, alive, sampled, cpu_seconds, cpu_quota_percent, vcpus, rss_kib, mem_mib,
+disk_write_bytes, allow, reaches}]}`. A script reading one has read the
+other — `host/team.go`'s `teamMember` and `teamPSJSON` are the one place this
+mapping is built, the same rule §8.4 already follows for the two graph
+renderers.
+
+```
+$ kelyfos team ps --json | jq '.agents[] | {agent, alive, cpu_seconds}'
+```
+
+**`kelyfos team graph --json`** (declared) and **`kelyfos team ps --graph
+--json`** (running) both emit `host/teamgraph.go`'s `teamGraphJSON`: the
+resolved topology itself, never a picture of it — no coordinates, no
+glyphs. `agents`, `edges`, `resources` (each with its `kind`:
+`domain`/`store_key`/`secret`) and `access` (with `write`) are the same
+`graph.Input` both text renderers already draw from; `indirect_reach` is the
+"a star topology is not the isolation it looks like" section (§8.4's own
+picture), structured as `{from, to, hops}` pairs instead of prose, bounded the
+same way and saying so (`indirect_reach_truncated`) when it is. `mode` is
+`"declared"` or `"running"` — P7-7's own names for the two questions; running
+mode also carries `spawned_not_in_topology` and `store_enabled_unknown`, the
+two honest gaps §8.4.1 already states in prose, now as fields a script can
+check without parsing a sentence.
+
+```
+$ kelyfos team graph --json | jq '.indirect_reach'
+$ kelyfos team ps --graph --json | jq '.spawned_not_in_topology'
+```
+
+**`kelyfos watch --json`** prints one snapshot of the digest and exits,
+instead of opening the live view: `internal/digest.Digest.Snapshot()`, the
+same aggregate every pane above already reads — every counter, the session
+header, the `session.policy` and `team.topology` events verbatim, the secrets
+bound (named, never valued), and the team's pairs, domains and store activity,
+each collection in first-seen order and bounded the same way the live view
+already is (`MaxDistinctKeys`, with a `*_truncated` flag saying when a
+collection hit it). It carries no timeline — `kelyfos log --json` is that
+surface already, and duplicating it here under a different flag would remove
+the one property that makes a digest safe to snapshot on a session with no
+natural end: every field in it is bounded regardless of how large the chain
+behind it has grown, or how long the team it describes has been running.
+`internal/digest/digest.go`'s own doc comment on `Snapshot` is the
+field-by-field reference; this paragraph is the pointer to it.
+
+```
+$ kelyfos watch --json | jq '.session, .totals, .domains'
+```
+
 ---
 
 ## 9. Conformance

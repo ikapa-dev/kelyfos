@@ -35,6 +35,9 @@ import (
 func watchCmd(argv []string) error {
 	fs := flag.NewFlagSet("kelyfos watch", flag.ExitOnError)
 	id := fs.String("session", "", "session id (default: the most recent)")
+	asJSON := fs.Bool("json", false,
+		"print one snapshot of the digest — every counter, the policy and the topology (P7-10) — as JSON, "+
+			"instead of opening the live view")
 	fs.Usage = func() {
 		fmt.Fprint(fs.Output(), `usage: kelyfos watch [flags]
 
@@ -55,6 +58,11 @@ an agent sheet — each agent's declared caps beside what it has actually done.
   3, s             agent sheet — caps beside live counters
   q, esc, ctrl-c   quit
 
+--json (P7-10) skips all of the above: it reads the chain recorded so far,
+once, and prints internal/digest's own Snapshot shape — the same aggregate
+every pane above already reads — for a script to consume instead of a person
+to watch. docs/teams.md §8.5 documents the shape.
+
 `)
 		fs.PrintDefaults()
 	}
@@ -68,6 +76,10 @@ an agent sheet — each agent's declared caps beside what it has actually done.
 	}
 	path := recorder.Path(sandbox.Root(), sessionID)
 
+	if *asJSON {
+		return watchJSON(path)
+	}
+
 	m := &watchModel{session: sessionID, path: path, started: time.Now()}
 	// The alt screen is a property of the view in v2, not an option on the
 	// program: set once in View() rather than asked for here (F-D51).
@@ -76,6 +88,37 @@ an agent sheet — each agent's declared caps beside what it has actually done.
 	go m.tail()
 	_, err = p.Run()
 	return err
+}
+
+// watchJSON is `kelyfos watch --json`: a one-shot snapshot of the session's
+// digest, printed once and exited, rather than the live TUI. It never
+// live-tails — a caller who wants the current state re-runs it, the same
+// "once" `kelyfos log --json` has always offered next to `--follow --json`
+// for "as it happens".
+//
+// Built with a zero-value digest.Digest, the same shape watchModel's own d
+// field starts as (never digest.New()), so this snapshot has no Timeline for
+// exactly the reason the live view never keeps one: KeepTimeline's own doc
+// comment says why retaining it is the unbounded growth a session with no
+// natural end must not pay for. A team still up when this runs is read as it
+// stands at that moment, not followed.
+func watchJSON(path string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("no flight recorder at %s: %w", path, err)
+	}
+	defer f.Close()
+	events, err := recorder.Read(f)
+	if err != nil {
+		return err
+	}
+	var d digest.Digest
+	for _, e := range events {
+		d.Absorb(e)
+	}
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	return enc.Encode(d.Snapshot())
 }
 
 type eventMsg recorder.Event

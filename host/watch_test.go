@@ -1,7 +1,11 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -9,6 +13,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
+	"github.com/p4r4n0rm4l/KelyfOS/internal/digest"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/sandbox"
 )
@@ -504,5 +509,61 @@ func TestMapPaneCaveatsMatchTeamPSGraphsHonestGaps(t *testing.T) {
 	}
 	if !strings.Contains(out, "spawned at runtime") || !strings.Contains(out, "worker-1-spawn-1") {
 		t.Errorf("no note naming the agent spawned at runtime, not in the declared topology:\n%s", out)
+	}
+}
+
+// kelyfos watch --json (P7-10): a one-shot snapshot of the digest, printed
+// to stdout and nothing else — no alt screen, no bubbletea program, no
+// interactive state. This writes a real JSONL file (no hash chain needed:
+// recorder.Read only parses, it does not verify) and reads watchJSON's
+// stdout back through a pipe, the same technique host/log_test.go's
+// renderEvent already uses for printEvent.
+func TestWatchJSONPrintsASnapshotAndExitsWithoutOpeningTheTUI(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "events.jsonl")
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	enc := json.NewEncoder(f)
+	for _, e := range teamEvents() {
+		if err := enc.Encode(e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved := os.Stdout
+	os.Stdout = w
+	watchErr := watchJSON(path)
+	os.Stdout = saved
+	w.Close()
+	out, err := io.ReadAll(r)
+	r.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if watchErr != nil {
+		t.Fatalf("watchJSON returned an error: %v", watchErr)
+	}
+
+	var s digest.Snapshot
+	if err := json.Unmarshal(out, &s); err != nil {
+		t.Fatalf("watchJSON's stdout is not valid Snapshot JSON: %v\n%s", err, out)
+	}
+	if !s.Team {
+		t.Errorf("snapshot of a team session has Team=false: %+v", s)
+	}
+	if s.Events == 0 {
+		t.Error("snapshot has Events=0 for a non-empty fixture")
+	}
+	if len(s.Agents) != 2 {
+		t.Errorf("snapshot has %d agents, want 2 (master, worker-1)", len(s.Agents))
 	}
 }
