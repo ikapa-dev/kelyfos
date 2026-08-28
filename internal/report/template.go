@@ -126,7 +126,7 @@ const reportHTML = `<!DOCTYPE html>
   .run-note{color:var(--warn);font-size:12.5px;background:rgba(217,106,95,.08);
             border:1px solid rgba(217,106,95,.35);border-radius:4px;padding:8px 12px;margin:8px 0}
   .runmap{margin:8px 0 20px}
-  .runmap svg{width:100%;max-width:900px;height:auto;display:block;background:var(--panel);
+  .runmap svg{max-width:100%;height:auto;display:block;background:var(--panel);
               border:1px solid var(--line);border-radius:6px}
   .runmap .node{stroke-width:1.5}
   .runmap .node.agent{fill:var(--amber);stroke:#3a2c12}
