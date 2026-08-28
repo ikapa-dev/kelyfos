@@ -212,11 +212,13 @@ domain can be as identifying as the traffic to it), `workspace` (the host
 directory a machine's `/work` was attached to, a filesystem path), a
 `traceparent` (an inbound W3C trace header, taken verbatim and unparsed
 from an outside MCP client, so nothing here has ever validated its
-shape), and `store_keys[].name` (a team store ACL rule's own key name —
+shape), `store_keys[].name` (a team store ACL rule's own key name —
 the same value space `team.store`'s own `peer` field already redacts when
-a key is actually accessed, kept consistent between declaration and use).
-Everything else about each event — its type, timestamp, agent, byte
-counts, exit codes, resource figures — survives unchanged. A new
+a key is actually accessed, kept consistent between declaration and use),
+and `error.message` (see below — it is redacted since v1.1, and was not
+before). Everything else about each event — its type, timestamp, agent,
+`error.kind`, byte counts, exit codes, resource figures — survives
+unchanged. A new
 `session.erasure` event is appended recording that this ran, why (an
 operator-supplied `-reason`, required — an erasure with no stated reason
 would be exactly the kind of unaccountable action this product's whole
@@ -391,13 +393,32 @@ the moment it sees one — the no-`session.end`-anywhere check inside
 `Erase` itself remains underneath as a second, independent layer for the
 same case, since neither guard alone can see everything the other misses.
 
-**What is deliberately out of scope.** `EvError.Message` is not redacted:
-it is generally a system-generated string (a timeout, a signal name) with
-no established precedent for holding raw guest content the way `data`,
-`args` and `cmd` do, and widening the redacted-field list is a decision to
-make against a real request for it, not to predict here. Per-agent or
+**`error.message`, and why it used to be exempt.** Until v1.1 this field
+was left alone, on the stated ground that it was "generally a
+system-generated string (a timeout, a signal name) with no established
+precedent for holding raw guest content the way `data`, `args` and `cmd`
+do". That was wrong when it was written. The precedent was two files
+away: `sandbox_exec` builds its tool result out of the guest's stdout, and
+`host/servemcpaudit.go` stored the first line of that result here — so
+every failed command in a `serve-mcp` session left a line of its own
+output in a field an erasure did not touch. `host/exec.go` copies the
+guest supervisor's error string the same way, and that one carries an
+agent-chosen path.
+
+Both halves are closed. The audit lane no longer copies any of a tool
+result into a message field: it records the shape of the failure instead —
+the exit status the guest process returned, which the chain already keeps
+unredacted on `command.exit`, or the size of the content it declined to
+hold, which is the rule the argument summariser already applies. And
+`error.message` is redacted like `args` and `cmd`, so whatever a future
+writer of that field puts there is covered without anyone having to
+remember. Either fix alone would have drifted: an exemption is what tells
+the next writer of a field that it is a safe place to put a string.
+`error.kind` — the fixed enumeration an auditor reads — is still exempt.
+
+**What is deliberately out of scope.** Per-agent or
 per-event scoping — "erase only what agent X said," rather than a whole
-session — is the same kind of decision, deferred for the same reason:
+session — is a decision deferred until something asks for it:
 nothing has asked for it yet, and a session is usually the right unit for
 an Article 17 request in the first place, since it is one interaction.
 **A copy that already left this record is out of reach by construction,

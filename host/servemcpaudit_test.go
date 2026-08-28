@@ -294,3 +294,173 @@ func TestClippingNeverLeavesHalfARune(t *testing.T) {
 		t.Errorf("got %q, want the replacement character kept", got)
 	}
 }
+
+// --- F12: guest output in an error message ------------------------------------
+
+// f12Canary is deliberately shaped like the kind of content an Article 17
+// request is about, rather than an opaque token: a failing command that
+// printed a person's address is the case the record has to be able to erase.
+const f12Canary = "CANARY-jane.doe@example.com-guest-stdout"
+
+// failingExecResult is byte-for-byte what host/servemcptools.go's toolExec
+// returns for a command that printed f12Canary and exited 2. Built here
+// rather than by booting a machine, and kept honest by
+// TestF12_TheExecResultFixtureStillMatchesTheTool below — a fixture that has
+// drifted from the tool it stands for proves nothing.
+func failingExecResult() *mcp.CallToolResult {
+	stdout := f12Canary + "\nsecond line\n"
+	var text strings.Builder
+	text.WriteString(stdout)
+	fmt.Fprintf(&text, "\n[exit status %d]", 2)
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{mcp.Text(text.String())},
+		IsError: true,
+		StructuredContent: map[string]any{
+			"exit_code": 2, "stdout": stdout, "stderr": "",
+		},
+	}
+}
+
+// TestF12_TheExecResultFixtureStillMatchesTheTool reads the source, because
+// the finding is precisely that two files two directories apart disagreed
+// about whether a field holds guest content. If sandbox_exec ever stops
+// building its result out of the guest's stdout, the fixture above stops
+// standing for anything and this test says so.
+func TestF12_TheExecResultFixtureStillMatchesTheTool(t *testing.T) {
+	src := readSource(t, "servemcptools.go")
+	for _, want := range []string{"text.Write(res.Stdout)", "IsError: res.Code != 0"} {
+		if !strings.Contains(src, want) {
+			t.Errorf("servemcptools.go no longer contains %q — failingExecResult() no longer "+
+				"stands for what sandbox_exec actually returns", want)
+		}
+	}
+}
+
+// TestF12_GuestOutputNeverReachesTheAuditErrorMessage is the source half.
+//
+// eraseExempt excused error.message as "a system-generated string ... with no
+// established precedent for holding raw guest content". The precedent was two
+// files away: sandbox_exec builds its tool result out of res.Stdout, and this
+// lane stored the first line of it as the error. Every failed command in a
+// serve-mcp session left its first line of output in the record.
+//
+// The audit lane cannot tell a host-written refusal from a guest's stdout —
+// both arrive as Content[0].Text — so it must copy neither. What it records
+// instead is the shape of the failure: the exit status the guest process
+// returned, which is a number the record already keeps on command.exit, or
+// failing that the size of the content it declined to hold, which is the rule
+// summariseArgs already applies to every argument on every tool.
+func TestF12_GuestOutputNeverReachesTheAuditErrorMessage(t *testing.T) {
+	root := t.TempDir()
+	const id = "0badcafe"
+	rec, err := recorder.Open(root, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &hostServer{auditID: id, audit: rec}
+	if err := rec.Append(recorder.Event{
+		Type: recorder.TypeSessionStart, Reason: recorder.ReasonServeMCP,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	p := &mcp.CallToolParams{
+		Name:      "sandbox_exec",
+		Arguments: json.RawMessage(`{"sandbox":"0badcafe","command":"/usr/bin/report-address"}`),
+	}
+	s.auditCall(p)(failingExecResult())
+	if err := rec.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	blob, err := os.ReadFile(recorder.Path(root, id))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(blob), f12Canary) {
+		t.Fatalf("a failing command's stdout is in the audit chain:\n%s", blob)
+	}
+
+	events, err := recorder.Read(strings.NewReader(string(blob)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result *recorder.Event
+	for i := range events {
+		if events[i].Type == recorder.TypeMCPHostResult {
+			result = &events[i]
+		}
+	}
+	if result == nil {
+		t.Fatal("no mcp.host.result was recorded")
+	}
+	if result.Outcome != "error" || result.Error == nil || result.Error.Kind != "tool" {
+		t.Fatalf("the failure is no longer recorded as one: %+v", result)
+	}
+	// The record still says what happened, in the terms the record already
+	// uses elsewhere for the same fact.
+	if result.Error.Message != "exit status 2" {
+		t.Errorf("error.message = %q, want the exit status the record already keeps on command.exit", result.Error.Message)
+	}
+}
+
+// TestF12_AnErasureFingerprintsErrorMessage is the sink half, and it is the
+// half that has to hold whatever any future writer of this field does. The
+// finding names a second source this task does not own — host/exec.go copies
+// the guest supervisor's own error string, which carries the agent-chosen
+// path — so the sink is what stops the next one drifting in.
+//
+// A message is planted directly here, the way host/exec.go plants one, rather
+// than through the audit lane: with the source half fixed the lane no longer
+// produces one, and a sink test that depends on the source being broken tests
+// nothing once it is fixed.
+func TestF12_AnErasureFingerprintsErrorMessage(t *testing.T) {
+	root := t.TempDir()
+	const id = "0badf00d"
+	rec, err := recorder.Open(root, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range []recorder.Event{
+		{Type: recorder.TypeSessionStart, Reason: recorder.ReasonServeMCP},
+		{Type: recorder.TypeCommandExit, Call: "c1", Error: &recorder.EvError{
+			Kind: "internal", Message: `exec: "/tmp/` + f12Canary + `": executable file not found in $PATH`,
+		}},
+		{Type: recorder.TypeSessionEnd, Reason: "shutdown"},
+	} {
+		if err := rec.Append(e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := rec.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := recorder.Erase(root, id, "GDPR Article 17 request"); err != nil {
+		t.Fatalf("Erase: %v", err)
+	}
+	blob, err := os.ReadFile(recorder.Path(root, id))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(blob), f12Canary) {
+		t.Fatalf("an erasure left the content of error.message behind:\n%s", blob)
+	}
+	events, err := recorder.Read(strings.NewReader(string(blob)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range events {
+		if e.Type != recorder.TypeCommandExit {
+			continue
+		}
+		if e.Error == nil {
+			t.Fatal("the erasure removed the error object rather than fingerprinting its message")
+		}
+		if e.Error.Kind != "internal" {
+			t.Errorf("error.kind = %q — a fixed enumeration is structural and must survive", e.Error.Kind)
+		}
+		if !strings.Contains(e.Error.Message, "erased") || !strings.Contains(e.Error.Message, "sha256:") {
+			t.Errorf("error.message = %q, want a fingerprint of what was there", e.Error.Message)
+		}
+	}
+}

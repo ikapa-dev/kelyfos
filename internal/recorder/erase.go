@@ -277,9 +277,23 @@ var eraseExempt = map[string]string{
 	"Signal": "an OS signal name, a fixed enumeration",
 
 	"Error.Kind": "a fixed enumeration",
-	"Error.Message": "generally a system-generated string (a timeout, a signal name) with no " +
-		"established precedent for holding raw guest content the way Data, Args and Cmd do " +
-		"(documented in docs/retention.md §5 since this task's first draft)",
+	// Error.Message was exempt here until F12, on the stated ground that it
+	// was "generally a system-generated string (a timeout, a signal name)
+	// with no established precedent for holding raw guest content the way
+	// Data, Args and Cmd do". The precedent existed two files away, and the
+	// exemption was simply wrong: host/servemcpaudit.go stored the first line
+	// of a failed tool result here, and a failed sandbox_exec's result is
+	// built out of the guest's own stdout — so every failed command in a
+	// serve-mcp session left a line of its output in a field an erasure did
+	// not touch. host/exec.go copies the guest supervisor's error string the
+	// same way, and that one carries an agent-chosen path.
+	//
+	// The sources are being fixed too, and this is fixed anyway, because
+	// either alone drifts: an exemption is what tells the next writer of a
+	// field that it is a safe place to put a string. A genuinely
+	// system-generated message loses nothing by being fingerprinted, and
+	// Error.Kind — the fixed enumeration an auditor actually reads — is still
+	// exempt above.
 
 	"SHA256": "a digest, not the content it fingerprints — the exact pattern this whole mechanism generalises from file.write, and now also what session.erasure's own SHA256 anchors (S1)",
 

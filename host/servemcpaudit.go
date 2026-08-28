@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"strings"
 	"time"
@@ -165,14 +166,67 @@ func (s *hostServer) auditCall(p *mcp.CallToolParams) func(*mcp.CallToolResult) 
 		}
 		if res != nil && res.IsError {
 			ev.Outcome = "error"
-			msg := ""
-			if len(res.Content) > 0 {
-				msg = firstLine(res.Content[0].Text)
-			}
-			ev.Error = &recorder.EvError{Kind: "tool", Message: msg}
+			ev.Error = &recorder.EvError{Kind: "tool", Message: resultErrorShape(res)}
 		}
 		_ = s.audit.Append(ev)
 	}
+}
+
+// resultErrorShape says how a tool call failed without copying any of what it
+// returned (F12).
+//
+// This used to be firstLine(res.Content[0].Text), and the reason given for
+// leaving error.message out of the erasure was that it holds "a
+// system-generated string ... with no established precedent for holding raw
+// guest content". The precedent was two files away: sandbox_exec builds its
+// tool result out of res.Stdout (servemcptools.go's toolExec), and IsError is
+// set from the guest's own exit code — so every failed command in a serve-mcp
+// session left its first line of output in a field an erasure did not touch.
+//
+// This function cannot tell a host-written refusal from a guest's stdout;
+// both arrive as Content[0].Text and nothing in the result distinguishes them.
+// So it copies neither, and records the shape instead: the exit status the
+// guest process returned — a number the chain already keeps, unredacted, in
+// command.exit's own `code` — or, when there is no exit status to report, the
+// size of the content it declined to hold. Sizing what must not be recorded is
+// the rule summariseArgs already applies to every argument of every tool.
+//
+// What the failure was is not lost. It is in the sandbox's own chain, in the
+// command.output events that carry the same bytes and that an erasure DOES
+// redact, which is where output belongs; the outward lane records that the
+// call failed, which tool, with which arguments, and how.
+func resultErrorShape(res *mcp.CallToolResult) string {
+	if m, ok := res.StructuredContent.(map[string]any); ok {
+		if code, ok := structuredExitCode(m["exit_code"]); ok {
+			return fmt.Sprintf("exit status %d", code)
+		}
+	}
+	n := 0
+	for _, c := range res.Content {
+		n += len(c.Text)
+	}
+	return fmt.Sprintf("the tool reported an error in %d bytes of content", n)
+}
+
+// structuredExitCode reads an exit status out of a result's structured
+// content. The value is an `any`: this server builds it as an int, but the
+// field is part of a wire-shaped map, so a float — what a JSON round trip
+// makes of an integer — is accepted too. Anything else is not an exit status
+// and is refused rather than formatted, because %d over an unexpected type is
+// how a value nobody sized reaches a record that promises it holds none.
+func structuredExitCode(v any) (int, bool) {
+	switch n := v.(type) {
+	case int:
+		return n, true
+	case int64:
+		return int(n), true
+	case float64:
+		if n != math.Trunc(n) {
+			return 0, false
+		}
+		return int(n), true
+	}
+	return 0, false
 }
 
 // resultSandbox reads the id out of a structured result, for the tools that
@@ -198,10 +252,14 @@ func resultSandbox(res *mcp.CallToolResult) string {
 	return ""
 }
 
-// firstLine is a message's first line, capped. Used for the audit summary of a
-// tool result, and for a desktop notification of a refusal (E5-7) — which is
-// read at a glance, so the fix line beneath belongs on the terminal where
-// somebody has to go to apply it anyway.
+// firstLine is a message's first line, capped. Its one remaining caller is the
+// desktop notification of a refusal (E5-7, host/denials.go) — which is read at
+// a glance, so the fix line beneath belongs on the terminal where somebody has
+// to go to apply it anyway.
+//
+// It used to summarise a tool result into the audit chain as well. It does not
+// any more, and must not again: a notification is shown once to the operator
+// who is already watching, while the chain is kept. See resultErrorShape (F12).
 func firstLine(s string) string {
 	if i := strings.IndexByte(s, '\n'); i >= 0 {
 		s = s[:i]
