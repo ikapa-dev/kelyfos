@@ -1343,7 +1343,7 @@
         documented as a fixed property in <code>docs/networking.md</code> and printed in the views, or promoted to
         a configuration key. The default is right either way; the invisibility is not. Placed before the views so
         that what they show is true.</span></li>
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">P7-5</span><span class="tk"><b>Retention, pruning and tombstones</b> (D61). <code>~/.cache/kelyfos/sessions/</code> has never
         been pruned &mdash; the template cache has a bound and is swept oldest-first, and the records that outlive
         every sandbox grow without limit, with no setting, no <code>kelyfos sessions prune</code> and no warning.
@@ -5816,6 +5816,33 @@ after:
         double-erasure through the real CLI refused with &ldquo;nothing to erase&rdquo; on the second run;
         <code>python3 tools/check-plan.py</code> &rarr; &ldquo;PLAN.html is coherent: 99 tasks, 78 checked, 64
         decisions&rdquo; (unchanged &mdash; append-only, no checkbox ticked by the reviewer).</td></tr>
+    <tr><td class="mono">2026-08-28</td><td class="mono">P7-5</td>
+        <td><b>Ticked, by the orchestrator, after adversarial review confirmed GO &mdash; and with it, Lane 1's
+        entire serial chain (P7-0 &rarr; P7-2 &rarr; P7-3 &rarr; P7-5) is closed.</b> The most security- and
+        compliance-critical mechanism in this phase, reviewed to match: five blockers found and fixed in the
+        erasure/tombstone mechanism itself (silent event loss under a live writer, fingerprint destruction on
+        repeat erasure, a fifth hand-maintained redaction list this project has now closed structurally, a
+        missing version/timestamp on the accountability event, and a false-positive truncation warning), plus
+        six should-fix items including a cryptographic anchor that makes an honest erasure provably distinct
+        from a malicious rewrite rather than merely conventionally distinct. Every fix independently
+        re-verified by re-running the reviewer's own original repros against the fix, not by reading. Full
+        findings and resolutions recorded in the row above (appended by the orchestrator per &sect;8 rules 3
+        and 10, since the fix commit itself did not carry them).
+        <br>Merged to <code>main</code>. Three real content conflicts this time, all resolved: <code>PLAN.html</code>
+        (Progress Log append zone, both branches' rows kept in full); <code>docs/cookbook.md</code> (both this
+        branch and P7-7, merged earlier, independently numbered a new recipe &ldquo;15&rdquo; &mdash; kept both,
+        renumbered this branch's <code>retention-and-erasure</code> to 16); <code>llms.txt</code>/
+        <code>llms-full.txt</code> regenerated via <code>make docs</code> rather than merged by hand, the right
+        call for generated files. The now-familiar cross-lane gap recurred a third time and was fixed the same
+        way: <code>internal/digest</code>'s <code>TestEveryKnownEventTypeIsClassified</code> didn't know about
+        <code>session.erasure</code> yet &mdash; added to <code>knownUnclassified</code> alongside
+        <code>session.policy</code> and <code>team.topology</code>.</td>
+        <td class="mono">merge commit; three conflicts (PLAN.html, docs/cookbook.md, generated
+        <code>llms*.txt</code>), resolved as described at left; post-merge <code>gofmt -l .</code> clean,
+        <code>go vet ./...</code> clean, <code>go test -count=1 ./...</code> every package <code>ok</code>
+        (including <code>internal/digest</code> after the classification fix), <code>govulncheck</code> &rarr;
+        &ldquo;No vulnerabilities found.&rdquo;, <code>python3 tools/check-plan.py</code> &rarr; &ldquo;PLAN.html
+        is coherent: 101 tasks, 86 checked, 68 decisions&rdquo;</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
