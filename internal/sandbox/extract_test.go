@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -634,4 +635,195 @@ func TestASetgidTheHostSetSurvivesButOneTheGuestAskedForDoesNot(t *testing.T) {
 			t.Errorf("%s came back %04o, want 0755", name, got)
 		}
 	}
+}
+
+// F4. A directory whose name carries whitespace loses everything inside it,
+// silently.
+//
+// The review could not reproduce this — "no toolchain was available on either
+// pass" — so here it is against a real image and the real debugfs, which turns
+// out to have two distinct failures rather than the one predicted.
+//
+// listDirs batched every directory at one level into one script and attributed
+// each block of records to the directory named on the echoed command line. The
+// directory was not quoted, and the echo was matched with strings.TrimSpace:
+//
+//	a trailing space   ls -l -p /notes      -> debugfs strips it while tokenising
+//	                                          "/notes: File not found by ext2_lookup"
+//	                                          and TrimSpace makes the key "/notes"
+//	                                          while the directory is "/notes "
+//	an interior space  ls -l -p /my notes   -> two arguments
+//	                                          "Usage: ls [-c] [-d] [-l] [-p] [-r] file"
+//
+// Both end the same way: blocks[dir] is empty, the directory is created on the
+// host with none of its contents, and nothing anywhere says so. The error text
+// goes to stderr, which listDirs discarded, and debugfs exits 0 either way.
+//
+// Note what the review's `ls:` rule would have caught: neither. com_err is not
+// what prints these — one is a lookup failure prefixed with the path and the
+// other is a usage line — which is why the check that actually holds is the
+// structural one: debugfs echoes every command, so a directory that produced no
+// block at all means the parse drifted, whatever the message was.
+func TestF4_ADirectoryNameWithWhitespaceKeepsItsContents(t *testing.T) {
+	needsImageTools(t)
+
+	root := t.TempDir()
+	src := filepath.Join(root, "src")
+	// "notes " is the trailing-space case, "my notes" the interior one, and
+	// "plain" is the control: if the fix broke ordinary directories this is
+	// what would say so.
+	want := map[string]string{
+		"notes /a.txt":   "trailing\n",
+		"my notes/b.txt": "interior\n",
+		"plain/c.txt":    "ordinary\n",
+		"deep/ x /d.txt": "both ends\n",
+		"top.txt":        "root\n",
+	}
+	for rel, body := range want {
+		p := filepath.Join(src, rel)
+		mkdirT(t, filepath.Dir(p))
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	img := filepath.Join(root, "ws.ext4")
+	packImage(t, src, img)
+
+	entries, err := listImage(img)
+	if err != nil {
+		t.Fatalf("a workspace with spaces in its directory names was refused: %v", err)
+	}
+	found := map[string]bool{}
+	for _, e := range entries {
+		found[e.path] = true
+	}
+	for rel := range want {
+		if !found[filepath.ToSlash(rel)] {
+			t.Errorf("%q is in the image and the enumeration did not find it — the directory is "+
+				"created on the host with none of its contents and nothing says so", rel)
+		}
+	}
+
+	// And through to the person's disk, which is where it matters.
+	tree := mkdirT(t, filepath.Join(root, "tree"))
+	if err := extractInto(t, img, tree); err != nil {
+		t.Fatalf("extract: %v", err)
+	}
+	for rel, body := range want {
+		got, err := os.ReadFile(filepath.Join(tree, rel))
+		if err != nil {
+			t.Errorf("%q did not come back: %v", rel, err)
+			continue
+		}
+		if string(got) != body {
+			t.Errorf("%q came back as %q, want %q", rel, got, body)
+		}
+	}
+}
+
+// The cross-check on its own: a directory that produced no block is an error.
+//
+// debugfs echoes every command it reads from a script and every directory has
+// at least `.` and `..`, so an empty block cannot happen to a directory that was
+// really listed. It is what catches a drift whose message nobody predicted —
+// which, as the corpus above shows, is both of the ones that actually occur.
+func TestF4_ADirectoryThatProducedNoRecordsIsAnError(t *testing.T) {
+	needsImageTools(t)
+
+	root := t.TempDir()
+	src := mkdirT(t, filepath.Join(root, "src", "real"))
+	if err := os.WriteFile(filepath.Join(src, "f.txt"), []byte("x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	img := filepath.Join(root, "ws.ext4")
+	packImage(t, filepath.Join(root, "src"), img)
+
+	// A directory that is not in the image at all. listDirs is only ever handed
+	// names it enumerated, so this cannot arise from a real walk — it is the
+	// drift the cross-check is for, staged directly.
+	if _, err := listDirs(img, []string{"/real", "/not-there"}); err == nil {
+		t.Error("a directory debugfs said nothing about was treated as an empty directory; " +
+			"that is how a workspace loses a subtree without an error")
+	}
+	// The control: the real one alone still works.
+	blocks, err := listDirs(img, []string{"/", "/real"})
+	if err != nil {
+		t.Fatalf("an ordinary listing was refused: %v", err)
+	}
+	if len(blocks["/real"]) == 0 {
+		t.Error("/real came back with no records")
+	}
+}
+
+// entryFrom is the parser every byte of a guest-written filesystem arrives
+// through, and it had no fuzz target. F17 and F4 both changed it — one added the
+// size field, the other the attribution the records are grouped by — so this is
+// the coverage those changes owe.
+//
+// What it asserts is not "no error": it is that anything *accepted* is safe to
+// use, which is the claim the rest of the package rests on. The strictness is
+// the check here, deliberately, rather than a check bolted beside a lenient
+// parser.
+func FuzzEntryFrom(f *testing.F) {
+	for _, seed := range []string{
+		"/12/100644/501/1000/main.go/42/",
+		"/16/040775/501/1000/notes //",
+		"/15/120777/501/1000/link/5/",
+		"/2/040755/0/0/.//",
+		"/2/040755/0/0/..//",
+		"/11/040700/0/0/lost+found//",
+		"/12/100644/501/1000/../../pwn./21/",
+		"/12/100644/501/1000/a\" b/1/",
+		"/12/060644/501/1000/dev/0/",
+		"/12/100644/501/1000/big/-1/",
+		"/12/100644/501/1000/big/99999999999999999999/",
+		"",
+		"//////",
+	} {
+		f.Add(seed)
+	}
+	f.Fuzz(func(t *testing.T, record string) {
+		for _, dir := range []string{"/", "/sub", "/a b", "/notes "} {
+			e, err := entryFrom(dir, record)
+			if err != nil || e == nil {
+				continue
+			}
+			// A name that reaches here is joined to a host path through an
+			// os.Root and interpolated into a double-quoted debugfs argument.
+			if e.path == "" || path.IsAbs(e.path) {
+				t.Fatalf("accepted %q in %q with path %q", record, dir, e.path)
+			}
+			for _, seg := range strings.Split(e.path, "/") {
+				if seg == "" || seg == "." || seg == ".." {
+					t.Fatalf("accepted %q in %q with path %q", record, dir, e.path)
+				}
+			}
+			if strings.ContainsAny(e.path, "\x00\"'") {
+				t.Fatalf("accepted %q in %q with path %q", record, dir, e.path)
+			}
+			for _, r := range e.path {
+				if (r < 0x20 || r == 0x7f) && r != '/' {
+					t.Fatalf("accepted %q in %q with a control character in %q", record, dir, e.path)
+				}
+			}
+			// The size is what F17's check compares a dump against, so a
+			// negative or unparsed one would disable that check rather than
+			// trip it.
+			if e.size < 0 {
+				t.Fatalf("accepted %q with size %d", record, e.size)
+			}
+			switch e.kind {
+			case kindDir:
+				if e.size != 0 {
+					t.Fatalf("accepted directory %q with size %d", record, e.size)
+				}
+			case kindFile, kindSymlink:
+			default:
+				t.Fatalf("accepted %q with kind %d", record, e.kind)
+			}
+			if e.mode&^os.FileMode(0o7777) != 0 {
+				t.Fatalf("accepted %q with mode %v", record, e.mode)
+			}
+		}
+	})
 }

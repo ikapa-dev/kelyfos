@@ -147,47 +147,84 @@ func listImage(imagePath string) ([]imageEntry, error) {
 	return out, nil
 }
 
+// The echo listDirs attributes records by, and the two halves of it, kept
+// together so the string that is written can only be read back by the string
+// that matches it.
+const (
+	lsCommand = `ls -l -p "`
+	lsEcho    = "debugfs: " + lsCommand
+)
+
 // listDirs runs one debugfs process over every directory at one level.
 //
 // debugfs echoes each command it reads from a script, which is what makes the
 // output attributable: a block of records belongs to the directory named on the
-// `debugfs: ls -l -p <dir>` line above it.
+// `debugfs: ls -l -p "<dir>"` line above it.
+//
+// The quotes are F4, and the whole of it. Unquoted, a directory name carrying
+// whitespace lost everything inside it, two different ways, and said nothing:
+//
+//	`notes `     ls -l -p /notes      debugfs strips the trailing space while
+//	                                  tokenising and reports "/notes: File not
+//	                                  found by ext2_lookup"; the echo was then
+//	                                  matched with TrimSpace, so the key became
+//	                                  "/notes" and the directory was "/notes "
+//	`my notes`   ls -l -p /my notes   two arguments: "Usage: ls [-c] [-d] [-l]
+//	                                  [-p] [-r] file"
+//
+// Both leave blocks[dir] empty, the directory is created on the host with none
+// of its contents, and debugfs exits 0 with the complaint on the stderr this
+// used to discard. So the echo is matched with the quotes on — the key is the
+// string that was submitted rather than a trimmed guess at it — and the
+// attribution is cross-checked below, because neither of those messages is one
+// anybody predicted and the next one will not be either.
+//
+// validName refuses both quote characters, which is what makes the quoting hold
+// (S5c); everything else a name may contain, whitespace included, sits safely
+// inside it.
 func listDirs(imagePath string, dirs []string) (map[string][]string, error) {
 	var script strings.Builder
 	for _, d := range dirs {
 		// A directory whose own name reached here has already been validated,
-		// so it carries no newline to break the script.
-		fmt.Fprintf(&script, "ls -l -p %s\n", d)
+		// so it carries no newline to break the script and no quote to close
+		// the argument early.
+		fmt.Fprintf(&script, "%s%s\"\n", lsCommand, d)
 	}
-	f, err := os.CreateTemp("", "kelyfos-ls-*")
+	out, stderr, err := runDebugfs(imagePath, script.String())
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("read the workspace image: %w: %s", err, strings.TrimSpace(stderr))
 	}
-	defer os.Remove(f.Name())
-	if _, err := f.WriteString(script.String()); err != nil {
-		f.Close()
-		return nil, err
-	}
-	if err := f.Close(); err != nil {
-		return nil, err
-	}
-
-	out, err := exec.Command("debugfs", "-f", f.Name(), imagePath).Output()
-	if err != nil {
-		return nil, fmt.Errorf("read the workspace image: %w", err)
+	if bad := debugfsErrors(stderr); len(bad) > 0 {
+		return nil, refuse("the image would not list its directories: %s", strings.Join(bad, "; "))
 	}
 
 	blocks := map[string][]string{}
 	current := ""
-	for _, line := range strings.Split(string(out), "\n") {
-		if rest, ok := strings.CutPrefix(line, "debugfs: ls -l -p "); ok {
-			current = strings.TrimSpace(rest)
+	for _, line := range strings.Split(out, "\n") {
+		if rest, ok := strings.CutPrefix(line, lsEcho); ok {
+			// A line that opens like an echo and does not close like one means
+			// the parse has drifted, and the answer is to attribute nothing
+			// rather than to attribute it to the wrong directory. The
+			// cross-check below is what turns that into an error.
+			current, _ = strings.CutSuffix(rest, `"`)
 			continue
 		}
 		if current == "" || strings.TrimSpace(line) == "" {
 			continue
 		}
 		blocks[current] = append(blocks[current], line)
+	}
+
+	// Every directory asked about has to have answered. debugfs echoes every
+	// command it reads, and every directory holds at least `.` and `..`, so an
+	// empty block is not an empty directory — it is a command that failed or an
+	// attribution that drifted. A workspace that quietly comes back missing a
+	// subtree is the failure mode this package refuses everywhere else.
+	for _, d := range dirs {
+		if len(blocks[d]) == 0 {
+			return nil, refuse("the image lists nothing at all for %s, not even `.` and `..`; "+
+				"its contents cannot be read and will not be guessed at", d)
+		}
 	}
 	return blocks, nil
 }

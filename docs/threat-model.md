@@ -123,7 +123,17 @@ wrong:
    be repaired was built to be repaired and the repair is a guess about intent.
    A separator, a NUL, a control character, `.`, `..`, anything that is not a
    file, a directory or a symlink, and a symlink whose target is absolute or
-   climbs out.
+   climbs out. A symlink is judged by where its whole **chain** lands, resolved
+   through the entry set, rather than one link at a time — three links that each
+   look like they stay inside compose into one that does not.
+
+   The enumeration also has to be **complete**, which is a separate promise and
+   was separately broken. The directory names are quoted in the command that
+   lists them, and the listing is attributed back by the quoted echo rather than
+   by a trimmed guess at it; a directory that produced no records at all — not
+   even `.` and `..` — refuses the image instead of reading as empty. Without
+   that, a directory named `notes ` or `my notes` came back created and empty,
+   with its contents gone and nothing anywhere saying so.
 2. **The extraction cannot leave the tree even if it is.** `debugfs` no longer
    chooses a destination: it dumps into staging files the host names, and every
    guest-chosen name is used through an `os.Root`. Go walks such a path one
