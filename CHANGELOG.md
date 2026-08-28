@@ -36,6 +36,19 @@ reference described in the README and re-measured per release.
   `team.topology` cannot tell them: a worker spawned at runtime after boot,
   and whether an empty store rule list means the store is off or open to the
   whole team (P7-7).
+- **`--json` on `kelyfos team ps`, `kelyfos team graph` and `kelyfos watch`**:
+  the extensibility surface for a view this phase did not think of, and
+  cheaper than a plugin system. Before this, only `bench`, `log` and `verify`
+  could be piped. `kelyfos team ps --json` returns the identical shape the
+  `team_ps` MCP tool has always returned as `structuredContent`. `kelyfos team
+  graph --json` and `kelyfos team ps --graph --json` return the resolved
+  topology as data instead of a drawing — agents, edges, resources, access and
+  the indirect-reach pairs the terminal view already draws in prose. `kelyfos
+  watch --json` prints one snapshot of `internal/digest`'s own fold — every
+  counter, the session header, the policy and topology events verbatim, bounded
+  the same way the live view already is — and exits, instead of opening the
+  TUI; it carries no timeline, which `kelyfos log --json` already is. Documented
+  in `docs/teams.md` §8.5 (P7-10).
 
 ### Fixed
 - **A single oversized, guest-influenced field could make the flight recorder

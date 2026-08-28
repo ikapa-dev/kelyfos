@@ -66,8 +66,18 @@ const MaxDistinctKeys = 4096
 // agentless events and its agents' events apart; report sums both into one
 // number — and Totals and AgentTotals below exist so each view can ask for
 // the combination it wants without recomputing it.
+//
+// Tagged for JSON (P7-10, Snapshot below) even though this package otherwise
+// leaves rendering to its callers: a field name is part of this struct's data
+// shape, not its look, the same distinction recorder.Event's own tags already
+// draw for the wire format.
 type Counters struct {
-	Commands, Failed, Files, EgressOK, EgressBlocked, Secrets int
+	Commands      int `json:"commands"`
+	Failed        int `json:"failed"`
+	Files         int `json:"files"`
+	EgressOK      int `json:"egress_ok"`
+	EgressBlocked int `json:"egress_blocked"`
+	Secrets       int `json:"secrets"`
 }
 
 // Add returns the elementwise sum of two Counters.
@@ -98,7 +108,8 @@ type Agent struct {
 // what secret.use already writes, folded into a de-duplicated, first-seen
 // list the way internal/report's Summary.Secrets has always been built.
 type SecretRef struct {
-	Name, Host string
+	Name string `json:"name"`
+	Host string `json:"host"`
 }
 
 // Pair is a directional agent-to-peer relationship: who a message was sent
@@ -111,23 +122,30 @@ type Pair struct {
 
 // PairCounts is what happened between one directional pair.
 type PairCounts struct {
-	Messages, Refused int
-	Bytes             int64
+	Messages int   `json:"messages"`
+	Refused  int   `json:"refused"`
+	Bytes    int64 `json:"bytes"`
 }
 
 // Domain is one egress destination's activity — every attempt this session
 // made against one host, allowed or not.
 type Domain struct {
-	Host                         string
-	Allowed, Blocked, Terminated int
-	BytesIn, BytesOut            int64
+	Host       string `json:"host"`
+	Allowed    int    `json:"allowed"`
+	Blocked    int    `json:"blocked"`
+	Terminated int    `json:"terminated"`
+	BytesIn    int64  `json:"bytes_in"`
+	BytesOut   int64  `json:"bytes_out"`
 }
 
 // StoreKey is one team-store key's activity across the session.
 type StoreKey struct {
-	Key                         string
-	Gets, Puts, Deletes, Denied int
-	Bytes                       int64
+	Key     string `json:"key"`
+	Gets    int    `json:"gets"`
+	Puts    int    `json:"puts"`
+	Deletes int    `json:"deletes"`
+	Denied  int    `json:"denied"`
+	Bytes   int64  `json:"bytes"`
 }
 
 // Entry is one event, annotated with the three facts every view needs to
@@ -360,6 +378,157 @@ func (d *Digest) TeamRefused() int { return d.MessagesRefused + d.SpawnRefused }
 // team.store access, which the live view has always folded into its one
 // "refused" counter on the status line.
 func (d *Digest) AllRefusals() int { return d.TeamRefused() + d.StoreRefused }
+
+// Snapshot is the digest as a documented, stable JSON shape (P7-10,
+// docs/teams.md §8.5) — every bounded aggregate this fold already computes,
+// with the two collections a map cannot carry into JSON as-is turned into the
+// same order every existing reader of this fold already walks them in:
+// AgentOrder, PairOrder, DomainOrder and StoreOrder are what kelyfos watch's
+// own panes and internal/report's own views read today, so a JSON reader sees
+// agents, pairs, domains and store keys in first-seen order — not in
+// encoding/json's alphabetical map-key sort, which for Pairs is not even an
+// option: Pair is a struct, and encoding/json refuses to marshal a map keyed
+// on one at all ("json: unsupported type").
+//
+// Timeline is deliberately not part of this shape. It is every event,
+// annotated, unbounded by anything but the chain itself — kelyfos log --json
+// already exists to hand a caller the raw events, one per line, and
+// duplicating that here under a different flag would both restate an
+// existing surface and remove the one property that makes a snapshot safe to
+// take of a session with no natural end: every field below is already
+// bounded, by MaxDistinctKeys or by construction (a session header is a fixed
+// number of fields, however long the session has run), so this shape's size
+// is bounded regardless of how large the chain behind it has grown. That is
+// also why Snapshot never retains KeepTimeline's collection even when the
+// Digest it was built from does — kelyfos watch --json builds its Digest with
+// KeepTimeline left false, the same zero-value shape the live TUI has always
+// absorbed into (host/watch.go), and Snapshot ignores Timeline either way.
+type Snapshot struct {
+	Events int `json:"events"`
+
+	Team   bool `json:"team"`
+	Served bool `json:"served"`
+	// SawSessionStart distinguishes "this chain has no single flavour" (a
+	// team or a server session) from "this chain never told me" (a malformed
+	// or partial one) — see the field of the same name on Digest.
+	SawSessionStart bool `json:"saw_session_start"`
+
+	Image      string `json:"image,omitempty"`
+	Arch       string `json:"arch,omitempty"`
+	Kelyfos    string `json:"kelyfos,omitempty"`
+	Kernel     string `json:"kernel,omitempty"`
+	Supervisor string `json:"supervisor,omitempty"`
+	BootMS     int64  `json:"boot_ms,omitempty"`
+	Started    string `json:"started,omitempty"`
+	Ended      string `json:"ended,omitempty"`
+	EndReason  string `json:"end_reason,omitempty"`
+
+	TimedOut   string `json:"timed_out,omitempty"`
+	OOMKills   int    `json:"oom_kills,omitempty"`
+	Terminated int    `json:"terminated,omitempty"`
+
+	// Session is every agentless event's contribution; Totals adds every
+	// agent's on top — see Digest.Totals.
+	Session Counters `json:"session"`
+	Totals  Counters `json:"totals"`
+
+	// Receipt, Policy and Topology are the three verbatim, kept-not-derived
+	// events this fold carries (D59's own reasoning: a declared policy is a
+	// fact recorded once, not something to re-derive) — nil until one has
+	// been absorbed. Policy and Receipt are the agentless case; a team's own
+	// are on each entry in Agents instead.
+	Receipt  *recorder.Event `json:"receipt,omitempty"`
+	Policy   *recorder.Event `json:"policy,omitempty"`
+	Topology *recorder.Event `json:"topology,omitempty"`
+
+	Secrets          []SecretRef `json:"secrets,omitempty"`
+	SecretsTruncated bool        `json:"secrets_truncated,omitempty"`
+
+	Agents []AgentSnapshot `json:"agents,omitempty"`
+
+	PeerOnly          []string `json:"peer_only,omitempty"`
+	PeerOnlyTruncated bool     `json:"peer_only_truncated,omitempty"`
+
+	Messages        int `json:"messages"`
+	MessagesRefused int `json:"messages_refused"`
+	SpawnRefused    int `json:"spawn_refused"`
+	StoreRefused    int `json:"store_refused"`
+
+	Pairs          []PairSnapshot `json:"pairs,omitempty"`
+	PairsTruncated bool           `json:"pairs_truncated,omitempty"`
+
+	Domains          []Domain `json:"domains,omitempty"`
+	DomainsTruncated bool     `json:"domains_truncated,omitempty"`
+
+	Store          []StoreKey `json:"store,omitempty"`
+	StoreTruncated bool       `json:"store_truncated,omitempty"`
+}
+
+// AgentSnapshot is one team member's slice of Snapshot: an Agent with its map
+// key (Digest.Agents is keyed on the same Name) carried explicitly, since a
+// JSON array element cannot inherit one from the collection around it.
+type AgentSnapshot struct {
+	Name string `json:"name"`
+	Counters
+	Receipt *recorder.Event `json:"receipt,omitempty"`
+	Policy  *recorder.Event `json:"policy,omitempty"`
+}
+
+// PairSnapshot is one directional pair's counts, with From/To carried
+// explicitly — Digest.Pairs is keyed on Pair, a struct encoding/json cannot
+// use as a map key at all, which is the reason this type (and Snapshot
+// itself) exists rather than tagging Digest for JSON directly.
+type PairSnapshot struct {
+	From string `json:"from"`
+	To   string `json:"to"`
+	PairCounts
+}
+
+// Snapshot builds the JSON-stable view of d as it stands right now: every
+// bounded aggregate, in first-seen order, with no Timeline. Safe to call at
+// any point during a live absorb, including on a session with no natural end
+// — see the Snapshot doc comment for why that is true by construction and not
+// only by convention.
+func (d *Digest) Snapshot() Snapshot {
+	s := Snapshot{
+		Events: d.Events, Team: d.Team, Served: d.Served, SawSessionStart: d.SawSessionStart,
+		Image: d.Image, Arch: d.Arch, Kelyfos: d.Kelyfos, Kernel: d.Kernel, Supervisor: d.Supervisor,
+		BootMS: d.BootMS, Started: d.Started, Ended: d.Ended, EndReason: d.EndReason,
+		TimedOut: d.TimedOut, OOMKills: d.OOMKills, Terminated: d.Terminated,
+		Session: d.Session, Totals: d.Totals(),
+		Receipt: d.Receipt, Policy: d.Policy, Topology: d.Topology,
+		Secrets: d.Secrets, SecretsTruncated: d.SecretsTruncated,
+		PeerOnly: d.PeerOnly, PeerOnlyTruncated: d.PeerOnlyTruncated,
+		Messages: d.Messages, MessagesRefused: d.MessagesRefused,
+		SpawnRefused: d.SpawnRefused, StoreRefused: d.StoreRefused,
+		PairsTruncated: d.PairsTruncated, DomainsTruncated: d.DomainsTruncated, StoreTruncated: d.StoreTruncated,
+	}
+	for _, name := range d.AgentOrder {
+		// Belt and suspenders against a malformed chain, matching how
+		// internal/report's own AgentOrder walk (rungraph.go) treats the same
+		// invariant: AgentOrder and Agents are always kept in sync by agent(),
+		// but nothing here re-derives that guarantee from first principles.
+		if a := d.Agents[name]; a != nil {
+			s.Agents = append(s.Agents, AgentSnapshot{Name: a.Name, Counters: a.Counters, Receipt: a.Receipt, Policy: a.Policy})
+		}
+	}
+	for _, p := range d.PairOrder {
+		if pc := d.Pairs[p]; pc != nil {
+			s.Pairs = append(s.Pairs, PairSnapshot{From: p.From, To: p.To, PairCounts: *pc})
+		}
+	}
+	for _, host := range d.DomainOrder {
+		if dm := d.Domains[host]; dm != nil {
+			s.Domains = append(s.Domains, *dm)
+		}
+	}
+	for _, key := range d.StoreOrder {
+		if sk := d.Store[key]; sk != nil {
+			s.Store = append(s.Store, *sk)
+		}
+	}
+	return s
+}
 
 func (d *Digest) agent(name string) *Agent {
 	a, ok := d.Agents[name]

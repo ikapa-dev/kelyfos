@@ -1,7 +1,9 @@
 package digest
 
 import (
+	"bytes"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
@@ -848,5 +850,122 @@ func FuzzAbsorbNeverPanics(f *testing.F) {
 		if len(live.Timeline) != 0 {
 			t.Errorf("a zero-value Digest retained a Timeline entry for type %q", typ)
 		}
+
+		// P7-10: kelyfos watch --json marshals exactly this shape, from
+		// exactly this kind of live, KeepTimeline-false Digest. Every string
+		// field fed into this fuzz target — agent, peer, host, path, name,
+		// reason, kind, outcome, data — can land in Snapshot somewhere (an
+		// agent name, a Domain.Host, a StoreKey.Key, a Pair, a SecretRef), so
+		// this is the same hostile-input property FuzzAbsorbNeverPanics
+		// already checks on Absorb, checked again on the one shape this
+		// package hands to encoding/json.
+		blob, err := json.Marshal(live.Snapshot())
+		if err != nil {
+			t.Fatalf("Snapshot() for type %q did not marshal to JSON: %v", typ, err)
+		}
+		if bytes.ContainsAny(blob, "\x00\x1b") {
+			t.Errorf("a raw control byte reached the marshaled snapshot for type %q: %q", typ, blob)
+		}
+		if bytes.Contains(blob, []byte("<script")) {
+			t.Errorf("raw <script bytes reached the marshaled snapshot for type %q: %q", typ, blob)
+		}
+		var back Snapshot
+		if err := json.Unmarshal(blob, &back); err != nil {
+			t.Fatalf("Snapshot JSON for type %q does not parse back: %v", typ, err)
+		}
 	})
+}
+
+// Snapshot (P7-10) turns Digest.Pairs/Domains/Store/Agents — three of which
+// are keyed on something JSON cannot use as a map key at all — into slices in
+// the same first-seen order every existing reader of this fold already walks
+// them in.
+func TestSnapshotOrdersCollectionsByFirstSeen(t *testing.T) {
+	d := Walk(teamEvents())
+	s := d.Snapshot()
+
+	if got := len(s.Agents); got != len(d.AgentOrder) {
+		t.Fatalf("Snapshot has %d agents, want %d (len(AgentOrder))", got, len(d.AgentOrder))
+	}
+	for i, name := range d.AgentOrder {
+		if s.Agents[i].Name != name {
+			t.Errorf("Agents[%d].Name = %q, want %q (AgentOrder[%d])", i, s.Agents[i].Name, name, i)
+		}
+	}
+
+	if got := len(s.Pairs); got != len(d.PairOrder) {
+		t.Fatalf("Snapshot has %d pairs, want %d (len(PairOrder))", got, len(d.PairOrder))
+	}
+	for i, p := range d.PairOrder {
+		if s.Pairs[i].From != p.From || s.Pairs[i].To != p.To {
+			t.Errorf("Pairs[%d] = {%q,%q}, want {%q,%q} (PairOrder[%d])",
+				i, s.Pairs[i].From, s.Pairs[i].To, p.From, p.To, i)
+		}
+	}
+
+	if got := len(s.Store); got != len(d.StoreOrder) {
+		t.Fatalf("Snapshot has %d store keys, want %d (len(StoreOrder))", got, len(d.StoreOrder))
+	}
+	for i, key := range d.StoreOrder {
+		if s.Store[i].Key != key {
+			t.Errorf("Store[%d].Key = %q, want %q (StoreOrder[%d])", i, s.Store[i].Key, key, i)
+		}
+	}
+}
+
+// A team's own per-agent policy and the session's own topology are carried
+// verbatim, not re-derived — D59's own reasoning: a declared policy is a fact
+// recorded once, and Snapshot reads it back rather than reconstructing it.
+func TestSnapshotCarriesPolicyAndTopologyVerbatim(t *testing.T) {
+	events := append(teamEvents(),
+		recorder.NewSessionPolicy("master", recorder.PolicyFields{VcpuCount: 2}),
+		recorder.NewTeamTopology(recorder.TopologyFields{
+			Agents: []recorder.EvAgent{{Name: "master"}, {Name: "worker-1"}},
+			Edges:  []string{"master -> worker-1"},
+		}),
+	)
+	s := Walk(events).Snapshot()
+
+	if s.Topology == nil || len(s.Topology.Agents) != 2 {
+		t.Fatalf("Snapshot.Topology = %v, want the two-agent team.topology event", s.Topology)
+	}
+	var masterPolicy *recorder.Event
+	for i := range s.Agents {
+		if s.Agents[i].Name == "master" {
+			masterPolicy = s.Agents[i].Policy
+		}
+	}
+	if masterPolicy == nil || masterPolicy.VcpuCount != 2 {
+		t.Errorf("master's Snapshot policy = %v, want VcpuCount=2", masterPolicy)
+	}
+}
+
+// Timeline — every event, annotated, unbounded — has no place in this shape:
+// kelyfos log --json is that surface already, and Snapshot has no field for
+// it at all, so it cannot appear in the marshaled JSON regardless of how the
+// Digest it was built from was constructed (KeepTimeline true or false).
+func TestSnapshotNeverMarshalsATimeline(t *testing.T) {
+	allowed := true
+	events := append(append([]recorder.Event(nil), teamEvents()...),
+		recorder.Event{Type: recorder.TypeEgressAttempt, Host: "example.com", Allowed: &allowed})
+	d := Walk(events) // Walk uses New(), which sets KeepTimeline true
+	if len(d.Timeline) == 0 {
+		t.Fatal("test fixture is broken: the source Digest has no Timeline to omit")
+	}
+	blob, err := json.Marshal(d.Snapshot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(blob, &raw); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := raw["timeline"]; ok {
+		t.Errorf("Snapshot's JSON carries a timeline key: %s", blob)
+	}
+	for _, want := range []string{"events", "session", "totals", "agents", "pairs", "domains", "store"} {
+		if _, ok := raw[want]; !ok {
+			t.Errorf("Snapshot's JSON is missing %q: %s", want, blob)
+		}
+	}
 }

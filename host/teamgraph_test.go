@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
@@ -515,5 +516,194 @@ func TestFitToBudgetNeverExceedsItsBudget(t *testing.T) {
 	got := fitToBudget(lines, 3, note)
 	if len(got) != 3 || got[2] != note {
 		t.Errorf("fitToBudget(lines, 3, note) = %v, want 3 lines ending in the note", got)
+	}
+}
+
+// P7-10: kelyfos team graph --json / kelyfos team ps --graph --json.
+//
+// buildTeamGraphJSON is a pure conversion of an already-normalized
+// graph.Input, so these tests build the Input directly (as
+// TestRenderTeamGraphDrawsTheCanvasEdgesAndIndirectReach and its siblings
+// already do) rather than going through buildGraphInput again — the two are
+// tested separately, on purpose, so a bug in one is not masked by the other.
+
+func TestBuildTeamGraphJSONReportsAgentsEdgesResourcesAndAccess(t *testing.T) {
+	in := graph.Input{
+		Agents:    []graph.Agent{{ID: "master", Group: "g"}, {ID: "worker-1"}},
+		Edges:     []graph.Edge{{From: "master", To: "worker-1"}},
+		Resources: []graph.Resource{{ID: "example.com", Kind: graph.Domain}, {ID: "findings", Kind: graph.StoreKey}},
+		Access: []graph.Access{
+			{Agent: "master", Resource: "example.com"},
+			{Agent: "worker-1", Resource: "findings", Write: true},
+		},
+	}
+	out, err := buildTeamGraphJSON("declared", "suppliers", in, false, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Mode != "declared" || out.Team != "suppliers" {
+		t.Errorf("Mode=%q Team=%q, want declared/suppliers", out.Mode, out.Team)
+	}
+	if len(out.Agents) != 2 || out.Agents[0].ID != "master" || out.Agents[0].Group != "g" {
+		t.Errorf("Agents = %+v, want master (group g) and worker-1", out.Agents)
+	}
+	if len(out.Edges) != 1 || out.Edges[0] != (teamGraphEdgeJSON{From: "master", To: "worker-1"}) {
+		t.Errorf("Edges = %+v", out.Edges)
+	}
+	if len(out.Resources) != 2 || out.Resources[0].Kind != "domain" || out.Resources[1].Kind != "store_key" {
+		t.Errorf("Resources = %+v, want kinds domain then store_key", out.Resources)
+	}
+	if len(out.Access) != 2 || !out.Access[1].Write {
+		t.Errorf("Access = %+v, want worker-1's findings access to carry write=true", out.Access)
+	}
+	if len(out.EgressPorts) == 0 {
+		t.Error("EgressPorts is empty — every sandbox reaches the fixed default pair (P7-4/D65)")
+	}
+	if out.SpawnedNotInTopology != nil || out.StoreEnabledUnknown {
+		t.Errorf("declared mode carries running-only fields: spawned=%v unknown=%v",
+			out.SpawnedNotInTopology, out.StoreEnabledUnknown)
+	}
+}
+
+// Same fixture and the same expectation as
+// TestRenderTeamGraphReportsOneHopStoreMediatedReachAsIndirect: the JSON
+// shape and the terminal drawing must never disagree about what reaches what.
+func TestBuildTeamGraphJSONReportsOneHopStoreMediatedReachAsIndirect(t *testing.T) {
+	in, err := buildGraphInput(
+		[]graphAgent{{Name: "worker-1"}, {Name: "worker-2"}},
+		nil,
+		[]graphStoreRule{{Name: "shared", Read: []string{"*"}, Write: []string{"*"}}},
+		true,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := buildTeamGraphJSON("declared", "t", in, false, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[[2]string]int{{"worker-1", "worker-2"}: 1, {"worker-2", "worker-1"}: 1}
+	if len(out.IndirectReach) != len(want) {
+		t.Fatalf("IndirectReach = %+v, want %d one-hop pairs", out.IndirectReach, len(want))
+	}
+	for _, r := range out.IndirectReach {
+		hops, ok := want[[2]string{r.From, r.To}]
+		if !ok || hops != r.Hops {
+			t.Errorf("unexpected reach entry %+v", r)
+		}
+	}
+}
+
+// Mirrors TestRenderTeamGraphNeverReportsADirectEdgeAsIndirectReach: a
+// declared edge must never also appear in IndirectReach.
+func TestBuildTeamGraphJSONNeverReportsADirectEdgeAsIndirectReach(t *testing.T) {
+	in := graph.Input{
+		Agents: []graph.Agent{{ID: "a"}, {ID: "b"}},
+		Edges:  []graph.Edge{{From: "a", To: "b"}},
+	}
+	out, err := buildTeamGraphJSON("declared", "t", in, false, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out.IndirectReach) != 0 {
+		t.Errorf("a direct edge showed up in IndirectReach: %+v", out.IndirectReach)
+	}
+}
+
+// Mirrors TestRenderTeamGraphIndirectReachIsBoundedAndSaysSoWhenTruncated:
+// the JSON shape must bound the same list the same way and say when it did.
+func TestBuildTeamGraphJSONIndirectReachIsBoundedAndSaysSoWhenTruncated(t *testing.T) {
+	var agents []graphAgent
+	for i := 0; i < 30; i++ {
+		agents = append(agents, graphAgent{Name: fmt.Sprintf("worker-%02d", i)})
+	}
+	in, err := buildGraphInput(agents, nil,
+		[]graphStoreRule{{Name: "shared", Read: []string{"*"}, Write: []string{"*"}}}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := buildTeamGraphJSON("declared", "t", in, false, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out.IndirectReach) > maxIndirectReachLines {
+		t.Errorf("IndirectReach has %d entries, want at most %d", len(out.IndirectReach), maxIndirectReachLines)
+	}
+	if !out.IndirectReachTruncated {
+		t.Error("a 30-agent, fully-open store did not set IndirectReachTruncated")
+	}
+}
+
+func TestBuildTeamGraphJSONRunningModeCarriesTheTwoHonestGaps(t *testing.T) {
+	in := graph.Input{Agents: []graph.Agent{{ID: "master"}}}
+	out, err := buildTeamGraphJSON("running", "t", in, true, []string{"master-spawn-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Mode != "running" {
+		t.Errorf("Mode = %q, want running", out.Mode)
+	}
+	if !out.StoreEnabledUnknown {
+		t.Error("StoreEnabledUnknown not set when the caller said it was unknown")
+	}
+	if strings.Join(out.SpawnedNotInTopology, ",") != "master-spawn-1" {
+		t.Errorf("SpawnedNotInTopology = %v, want [master-spawn-1]", out.SpawnedNotInTopology)
+	}
+}
+
+// A hostile agent name — a <script> tag, a null byte, a quote that would
+// break a hand-built JSON string — must reach valid, well-escaped JSON and
+// nothing else: encoding/json escapes correctly by construction, so this
+// asserts that property holds end to end rather than assuming it.
+func TestBuildTeamGraphJSONMarshalsHostileNamesSafely(t *testing.T) {
+	hostile := "worker\"</script><script>alert(1)</script>\x00\x1b[31m"
+	in := graph.Input{
+		Agents:    []graph.Agent{{ID: graph.AgentID(hostile)}, {ID: "master"}},
+		Edges:     []graph.Edge{{From: graph.AgentID(hostile), To: "master"}},
+		Resources: []graph.Resource{{ID: graph.ResourceID(hostile), Kind: graph.Domain}},
+		Access:    []graph.Access{{Agent: graph.AgentID(hostile), Resource: graph.ResourceID(hostile)}},
+	}
+	out, err := buildTeamGraphJSON("declared", hostile, in, false, []string{hostile})
+	if err != nil {
+		t.Fatal(err)
+	}
+	blob, err := json.Marshal(out)
+	if err != nil {
+		t.Fatalf("json.Marshal refused hostile input: %v", err)
+	}
+	if strings.Contains(string(blob), "<script") {
+		t.Errorf("raw <script bytes reached the marshaled JSON: %s", blob)
+	}
+	if strings.ContainsAny(string(blob), "\x00\x1b") {
+		t.Errorf("a raw control byte reached the marshaled JSON: %q", blob)
+	}
+	var back teamGraphJSON
+	if err := json.Unmarshal(blob, &back); err != nil {
+		t.Fatalf("the marshaled JSON does not parse back: %v", err)
+	}
+	// in.Agents is [hostile, "master"], in that order, and buildTeamGraphJSON
+	// walks in.Agents directly (no sort) — so index 0 is the hostile one.
+	if back.Team != hostile || back.Agents[0].ID != hostile {
+		t.Errorf("the hostile value did not round-trip intact: Team=%q Agents[0].ID=%q", back.Team, back.Agents[0].ID)
+	}
+}
+
+func TestTeamPSJSONMarshalsAndRoundTrips(t *testing.T) {
+	in := teamPSJSON{
+		Team: "suppliers", Session: "abc123", Owner: ownerCLI, StartedAt: "2026-08-27T00:00:00Z",
+		Edges:  []string{"master -> worker-1"},
+		Budget: &teamBudget{CGroup: "kelyfos.slice", CPUQuota: 200, UsedSeconds: 1.5},
+		Agents: []teamMember{{Name: "master", Sandbox: "sb1", Alive: true}},
+	}
+	blob, err := json.Marshal(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var back teamPSJSON
+	if err := json.Unmarshal(blob, &back); err != nil {
+		t.Fatalf("does not round-trip: %v", err)
+	}
+	if back.Team != in.Team || back.Budget.CGroup != in.Budget.CGroup || len(back.Agents) != 1 {
+		t.Errorf("round trip mismatch: got %+v", back)
 	}
 }

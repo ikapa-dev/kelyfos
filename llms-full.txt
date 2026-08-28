@@ -512,7 +512,7 @@ And the parts that make it a thing you reach for rather than tolerate (v0.8):
 | [`llms.txt`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/llms.txt) · [`llms-full.txt`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/llms-full.txt) | for machine readers: an index per the llmstxt.org spec, and the whole set in one file, whose current size `llms.txt` states |
 | [`docs/reference/`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/reference/README.md) | every command, flag, toml key, MCP tool, event and exit code — generated from the source |
 | [`PLAN.html`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/PLAN.html) · [`PLAN-FEATURES.html`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/PLAN-FEATURES.html) | the living plan — every decision and the full progress log, phases then epics |
-| [`docs/cookbook.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/cookbook.md) | sixteen recipes that work: run one, allowlist a domain, fork, build a team, point a client at it, write a plugin, verify the log, pause and resume, review a diff, forward a port, draw a team's topology |
+| [`docs/cookbook.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/cookbook.md) | eighteen recipes that work: run one, allowlist a domain, fork, build a team, point a client at it, write a plugin, verify the log, pause and resume, review a diff, forward a port, draw a team's topology, pipe it as JSON |
 | [`docs/integrating.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/integrating.md) | building on it: the four ways in, orchestrator patterns, common mistakes |
 | [`docs/mcp-surface.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/mcp-surface.md) | MCP in both directions: `serve-mcp` as a tool for any client, `[[plugin]]` servers inside the guest |
 | [`docs/threat-model.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/threat-model.md) | what is defended, and what is not |
@@ -3390,6 +3390,67 @@ Two honest gaps, both stated in the view itself rather than left silent:
   empty, rather than guessing either way; `kelyfos team graph`, reading
   `kelyfos.toml` directly, does not have this gap.
 
+### 8.5 `--json` (P7-10)
+
+Until this task, only `kelyfos bench`, `kelyfos log` and `kelyfos verify` could
+be piped. The three views above answer three different questions and none of
+them had a machine-readable form — a script that wanted any of it had to parse
+a table, or a terminal drawing meant for a person. `--json` on each is the
+extensibility surface for a view this phase did not think of, and it is
+cheaper than a plugin system.
+
+**`kelyfos team ps --json`** returns exactly the shape the `team_ps` MCP tool
+has always returned as `structuredContent` (§2.2 of `docs/mcp-surface.md`'s
+Teams section):
+`{team, session, owner, started_at, edges, budget, agents: [{agent, sandbox,
+via, alive, sampled, cpu_seconds, cpu_quota_percent, vcpus, rss_kib, mem_mib,
+disk_write_bytes, allow, reaches}]}`. A script reading one has read the
+other — `host/team.go`'s `teamMember` and `teamPSJSON` are the one place this
+mapping is built, the same rule §8.4 already follows for the two graph
+renderers.
+
+```
+$ kelyfos team ps --json | jq '.agents[] | {agent, alive, cpu_seconds}'
+```
+
+**`kelyfos team graph --json`** (declared) and **`kelyfos team ps --graph
+--json`** (running) both emit `host/teamgraph.go`'s `teamGraphJSON`: the
+resolved topology itself, never a picture of it — no coordinates, no
+glyphs. `agents`, `edges`, `resources` (each with its `kind`:
+`domain`/`store_key`/`secret`) and `access` (with `write`) are the same
+`graph.Input` both text renderers already draw from; `indirect_reach` is the
+"a star topology is not the isolation it looks like" section (§8.4's own
+picture), structured as `{from, to, hops}` pairs instead of prose, bounded the
+same way and saying so (`indirect_reach_truncated`) when it is. `mode` is
+`"declared"` or `"running"` — P7-7's own names for the two questions; running
+mode also carries `spawned_not_in_topology` and `store_enabled_unknown`, the
+two honest gaps §8.4.1 already states in prose, now as fields a script can
+check without parsing a sentence.
+
+```
+$ kelyfos team graph --json | jq '.indirect_reach'
+$ kelyfos team ps --graph --json | jq '.spawned_not_in_topology'
+```
+
+**`kelyfos watch --json`** prints one snapshot of the digest and exits,
+instead of opening the live view: `internal/digest.Digest.Snapshot()`, the
+same aggregate every pane above already reads — every counter, the session
+header, the `session.policy` and `team.topology` events verbatim, the secrets
+bound (named, never valued), and the team's pairs, domains and store activity,
+each collection in first-seen order and bounded the same way the live view
+already is (`MaxDistinctKeys`, with a `*_truncated` flag saying when a
+collection hit it). It carries no timeline — `kelyfos log --json` is that
+surface already, and duplicating it here under a different flag would remove
+the one property that makes a digest safe to snapshot on a session with no
+natural end: every field in it is bounded regardless of how large the chain
+behind it has grown, or how long the team it describes has been running.
+`internal/digest/digest.go`'s own doc comment on `Snapshot` is the
+field-by-field reference; this paragraph is the pointer to it.
+
+```
+$ kelyfos watch --json | jq '.session, .totals, .domains'
+```
+
 ---
 
 ## 9. Conformance
@@ -5594,12 +5655,15 @@ are measured on the bare-KVM reference (D15).
 **`team_up`** — raise the team the project's `kelyfos.toml` declares.
 No parameters: the topology is the file's, not the caller's. There is no
 argument that adds an agent or an edge, for the reason in §1.
-**`team_ps`** — the roster, as structured data. This is deliberately the
-machine-readable form `kelyfos team ps` does not have, and it is where an
-orchestrator gets the mapping it needs:
+**`team_ps`** — the roster, as structured data, for a caller who is already an
+MCP client rather than a shell: an orchestrator gets the mapping it needs
+without spawning `kelyfos` and parsing its stdout.
 `{team, session, owner, started_at, edges, budget, agents: [{agent, sandbox, via,
 alive, sampled, cpu_seconds, cpu_quota_percent, vcpus, rss_kib, mem_mib,
-disk_write_bytes, allow, reaches}]}`.
+disk_write_bytes, allow, reaches}]}` — the identical shape `kelyfos team ps
+--json` now also prints (P7-10, `docs/teams.md` §8.5), built from the same
+`teamMember`/`teamPSJSON` mapping in `host/team.go` so the tool and the flag
+can never disagree about what a team is doing.
 `alive` is whether the machine is still there, and `sampled` is whether its usage
 could be read at all — a genuinely idle agent and one whose sample failed are two
 different facts and would otherwise both be zeroes.
@@ -6939,7 +7003,7 @@ description: complete recipes, each one a script CI runs on a real machine
 
 # KelyfOS cookbook
 
-Sixteen recipes, each one complete, each one runnable as it stands.
+Eighteen recipes, each one complete, each one runnable as it stands.
 
 These are not illustrations. `bash dev/cookbook.sh` extracts every script below
 and runs it on a real machine. Every commit checks that each recipe still
@@ -8577,6 +8641,133 @@ grep -o '"type":"session.erasure"[^}]*}' "$record"
 
 ---
 
+## 17. Pipe a team's roster, its topology and its digest as JSON
+
+`kelyfos team ps`, `kelyfos team graph` and `kelyfos watch` all gain `--json`
+(P7-10): the extensibility surface for a view this phase did not think of,
+and cheaper than a plugin system. `kelyfos team ps --json` returns the same
+shape the `team_ps` MCP tool has always returned as `structuredContent`.
+`kelyfos team graph --json` and `kelyfos team ps --graph --json` return the
+resolved topology — agents, edges, resources, access and the indirect-reach
+pairs the picture in recipe 15 draws — as data instead of a drawing.
+`kelyfos watch --json` prints one snapshot of the digest — every counter, the
+policy and topology events verbatim — and exits, instead of opening the live
+view. `docs/teams.md` §8.5 documents every field.
+
+<!-- recipe: team-json -->
+
+```bash
+set -euo pipefail
+work="$(mktemp -d)"
+cd "$work"
+trap 'kelyfos team down >/dev/null 2>&1 || true; pkill -f "kelyfos team up" 2>/dev/null || true; rm -rf "$work"' EXIT
+
+cat > kelyfos.toml <<'TOML'
+[team]
+name = "cookbook-json"
+
+[[team.agent]]
+name  = "master"
+image = "dev"
+allow = ["example.com"]
+
+[[team.agent]]
+name  = "worker"
+image = "dev"
+count = 2
+
+[[team.edge]]
+from = "master"
+to   = "worker-*"
+
+[team.store]
+enabled = true
+
+[[team.store.key]]
+name  = "findings"
+write = ["worker-*"]
+read  = ["master"]
+TOML
+
+echo "== declared topology, nothing booted =="
+kelyfos team graph --json > declared.json
+python3 -c "
+import json
+d = json.load(open('declared.json'))
+assert d['mode'] == 'declared', d
+assert d['team'] == 'cookbook-json', d
+assert len(d['agents']) == 3, d['agents']
+assert any(e['from'] == 'master' for e in d['edges']), d['edges']
+assert any(r['kind'] == 'store_key' for r in d['resources']), d['resources']
+assert d['egress_ports'] == [80, 443], d['egress_ports']
+print('declared.json: mode=declared, %d agents, %d edges, %d resources' %
+      (len(d['agents']), len(d['edges']), len(d['resources'])))
+"
+
+echo
+echo "== boot it =="
+kelyfos team up >up.log 2>&1 &
+for _ in $(seq 1 600); do grep -q 'team up in' up.log && break; sleep 0.25; done
+grep -q 'team up in' up.log || { cat up.log; exit 1; }
+
+echo
+echo "== kelyfos team ps --json — the same shape the team_ps MCP tool returns =="
+kelyfos team ps --json > ps.json
+python3 -c "
+import json
+d = json.load(open('ps.json'))
+assert d['team'] == 'cookbook-json', d
+names = sorted(a['agent'] for a in d['agents'])
+assert names == ['master', 'worker-1', 'worker-2'], names
+assert all(a['alive'] for a in d['agents']), d['agents']
+print('ps.json: %d agents, all alive' % len(d['agents']))
+"
+
+echo
+echo "== kelyfos team ps --graph --json — the running topology, as data =="
+kelyfos team ps --graph --json > running.json
+python3 -c "
+import json
+d = json.load(open('running.json'))
+assert d['mode'] == 'running', d
+assert d['team'] == 'cookbook-json', d
+assert len(d['agents']) == 3, d['agents']
+print('running.json: mode=running, %d agents, %d indirect reach pair(s)' %
+      (len(d['agents']), len(d.get('indirect_reach') or [])))
+"
+
+echo
+echo "== declared and running agree on agents, edges and resources =="
+python3 -c "
+import json
+a = json.load(open('declared.json'))
+b = json.load(open('running.json'))
+norm = lambda d: (sorted(x['id'] for x in d['agents']),
+                   sorted((e['from'], e['to']) for e in d['edges']),
+                   sorted(x['id'] for x in d['resources']))
+assert norm(a) == norm(b), (norm(a), norm(b))
+print('agents, edges and resources match between declared and running')
+"
+
+echo
+echo "== kelyfos watch --json — a one-shot snapshot of the digest, not the live view =="
+kelyfos watch --json > digest.json
+python3 -c "
+import json
+d = json.load(open('digest.json'))
+assert d['team'] is True, d
+assert d['events'] > 0, d
+assert d['topology'] is not None, 'no team.topology in the digest'
+assert any(a.get('policy') for a in d['agents']), 'no agent carries its session.policy'
+print('digest.json: team=%s, %d events, topology present, %d agent(s) with a policy' %
+      (d['team'], d['events'], sum(1 for a in d['agents'] if a.get('policy'))))
+"
+
+kelyfos team down
+```
+
+---
+
 ## Running them yourself
 
 ```
@@ -9182,7 +9373,7 @@ different protocol stack from the REST endpoints the shim serves. Use
 
 ## 7. Where to look next
 
-- [`cookbook.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/cookbook.md) — sixteen recipes that run, including the Python
+- [`cookbook.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/cookbook.md) — eighteen recipes that run, including the Python
   client above
 - [`reference/`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/reference/README.md) — every command, flag, key, tool, event and exit
   code, generated from the source
@@ -10548,7 +10739,7 @@ hand-written half, and this page says where each is still thin.
 | stuck on something KelyfOS refused | [`denials.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/denials.md), then [`reference/denials.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/reference/denials.md) for the exact one |
 | running something long and walking away | [`denials.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/denials.md) on `--notify`, and [`events.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/events.md) §6 for the history afterwards |
 | keeping an agent off the network | [`networking.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/networking.md) |
-| after something that works, right now | [`cookbook.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/cookbook.md) — sixteen recipes, each one runnable as it stands |
+| after something that works, right now | [`cookbook.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/cookbook.md) — eighteen recipes, each one runnable as it stands |
 | putting KelyfOS inside something else | [`integrating.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/integrating.md) |
 | building KelyfOS into something else | [`protocol.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/protocol.md), then [`e2b-shim.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/e2b-shim.md) |
 | driving KelyfOS from an MCP client | [`mcp-surface.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/mcp-surface.md) — `serve-mcp` and `[[plugin]]`, and [recipe 9](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/cookbook.md) for the configuration |
@@ -11191,6 +11382,7 @@ kelyfos team ps
 | Flag | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `--graph` | boolean | — | draw the topology this team was declared with at boot (P7-7) instead of the table below |
+| `--json` | boolean | — | emit structured data instead of a table — the same shape the team_ps MCP tool already returns (P7-10) |
 
 ## kelyfos team down
 
@@ -11212,6 +11404,7 @@ kelyfos team graph
 
 | Flag | Type | Default | Meaning |
 | --- | --- | --- | --- |
+| `--json` | boolean | — | emit the resolved topology as JSON (P7-10) instead of drawing it |
 | `--policy` | string | — | a specific kelyfos.toml, instead of the one found by walking up from here |
 
 ## kelyfos shim
@@ -11316,6 +11509,7 @@ kelyfos watch [flags]
 
 | Flag | Type | Default | Meaning |
 | --- | --- | --- | --- |
+| `--json` | boolean | — | print one snapshot of the digest — every counter, the policy and the topology (P7-10) — as JSON, instead of opening the live view |
 | `--session` | string | the most recent | session id |
 
 ## kelyfos bench
