@@ -5986,6 +5986,37 @@ after:
         <code>govulncheck</code> &rarr; &ldquo;No vulnerabilities found.&rdquo;, <code>make docs</code> regenerated
         cleanly; <code>python3 tools/check-plan.py</code> &rarr; &ldquo;PLAN.html is coherent: 101 tasks, 87
         checked, 68 decisions&rdquo;.</td></tr>
+    <tr><td class="mono">2026-08-28</td><td class="mono">P7-10</td>
+        <td><code>--json</code> where it was missing, stage three's second task. <code>kelyfos watch
+        --json</code> prints one <code>Digest.Snapshot()</code> and exits, skipping the bubbletea TUI
+        entirely. <code>kelyfos team ps --json</code> emits the identical shape the <code>team_ps</code> MCP
+        tool's own <code>structuredContent</code> already used, deliberately, so two readers of the same fact
+        never see two shapes. <code>kelyfos team graph --json</code> and <code>kelyfos team ps --graph
+        --json</code> (P7-7) emit agents/edges/resources/access/indirect_reach, built from the same
+        <code>graph.Input</code> both existing text renderers already share. <code>internal/digest</code>
+        gained JSON tags plus a new <code>Snapshot</code>/<code>AgentSnapshot</code>/<code>PairSnapshot</code>
+        type and a <code>(*Digest).Snapshot()</code> method converting the fold's map-keyed collections
+        (<code>Pairs map[Pair]*PairCounts</code>, which <code>encoding/json</code> cannot marshal directly)
+        into ordered slices, excluding <code>Timeline</code>. Today only <code>bench</code>, <code>log</code>
+        and <code>verify</code> could be piped; this is the extensibility surface anyone wanting a view this
+        phase didn't build can now use.
+        <br>Found and fixed a real pre-existing bug while touching cookbook infrastructure:
+        <code>docs/cookbook.md</code> already had 17 real recipes before this task (P7-9's own recipe 17
+        landed first), but <code>tools/cookbook/main.go</code>'s <code>checkCount</code> word-map still said
+        &ldquo;Sixteen&rdquo; &mdash; a drift that would have failed CI the moment anyone ran it. Corrected to
+        18 (&ldquo;Eighteen&rdquo;, this task's own new recipe included) across every cross-reference.</td>
+        <td class="mono">commit <code>9001914</code> on the author's worktree branch, verified by the
+        orchestrator: <code>gofmt -l .</code> clean, <code>go vet ./...</code> clean, <code>go test -count=1
+        ./...</code> every package <code>ok</code>, <code>govulncheck</code> &rarr; &ldquo;No vulnerabilities
+        found.&rdquo;, <code>make docs</code> regenerated cleanly<br>
+        real end-to-end: booted a real 2-agent <code>dev</code>-image team, then <code>team ps --json</code>
+        &rarr; valid JSON with keys <code>team, session, owner, started_at, edges, budget, agents</code>;
+        <code>team graph --json</code> (declared) &rarr; valid JSON with <code>mode, team, agents, edges,
+        resources, access, egress_ports</code>; <code>team ps --graph --json</code> (running) &rarr; the same
+        plus <code>store_enabled_unknown</code> (P7-3's recorder gap, honestly carried into the JSON shape
+        too); <code>watch --json</code> &rarr; valid JSON. All four parsed cleanly with Python's
+        <code>json.load</code>, no manual JSON construction found anywhere in the diff (grepped for
+        hand-built JSON strings; everything goes through <code>encoding/json</code>).</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
