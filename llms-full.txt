@@ -32,6 +32,7 @@ Contents, in reading order:
 - `docs/qol.md` — the shell, the diff, pause and resume, port forwarding and notifications — written before the code, with the places the built thing differed marked
 - `docs/policy-record.md` — session.policy and team.topology, written before the code: every field, its position in the frozen hash order, which door writes it, and what it omits
 - `docs/retention.md` — the [sessions] retention_days floor, kelyfos sessions prune, the size warning, and kelyfos sessions erase's replacement-record pattern
+- `docs/otlp.md` — how kelyfos log --export-otlp maps a session's chain to OTLP-JSON spans, why the mapping is versioned apart from the flight recorder and never an input to kelyfos verify, and what is deliberately not mapped
 - `docs/README.md` — what every document is, and — deliberately — where each is still thin
 - `docs/reference/cli.md` — every command and flag, with types and defaults
 - `docs/reference/config.md` — every key the policy file takes, and every key it refuses
@@ -512,7 +513,7 @@ And the parts that make it a thing you reach for rather than tolerate (v0.8):
 | [`llms.txt`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/llms.txt) · [`llms-full.txt`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/llms-full.txt) | for machine readers: an index per the llmstxt.org spec, and the whole set in one file, whose current size `llms.txt` states |
 | [`docs/reference/`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/reference/README.md) | every command, flag, toml key, MCP tool, event and exit code — generated from the source |
 | [`PLAN.html`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/PLAN.html) · [`PLAN-FEATURES.html`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/PLAN-FEATURES.html) | the living plan — every decision and the full progress log, phases then epics |
-| [`docs/cookbook.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/cookbook.md) | eighteen recipes that work: run one, allowlist a domain, fork, build a team, point a client at it, write a plugin, verify the log, pause and resume, review a diff, forward a port, draw a team's topology, pipe it as JSON |
+| [`docs/cookbook.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/cookbook.md) | nineteen recipes that work: run one, allowlist a domain, fork, build a team, point a client at it, write a plugin, verify the log, pause and resume, review a diff, forward a port, draw a team's topology, pipe it as JSON, export it as OTLP |
 | [`docs/integrating.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/integrating.md) | building on it: the four ways in, orchestrator patterns, common mistakes |
 | [`docs/mcp-surface.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/mcp-surface.md) | MCP in both directions: `serve-mcp` as a tool for any client, `[[plugin]]` servers inside the guest |
 | [`docs/threat-model.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/threat-model.md) | what is defended, and what is not |
@@ -7003,7 +7004,7 @@ description: complete recipes, each one a script CI runs on a real machine
 
 # KelyfOS cookbook
 
-Eighteen recipes, each one complete, each one runnable as it stands.
+Nineteen recipes, each one complete, each one runnable as it stands.
 
 These are not illustrations. `bash dev/cookbook.sh` extracts every script below
 and runs it on a real machine. Every commit checks that each recipe still
@@ -8764,6 +8765,82 @@ print('digest.json: team=%s, %d events, topology present, %d agent(s) with a pol
 "
 
 kelyfos team down
+```
+
+---
+
+## 18. Export the record as OTLP, for tools that already speak it
+
+`kelyfos log --export-otlp` maps the same session's chain to OTLP-JSON spans
+— the shape a Jaeger, a Grafana Tempo, or an OpenTelemetry Collector's file
+receiver already reads, with `invoke_agent` per agent, `execute_tool` per
+command, and every egress attempt or refusal riding along as a span event.
+
+It is a one-way projection, not a second record. `docs/otlp.md` is why: the
+GenAI semantic conventions this mapping targets are still marked
+"Development" with no stabilisation timeline, so this file is versioned
+apart from the flight recorder and `kelyfos verify` never reads it back —
+only `kelyfos log --export` (recipe 6) produces something a recipient
+verifies.
+
+<!-- recipe: otlp-export -->
+
+```bash
+set -euo pipefail
+work="$(mktemp -d)"
+cd "$work"
+trap 'rm -rf "$work"' EXIT
+
+kelyfos run --image dev --allow api.github.com -- bash -c '
+  set -e
+  kelyfos exec "echo hello > /tmp/hi.txt"
+  kelyfos exec "curl -s -o /dev/null -w \"%{http_code}\n\" https://api.github.com/rate_limit"
+  if kelyfos exec "curl -sS -m 10 https://example.com"; then
+    echo "example.com should have been refused"; exit 1
+  fi
+'
+
+echo
+echo "== export the chain as OTLP-JSON =="
+kelyfos log --export-otlp trace.json
+ls -l trace.json
+
+echo
+echo "== span names and shape, checked straight out of the file =="
+python3 - trace.json <<'PY'
+import json, sys
+
+doc = json.load(open(sys.argv[1]))
+spans = [s for rs in doc["resourceSpans"] for ss in rs["scopeSpans"] for s in ss["spans"]]
+names = sorted(s["name"] for s in spans)
+print("\n".join(names))
+
+assert any(n == "invoke_agent" for n in names), "no invoke_agent span"
+assert any(n.startswith("execute_tool") for n in names), "no execute_tool span"
+
+for s in spans:
+    assert len(s["traceId"]) == 32, s["traceId"]
+    assert len(s["spanId"]) == 16, s["spanId"]
+    # OTLP/JSON's own deviation from generic protobuf-JSON: enums are
+    # integers, never the enum's name string, and every 64-bit value
+    # (the two timestamps) is a decimal string.
+    assert isinstance(s["kind"], int) and not isinstance(s["kind"], bool)
+    assert isinstance(s["startTimeUnixNano"], str)
+    assert isinstance(s["endTimeUnixNano"], str)
+
+agent = next(s for s in spans if s["name"] == "invoke_agent")
+events = [e["name"] for e in agent.get("events", [])]
+assert "kelyfos.egress.attempt" in events, events
+assert "kelyfos.egress.refused" in events, events
+print("span names and OTLP-JSON shape check out")
+PY
+
+# One-way: the flight recorder itself is unaffected by the export, and
+# `kelyfos verify`/`kelyfos log --verify` never read the OTLP file — they
+# read the chain, exactly as they did before this recipe ran.
+echo
+echo "== the flight recorder is untouched, and still verifies =="
+kelyfos log --verify
 ```
 
 ---
@@ -10703,6 +10780,239 @@ applies to a bound secret's value (`docs/policy-record.md` §1's own
 
 
 ---
+title: Mapping the chain to a standard, without adopting it
+url: https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/otlp.md
+description: how kelyfos log --export-otlp maps a session's chain to OTLP-JSON spans, why the mapping is versioned apart from the flight recorder and never an input to kelyfos verify, and what is deliberately not mapped
+---
+
+# OTLP export — mapping the chain to a standard, without adopting it
+
+*Mixed, written after the code rather than before it, the way `docs/retention.md`
+was at P7-5: this is a projection off an already-frozen record, not a new
+field on it, so there was nothing to specify ahead of a real mapping the way
+`docs/policy-record.md` specified `session.policy` and `team.topology` before
+either existed.*
+
+## 1. What this is, and what it deliberately is not
+
+`kelyfos log --export-otlp <path>` writes one session's flight recorder chain
+as an [OTLP-JSON][otlp-json] trace export: the shape every existing tracing
+backend — Jaeger, Grafana Tempo, an OpenTelemetry Collector's file receiver,
+any vendor that speaks OTLP — already knows how to read. It exists because
+those tools exist and this project would rather export *to* them than ask
+anyone to build a KelyfOS-specific viewer for one more format.
+
+It is **not** a second flight recorder. `internal/recorder`'s `Event` struct,
+its frozen field order and the hash chain computed over it are untouched by
+anything in this package — D59 settles this: the OTLP mapping is versioned
+apart from the chain and is never an input to `kelyfos verify`. Concretely,
+that means:
+
+- `internal/otlp` (the package doing the mapping) imports `internal/recorder`
+  to *read* events and `internal/digest` to fold them, and imports nothing
+  the other direction — no door that writes a `session.policy` or a
+  `command.start` event knows this package exists.
+- The export is one-way and lossy. It is not read back by `kelyfos verify`,
+  by `kelyfos log`, or by anything else in this repository. A reader who
+  wants the record itself, tamper-evidence included, wants `kelyfos log
+  --export` (recipe 6, `docs/cookbook.md`) — a different flag, a different
+  file, a different promise.
+- As of the OpenTelemetry GenAI semantic conventions this mapping targets
+  (v1.42; the agent/tool span conventions have since moved out of the core
+  `semantic-conventions` repository into a dedicated
+  `semantic-conventions-genai` one, confirmed by reading both directly rather
+  than assumed), every `gen_ai.*` attribute this package writes still carries
+  the "Development" stability badge with no stabilisation timeline. A future
+  revision can rename or restructure any of them and the
+  fix is a change to `internal/otlp` alone — never a migration of anything
+  hashed.
+
+Because of that boundary, this document — unlike `docs/policy-record.md` for
+`session.policy`/`team.topology` — carries no obligation to `tools/gendocs`
+or `TestSchemaFieldsExist`: nothing here is a field on `Event`, so there is
+nothing for either to cover. `kelyfos log -h` and `docs/reference/cli.md`
+(generated) are where `--export-otlp` itself is documented as a flag.
+
+[otlp-json]: https://github.com/open-telemetry/opentelemetry-proto/blob/main/docs/specification.md#json-protobuf-encoding
+
+## 2. The shape
+
+One `ExportTraceServiceRequest`, one resource (`service.name = "kelyfos"`,
+`kelyfos.session.id`), one instrumentation scope (`name = "kelyfos"`,
+`version` = the recording binary's own version off `session.start`), and a
+flat list of spans that nest by `parentSpanId` rather than by JSON structure
+— OTLP's own shape, not this project's choice:
+
+```
+kelyfos.session                         (root span, this package's own name — not gen_ai.*)
+├── invoke_agent                        one per agent (or the sole implicit
+│   │                                   agent of a non-team session)
+│   ├── kelyfos.egress.attempt/refused  span *events*, not child spans
+│   └── execute_tool <tool>             one per command.start, child of its
+│                                       agent's own invoke_agent span
+└── invoke_agent <other-agent>
+    └── execute_tool <tool>
+```
+
+`gen_ai.operation.name` is `invoke_agent` on the agent spans and
+`execute_tool` on the command spans — the two enum values named in the task
+text, and the two [GenAI agent-span conventions][genai-agent-spans] whose own
+"internal" variant (not the "client" one, which is for a call to a remote
+hosted-agent service such as the OpenAI Assistants API or AWS Bedrock
+Agents — not what a locally-spawned sandbox is) this package follows for
+span kind (`SPAN_KIND_INTERNAL`) and the attributes it sets:
+
+| Span | `gen_ai.*` attributes set | Also set |
+| --- | --- | --- |
+| `invoke_agent` | `operation.name`, `agent.name` (when named), `agent.id` (the member's own sandbox id, off `team.topology`) | — |
+| `execute_tool` | `operation.name`, `tool.name` (the command's `argv[0]`), `tool.call.id` (the command's own correlation id), `agent.name` (inside a team) | `error.type` and `status` — only on failure, see §4 |
+
+Two attributes this package could plausibly have used and deliberately does
+not: `gen_ai.provider.name`, because the [conventions][genai-agent-spans]
+require it on the *client* invoke-agent span and its whole well-known-value
+list (`openai`, `anthropic`, `aws.bedrock`, …) names a GenAI *inference*
+provider, which is not a fact KelyfOS has an honest answer for — a sandboxed
+process's own choice of model, if it makes one, is invisible to the host that
+records it. `gen_ai.tool.type` (`function`/`extension`/`datastore`)
+similarly has no honest mapping for an arbitrary shell command. Both are
+skipped rather than guessed, the same discipline that keeps this a
+projection *to* the standard rather than a claim of full conformance with
+it.
+
+`server.address`/`server.port` on an egress span event are the stable,
+generic OTel network attributes (not `gen_ai.*`), reused for `egress.attempt`'s
+own `host`/`port` fields rather than inventing a KelyfOS-specific pair for the
+same two facts.
+
+Every other attribute is namespaced `kelyfos.*` and is exactly what
+`docs/events.md` already documents for the field it is taken from —
+`kelyfos.command.argv`, `.cwd`, `.via`, `.exit_code`, `.exited`;
+`kelyfos.egress.allowed`, `.mode`, `.reason`, `.bytes_in`, `.bytes_out`;
+`kelyfos.session.end_reason`; `kelyfos.arch`, `kelyfos.image`,
+`kelyfos.team`, `kelyfos.served`.
+
+[genai-agent-spans]: https://github.com/open-telemetry/semantic-conventions-genai/blob/main/docs/gen-ai/gen-ai-agent-spans.md
+
+## 3. What is not mapped, and why
+
+Deliberately, the same way `docs/policy-record.md` §8 lists what
+`session.policy` omits:
+
+- **`file.write`, `secret.use`, `team.message`/`team.refused`/`team.store`/
+  `team.spawn`, `resource.*`, `plugin.*`, `mcp.host.*`.** The task text names
+  three things this mapping owes: one `invoke_agent` span per agent, one
+  `execute_tool` span per command, and egress attempts/refusals as span
+  events. Everything else stays out rather than being folded in by
+  extension — a mapping that grows attributes nobody asked for is exactly
+  the kind of scope creep this phase's own non-goals discipline exists to
+  catch, and every one of these event types is still fully available in the
+  record itself (`kelyfos log`, `kelyfos log --json`) for a reader who
+  wants it. `session.policy` and `team.topology` get no span or attribute
+  set of their own for the same reason — but two of their fields are read
+  regardless, because they answer questions the mapping already has to ask:
+  `team.topology`'s `Agents[].Sandbox` is `gen_ai.agent.id` (§2), and
+  `session.policy`'s `traceparent` seeds trace continuity (§5). Reading a
+  field to answer a question already being asked is not the same thing as
+  mapping the event.
+- **Token usage, model parameters, chat history** (`gen_ai.usage.*`,
+  `gen_ai.request.*`, `gen_ai.input.messages`, `gen_ai.output.messages`,
+  `gen_ai.system_instructions`, …). KelyfOS has none of these facts —
+  it records that a sandboxed process ran a command, not what a model inside
+  that process was asked or told. Populating them with invented values would
+  be worse than omitting them.
+- **`gen_ai.tool.call.arguments`/`gen_ai.tool.call.result`.** Both are
+  Opt-In, schema'd as structured objects, and explicitly flagged as likely
+  to carry sensitive content by the conventions themselves. The command's
+  own argv is still present as `kelyfos.command.argv`, in the same place
+  `docs/events.md` already puts it, without machinery that reaches back into
+  a schema this project does not control.
+
+## 4. Errors
+
+Per [`docs/general/recording-errors.md`][recording-errors]: a span's status
+is left **unset** when nothing went wrong. `STATUS_CODE_OK` is never written
+by this package — only `STATUS_CODE_ERROR`, with `error.type` and a message,
+and only on a command that exited non-zero or never exited before the chain
+did (`error.type = "incomplete"`), or a session whose own `session.end`
+reason was `error` or `timeout`.
+
+[recording-errors]: https://github.com/open-telemetry/semantic-conventions/blob/main/docs/general/recording-errors.md
+
+## 5. Trace continuity
+
+`session.policy`'s `traceparent` field (`docs/policy-record.md` §8.7) is
+stored opaque — decomposing it was left as "a P7-11 concern if it turns out
+to be one." It is one: when an inbound [W3C `traceparent`][traceparent]
+parses, this session's OTLP export continues that trace (its `trace-id`
+seeds every span in the export; its `parent-id` becomes the root
+`kelyfos.session` span's own parent) instead of starting a new one. A
+missing or malformed header — the common case, and the only one a session
+opened directly rather than as a hop from another traced system will ever
+carry — falls back to a trace id derived deterministically from the session
+id, so re-exporting the same session twice is byte-identical.
+
+[traceparent]: https://www.w3.org/TR/trace-context/#traceparent-header
+
+## 6. Bounded output, considered rather than assumed
+
+Unlike `internal/digest`'s `Domains`/`Store`/`Pairs`/`Secrets`/`PeerOnly`
+maps — each capped at `MaxDistinctKeys` because the *key itself* is
+guest-influenced and a compromised sandbox can mint an unbounded number of
+distinct ones (a domain per connection attempt, a store key per request) —
+this package caps nothing on its own, deliberately rather than by omission.
+The number of `execute_tool` spans an export carries is exactly the number
+of `command.start` events the chain holds, and that count is already what
+every existing reader of the chain shows without a cap: the flat replay
+(`kelyfos log`), the report's lane view, and `internal/digest.Timeline`
+itself. A session that ran a hundred thousand real commands produces a
+hundred thousand real spans in every one of those views, this one included
+— that is the record being accurate, not the record growing without bound
+the way a `Domains` map keyed on guest-chosen strings could. Capping span
+*count* here, where nothing else in the product caps event count, would be
+a new and inconsistent promise ("this export is a sample, not the whole
+session") that nothing asked for and `kelyfos verify`'s own event-count
+report would then contradict.
+
+## 7. The IETF `agent-audit-trail` mapping: ready, not shipped
+
+The task text asks for the machinery to be *ready* for a second mapping, to
+the IETF `draft-sharif-agent-audit-trail-01` individual submission (expires
+February 2027), and says explicitly that having it ready is "worth having…
+rather than shipping." It is not shipped, and the reasons are worth stating
+rather than leaving as a silent gap:
+
+The draft's own record shape is considerably further from this project's
+than OTLP's is. Every record needs a fresh UUIDv4 `record_id`; `agent_id` is
+a URI matching a companion "Agent Passport" specification (MCPS) this
+project does not implement; `trust_level` is a five-level (`L0`–`L4`)
+cryptographic-attestation scale with no KelyfOS equivalent at any level;
+`action_type` is a closed enum (`tool_call`, `tool_response`, `decision`,
+`delegation`, `escalation`, `error`, `lifecycle`) that does not line up
+one-to-one with this project's own event vocabulary — a `team.spawn` is
+*something like* a delegation and is not one; hashing is over RFC 8785 JSON
+Canonicalization (JCS), a different canonicalisation from `internal/recorder`'s
+own struct-order hashing. Populating `trust_level` or `action_type` with a
+value chosen to make a KelyfOS event fit the closest enum member would be
+inventing a fact the record does not have — exactly the trap D59 already
+names for OTLP's own `gen_ai.*` attributes, and a taller one here because the
+draft's fields have no honest "leave it out" escape hatch the way
+`gen_ai.provider.name` does.
+
+What *is* ready: `internal/otlp.Build`'s own two-step shape —
+`d := digest.Walk(events)` once, then one pass over `d.Timeline` grouping
+entries by agent and by command — is generic to "walk the fold, group by
+agent, group by command," not specific to OTLP's own span/event vocabulary.
+A future `internal/aat` package mapping to the IETF draft would start from
+the identical two steps and diverge only in what it builds from each
+group — the same reuse this project's own `internal/digest` exists to buy
+every reader of the chain (P7-1). Building that package now, against a
+draft one individual submission away from its own next revision, would risk
+exactly the "migration rather than an argument" `docs/policy-record.md` §8.8
+warns a schema decided too early becomes — except here it is not even this
+project's own schema to decide.
+
+
+---
 title: Documentation map
 url: https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/README.md
 description: what every document is, and — deliberately — where each is still thin
@@ -10736,6 +11046,7 @@ hand-written half, and this page says where each is still thin.
 | auditing what an agent did | [`events.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/events.md) |
 | auditing what a run was *permitted* to do, not only what it did | [`policy-record.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/policy-record.md) |
 | deciding how long records are kept, or erasing what one holds | [`retention.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/retention.md) |
+| feeding a run into Jaeger, Tempo or an OTel Collector | [`otlp.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/otlp.md) — `kelyfos log --export-otlp` |
 | stuck on something KelyfOS refused | [`denials.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/denials.md), then [`reference/denials.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/reference/denials.md) for the exact one |
 | running something long and walking away | [`denials.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/denials.md) on `--notify`, and [`events.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/events.md) §6 for the history afterwards |
 | keeping an agent off the network | [`networking.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/networking.md) |
@@ -10761,11 +11072,12 @@ hand-written half, and this page says where each is still thin.
 | [`qol.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/qol.md) | concept | The v0.8 specification, written before the code: named sessions and their store, the workspace manifest, the PTY channel, and why inbound forwarding does not touch the firewall. |
 | [`policy-record.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/policy-record.md) | concept | The Phase 7 policy-record specification, written before the code: every field `session.policy` and `team.topology` add, its position in the frozen hash order, which of the eight doors writes it, and what it deliberately omits. |
 | [`retention.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/retention.md) | mixed | P7-5 (D61): the `[sessions] retention_days` floor, `kelyfos sessions prune`, the size warning, and `kelyfos sessions erase` — the replacement-record pattern that lets an EU AI Act Article 12 retention floor and a GDPR Article 17 erasure request coexist by separating a chain's structure from its content. |
+| [`otlp.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/otlp.md) | mixed | P7-11: how `kelyfos log --export-otlp` maps a session's chain to OTLP-JSON spans, why that mapping is versioned apart from the flight recorder and never an input to `kelyfos verify`, what is deliberately not mapped, and why the IETF `agent-audit-trail` draft's own mapping is ready rather than shipped. |
 | [`mcp-surface.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/mcp-surface.md) | concept | MCP in both directions: `serve-mcp` as a tool for any client, and `[[plugin]]` servers inside the guest. Specification, written before the code. |
 | [`hardening.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/hardening.md) | concept | The v0.9 specification, written before the code: what a compromised agent reaches today, what the jailer and the guest profiles take away, and what remains reachable afterwards. |
 | [`host-seccomp.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/host-seccomp.md) | mixed | The syscall filter around the VMM process: which one is in force and why that is settled, how it is proved from the kernel's own copy rather than from the absence of a flag, and every syscall it permits. |
 | [`threat-model.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/threat-model.md) | concept | What KelyfOS defends against and — the longer half — what it does not. |
-| [`cookbook.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/cookbook.md) | recipes | Sixteen complete, copy-pasteable recipes. Every one is a script CI extracts and runs on a real machine. |
+| [`cookbook.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/cookbook.md) | recipes | Eighteen complete, copy-pasteable recipes. Every one is a script CI extracts and runs on a real machine. |
 | [`integrating.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/integrating.md) | mixed | For building on KelyfOS: the four ways in, orchestrator patterns, and a long list of the mistakes people actually make. |
 | [`e2b-shim.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/e2b-shim.md) | mixed | The E2B-compatible REST subset: what it implements, what it does not, and why. |
 | [`../llms.txt`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/llms.txt) | **generated** | The index a machine reads first: every page above as a link with a one-line description, per the llmstxt.org spec. |
@@ -10912,7 +11224,7 @@ neither refusal mentions the other, so a user who follows the first message hits
 the second; `team ps` has no sample output; the store's `not_found` is described as
 "not a refusal" and is recorded as one.
 
-### `cookbook.md` — sixteen things that work
+### `cookbook.md` — eighteen things that work
 
 *Recipes:* one sandbox; an allowlist and an injected credential; a workspace
 round-trip; snapshot and fork; a three-agent team with an ask round-trip and a
@@ -10932,7 +11244,9 @@ was frozen with; seeing what an agent changed before keeping it, including what
 sandbox that has no network, including how to start a long-running process
 through `kelyfos exec` without hanging on it; and a team's declared topology,
 drawn with nothing booted and then confirmed to match the same team once it
-is actually running (`team graph`, `team ps --graph`).
+is actually running (`team graph`, `team ps --graph`); and exporting the same
+chain as OTLP-JSON, with its span names and shape checked out of the file
+rather than eyeballed.
 *Thin:* nothing hidden — every script is extracted and executed by
 `dev/cookbook.sh` and by the `cookbook` workflow, so a recipe that stops working
 fails rather than misleading anyone.
@@ -11005,6 +11319,28 @@ like `sessions rm`, they are subcommands of `kelyfos sessions` rather than
 top-level commands, and the generator's discovery only reaches the
 top-level usage block; `-h` on each, and this page, are where their flags
 are written down.
+*Thin:* written once, against the code that already existed; nothing to
+report yet.
+
+### `otlp.md` — mapping the chain to a standard, without adopting it
+
+*Mixed, written after the code, the same way `retention.md` was*: this is a
+projection off an already-frozen record, so there was no field to specify
+ahead of a real mapping. *Concept:* why the OTLP export is versioned apart
+from the flight recorder and never an input to `kelyfos verify` (D59); which
+`gen_ai.*` attributes this mapping uses and which two it deliberately skips
+(`gen_ai.provider.name`, `gen_ai.tool.type`) because KelyfOS has no honest
+value for either; how an inbound W3C `traceparent` on `session.policy`
+continues an existing trace instead of starting a new one; why the IETF
+`agent-audit-trail` draft's own mapping is ready — the same `digest.Walk` plus
+per-agent/per-command grouping this package already does — rather than
+shipped, and what specifically about that draft (a `trust_level` scale and an
+`action_type` enum with no KelyfOS equivalent) makes shipping it now a
+guess rather than a mapping.
+*Reference:* none — `--export-otlp` itself is a flag on `kelyfos log`, in
+[`reference/cli.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/reference/cli.md); the shape it writes is OTLP's own,
+not this project's, so there is nothing of this project's own schema for a
+generator to extract.
 *Thin:* written once, against the code that already existed; nothing to
 report yet.
 
@@ -11459,6 +11795,7 @@ kelyfos log [flags]
 | Flag | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `--export` | string | — | write a self-contained HTML report to this path |
+| `--export-otlp` | string | — | write an OTLP-JSON trace export to this path (one-way, never read back — docs/otlp.md) |
 | `-f` | boolean | — | alias for --follow |
 | `--follow` | boolean | — | stream events as they are recorded |
 | `--json` | boolean | — | print the raw events instead of a readable replay |
