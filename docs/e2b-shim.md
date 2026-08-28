@@ -82,10 +82,40 @@ started.
 
 **By default the shim does not authenticate anybody.** While it is running, any
 process on the machine that can reach its port can boot sandboxes, kill them, and
-read and write files inside them. `--addr` binds loopback by default and is the
-only thing between it and the network. That is a property of being an
+read and write files inside them. That is a property of being an
 unauthenticated local API, not an oversight, and
 [`docs/threat-model.md`](threat-model.md) says so.
+
+**A web page is not one of those processes.** Localhost plus no authentication is
+the exact configuration a page you visit can reach, and `POST /files` is a
+CORS-"simple" multipart request, so a plain `<form>` needs no preflight to write
+into a live sandbox. Every route therefore refuses, before the token check:
+
+- a request carrying `Sec-Fetch-Site` with anything but `same-origin` or `none`;
+- a request carrying an `Origin` header **at all** — refused by its presence
+  rather than matched against a list, because there is no browser this shim
+  serves and so no origin worth allowing;
+- a `Host` header that does not name the address the listener bound to. This is
+  the one that catches DNS rebinding, which the other two structurally cannot
+  see: a page whose name has been rebound to `127.0.0.1` is same-origin with
+  itself. The bound address, any IP literal on the bound port, and `localhost`
+  are accepted; a name is what rebinding needs, and a name is what this refuses.
+
+No SDK sends any of those headers, so the quickstart above is unaffected. A
+refusal answers `403` and says which check it was.
+
+**And `POST /sandboxes` requires its body to be JSON.** It used to discard the
+decode error, so a body that was not JSON — a cross-origin form post, say — cost
+the host a microVM. An absent body still means "the defaults"; a malformed one
+answers `400`, and the body is read to a ceiling of 64 KiB.
+
+**A bind off loopback needs a credential.** `--addr` accepts any address, and a
+shim bound off loopback with no token is reachable from the LAN. `kelyfos shim`
+now refuses to serve one: it checks the listener's own address the moment it has
+one — after the bind, so `--addr :0` and `--addr localhost:3000` are resolved
+first — and stops with a message naming the address and `KELYFOS_SHIM_TOKEN`.
+A loopback bind, which is the default and every setup on this page, is
+unchanged.
 
 **Set `KELYFOS_SHIM_TOKEN` and it does.** Every route then requires
 `Authorization: Bearer <token>`, compared in constant time, and answers `401`

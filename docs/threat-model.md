@@ -468,6 +468,43 @@ confined child is granted read beneath `/`. That is a local privilege surface
 the rest of the CLI does not have, and without the token `--addr` is the only
 thing between it and the network.
 
+**A web page is not one of those processes, and used to be** (P7-17/F2). This
+paragraph said "any process on that machine" and never named a browser, which
+made the residual sound smaller than it was: localhost plus no authentication is
+the exact configuration a page the developer visits can reach, and two of the
+shim's routes need no preflight to get there. `POST /files` takes
+`multipart/form-data`, a CORS-"simple" request, so a plain `<form>` in any page
+writes a file into the live sandbox — `/work/.git/hooks/pre-commit`, say. `POST
+/sandboxes` did not require its body to parse at all, so an empty cross-origin
+POST booted a microVM, up to the sixteen below. The responses are not readable
+cross-origin, which does not help: the writes land, and a planted file the agent
+will later read is the better outcome for an attacker anyway.
+
+That is closed structurally rather than by authentication, because the shim has
+no legitimate browser client at all. Before the token check, every route now
+refuses a request carrying `Sec-Fetch-Site` with anything but `same-origin` or
+`none`, refuses the *presence* of an `Origin` header rather than allowlisting
+one, and refuses a `Host` header that does not name the address the listener
+bound to. The `Host` check is the one that catches DNS rebinding — a page whose
+name has been rebound to `127.0.0.1` is same-origin with itself, so it sends no
+`Origin` and `Sec-Fetch-Site: same-origin`, and the only thing it cannot change
+is the `Host` header its own URL produced. It is satisfied by the bound address
+itself, by any IP literal on the bound port, and by `localhost`; a name is what
+rebinding needs and a name is what it refuses. No SDK sends any of the three
+headers, and `docs/e2b-shim.md`'s own quickstart is unaffected.
+
+**A bind off loopback with no credential is refused outright.** `--addr` accepts
+any address, and this document and `docs/e2b-shim.md` both said what that meant
+while the code let it happen silently. `kelyfos shim` now checks the listener's
+own address the moment it has one — after the bind, so `--addr :0` and
+`--addr localhost:3000` are resolved first — and refuses to serve a non-loopback
+address unless `KELYFOS_SHIM_TOKEN` is set, naming the address and the fix. A
+loopback bind is unchanged, which is the default and every documented setup.
+
+What is **not** changed is the default for a loopback bind: it still
+authenticates nobody, and the paragraph above still describes what a local
+process can do with it.
+
 The sandboxes it creates are policed like any other: since F-D33 the shim reads
 `kelyfos.toml`, the caps above apply to them, and each one writes its own flight
 recorder. One shim holds at most sixteen machines at once, so the port is not a

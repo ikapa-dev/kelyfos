@@ -73,6 +73,47 @@ reference described in the README and re-measured per release.
   coming) or on Ctrl-C (P7-9).
 
 ### Fixed
+- **A web page you visited could write files into a running shim sandbox and
+  boot microVMs.** `kelyfos shim` serves on `127.0.0.1:3000` with no
+  authentication by default, which is the exact configuration a browser can
+  reach, and its middleware chain had no `Origin`, `Sec-Fetch-Site`, `Host` or
+  CSRF check. `POST /files` takes `multipart/form-data`, a CORS-"simple"
+  request needing no preflight, so a plain `<form>` in any page wrote a file
+  into the live sandbox — `/work/.git/hooks/pre-commit`, say — and `POST
+  /sandboxes` discarded its decode error, so a cross-origin post with no
+  parseable body at all booted a machine. The responses are not readable
+  cross-origin; the writes landed anyway. Every route now refuses, **before**
+  the token check, a `Sec-Fetch-Site` that is neither `same-origin` nor `none`,
+  the *presence* of an `Origin` header, and a `Host` header that does not name
+  the bound address — the last being the only one that catches DNS rebinding,
+  since a rebound page is same-origin with itself. `localhost` and any IP
+  literal on the bound port are accepted; a name is not. No SDK sends any of
+  those headers. `POST /sandboxes` now answers `400` to a body that is not
+  JSON, reads it to a ceiling of 64 KiB, and still treats an absent body as
+  "the defaults" (P7-17/F2).
+- **Guest-chosen strings reached the operator's terminal without
+  `proto.SafeText`.** A process name, a plugin name, a crash message, the
+  kernel and supervisor strings on the boot line, and a command's captured
+  output are all bytes the guest chose, and eight print sites across
+  `kelyfos run`, `kelyfos exec`, `kelyfos log` and `kelyfos watch` printed them
+  raw — so `comm = "\x1b[2J\x1b[3J…"` cleared the screen and the scrollback
+  mid-run and could repaint a fake prompt, and `kelyfos run` recorded the same
+  bytes into the hash chain, where they came back on every later replay. They
+  are now sanitised at the edge, in `proto.Reader.Read`, before the value is
+  either shown or recorded; the three replay surfaces sanitise again on the way
+  out, because a chain on disk may predate this. Command output keeps `\n`,
+  `\t` and SGR colour and loses everything else, including OSC (window titles
+  and hyperlinks), the CSI erase and cursor-movement sequences, and a bare
+  `\r`. The predicate is now `unicode.IsPrint` rather than an ASCII control
+  range, which also covers the Trojan Source characters — `U+202E` and the
+  bidirectional isolates — in the terminal and in the exported HTML report
+  alike (P7-17/F20, F1).
+- **An `egress.attempt` refused because a foreign local process connected to
+  the proxy printed as `egress BLOCKED :0`.** The refusal records the address
+  that knocked in `peer` and nothing rendered it, so the one fact worth
+  recording was visible only by reading the chain. `kelyfos log`,
+  `kelyfos watch`, `kelyfos view` and the exported report now all name it, and
+  `kelyfos view` prints the reason for a blocked egress as well (P7-17/F20).
 - **A single oversized, guest-influenced field could make the flight recorder
   permanently unreadable from that line on.** The record is a hash chain read
   with a bufio.Scanner capped at 8 MiB, and nothing bounded what a caller could
@@ -429,6 +470,18 @@ reference described in the README and re-measured per release.
   S2/P6-4 works correctly on real hardware and this was always a test bug.
 
 ### Changed
+- **`kelyfos shim` refuses to serve a non-loopback `--addr` unless
+  `KELYFOS_SHIM_TOKEN` is set.** `--addr` accepted any address, and a shim
+  bound off loopback with no credential is reachable from the LAN by a surface
+  whose routes boot microVMs and write files into a live sandbox —
+  `docs/e2b-shim.md` and `docs/threat-model.md` both said so while the code let
+  it happen silently. The check reads the listener's own address, after the
+  bind, so `--addr :0` and `--addr localhost:3000` are resolved before it is
+  applied, and the refusal names the address and the fix. **A loopback bind is
+  unchanged** — that is the default and every setup the documentation
+  describes. Set `KELYFOS_SHIM_TOKEN` to keep an off-loopback bind working;
+  every route then requires `Authorization: Bearer <token>`, compared in
+  constant time (P7-17/F2).
 - **A `kelyfos.toml` combining `[team]` with `[[plugin]]` or `[[forward]]` is now refused by `kelyfos
   team up` (and `serve-mcp`'s `team_up`), at plan time, instead of silently booting a team where
   neither did anything.** Both keys are file-level and always parsed next to an ordinary `[team]`

@@ -32,10 +32,16 @@ import (
 // rather than as an open defect.
 
 // drive runs one request against the handler with no network and no VM.
+//
+// The Host is set because since P7-17/F2 every route checks it: httptest's own
+// default is "example.com", which is a name, and a name in a Host header is
+// exactly what the DNS-rebinding check refuses. A fixture that did not name a
+// Host was a fixture that could no longer reach a handler at all.
 func drive(t *testing.T, h http.Handler, method, target, body string) (int, string) {
 	t.Helper()
 	req := httptest.NewRequest(method, target, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
+	req.Host = bound
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
 	return rr.Code, strings.TrimSpace(rr.Body.String())
@@ -51,7 +57,7 @@ func drive(t *testing.T, h http.Handler, method, target, body string) (int, stri
 func hostileShim(t *testing.T) *Server {
 	t.Helper()
 	t.Setenv("KELYFOS_CACHE", t.TempDir())
-	return New(Policy{Arch: "aarch64", Flavor: "dev", Vcpus: 2, MemMiB: 512})
+	return New(Policy{Arch: "aarch64", Flavor: "dev", Vcpus: 2, MemMiB: 512, Addr: bound})
 }
 
 // H-6. Nothing bounds how many sandboxes one caller may ask for.
@@ -149,6 +155,7 @@ func driveAuth(t *testing.T, h http.Handler, method, target, token string) (int,
 	t.Helper()
 	req := httptest.NewRequest(method, target, strings.NewReader(`{}`))
 	req.Header.Set("Authorization", "Bearer "+token)
+	req.Host = bound
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
 	return rr.Code, strings.TrimSpace(rr.Body.String())

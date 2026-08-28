@@ -17,6 +17,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/egress"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
@@ -25,6 +26,7 @@ import (
 	"io"
 	"log"
 	"mime"
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -69,6 +71,16 @@ type Policy struct {
 	Version string
 	// PolicyPath is the file the above came from, empty when there was none.
 	PolicyPath string
+
+	// Addr is the literal address the listener bound to — net.Listener's own
+	// Addr().String(), not the string the operator typed, so `--addr :0` and
+	// `--addr localhost:3000` are both resolved before they get here.
+	//
+	// It is what the Host header is checked against (P7-17/F2). Empty means
+	// nobody told this Server what it bound to, and every request is refused:
+	// a check that switches itself off when a field is unset is the shape of
+	// half the findings in this review.
+	Addr string
 }
 
 // box is one sandbox the shim owns, with everything that has to come down with
@@ -145,6 +157,11 @@ const MaxSandboxes = 16
 // every route asks; leave it and the shim says out loud, once, what it is.
 const tokenEnv = "KELYFOS_SHIM_TOKEN"
 
+// TokenEnv is tokenEnv for the CLI, which has to decide before it binds
+// whether a credential is set (host/shim.go's shimBindNeedsAToken). Exported
+// so there is one spelling of the variable's name rather than two.
+const TokenEnv = tokenEnv
+
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	// envd routes
@@ -156,21 +173,32 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /sandboxes", s.listSandboxes)
 	mux.HandleFunc("DELETE /sandboxes/{id}", s.killSandbox)
 	mux.HandleFunc("/", s.notImplemented)
-	return logging(authenticated(mux))
+	return logging(s.authenticated(mux))
 }
 
-// authenticated gates every route on a bearer token, when one is configured.
+// authenticated is every condition that applies to every route, applied once
+// rather than per-handler — the browser checks first, then the bearer token
+// when one is configured.
 //
-// The comparison is constant-time. A token checked with == leaks its length and
-// its prefix to anything that can time a request, and a credential compared
-// carelessly is the kind of thing this repository spends a whole document
-// refusing to do elsewhere.
-func authenticated(next http.Handler) http.Handler {
+// The order is the point. A page that somehow learned the token still gets
+// nowhere, and the answer a browser receives never depends on a credential
+// comparison at all.
+//
+// The token comparison is constant-time. A token checked with == leaks its
+// length and its prefix to anything that can time a request, and a credential
+// compared carelessly is the kind of thing this repository spends a whole
+// document refusing to do elsewhere.
+func (s *Server) authenticated(next http.Handler) http.Handler {
 	want := os.Getenv(tokenEnv)
-	if want == "" {
-		return next
-	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if why := s.refuseBrowser(r); why != "" {
+			writeErr(w, http.StatusForbidden, why)
+			return
+		}
+		if want == "" {
+			next.ServeHTTP(w, r)
+			return
+		}
 		got, _ := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
 		if subtle.ConstantTimeCompare([]byte(got), []byte(want)) != 1 {
 			writeErr(w, http.StatusUnauthorized,
@@ -179,6 +207,84 @@ func authenticated(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// refuseBrowser makes a web page structurally unable to reach this shim, and
+// returns why when it refuses (P7-17/F2).
+//
+// The shim serves on 127.0.0.1:3000, which is the exact configuration a page
+// the developer visits can reach, and two of its routes need no preflight to
+// get there: multipart/form-data is a CORS-"simple" request, so a plain <form>
+// POSTs a file into the live sandbox, and POST /sandboxes boots a microVM. The
+// responses are not readable cross-origin, which does not help: the writes
+// land, and a planted file the agent will later read is the better outcome for
+// an attacker anyway.
+//
+// Three checks, each catching what the others cannot:
+//
+//   - Sec-Fetch-Site. Every current browser sends it on every request; no SDK
+//     sends it at all. "none" is a typed URL or a bookmark and "same-origin" is
+//     this shim's own page, of which there is none — anything else is a page
+//     somewhere else asking.
+//   - Origin, refused by its presence rather than allowlisted. Browsers attach
+//     it to every POST, form submissions included. This shim has no legitimate
+//     browser client, so there is no origin to allow and no list to get wrong.
+//   - The Host header. This is the only one that catches DNS rebinding, and
+//     rebinding is the only attack the first two cannot see: a page at
+//     http://evil.example:3000 whose name resolves to 127.0.0.1 is same-origin
+//     with itself, so it sends Sec-Fetch-Site: same-origin and no Origin. What
+//     it cannot change is the Host header, which comes from its own URL.
+func (s *Server) refuseBrowser(r *http.Request) string {
+	if site := r.Header.Get("Sec-Fetch-Site"); site != "" && site != "same-origin" && site != "none" {
+		return "cross-site request refused: this shim has no browser client (see docs/e2b-shim.md)"
+	}
+	if r.Header.Get("Origin") != "" {
+		return "browser origins are not clients of this shim; the Origin header is refused by its presence"
+	}
+	if !s.hostAllowed(r.Host) {
+		return "Host header does not name the address this shim bound to (" + s.Policy.Addr + ")"
+	}
+	return ""
+}
+
+// hostAllowed is the Host check, and it is deliberately not a string equality
+// against the bound address alone.
+//
+// Equality is what host/view.go does, and it is right there because that server
+// binds 127.0.0.1:0 itself and prints the only URL anyone will ever use. This
+// one is reached through an address the operator chose — `--addr :3000` binds
+// every interface, and `http://localhost:3000` is what a person types and what
+// the E2B SDK's own E2B_DEBUG default is — so equality alone would refuse
+// working setups the docs describe.
+//
+// What the check actually has to stop is a NAME, because DNS rebinding needs
+// one: the attacker's page must be served from a name they control that later
+// resolves to the loopback address. An IP literal in a Host header cannot have
+// been rebound, and "localhost" is a name no attacker's DNS can answer for. So
+// the rule is: the port must match what this shim bound, and the host part must
+// be an IP literal or exactly "localhost". "kelyfos.localhost" and
+// "127.0.0.1.nip.io" are names and are refused, which is the case a
+// suffix-match would have got wrong.
+//
+// An empty Policy.Addr refuses everything. A Server that was never told what it
+// bound to cannot answer this question, and a check that switches itself off
+// when a field is unset is the shape of half the findings in this review.
+func (s *Server) hostAllowed(h string) bool {
+	if s.Policy.Addr == "" {
+		return false
+	}
+	if h == s.Policy.Addr {
+		return true
+	}
+	host, port, err := net.SplitHostPort(h)
+	if err != nil {
+		return false
+	}
+	_, boundPort, err := net.SplitHostPort(s.Policy.Addr)
+	if err != nil || port != boundPort {
+		return false
+	}
+	return net.ParseIP(host) != nil || strings.EqualFold(host, "localhost")
 }
 
 // Close stops every sandbox the shim created.
@@ -208,11 +314,34 @@ type sandboxResponse struct {
 	EnvdVersion string `json:"envdVersion"`
 }
 
+// maxCreateBody bounds the JSON POST /sandboxes will read. The only field this
+// route reads is a template id it echoes back and never honours, so anything
+// past a few kilobytes is not a request this shim has a use for — and an
+// unbounded decode on a route that boots a microVM is a second cost on top of
+// the machine.
+const maxCreateBody = 64 << 10
+
 func (s *Server) createSandbox(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		TemplateID string `json:"templateID"`
 	}
-	_ = json.NewDecoder(r.Body).Decode(&req)
+	// The decode error used to be discarded, so a body that was not JSON at
+	// all — a cross-origin <form> POST, say — cost the host a microVM
+	// (P7-17/F2). io.EOF is not that error: an absent body has always meant
+	// "the defaults" for `curl -X POST /sandboxes`, and still does. Anything
+	// after the first value is refused too, because a request with a JSON
+	// object and then garbage is not a request any client of this shim makes.
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxCreateBody))
+	if err := dec.Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+		writeErr(w, http.StatusBadRequest,
+			"the request body is not JSON; POST /sandboxes takes {\"templateID\": \"...\"} or nothing at all")
+		return
+	}
+	if dec.More() {
+		writeErr(w, http.StatusBadRequest,
+			"the request body carries more than one JSON value")
+		return
+	}
 
 	// Before the machine is built rather than after, because the cost this is
 	// bounding is the building of it.

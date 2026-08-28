@@ -119,7 +119,41 @@ curl -sS -o /dev/null -X POST "$BASE/files?path=/work/blob.bin" --data-binary @b
 curl -sS "$BASE/files?path=/work/blob.bin" > blob.out
 check "$(cmp -s blob.bin blob.out && echo yes || echo no)" "4 KiB of random bytes survive the round trip unchanged"
 
-say "6. a route the shim does not implement says so"
+say "6. a web page cannot reach it, and a bind off loopback needs a credential"
+# P7-17/F2. The shim serves on a loopback port with no authentication, which is
+# the exact configuration a page the developer visits can reach: POST /files is
+# a CORS-"simple" multipart request and POST /sandboxes needed no parseable body
+# at all. Driven here over the real socket, because header handling in an
+# httptest recorder is not the same thing as header handling in net/http's own
+# server.
+for hdr in 'Origin: http://evil.example' 'Sec-Fetch-Site: cross-site'; do
+  c="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/sandboxes" -H "$hdr" -d '{}')"
+  check "$([ "$c" = 403 ] && echo yes || echo no)" "a request carrying '$hdr' is refused (got $c)"
+done
+c="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/files?path=/work/pwned" \
+      -H 'Origin: http://evil.example' -F 'file=@payload.txt')"
+check "$([ "$c" = 403 ] && echo yes || echo no)" "a cross-origin form POST to /files is refused (got $c)"
+
+# DNS rebinding: the one shape Origin and Sec-Fetch-Site cannot see, because a
+# rebound page is same-origin with itself. The Host header is what it cannot
+# change.
+c="$(curl -s -o /dev/null -w '%{http_code}' -H 'Host: evil.example:3123' "$BASE/health")"
+check "$([ "$c" = 403 ] && echo yes || echo no)" "a Host header naming a rebindable name is refused (got $c)"
+c="$(curl -s -o /dev/null -w '%{http_code}' -H "Host: localhost:${ADDR##*:}" "$BASE/health")"
+check "$([ "$c" = 204 ] && echo yes || echo no)" "…and localhost still works, which is what people type (got $c)"
+
+# The decode error createSandbox used to discard: a body that is not JSON cost
+# the host a microVM.
+c="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/sandboxes" -d 'not json at all')"
+check "$([ "$c" = 400 ] && echo yes || echo no)" "a body that is not JSON answers 400 rather than booting (got $c)"
+
+# And the bind itself. A shim off loopback with no credential is reachable from
+# the LAN; it now refuses to start rather than saying so in a document.
+off="$(kelyfos shim --addr 0.0.0.0:3124 2>&1; echo "rc=$?")"
+check "$(printf '%s' "$off" | grep -q 'rc=0' && echo no || echo yes)" "kelyfos shim refuses a non-loopback bind with no token"
+check "$(printf '%s' "$off" | grep -q 'KELYFOS_SHIM_TOKEN' && echo yes || echo no)" "…and the refusal names the fix"
+
+say "7. a route the shim does not implement says so"
 ni="$(curl -s -o body.txt -w '%{http_code}' "$BASE/sandboxes/$sbx/commands")"
 check "$([ "$ni" != 200 ] && echo yes || echo no)" "an unimplemented route does not answer 200 (got $ni)"
 check "$(grep -qi 'not implemented\|mcp' body.txt && echo yes || echo no)" \
@@ -127,7 +161,7 @@ check "$(grep -qi 'not implemented\|mcp' body.txt && echo yes || echo no)" \
 
 # --- the record, which is the thing E2B does not give you --------------------
 
-say "7. every shim sandbox gets its own flight recorder"
+say "8. every shim sandbox gets its own flight recorder"
 # ~/.cache/kelyfos/sessions/<sandboxID>/events.jsonl, and the sandbox id is the
 # one the shim handed back — so this checks the record of a named machine rather
 # than whichever file happens to be newest.
@@ -144,7 +178,7 @@ if [ -f "$rec" ]; then
     "…and the chain verifies"
 fi
 
-say "8. DELETE /sandboxes/{id} stops the machine"
+say "9. DELETE /sandboxes/{id} stops the machine"
 d="$(curl -sS -o /dev/null -w '%{http_code}' -X DELETE "$BASE/sandboxes/$sbx")"
 check "$([ "$d" = 200 ] || [ "$d" = 204 ] && echo yes || echo no)" "DELETE answers (got $d)"
 sleep 2

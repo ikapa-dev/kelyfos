@@ -119,6 +119,19 @@ commands. See docs/e2b-shim.md.
 	if err != nil {
 		return err
 	}
+	// After the listen rather than before it, so the check reads the address
+	// the kernel actually gave — `--addr :0` and `--addr localhost:3000` are
+	// both a different string by now — and the socket is closed again before
+	// anything can reach it.
+	if err := shimBindNeedsAToken(ln.Addr().String(), os.Getenv(shim.TokenEnv)); err != nil {
+		ln.Close()
+		return err
+	}
+	// The Host header is checked against this on every route (P7-17/F2), and
+	// it is the listener's own address rather than the flag: the two differ
+	// for every form of --addr that names a port of zero or a name.
+	srv.Policy.Addr = ln.Addr().String()
+
 	http := &http.Server{Handler: srv.Handler()}
 
 	fmt.Printf("kelyfos E2B shim listening on http://%s\n", ln.Addr())
@@ -149,4 +162,36 @@ commands. See docs/e2b-shim.md.
 	defer cancel()
 	_ = http.Shutdown(shutdownCtx)
 	return nil
+}
+
+// shimBindNeedsAToken refuses a bind that is reachable from the network unless
+// a credential is set (P7-17/F2).
+//
+// `--addr` accepts any address, and docs/e2b-shim.md already says a shim off
+// loopback is reachable from the LAN — but the code let it happen silently, on
+// a surface whose routes boot microVMs and write files into a live sandbox. A
+// bind is the one moment the process knows it is about to be reachable, so this
+// is where it is answered, and it is answered by refusing rather than warning:
+// a warning on a port that is already open is a warning nobody acts on in time.
+//
+// addr is the LISTENER's own address, not the string the operator typed, so
+// `--addr :3000` and `--addr localhost:3000` are both resolved before they get
+// here. An address that will not split is refused rather than assumed safe.
+func shimBindNeedsAToken(addr, token string) error {
+	if token != "" {
+		return nil
+	}
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return fmt.Errorf("cannot tell whether %q is reachable from the network: %w.\n"+
+			"Set %s to a shared secret, or bind an address this can read", addr, err, shim.TokenEnv)
+	}
+	if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+		return nil
+	}
+	return fmt.Errorf("%s is reachable from the network and this shim has no credential.\n"+
+		"Any machine that can route to it could boot sandboxes, kill them, and read and\n"+
+		"write files inside them. Set %s to a shared secret — every route then requires\n"+
+		"Authorization: Bearer <token> — or bind loopback (--addr 127.0.0.1:3000).",
+		addr, shim.TokenEnv)
 }
