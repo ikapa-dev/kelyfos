@@ -1387,7 +1387,7 @@
         <code>--refresh</code>, which rewrites the file atomically and emits a meta-refresh so a browser tab
         follows a running team with <b>no socket anywhere in the path</b>. This is the honest answer to
         &ldquo;live&rdquo; for anyone who does not want a listener, and it exists whether or not P7-12 does.</span></li>
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">P7-10</span><span class="tk"><b><code>--json</code> where it is missing.</b> <code>team ps</code>, <code>team graph</code> and
         the digest, as a documented stable shape. Today only <code>bench</code>, <code>log</code> and
         <code>verify</code> can be piped, so somebody who wants a view this phase did not think of has to parse a
@@ -6017,6 +6017,35 @@ after:
         too); <code>watch --json</code> &rarr; valid JSON. All four parsed cleanly with Python's
         <code>json.load</code>, no manual JSON construction found anywhere in the diff (grepped for
         hand-built JSON strings; everything goes through <code>encoding/json</code>).</td></tr>
+    <tr><td class="mono">2026-08-28</td><td class="mono">P7-10</td>
+        <td><b>Ticked, by the orchestrator, after adversarial review confirmed GO with no blocking findings.</b>
+        The reviewer checked every new JSON-encoding call site (<code>digest.Snapshot()</code>,
+        <code>buildTeamGraphJSON</code>, <code>teamPSJSON</code>/<code>printJSON</code>, <code>watchJSON</code>)
+        and confirmed all of them marshal real typed structs through <code>encoding/json</code> rather than
+        building JSON by string concatenation, that <code>Pairs</code>' map-to-slice conversion in
+        <code>Snapshot()</code> is complete (every <code>Digest</code> field covered except the deliberately
+        excluded <code>Timeline</code>, itself under its own test), and &mdash; by diffing
+        <code>proto.SafeText</code> call counts against <code>main</code> &mdash; that the pre-existing
+        non-JSON terminal rendering paths in <code>host/teamgraph.go</code> and <code>host/watch.go</code> are
+        byte-for-byte untouched. New adversarial fuzz coverage
+        (<code>FuzzAbsorbNeverPanics</code> extended, plus a new
+        <code>TestBuildTeamGraphJSONMarshalsHostileNamesSafely</code>) exercises null bytes, ESC sequences and
+        script tags in guest-controlled names and asserts they never reach the marshaled blob raw. Live
+        end-to-end against a real 3-agent Firecracker team on <code>kelyfos-dev</code>: all four
+        <code>--json</code> surfaces valid, cross-checked semantically against their non-JSON table
+        counterparts.
+        <br>Reviewer's one side-observation (not a P7-10 defect): the cookbook recipe-count fix P7-10 carries
+        along incidentally repairs a pre-existing bug already on <code>main</code> (<code>9fe5a73</code>) &mdash;
+        the header said &ldquo;Sixteen&rdquo; against 17 real markers, a latent break in the cookbook CI gate
+        that predates this task. Noted for awareness; nothing to fix in P7-10 itself.
+        Reviewer's final verdict: <b>GO.</b></td>
+        <td class="mono"><code>gofmt -l .</code> clean; <code>go vet ./...</code> clean; <code>go test
+        -count=1 ./...</code> 20 packages <code>ok</code>; 30s adversarial fuzz run on
+        <code>FuzzAbsorbNeverPanics</code> &rarr; 984,297 execs, 134 interesting cases, <code>PASS</code>;
+        <code>govulncheck</code> &rarr; &ldquo;No vulnerabilities found.&rdquo;; <code>make docs</code> a
+        no-op diff. Live 3-agent team: <code>team ps --json</code>, <code>team graph --json</code>,
+        <code>team ps --graph --json</code>, <code>watch --json</code> all exit 0 and
+        <code>python3 -m json.tool</code>-valid.</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
