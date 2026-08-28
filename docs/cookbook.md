@@ -1,6 +1,6 @@
 # KelyfOS cookbook
 
-Sixteen recipes, each one complete, each one runnable as it stands.
+Eighteen recipes, each one complete, each one runnable as it stands.
 
 These are not illustrations. `bash dev/cookbook.sh` extracts every script below
 and runs it on a real machine. Every commit checks that each recipe still
@@ -1634,6 +1634,82 @@ echo
 echo "== what took its place =="
 grep -o '"data":"[^"]*"' "$record" | tail -1
 grep -o '"type":"session.erasure"[^}]*}' "$record"
+```
+
+---
+
+## 17. Export the record as OTLP, for tools that already speak it
+
+`kelyfos log --export-otlp` maps the same session's chain to OTLP-JSON spans
+— the shape a Jaeger, a Grafana Tempo, or an OpenTelemetry Collector's file
+receiver already reads, with `invoke_agent` per agent, `execute_tool` per
+command, and every egress attempt or refusal riding along as a span event.
+
+It is a one-way projection, not a second record. `docs/otlp.md` is why: the
+GenAI semantic conventions this mapping targets are still marked
+"Development" with no stabilisation timeline, so this file is versioned
+apart from the flight recorder and `kelyfos verify` never reads it back —
+only `kelyfos log --export` (recipe 6) produces something a recipient
+verifies.
+
+<!-- recipe: otlp-export -->
+
+```bash
+set -euo pipefail
+work="$(mktemp -d)"
+cd "$work"
+trap 'rm -rf "$work"' EXIT
+
+kelyfos run --image dev --allow api.github.com -- bash -c '
+  set -e
+  kelyfos exec "echo hello > /tmp/hi.txt"
+  kelyfos exec "curl -s -o /dev/null -w \"%{http_code}\n\" https://api.github.com/rate_limit"
+  if kelyfos exec "curl -sS -m 10 https://example.com"; then
+    echo "example.com should have been refused"; exit 1
+  fi
+'
+
+echo
+echo "== export the chain as OTLP-JSON =="
+kelyfos log --export-otlp trace.json
+ls -l trace.json
+
+echo
+echo "== span names and shape, checked straight out of the file =="
+python3 - trace.json <<'PY'
+import json, sys
+
+doc = json.load(open(sys.argv[1]))
+spans = [s for rs in doc["resourceSpans"] for ss in rs["scopeSpans"] for s in ss["spans"]]
+names = sorted(s["name"] for s in spans)
+print("\n".join(names))
+
+assert any(n == "invoke_agent" for n in names), "no invoke_agent span"
+assert any(n.startswith("execute_tool") for n in names), "no execute_tool span"
+
+for s in spans:
+    assert len(s["traceId"]) == 32, s["traceId"]
+    assert len(s["spanId"]) == 16, s["spanId"]
+    # OTLP/JSON's own deviation from generic protobuf-JSON: enums are
+    # integers, never the enum's name string, and every 64-bit value
+    # (the two timestamps) is a decimal string.
+    assert isinstance(s["kind"], int) and not isinstance(s["kind"], bool)
+    assert isinstance(s["startTimeUnixNano"], str)
+    assert isinstance(s["endTimeUnixNano"], str)
+
+agent = next(s for s in spans if s["name"] == "invoke_agent")
+events = [e["name"] for e in agent.get("events", [])]
+assert "kelyfos.egress.attempt" in events, events
+assert "kelyfos.egress.refused" in events, events
+print("span names and OTLP-JSON shape check out")
+PY
+
+# One-way: the flight recorder itself is unaffected by the export, and
+# `kelyfos verify`/`kelyfos log --verify` never read the OTLP file — they
+# read the chain, exactly as they did before this recipe ran.
+echo
+echo "== the flight recorder is untouched, and still verifies =="
+kelyfos log --verify
 ```
 
 ---

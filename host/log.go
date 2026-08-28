@@ -9,6 +9,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/p4r4n0rm4l/KelyfOS/internal/otlp"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/proto"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/report"
@@ -32,6 +33,7 @@ func logCmd(argv []string) error {
 		asJSON      = fs.Bool("json", false, "print the raw events instead of a readable replay")
 		list        = fs.Bool("list", false, "list recorded sessions")
 		export      = fs.String("export", "", "write a self-contained HTML report to this path")
+		exportOTLP  = fs.String("export-otlp", "", "write an OTLP-JSON trace export to this path (one-way, never read back — docs/otlp.md)")
 		signKey     = fs.String("sign-key", "", "sign the exported report with this ed25519 private key (PEM PKCS#8)")
 	)
 	fs.Usage = func() {
@@ -64,6 +66,9 @@ docs/events.md.
 
 	if *export != "" {
 		return exportSession(sessionID, path, *export, *signKey)
+	}
+	if *exportOTLP != "" {
+		return exportOTLPSession(sessionID, path, *exportOTLP)
 	}
 	if *signKey != "" {
 		return errors.New("--sign-key signs an export; give --export a path as well")
@@ -269,6 +274,72 @@ func exportSession(id, path, dest, signKey string) error {
 			" some other way than in this file\n")
 	}
 	fmt.Printf("  anyone can check it: kelyfos verify %s\n", dest)
+	return nil
+}
+
+// exportOTLPSession renders this session's chain as an OTLP-JSON trace
+// export — a one-way, lossy projection for interoperability with existing
+// observability tooling (internal/otlp, docs/otlp.md). D59: versioned apart
+// from the flight recorder and never an input to `kelyfos verify`; nothing
+// here touches internal/recorder's Event struct or its frozen field order.
+//
+// Unlike exportSession, this reads the record's parsed events rather than
+// carrying its raw bytes: the OTLP file is a projection meant for an
+// observability backend, not a document a recipient re-verifies against the
+// chain the way an HTML report is (recipe 6, docs/cookbook.md) — so there is
+// no record blob to embed, and nothing here to sign.
+func exportOTLPSession(id, path, dest string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("no flight recorder for session %s: %w", id, err)
+	}
+	events, err := recorder.Read(f)
+	f.Close()
+	if err != nil {
+		return fmt.Errorf("reading flight recorder for session %s: %w", id, err)
+	}
+
+	trace, err := otlp.Build(id, events)
+	if err != nil {
+		return err
+	}
+	blob, err := json.MarshalIndent(trace, "", "  ")
+	if err != nil {
+		return err
+	}
+	blob = append(blob, '\n')
+
+	// Same atomic-write discipline as exportSession above: rendered beside
+	// the destination and moved into place, never written straight over it.
+	tmp, err := os.CreateTemp(filepath.Dir(dest), ".kelyfos-export-*")
+	if err != nil {
+		return err
+	}
+	defer func() {
+		tmp.Close()
+		_ = os.Remove(tmp.Name())
+	}()
+	if _, err := tmp.Write(blob); err != nil {
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmp.Name(), createMode()); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp.Name(), dest); err != nil {
+		return err
+	}
+
+	spans := 0
+	for _, rs := range trace.ResourceSpans {
+		for _, ss := range rs.ScopeSpans {
+			spans += len(ss.Spans)
+		}
+	}
+	fmt.Printf("wrote %s (%d spans)\n", dest, spans)
+	fmt.Printf("  one-way and lossy: not read back by kelyfos, and never an input to kelyfos verify\n")
 	return nil
 }
 
