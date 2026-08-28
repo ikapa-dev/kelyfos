@@ -1,6 +1,6 @@
 # KelyfOS cookbook
 
-Twenty recipes, each one complete, each one runnable as it stands.
+Twenty-one recipes, each one complete, each one runnable as it stands.
 
 These are not illustrations. `bash dev/cookbook.sh` extracts every script below
 and runs it on a real machine. Every commit checks that each recipe still
@@ -1944,6 +1944,137 @@ grep -q '^stopped$' refresh.log
 echo "the loop stopped cleanly on its own signal"
 
 kelyfos team down
+```
+
+---
+
+## 20. Watch a running session live, from a browser, with `kelyfos view`
+
+`kelyfos log --export --refresh` (recipe 19) is the no-socket answer to
+"live." `kelyfos view` is the other one — the one place KelyfOS opens a
+listening socket at all (D60, docs/view.md) — serving the identical report
+live over HTTP instead of rewriting a file on a timer. Every condition that
+comes with that socket is checked below against the real, running server:
+the right token gets the page, no token or the wrong one is refused, a
+forged `Host` header is refused (the DNS-rebinding defence), `POST` is
+refused structurally, the flight recorder stays open read-only throughout,
+and a command run in the sandbox *while the viewer is already open* arrives
+over the SSE stream without anybody re-exporting or reloading anything.
+
+<!-- recipe: view-live -->
+
+```bash
+set -euo pipefail
+work="$(mktemp -d)"
+cd "$work"
+RUN_PID=""
+VIEW_PID=""
+SSE_PID=""
+trap '
+  [ -n "$SSE_PID" ] && kill "$SSE_PID" 2>/dev/null
+  [ -n "$VIEW_PID" ] && kill "$VIEW_PID" 2>/dev/null
+  [ -n "$RUN_PID" ] && kill "$RUN_PID" 2>/dev/null
+  [ -n "$RUN_PID" ] && wait "$RUN_PID" 2>/dev/null
+  rm -rf "$work"
+' EXIT
+
+echo "== boot a sandbox to watch =="
+kelyfos run --image dev >run.log 2>&1 &
+RUN_PID=$!
+for _ in $(seq 1 600); do grep -q "ready in" run.log && break; sleep 0.25; done
+grep -q "ready in" run.log || { cat run.log; exit 1; }
+echo "sandbox is up"
+
+echo
+echo "== start the viewer — no --session needed, it defaults to the most recent =="
+kelyfos view >view.log 2>&1 &
+VIEW_PID=$!
+for _ in $(seq 1 200); do grep -q '^kelyfos view: http://' view.log && break; sleep 0.1; done
+url="$(grep '^kelyfos view: http://' view.log | sed 's/^kelyfos view: //')"
+[ -n "$url" ]
+echo "printed once, to this terminal, never as a CLI argument: $url"
+
+host="${url#http://}"; host="${host%%/*}"
+token="${url##*token=}"
+
+echo
+echo "== the right token: 200, and it is the live version of the same report =="
+code="$(curl -s -o page.html -w '%{http_code}' "http://$host/?token=$token")"
+[ "$code" = "200" ]
+grep -q '<title>KelyfOS session' page.html
+grep -q 'id="kelyfos-live"' page.html
+echo "same report kelyfos log --export builds, plus this task's own live section"
+
+echo
+echo "== no token, or a wrong one: refused before anything is rendered =="
+code="$(curl -s -o /dev/null -w '%{http_code}' "http://$host/")"
+[ "$code" = "401" ]
+code="$(curl -s -o /dev/null -w '%{http_code}' "http://$host/?token=0000000000000000000000000000000000000000000000000000000000000000")"
+[ "$code" = "401" ]
+echo "refused both times"
+
+echo
+echo "== a forged Host header: refused regardless of the token (DNS-rebinding defence) =="
+code="$(curl -s -o /dev/null -w '%{http_code}' -H "Host: evil.example.com:1234" "http://$host/?token=$token")"
+[ "$code" = "403" ]
+echo "refused"
+
+echo
+echo "== POST: refused structurally — this page answers GET and HEAD only =="
+code="$(curl -s -o /dev/null -w '%{http_code}' -X POST "http://$host/?token=$token")"
+[ "$code" = "405" ]
+echo "refused"
+
+echo
+echo "== the flight recorder stays open read-only — checked in /proc, not assumed =="
+python3 - "$VIEW_PID" <<'PY'
+import os, sys
+pid = sys.argv[1]
+fddir = f"/proc/{pid}/fd"
+bad = []
+for fd in os.listdir(fddir):
+    try:
+        target = os.readlink(os.path.join(fddir, fd))
+    except OSError:
+        continue
+    if "/sessions/" not in target or not target.endswith("events.jsonl"):
+        continue
+    with open(f"/proc/{pid}/fdinfo/{fd}") as f:
+        for line in f:
+            if line.startswith("flags:"):
+                flags = int(line.split()[1], 8)
+                if flags & 3 != 0:  # O_RDONLY is 0; any other low bits mean a write handle
+                    bad.append((fd, oct(flags)))
+if bad:
+    print("write-mode fd(s) on the session record:", bad)
+    sys.exit(1)
+print("no write-mode fd on the session's own events.jsonl")
+PY
+
+echo
+echo "== a real update, while the viewer is already open: run a command, watch it arrive =="
+timeout 8 curl -sN "http://$host/events?token=$token" >sse.log &
+SSE_PID=$!
+sleep 0.3
+kelyfos exec "echo cookbook-recipe-20-marker" >/dev/null
+wait "$SSE_PID" 2>/dev/null || true
+SSE_PID=""
+grep -q 'event: update' sse.log
+grep -q 'cookbook-recipe-20-marker' sse.log
+echo "the running command reached the open stream on its own — no re-export, no reload"
+
+echo
+echo "== tear the sandbox down; the viewer notices session.end and exits on its own =="
+kill -INT "$RUN_PID"
+wait "$RUN_PID" 2>/dev/null || true
+RUN_PID=""
+for _ in $(seq 1 200); do kill -0 "$VIEW_PID" 2>/dev/null || break; sleep 0.1; done
+if kill -0 "$VIEW_PID" 2>/dev/null; then
+  echo "the viewer did not exit on its own within 20s"; cat view.log; exit 1
+fi
+VIEW_PID=""
+grep -q 'stopping (the session ended)' view.log
+echo "the viewer process exited on its own — nothing left listening on that port"
 ```
 
 ---

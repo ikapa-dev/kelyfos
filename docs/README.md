@@ -27,10 +27,11 @@ hand-written half, and this page says where each is still thin.
 | auditing what a run was *permitted* to do, not only what it did | [`policy-record.md`](policy-record.md) |
 | deciding how long records are kept, or erasing what one holds | [`retention.md`](retention.md) |
 | feeding a run into Jaeger, Tempo or an OTel Collector | [`otlp.md`](otlp.md) — `kelyfos log --export-otlp` |
+| watching a session live, from a browser, without exporting a file first | [`view.md`](view.md) — `kelyfos view`, the one place KelyfOS opens a socket |
 | stuck on something KelyfOS refused | [`denials.md`](denials.md), then [`reference/denials.md`](reference/denials.md) for the exact one |
 | running something long and walking away | [`denials.md`](denials.md) on `--notify`, and [`events.md`](events.md) §6 for the history afterwards |
 | keeping an agent off the network | [`networking.md`](networking.md) |
-| after something that works, right now | [`cookbook.md`](cookbook.md) — twenty recipes, each one runnable as it stands |
+| after something that works, right now | [`cookbook.md`](cookbook.md) — twenty-one recipes, each one runnable as it stands |
 | putting KelyfOS inside something else | [`integrating.md`](integrating.md) |
 | building KelyfOS into something else | [`protocol.md`](protocol.md), then [`e2b-shim.md`](e2b-shim.md) |
 | driving KelyfOS from an MCP client | [`mcp-surface.md`](mcp-surface.md) — `serve-mcp` and `[[plugin]]`, and [recipe 9](cookbook.md) for the configuration |
@@ -53,11 +54,12 @@ hand-written half, and this page says where each is still thin.
 | [`policy-record.md`](policy-record.md) | concept | The Phase 7 policy-record specification, written before the code: every field `session.policy` and `team.topology` add, its position in the frozen hash order, which of the eight doors writes it, and what it deliberately omits. |
 | [`retention.md`](retention.md) | mixed | P7-5 (D61): the `[sessions] retention_days` floor, `kelyfos sessions prune`, the size warning, and `kelyfos sessions erase` — the replacement-record pattern that lets an EU AI Act Article 12 retention floor and a GDPR Article 17 erasure request coexist by separating a chain's structure from its content. |
 | [`otlp.md`](otlp.md) | mixed | P7-11: how `kelyfos log --export-otlp` maps a session's chain to OTLP-JSON spans, why that mapping is versioned apart from the flight recorder and never an input to `kelyfos verify`, what is deliberately not mapped, and why the IETF `agent-audit-trail` draft's own mapping is ready rather than shipped. |
+| [`view.md`](view.md) | mixed | P7-12 (D60): `kelyfos view`, the one place KelyfOS opens a listening socket — loopback-only with no relaxing flag, a per-process token compared in constant time, the `Host`-header check against DNS rebinding, `GET`/`HEAD` only, the hash-pinned CSP, why the live feed carries the timeline and not the (static) run map, and the residual risk a shared host's other local users still pose. |
 | [`mcp-surface.md`](mcp-surface.md) | concept | MCP in both directions: `serve-mcp` as a tool for any client, and `[[plugin]]` servers inside the guest. Specification, written before the code. |
 | [`hardening.md`](hardening.md) | concept | The v0.9 specification, written before the code: what a compromised agent reaches today, what the jailer and the guest profiles take away, and what remains reachable afterwards. |
 | [`host-seccomp.md`](host-seccomp.md) | mixed | The syscall filter around the VMM process: which one is in force and why that is settled, how it is proved from the kernel's own copy rather than from the absence of a flag, and every syscall it permits. |
 | [`threat-model.md`](threat-model.md) | concept | What KelyfOS defends against and — the longer half — what it does not. |
-| [`cookbook.md`](cookbook.md) | recipes | Twenty complete, copy-pasteable recipes. Every one is a script CI extracts and runs on a real machine. |
+| [`cookbook.md`](cookbook.md) | recipes | Twenty-one complete, copy-pasteable recipes. Every one is a script CI extracts and runs on a real machine. |
 | [`integrating.md`](integrating.md) | mixed | For building on KelyfOS: the four ways in, orchestrator patterns, and a long list of the mistakes people actually make. |
 | [`e2b-shim.md`](e2b-shim.md) | mixed | The E2B-compatible REST subset: what it implements, what it does not, and why. |
 | [`../llms.txt`](../llms.txt) | **generated** | The index a machine reads first: every page above as a link with a one-line description, per the llmstxt.org spec. |
@@ -325,6 +327,30 @@ guess rather than a mapping.
 [`reference/cli.md`](reference/cli.md); the shape it writes is OTLP's own,
 not this project's, so there is nothing of this project's own schema for a
 generator to extract.
+*Thin:* written once, against the code that already existed; nothing to
+report yet.
+
+### `view.md` — the localhost read-only viewer
+
+*Mixed, written after the code, the same way `retention.md` and `otlp.md`
+were*: P7-12 is a live-serving wrapper around a page P7-8 already specifies
+exactly, so there was no independent shape to write down ahead of the code —
+what's new is the server, and that is what this page states precisely.
+*Concept:* why D60 admits exactly one listening socket into a codebase whose
+every other non-goal forbids one, and what stays forbidden regardless
+(§1); each binding condition — loopback-only with no relaxing flag, the
+256-bit token and how it reaches a browser this process never launches
+without ever being a CLI argument, the `Host`-header check against DNS
+rebinding, `GET`/`HEAD`-only as a structural property rather than a
+promise, the hash-pinned CSP, "carries data, never markup," the read-only
+file handle, the URL carrying no filesystem path — stated as what is
+enforced and how, not only what is intended (§3); why the run map, agent
+sheets and reach matrix are not updated live, and what the live feed
+carries instead (§4); the residual risk a shared host's other local users
+still pose, stated rather than buried (§6).
+*Reference:* `kelyfos view`'s own flags are in
+[`reference/cli.md`](reference/cli.md); it introduces no new event type and
+no new `kelyfos.toml` key.
 *Thin:* written once, against the code that already existed; nothing to
 report yet.
 
