@@ -2,12 +2,26 @@ package report
 
 import (
 	"bytes"
+	"encoding/base64"
 	"regexp"
 	"strings"
 	"testing"
 
+	"github.com/p4r4n0rm4l/KelyfOS/internal/digest"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
 )
+
+// isRawControlByte is every byte-checking loop's own copy of safe.go's
+// isDangerousControl, restated on a byte rather than a rune (a page is
+// scanned as raw bytes here, not decoded runes) — including 0x7f, which
+// safe.go's own comment explicitly claims to handle and an earlier version
+// of these loops did not check for.
+func isRawControlByte(b byte) bool {
+	if b == '\t' || b == '\n' || b == '\r' {
+		return false
+	}
+	return b < 0x20 || b == 0x7f
+}
 
 // The RENDER checklist (PLAN.html §8 rule 10) and P7-8's own task text both
 // say the same thing: adversary strings must reach element text content
@@ -29,6 +43,11 @@ const scriptPayload = `<script>alert(document.cookie)</script>`
 func hostileEvents() []recorder.Event {
 	agentName := `<img src=x onerror="alert(1)">`
 	peerName := `"onmouseover="javascript:alert(1)`
+	// The reviewer's own proof-of-concept: an OSC title-set escape sequence,
+	// plus SOH/US/DEL for broader C0-range coverage. \x1b and \x07 are what
+	// actually rewrite a terminal's title bar; the rest are here so any one
+	// of safe.go's blocked bytes has a real carrier in this corpus.
+	controlPayload := "\x1b]0;pwned\x07 normal text stays readable \x01\x1f\x7f end"
 
 	var evs []recorder.Event
 	add := func(e recorder.Event) { evs = append(evs, e) }
@@ -71,6 +90,28 @@ func hostileEvents() []recorder.Event {
 	add(recorder.Event{Type: recorder.TypeTeamMessage, Agent: agentName, Peer: "worker-2",
 		Kind: "send", Data: scriptPayload + `</pre><img src=x onerror=alert(10)>`,
 		SHA256: "cafef00d", Bytes: 40, TS: "2026-08-27T10:00:03.000Z"})
+
+	// A REAL control/ANSI byte sequence, not HTML markup — safeBody's own
+	// reason to exist, and its own review's exact proof-of-concept: an OSC
+	// title-set escape (`\x1b]0;pwned\x07`) plus a scattering of other C0
+	// bytes and DEL. Without a fixture that actually puts one of these into
+	// Output/Data, safeBody could be silently reverted to a no-op and
+	// nothing in this file would notice — every other fixture here is HTML
+	// escaping, which only exercises safe. Routed through both surfaces
+	// safeBody covers: a command's captured output, and a message body.
+	add(recorder.Event{Type: recorder.TypeCommandStart, Agent: agentName,
+		Call: "c1", Cmd: []string{"echo", "hi"}, Via: "exec", TS: "2026-08-27T10:00:03.100Z"})
+	add(recorder.Event{Type: recorder.TypeCommandOutput, Agent: agentName,
+		Call: "c1", Stream: "stdout",
+		Data: base64.StdEncoding.EncodeToString([]byte(controlPayload)),
+		TS:   "2026-08-27T10:00:03.200Z"})
+	exitCode := 0
+	add(recorder.Event{Type: recorder.TypeCommandExit, Agent: agentName,
+		Call: "c1", Code: &exitCode, TS: "2026-08-27T10:00:03.300Z"})
+
+	add(recorder.Event{Type: recorder.TypeTeamMessage, Agent: "worker-2", Peer: agentName,
+		Kind: "reply", Data: controlPayload,
+		SHA256: "f00dbaad", Bytes: len(controlPayload), TS: "2026-08-27T10:00:03.400Z"})
 
 	// A store key that is a <script> tag — put once (so it's a resource
 	// the run map/reach matrix actually draws), then a refusal against the
@@ -143,9 +184,12 @@ func TestHostileValuesReachTextContentOnly(t *testing.T) {
 	page := stripIsland(t, html)
 
 	// Raw control bytes are a page-wide property — text content or
-	// attribute, neither is allowed to carry one.
+	// attribute, neither is allowed to carry one. 0x7f (DEL) is checked
+	// alongside the C0 range: safe.go's own isDangerousControl treats it
+	// the same as a control byte, and a check that only covered < 0x20
+	// would miss a regression there.
 	for _, b := range []byte(page) {
-		if b < 0x20 && b != '\t' && b != '\n' && b != '\r' {
+		if isRawControlByte(b) {
 			t.Fatalf("the report contains a raw control byte: 0x%02x", b)
 		}
 	}
@@ -268,7 +312,7 @@ func FuzzRunSectionRendersHostileStringsSafely(f *testing.F) {
 		}
 		page := stripIsland(t, buf.String())
 		for _, b := range []byte(page) {
-			if b < 0x20 && b != '\t' && b != '\n' && b != '\r' {
+			if isRawControlByte(b) {
 				t.Fatalf("a raw control byte 0x%02x reached the page for agent=%q key=%q domain=%q secret=%q",
 					b, agent, storeKey, domain, secretName)
 			}
@@ -286,6 +330,146 @@ func FuzzRunSectionRendersHostileStringsSafely(f *testing.F) {
 			}
 		}
 	})
+}
+
+// Review finding 1: session.policy and the earlier session.ready/
+// session.start/session.end fields all come off the guest's own boot
+// handshake or a host-side reason string — but safe.go's own doc comment
+// claimed "the two template functions every guest-influenced value in
+// reportHTML is routed through" before Image, Arch, Kernel, Supervisor and
+// EndReason actually were. All five in one fixture, with the reviewer's
+// own proof-of-concept payload (an OSC title-set escape) plus HTML markup,
+// so a regression here shows up as either a raw control byte or a live
+// tag reaching the page.
+func TestSummaryHeaderFieldsRenderSafely(t *testing.T) {
+	hostile := "\x1b]0;pwned\x07<script>alert(1)</script>"
+	events := []recorder.Event{
+		{Type: recorder.TypeSessionStart, Image: hostile, Arch: hostile, TS: "2026-08-27T10:00:00.000Z"},
+		{Type: recorder.TypeSessionReady, Kernel: hostile, Supervisor: hostile, TS: "2026-08-27T10:00:01.000Z"},
+		{Type: recorder.TypeResourceTimeout, Budget: hostile, TS: "2026-08-27T10:00:01.500Z"},
+		{Type: recorder.TypeSessionEnd, Reason: hostile, TS: "2026-08-27T10:00:02.000Z"},
+	}
+	html := render(t, events)
+	page := stripIsland(t, html)
+
+	for _, b := range []byte(page) {
+		if isRawControlByte(b) {
+			t.Fatalf("a raw control byte 0x%02x reached the page via a session header field", b)
+		}
+	}
+	for _, tag := range tagSpans(page) {
+		if strings.HasPrefix(strings.ToLower(tag), "<script") {
+			t.Errorf("a live <script> tag from a session header field: %s", tag)
+		}
+	}
+	if !strings.Contains(page, "&lt;script&gt;alert(1)&lt;/script&gt;") {
+		t.Error("the hostile header payload never appeared, escaped, anywhere — it may have been dropped rather than rendered")
+	}
+}
+
+// The one guest-influenced field the run section itself can carry outside
+// the map/sheets/matrix/store panel proper: RunNote, populated from
+// internal/graph's own error text when a chain is too inconsistent to
+// draw (review finding 5). Tested directly against the template, the way
+// TestSummaryHeaderFieldsRenderSafely tests View's other string fields,
+// rather than by trying to manufacture a real graph.Layout failure.
+func TestRunNoteRendersSafely(t *testing.T) {
+	v := View{RunNote: `<script>alert(1)</script>` + "\x1b]0;pwned\x07"}
+	var buf bytes.Buffer
+	if err := tmpl.Execute(&buf, v); err != nil {
+		t.Fatal(err)
+	}
+	html := buf.String()
+	for _, b := range []byte(html) {
+		if isRawControlByte(b) {
+			t.Fatalf("a raw control byte 0x%02x reached the page via RunNote", b)
+		}
+	}
+	for _, tag := range tagSpans(html) {
+		if strings.HasPrefix(strings.ToLower(tag), "<script") {
+			t.Errorf("a live <script> tag from RunNote: %s", tag)
+		}
+	}
+	if !strings.Contains(html, "&lt;script&gt;alert(1)&lt;/script&gt;") {
+		t.Error("RunNote's escaped form never appeared — it may have been dropped rather than rendered")
+	}
+}
+
+// A hostile SessionID — the caller-supplied argument to Render, not
+// anything folded from the chain — goes through the same {{safe}} the
+// review asked for (finding 1). Tested with a direct Render call since the
+// shared render(t, events) helper always passes the fixed "s1".
+func TestHostileSessionIDRendersSafely(t *testing.T) {
+	hostile := "\x1b]0;pwned\x07<script>alert(1)</script>"
+	events := []recorder.Event{ev(recorder.TypeSessionStart, "")}
+	var buf bytes.Buffer
+	if _, err := Render(&buf, hostile, chainOf(t, events)); err != nil {
+		t.Fatal(err)
+	}
+	page := stripIsland(t, buf.String())
+	for _, b := range []byte(page) {
+		if isRawControlByte(b) {
+			t.Fatalf("a raw control byte 0x%02x reached the page via SessionID", b)
+		}
+	}
+	for _, tag := range tagSpans(page) {
+		if strings.HasPrefix(strings.ToLower(tag), "<script") {
+			t.Errorf("a live <script> tag from SessionID: %s", tag)
+		}
+	}
+}
+
+// Review finding 6: a domain and a store key sharing one literal name must
+// draw as two distinct nodes of the right kinds, not collapse into one —
+// addRes used to dedupe on ResourceID alone, with no Kind folded into
+// identity, so whichever of the two addRes saw second silently vanished
+// and the first kept the wrong label for it.
+func TestDomainAndStoreKeySharingALiteralNameStayDistinct(t *testing.T) {
+	const shared = "shared.example"
+	events := []recorder.Event{
+		{Type: recorder.TypeSessionReady, Agent: "alice", TS: "2026-08-27T10:00:00.000Z"},
+		recorder.NewSessionPolicy("alice", recorder.PolicyFields{
+			VcpuCount: 1, MemMiB: 1, Allow: []string{shared},
+		}),
+		recorder.NewTeamTopology(recorder.TopologyFields{
+			Agents:    []recorder.EvAgent{{Name: "alice"}},
+			StoreKeys: []recorder.EvStoreKey{{Name: shared, Read: []string{"alice"}, Write: []string{"alice"}}},
+		}),
+		{Type: recorder.TypeTeamStore, Agent: "alice", Peer: shared, Kind: "put", Outcome: "delivered", Bytes: 1, TS: "2026-08-27T10:00:01.000Z"},
+	}
+	d := digest.Walk(events)
+	sec := buildRunSection(d)
+	if sec.Note != "" {
+		t.Fatalf("run section could not be built: %s", sec.Note)
+	}
+	if sec.Map == nil {
+		t.Fatal("no run map for a team with a domain and a store key")
+	}
+	if sec.Map.DomainCount != 1 || sec.Map.StoreCount != 1 {
+		t.Errorf("DomainCount=%d StoreCount=%d, want exactly one of each — "+
+			"a domain and a store key named %q must not collapse into one node",
+			sec.Map.DomainCount, sec.Map.StoreCount, shared)
+	}
+	var sawDomain, sawStore bool
+	for _, n := range sec.Map.Nodes {
+		if n.Label != shared {
+			continue
+		}
+		switch n.Kind {
+		case "domain":
+			sawDomain = true
+		case "store":
+			sawStore = true
+		default:
+			t.Errorf("a node labelled %q has kind %q, want domain or store", shared, n.Kind)
+		}
+	}
+	if !sawDomain {
+		t.Error("no domain node labelled " + shared)
+	}
+	if !sawStore {
+		t.Error("no store node labelled " + shared)
+	}
 }
 
 // stripIsland removes the embedded base64 record the way

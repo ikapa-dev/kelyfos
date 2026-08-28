@@ -195,6 +195,21 @@ func buildRunSection(d *digest.Digest) RunSection {
 		sec.Reach = r
 	}
 	sec.Store = buildStorePanel(d)
+
+	// digest.MaxDistinctKeys bounds how many distinct store keys the fold
+	// ever tracks (digest.Digest.StoreTruncated) — Digest.StoreOrder is
+	// exactly what collectStoreAccess reads to decide which keys the map
+	// and the reach matrix draw resources for (review finding 7). The
+	// store panel already says so in its own table (StorePanelView.
+	// Truncated), but the map and the matrix's own correctness depends on
+	// that same key list being complete and said nothing about it — the
+	// RENDER checklist's "output bounded, and saying so when it
+	// truncates" applies to what a view computes from, not only to what
+	// it lists.
+	if d.StoreTruncated && sec.Note == "" {
+		sec.Note = "the store tracked more distinct keys than this report retains " +
+			"(digest.MaxDistinctKeys) — the run map, the reach matrix and the store panel below may not show every one."
+	}
 	return sec
 }
 
@@ -283,8 +298,17 @@ func buildGraphInput(d *digest.Digest, agents []runAgent) graph.Input {
 	in.Edges = collectEdges(d, agents)
 
 	resSeen := map[graph.ResourceID]bool{}
+	// addRes namespaces id by kind before it ever becomes a graph.ResourceID
+	// (review finding 6): a domain, a store key and a secret's "name@host"
+	// live in three separate namespaces in this product, but graph.Resource
+	// only ever carries a bare ResourceID, and this file used to pass one
+	// through unprefixed — so a store key and a domain sharing one literal
+	// name (Allow: ["shared.example"] beside a "shared.example" key)
+	// deduplicated into a single node and kept only the first Kind it saw,
+	// mislabelling whichever came second. resourceLabel below strips the
+	// namespace back off for display; only the internal identity carries it.
 	addRes := func(id string, kind graph.ResourceKind) graph.ResourceID {
-		rid := graph.ResourceID(id)
+		rid := resourceID(id, kind)
 		if !resSeen[rid] {
 			resSeen[rid] = true
 			in.Resources = append(in.Resources, graph.Resource{ID: rid, Kind: kind})
@@ -448,6 +472,49 @@ func globMatch(pattern, s string) bool {
 	return pattern == s
 }
 
+// domainNS, storeNS and secretNS namespace a graph.ResourceID by kind
+// (review finding 6): a domain, a store key and a secret's "name@host" are
+// three separate namespaces in this product — nothing stops an operator
+// writing Allow: ["shared.example"] beside a [[team.store.key]] named
+// "shared.example" — but graph.Resource only ever carries a bare
+// ResourceID, with no Kind folded into equality. Left unprefixed, the two
+// deduplicate into one node and silently keep whichever Kind addRes saw
+// first, drawing (and reach-computing) a store key as a network domain or
+// the reverse. The prefix is stripped back off for display by
+// resourceLabel; only the internal identity — never anything rendered —
+// carries it.
+const (
+	domainNS = "domain:"
+	storeNS  = "key:"
+	secretNS = "secret:"
+)
+
+func resourceID(id string, kind graph.ResourceKind) graph.ResourceID {
+	switch kind {
+	case graph.Domain:
+		return graph.ResourceID(domainNS + id)
+	case graph.StoreKey:
+		return graph.ResourceID(storeNS + id)
+	case graph.Secret:
+		return graph.ResourceID(secretNS + id)
+	default:
+		return graph.ResourceID(id)
+	}
+}
+
+// resourceLabel strips resourceID's own namespace prefix back off, so the
+// map and its edge titles show the bare, real-world name — "shared.example",
+// never "domain:shared.example" — the way every other guest-influenced
+// label in this file already reads.
+func resourceLabel(id string) string {
+	for _, prefix := range [...]string{domainNS, storeNS, secretNS} {
+		if rest, ok := strings.CutPrefix(id, prefix); ok {
+			return rest
+		}
+	}
+	return id
+}
+
 // buildRunMap lays in out with internal/graph.Layout and scales it to
 // pixels with internal/graph.SVG — the exact same two calls
 // `kelyfos team graph` makes for its own drawing (P7-6, P7-7), so the two
@@ -467,12 +534,25 @@ func buildRunMap(in graph.Input) (*RunMapView, string) {
 
 	v := &RunMapView{Width: svg.Width, Height: svg.Height}
 	for _, n := range svg.Nodes {
-		mn := MapNode{CX: n.Pos.X, CY: n.Pos.Y, Label: n.Node.ID}
+		mn := MapNode{CX: n.Pos.X, CY: n.Pos.Y}
 		if n.Node.Kind == graph.NodeAgent {
-			mn.Kind, mn.Sub, mn.R = "agent", n.Group, nodeRadius
+			// An agent's own NodeID.ID is never namespaced — only a
+			// resource's is (resourceID) — so it needs no stripping.
+			mn.Label = n.Node.ID
+			// n.Group is the fork-template key — a content hash, e.g.
+			// "c049e692d3c51b083a1e37d02311de50" — not a short label;
+			// printed in full it overflows the column pitch two agents
+			// wide (review finding 4). short() (already used for hashes
+			// elsewhere in this package) keeps it recognisable without
+			// the overlap; the agent sheet still shows the group in full.
+			mn.Kind, mn.Sub, mn.R = "agent", short(n.Group), nodeRadius
 			mn.LX, mn.LY = n.Pos.X, n.Pos.Y+nodeRadius+labelGap
 			v.AgentCount++
 		} else {
+			// resourceLabel undoes resourceID's own namespacing (review
+			// finding 6) — the drawing shows the real name, never
+			// "domain:"/"key:"/"secret:" plus it.
+			mn.Label = resourceLabel(n.Node.ID)
 			switch n.ResourceKind {
 			case graph.Domain:
 				mn.Kind = "domain"
@@ -498,10 +578,13 @@ func buildRunMap(in graph.Input) (*RunMapView, string) {
 			v.EdgeCount++
 		case graph.EdgeRead:
 			me.Kind = "read"
-			me.Title = string(e.From.ID) + " reads " + string(e.To.ID)
+			// e.To is always a resource for a read/write edge — e.From is
+			// always the agent — so only e.To needs resourceLabel's
+			// namespace stripped back off.
+			me.Title = string(e.From.ID) + " reads " + resourceLabel(e.To.ID)
 		case graph.EdgeWrite:
 			me.Kind = "write"
-			me.Title = string(e.From.ID) + " writes " + string(e.To.ID)
+			me.Title = string(e.From.ID) + " writes " + resourceLabel(e.To.ID)
 		}
 		v.Edges = append(v.Edges, me)
 	}
@@ -596,6 +679,23 @@ func buildAgentSheets(d *digest.Digest) []AgentSheetView {
 	}
 	if d.Policy != nil {
 		return []AgentSheetView{policySheet("", "", "", "", d.Policy)}
+	}
+	// team.topology is written once, after every agent's own
+	// session.ready/session.policy pair, at the very end of team boot
+	// (docs/policy-record.md §3) — so a chain cut short before that last
+	// write, or simply malformed, can carry real per-agent policies with
+	// no topology event to hang them off of. Falling through to "no
+	// sheets" here would silently drop policy data this fold actually
+	// has (review finding 8): a team member's own session.policy is
+	// still worth a sheet even when this file cannot draw a map for it.
+	if d.Team {
+		var sheets []AgentSheetView
+		for _, name := range d.AgentOrder {
+			if a := d.Agents[name]; a != nil && a.Policy != nil {
+				sheets = append(sheets, policySheet(name, "", "", "", a.Policy))
+			}
+		}
+		return sheets
 	}
 	return nil
 }

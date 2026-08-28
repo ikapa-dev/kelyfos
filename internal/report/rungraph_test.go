@@ -1,6 +1,7 @@
 package report
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -164,8 +165,16 @@ func TestReachMatrixCountsStoreKeyHops(t *testing.T) {
 		return sec.Reach.Rows[idx[from]].Cells[idx[to]]
 	}
 
-	if !cell("worker-1", "master").Reaches {
-		t.Error("worker-1 does not reach master, but a declared edge connects them")
+	// demoTeamEvents' only declared edges run master -> worker-N, one
+	// direction; nothing declares worker-1 -> master. So this reach can
+	// only be the store-key hop the fixture's own doc comment names
+	// (worker-1 writes findings/worker-1, master reads it) — a single,
+	// direct writer -> reader hop, which is exactly what this test's own
+	// name claims to check and a bare Reaches assertion does not: a
+	// two-hop path through some other node would also satisfy Reaches.
+	if c := cell("worker-1", "master"); !c.Reaches || c.Hops != 1 {
+		t.Errorf("worker-1 -> master = %+v, want a 1-hop reach via the findings/worker-1 store key "+
+			"(no declared edge runs this direction at all)", c)
 	}
 	if got := cell("master", "master"); !got.Self {
 		t.Error("the diagonal is not marked Self")
@@ -274,5 +283,110 @@ func TestFullReportRendersTheRunSection(t *testing.T) {
 	}
 	if !strings.Contains(html, `Content-Security-Policy`) {
 		t.Error("the report has no CSP meta tag")
+	}
+}
+
+// Review finding 4: a fork-template Group is a content hash
+// ("c049e692d3c51b083a1e37d02311de50", 32 characters) — printed in full
+// beside an agent's name at 10px monospace on this map's 120px column
+// pitch, adjacent agents' labels visually overlap in the real export.
+// short() (report.go, already used for hashes elsewhere in this package)
+// is what buildRunMap is supposed to apply; this pins that it actually
+// does, on the node MapNode.Sub carries rather than on rendered pixels
+// this package cannot measure.
+func TestAgentGroupLabelIsShortenedOnTheMap(t *testing.T) {
+	const longGroup = "c049e692d3c51b083a1e37d02311de50"
+	events := []recorder.Event{
+		recorder.NewTeamTopology(recorder.TopologyFields{
+			Agents: []recorder.EvAgent{
+				{Name: "master"},
+				{Name: "worker-1", Group: longGroup},
+			},
+			Edges: []string{"master -> worker-1"},
+		}),
+	}
+	d := digest.Walk(events)
+	sec := buildRunSection(d)
+	if sec.Map == nil {
+		t.Fatal("no run map")
+	}
+	var found bool
+	for _, n := range sec.Map.Nodes {
+		if n.Label != "worker-1" {
+			continue
+		}
+		found = true
+		if n.Sub != short(longGroup) {
+			t.Errorf("Sub = %q, want short(longGroup) = %q", n.Sub, short(longGroup))
+		}
+		if n.Sub == longGroup {
+			t.Error("Sub carries the full, unshortened fork-template hash")
+		}
+	}
+	if !found {
+		t.Fatal("worker-1 never appears as a node on the map")
+	}
+}
+
+// Review finding 7: a store key list past digest.MaxDistinctKeys must not
+// silently understate what the map and the reach matrix draw resources
+// for — Digest.StoreTruncated already exists (the store panel's own table
+// already says so); buildRunSection is supposed to propagate the same
+// signal into RunSection.Note, which the map and matrix render above.
+func TestStoreTruncationIsPropagatedToTheRunNote(t *testing.T) {
+	events := []recorder.Event{
+		recorder.NewTeamTopology(recorder.TopologyFields{
+			Agents: []recorder.EvAgent{{Name: "master"}, {Name: "worker-1"}},
+		}),
+	}
+	for i := 0; i < digest.MaxDistinctKeys+1; i++ {
+		events = append(events, recorder.Event{
+			Type: recorder.TypeTeamStore, Agent: "master",
+			Peer: fmt.Sprintf("key-%d", i), Kind: "put", Outcome: "delivered", Bytes: 1,
+		})
+	}
+	d := digest.Walk(events)
+	if !d.StoreTruncated {
+		t.Fatal("the fixture did not actually trigger Digest.StoreTruncated — test setup is wrong")
+	}
+	sec := buildRunSection(d)
+	if sec.Note == "" {
+		t.Error("Digest.StoreTruncated is true but RunSection.Note says nothing about it")
+	}
+	if !strings.Contains(sec.Note, "MaxDistinctKeys") {
+		t.Errorf("Note = %q, want it to name the truncation explicitly", sec.Note)
+	}
+}
+
+// Review finding 8: team.topology is written once, at the very end of
+// team boot, after every agent's own session.ready/session.policy pair —
+// so a chain cut short before that last write, or simply malformed, can
+// carry real per-agent policies with no topology event to hang them off
+// of. buildAgentSheets must not silently drop that policy data just
+// because there is no map to draw for it.
+func TestAgentSheetsSurviveAMissingTopology(t *testing.T) {
+	events := []recorder.Event{
+		{Type: recorder.TypeSessionReady, Agent: "master", TS: "2026-08-27T10:00:00.000Z"},
+		recorder.NewSessionPolicy("master", recorder.PolicyFields{VcpuCount: 1, MemMiB: 512}),
+		{Type: recorder.TypeSessionReady, Agent: "worker-1", TS: "2026-08-27T10:00:01.000Z"},
+		recorder.NewSessionPolicy("worker-1", recorder.PolicyFields{VcpuCount: 1, MemMiB: 256}),
+	}
+	d := digest.Walk(events)
+	if d.Topology != nil {
+		t.Fatal("test setup is wrong: this fixture must not carry a team.topology event")
+	}
+	sheets := buildAgentSheets(d)
+	if len(sheets) != 2 {
+		t.Fatalf("len(sheets) = %d, want 2 — a missing team.topology must not drop real per-agent policy data", len(sheets))
+	}
+	byName := map[string]AgentSheetView{}
+	for _, s := range sheets {
+		byName[s.Name] = s
+	}
+	if s := byName["master"]; !s.HasPolicy || s.MemMiB != 512 {
+		t.Errorf("master's sheet = %+v, want HasPolicy with MemMiB=512", s)
+	}
+	if s := byName["worker-1"]; !s.HasPolicy || s.MemMiB != 256 {
+		t.Errorf("worker-1's sheet = %+v, want HasPolicy with MemMiB=256", s)
 	}
 }

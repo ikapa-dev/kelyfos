@@ -7,7 +7,7 @@ const reportHTML = `<!DOCTYPE html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
-<title>KelyfOS session {{.SessionID}}</title>
+<title>KelyfOS session {{safe .SessionID}}</title>
 <style>
 .cards .l .qual{opacity:.62;font-weight:400}
   :root{
@@ -167,15 +167,44 @@ const reportHTML = `<!DOCTYPE html>
     body{background:#fff;color:#111}
     .card,table.meta,pre{background:#fff}
     pre{max-height:none;overflow:visible}
-    .runmap svg{max-width:100%}
+    /* Every element below sets its OWN dark panel background
+       (var(--panel)) or a light, dark-background-tuned text colour, and
+       neither is touched by body's own background/colour swap above —
+       inherited near-black text on an unreset dark panel, or unreset
+       near-white text against the now-white page, is a contrast ratio
+       around 1:1 either way. Set both halves explicitly so the box is
+       legible whether or not the printer honours background colours at
+       all (most default to stripping them). Found on the real rendered
+       output, not assumed: .chain predates this task; .sheet, .cell,
+       .runmap svg and the SVG label share its exact shape.
+       .command/.team/.client/.plugin's title colours, .card .n, h1,
+       h3.run-sub and .island summary are the same bug one layer down —
+       near-white or pale, chosen for the dark theme, invisible once
+       their container's background actually goes white. */
+    .chain,.sheet,.cell{background:#fff;color:#111}
+    .chain code{color:#111}
+    /* .chain.bad is the one box that must NOT flatten to plain #111: its
+       colour is the warning itself (this record failed self-verification)
+       and losing it to the same treatment as everything else would hide
+       exactly the one signal a reader must not miss. Only its background
+       needs resetting — the translucent red tint reads as a near-white
+       wash once print strips the dark page behind it — and var(--warn) on
+       white keeps enough contrast to read as red, not as body text. */
+    .chain.bad{background:#fdf2f1}
+    .sheet-head{color:#111}
+    .command .title,.team .title,.client .title,.plugin .title,
+    .card .n,h1,h3.run-sub,.island summary{color:#111}
+    .runmap svg{max-width:100%;background:#fff}
+    .runmap .label{fill:#111}
+    .runmap .edge.message{stroke:#111}
   }
 </style>
 </head><body class="{{if .Lanes}}team{{end}}"><div class="wrap">
 
 <h1>Kelyf<span>OS</span> session report</h1>
-<div class="sub">session <span id="kelyfos-session">{{.SessionID}}</span> · {{.Events}} events · generated {{.Generated}}</div>
+<div class="sub">session <span id="kelyfos-session">{{safe .SessionID}}</span> · {{.Events}} events · generated {{.Generated}}</div>
 {{if .SelfCheck}}
-<div class="chain bad">The exporter's own check of this record failed — {{.SelfCheck}}.
+<div class="chain bad">The exporter's own check of this record failed — {{safe .SelfCheck}}.
 That is this file reporting a problem with itself. Check it rather than take its word:
 <code>kelyfos verify &lt;this file&gt;</code>.</div>
 {{end}}
@@ -210,11 +239,11 @@ That is this file reporting a problem with itself. Check it rather than take its
 </div>
 
 <table class="meta">
-  <tr><td>image</td><td>{{.Summary.Image}} · {{.Summary.Arch}}</td></tr>
-  <tr><td>guest</td><td>kernel {{.Summary.Kernel}} · supervisor {{.Summary.Supervisor}}</td></tr>
+  <tr><td>image</td><td>{{safe .Summary.Image}} · {{safe .Summary.Arch}}</td></tr>
+  <tr><td>guest</td><td>kernel {{safe .Summary.Kernel}} · supervisor {{safe .Summary.Supervisor}}</td></tr>
   <tr><td>kelyfos</td><td>{{.Summary.Kelyfos}}</td></tr>
   <tr><td>started</td><td>{{.Summary.Started}}</td></tr>
-  <tr><td>ended</td><td>{{if .Summary.Ended}}{{.Summary.Ended}} ({{.Summary.EndReason}}){{else}}still running{{end}}</td></tr>
+  <tr><td>ended</td><td>{{if .Summary.Ended}}{{.Summary.Ended}} ({{safe .Summary.EndReason}}){{else}}still running{{end}}</td></tr>
   <tr><td>TLS terminated</td><td>{{.Summary.Terminated}} connection(s) the proxy could read{{if not .Summary.Terminated}} — none{{end}}</td></tr>
   {{if .Summary.Usage}}<tr><td>usage receipt</td><td>
     {{printf "%.2f" .Summary.Usage.CPUSeconds}} CPU-seconds{{if .Summary.Usage.CPUQuota}} · quota {{.Summary.Usage.CPUQuota}}% of one core{{else if .Summary.Usage.Vcpus}} · {{.Summary.Usage.Vcpus}} core(s), no quota{{end}}<br>
@@ -222,7 +251,7 @@ That is this file reporting a problem with itself. Check it rather than take its
     network {{.Summary.Usage.NetIn}} in / {{.Summary.Usage.NetOut}} out · disk {{.Summary.Usage.DiskWrite}} written, {{.Summary.Usage.DiskRead}} read<br>
     <span style="color:var(--muted)">measured on the host, from the VMM's own counters — the guest was not asked</span>
   </td></tr>{{end}}
-  <tr><td>ended by</td><td>{{if .Summary.TimedOut}}<span style="color:var(--warn)">the {{.Summary.TimedOut}} budget</span>{{else}}{{.Summary.EndReason}}{{end}}</td></tr>
+  <tr><td>ended by</td><td>{{if .Summary.TimedOut}}<span style="color:var(--warn)">the {{safe .Summary.TimedOut}} budget</span>{{else}}{{safe .Summary.EndReason}}{{end}}</td></tr>
   <tr><td>secrets used</td><td>{{if .Summary.Secrets}}{{range .Summary.Secrets}}{{safe .}} {{end}}<br><span style="color:var(--muted)">values are never recorded</span>{{else}}none{{end}}</td></tr>
 </table>
 
@@ -231,7 +260,7 @@ That is this file reporting a problem with itself. Check it rather than take its
 <p class="lanes-note">What the run was <i>declared</i> permitted, from <code>session.policy</code> and
 <code>team.topology</code> &mdash; not what happened, which is the timeline below. A run map with no
 edge to a peer means none was declared, whatever the timeline shows was attempted.</p>
-{{if .RunNote}}<p class="run-note">{{.RunNote}}</p>{{end}}
+{{if .RunNote}}<p class="run-note">{{safe .RunNote}}</p>{{end}}
 
 {{if .RunMap}}
 <figure class="runmap">
@@ -269,7 +298,7 @@ solid line = message &nbsp; short dashes = read &nbsp; long dashes = write
     {{if or .NetRxMbps .NetTxMbps}}<tr><td>network</td><td>{{.NetRxMbps}} Mbps in / {{.NetTxMbps}} Mbps out</td></tr>{{end}}
     {{if .MaxRuntime}}<tr><td>max runtime</td><td>{{.MaxRuntime}}</td></tr>{{end}}
     {{if .IdleTimeout}}<tr><td>idle timeout</td><td>{{.IdleTimeout}}</td></tr>{{end}}
-    <tr><td>allow</td><td>{{if .Allow}}{{range .Allow}}{{safe .}} {{end}}{{if .Ports}}&middot; ports {{range .Ports}}{{.}} {{end}}{{end}}{{else}}none{{end}}</td></tr>
+    <tr><td>allow</td><td>{{if .Allow}}{{range .Allow}}{{safe .}} {{end}}{{else}}none{{end}}{{if .Ports}} &middot; ports {{range .Ports}}{{.}} {{end}}{{end}}</td></tr>
     <tr><td>secrets</td><td>{{if .Secrets}}{{range .Secrets}}{{safe .Name}} &rarr; {{safe .Host}}{{if .Path}} ({{safe .Path}}){{end}} {{end}}{{else}}none{{end}}</td></tr>
     {{if .Workspace}}<tr><td>workspace</td><td>{{safe .Workspace}}</td></tr>{{end}}
     {{if .Plugins}}<tr><td>plugins</td><td>{{range .Plugins}}{{safe .}} {{end}}</td></tr>{{end}}
