@@ -689,7 +689,7 @@ func printEvent(line []byte, asJSON bool) {
 		// tells the whole story for the one where it matters.
 		why := ""
 		if e.Reason != "" {
-			why = " " + e.Reason
+			why = " " + proto.SafeText(e.Reason)
 		}
 		// A session with no single image — a team's, a server's — says nothing
 		// rather than "image=" followed by a hole.
@@ -699,27 +699,27 @@ func printEvent(line []byte, asJSON bool) {
 		}
 		fmt.Printf("%s  session start   %sarch=%s kelyfos=%s%s\n", ts, image, e.Arch, e.Kelyfos, why)
 	case recorder.TypeMCPHostCall:
-		fmt.Printf("%s  %sclient call    %s\n", ts, who, strings.TrimSpace(e.Name+" "+e.Args))
+		fmt.Printf("%s  %sclient call    %s\n", ts, who, proto.SafeText(strings.TrimSpace(e.Name+" "+e.Args)))
 	case recorder.TypeMCPHostResult:
 		outcome := e.Outcome
 		if e.Error != nil {
 			outcome = "refused: " + e.Error.Message
 		}
-		fmt.Printf("%s  %sclient result  %s %s (%d ms)\n", ts, who, e.Name, outcome, e.DurationMS)
+		fmt.Printf("%s  %sclient result  %s %s (%d ms)\n", ts, who, proto.SafeText(e.Name), proto.SafeText(outcome), e.DurationMS)
 	case recorder.TypePluginCall:
 		outcome := e.Outcome
 		what := e.Name + "_" + e.Tool
 		if e.Args != "" {
 			what += " " + e.Args
 		}
-		fmt.Printf("%s  %splugin call    %s  %s (%d ms)\n", ts, who, what,
-			strings.TrimSpace(outcome), e.DurationMS)
+		fmt.Printf("%s  %splugin call    %s  %s (%d ms)\n", ts, who, proto.SafeText(what),
+			proto.SafeText(strings.TrimSpace(outcome)), e.DurationMS)
 	case recorder.TypePluginCrash:
-		fmt.Printf("%s  %splugin stopped %s  %s\n", ts, who, e.Name, e.Reason)
+		fmt.Printf("%s  %splugin stopped %s  %s\n", ts, who, proto.SafeText(e.Name), proto.SafeText(e.Reason))
 	case recorder.TypeShellStart:
 		where := ""
 		if e.Path != "" {
-			where = " · recording to " + e.Path
+			where = " · recording to " + proto.SafeText(e.Path)
 		}
 		fmt.Printf("%s  %sshell opened   %s\n", ts, who, strings.TrimSpace(where))
 	case recorder.TypeShellEnd:
@@ -752,21 +752,21 @@ func printEvent(line []byte, asJSON bool) {
 	case recorder.TypeForwardAccept:
 		outcome := "carried"
 		if e.Reason != "" {
-			outcome = "REFUSED  " + e.Reason
+			outcome = "REFUSED  " + proto.SafeText(e.Reason)
 		}
 		fmt.Printf("%s  %sforward        %s -> guest %d  from %s  %s\n",
-			ts, who, "host "+strconv.Itoa(e.Port), e.GuestPort, e.Peer, outcome)
+			ts, who, "host "+strconv.Itoa(e.Port), e.GuestPort, proto.SafeText(e.Peer), outcome)
 	case recorder.TypeRunReview:
 		fmt.Printf("%s  %sreview          %s · %d added, %d modified, %d deleted → %s\n",
-			ts, who, e.Outcome, e.Added, e.Modified, e.Deleted, e.Path)
+			ts, who, e.Outcome, e.Added, e.Modified, e.Deleted, proto.SafeText(e.Path))
 	case recorder.TypeSessionPause:
-		fmt.Printf("%s  %spaused          as %q in %d ms\n", ts, who, e.Name, e.DurationMS)
+		fmt.Printf("%s  %spaused          as %q in %d ms\n", ts, who, proto.SafeText(e.Name), e.DurationMS)
 	case recorder.TypeSessionResume:
 		why := ""
 		if e.Reason != "" {
-			why = "  · policy differed: " + e.Reason
+			why = "  · policy differed: " + proto.SafeText(e.Reason)
 		}
-		fmt.Printf("%s  %sresumed         %q in %d ms%s\n", ts, who, e.Name, e.BootMS, why)
+		fmt.Printf("%s  %sresumed         %q in %d ms%s\n", ts, who, proto.SafeText(e.Name), e.BootMS, why)
 	case recorder.TypeSessionReady:
 		// A team member's ready line says how it started, not what booted: the
 		// kernel and supervisor are the same for every member and the boot path
@@ -783,9 +783,9 @@ func printEvent(line []byte, asJSON bool) {
 		fmt.Printf("%s  ready           %d ms  kernel=%s supervisor=%s %s\n",
 			ts, e.BootMS, e.Kernel, e.Supervisor, overlay)
 	case recorder.TypeSessionEnd:
-		fmt.Printf("%s  session end     %s after %d ms\n", ts, e.Reason, e.DurationMS)
+		fmt.Printf("%s  session end     %s after %d ms\n", ts, proto.SafeText(e.Reason), e.DurationMS)
 	case recorder.TypeCommandStart:
-		fmt.Printf("%s  $ %s%s\n", ts, who, strings.Join(e.Cmd, " "))
+		fmt.Printf("%s  $ %s%s\n", ts, who, proto.SafeText(strings.Join(e.Cmd, " ")))
 	case recorder.TypeCommandOutput:
 		data, _ := base64.StdEncoding.DecodeString(e.Data)
 		prefix := "  | "
@@ -802,43 +802,44 @@ func printEvent(line []byte, asJSON bool) {
 		}
 		extra := ""
 		if e.Error != nil {
-			extra = fmt.Sprintf("  (%s: %s)", e.Error.Kind, e.Error.Message)
+			extra = fmt.Sprintf("  (%s: %s)", e.Error.Kind, proto.SafeText(e.Error.Message))
 		}
 		fmt.Printf("%s  exit %-3d        %d ms%s\n", ts, code, e.DurationMS, extra)
 	case recorder.TypeFileWrite:
 		fmt.Printf("%s  write           %s%s  %d bytes  sha256=%s via=%s\n",
-			ts, who, e.Path, e.Bytes, shortHash(e.SHA256), e.Via)
+			ts, who, proto.SafeText(e.Path), e.Bytes, shortHash(e.SHA256), e.Via)
 	case recorder.TypeEgressAttempt:
 		verdict := "BLOCKED"
 		if e.Allowed != nil && *e.Allowed {
 			verdict = "allowed"
 		}
-		fmt.Printf("%s  egress %-7s %s%s:%d  mode=%s %s\n", ts, verdict, who, e.Host, e.Port, e.Mode, e.Reason)
+		fmt.Printf("%s  egress %-7s %s%s:%d  mode=%s %s\n", ts, verdict, who,
+			proto.SafeText(e.Host), e.Port, e.Mode, proto.SafeText(e.Reason))
 	case recorder.TypeSecretUse:
-		fmt.Printf("%s  secret          %s%s -> %s\n", ts, who, e.Name, e.Host)
+		fmt.Printf("%s  secret          %s%s -> %s\n", ts, who, proto.SafeText(e.Name), proto.SafeText(e.Host))
 	case recorder.TypeTeamMessage, recorder.TypeTeamRefused:
 		verb := map[string]string{"send": "->", "ask": "?>", "reply": "<-"}[e.Kind]
 		if verb == "" {
 			verb = "->"
 		}
-		what := fmt.Sprintf("%s %s %s", e.Agent, verb, e.Peer)
+		what := fmt.Sprintf("%s %s %s", proto.SafeText(e.Agent), verb, proto.SafeText(e.Peer))
 		detail := fmt.Sprintf("%s · %d bytes · %s", e.Kind, e.Bytes, shortHash(e.SHA256))
 		if e.Type == recorder.TypeTeamRefused {
-			fmt.Printf("%s  team REFUSED    %s  %s (%s)\n", ts, what, detail, e.Reason)
+			fmt.Printf("%s  team REFUSED    %s  %s (%s)\n", ts, what, detail, proto.SafeText(e.Reason))
 		} else {
 			fmt.Printf("%s  team            %s  %s\n", ts, what, detail)
 		}
 	case recorder.TypeTeamStore:
 		verdict := e.Outcome
 		if e.Reason != "" {
-			verdict += " · " + e.Reason
+			verdict += " · " + proto.SafeText(e.Reason)
 		}
-		fmt.Printf("%s  team store      %s %s %s  %s\n", ts, e.Agent, e.Kind, e.Peer, verdict)
+		fmt.Printf("%s  team store      %s %s %s  %s\n", ts, proto.SafeText(e.Agent), e.Kind, proto.SafeText(e.Peer), verdict)
 	case recorder.TypeTeamSpawn:
 		if e.Outcome == "refused" {
-			fmt.Printf("%s  team REFUSED    %s may not spawn  (%s)\n", ts, e.Agent, e.Reason)
+			fmt.Printf("%s  team REFUSED    %s may not spawn  (%s)\n", ts, proto.SafeText(e.Agent), proto.SafeText(e.Reason))
 		} else {
-			fmt.Printf("%s  team %-10s %s by %s\n", ts, e.Kind, e.Peer, e.Agent)
+			fmt.Printf("%s  team %-10s %s by %s\n", ts, e.Kind, proto.SafeText(e.Peer), proto.SafeText(e.Agent))
 		}
 	case recorder.TypeResourceSummary:
 		fmt.Printf("%s  usage           %s%.2f CPU-seconds%s · peak RSS %s (VMM)%s · net %s in / %s out · disk %s written\n",
@@ -851,7 +852,7 @@ func printEvent(line []byte, asJSON bool) {
 			(time.Duration(e.ElapsedMS) * time.Millisecond).Round(time.Second))
 	case recorder.TypeResourceOOM:
 		fmt.Printf("%s  OOM-killed      %s%s (pid %d) holding %s of a %d MiB machine\n",
-			ts, who, e.Comm, e.PID, report.HumanKiB(e.RSSKiB), e.MemMiB)
+			ts, who, proto.SafeText(e.Comm), e.PID, report.HumanKiB(e.RSSKiB), e.MemMiB)
 	default:
 		fmt.Printf("%s  %-15s %s\n", ts, e.Type, strings.TrimSpace(string(line)))
 	}
