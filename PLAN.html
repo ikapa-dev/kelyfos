@@ -5339,6 +5339,59 @@ after:
         &hellip;&lt;/h3&gt;</code>, one <code>&lt;svg&gt;</code>, one <code>role="img"</code>, one
         <code>Content-Security-Policy</code> meta tag, one <code>@media print</code> block &mdash; all present
         in the real, 68376-byte, 43-event, 6-agent export.</td></tr>
+    <tr><td class="mono">2026-08-28</td><td class="mono">P7-8</td>
+        <td><b>The RENDER-surface review of <code>040f35f</code>, and its fixes in <code>83aed12</code>, per
+        &sect;8 rule 10 &mdash; appended here since the fix commit did not carry this row itself.</b>
+        The task's own stated constraint &mdash; &ldquo;adversary strings reach element text content only&rdquo;
+        &mdash; held for SVG generation and geometry throughout both rounds: every attribute a Go-computed
+        number, no <code>&lt;foreignObject&gt;</code>/<code>href</code>/<code>style</code> anywhere in the
+        drawing, verified against real exports both rounds. What the first round found was narrower but real:
+        despite <code>safe.go</code>'s own doc comment claiming coverage of &ldquo;every guest-influenced value
+        in reportHTML,&rdquo; several fields from the guest's own <code>ready</code> handshake
+        (<code>Kernel</code>, <code>Supervisor</code>, <code>Image</code>, <code>Arch</code>,
+        <code>EndReason</code>, <code>TimedOut</code>, <code>SessionID</code>, <code>SelfCheck</code>) reached
+        the page unescaped &mdash; demonstrated with a real OSC terminal-title-set escape sequence landing
+        verbatim in the exported file (finding 1). <code>safeBody</code>, the half of the fix meant for
+        multi-line command output and message bodies, had zero test coverage: mutation-tested by reverting it
+        to a no-op, the entire suite still passed (finding 2). The required <code>@media print</code> fix made
+        the new agent sheets and the pre-existing chain-verification box unreadable on paper, near-black text on
+        an unreset dark background (finding 3). Run-map agent labels showed the full 32-character fork-template
+        hash, overflowing the column pitch (finding 4). <code>RunNote</code> was the one guest-influenced value
+        in the new section not routed through <code>safe</code> (finding 5). A domain and a store key sharing
+        one literal name collapsed into a single, mislabelled node (finding 6) &mdash; <code>graph.ResourceID</code>
+        carried no kind, so two different resource namespaces aliased. Lower severity: unbounded output on the
+        map/matrix with no truncation notice (7); a test asserting the wrong direction with no declared edge in
+        its own fixture (8a); ports silently dropped when <code>Allow</code> was empty (8b); a topology-less
+        team rendering zero agent sheets despite having per-agent policies (8c).
+        <br><b>All fixed and independently re-verified by the reviewer through execution, not by reading</b>:
+        finding 1's exact repro now renders 0 raw control bytes page-wide; finding 2 closed with six new direct
+        tests plus a real control-byte corpus fixture, mutation-tested three ways including a byte the review
+        did not ask for (<code>0x7f</code>); finding 3's five flagged selectors measured at 18.88:1 contrast in
+        print, and <code>.chain.bad</code>'s cascade specifically confirmed to keep its warning colour (a CSS
+        specificity analysis, not a guess: the print rule only resets <i>background</i>, and the existing
+        screen-level color rule outranks the print reset); finding 4's labels shortened from 43 to 23 characters
+        in a real export; finding 5 confirmed to fail under mutation without the fix; finding 6's exact
+        collision repro re-run and confirmed to now draw one correctly-labelled diamond and one correctly-labelled
+        square; findings 7/8a/8b/8c each independently reproduced by the reviewer's own probes, not the
+        author's tests.
+        <br>One false alarm from the review process itself, correctly diagnosed and not charged against this
+        task: two early <code>dev/demo-team.sh</code> runs during re-verification showed unrelated team-runtime
+        failures (store round-trips, spawn budgets, edge refusals) &mdash; traced to a concurrently-running
+        review in a sibling worktree issuing <code>team up</code>/<code>sessions erase</code>/<code>team
+        down</code>/<code>pkill</code> against the same shared <code>~/.cache/kelyfos</code> the demo script
+        also uses. A quiet-host re-run: 22 passed, 0 failed, 1 skipped. Noted by the reviewer as the same
+        shared-host hazard S20 already fixed once, now recurring under this session's own pattern of several
+        concurrent worktree agents on one dev VM &mdash; see the orchestrator's note below.
+        <br>Reviewer's final verdict: <b>GO.</b></td>
+        <td class="mono">reviewer's re-verification, inside <code>kelyfos-dev</code> on <code>83aed12</code>:
+        <code>gofmt -l .</code> empty, <code>go vet ./...</code> clean, <code>go test -count=1 ./...</code> every
+        package <code>ok</code>, <code>govulncheck</code> &rarr; &ldquo;No vulnerabilities found.&rdquo;,
+        <code>make docs</code> &rarr; zero diff; a fresh 68630-byte export re-inspected directly: 0 control
+        bytes, every SVG geometry attribute numeric, closed nine-value <code>class</code> vocabulary, no
+        <code>href</code>/<code>style=</code>/<code>&lt;foreignObject&gt;</code>/<code>&lt;script&gt;</code>/
+        <code>javascript:</code>, CSP/<code>role="img"</code>/<code>@media print</code> all present;
+        <code>python3 tools/check-plan.py</code> coherent; PLAN.html byte-identical across all 17 checkboxes,
+        untouched by the review itself.</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
