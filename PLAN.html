@@ -1501,9 +1501,9 @@
               <span class="tid">F8</span><span class="tk"><b>High.</b> Any binary named <code>kelyfos-confine</code> runs unconfined as root &mdash; the re-entrancy guard in <code>confine()</code> tests <code>cmd.Path</code>, which the agent chooses. <code>supervisor/confine.go:104</code>.</span></li>
           <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
               <span class="tid">F9</span><span class="tk"><b>High.</b> The egress proxy is reachable by any local process, with the operator&rsquo;s bound credentials attached &mdash; the input chain filters by <code>iifname</code>, and a local connection to the TAP address never crosses the TAP. <code>internal/egress/proxy.go:251</code> &middot; <code>internal/sandbox/network.go:190</code>.</span></li>
-          <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+          <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
               <span class="tid">F10</span><span class="tk">A confined process can <code>mknod</code> its way to the raw disks: <code>writeRights</code> grants <code>MAKE_CHAR</code>/<code>MAKE_BLOCK</code> and the merged overlay carries neither <code>MS_NODEV</code> nor <code>MS_NOSUID</code>. <code>supervisor/profile.go:130</code> &middot; <code>supervisor/mount.go:73</code>.</span></li>
-          <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+          <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
               <span class="tid">F11</span><span class="tk"><code>write_file</code> re-checks for symlinks and still opens through one &mdash; a lexical <code>Lstat</code> walk followed by an ordinary <code>os.WriteFile</code>, with the swap window between them. <code>supervisor/tools.go:413</code>.</span></li>
           <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
               <span class="tid">F13</span><span class="tk">The flight recorder fails open: 77 <code>Append</code> errors are discarded, so a full disk or one corrupt line leaves the sandbox executing while nothing is recorded. Fail closed in the recorder (<b>13a</b>) and wire <code>Broken()</code> into the run loop (<b>13b</b>). <code>internal/recorder/recorder.go:504</code> &middot; <code>host/run.go</code>.</span></li>
@@ -1529,7 +1529,7 @@
               <span class="tid">F2</span><span class="tk">The E2B shim HTTP API has no cross-site request defence, and its token is opt-in: a web page can <code>POST /files</code> and <code>POST /sandboxes</code> without a preflight. <code>shim/shim.go:148</code>.</span></li>
           <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
               <span class="tid">F21</span><span class="tk">A discovered <code>kelyfos.toml</code> is trusted with host-wide powers &mdash; no ownership or writability check on the walk up to <code>/</code>, and the file may name an absolute workspace, an absolute plugin path and bound secrets. <code>internal/config/config.go:117</code>.</span></li>
-          <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+          <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
               <span class="tid">F3</span><span class="tk">The guest vsock listener never checks the peer CID, and <code>CONFIG_VSOCKETS_LOOPBACK</code> is disabled against the upstream default in a config the fragment does not pin. <code>internal/vsock/vsock.go:101</code>.</span></li>
           <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
               <span class="tid">F4</span><span class="tk">Workspace contents are lost for a directory name ending in whitespace: the <code>debugfs</code> script line is unquoted and the echo-attribution trims. <code>internal/sandbox/extract.go:155</code>.</span></li>
@@ -6891,6 +6891,160 @@ after:
         <code>a393b2e</code> and the branch. <code>go test -race ./internal/sandbox/</code> fails on
         <code>TestSilentTeamConnectionsAreCappedAndReclaimed</code>, also pre-existing and invisible to the gate
         because <code>make test</code> does not run <code>-race</code>.</td></tr>
+    <tr><td class="mono">2026-08-29</td><td class="mono">P7-17/F10</td>
+        <td><b>A confined process could <code>mknod</code> its way to the raw disks; device creation is now
+        governed by the ruleset and granted by no rule, with a <code>nodev</code> root beneath it.</b>
+        <code>writeRights</code> granted <code>MAKE_CHAR</code> and <code>MAKE_BLOCK</code> on every writable
+        tree, the merged overlay was mounted with flags <code>0</code>, and <code>mknod</code> is deliberately not
+        on the seccomp list &mdash; so <code>mknod /root/disk b 254 16</code> reopened the workspace disk past the
+        <code>nosuid,nodev</code> that guards <code>/work</code>.
+        <br><b>The report&rsquo;s prescribed fix would have made this worse, and the diff would have looked
+        identical.</b> It says &ldquo;remove <code>MAKE_CHAR</code> and <code>MAKE_BLOCK</code> from
+        <code>writeRights</code>&rdquo; and does not mention that <code>handledRights = writeRights</code> is the
+        ruleset&rsquo;s only <code>Access_fs</code>. Landlock restricts only what it <i>handles</i>, so the
+        literal fix removes device creation from the ruleset&rsquo;s vocabulary and permits it <b>everywhere</b>,
+        <code>/etc</code> and <code>/usr</code> included &mdash; ground the original grant never reached. Fixed as
+        <code>handledRights = writeRights | deviceCreation</code>: handled by the ruleset, granted by no rule.
+        <code>MAKE_FIFO</code> and <code>MAKE_SOCK</code> stay; <code>mknod</code>/<code>mknodat</code> stay off
+        the seccomp list, because <code>mkfifo(3)</code> is <code>mknodat</code> with <code>S_IFIFO</code> and a
+        number-only filter would break every tool that uses a named pipe.
+        <br><b>Reviewed</b> by an agent that wrote none of it. Verdict: not reachable. Two findings accepted
+        &mdash; <code>docs/threat-model.md</code> claimed the block devices are reachable &ldquo;only as the
+        mounts the host attached&rdquo;, which is false for <i>reads</i> (<code>READ_FILE</code> is granted
+        beneath <code>/</code>), and the <code>MS_NOSUID</code> rationale rested on &ldquo;every process here is
+        already root&rdquo;, which is not true. Three rejected with reasons.</td>
+        <td class="mono"><b>The trap measured, not argued.</b> Reviewer built a harness calling the real
+        <code>applyLandlock(profileFor("dev"))</code> in a locked thread as root on a real Landlock kernel:<br>
+        <code>parent 38031ba &nbsp;&rarr; /root,/tmp,/work: ALLOWED &nbsp;&middot;&nbsp; /etc,/usr: refused</code><br>
+        <code>handledRights = writeRights (the review's own fix) &rarr; /root,/tmp,/work: ALLOWED &middot; /etc,/usr: ALLOWED</code><br>
+        <code>branch &nbsp;&rarr; /root,/tmp,/work: EACCES &nbsp;&middot;&nbsp; /etc,/usr: EACCES</code><br>
+        pre-fix live in a microVM: <code>mknod: MKNOD-OK b 254 16</code>, <code>dd: READ-OK the raw workspace
+        disk is readable through it</code>, <code>char node: MKNOD-OK c 1 1</code><br>
+        post-fix live: <code>MKNOD-REFUSED</code> for block and char in <code>/root</code>, <code>/tmp</code> and
+        <code>/work</code>; <code>MKFIFO-OK</code>, <code>UNIX-SOCKET-OK</code>, mkdir, symlink, pty and
+        <code>mv</code> across trees all still work; <code>/proc/mounts</code> shows
+        <code>overlay / overlay rw,nosuid,nodev</code><br>
+        each layer shown refusing alone: Landlock grant restored but <code>nodev</code> kept &rarr;
+        <code>MKNOD-OK</code> then <code>READ-REFUSED dd: can't open '/root/f10disk': Permission denied</code><br>
+        parent failures: <code>devnode_test.go:83: writeRights grants MAKE_CHAR on every writable tree &hellip;</code>,
+        <code>&hellip; MAKE_BLOCK &hellip; mknod /root/disk b 254 16 is the raw workspace disk</code>,
+        <code>devnode_test.go:140: the merged overlay is not mounted MS_NODEV &hellip; MS_NOSUID: /bin/busybox in
+        this image is mode 4755</code><br>
+        <code>TestF10_DeviceCreationIsGovernedByTheRulesetAndGrantedByNoRule</code> fails on <b>both</b> mutants,
+        each on its own assertion; <code>TestF10_MknodStaysOffTheSeccompRefusalList</code> pins the constraint
+        with the <code>mkfifo</code> reasoning in its failure message<br>
+        image checked by read-only loop mount: <b>zero</b> device nodes anywhere, exactly one setuid file
+        (<code>/bin/busybox</code>, <code>-rwsr-xr-x</code>) &mdash; so <code>MS_NODEV</code> costs nothing and
+        <code>MS_NOSUID</code> retires the one<br>
+        reviewer rejected: <code>/dev/pts</code> is writable and not <code>nodev</code>, but devpts refuses
+        <code>mknod</code> outright; <code>mv</code>/<code>ln</code> a device node in is <code>EXDEV</code> and
+        <code>REFER</code> is not granted on <code>/dev/vda</code>; the ABI floor is unaffected<br>
+        read residual now stated in the doc rather than denied: <code>dd if=/dev/vdb bs=512 count=1</code>
+        succeeds, <code>dd of=/dev/vdb</code> is <code>Permission denied</code></td></tr>
+    <tr><td class="mono">2026-08-29</td><td class="mono">P7-17/F11</td>
+        <td><b><code>write_file</code> re-checked for symlinks and still opened through one; the write is now
+        guarded at the open.</b> <code>noSymlinksBeneath</code> was a lexical <code>Lstat</code> walk followed by
+        an ordinary <code>os.WriteFile</code>, so a link planted in the gap was followed by PID 1, which is not
+        confined. The write now goes through <code>os.OpenRoot(tree)</code> &mdash;
+        <code>writableTarget</code> returns the matched tree &mdash; with the seven named device nodes taking an
+        exact-match branch with <code>O_NOFOLLOW</code>. <code>noSymlinksBeneath</code> is kept as a message and a
+        second opinion, and its paragraph claiming &ldquo;there is no single root to anchor here&rdquo; is
+        corrected rather than deleted: there is no single root, but there does not need to be, because
+        <code>writableTarget</code> already decides which tree the path belongs to.
+        <br><b>The report understates the window.</b> It frames the gap as &ldquo;between the last
+        <code>Lstat</code> and the open&rdquo;. <code>noSymlinksBeneath</code> returns <code>nil</code> at the
+        <i>first missing component</i>, so for a file being created there is effectively no <code>Lstat</code> of
+        the leaf at all and the gap includes all of <code>MkdirAll</code> &mdash; which is why it reproduces in
+        seconds rather than needing a tight loop.
+        <br><b>Reviewed</b>: not reachable. One finding accepted, and it is a correction to the security review
+        itself &mdash; see the F11 mechanism note below. One rejected: the reviewer&rsquo;s own escaping-parent
+        race first appeared to fail on the branch, and the fixture was at fault (the victim was inside the tree
+        the root anchors on, so following the link was correct).</td>
+        <td class="mono">parent <code>99fd574</code>, 5 of 5 runs FAIL:
+        <code>writable_race_test.go:99: write_file wrote through a symlink planted between its check and its
+        open: /var/tmp/kelyfos-f11-victim-641136600/victim holds the guest's bytes after 200000 writes</code><br>
+        branch, 10 of 10 PASS: <code>200000 writes raced against a symlink flip; the victim was never
+        touched</code><br>
+        reviewer ran two <i>different</i> races of its own, flipping a <b>parent component</b> rather than the
+        leaf &mdash; absolute link out of <code>/tmp</code>, and relative climbing out &mdash; both FAIL on the
+        parent and PASS on the branch, 3 runs each at up to 200,000 writes<br>
+        live through the real MCP file tools in a microVM: ordinary write lands;
+        <code>/work/rev-link &rarr; /dev/vdb</code> refused; parent component
+        <code>/work/revdir &rarr; /etc</code> refused and <code>/etc/passwd</code> untouched; in-tree relative
+        link still refused by name; <code>/work/../etc/&hellip;</code> refused as outside the trees;
+        <code>/dev/null</code> still writable; <code>upload</code> refused on the same symlink, so it shares the
+        guarded write<br>
+        <b>Correction to the security review, verified three ways.</b> The report&rsquo;s F18 entry instructs
+        &ldquo;<code>os.Root</code> is <code>RESOLVE_BENEATH</code>, not <code>RESOLVE_NO_SYMLINKS</code>&rdquo;.
+        <b>Go 1.27 uses neither and does not call <code>openat2</code> at all.</b>
+        <code>openat2Trap</code> appears only in the eight <code>sysnum_linux_*.go</code> declarations and is
+        called nowhere in GOROOT; <code>grep -rn "openat2\|RESOLVE_BENEATH" $GOROOT/src/os/</code> returns
+        nothing; <code>os/root_unix.go:67,86,118</code> open each component with
+        <code>unix.Openat(parent, name, O_NOFOLLOW|O_CLOEXEC)</code> and resolve links by hand in
+        <code>checkSymlink</code>. Confirmed independently by the reviewer, the author and the lead. Measured
+        semantics are <i>stricter</i> than <code>RESOLVE_BENEATH</code> in one respect: a relative in-tree link is
+        followed, but an <b>absolute link is refused even when it points inside the tree</b>
+        (<code>splitPathInRoot</code> returns <code>errPathEscapes</code> on a leading separator,
+        <code>os/root.go:306</code>). Nine sites in the supervisor corrected to describe the walk and name the
+        guarantee rather than a syscall Go does not make; the pre-existing occurrences in
+        <code>internal/sandbox/</code> and <code>docs/threat-model.md</code> routed to the integrity
+        workstream.<br>
+        residuals now written down rather than assumed: Go&rsquo;s <code>os.Root</code> does not stop crossing a
+        mount boundary &mdash; live <code>/proc/mounts</code> confirms nothing is mounted beneath the writable
+        trees today, so no exposure, but a future bind mount would be followed silently<br>
+        <code>writableFor</code> removed &mdash; zero callers, production and test</td></tr>
+    <tr><td class="mono">2026-08-29</td><td class="mono">P7-17/F3</td>
+        <td><b>The guest&rsquo;s vsock listeners accepted any peer that could reach them; they now serve the host
+        and refuse everyone else, loudly.</b> <code>Accept</code> read the peer&rsquo;s CID and never looked at
+        it. <code>Accept</code> is restructured into a loop around an extracted <code>accept1</code> &mdash; the
+        report&rsquo;s snippet does not compile in context, using <code>continue</code> inside
+        <code>rc.Read</code>&rsquo;s callback where there is no loop &mdash; and a peer that is not
+        <code>VMADDR_CID_HOST</code> is closed and logged while the listener keeps accepting. It also fails closed
+        on a non-vsock sockaddr, where the old code built an <code>Addr</code> with CID 0 and served.
+        <code># CONFIG_VSOCKETS_LOOPBACK is not set</code> is pinned in
+        <code>image/buildroot/kernel/kelyfos.fragment</code> beside the <code>VHOST_VSOCK</code> line, so the
+        build fails the day it flips.
+        <br><b>Reviewed</b>: not reachable. One finding accepted (the refusal log was unbounded and
+        per-connection &mdash; in the one scenario this check exists for, a guest process could drive unlimited
+        console output from PID 1 by connecting in a loop; now one line per listener with a total on close), one
+        informational (the two end-to-end fixtures skip unless <code>vsock_loopback</code> is loaded, so the
+        comment now says CI covers the table only &mdash; a skipped fixture must not read like a passing one).</td>
+        <td class="mono"><b>The &ldquo;latent&rdquo; claim measured rather than assumed:</b>
+        <code>grep -c vsock_loopback /proc/kallsyms &rarr; 0</code> but
+        <code>socket(AF_VSOCK, SOCK_STREAM, 0) &rarr; AF_VSOCK socket created</code>,
+        <code>connect((VMADDR_CID_LOCAL, 10002)) &rarr; [Errno 110] Operation timed out</code> &mdash; one kernel
+        config symbol is the whole distance<br>
+        peer CID read off a running guest before the check was written, because a check on the wrong constant
+        would refuse every channel: <code>type=*unix.SockaddrVM cid=2 peerport=&hellip; HOST=2</code><br>
+        reviewer instrumented <code>Accept</code> and confirmed <b>all five channels</b> independently &mdash;
+        <code>CID=2</code> on <code>localPort</code> 10001 exec, 10002 MCP, 10004 shell, 10005 forward in one
+        boot, and 10003 control in a second &mdash; measured, none assumed<br>
+        parent: <code>Accept returned a connection from vsock:1:3917623075 &mdash; a peer inside this machine,
+        not the host.</code>; branch: refused, logged, still accepting<br>
+        the pin proven on the verified path without a 35-minute kernel build:
+        <code>image/check-kernel.sh:21</code> concatenates both fragments into
+        <code>.kelyfos-kernel-want</code> for <code>check-config.sh</code>; synthetic <code>.config</code> with
+        loopback flipped to <code>=y</code> as an <code>olddefconfig</code> would &rarr;
+        <code>MISMATCH CONFIG_VSOCKETS_LOOPBACK: asked for n, got CONFIG_VSOCKETS_LOOPBACK=y</code>, non-zero;
+        current config &rarr; <code>config verified</code>, exit 0<br>
+        the report&rsquo;s first Verification correction confirmed from real kernel source, not from the report:
+        <code>net/vmw_vsock/Kconfig</code> extracted from the project&rsquo;s own
+        <code>linux-6.12.105.tar.xz</code> and <code>linux-6.19.14.tar.xz</code> &mdash; both
+        <code>tristate &hellip; default y</code>, and <code>CONFIG_VSOCKETS=y</code> is in the fragment so the
+        dependency is met and the default would apply<br>
+        the withdrawn impact claim is <i>not</i> restated: the docs describe what a non-host peer would reach as
+        exec/control/MCP, never the retracted &ldquo;unrestricted filesystem access&rdquo;<br>
+        <code>TestF3_TheRefusalLogIsRateLimitedButCounted</code>: 40 knocks &rarr; 40 counted, <b>1</b> log line,
+        <code>vsock: port 41661 refused 40 connections from peers that were not the host</code> on close<br>
+        reviewer rejected: fd leak or busy-loop in the new <code>Accept</code> &mdash; refusal closes,
+        <code>newConn</code> closes on its own error, <code>accept1</code> returns <code>-1</code> on every error
+        path, and each iteration consumes a real connection<br>
+        across all three: <code>make test</code> all packages ok, <code>make vuln</code> clean,
+        <code>make docs</code> no drift, <code>gofmt</code>/<code>go vet</code> clean, four
+        <code>supervisor</code> fuzz targets at 10s &rarr; 0 failures, <code>make test-integration</code> 6/6
+        PASS, and <b>the F8 <code>dev/accept-profile.sh</code> block executed for the first time &mdash; all four
+        assertions PASS</b>. Re-run by the lead after rebasing onto <code>643922e</code>: 21 packages ok,
+        <code>No vulnerabilities found.</code></td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
