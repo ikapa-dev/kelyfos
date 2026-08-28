@@ -6257,6 +6257,106 @@ after:
         -count=1 ./...</code> 25 packages <code>ok</code>; <code>govulncheck</code> &rarr; &ldquo;No
         vulnerabilities found.&rdquo;; <code>make docs</code> regenerates cleanly; grep for &ldquo;seventeen
         recipes/complete/things&rdquo; across the repo &rarr; zero hits.</td></tr>
+    <tr><td class="mono">2026-08-28</td><td class="mono">P7-12</td>
+        <td><b><code>kelyfos view</code> &mdash; the localhost read-only viewer</b> (D60). The last build task in
+        Phase 7. Serves exactly the page P7-8 already builds &mdash; the run map, agent sheets, reach matrix,
+        store panel and timeline, all reused from <code>internal/report</code> unchanged &mdash; live, over HTTP,
+        with new events pushed to an open tab over SSE.
+        <br><b>Every binding condition, structural rather than promised</b>: <code>bindLoopback()</code>
+        (<code>host/view.go</code>) takes zero arguments &mdash; asserted by reflection
+        (<code>TestBindLoopbackTakesNoArguments</code>) &mdash; and calls <code>net.Listen(&quot;tcp&quot;,
+        &quot;127.0.0.1:0&quot;)</code> with that address a literal, nowhere a flag could reach; a 256-bit
+        <code>crypto/rand</code> token, minted once per process, printed once in the URL as
+        <code>?token=</code> (never a CLI argument &mdash; the same pattern Jupyter/code-server use, documented
+        in <code>docs/view.md</code> along with its own honest caveat about URLs and history), also accepted as
+        <code>Authorization: Bearer</code> for curl callers, compared with <code>crypto/subtle.ConstantTimeCompare</code>
+        on every route including <code>/events</code>; the <code>Host</code> header checked against
+        <code>net.Listener.Addr().String()</code> before the token is even examined, so a mismatch is refused
+        regardless of token validity (the DNS-rebinding defence); <code>GET</code>/<code>HEAD</code> only,
+        refused with <code>405</code> and an <code>Allow</code> header otherwise, checked first of all three so a
+        <code>POST</code> never reaches a token check; a <code>Content-Security-Policy</code> <i>header</i>
+        (the static export's own <code>&lt;meta&gt;</code> CSP is removed &mdash; asserted present exactly once
+        first &mdash; because its <code>default-src 'none'</code> has no <code>script-src</code> override and
+        would block this page's one script regardless of the header) whose <code>script-src</code> names only
+        that script's own SHA-256 hash, pinned by <code>TestCSPHashMatchesTheActuallyServedScript</code>, which
+        fetches a real page, extracts the actual <code>&lt;script&gt;</code> content, hashes it, and asserts
+        the header allows exactly that hash; the script never calls <code>innerHTML</code>/<code>outerHTML</code>/
+        <code>insertAdjacentHTML</code>/<code>document.write</code> anywhere &mdash; every value from an SSE
+        message is placed with <code>.textContent</code>, new nodes built with
+        <code>document.createElement</code>/<code>appendChild</code>; the flight recorder is read exclusively
+        through <code>os.ReadFile</code> (<code>O_RDONLY</code>), no write handle anywhere in this command; the
+        session id is resolved once via the same <code>resolveSession</code>/<code>sandbox.Root()</code>/
+        <code>recorder.Path</code> <code>host/log.go</code> already uses, and no route handler ever takes a path
+        fragment from a URL; a background loop (P7-9's own &ldquo;poll a growing file&rdquo; shape) exits the
+        process on <code>session.end</code> or after <code>--idle-timeout</code> (default 30m, the one flag this
+        task allows &mdash; nothing else has one).
+        <br><b>Deliberately not attempted</b>: live redrawing of the run map/agent sheets/reach matrix &mdash;
+        those are declared once (<code>session.policy</code>/<code>team.topology</code>) and do not change
+        again for the life of a session, so the live feed carries the timeline instead (one compact line per new
+        event, via a live-feed-scoped formatter, <code>viewLogLine</code>, not the authoritative renderer); the
+        script therefore sets no SVG attribute at all today &mdash; permitted by the task's own ceiling
+        (&ldquo;may only&rdquo;), not required by it, and said so rather than left silent. <code>docs/view.md</code>
+        &sect;6 states the residual risk in D60's own words: loopback is shared with every local user on this
+        host, so the token separates them and the interface does not. <code>docs/threat-model.md</code> gets a
+        matching entry beside the shim's own, contrasting what is actually stronger here (token required
+        everywhere, no unauthenticated default, structural <code>GET</code>/<code>HEAD</code>-only) against what
+        is not (the port itself is exactly as shared).
+        <br><b>Cookbook recipe 21</b> (<code>view-live</code>) is this task's own real end-to-end test, not a
+        description of one: boots a real sandbox, starts the viewer with no <code>--session</code> (defaults to
+        most recent), asserts <code>200</code> with the right token, <code>401</code> with none/wrong, <code>403</code>
+        on a forged <code>Host</code> header even with a correct token, <code>405</code> on <code>POST</code>,
+        zero write-mode file descriptors on <code>events.jsonl</code> (checked via <code>/proc/&lt;pid&gt;/fd</code>
+        and <code>fdinfo</code> flags in a small inline Python script, not assumed), a real
+        <code>kelyfos exec</code> command's effect arriving over the open SSE stream with no re-export and no
+        reload, and the viewer process exiting on its own once the sandbox is torn down and <code>session.end</code>
+        lands.
+        <br><b>One shared-tooling gap found and fixed along the way</b>: <code>tools/cookbook/main.go</code>'s
+        recipe-count check (E4-5) only spelled numbers through &ldquo;Twenty&rdquo; (20) &mdash; this is the 21st
+        recipe, the first to cross that line, and the map simply had nowhere to go. Extended through
+        &ldquo;Twenty-nine&rdquo; and added &ldquo;Thirty&rdquo; for headroom rather than the bare minimum, so
+        the next few recipes do not hit the identical wall. Three further stale &ldquo;twenty recipes&rdquo;
+        mentions (<code>README.md</code>, <code>docs/README.md</code>, <code>docs/integrating.md</code>) fixed
+        alongside &mdash; the same class of gap P7-9's own re-review found and fixed for &ldquo;seventeen&rdquo;,
+        recurring exactly where that row predicted a hand-typed count would recur.
+        <br>Not self-ticked: this is a RENDER-surface task per &sect;8 rule 10 / D63 (it reuses
+        <code>internal/report</code>'s renderer, and its own script is new RENDER-adjacent surface) and stands
+        by for adversarial review &mdash; against the four checklists, with <code>make test</code>,
+        <code>make vuln</code> and this task's own hostile-content SSE test rerun by the reviewer &mdash; before
+        its checkbox is set.</td>
+        <td class="mono">commit <code>c942402</code>. Inside <code>kelyfos-dev</code>, this branch:
+        <code>gofmt -l .</code> &rarr; clean; <code>go vet ./...</code> &rarr; clean; <code>go build ./...</code>
+        &rarr; clean; <code>go test -count=1 ./...</code> &rarr; every package <code>ok</code> or
+        <code>[no test files]</code>, <code>host</code> package 17.124s including all 17 new
+        <code>host/view_test.go</code> tests <code>PASS</code> (token required on every route; wrong/missing
+        token refused on <code>/</code> and <code>/events</code>; correct token and a <code>Bearer</code> header
+        both accepted; forged <code>Host</code> refused even with the right token; every non-<code>GET</code>/
+        <code>HEAD</code> method refused with the right <code>Allow</code> header on both routes;
+        <code>HEAD</code> itself accepted; the CSP hash test; <code>injectLive</code>'s own negative tests
+        (missing anchor, anchor present twice); hostile control bytes/<code>&lt;script&gt;</code>/quotes over
+        SSE arriving as valid, fully-escaped JSON with zero raw control bytes on the wire; a late-connecting
+        client catching up without replaying old events; <code>session.end</code> broadcasting once;
+        <code>runView</code> itself exiting on <code>session.end</code> and on idle timeout;
+        <code>viewLogLine</code>'s control-byte handling and its no-panic sweep over every named event type; the
+        token's 256-bit/64-hex-char shape and uniqueness)<br>
+        <code>make vuln</code> &rarr; &ldquo;No vulnerabilities found.&rdquo;<br>
+        <code>make docs</code> &rarr; <code>gendocs: wrote 8 files &hellip; llms.txt 7626 bytes &middot;
+        llms-full.txt 715136 bytes, about 185730 tokens</code>, zero further diff on a second run;
+        <code>go test ./tools/gendocs/...</code> &rarr; <code>TestEveryDocumentUnderDocsIsInTheLLMsSet</code>
+        and all others <code>PASS</code>, confirming <code>docs/view.md</code>'s registration (the exact class
+        of gap P7-11 hit); <code>go run ./tools/cookbook -in docs/cookbook.md</code> &rarr;
+        &ldquo;21 recipes, all extractable&rdquo;<br>
+        <b>Real end-to-end, not simulated</b>: <code>bash dev/cookbook.sh view-live</code> against a real booted
+        Firecracker microVM (<code>dev</code> image) &rarr; every step above passed against the real server,
+        ending &ldquo;<code>PASS  view-live (10s)</code>&rdquo;, &ldquo;1 passed, 0 failed&rdquo;; the printed
+        URL captured directly from the process's own stdout,
+        <code>http://127.0.0.1:41699/?token=a972b138&hellip;</code>, never passed as an argument to anything;
+        the read-only check's own output, &ldquo;no write-mode fd on the session's own
+        events.jsonl&rdquo;<br>
+        <code>python3 tools/check-plan.py</code> (host) &rarr; &ldquo;PLAN.html is coherent&rdquo;<br>
+        not self-ticked, not pushed, not merged; standing by for RENDER-surface review, matching how P7-7,
+        P7-8 and P7-9's authors left their own rows before review &mdash; this is the one task in the whole
+        project allowed to open a socket, and the review that follows should be adversarial about exactly the
+        binding conditions above, not about whether the feature is convenient.</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
