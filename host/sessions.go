@@ -421,11 +421,57 @@ func hasLiveRunDir(id string) bool {
 	return err == nil
 }
 
-// sessionIsLive is prune's single skip-or-not question, combining both
+// auditMarkerDir holds one empty file per currently-running `kelyfos
+// serve-mcp` process, named for its own audit session id — a liveness
+// signal in its own namespace, deliberately not the sandbox run-directory
+// tree (host/servemcpaudit.go's openAudit/closeAudit own it; nothing else
+// reads or writes this directory, so nothing else that scans
+// sandbox.RunDirOf's tree expecting real jail contents can be confused by
+// an entry that is not one).
+//
+// P7-13: an audit session's chain is opened via sandbox.NewID() before any
+// sandbox exists — hasLiveRunDir and RunningSessions both only ever see a
+// sandbox's own id, so a long-lived, low-traffic serve-mcp process's own
+// audit chain was invisible to every prior liveness check, live-reproduced
+// as a silent, unrecoverable prune: the directory removed out from under
+// the still-running process, no error anywhere, every event it wrote
+// afterward landing on an unlinked inode nothing could ever read again —
+// the exact B1 failure class, on the one session shape none of the earlier
+// three checks (live, hasLiveRunDir, running) could ever reach. A leftover
+// marker after a crash is the same accepted false positive hasLiveRunDir's
+// own leftover directory already is.
+func auditMarkerDir() string {
+	return filepath.Join(sandbox.Root(), "audit-live")
+}
+
+func auditMarkerPath(id string) string {
+	return filepath.Join(auditMarkerDir(), id)
+}
+
+func hasLiveAuditMarker(id string) bool {
+	_, err := os.Stat(auditMarkerPath(id))
+	return err == nil
+}
+
+// sessionIsLive is prune's single skip-or-not question, combining all four
 // guards erase asks separately (and reports separately, since a paused
 // session and a possibly-running one call for different advice).
-func sessionIsLive(id string, live map[string]bool) bool {
-	return live[id] || hasLiveRunDir(id)
+//
+// P7-13: hasLiveRunDir alone only sees a sandbox whose own id names its run
+// directory. A team's chain and a `kelyfos serve-mcp` process's own audit
+// chain are both opened under an id sandbox.NewID() mints that is never any
+// sandbox's own id, so no run directory is ever named for either — prune
+// could delete one out from under a writer still appending to it, the same
+// B1 gap erase's own review already found and closed for erase, left open
+// here. running is sandbox.RunningSessions(), computed once by the caller
+// rather than per session; hasLiveAuditMarker closes the one case running
+// still cannot see — a serve-mcp process's own audit chain names no
+// sandbox's Session field at all, so erase's own three-layer check falls
+// through to recorder.Erase's own no-session.end refusal underneath it,
+// but prune never parses the chain and has no equivalent fourth layer of
+// its own without this marker.
+func sessionIsLive(id string, live, running map[string]bool) bool {
+	return live[id] || hasLiveRunDir(id) || running[id] || hasLiveAuditMarker(id)
 }
 
 // pruneEligible is prune's own age question, split out from the directory
@@ -498,6 +544,10 @@ you still need to keep, see 'kelyfos sessions erase'.
 	if err != nil {
 		return err
 	}
+	running, err := sandbox.RunningSessions()
+	if err != nil {
+		return err
+	}
 
 	root := recorder.SessionsDir(sandbox.Root())
 	entries, err := os.ReadDir(root)
@@ -517,7 +567,7 @@ you still need to keep, see 'kelyfos sessions erase'.
 			continue
 		}
 		id := e.Name()
-		if sessionIsLive(id, live) {
+		if sessionIsLive(id, live, running) {
 			continue
 		}
 		// events.jsonl's own mtime, not the directory's own (S2) — see
@@ -627,11 +677,7 @@ Flags may go on either side of the id, the same as `+"`kelyfos verify`"+`.
 	// either — invisible to the check above even while very much alive
 	// (B1). RunningSessions asks the other direction: is any live
 	// sandbox's own RecordSession() this id, whichever sandbox actually
-	// holds a run directory. It still cannot see a live serve-mcp
-	// process's own audit session, which names no sandbox's Session field
-	// at all — recorder.Erase's own refusal of a chain with no
-	// session.end anywhere in it is what catches that case, underneath
-	// this one.
+	// holds a run directory.
 	running, err := sandbox.RunningSessions()
 	if err != nil {
 		return err
@@ -640,6 +686,17 @@ Flags may go on either side of the id, the same as `+"`kelyfos verify`"+`.
 		return fmt.Errorf("%s has a live sandbox writing into it right now (a team member, or a "+
 			"machine kelyfos serve-mcp created) — erasing a chain still being written to would "+
 			"race the writer", id)
+	}
+	// running still cannot see a live serve-mcp process's own audit
+	// session, which names no sandbox's Session field at all — before
+	// P7-13 recorder.Erase's own refusal of a chain with no session.end
+	// anywhere in it was what caught that case, underneath this one; now
+	// the marker openAudit/closeAudit maintain catches it explicitly, the
+	// same way it closes the identical gap in sessionsPrune below, which
+	// has no equivalent fourth layer of its own to fall through to.
+	if hasLiveAuditMarker(id) {
+		return fmt.Errorf("%s is a live kelyfos serve-mcp process's own audit session — erasing a "+
+			"chain still being written to would race the writer", id)
 	}
 
 	redacted, err := recorder.Erase(sandbox.Root(), id, *reason)

@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -89,6 +90,15 @@ func argSandbox(raw json.RawMessage) string {
 // openAudit gives the server its own session. A serve-mcp process is a session
 // in the same sense a `kelyfos run` is: it starts, it does things, it ends, and
 // the record of it outlives it.
+//
+// P7-13: this session names no sandbox's own run directory and no sandbox
+// ever records it as its own Session, so `kelyfos sessions prune`/`erase`
+// had no way to tell this chain apart from an ordinary, long-idle, safe-to-
+// remove one — live-reproduced as a silent, unrecoverable prune of a
+// still-running process's own audit trail. The marker file below is this
+// process's own liveness signal, in its own namespace (host/sessions.go's
+// auditMarkerDir/hasLiveAuditMarker); a leftover one after a crash is the
+// same accepted false positive a leftover sandbox run directory already is.
 func (s *hostServer) openAudit() error {
 	id, err := sandbox.NewID()
 	if err != nil {
@@ -97,6 +107,14 @@ func (s *hostServer) openAudit() error {
 	rec, err := recorder.Open(sandbox.Root(), id)
 	if err != nil {
 		return err
+	}
+	if err := os.MkdirAll(auditMarkerDir(), 0o700); err != nil {
+		_ = rec.Close()
+		return fmt.Errorf("marking this session live: %w", err)
+	}
+	if err := os.WriteFile(auditMarkerPath(id), nil, 0o600); err != nil {
+		_ = rec.Close()
+		return fmt.Errorf("marking this session live: %w", err)
 	}
 	s.auditID, s.audit = id, rec
 	return rec.Append(recorder.Event{
@@ -114,6 +132,7 @@ func (s *hostServer) closeAudit() {
 		DurationMS: s.audit.Since().Milliseconds(),
 	})
 	_ = s.audit.Close()
+	_ = os.Remove(auditMarkerPath(s.auditID))
 	s.audit = nil
 }
 

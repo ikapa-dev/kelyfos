@@ -1079,6 +1079,11 @@ compromised can still *use* the credential against the domain it is bound to —
 that is what binding it means — but it cannot read it, keep it, or send it
 anywhere else.
 
+`session.policy` (P7-2) writes each secret's own `NAME`, domain and scope into
+the permanent record at the door that admits the agent — never the value —
+so an exported session names exactly which credentials an agent was bound to
+without carrying anything a reader could use.
+
 **A credential that comes back is replaced.** From v1.0 the proxy scrubs bound
 values out of responses it can read, so an API that reflects the token — in an
 error, in a header, in a redirect — does not hand it to the agent. It catches an
@@ -1188,15 +1193,39 @@ and crashes (`plugin.call`, `plugin.crash`) — and those are marked `"source": 
 can weigh them differently. The host still writes them; it just did not witness
 them.
 
+**Erasure (P7-5, D61) is a third, deliberate way the record changes, distinct
+from both the tampering above and a plain deletion.** `kelyfos sessions erase`
+rewrites a session's own chain in place, replacing content-carrying fields
+(command output, a file path, an MCP argument, and more — the full list is
+`docs/retention.md` §5) with a fingerprint of what was there rather than
+deleting the event or the file, and appends `session.erasure` as the chain's
+new last event, anchored to the exact chain head it replaced. This is honest
+about what it cannot do: without a copy of the chain from before the erasure,
+`kelyfos verify` has nothing to compare the anchor against, so it cannot
+*detect* that an erasure happened versus prove one it is told to expect —
+the guarantee is that an erasure is itself recorded and cannot silently
+masquerade as the original record, not that a reader with no prior copy can
+tell an honest erasure from a hostile one that also appended a
+`session.erasure` event of its own. A session with no `session.end` anywhere
+in its chain cannot be erased at all — the same ambiguity named two
+paragraphs up (a record that might still be open) means erasure refuses
+rather than guessing. `kelyfos sessions prune` is unrelated and coarser:
+whole directories past the retention floor, never a rewrite.
+
 ### One agent reaching another, in a team
 A team is several sandboxes on one host, and **no guest ever has a network path
 to another guest**: there is no route, no shared bridge and no address to
 try, and every packet in or out of a sandbox's TAP is dropped by that sandbox's
 own forward chain, so guessing another's address gets nowhere.
 Every message goes through a host broker that checks it against the edge list
-you declared and records it either way, refusals included. Three things follow
-that are worth saying out loud, because a team is a *deliberate* data path
-between sandboxes and §2 otherwise reads as forbidding one.
+you declared and records it either way, refusals included. The declared shape
+itself is part of the record too (P7-2, P7-3): `session.policy` writes each
+agent's own ceiling — its edges, its store access, its resource caps — at the
+door that admits it, and `team.topology` writes the team's shape once at boot,
+both before any guest code runs, so a reader of the chain does not have to
+reconstruct what a team was allowed to do from what it happened to try. Three
+things follow that are worth saying out loud, because a team is a *deliberate*
+data path between sandboxes and §2 otherwise reads as forbidding one.
 
 - **The edge list is the boundary, not the network.** A team is usually a set
   of differently-privileged machines: one agent holds the credentials and the
@@ -1390,6 +1419,24 @@ every route is `GET`/`HEAD` only so there is nothing to mutate even for
 someone who reached the port, and the process exits on its own once the
 session it is showing ends or after a bounded idle period — it does not sit
 open indefinitely the way an unattended shim can.
+
+### Two more ways the record leaves the host, neither one a socket (P7-9, P7-11)
+`kelyfos log --export --refresh` and `kelyfos log --export-otlp` both write a
+file and stop there — no listener, no socket, in either path. `--refresh`
+rewrites the same destination on a timer for as long as a session keeps
+running, so a browser tab left open on it follows along through its own
+`<meta http-equiv="refresh">` tag; the file itself carries the same signed,
+verifiable record every export always has, and the loop's last write, on
+`session.end` or Ctrl-C, drops the refresh tag so a tab nothing will update
+again does not keep asking. `--export-otlp` is a one-way, lossy *projection*
+of the chain into OTLP-JSON spans for existing observability tooling
+(Jaeger, an OTel Collector), not a second record: it is versioned apart from
+the flight recorder, `kelyfos verify` never reads it, and every
+guest-influenced string it carries — command argv, a path, an error message —
+is escaped the same way the terminal replay is (`internal/otlp`, `docs/otlp.md`).
+Neither widens what a reader of an export could already do with
+`kelyfos log --export` on its own; both are new *shapes* for the same
+one-way write, not a new capability to reach in from outside.
 
 ### The supply chain of what you run *inside*
 `--allow github.com` means the agent can fetch and execute whatever is at
@@ -10736,7 +10783,7 @@ special case to work around — an erasure genuinely is the most recent thing
 that happened to the chain — but it is worth knowing if a prune schedule
 and an erasure schedule are ever compared against each other.
 
-Two guards apply before age is even considered, and neither respects
+Four guards apply before age is even considered, and none respect
 `-dry-run` differently — a session either is prunable or it is not:
 
 - **A currently paused session's own chain is never pruned**, however old.
@@ -10751,7 +10798,33 @@ Two guards apply before age is even considered, and neither respects
 - **A session with a live-looking run directory is never pruned.** A
   leftover run directory after a crash is a false positive prune would
   rather have than the alternative — touching a chain something might still
-  be writing to.
+  be writing to. This only ever sees an ordinary sandbox, whose own id
+  names its run directory.
+- **A session any live sandbox's own `RecordSession()` names is never
+  pruned** (`sandbox.RunningSessions()`). This is what makes a **team**'s
+  own top-level chain visible — opened under an id `sandbox.NewID()` mints
+  that is never any sandbox's own id, so the guard above never sees it, but
+  a live member sandbox's own state does name it.
+- **A session with a live `kelyfos serve-mcp` marker is never pruned.** A
+  `serve-mcp` process's own audit chain is opened the same un-sandboxed way
+  a team's is, but no sandbox it creates ever names the audit session as
+  its own `RecordSession()` either, so the guard above cannot see it — this
+  was found live, by a whole-phase read-back (P7-13): a long-lived,
+  low-traffic `serve-mcp` process's own audit chain, silently deleted by
+  prune while the process kept running, no error anywhere. `openAudit`
+  creates an empty marker file under `~/.cache/kelyfos/audit-live/` the
+  moment the session exists and `closeAudit` removes it on a clean
+  shutdown; prune (and erase, see §5) both check for it. **The same
+  leftover-after-a-crash tradeoff the run-directory guard already accepts
+  applies here too, and is worth naming plainly: `kelyfos serve-mcp` does
+  not currently exit on `SIGTERM` alone while its stdin pipe is held open
+  the way a real MCP client normally holds it (a signal handler runs, but
+  a blocking read on inherited stdin is not interrupted by it) — so a
+  supervisor stopping it with a plain `kill` rather than closing its input
+  stream is likely to end up sending `SIGKILL`, which leaves the marker
+  behind permanently.** There is no command to clear a stale marker today;
+  the only recovery is deleting the file by hand under
+  `~/.cache/kelyfos/audit-live/`.
 
 `-dry-run` reports exactly what a real run would delete, with no side
 effect. Without it, `kelyfos sessions prune` deletes and reports what it
@@ -10993,10 +11066,13 @@ id, so `RunDirOf(that id)` never exists even while every sandbox writing
 into that exact chain is alive. `sandbox.RunningSessions()` closes this
 for a team specifically — every live sandbox's own `RecordSession()`,
 whichever sandbox actually holds the run directory — with a specific,
-named refusal at the CLI layer; the no-`session.end`-anywhere check inside
-`Erase` itself is what closes it underneath that, for a live serve-mcp
-audit session too, since neither guard alone can see everything the other
-misses.
+named refusal at the CLI layer. A live serve-mcp audit session is closed
+the same explicit way (P7-13): `openAudit`/`closeAudit` maintain a marker
+file (§3 above has the full account, including its own leftover-after-an-
+unclean-kill tradeoff), and erase refuses with a specific, named message
+the moment it sees one — the no-`session.end`-anywhere check inside
+`Erase` itself remains underneath as a second, independent layer for the
+same case, since neither guard alone can see everything the other misses.
 
 **What is deliberately out of scope.** `EvError.Message` is not redacted:
 it is generally a system-generated string (a timeout, a signal name) with

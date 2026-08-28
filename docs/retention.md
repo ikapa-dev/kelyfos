@@ -100,7 +100,7 @@ special case to work around — an erasure genuinely is the most recent thing
 that happened to the chain — but it is worth knowing if a prune schedule
 and an erasure schedule are ever compared against each other.
 
-Two guards apply before age is even considered, and neither respects
+Four guards apply before age is even considered, and none respect
 `-dry-run` differently — a session either is prunable or it is not:
 
 - **A currently paused session's own chain is never pruned**, however old.
@@ -115,7 +115,33 @@ Two guards apply before age is even considered, and neither respects
 - **A session with a live-looking run directory is never pruned.** A
   leftover run directory after a crash is a false positive prune would
   rather have than the alternative — touching a chain something might still
-  be writing to.
+  be writing to. This only ever sees an ordinary sandbox, whose own id
+  names its run directory.
+- **A session any live sandbox's own `RecordSession()` names is never
+  pruned** (`sandbox.RunningSessions()`). This is what makes a **team**'s
+  own top-level chain visible — opened under an id `sandbox.NewID()` mints
+  that is never any sandbox's own id, so the guard above never sees it, but
+  a live member sandbox's own state does name it.
+- **A session with a live `kelyfos serve-mcp` marker is never pruned.** A
+  `serve-mcp` process's own audit chain is opened the same un-sandboxed way
+  a team's is, but no sandbox it creates ever names the audit session as
+  its own `RecordSession()` either, so the guard above cannot see it — this
+  was found live, by a whole-phase read-back (P7-13): a long-lived,
+  low-traffic `serve-mcp` process's own audit chain, silently deleted by
+  prune while the process kept running, no error anywhere. `openAudit`
+  creates an empty marker file under `~/.cache/kelyfos/audit-live/` the
+  moment the session exists and `closeAudit` removes it on a clean
+  shutdown; prune (and erase, see §5) both check for it. **The same
+  leftover-after-a-crash tradeoff the run-directory guard already accepts
+  applies here too, and is worth naming plainly: `kelyfos serve-mcp` does
+  not currently exit on `SIGTERM` alone while its stdin pipe is held open
+  the way a real MCP client normally holds it (a signal handler runs, but
+  a blocking read on inherited stdin is not interrupted by it) — so a
+  supervisor stopping it with a plain `kill` rather than closing its input
+  stream is likely to end up sending `SIGKILL`, which leaves the marker
+  behind permanently.** There is no command to clear a stale marker today;
+  the only recovery is deleting the file by hand under
+  `~/.cache/kelyfos/audit-live/`.
 
 `-dry-run` reports exactly what a real run would delete, with no side
 effect. Without it, `kelyfos sessions prune` deletes and reports what it
@@ -357,10 +383,13 @@ id, so `RunDirOf(that id)` never exists even while every sandbox writing
 into that exact chain is alive. `sandbox.RunningSessions()` closes this
 for a team specifically — every live sandbox's own `RecordSession()`,
 whichever sandbox actually holds the run directory — with a specific,
-named refusal at the CLI layer; the no-`session.end`-anywhere check inside
-`Erase` itself is what closes it underneath that, for a live serve-mcp
-audit session too, since neither guard alone can see everything the other
-misses.
+named refusal at the CLI layer. A live serve-mcp audit session is closed
+the same explicit way (P7-13): `openAudit`/`closeAudit` maintain a marker
+file (§3 above has the full account, including its own leftover-after-an-
+unclean-kill tradeoff), and erase refuses with a specific, named message
+the moment it sees one — the no-`session.end`-anywhere check inside
+`Erase` itself remains underneath as a second, independent layer for the
+same case, since neither guard alone can see everything the other misses.
 
 **What is deliberately out of scope.** `EvError.Message` is not redacted:
 it is generally a system-generated string (a timeout, a signal name) with

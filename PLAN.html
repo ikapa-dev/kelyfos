@@ -1417,7 +1417,7 @@
         shared host, loopback is reachable by every local user, so the token is what separates them and not the
         interface. A Unix socket at <code>0600</code> would be stronger and no browser can open one — that is
         the cost of the page being a page.</span></li>
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">P7-13</span><span class="tk"><b>The phase read back against its own source.</b> Before the exit checkpoint, an agent
         that wrote none of Phase 7 reviews the whole diff &mdash; every new event field, both renderers, the
         viewer, and the retention and tombstone path &mdash; against the four checklists in &sect;8 rule 10 and
@@ -6503,6 +6503,114 @@ after:
         <code>POST //events</code>) &rarr; <code>405 Method Not Allowed</code> with the full security-header
         set; no-token dirty-path <code>GET</code> &rarr; <code>401</code>; correct token &rarr;
         <code>200 OK</code>, real page served.</td></tr>
+    <tr><td class="mono">2026-08-28</td><td class="mono">P7-13</td>
+        <td><b>The whole-phase read-back, ticked.</b> An agent that wrote none of Phase 7 reviewed
+        <code>git diff 1eddaf3 ecea41f</code> in full (99 files, ~26,000 inserted lines, P7-0 through P7-12)
+        against the four &sect;8 rule 10 checklists and <code>docs/threat-model.md</code>, ran <code>make
+        vuln</code> and every one of the repository's 27 fuzz targets at <code>FUZZTIME=60s</code> (zero
+        failures), and specifically hunted cross-task interactions no single task's own review could see. Five
+        findings, all answered below &mdash; including, per the task's own text, why one was rejected and one
+        deferred rather than fixed.
+        <br><b>F1 (high, two fix rounds).</b> <code>kelyfos sessions prune</code>'s liveness guard
+        (<code>sessionIsLive</code>) never got the third check <code>erase</code>'s own P7-5 review already
+        found it needed (B1): a team's own chain, opened under an id that names no sandbox's run directory, was
+        invisible to <code>hasLiveRunDir</code> however recently a live member sandbox wrote to it. Round-one
+        fix added <code>sandbox.RunningSessions()</code>, re-review confirmed it live and non-tautologically
+        (reverted the check, watched prune actually delete a live team's chain) &mdash; then live-reproduced a
+        harder residual case the fix did not close: a <code>kelyfos serve-mcp</code> process's own audit
+        session names no sandbox's own <code>RecordSession()</code> either, so all three checks stayed blind
+        to it. Reproduced against the real patched binary: a live <code>serve-mcp</code> process's audit
+        directory deleted by prune mid-run, no error anywhere, the process's later writes landing on an
+        unlinked inode. Round-two fix added a fourth, independent liveness signal in its own namespace &mdash;
+        an empty marker file per live <code>serve-mcp</code> process, created by <code>openAudit</code> and
+        removed by <code>closeAudit</code> on clean shutdown, checked by both <code>sessionsPrune</code> and
+        <code>sessionsErase</code> &mdash; live-reproduced as closing the exact scenario a third review round
+        confirmed: the directory now survives prune while the process runs, and the marker is correctly
+        cleared on a clean exit. The one honestly-named residual (not a blocker, documented rather than fixed):
+        <code>kelyfos serve-mcp</code> does not currently exit on <code>SIGTERM</code> alone while its stdin
+        pipe is held open the normal way a real MCP client holds it, so a supervisor's plain <code>kill</code>
+        is likelier to end in <code>SIGKILL</code> than a clean shutdown &mdash; leaving the marker (and thus
+        the protection) permanent, the same accepted tradeoff <code>hasLiveRunDir</code>'s own leftover
+        directory already carries, now named plainly in <code>docs/retention.md</code> rather than left
+        implicit. That signal-handling gap itself is pre-existing, untouched by this fix, and out of this
+        task's scope.
+        <br><b>F2 (high, fixed and extended).</b> Only <code>shell.end</code>'s <code>Reason</code> was routed
+        through <code>proto.SafeText</code> in <code>kelyfos log</code>'s human-readable replay
+        (<code>printEvent</code>); every other case printed parsed Go string fields straight into
+        <code>fmt.Printf</code>. Live-verified: a hand-crafted <code>file.write</code> event with an ESC byte
+        in its <code>Path</code> reached stdout with the control byte intact. Wrapped every field the review
+        named, then &mdash; found while already in the same function &mdash; several more with the identical
+        gap the review did not enumerate, for the same reason P7-11 wrapped three already-safe fields anyway:
+        closing an inconsistency cheaply rather than leaving a sixth instance of this project's recurring
+        hand-maintained-list bug class for later. Deliberately left open, flagged rather than decided
+        unilaterally: <code>TypeCommandOutput</code>'s raw stdout/stderr replay, since escaping the guest's
+        actual output content (as opposed to host-generated status text) could defeat legitimate ANSI
+        formatting a reader may want preserved &mdash; the reviewer's own view, given on request, leans toward
+        an eventual allow-list rather than leaving it open indefinitely, recorded as a real open question, not
+        a rejected finding. Two adjacent gaps the reviewer found while verifying: <code>G2</code>, the
+        &ldquo;unparseable event&rdquo; fallback printed raw on-disk bytes verbatim on a
+        <code>json.Unmarshal</code> failure &mdash; live-verified with a hand-tampered line carrying a raw ESC
+        byte &mdash; now wrapped too. <code>G3</code>, two already-correctly-wrapped fields
+        (<code>TypeMCPHostResult</code>'s <code>Name</code>, <code>TypeTeamStore</code>'s <code>Peer</code>)
+        had no independent test coverage; added.
+        <br><b>F3 (medium, fixed).</b> <code>docs/threat-model.md</code> was updated for P7-12 and P7-8 only;
+        P7-2, P7-3, P7-5, P7-9 and P7-11 had zero mention. Added an erasure paragraph to &ldquo;Tampering with
+        the record&rdquo; (what <code>kelyfos sessions erase</code> actually guarantees and what it honestly
+        cannot &mdash; detect an erasure with no prior copy to compare against), a note on
+        <code>session.policy</code>/<code>team.topology</code> becoming part of the record, a new subsection on
+        <code>--refresh</code> and <code>--export-otlp</code> as two more ways the record leaves the host with
+        neither one a socket, and a credential-naming note verified against the actual <code>EvSecret</code>
+        struct (<code>Name</code>/<code>Host</code>/<code>Path</code> only, confirmed no value field exists)
+        rather than assumed.
+        <br><b>F4 (low, deferred, not fixed): no renderer surfaces that a session was erased.</b> Grepped
+        <code>internal/report</code>, <code>host/view.go</code>, <code>host/watch.go</code> &mdash; zero hits.
+        This is a known, previously-documented gap: P7-5's own adversarial review named it as a non-blocking
+        observation (&ldquo;worth picking up whenever this area is next touched&rdquo;) and
+        <code>internal/digest</code>'s own test comment says the same. Three tasks since (P7-7, P7-8, P7-12)
+        each touched exactly this area and none picked it up; not fixed here either, since it is a real but
+        genuinely separate piece of work (a renderer change, not a correctness fix) rather than something this
+        read-back should absorb into its own scope. Left open, named a third time, for whichever task next
+        touches a renderer.
+        <br><b>F5 (medium, reconfirmed, not newly tracked): the <code>internal/sandbox</code> data race P7-12's
+        own re-review already found and named for this task by name.</b> Independently re-verified rather than
+        taken on report: <code>go test -race -run
+        'TestSilentEventsConnectionsAreCappedAndReclaimed|TestSilentTeamConnectionsAreCappedAndReclaimed'
+        -count=3 ./internal/sandbox/...</code> fails both, every run, pointing at <code>sandbox.go</code>'s
+        <code>serveEvents</code>/<code>serveTeam</code> lazily initializing a semaphore field without
+        synchronization. Last touched at P7-5's <code>fa68981</code>; confirmed via <code>git log</code>/<code>git
+        diff</code> that no later Phase 7 task modified this code. Already named as a P7-16 candidate in
+        PLAN.html two rows up (P7-12's re-review); not re-opened as a new task here, left for whichever task
+        picks up Lane 1/P7-16 follow-up work.
+        <br>Also considered and explicitly rejected as findings, with reasons: a viewer/erasure race window
+        (theoretical, requires an operator to run erase during a narrow live-watch window, and the viewer's own
+        shutdown-on-<code>session.end</code> closes it in practice); a <code>-session</code> path-traversal
+        concern (same trust boundary as the operator's own shell, already drawn in the threat model); OTLP's
+        non-exhaustive event classification (explicitly scoped as lossy by P7-11's own task text, unlike
+        <code>internal/digest</code>'s exhaustiveness guarantee); the P7-7/P7-8 <code>internal/digest</code>
+        merge losing test coverage (direct diff against P7-8's discarded commit found nothing lost); and a
+        BROKER-checklist concern on the viewer's SSE surface (structurally read-only, single-session, no
+        cross-team reachability it did not already expose via the exported HTML report).
+        <br>Also flagged, out of scope, not fixed here: <code>host/watch.go</code>'s live TUI event renderer
+        (<code>absorb()</code>) has the same unescaped-field shape F2 fixed in <code>host/log.go</code> &mdash;
+        <code>proto.SafeText</code> appears exactly once in that file, for a static caps-sheet name, not in the
+        live event stream. Not built into a live proof-of-concept (bubbletea/lipgloss's own handling of
+        embedded ANSI mid-frame is not yet understood well enough to say how exploitable this is) and not fixed
+        here since it needs its own look, not a rider on this one; worth its own task.</td>
+        <td class="mono">fix commits <code>bc2fe2e</code>, <code>19d48ec</code>, <code>62699f6</code>,
+        <code>84e63a5</code>, <code>07aae0f</code>. Three review rounds, final verdict <b>GO</b>.
+        <code>gofmt -l .</code> clean; <code>go vet ./...</code> clean; <code>go build ./...</code> clean;
+        <code>go test -count=1 ./...</code> 25 packages <code>ok</code>; <code>go test -race -count=3
+        ./host/...</code> clean (also re-run at <code>-count=5</code>, twice, across two review rounds);
+        <code>govulncheck</code> &rarr; &ldquo;No vulnerabilities found.&rdquo;; <code>make vuln</code> and
+        every one of 27 fuzz targets at <code>FUZZTIME=60s</code> &rarr; zero failures (P7-13's own audit
+        pass, before any fix).
+        <br>Live, real binary, real <code>kelyfos serve-mcp</code> process (round three): aged its audit
+        session past the retention floor, ran <code>kelyfos sessions prune</code> while the process stayed
+        running &mdash; directory survived, process alive throughout; closed its stdin cleanly &rarr; marker
+        removed, <code>session.end</code> written; re-aged &rarr; prune reclaimed it normally. Separately
+        confirmed an unclean <code>kill -9</code> leaves the marker (and protection) permanently, matching the
+        documented tradeoff; confirmed two concurrent first-time <code>serve-mcp</code> starts race-free on
+        marker-directory creation.</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
