@@ -434,6 +434,28 @@ type Recorder struct {
 	off     int64 // how much of the file this process has accounted for
 	sandbox string
 	started time.Time
+
+	// The fail-closed latch (F13). Append used to be a function whose error
+	// every door but one discarded: fill the disk, or damage one byte of the
+	// file, and the sandbox went on executing commands and making egress
+	// while nothing was being recorded. Worse than the silence, the chain
+	// that came out of it VERIFIED — every digest correct, every seq
+	// consecutive, a session.end reading "shutdown" — because a refused
+	// Append rolls its sequence number back and leaves prev alone, so the
+	// events written after the hole chain onto the ones before it as though
+	// the hole were not there. Nothing distinguishes that record from a
+	// session in which the lost commands were never run.
+	//
+	// So the first failure is final. failure holds it, failedAt is the seq
+	// the event that could not be written would have had, and broken is
+	// closed so a run loop can select on it and bring the machine down.
+	// Nothing is ever recorded through this Recorder again — the one
+	// exception being the single session.end writeEpitaphLocked adds, which
+	// says why the record stops where it does.
+	broken   chan struct{}
+	failure  error
+	failedAt int
+	epitaph  bool // whether that session.end reached the chain
 }
 
 // SessionsDir is where session records live — deliberately outside the run
@@ -456,7 +478,16 @@ func Open(root, sandboxID string) (*Recorder, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open flight recorder: %w", err)
 	}
-	return &Recorder{f: f, sandbox: sandboxID, started: time.Now()}, nil
+	return newRecorder(f, sandboxID), nil
+}
+
+// newRecorder is Open's tail, split out so every Recorder in this package —
+// Open's, and the ones the fail-closed tests build over a file whose writes
+// fail — is constructed the same way. A Recorder assembled as a struct
+// literal would have a nil broken channel, and closing a nil channel panics:
+// the latch has to be wired at construction or not at all.
+func newRecorder(f *os.File, sandboxID string) *Recorder {
+	return &Recorder{f: f, sandbox: sandboxID, started: time.Now(), broken: make(chan struct{})}
 }
 
 // catchUp reads the whole chain and re-derives seq and prev from it whenever
@@ -521,6 +552,12 @@ func (r *Recorder) catchUp() error {
 // Events are flushed on every write. Buffering an audit log costs nothing to
 // lose in the happy path and loses exactly the interesting events when a
 // process dies unexpectedly.
+//
+// An Append that fails takes the recorder with it (F13): the error is latched,
+// Broken is closed, and every later Append is refused rather than quietly
+// resuming a chain that has a hole in it. Callers that discard the returned
+// error are no longer discarding the consequence — that is the whole point of
+// putting the policy here rather than at the seventy-seven doors that call it.
 func (r *Recorder) Append(e Event) error {
 	if r == nil {
 		return nil // recording disabled
@@ -528,6 +565,23 @@ func (r *Recorder) Append(e Event) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
+	if r.failure != nil {
+		return fmt.Errorf("the flight recorder stopped at event %d and is recording nothing further: %w",
+			r.failedAt, r.failure)
+	}
+	if err := r.appendLocked(e); err != nil {
+		r.failLocked(err)
+		return err
+	}
+	return nil
+}
+
+// appendLocked is Append's body: the caller holds r.mu and has already decided
+// that this recorder is still allowed to write. Separate from Append so that
+// failLocked's own epitaph can go through exactly the same path — the same
+// lock, the same catchUp, the same chaining — without re-entering the latch it
+// was called from.
+func (r *Recorder) appendLocked(e Event) error {
 	if err := unix.Flock(int(r.f.Fd()), unix.LOCK_EX); err != nil {
 		return fmt.Errorf("lock flight recorder: %w", err)
 	}
@@ -596,6 +650,124 @@ func (r *Recorder) Append(e Event) error {
 	r.prev = digest
 	r.off += int64(len(line))
 	return nil
+}
+
+// maxFailureReason bounds how much of the underlying error reaches the
+// session.end below. The three errors that can get here are host-built —
+// an *os.PathError naming this file, fitUnderMaxLine's own seq/type/size
+// message, or catchUp's "flight recorder is corrupt" wrapping a JSON parse
+// error — so none of them carries guest content beyond, at worst, the single
+// character encoding/json quotes back when it names an unexpected byte. The
+// cap is here anyway, because `reason` is one of the fields an erasure does
+// NOT redact (see eraseExempt) and a field that survives an erasure should
+// never be a place where an unbounded string can pool.
+const maxFailureReason = 160
+
+// failLocked latches the first Append failure. The caller holds r.mu.
+//
+// Only the FIRST error is kept. What matters to whoever reads this later is
+// what broke the recording, not the twenty consequential errors that follow
+// once the disk is full, and a latch that kept being overwritten would report
+// the last of those instead.
+func (r *Recorder) failLocked(err error) {
+	if r.failure != nil {
+		return
+	}
+	r.failure = err
+	// r.seq is the last event that actually reached the file: every error
+	// path in appendLocked either rolls the increment back or fails before
+	// it. So the event that was lost is the next one.
+	r.failedAt = r.seq + 1
+	close(r.broken)
+	// Best effort, immediately, while the lock is still held: on a recorder
+	// that failed for a reason a small write can get past, this is the line
+	// that turns a truncated chain into one that says why it is truncated.
+	// It usually cannot be written — a full disk has no room for it either,
+	// and a corrupt chain fails catchUp again — which is exactly why
+	// EndBroken exists for the shutdown path to try once more.
+	_ = r.writeEpitaphLocked()
+}
+
+// writeEpitaphLocked appends the one session.end that says why the record
+// stops here. The caller holds r.mu and r.failure is set.
+//
+// It reuses session.end rather than introducing an event type or a field for
+// this: `reason` is already the field that says why a session ended, this is
+// why this session ended, and a schema whose answer to every new circumstance
+// is a new field is a schema no independent reader can keep up with. The
+// chain that results is a complete, verifiable session whose last line says
+// the recording was cut short and at which sequence number — which is the
+// distinction docs/events.md notes the record could not previously draw,
+// where a truncated chain and a session still open are indistinguishable.
+//
+// When it does land it takes failedAt as its own seq, since that number was
+// freed when the lost event rolled back: seq N is where the lost event would
+// have been, and what is there instead says so. The chain has no gap, which
+// matters because Verify treats one as reordering.
+func (r *Recorder) writeEpitaphLocked() error {
+	if r.epitaph {
+		return nil
+	}
+	err := r.appendLocked(Event{
+		Type: TypeSessionEnd,
+		Reason: fmt.Sprintf("recorder failed at seq %d: %s", r.failedAt,
+			clipUTF8(r.failure.Error(), maxFailureReason)),
+		DurationMS: time.Since(r.started).Milliseconds(),
+	})
+	if err == nil {
+		r.epitaph = true
+	}
+	return err
+}
+
+// Broken is closed the first time an Append fails, and is the whole of what a
+// run loop has to watch: select on it beside the guest's own exit, and bring
+// the machine down when it fires. Nothing else in this package closes it, and
+// it is never reopened — a recorder that has lost an event stays lost.
+//
+// A nil Recorder is recording disabled, not a broken one, and returns a nil
+// channel: a receive on nil blocks forever, so a caller that selects on this
+// needs no special case for the sandbox that was asked not to record.
+func (r *Recorder) Broken() <-chan struct{} {
+	if r == nil {
+		return nil
+	}
+	return r.broken
+}
+
+// Failure reports why the recorder stopped and the sequence number of the
+// event that could not be written — the two halves of the line an operator
+// needs on stderr. (0, nil) while the recorder is intact.
+func (r *Recorder) Failure() (seq int, err error) {
+	if r == nil {
+		return 0, nil
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.failedAt, r.failure
+}
+
+// EndBroken makes one more attempt to get the "why the record stops here"
+// session.end onto the chain, for the shutdown path to call after it has seen
+// Broken fire and stopped the machine. A no-op on an intact recorder, and a
+// no-op once the line is on the chain, so it is safe to call unconditionally
+// on the way out.
+//
+// It is worth a second attempt because by then the machine is down: whatever
+// was holding the disk may have let go, and the difference between a chain
+// that ends mid-session for no stated reason and one whose last line names
+// the error is the difference between an auditor guessing and an auditor
+// reading.
+func (r *Recorder) EndBroken() error {
+	if r == nil {
+		return nil
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.failure == nil || r.epitaph {
+		return nil
+	}
+	return r.writeEpitaphLocked()
 }
 
 func (r *Recorder) Since() time.Duration { return time.Since(r.started) }

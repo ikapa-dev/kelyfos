@@ -58,7 +58,7 @@ Closes the file. Written by the **host**.
 
 | Field | Type | Meaning |
 | --- | --- | --- |
-| `reason` | string | shutdown, interrupted, vm_exited, command_exited, timeout, error |
+| `reason` | string | shutdown, interrupted, vm_exited, command_exited, timeout, error — or "recorder failed at seq N: <error>", the one session.end the recorder writes for itself after it lost an event and stopped (F13) |
 | `duration_ms` | integer | session length |
 | `code` | integer | what kelyfos exited with, after the OOM adjustment *(kelyfos run knows)* |
 

@@ -212,12 +212,38 @@ Closes the file.
 
 | Field | Type | Meaning |
 | --- | --- | --- |
-| `reason` | string | `shutdown`, `interrupted`, `vm_exited`, `command_exited`, `timeout`, `error`. |
+| `reason` | string | `shutdown`, `interrupted`, `vm_exited`, `command_exited`, `timeout`, `error` — or `recorder failed at seq N: <error>`, which the recorder writes for itself; see below. |
 | `duration_ms` | integer | Session length. |
 | `code` | integer | What `kelyfos` exited with, when `kelyfos run` knows — after the OOM adjustment, so it is what the shell saw. |
 
 `command_exited` is the `kelyfos run [flags] -- <command>` form (D23): the
 sandbox's lifetime was that command's, and the command finished.
+
+**The recorder fails closed.** An append can fail — the disk fills, or the
+file is damaged and no longer parses — and until v1.1 that error was returned
+to callers who discarded it: the sandbox went on running commands and making
+egress while nothing was being recorded. The chain that came out of it
+*verified*, because a refused append rolls its sequence number back and leaves
+the previous hash alone, so the events written afterwards chain onto the ones
+before the hole as though the hole were not there. Nothing distinguished that
+record from a session in which the lost commands were never run (F13).
+
+Now the first failure is final. No further event is recorded through that
+recorder, and the run loop is told: the machine is brought down rather than
+left running unrecorded. The recorder then writes one last `session.end` of
+its own, with `reason` = `recorder failed at seq N: <error>` — `N` being the
+sequence number of the event that could not be written, and `<error>` the
+underlying failure, bounded to 160 bytes. When that line does reach the chain
+it takes `N` as its own `seq`, so the chain has no gap: seq `N` is the place
+where the lost event would have been, and what is there instead says so.
+
+That line is the difference between a chain that stops for no stated reason
+and one that says why it stops: without it, a truncated record and a session
+that is still open are indistinguishable (§5). It is best effort in both
+directions — a disk with no room for the lost event usually has none for this
+either, and a chain that no longer parses cannot be appended to at all — so a
+record that simply stops, with no `session.end` anywhere, remains a shape a
+reader must be ready for.
 
 ### `command.start`
 A command was submitted, before it runs.
@@ -888,6 +914,13 @@ and a digest of the whole record, so a signed export cut short no longer
 verifies against its own signature. `kelyfos verify` also says when a record has
 no `session.end`, and says it as an observation: the chain cannot tell an open
 session from a truncated one.
+
+One case of that is now narrower rather than closed. When the truncation is the
+recorder's own — the disk filled, or the file stopped parsing — it writes a
+final `session.end` with `reason` = `recorder failed at seq N: <error>` and
+stops (§4, `session.end`), so a reader is told rather than left to infer. That
+does not help against an attacker who cut the file short; nothing here can, and
+the chain head is still what answers that.
 
 It does not prove that every agent a policy declared actually wrote one.
 

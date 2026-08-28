@@ -80,7 +80,7 @@ func Types() []EventType {
 		{Type: TypeSessionEnd, Source: SourceHost,
 			Doc: "closes the file",
 			Fields: []Field{
-				{Name: "reason", Type: "string", Doc: "shutdown, interrupted, vm_exited, command_exited, timeout, error"},
+				{Name: "reason", Type: "string", Doc: "shutdown, interrupted, vm_exited, command_exited, timeout, error — or \"recorder failed at seq N: <error>\", the one session.end the recorder writes for itself after it lost an event and stopped (F13)"},
 				{Name: "duration_ms", Type: "integer", Doc: "session length"},
 				{Name: "code", Type: "integer", Doc: "what kelyfos exited with, after the OOM adjustment", When: "kelyfos run knows"},
 			}},
