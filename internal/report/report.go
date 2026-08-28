@@ -25,6 +25,17 @@ type View struct {
 	SessionID string
 	Generated string
 	Events    int
+	// RefreshSeconds is P7-9's whole mechanism: when positive, the page
+	// carries a <meta http-equiv="refresh"> tag with this many seconds,
+	// which is what makes an already-open browser tab reload itself and
+	// pick up whatever kelyfos log --refresh last wrote to this same path —
+	// no socket anywhere in that path, only a CLI process that keeps
+	// rewriting the file atomically and a page that asks to be re-fetched.
+	// Zero for every ordinary export, which is why the tag is conditional
+	// rather than always present at some value: a one-shot report has
+	// nothing more coming, and asking a reader's browser to keep reloading
+	// a file nothing will ever update again would be a small, pointless lie.
+	RefreshSeconds int
 	// ChainHead is the digest the record ends on, printed as text so a reader
 	// holding two reports of the same session can tell whether they hold the
 	// same record. Empty when the chain does not verify: a head read off a line
@@ -164,18 +175,51 @@ func Render(w io.Writer, sessionID string, chain []byte) (events int, err error)
 // nobody has seen proves that one process made both halves, which the chain
 // already proves, and it invites a reader to stop asking.
 func RenderSigned(w io.Writer, sessionID string, chain []byte, key ed25519.PrivateKey) (events int, err error) {
+	return renderView(w, sessionID, chain, key, 0)
+}
+
+// RenderRefreshable is RenderSigned plus P7-9's live-export mechanism: the
+// page it writes carries a <meta http-equiv="refresh" content="refreshSeconds">
+// tag, so a browser tab already open on it reloads itself every
+// refreshSeconds and shows whatever kelyfos log --refresh most recently wrote
+// to the same path. refreshSeconds <= 0 renders exactly like RenderSigned —
+// no tag at all, not one that never fires.
+//
+// This is the whole answer to "live" that this package offers, and it is
+// deliberately this small: the caller (host/log.go's refresh loop) is the
+// one rewriting the file, on its own clock, atomically, same as any other
+// export. Nothing here opens a connection of any kind — a reader's browser
+// re-fetching a local file is not one.
+func RenderRefreshable(w io.Writer, sessionID string, chain []byte, key ed25519.PrivateKey, refreshSeconds int) (events int, err error) {
+	return renderView(w, sessionID, chain, key, refreshSeconds)
+}
+
+// renderView is RenderSigned's and RenderRefreshable's shared body — one
+// place that turns a chain into a page, so the two callers cannot drift on
+// what "render a report" means (the fold, the signature check, the template)
+// while differing only in the one field that is actually theirs to differ on.
+func renderView(w io.Writer, sessionID string, chain []byte, key ed25519.PrivateKey, refreshSeconds int) (events int, err error) {
 	parsed, err := recorder.Read(bytes.NewReader(chain))
 	if err != nil {
 		return 0, err
 	}
 	_, head, verifyErr := recorder.Verify(bytes.NewReader(chain))
+	if refreshSeconds < 0 {
+		// The template's {{if .RefreshSeconds}} is a non-zero check, and a
+		// negative number is non-zero — content="-3" would be a tag the
+		// template author never meant to write. Clamped rather than
+		// rejected: a caller passing a stray negative value gets "no tag"
+		// (the safe reading of "not refreshing"), not a rendering failure.
+		refreshSeconds = 0
+	}
 	v := View{
-		SessionID:  sessionID,
-		Generated:  time.Now().UTC().Format("2006-01-02 15:04:05 UTC"),
-		Events:     len(parsed),
-		ChainHead:  head,
-		Chain:      embedChain(chain),
-		ChainBytes: len(chain),
+		SessionID:      sessionID,
+		Generated:      time.Now().UTC().Format("2006-01-02 15:04:05 UTC"),
+		Events:         len(parsed),
+		ChainHead:      head,
+		Chain:          embedChain(chain),
+		ChainBytes:     len(chain),
+		RefreshSeconds: refreshSeconds,
 	}
 	if verifyErr != nil {
 		v.SelfCheck = verifyErr.Error()

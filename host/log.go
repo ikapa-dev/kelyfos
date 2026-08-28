@@ -3,12 +3,14 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/p4r4n0rm4l/KelyfOS/internal/digest"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/otlp"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/proto"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
@@ -16,25 +18,29 @@ import (
 	"github.com/p4r4n0rm4l/KelyfOS/internal/sandbox"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
 func logCmd(argv []string) error {
 	fs := flag.NewFlagSet("kelyfos log", flag.ExitOnError)
 	var (
-		id          = fs.String("session", "", "session id (default: the most recent)")
-		follow      = fs.Bool("follow", false, "stream events as they are recorded")
-		followShort = fs.Bool("f", false, "alias for --follow")
-		verify      = fs.Bool("verify", false, "check the hash chain and report the first break")
-		asJSON      = fs.Bool("json", false, "print the raw events instead of a readable replay")
-		list        = fs.Bool("list", false, "list recorded sessions")
-		export      = fs.String("export", "", "write a self-contained HTML report to this path")
-		exportOTLP  = fs.String("export-otlp", "", "write an OTLP-JSON trace export to this path (one-way, never read back — docs/otlp.md)")
-		signKey     = fs.String("sign-key", "", "sign the exported report with this ed25519 private key (PEM PKCS#8)")
+		id           = fs.String("session", "", "session id (default: the most recent)")
+		follow       = fs.Bool("follow", false, "stream events as they are recorded")
+		followShort  = fs.Bool("f", false, "alias for --follow")
+		verify       = fs.Bool("verify", false, "check the hash chain and report the first break")
+		asJSON       = fs.Bool("json", false, "print the raw events instead of a readable replay")
+		list         = fs.Bool("list", false, "list recorded sessions")
+		export       = fs.String("export", "", "write a self-contained HTML report to this path")
+		exportOTLP   = fs.String("export-otlp", "", "write an OTLP-JSON trace export to this path (one-way, never read back — docs/otlp.md)")
+		signKey      = fs.String("sign-key", "", "sign the exported report with this ed25519 private key (PEM PKCS#8)")
+		refresh      = fs.Bool("refresh", false, "keep rewriting --export as the session continues, atomically, with a meta-refresh tag — no server, no socket; Ctrl-C to stop")
+		refreshEvery = fs.Duration("refresh-every", 2*time.Second, "how often --refresh rewrites the export (only meaningful with --refresh)")
 	)
 	fs.Usage = func() {
 		fmt.Fprint(fs.Output(), `usage: kelyfos log [flags]
@@ -42,6 +48,15 @@ func logCmd(argv []string) error {
 Replays a session's flight recorder — every command, its output, and from
 phase 2 every egress attempt and secret use. The schema is documented in
 docs/events.md.
+
+--export works against a session that is still running, not only a finished
+one. --refresh turns that into the honest answer to "live" for anyone who
+does not want a listener: it rewrites the same file atomically on a timer and
+the page it writes carries a <meta http-equiv="refresh">, so a browser tab
+already open on it keeps reloading and shows whatever the last rewrite wrote
+— no server, no socket, anywhere in that path. It stops on its own once the
+session ends (that last write drops the refresh tag too, since nothing more
+is coming) or on Ctrl-C.
 
 `)
 		fs.PrintDefaults()
@@ -65,10 +80,24 @@ docs/events.md.
 	path := recorder.Path(sandbox.Root(), sessionID)
 
 	if *export != "" {
+		if *refresh {
+			// ctx/stop live here, at the command's own entry point, the same
+			// place every other long-running kelyfos command wires up
+			// Ctrl-C (team up, run, serve-mcp, fork, snapshot restore) —
+			// rather than inside the loop below, which takes the context as
+			// a plain argument and is exercised without a real OS signal in
+			// host/log_test.go.
+			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+			defer stop()
+			return refreshExportSession(ctx, sessionID, path, *export, *signKey, *refreshEvery)
+		}
 		return exportSession(sessionID, path, *export, *signKey)
 	}
 	if *exportOTLP != "" {
 		return exportOTLPSession(sessionID, path, *exportOTLP)
+	}
+	if *refresh {
+		return errors.New("--refresh rewrites an export; give --export a path as well")
 	}
 	if *signKey != "" {
 		return errors.New("--sign-key signs an export; give --export a path as well")
@@ -214,35 +243,8 @@ func exportSession(id, path, dest, signKey string) error {
 		}
 	}
 
-	// Rendered beside the destination and moved into place, never written
-	// straight over it. An export that fails partway used to leave a truncated
-	// file where a good report had been: os.Create empties the destination
-	// before anything has read the record, so a record with one unparseable
-	// line — a host killed mid-write is enough — destroyed last week's report
-	// and produced nothing. A failed export must leave what was there alone.
-	tmp, err := os.CreateTemp(filepath.Dir(dest), ".kelyfos-export-*")
+	n, err := atomicWriteReport(dest, id, blob, key, 0)
 	if err != nil {
-		return err
-	}
-	defer func() {
-		tmp.Close()
-		_ = os.Remove(tmp.Name()) // a no-op once the rename has happened
-	}()
-	n, err := report.RenderSigned(tmp, id, blob, key)
-	if err != nil {
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	// os.CreateTemp makes a 0600 file and a rename carries that mode with it, so
-	// without this every exported report is owner-only — which is not what
-	// os.Create did before the export became atomic, and not what a document
-	// written to be handed to somebody should be (P6-18, umask.go).
-	if err := os.Chmod(tmp.Name(), createMode()); err != nil {
-		return err
-	}
-	if err := os.Rename(tmp.Name(), dest); err != nil {
 		return err
 	}
 
@@ -342,6 +344,211 @@ func exportOTLPSession(id, path, dest string) error {
 	fmt.Printf("  one-way and lossy: not read back by kelyfos, and never an input to kelyfos verify\n")
 	return nil
 }
+
+// atomicWriteReport renders chain into dest via a temp file in dest's own
+// directory, renamed into place — never written straight over the
+// destination. It is exportSession's own atomic-write step (P6-18), factored
+// out so the --refresh loop below writes a report exactly one way rather
+// than growing a second copy of "how a report gets safely onto disk": an
+// export that fails partway must leave what was already there alone, whether
+// this is the only write that will ever happen or the two-hundredth in a
+// refresh loop.
+func atomicWriteReport(dest, id string, chain []byte, key ed25519.PrivateKey, refreshSeconds int) (n int, err error) {
+	tmp, err := os.CreateTemp(filepath.Dir(dest), ".kelyfos-export-*")
+	if err != nil {
+		return 0, err
+	}
+	defer func() {
+		tmp.Close()
+		_ = os.Remove(tmp.Name()) // a no-op once the rename has happened
+	}()
+	n, err = report.RenderRefreshable(tmp, id, chain, key, refreshSeconds)
+	if err != nil {
+		return 0, err
+	}
+	if err := tmp.Close(); err != nil {
+		return 0, err
+	}
+	// os.CreateTemp makes a 0600 file and a rename carries that mode with it, so
+	// without this every exported report is owner-only — which is not what
+	// os.Create did before the export became atomic, and not what a document
+	// written to be handed to somebody should be (P6-18, umask.go).
+	if err := os.Chmod(tmp.Name(), createMode()); err != nil {
+		return 0, err
+	}
+	if err := os.Rename(tmp.Name(), dest); err != nil {
+		return 0, err
+	}
+	return n, nil
+}
+
+// refreshExportSession is P7-9: --export against a session that has not
+// ended, kept current. It rewrites dest every interval, atomically
+// (atomicWriteReport), from whatever the flight recorder holds at that
+// moment — the same one-blob-one-call render exportSession uses, just run
+// on a clock. The page it writes carries a <meta http-equiv="refresh">, so a
+// browser tab already open on dest reloads itself and picks up each rewrite
+// with nothing more asked of the person watching it.
+//
+// There is no socket anywhere in this: the loop below opens exactly the
+// files exportSession already opens (the session's own events.jsonl, read;
+// dest, written), on a timer, in this one process. "Live" here means a file
+// changing on disk and a browser polling it, which is the whole point — it
+// is the honest answer for anyone who does not want a listener, and it works
+// whether or not P7-12's viewer ever runs.
+// minRefreshInterval is the floor on --refresh-every. Below it the loop stops
+// being a "how often does the export change" knob and becomes a syscall
+// storm: an unbounded --refresh-every 1ns measured at over a full CPU-second
+// of work per wall-second, against a meta tag whose own content is whole
+// seconds — no browser could ever observe anything below this floor either.
+const minRefreshInterval = 100 * time.Millisecond
+
+func refreshExportSession(ctx context.Context, id, path, dest, signKey string, interval time.Duration) error {
+	if interval < minRefreshInterval {
+		return fmt.Errorf("--refresh-every must be at least %s, got %s", minRefreshInterval, interval)
+	}
+	var key ed25519.PrivateKey
+	if signKey != "" {
+		var err error
+		if key, err = report.LoadSigningKey(signKey); err != nil {
+			return err
+		}
+	}
+	// The meta tag's content is whole seconds; a sub-second interval still
+	// rewrites the file that often, it just asks the browser to reload no
+	// more than once a second rather than claiming a granularity HTML's own
+	// refresh mechanism does not have.
+	refreshSecs := int((interval + time.Second/2) / time.Second)
+	if refreshSecs < 1 {
+		refreshSecs = 1
+	}
+
+	fmt.Printf("refreshing %s from session %s every %s\n", dest, id, interval)
+	fmt.Println("  atomic rewrite + <meta refresh> — no server, no socket. Ctrl-C to stop.")
+
+	var last []byte
+	var lastLog string
+	wrote := false
+	log := func(line string) {
+		// A vanished record or a permanently-invalid export repeats the same
+		// diagnostic every tick — at the floor above that is up to ten lines a
+		// second. One line per new problem, not one per poll.
+		if line == lastLog {
+			return
+		}
+		lastLog = line
+		fmt.Println(line)
+	}
+	for {
+		blob, err := os.ReadFile(path)
+		switch {
+		case err != nil:
+			// The session may not have written a single line yet — a refresh
+			// started in the same breath as `team up` races its own first
+			// event. Transient either way: say so and keep polling rather
+			// than exiting a loop the caller asked to run "until it's done."
+			log(fmt.Sprintf("  %s waiting for the flight recorder: %v", refreshStamp(), err))
+		case wrote && bytes.Equal(blob, last):
+			// Nothing new since the last rewrite. The meta tag already has an
+			// open tab polling dest on its own schedule, so there is nothing
+			// this tick needs to redo — an unconditional rewrite here would
+			// mean an atomic rename every interval for a team that is simply
+			// idle between messages.
+			//
+			// wrote guards this: bytes.Equal(nil, nil) is true, so without it
+			// a session file that exists but is still empty (created by
+			// recorder.Open, nothing Appended yet) would match a nil `last`
+			// on the very first tick and the loop would sit there forever,
+			// silently, never writing dest and never saying why.
+		default:
+			ended, n, werr := writeRefreshedReport(dest, id, blob, key, refreshSecs)
+			if werr != nil {
+				var wfe *refreshWriteError
+				if errors.As(werr, &wfe) {
+					// Unlike a parse race, a write failure — a destination
+					// directory that does not exist, a read-only filesystem,
+					// no space left — will not resolve itself on the next
+					// tick. The one-shot --export exits 1 on the identical
+					// error; --refresh does the same rather than retrying it
+					// forever under "export not yet valid," which is
+					// actively wrong for a write-side fault.
+					return fmt.Errorf("writing %s: %w", dest, wfe.err)
+				}
+				// A read racing an in-flight Append could in principle catch
+				// a torn final line; Append writes each event with one
+				// O_APPEND syscall, so the kernel does not hand a concurrent
+				// reader a half-written line in practice, but treating a
+				// parse failure as fatal here would turn a one-tick race
+				// into the whole command exiting. Try again next tick.
+				log(fmt.Sprintf("  %s export not yet valid, retrying: %v", refreshStamp(), werr))
+			} else {
+				last = blob
+				wrote = true
+				log(fmt.Sprintf("  %s wrote %s (%d events, %d chain bytes)", refreshStamp(), dest, n, len(blob)))
+				if ended {
+					fmt.Println("session ended — that was the final export, with no further meta-refresh; stopping")
+					return nil
+				}
+			}
+		}
+		select {
+		case <-ctx.Done():
+			if wrote {
+				// A tab left open on dest still carries the refresh tag from
+				// its last rewrite and will keep re-fetching a file nothing
+				// will ever change again unless this last write drops it —
+				// the same reason session.end drops it, applied to the other
+				// way the loop can stop.
+				if _, werr := atomicWriteReport(dest, id, last, key, 0); werr == nil {
+					fmt.Println("\nstopped — wrote a final export with no further meta-refresh")
+				} else {
+					fmt.Printf("\nstopped (final export failed: %v)\n", werr)
+				}
+			} else {
+				fmt.Println("\nstopped")
+			}
+			return nil
+		case <-time.After(interval):
+		}
+	}
+}
+
+// refreshWriteError marks an error as coming from atomicWriteReport rather
+// than from parsing blob, so refreshExportSession's loop can tell a
+// transient read/parse race (retry next tick) apart from a write-side fault
+// like a missing destination directory or a full disk (not going away on its
+// own — surface it and stop, the way the one-shot --export already does).
+type refreshWriteError struct{ err error }
+
+func (e *refreshWriteError) Error() string { return e.err.Error() }
+func (e *refreshWriteError) Unwrap() error { return e.err }
+
+// writeRefreshedReport folds blob to learn whether the session it came from
+// has already ended, then writes it — dropping the refresh tag on that last
+// write, because a page nothing will update again should not ask a reader's
+// browser to keep asking.
+func writeRefreshedReport(dest, id string, blob []byte, key ed25519.PrivateKey, refreshSecs int) (ended bool, n int, err error) {
+	parsed, err := recorder.Read(bytes.NewReader(blob))
+	if err != nil {
+		return false, 0, err
+	}
+	d := digest.Walk(parsed)
+	ended = d.Ended != ""
+	secs := refreshSecs
+	if ended {
+		secs = 0
+	}
+	n, err = atomicWriteReport(dest, id, blob, key, secs)
+	if err != nil {
+		return false, 0, &refreshWriteError{err}
+	}
+	return ended, n, nil
+}
+
+// refreshStamp is the wall-clock prefix on the refresh loop's own progress
+// lines — one file changing over minutes needs a clock beside each line
+// exportSession's single-shot output never did.
+func refreshStamp() string { return time.Now().Format("15:04:05") }
 
 func verifySession(id, path string) error {
 	blob, err := os.ReadFile(path)

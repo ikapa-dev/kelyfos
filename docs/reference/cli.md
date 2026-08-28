@@ -344,6 +344,8 @@ kelyfos log [flags]
 | `--follow` | boolean | — | stream events as they are recorded |
 | `--json` | boolean | — | print the raw events instead of a readable replay |
 | `--list` | boolean | — | list recorded sessions |
+| `--refresh` | boolean | — | keep rewriting --export as the session continues, atomically, with a meta-refresh tag — no server, no socket; Ctrl-C to stop |
+| `--refresh-every` | duration | 2s | how often --refresh rewrites the export (only meaningful with --refresh) |
 | `--session` | string | the most recent | session id |
 | `--sign-key` | string | — | sign the exported report with this ed25519 private key (PEM PKCS#8) |
 | `--verify` | boolean | — | check the hash chain and report the first break |

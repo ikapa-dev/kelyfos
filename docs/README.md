@@ -30,7 +30,7 @@ hand-written half, and this page says where each is still thin.
 | stuck on something KelyfOS refused | [`denials.md`](denials.md), then [`reference/denials.md`](reference/denials.md) for the exact one |
 | running something long and walking away | [`denials.md`](denials.md) on `--notify`, and [`events.md`](events.md) §6 for the history afterwards |
 | keeping an agent off the network | [`networking.md`](networking.md) |
-| after something that works, right now | [`cookbook.md`](cookbook.md) — eighteen recipes, each one runnable as it stands |
+| after something that works, right now | [`cookbook.md`](cookbook.md) — twenty recipes, each one runnable as it stands |
 | putting KelyfOS inside something else | [`integrating.md`](integrating.md) |
 | building KelyfOS into something else | [`protocol.md`](protocol.md), then [`e2b-shim.md`](e2b-shim.md) |
 | driving KelyfOS from an MCP client | [`mcp-surface.md`](mcp-surface.md) — `serve-mcp` and `[[plugin]]`, and [recipe 9](cookbook.md) for the configuration |
@@ -57,7 +57,7 @@ hand-written half, and this page says where each is still thin.
 | [`hardening.md`](hardening.md) | concept | The v0.9 specification, written before the code: what a compromised agent reaches today, what the jailer and the guest profiles take away, and what remains reachable afterwards. |
 | [`host-seccomp.md`](host-seccomp.md) | mixed | The syscall filter around the VMM process: which one is in force and why that is settled, how it is proved from the kernel's own copy rather than from the absence of a flag, and every syscall it permits. |
 | [`threat-model.md`](threat-model.md) | concept | What KelyfOS defends against and — the longer half — what it does not. |
-| [`cookbook.md`](cookbook.md) | recipes | Eighteen complete, copy-pasteable recipes. Every one is a script CI extracts and runs on a real machine. |
+| [`cookbook.md`](cookbook.md) | recipes | Twenty complete, copy-pasteable recipes. Every one is a script CI extracts and runs on a real machine. |
 | [`integrating.md`](integrating.md) | mixed | For building on KelyfOS: the four ways in, orchestrator patterns, and a long list of the mistakes people actually make. |
 | [`e2b-shim.md`](e2b-shim.md) | mixed | The E2B-compatible REST subset: what it implements, what it does not, and why. |
 | [`../llms.txt`](../llms.txt) | **generated** | The index a machine reads first: every page above as a link with a one-line description, per the llmstxt.org spec. |
@@ -204,7 +204,7 @@ neither refusal mentions the other, so a user who follows the first message hits
 the second; `team ps` has no sample output; the store's `not_found` is described as
 "not a refusal" and is recorded as one.
 
-### `cookbook.md` — eighteen things that work
+### `cookbook.md` — twenty things that work
 
 *Recipes:* one sandbox; an allowlist and an injected credential; a workspace
 round-trip; snapshot and fork; a three-agent team with an ask round-trip and a
@@ -222,11 +222,15 @@ machine and picking the same one up with its scratch intact, under the policy it
 was frozen with; seeing what an agent changed before keeping it, including what
 `--review` does when there is nobody to ask; reaching a server inside a
 sandbox that has no network, including how to start a long-running process
-through `kelyfos exec` without hanging on it; and a team's declared topology,
+through `kelyfos exec` without hanging on it; a team's declared topology,
 drawn with nothing booted and then confirmed to match the same team once it
-is actually running (`team graph`, `team ps --graph`); and exporting the same
+is actually running (`team graph`, `team ps --graph`); exporting the same
 chain as OTLP-JSON, with its span names and shape checked out of the file
-rather than eyeballed.
+rather than eyeballed; and exporting a report against a team that has not
+stopped, `--refresh` rewriting it atomically on a clock so an open browser
+tab follows along through its own `<meta http-equiv="refresh">` — checked
+for the one property that matters, that the process doing the rewriting
+holds no socket at all.
 *Thin:* nothing hidden — every script is extracted and executed by
 `dev/cookbook.sh` and by the `cookbook` workflow, so a recipe that stops working
 fails rather than misleading anyone.

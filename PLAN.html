@@ -1382,7 +1382,7 @@
         content only &mdash; every SVG attribute is a number computed in Go, and there is no
         <code>&lt;foreignObject&gt;</code>, <code>href</code> or <code>style</code> attribute anywhere in the
         drawing.</span></li>
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">P7-9</span><span class="tk"><b>Exporting a running session.</b> <code>--export</code> against a live team, and
         <code>--refresh</code>, which rewrites the file atomically and emits a meta-refresh so a browser tab
         follows a running team with <b>no socket anywhere in the path</b>. This is the honest answer to
@@ -6134,6 +6134,129 @@ after:
         (&ldquo;fuzz: elapsed 21s &hellip; new interesting: 190, PASS&rdquo;), live hostile-chain export
         (<code>python3 json.load</code> clean, <code>jq</code> shape check, raw byte scan &mdash; zero control
         bytes outside <code>\t\n\r</code>).</td></tr>
+    <tr><td class="mono">2026-08-28</td><td class="mono">P7-9</td>
+        <td>Exporting a running session, stage three's first task. <code>--export</code> now works against a
+        live team, not only a finished one, and gains <code>--refresh</code>/<code>--refresh-every</code>:
+        rewrites the export file atomically on a timer and emits a <code>&lt;meta http-equiv="refresh"&gt;</code>
+        tag, so a browser tab left open follows a running team with no server and no socket anywhere in the
+        path &mdash; the honest answer to &ldquo;live&rdquo; for anyone who doesn't want a listener, independent
+        of whether P7-12 ever lands. <code>internal/report</code> gained <code>View.RefreshSeconds</code> and
+        <code>RenderRefreshable</code>, sharing a body with the existing <code>RenderSigned</code>;
+        <code>host/log.go</code> gained the two flags, <code>atomicWriteReport</code> (factored out of the
+        existing export path), and a context-driven poll loop that stops cleanly on <code>session.end</code> or
+        Ctrl-C/SIGTERM. Cookbook recipe 17 boots a real team, exports live, runs <code>--refresh</code>, checks
+        the refreshing process's own <code>/proc/*/fd</code> for zero sockets, triggers a real refusal, and
+        confirms the open file picks it up unassisted.
+        <br>This task shared the shared <code>kelyfos-dev</code> VM with P7-10 and P7-11 running concurrently
+        (stage three's three tasks), and hit a severe instance of the P7-16/D70 hazard: accumulated stuck
+        processes from all three agents' repeated connection retries drove the VM's load average to 15 on 6
+        vCPUs (uninterruptible-I/O-state processes piling up, not active computation), making SSH access
+        effectively unusable for roughly 90 minutes across all three worktrees. The orchestrator diagnosed this
+        directly (ruled out disk space and raw CPU, found the D-state process pile via <code>ps aux</code>), and
+        applied the same remedy the owner had already authorized once before for this exact class of problem: a
+        full VM restart. Verification proceeded normally afterward. Worth folding into P7-16's own scope when it
+        is picked up &mdash; this session's severity (a sustained multi-worktree SSH deadlock, not just a
+        `team.json` or cache collision) is worse than D70 currently describes.</td>
+        <td class="mono">commit <code>75d1ca7</code> on the author's worktree branch, verified by the
+        orchestrator after the VM restart: <code>gofmt -l .</code> clean, <code>go vet ./...</code> clean,
+        <code>go test -count=1 ./...</code> every package <code>ok</code>, <code>govulncheck</code> &rarr;
+        &ldquo;No vulnerabilities found.&rdquo;, <code>make docs</code> regenerated cleanly (llms.txt/
+        llms-full.txt updated for the new flags and recipe)<br>
+        real end-to-end: booted a real 2-agent <code>dev</code>-image team, ran <code>kelyfos log --export
+        --refresh --refresh-every 1s</code> against it &mdash; log shows &ldquo;wrote &hellip;refresh.html (6
+        events, 2653 bytes)&rdquo;; <code>ls /proc/&lt;pid&gt;/fd</code> on the refreshing process during the
+        run: no socket file descriptors; grepped the whole diff for <code>net.</code>/<code>http.</code>/
+        <code>Listen</code>/<code>Dial</code>: no matches outside prose; <code>kelyfos verify
+        refresh.html</code> &rarr; &ldquo;chain intact, 6 events verified&rdquo;; the exported page carries
+        <code>&lt;meta http-equiv="refresh" content="1"&gt;</code>, matching the configured interval.</td></tr>
+    <tr><td class="mono">2026-08-28</td><td class="mono">P7-9</td>
+        <td><b>Adversarial RENDER-surface review's findings, fixed by the orchestrator.</b> The reviewer
+        confirmed the task's central, non-negotiable claim &mdash; zero sockets anywhere in the
+        <code>--refresh</code> path &mdash; three independent ways (static grep of the whole diff, a live
+        <code>/proc/*/fd</code> census on a running <code>--refresh</code> process, and a full
+        <code>strace -f -e trace=socket,connect,bind,listen,accept,...</code> across the process tree during six
+        seconds of live refreshing: zero matches on any of them). It then found five real defects in the loop
+        around that sound core, verdict <b>NO-GO</b>. All five fixed:
+        <br><b>F1 (blocking):</b> the cookbook's opening recipe count and its true
+        <code>&lt;!-- recipe: --&gt;</code> marker count have been off by one since before this task (recipe 9's
+        embedded <code>connect-a-client</code> block was never counted in the prose); this task's own new recipe
+        carried the pre-existing gap forward instead of closing it, so <code>go run ./tools/cookbook</code>
+        refused to extract and the very recipe (17) this task's evidence rests on could not run through the
+        harness. Fixed the prose to the true count and extended <code>countWords</code>.
+        <br><b>F2 (high):</b> a permanent write-side fault (missing destination directory, read-only
+        filesystem) was indistinguishable from a transient parse race on a growing chain, so
+        <code>--refresh</code> against a bad path retried forever under &ldquo;export not yet valid&rdquo; instead
+        of the error the one-shot <code>--export</code> already exits 1 on for the identical fault. Added a
+        distinct error type so the loop now returns write-side failures immediately.
+        <br><b>F3 (high):</b> <code>recorder.Open</code>'s <code>O_CREATE</code> leaves a zero-byte chain file
+        between open and the first <code>Append</code>; <code>bytes.Equal(nil, nil)</code> being true meant a
+        refresh started in that window matched its own &ldquo;nothing new&rdquo; branch on tick one and sat
+        there, silently, forever &mdash; no error, no retry line, <code>dest</code> never created. Added a
+        <code>wrote</code> guard so tick one is never skipped regardless of what <code>last</code> still holds.
+        <br><b>F4 (medium):</b> <code>--refresh-every</code> had no floor; <code>1ns</code> measured at over a
+        full CPU-second of syscalls per wall-second against a <code>&lt;meta refresh&gt;</code> tag whose own
+        content is whole seconds. Added a 100ms floor.
+        <br><b>F5 (medium):</b> Ctrl-C/SIGTERM stopped the loop with no final write, so a browser tab left open
+        kept polling a file nothing would ever change again &mdash; the same lie <code>session.end</code>'s own
+        handling exists to avoid, on the other path that ends the loop. Added a best-effort final write (tag
+        dropped) on context cancellation.
+        <br>Two low-severity items folded in as one-line fixes since they were directly adjacent: flag
+        validation order (interval checked before loading the signing key, so a bad interval now reports as a
+        bad interval even when <code>--sign-key</code> is also wrong), and a message-clarity fix (the refresh
+        loop's byte count is the source chain's size, not <code>dest</code>'s written size &mdash; the one-shot
+        path reports the latter under the same words; relabelled &ldquo;chain bytes&rdquo; to stop it reading as
+        the same number). The unbounded-repeat-diagnostics low item is fixed too, via a one-line dedup on the
+        loop's own log lines, since it sat directly adjacent to the F2/F3 rewrite anyway.</td>
+        <td class="mono">fix commit <code>4585f1a</code>. <code>gofmt -l .</code> clean; <code>go vet
+        ./...</code> clean; <code>go test -timeout 60s -count=1 -run Refresh -v ./host/...</code> all 7 cases
+        <code>PASS</code> (including three new ones pinning F2/F3/F4 against the real loop, not just
+        <code>writeRefreshedReport</code> in isolation); <code>go test -race -count=5 -run Refresh
+        ./host/...</code> clean; <code>go test -count=1 ./...</code> 25 packages <code>ok</code>;
+        <code>govulncheck</code> &rarr; &ldquo;No vulnerabilities found.&rdquo;; <code>make docs</code>
+        regenerates cleanly; <code>go run ./tools/cookbook -in docs/cookbook.md</code> &rarr; &ldquo;18 recipes,
+        all extractable&rdquo; (was refusing before the fix).
+        <br>Hit the P7-16/D70 shared-host hazard again mid-verification &mdash; a single stuck
+        <code>go test ./tools/cookbook/...</code> process wedged the VM's <code>/Users/&hellip;</code> virtiofs
+        mount for <i>all</i> worktrees (native guest paths like <code>/tmp</code> stayed responsive throughout,
+        isolating it to the shared mount rather than the whole VM), with load climbing 0.81&rarr;2.00 and stuck
+        SSH sessions piling up 5&rarr;15 over several minutes with no sign of self-healing. Forced a VM restart
+        under the standing authorization from the earlier P7-9 incident this same day; verification above is
+        entirely from after that restart. This is the third such incident today (after the two documented
+        against this same task's live-verification pass) &mdash; folding into P7-16's scope becomes more
+        pressing with each recurrence.
+        <br>Not self-ticked: still holding for the reviewer to confirm F1&ndash;F5 are actually closed before
+        this task ticks.</td></tr>
+    <tr><td class="mono">2026-08-28</td><td class="mono">P7-9</td>
+        <td><b>Ticked, by the orchestrator, after a re-review confirmed GO.</b> The re-reviewer did not take the
+        fix commit's claims on faith: it independently re-counted every real <code>&lt;!-- recipe: --&gt;</code>
+        marker in <code>docs/cookbook.md</code> (18, matching), and for three of the five findings &mdash;
+        F2, F3 and F5 &mdash; it proved the new regression tests are not tautological by reverting each fix
+        in isolation inside a scratch clone on the VM and watching the original bug reproduce exactly
+        (<code>TestRefreshExportSessionStopsOnAPermanentWriteFailure</code> retries forever again without the
+        <code>errors.As</code> branch; <code>TestRefreshExportSessionRecoversFromAnEmptyChainFile</code> times
+        out again without the <code>wrote</code> guard; the SIGTERM tag-drop test fails again without the final
+        write). It re-verified F4's 100ms floor live at the exact boundary (<code>99ms</code> rejected,
+        <code>100ms</code> accepted) and F5 with two real scenarios against an actual booted team (SIGTERM
+        mid-session, and a natural <code>session.end</code>), both dropping the refresh tag correctly.
+        <br>It also found what the first round missed: three hand-written docs (<code>README.md</code>,
+        <code>docs/README.md</code> &times;2, <code>docs/integrating.md</code>) still said &ldquo;seventeen
+        recipes&rdquo; &mdash; <code>make docs</code> only reconciles generated output against these files as
+        source, so a wrong number in the prose itself was invisible to it, the same failure class
+        <code>P7-7</code> already had to fix once. And it proved, by removing just the floor check in a scratch
+        clone, that <code>TestRefreshExportSessionRejectsAnIntervalBelowTheFloor</code> and its sibling
+        non-positive-interval test passed anyway &mdash; both used <code>/dev/null</code> as both path and
+        dest and asserted only <code>err != nil</code>, and a write into <code>/dev</code> fails with
+        <code>EACCES</code> regardless of the interval, masking a removed check entirely. Neither was called a
+        merge blocker (the shipped runtime behavior was independently verified correct either way), but both
+        closed before ticking: the four stale mentions fixed to &ldquo;eighteen&rdquo;, and both tests now
+        assert the error message actually names the interval floor rather than merely being non-nil.
+        Re-reviewer's final verdict: <b>GO.</b></td>
+        <td class="mono">fix-round-2 commit <code>0ad58a6</code>. <code>gofmt -l .</code> clean; <code>go vet
+        ./...</code> clean; <code>go test -timeout 60s -count=1 -run Refresh -v ./host/...</code> all 7
+        <code>PASS</code>; <code>go test -race -count=5 -run Refresh ./host/...</code> clean; <code>go test
+        -count=1 ./...</code> 25 packages <code>ok</code>; <code>govulncheck</code> &rarr; &ldquo;No
+        vulnerabilities found.&rdquo;; <code>make docs</code> regenerates cleanly; grep for &ldquo;seventeen
+        recipes/complete/things&rdquo; across the repo &rarr; zero hits.</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>

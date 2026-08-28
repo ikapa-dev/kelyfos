@@ -59,6 +59,18 @@ reference described in the README and re-measured per release.
   changes only this mapping, never a hashed byte. An inbound W3C
   `traceparent` on `session.policy` continues that trace instead of starting
   a new one (`docs/otlp.md`, P7-11).
+- **`kelyfos log --export` against a session that has not ended, and
+  `--refresh` to keep it current.** The export always rendered whatever the
+  flight recorder held; what was new is `--refresh`, which rewrites the same
+  destination on a timer (`--refresh-every`, default 2s), atomically, for as
+  long as the session runs, and adds a `<meta http-equiv="refresh">` tag so a
+  browser tab already open on the file reloads itself and shows the latest
+  rewrite. No socket anywhere in that path — a CLI process rewriting a file
+  and a browser polling it — so it is the honest answer to "live" for anyone
+  who does not want a listener, and it exists whether or not `kelyfos view`
+  (P7-12) does. The loop stops on its own once `session.end` appears in the
+  chain (that final write drops the refresh tag, since nothing more is
+  coming) or on Ctrl-C (P7-9).
 
 ### Fixed
 - **A single oversized, guest-influenced field could make the flight recorder
