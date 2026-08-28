@@ -6611,6 +6611,83 @@ after:
         confirmed an unclean <code>kill -9</code> leaves the marker (and protection) permanently, matching the
         documented tradeoff; confirmed two concurrent first-time <code>serve-mcp</code> starts race-free on
         marker-directory creation.</td></tr>
+    <tr><td class="mono">2026-08-28</td><td class="mono">&mdash;</td>
+        <td><b>Phase 7 acceptance test, all eleven items run for real.</b> Every item verified with live command
+        evidence, not inspection:
+        <br><b>1.</b> All eleven <code>[resources]</code> caps set to distinct values, <code>session.policy</code>
+        parsed out of the raw <code>events.jsonl</code> and compared field by field &mdash; eleven of eleven
+        named and matching.
+        <br><b>2.</b> A secret bound and never used: <code>session.policy</code> records its name and domain;
+        <code>grep -c</code> for the literal value across the raw chain &rarr; 0.
+        <br><b>3.</b> <code>bash dev/demo-team.sh</code> &rarr; 22 passed, 0 failed, 1 skip (the known bare-KVM
+        cold-boot timing bar under Lima, D15's own carve-out). Exported report counted directly out of the HTML:
+        6 agent nodes, 5 distinct edges, the store's 2 ACLs, 1 allowed domain, the no-edge refusal present and
+        confirmed absent from the drawn edges.
+        <br><b>4.</b> <code>kelyfos team graph</code> (nothing booted) and <code>kelyfos team ps --graph</code>
+        (the same team, booted) describe byte-identical topology. A <code>[[plugin]]</code> beside
+        <code>[team]</code> is refused with P7-4's exact sentence, quoted and matched against
+        <code>host/teamplan.go</code>.
+        <br><b>5.</b> <code>team ps --json</code> and <code>watch --json</code> both valid JSON with every
+        expected top-level key present; <code>log --export-otlp</code> valid OTLP-JSON with both
+        <code>invoke_agent</code> and <code>execute_tool</code> spans present after a real command ran.
+        <br><b>6.</b> The viewer attacked live: no token &rarr; 401, wrong <code>Host</code> &rarr; 403,
+        <code>POST</code> &rarr; 405, correct token &rarr; 200; non-loopback bind refused structurally
+        (<code>bindLoopback()</code> takes no arguments, hardcoded to <code>127.0.0.1:0</code>, no flag exists to
+        override it); <code>/proc/&lt;pid&gt;/fd</code> checked idle and mid-request &mdash; no fd to any session
+        file at any point.
+        <br><b>7.</b> Retention proves both halves: a session exported before being pruned still verifies
+        offline after its directory is gone; erasure's per-field fingerprints matched an independently computed
+        sha256 of the original content exactly, and the chain-head anchor matched the pre-erasure head exactly;
+        <code>kelyfos verify</code> green on both, offline, no key.
+        <br><b>8.</b> Three new hostile-corpus fixtures added (a store key at the documented 1 KiB ceiling, a
+        64-character agent name, a session whose aggregate size is ~200 MB) &mdash; the three the acceptance item
+        itself names as missing, the existing markup-in-a-path/message-body-escape/<code>&lt;script&gt;</code>-store-key
+        cases already having been covered by earlier tasks. Proven non-vacuous: neutering <code>safeBody</code>
+        made the new 200 MB fixture fail identically to an existing control-byte fixture; making
+        <code>safe()</code> bypass autoescaping failed to even compile against <code>safe_test.go</code>'s own
+        type assertions. <code>safe.go</code> itself is unchanged &mdash; test-only.
+        <br><b>9.</b> Review-gating and P7-13 confirmed via the Progress Log itself. <code>make vuln</code>
+        &rarr; clean. Every fuzz target Phase 7 touched (<code>internal/graph</code>, <code>internal/otlp</code>,
+        <code>internal/digest</code>, <code>internal/report</code>, <code>internal/recorder</code> &times;2) run
+        at <code>FUZZTIME=60s</code>, zero crashers, seed corpora committed for the first time for every one of
+        them.
+        <br><b>10.</b> A fresh, context-free agent ran the docs-only exam for real (only <code>llms-full.txt</code>
+        and <code>--help</code> output, no source, no <code>PLAN.html</code>) and found a genuine gap:
+        <code>tools/gendocs</code> only discovers sub-verbs from a pipe-separated usage line, and
+        <code>host/main.go</code>'s own <code>sessions</code> line lacked one &mdash; <code>prune</code> and
+        <code>erase</code> and their real flags were silently absent from the generated CLI reference despite
+        the page's own &ldquo;CI fails when this disagrees with source&rdquo; claim. Fixed the one usage line;
+        <code>docs/reference/cli.md</code> now carries three correct entries. Token count re-measured:
+        <b>187,479</b>.
+        <br><b>11.</b> <code>go test -count=1 ./...</code> &rarr; 25 packages, 0 failed. <code>bash
+        dev/cookbook.sh</code> found one genuine failure among 21 recipes &mdash; recipe 19
+        (<code>live-export-refresh</code>, P7-9's own)'s assertion anchored both ends of a message that, by the
+        point it runs, can only ever match the message's OTHER valid clean-stop form; loosened to a prefix
+        match, reproduced failing on the original pattern first. Full re-run: <b>21/21</b>. Every <code>dev/</code>
+        acceptance suite run, several twice to separate real issues from self-inflicted build-concurrency
+        corruption during the first pass; three non-Phase-7 root causes found and diagnosed by isolated retry
+        (a network-throughput measurement that reads 0 in this specific Lima session; two Epic-E5 driver scripts
+        with no history anywhere in the repository; <code>~/.cache/kelyfos/sessions/</code> holding 2700+
+        sessions from this session's own many concurrent agents, some unreadable, breaking <code>kelyfos
+        runs</code>'s own assumptions &mdash; the exact P7-16 shared-host hazard class, already tracked, not
+        gating this exit).
+        <br>Two real, Phase-7-introduced bugs found by <i>running</i> the exam and the cookbook rather than by
+        inspection (items 10 and 11 above) &mdash; both fixed, both verified failing-then-passing. Neither
+        touches production RECORD/PROXY/BROKER/RENDER logic (a CLI usage string, a cookbook recipe's own shell
+        assertion), so neither was sent through another adversarial review round; the orchestrator re-verified
+        directly instead (full suite, govulncheck, the new fixtures individually, the regenerated CLI reference
+        by hand).</td>
+        <td class="mono">commits <code>bcc777d</code> (item 8), <code>b32e342</code> (item 9, 1867 files,
+        seed corpora), <code>793ad81</code> (item 10), <code>00f23df</code> (item 11), merged as
+        <code>da67834</code>. Post-merge: <code>gofmt -l .</code> clean; <code>go vet ./...</code> clean;
+        <code>go build ./...</code> clean; <code>go test -count=1 ./...</code> 25 packages <code>ok</code>;
+        <code>govulncheck</code> &rarr; &ldquo;No vulnerabilities found.&rdquo;; <code>go run ./tools/cookbook
+        -in docs/cookbook.md</code> &rarr; &ldquo;21 recipes, all extractable&rdquo;; <code>make docs</code> a
+        no-op diff; <code>python3 tools/check-plan.py</code> &rarr; &ldquo;PLAN.html is coherent: 102 tasks, 92
+        checked, 69 decisions&rdquo;.
+        <br>Not yet done, deliberately: the <code>v1.1</code> tag, and flipping this section's badge/status and
+        <code>#focus</code> to closed. Those are the owner's call, held for explicit confirmation before acting
+        &mdash; a visible, hard-to-reverse release milestone, not a verification step.</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
