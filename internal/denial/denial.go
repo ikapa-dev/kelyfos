@@ -136,13 +136,20 @@ var (
 	EgressResolvedAddr = Denial{
 		ID: "egress.resolved_addr",
 		Doc: "an allowlisted domain resolved to an address the proxy refuses to dial: loopback, " +
-			"link-local (which includes the cloud instance metadata address, 169.254.169.254), or " +
-			"other private/reserved space no legitimate public domain should ever resolve to",
-		Msg: "<host> resolved to <addr>, which this proxy will not dial",
+			"link-local (which includes the cloud instance metadata address, 169.254.169.254), " +
+			"CGNAT, or other private/reserved space no legitimate public domain should ever " +
+			"resolve to. The address itself is in the flight recorder as the attempt's " +
+			"resolved_addr, not in this message",
+		Msg: "<host> resolved to an address this proxy will not dial",
 		Fix: "this is not something to work around by retrying — it usually means <host>'s DNS is " +
 			"compromised, hijacked or misconfigured; a destination that is genuinely internal does " +
 			"not belong behind this proxy's allowlist at all",
-		Sample: V{"host": "api.example.com", "addr": "169.254.169.254"},
+		// No "addr": the message deliberately names none. The address the
+		// name resolved to goes to the flight recorder and stops there —
+		// telling a guest which address an allowlisted name resolves to is a
+		// DNS lookup it may not be able to perform itself, handed over one
+		// name at a time (F14).
+		Sample: V{"host": "api.example.com"},
 	}
 
 	SecretUnallowed = Denial{

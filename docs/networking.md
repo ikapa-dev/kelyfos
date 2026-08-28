@@ -189,6 +189,47 @@ The cost, stated plainly: anything that resolves before connecting — `ping`, r
 sockets, a library that ignores proxy environment variables — fails. For a
 deny-all sandbox that is the correct failure.
 
+### 4.1 The name is checked first, and then the address it resolved to
+
+Deciding on the name is what makes the allowlist mean anything, and it is not
+sufficient on its own: an allowlisted domain that is hijacked, expired or simply
+taken over can resolve wherever its new owner likes, and the classic destination
+is `169.254.169.254`, the cloud instance metadata endpoint — on port 80, already
+inside the proxy's permitted port set. So there is a second check, on the
+address, at the one point every dial passes through: `net.Dialer.Control`, which
+fires once per address a resolver hands back, after resolution and immediately
+before the connect syscall. A domain with several A/AAAA records is checked on
+each attempt Go's Happy Eyeballs fallback makes, not merely on its first, and a
+refusal there means nothing was sent and nothing was read.
+
+The refused ranges are a table with a comment per entry, not a stack of
+predicates. `internal/egress/dial.go` holds it; the ranges are RFC 1122's
+`0.0.0.0/8`, RFC 1918 private space, **RFC 6598 CGNAT `100.64.0.0/10`** — where
+Alibaba Cloud's metadata service lives, at `100.100.100.200`, and where every
+Tailscale and WireGuard mesh peer lives — loopback, link-local, RFC 6890's IETF
+protocol block, the three documentation ranges, RFC 2544 benchmarking space,
+multicast, RFC 1112's reserved `240.0.0.0/4` with the broadcast address in it,
+and the v6 equivalents. Two entries are not ranges in the ordinary sense:
+
+- **`168.63.129.16/32`** is the Azure wireserver: the instance metadata endpoint
+  on every Azure VM, sitting in ordinary public address space. No range rule
+  will ever catch it, so it has a line of its own.
+- **NAT64 `64:ff9b::/96`, 6to4 `2002::/16` and the deprecated IPv4-compatible
+  `::/96`** are not refused as prefixes — `64:ff9b::8.8.8.8` is a legitimate way
+  to reach `8.8.8.8`. The v4 address they carry inside is extracted and checked
+  against the same table, which is what refuses `64:ff9b::a9fe:a9fe`: the
+  metadata address wearing a v6 costume. 6to4 matters for the same reason in
+  reverse — a host with 6to4 configured really does put IPv4 packets on the wire
+  to the embedded address.
+
+**The refusal names no address to the guest.** It says the name "resolved to an
+address this proxy will not dial", and the address goes to the flight recorder
+as the attempt's `resolved_addr`. A guest that is told where an allowlisted name
+resolves has been handed the result of a DNS lookup it has no resolver to
+perform — one allowlisted name at a time, that is a map of the host's network.
+The operator is the one who needs the address, and the operator reads the
+record (F14).
+
 ## 5. What the guest is told
 
 The NIC is configured by the kernel from the boot arguments, so nothing in the

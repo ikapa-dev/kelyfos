@@ -136,14 +136,14 @@ Named: `host`, `port`. The values above are an example.
 
 ## `egress.resolved_addr`
 
-An allowlisted domain resolved to an address the proxy refuses to dial: loopback, link-local (which includes the cloud instance metadata address, 169.254.169.254), or other private/reserved space no legitimate public domain should ever resolve to.
+An allowlisted domain resolved to an address the proxy refuses to dial: loopback, link-local (which includes the cloud instance metadata address, 169.254.169.254), CGNAT, or other private/reserved space no legitimate public domain should ever resolve to. The address itself is in the flight recorder as the attempt's resolved_addr, not in this message.
 
 ```
-api.example.com resolved to 169.254.169.254, which this proxy will not dial [egress.resolved_addr]
+api.example.com resolved to an address this proxy will not dial [egress.resolved_addr]
     this is not something to work around by retrying — it usually means api.example.com's DNS is compromised, hijacked or misconfigured; a destination that is genuinely internal does not belong behind this proxy's allowlist at all
 ```
 
-Named: `addr`, `host`. The values above are an example.
+Named: `host`. The values above are an example.
 
 ## `forward.closed`
 

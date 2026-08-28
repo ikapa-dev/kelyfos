@@ -578,6 +578,8 @@ func (s *Server) wireEgressAudit(b *box) {
 			// port — an event that says a connection was refused and nothing
 			// whatever about which one (F9).
 			Peer: a.Peer,
+			// See wireProxyAudit: the resolved address is recorder-only (F14).
+			ResolvedAddr: a.ResolvedAddr,
 		})
 	}
 }

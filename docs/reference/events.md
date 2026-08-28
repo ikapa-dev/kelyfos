@@ -125,6 +125,7 @@ One outbound connection attempt, permitted or not. Written by the **host**.
 | `bytes_in` | integer | bytes read from upstream |
 | `bytes_out` | integer | bytes written upstream |
 | `peer` | string | who connected — the address a connection refused as foreign_peer came from; the request was never parsed, so host and port are absent on those *(reason is foreign_peer)* |
+| `resolved_addr` | string | where the requested host actually resolved to. Recorded because the 403 the guest reads names no address: telling a sandbox which address an allowlisted name resolves to hands it a DNS lookup it has no resolver to perform *(reason is unsafe_resolved_address)* |
 | `agent` | string | which machine produced it; present inside a team *(in a team)* |
 
 ## `secret.use`

@@ -196,6 +196,10 @@ func wireProxyAudit(proxy *egress.Proxy, rec *recorder.Recorder, agent string, b
 			// destination by the digest, the report and all three renderers
 			// (F9).
 			Peer: a.Peer,
+			// Where an allowlisted name actually resolved to. The 403 the
+			// guest read names no address; this is the only place it exists
+			// (F14).
+			ResolvedAddr: a.ResolvedAddr,
 		})
 	}
 }

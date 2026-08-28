@@ -137,6 +137,10 @@ type Attempt struct {
 	// guest's own blocked-domain records. recorder.Event already has a peer
 	// field, which is where this lands.
 	Peer string
+	// ResolvedAddr is where an allowlisted name actually resolved to, on a
+	// ReasonUnsafeResolvedAddr refusal and nothing else. It goes to the
+	// recorder and never into the body the guest reads (F14).
+	ResolvedAddr string
 }
 
 // DefaultPorts is what every sandbox in this product gets: the two ports the

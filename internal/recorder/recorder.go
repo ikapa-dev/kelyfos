@@ -293,6 +293,16 @@ type Event struct {
 	// computed over. An integer, so there is nothing here for
 	// clipLargestField to clip and nothing for an erasure to redact.
 	RedactedFields int `json:"redacted_fields,omitempty"`
+	// egress.attempt, when reason is unsafe_resolved_address (F14). Where an
+	// allowlisted name actually resolved to. It is here and nowhere else: the
+	// 403 the guest reads names no address, because telling a compromised
+	// agent the result of a DNS lookup it may not be able to perform itself is
+	// reconnaissance handed over one allowlisted name at a time. The operator
+	// is the one who needs it — a name resolving to 169.254.169.254 is the
+	// whole story of the incident — so it lives in the record. Appended at the
+	// end of the struct for the reason the resource.oom block gives: this
+	// order is the order the hash is computed over.
+	ResolvedAddr string `json:"resolved_addr,omitempty"`
 }
 
 // WithPosture fills the two fields that say which walls were around a machine.

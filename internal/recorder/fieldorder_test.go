@@ -71,6 +71,7 @@ func TestTheEventFieldOrderIsFrozen(t *testing.T) {
 		StoreKeys:      []EvStoreKey{{Name: "n", Read: []string{"r"}, Write: []string{"w"}}},
 		RecordPayloads: &yes,
 		RedactedFields: 1,
+		ResolvedAddr:   "r",
 	}
 
 	// The fixture above must set every field on Event, not only the ones
@@ -138,6 +139,7 @@ func TestTheEventFieldOrderIsFrozen(t *testing.T) {
 		// session.erasure's second counter (P7-17, F6) — appended after
 		// everything above, which is what makes it safe.
 		"redacted_fields",
+		"resolved_addr",
 	}
 
 	got := keysInOrder(t, string(body))

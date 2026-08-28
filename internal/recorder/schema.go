@@ -132,6 +132,7 @@ func Types() []EventType {
 				{Name: "bytes_in", Type: "integer", Doc: "bytes read from upstream"},
 				{Name: "bytes_out", Type: "integer", Doc: "bytes written upstream"},
 				{Name: "peer", Type: "string", Doc: "who connected — the address a connection refused as foreign_peer came from; the request was never parsed, so host and port are absent on those", When: "reason is foreign_peer"},
+				{Name: "resolved_addr", Type: "string", Doc: "where the requested host actually resolved to. Recorded because the 403 the guest reads names no address: telling a sandbox which address an allowlisted name resolves to hands it a DNS lookup it has no resolver to perform", When: "reason is unsafe_resolved_address"},
 				agentField(),
 			}},
 		{Type: TypeSecretUse, Source: SourceHost,

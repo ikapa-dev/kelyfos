@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"strings"
 	"testing"
 	"time"
@@ -23,20 +24,26 @@ func TestIsUnsafeResolvedIP(t *testing.T) {
 		"0.0.0.0", "::",
 		"224.0.0.1", "ff02::1",
 	}
+	// Same cases and same expectations as when this was written for F2; only
+	// the argument type moved, from net.IP to netip.Addr, when the predicate
+	// stack became a reviewable prefix table (F14).
 	for _, s := range unsafe {
-		ip := net.ParseIP(s)
-		if ip == nil {
+		a, err := netip.ParseAddr(s)
+		if err != nil {
 			t.Fatalf("test bug: %q does not parse as an IP", s)
 		}
-		if !isUnsafeResolvedIP(ip) {
+		if !isUnsafeResolvedAddr(a) {
 			t.Errorf("%s must be refused as an egress dial target, and was not", s)
 		}
 	}
 
 	safe := []string{"93.184.216.34", "1.1.1.1", "8.8.8.8", "2606:4700:4700::1111"}
 	for _, s := range safe {
-		ip := net.ParseIP(s)
-		if isUnsafeResolvedIP(ip) {
+		a, err := netip.ParseAddr(s)
+		if err != nil {
+			t.Fatalf("test bug: %q does not parse as an IP", s)
+		}
+		if isUnsafeResolvedAddr(a) {
 			t.Errorf("%s is a routable public address and must not be refused", s)
 		}
 	}
