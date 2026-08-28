@@ -193,13 +193,53 @@ type Error struct {
 func (e *Error) Error() string { return SafeText(e.Kind) + ": " + SafeText(e.Message) }
 
 // Sanitize replaces every string field the far side of a channel chose with
-// its SafeText form, in place. Nil-safe, because an Error is carried as a
-// pointer on every frame that has one and is absent on most of them.
+// its SafeText form, in place, and holds Kind to the enumeration below.
+// Nil-safe, because an Error is carried as a pointer on every frame that has
+// one and is absent on most of them.
+//
+// The Kind half is P7-17/F20's rider from the record workstream's review.
+// internal/recorder/erase.go exempts an event's error kind from erasure as "a
+// fixed enumeration", and it was not one: host/exec.go copied the guest's Kind
+// verbatim into the chain and nothing checked it — exitCodeFor switches with a
+// default, which accepts rather than rejects — so arbitrary guest text sat in a
+// field docs/retention.md promises "survives unchanged", and survived an
+// erasure verbatim. That is F12's exact shape one field to the left: an
+// exemption justified by a property no code enforced. The enumeration lives in
+// this file, so the rule that makes it one lives here too, at the same edge
+// every other guest string is cleaned at.
+//
+// A kind that is not one of the seven becomes ErrInternal, and the string the
+// guest actually sent moves into Message — which is where guest-chosen prose
+// belongs, is the field this path no longer records at all, and is still
+// printed on the operator's terminal. Nothing diagnostic is lost; it is moved
+// to the field that is allowed to hold it.
 func (e *Error) Sanitize() {
 	if e == nil {
 		return
 	}
 	e.Kind, e.Message = SafeText(e.Kind), SafeText(e.Message)
+	if KnownErrorKind(e.Kind) {
+		return
+	}
+	if e.Kind != "" {
+		if e.Message == "" {
+			e.Message = e.Kind
+		} else {
+			e.Message = e.Kind + ": " + e.Message
+		}
+	}
+	e.Kind = ErrInternal
+}
+
+// KnownErrorKind reports whether kind is one of the seven this protocol
+// defines. Exact: neither case nor surrounding whitespace is forgiven, because
+// a field an auditor is told is an enumeration has to be one.
+func KnownErrorKind(kind string) bool {
+	switch kind {
+	case ErrBadRequest, ErrNotFound, ErrDenied, ErrTimeout, ErrKilled, ErrIO, ErrInternal:
+		return true
+	}
+	return false
 }
 
 // Error kinds. Anything reported to the host is one of these.

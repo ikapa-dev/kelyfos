@@ -4,7 +4,9 @@ import (
 	"encoding/base64"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/p4r4n0rm4l/KelyfOS/internal/proto"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
 )
 
@@ -275,4 +277,38 @@ func TestF20_AForeignPeerRefusalSaysWhoKnockedAndWhy(t *testing.T) {
 			t.Errorf("the watch TUI does not say who connected:\n  %s", got)
 		}
 	})
+}
+
+// P7-17/F20, rider 2 (from the record workstream's review). host/exec.go
+// copied resp.Error.Message straight into the chain, and that string is the
+// guest supervisor's own prose carrying agent-chosen content — an argv, a path
+// — which is F12's shape: guest text in a record field, unbounded and not
+// enumerated. The chain keeps Kind, which is an enumeration now, and nothing
+// else from the guest's error.
+func TestF20_TheExecRecordKeepsTheErrorKindAndNotTheGuestsProse(t *testing.T) {
+	resp := proto.ExecResponse{
+		Stream: proto.StreamExit,
+		Error: &proto.Error{
+			Kind:    proto.ErrNotFound,
+			Message: `exec: "/tmp/\x00../../etc/shadow": executable file not found in $PATH`,
+		},
+	}
+	ev := execExitEvent("e1", "master", resp, 42*time.Millisecond)
+	if ev.Error == nil {
+		t.Fatal("the exit event carries no error at all")
+	}
+	if ev.Error.Kind != proto.ErrNotFound {
+		t.Errorf("the kind was not carried: %q", ev.Error.Kind)
+	}
+	if ev.Error.Message != "" {
+		t.Errorf("the guest's message reached the chain: %q", ev.Error.Message)
+	}
+	// Everything else the event is for is still there.
+	if ev.Call != "e1" || ev.Agent != "master" || ev.DurationMS != 42 {
+		t.Errorf("the exit event lost a field it is supposed to carry: %+v", ev)
+	}
+	// And an exit with no error carries none.
+	if ev := execExitEvent("e2", "", proto.ExecResponse{Stream: proto.StreamExit}, 0); ev.Error != nil {
+		t.Errorf("a clean exit grew an error: %+v", ev.Error)
+	}
 }

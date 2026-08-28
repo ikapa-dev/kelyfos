@@ -57,10 +57,25 @@ func snapshotDir(name string) (string, error) {
 	if err := validSnapshotName(name); err != nil {
 		return "", err
 	}
-	root := filepath.Join(sandbox.Root(), "snapshots")
+	return snapshotPathUnder(filepath.Join(sandbox.Root(), "snapshots"), name)
+}
+
+// snapshotPathUnder is the join and the assertion, separated from the
+// character rule above it so that it can be driven on its own.
+//
+// That separation is the point rather than tidiness: an assertion that can only
+// be reached through a check which already makes it unreachable is an assertion
+// nobody can watch fail, and this task has already found four tests that could
+// not fail. Feed this a name validSnapshotName would have refused and it
+// refuses too, which is what says the belt exists independently of the braces.
+func snapshotPathUnder(root, name string) (string, error) {
 	dir := filepath.Join(root, name)
 	rel, err := filepath.Rel(root, dir)
-	if err != nil || rel != name || rel == ".." ||
+	// rel == "." is the snapshots root itself, which a name of "." resolves to
+	// and which every other clause here is happy with — found by driving this
+	// function on its own rather than through validSnapshotName, which is the
+	// whole reason it is a separate function.
+	if err != nil || rel != name || rel == "." || rel == ".." ||
 		strings.HasPrefix(rel, ".."+string(filepath.Separator)) ||
 		strings.ContainsRune(rel, filepath.Separator) {
 		return "", fmt.Errorf("snapshot name %q does not resolve to a directory inside %s", name, root)

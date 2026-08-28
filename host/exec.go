@@ -138,14 +138,7 @@ to close.
 			}
 		case proto.StreamExit:
 			out.flush()
-			ev := recorder.Event{
-				Type: recorder.TypeCommandExit, Call: reqID, Code: resp.Code,
-				Signal: resp.Signal, DurationMS: time.Since(started).Milliseconds(),
-				Agent: st.Agent,
-			}
-			if resp.Error != nil {
-				ev.Error = &recorder.EvError{Kind: resp.Error.Kind, Message: resp.Error.Message}
-			}
+			ev := execExitEvent(reqID, st.Agent, resp, time.Since(started))
 			_ = rec.Append(ev)
 
 			if resp.Error != nil {
@@ -169,6 +162,28 @@ to close.
 			return fmt.Errorf("guest sent unknown stream %q", resp.Stream)
 		}
 	}
+}
+
+// execExitEvent is the command.exit record for one finished exec.
+//
+// A function rather than four lines inline because of what it decides: which
+// of the guest's fields reach the chain. Error.Message is the guest
+// supervisor's own prose and carries agent-chosen content — `exec: "/tmp/…":
+// executable file not found` — which is F12's shape, guest text in a record
+// field, unbounded and not enumerated. So the chain keeps Kind, which
+// proto.Error.Sanitize has already held to the protocol's seven values, and
+// nothing else; the message is still printed on the operator's terminal by the
+// caller, live, where it is useful and transient (P7-17/F20, rider from the
+// record workstream's review).
+func execExitEvent(call, agent string, resp proto.ExecResponse, took time.Duration) recorder.Event {
+	ev := recorder.Event{
+		Type: recorder.TypeCommandExit, Call: call, Code: resp.Code,
+		Signal: resp.Signal, DurationMS: took.Milliseconds(), Agent: agent,
+	}
+	if resp.Error != nil {
+		ev.Error = &recorder.EvError{Kind: resp.Error.Kind}
+	}
+	return ev
 }
 
 // exitCodeFor maps a protocol error onto the exit status the CLI reports. The

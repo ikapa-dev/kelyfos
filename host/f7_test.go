@@ -76,27 +76,49 @@ func TestF7_SnapshotDirAcceptsAnOrdinaryNameAndStaysUnderTheRoot(t *testing.T) {
 	}
 }
 
-// The belt-and-braces half: even if the character rule above is ever loosened,
-// the joined path is asserted to stay under the snapshot root before it is
-// returned. Checked by asking for a name the validator accepts and then
-// confirming the assertion exists — a name that passes validation but escapes
-// cannot be constructed today, which is the point, so this drives the
-// assertion through the only door it has.
-func TestF7_TheJoinAssertionIsThereAndNotJustTheCharacterRule(t *testing.T) {
-	src, err := os.ReadFile("snapshot.go")
-	if err != nil {
-		t.Fatal(err)
+// The belt-and-braces half, driven on its own. A name that passes the character
+// rule and still escapes cannot be constructed today — that is what the
+// character rule is for — so the assertion is a separate function and this
+// feeds it directly. An assertion reachable only through a check that already
+// makes it unreachable is an assertion nobody can watch fail, and this task has
+// already found four tests that could not.
+func TestF7_TheJoinAssertionRefusesWithoutHelpFromTheCharacterRule(t *testing.T) {
+	root := "/cache/snapshots"
+	for _, name := range []string{"../evil", "..", "a/b", "/etc/passwd", "", ".", "./x", "a/../b"} {
+		dir, err := snapshotPathUnder(root, name)
+		if err == nil {
+			t.Errorf("snapshotPathUnder(%q, %q) = %q, want a refusal from the join assertion alone",
+				root, name, dir)
+		}
 	}
-	body := string(src)
-	fn := body[strings.Index(body, "func snapshotDir("):]
-	fn = fn[:strings.Index(fn, "\n}\n")]
-	if !strings.Contains(fn, "validSnapshotName") {
-		t.Error("snapshotDir does not call validSnapshotName; the gate is not in the path function")
+	for _, name := range []string{"default", "v1.0", "a_b-c.d"} {
+		dir, err := snapshotPathUnder(root, name)
+		if err != nil {
+			t.Errorf("snapshotPathUnder(%q, %q): %v", root, name, err)
+		}
+		if want := filepath.Join(root, name); dir != want {
+			t.Errorf("snapshotPathUnder(%q, %q) = %q, want %q", root, name, dir, want)
+		}
 	}
-	if !strings.Contains(fn, "filepath.Rel") {
-		t.Error("snapshotDir does not assert filepath.Rel on the joined path; " +
-			"the character rule is the only thing standing between a name and a directory")
+}
+
+// And the gate itself: snapshotDir must apply BOTH, so removing either one is
+// caught. The character rule is what refuses a name; the join assertion is what
+// catches the day the character rule is loosened.
+func TestF7_SnapshotDirAppliesBothTheRuleAndTheAssertion(t *testing.T) {
+	t.Setenv("KELYFOS_CACHE", t.TempDir())
+	// A name only validSnapshotName refuses: the join assertion is happy with
+	// a leading dot and with a space.
+	for _, name := range []string{".hidden", "with space", "semi;colon"} {
+		if _, err := snapshotDir(name); err == nil {
+			t.Errorf("snapshotDir(%q) was accepted; the character rule is not being applied", name)
+		}
+		if _, err := snapshotPathUnder(filepath.Join("/root", "snapshots"), name); err != nil {
+			t.Errorf("the join assertion refuses %q on its own, so the case above proves nothing", name)
+		}
 	}
+	// A name only the join assertion refuses cannot be built past
+	// validSnapshotName, which is why that half is tested directly above.
 }
 
 // And nothing routes around it. A future call site that joins the snapshots
