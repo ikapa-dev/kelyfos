@@ -229,21 +229,37 @@ before the hole as though the hole were not there. Nothing distinguished that
 record from a session in which the lost commands were never run (F13).
 
 Now the first failure is final. No further event is recorded through that
-recorder, and the run loop is told: the machine is brought down rather than
-left running unrecorded. The recorder then writes one last `session.end` of
-its own, with `reason` = `recorder failed at seq N: <error>` — `N` being the
-sequence number of the event that could not be written, and `<error>` the
-underlying failure, bounded to 160 bytes. When that line does reach the chain
-it takes `N` as its own `seq`, so the chain has no gap: seq `N` is the place
-where the lost event would have been, and what is there instead says so.
+recorder: every later append is refused rather than quietly resuming a chain
+with a hole in it, so the record stops where the recording stopped. The
+recorder also closes a channel the moment it breaks, and reports the error and
+the sequence number of the event that was lost, **so that a run loop can stop
+the machine rather than leave it running unrecorded.**
+
+**That wiring is not in place yet.** Nothing outside the recorder watches the
+channel today, so a sandbox whose recorder has failed keeps running and keeps
+making egress, and the only signal is that its chain stops. Closing that is a
+separate change; until it lands, "the record stops" is the whole of what this
+guarantees, and this paragraph will say the machine is brought down when the
+machine is actually brought down.
+
+The recorder does write one last `session.end` of its own where it can, with
+`reason` = `recorder failed at seq N: <error>` — `N` being the sequence number
+of the event that could not be written, and `<error>` the underlying failure,
+bounded to 160 bytes. When that line reaches the chain it takes `N` as its own
+`seq`, so the chain has no gap: seq `N` is the place where the lost event would
+have been, and what is there instead says so.
 
 That line is the difference between a chain that stops for no stated reason
 and one that says why it stops: without it, a truncated record and a session
-that is still open are indistinguishable (§5). It is best effort in both
-directions — a disk with no room for the lost event usually has none for this
-either, and a chain that no longer parses cannot be appended to at all — so a
-record that simply stops, with no `session.end` anywhere, remains a shape a
-reader must be ready for.
+that is still open are indistinguishable (§5). It is genuinely best effort,
+and the two failures that reach it are the two that block it — a disk with no
+room for the lost event has none for this either, and a chain that no longer
+parses cannot be appended to at all. A disk that filled part-way through a
+line is the worst of them: the partial line left behind makes the file
+unappendable and unverifiable both, so what a reader gets is a record that
+visibly stops. **A record that simply stops, with no `session.end` anywhere, is
+a shape a reader must be ready for** — and it is still the better artefact,
+because the alternative this replaced was a chain that carried on and verified.
 
 ### `command.start`
 A command was submitted, before it runs.

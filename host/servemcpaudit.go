@@ -197,7 +197,7 @@ func (s *hostServer) auditCall(p *mcp.CallToolParams) func(*mcp.CallToolResult) 
 // call failed, which tool, with which arguments, and how.
 func resultErrorShape(res *mcp.CallToolResult) string {
 	if m, ok := res.StructuredContent.(map[string]any); ok {
-		if code, ok := structuredExitCode(m["exit_code"]); ok {
+		if code, ok := structuredExitCode(m[execExitCodeKey]); ok {
 			return fmt.Sprintf("exit status %d", code)
 		}
 	}
@@ -208,25 +208,56 @@ func resultErrorShape(res *mcp.CallToolResult) string {
 	return fmt.Sprintf("the tool reported an error in %d bytes of content", n)
 }
 
+// execExitCodeKey is the key sandbox_exec puts a command's exit status under in
+// its structured result, and the key resultErrorShape reads it back out of.
+// One constant because the two must agree: with the string written out twice,
+// renaming it in the tool leaves this reading a key nothing sets, every failed
+// command quietly falls through to the byte-count branch, and no test notices
+// — a reviewer demonstrated exactly that by renaming it to `exitCode`, at
+// which point all three F12 tests still passed.
+//
+// host/servemcptools.go still writes the literal; TestF12_TheExecResultFixture-
+// StillMatchesTheTool checks the two against each other until it uses this.
+const execExitCodeKey = "exit_code"
+
 // structuredExitCode reads an exit status out of a result's structured
 // content. The value is an `any`: this server builds it as an int, but the
 // field is part of a wire-shaped map, so a float — what a JSON round trip
 // makes of an integer — is accepted too. Anything else is not an exit status
 // and is refused rather than formatted, because %d over an unexpected type is
 // how a value nobody sized reaches a record that promises it holds none.
+//
+// The range is checked as well as the type. A float64 carrying +Inf passes
+// math.Trunc unchanged and saturates to 9223372036854775807 on conversion,
+// which is not an exit status and would print as one; so would 1e300. Real
+// ones run -1 (sandbox.ExecResult's own "no exit code" sentinel) through 255,
+// and anything outside that falls through to the byte-count branch rather than
+// being reported as a status the guest never returned.
 func structuredExitCode(v any) (int, bool) {
-	switch n := v.(type) {
+	var n int
+	switch t := v.(type) {
 	case int:
-		return n, true
+		n = t
 	case int64:
-		return int(n), true
-	case float64:
-		if n != math.Trunc(n) {
+		if t < math.MinInt32 || t > math.MaxInt32 {
 			return 0, false
 		}
-		return int(n), true
+		n = int(t)
+	case float64:
+		if math.IsInf(t, 0) || math.IsNaN(t) || t != math.Trunc(t) {
+			return 0, false
+		}
+		if t < math.MinInt32 || t > math.MaxInt32 {
+			return 0, false
+		}
+		n = int(t)
+	default:
+		return 0, false
 	}
-	return 0, false
+	if n < -1 || n > 255 {
+		return 0, false
+	}
+	return n, true
 }
 
 // resultSandbox reads the id out of a structured result, for the tools that

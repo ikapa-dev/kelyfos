@@ -688,7 +688,22 @@ var eraseExempt = map[string]string{
 	"Stream": "stdout or stderr, a fixed enumeration",
 	"Signal": "an OS signal name, a fixed enumeration",
 
-	"Error.Kind": "a fixed enumeration",
+	// A fixed enumeration is what this is meant to be, and what an auditor
+	// reads it as. It is not yet what the code enforces: host/exec.go copies
+	// resp.Error.Kind verbatim off the wire from the guest, and nothing on the
+	// host checks it against proto's set — exitCodeFor switches on it with a
+	// default rather than rejecting. So guest-chosen text in this field
+	// survives an erasure today.
+	//
+	// That is F12's own shape one field to the left: an exemption resting on a
+	// property no code enforces. The fix is validation on ingest, mapping
+	// anything unknown to a fixed value, which belongs at the edge with the
+	// rest of the guest-string sanitising (F20) and not here — widening this
+	// map instead would redact the one part of an error an auditor most needs
+	// to keep, to compensate for a check that is missing somewhere else.
+	// docs/retention.md §5 states the condition rather than promising the
+	// property.
+	"Error.Kind": "meant to be a fixed enumeration, and exempt on that basis — but see the note above: host/exec.go does not yet validate the guest-supplied kind, so the exemption is not yet unconditionally true",
 	// Error.Message was exempt here until F12, on the stated ground that it
 	// was "generally a system-generated string (a timeout, a signal name)
 	// with no established precedent for holding raw guest content the way

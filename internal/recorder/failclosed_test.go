@@ -368,3 +368,112 @@ func TestF13_ANilRecorderNeverBreaks(t *testing.T) {
 		t.Errorf("EndBroken on a nil Recorder: %v", err)
 	}
 }
+
+// TestF13_NothingIsAppendedAfterALineThatWasNeverFinished.
+//
+// A write the filesystem serves short leaves a partial line, and F13(a) put an
+// unconditional writer — the epitaph — immediately after the moment a write
+// fails, which is precisely when a partial line is most likely. Appending onto
+// one fuses two events into a single physical line and turns a chain that
+// verified into one that does not.
+//
+// The first case is the dangerous one: a line cut at exactly its last byte is
+// a COMPLETE JSON object with no terminator, so Verify reads it happily and
+// reports the chain intact. Nothing downstream would have objected; catchUp is
+// the only place that can see the file was left unfinished.
+func TestF13_NothingIsAppendedAfterALineThatWasNeverFinished(t *testing.T) {
+	t.Run("a complete object with no newline", func(t *testing.T) {
+		root := t.TempDir()
+		writeRawChain(t, root, "torn", []Event{
+			{Type: TypeSessionStart, V: Version, TS: "2026-01-01T00:00:00.000Z", Sandbox: "torn"},
+			{Type: TypeCommandStart, V: Version, TS: "2026-01-01T00:00:01.000Z", Sandbox: "torn", Call: "c1"},
+			{Type: TypeCommandOutput, V: Version, TS: "2026-01-01T00:00:02.000Z", Sandbox: "torn", Data: "aGkK"},
+		})
+		path := Path(root, "torn")
+		blob := readFile(t, path)
+		if err := os.WriteFile(path, bytes.TrimRight(blob, "\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		torn := readFile(t, path)
+
+		// The premise: every reader of this file says it is fine.
+		if n, _, err := Verify(bytes.NewReader(torn)); err != nil || n != 3 {
+			t.Fatalf("premise failed — Verify says %d events, %v; this test needs a file that verifies", n, err)
+		}
+
+		rec, err := Open(root, "torn")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rec.Close()
+		if err := rec.Append(Event{Type: TypeSessionEnd, Reason: "shutdown"}); err == nil {
+			t.Fatalf("Append extended a file whose last line was never finished:\n%s", readFile(t, path))
+		} else if !strings.Contains(err.Error(), "newline") {
+			t.Errorf("Append refused for the wrong reason: %v", err)
+		}
+		if after := readFile(t, path); !bytes.Equal(torn, after) {
+			t.Error("a refused Append still wrote to the file")
+		}
+		// And the recorder is finished, so the epitaph cannot fuse onto it
+		// either — the call the contract says is safe on every exit path.
+		select {
+		case <-rec.Broken():
+		default:
+			t.Fatal("a file that was never finished did not break the recorder")
+		}
+		if err := rec.EndBroken(); err == nil {
+			t.Error("EndBroken appended a session.end onto a line that was never finished")
+		}
+		if after := readFile(t, path); !bytes.Equal(torn, after) {
+			t.Fatalf("EndBroken rewrote the file:\n%s", after)
+		}
+	})
+
+	// And the production route: a disk that fills part-way through the line.
+	// fillTheDisk's other callers pin the limit exactly AT the file's size so
+	// the write is refused whole; this one leaves room for part of a line,
+	// which is what a real ENOSPC does and what the tests above deliberately
+	// avoid in order to measure the latch on its own.
+	t.Run("a partial object from a short write", func(t *testing.T) {
+		root := t.TempDir()
+		rec, err := Open(root, "short")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rec.Close()
+		if err := rec.Append(Event{Type: TypeSessionStart, Image: "base"}); err != nil {
+			t.Fatal(err)
+		}
+		path := Path(root, "short")
+		intact := readFile(t, path)
+
+		restore := fillTheDisk(t, chainSize(t, path)+40)
+		appendErr := rec.Append(Event{Type: TypeCommandOutput, Call: "c1", Stream: "stdout",
+			Data: strings.Repeat("QUJD", 64), Bytes: 192})
+		restore()
+		if appendErr == nil {
+			t.Fatal("the write was supposed to be served short; it was not")
+		}
+		torn := readFile(t, path)
+		if len(torn) <= len(intact) {
+			t.Skipf("the write landed no bytes at all (%d), so there is no torn line to test here", len(torn))
+		}
+		if torn[len(torn)-1] == '\n' {
+			t.Fatalf("expected a line with no terminator, got one ending in a newline")
+		}
+		t.Logf("the short write left %d bytes of a partial line: %s", len(torn)-len(intact), torn[len(intact):])
+
+		// No epitaph is possible, and that is the honest outcome: what a
+		// reader gets is a record that visibly stops, not one that quietly
+		// carries on.
+		if err := rec.EndBroken(); err == nil {
+			t.Error("EndBroken appended onto a partial line")
+		}
+		if after := readFile(t, path); !bytes.Equal(torn, after) {
+			t.Fatalf("EndBroken rewrote the file:\n%s", after)
+		}
+		if _, _, verr := Verify(bytes.NewReader(torn)); verr == nil {
+			t.Error("a chain ending in a partial event verified")
+		}
+	})
+}

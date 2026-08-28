@@ -217,8 +217,8 @@ the same value space `team.store`'s own `peer` field already redacts when
 a key is actually accessed, kept consistent between declaration and use),
 and `error.message` (see below — it is redacted since v1.1, and was not
 before). Everything else about each event — its type, timestamp, agent,
-`error.kind`, byte counts, exit codes, resource figures — survives
-unchanged. A new
+`error.kind` (with the caveat below), byte counts, exit codes, resource
+figures — survives unchanged. A new
 `session.erasure` event is appended recording that this ran, why (an
 operator-supplied `-reason`, required — an erasure with no stated reason
 would be exactly the kind of unaccountable action this product's whole
@@ -461,6 +461,28 @@ writer of that field puts there is covered without anyone having to
 remember. Either fix alone would have drifted: an exemption is what tells
 the next writer of a field that it is a safe place to put a string.
 `error.kind` — the fixed enumeration an auditor reads — is still exempt.
+
+**`error.kind` is exempt on a condition, not yet on a fact.** It is meant to
+be a fixed enumeration — `internal`, `tool`, `timeout` and the rest — and an
+auditor reads it as one, which is why an erasure keeps it: it says *what kind
+of thing went wrong* without saying what was in it. The host does not yet
+enforce that. `host/exec.go` copies the guest supervisor's `kind` verbatim off
+the wire and nothing checks it against the protocol's own set, so guest-chosen
+text in that field survives an erasure today. The fix is validation on ingest,
+mapping anything unknown to a fixed value, which belongs at the edge with the
+rest of the guest-string sanitising rather than here — widening the redacted
+list instead would remove the one part of an error an auditor most needs to
+keep, to make up for a check missing somewhere else. Until that lands, read
+this exemption as conditional: `error.kind` survives unchanged, and on the
+`kelyfos exec` path what survives is whatever the guest put there.
+
+A second route deserves the same honesty. `error.message` is redacted now, so
+an **erased** chain is clean whatever writes it — but an un-erased one can
+still carry guest bytes there by a route the audit lane's own fix does not
+cover: `host/servemcptools.go` records `err.Error()` from `sandbox.Exec`, and
+one of those errors embeds the guest-chosen stream name. `proto.SafeText`
+bounds its character class, not its length. The record holds it until an
+erasure removes it.
 
 **What is deliberately out of scope.** Per-agent or
 per-event scoping — "erase only what agent X said," rather than a whole

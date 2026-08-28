@@ -4102,21 +4102,37 @@ before the hole as though the hole were not there. Nothing distinguished that
 record from a session in which the lost commands were never run (F13).
 
 Now the first failure is final. No further event is recorded through that
-recorder, and the run loop is told: the machine is brought down rather than
-left running unrecorded. The recorder then writes one last `session.end` of
-its own, with `reason` = `recorder failed at seq N: <error>` — `N` being the
-sequence number of the event that could not be written, and `<error>` the
-underlying failure, bounded to 160 bytes. When that line does reach the chain
-it takes `N` as its own `seq`, so the chain has no gap: seq `N` is the place
-where the lost event would have been, and what is there instead says so.
+recorder: every later append is refused rather than quietly resuming a chain
+with a hole in it, so the record stops where the recording stopped. The
+recorder also closes a channel the moment it breaks, and reports the error and
+the sequence number of the event that was lost, **so that a run loop can stop
+the machine rather than leave it running unrecorded.**
+
+**That wiring is not in place yet.** Nothing outside the recorder watches the
+channel today, so a sandbox whose recorder has failed keeps running and keeps
+making egress, and the only signal is that its chain stops. Closing that is a
+separate change; until it lands, "the record stops" is the whole of what this
+guarantees, and this paragraph will say the machine is brought down when the
+machine is actually brought down.
+
+The recorder does write one last `session.end` of its own where it can, with
+`reason` = `recorder failed at seq N: <error>` — `N` being the sequence number
+of the event that could not be written, and `<error>` the underlying failure,
+bounded to 160 bytes. When that line reaches the chain it takes `N` as its own
+`seq`, so the chain has no gap: seq `N` is the place where the lost event would
+have been, and what is there instead says so.
 
 That line is the difference between a chain that stops for no stated reason
 and one that says why it stops: without it, a truncated record and a session
-that is still open are indistinguishable (§5). It is best effort in both
-directions — a disk with no room for the lost event usually has none for this
-either, and a chain that no longer parses cannot be appended to at all — so a
-record that simply stops, with no `session.end` anywhere, remains a shape a
-reader must be ready for.
+that is still open are indistinguishable (§5). It is genuinely best effort,
+and the two failures that reach it are the two that block it — a disk with no
+room for the lost event has none for this either, and a chain that no longer
+parses cannot be appended to at all. A disk that filled part-way through a
+line is the worst of them: the partial line left behind makes the file
+unappendable and unverifiable both, so what a reader gets is a record that
+visibly stops. **A record that simply stops, with no `session.end` anywhere, is
+a shape a reader must be ready for** — and it is still the better artefact,
+because the alternative this replaced was a chain that carried on and verified.
 
 ### `command.start`
 A command was submitted, before it runs.
@@ -11226,8 +11242,8 @@ the same value space `team.store`'s own `peer` field already redacts when
 a key is actually accessed, kept consistent between declaration and use),
 and `error.message` (see below — it is redacted since v1.1, and was not
 before). Everything else about each event — its type, timestamp, agent,
-`error.kind`, byte counts, exit codes, resource figures — survives
-unchanged. A new
+`error.kind` (with the caveat below), byte counts, exit codes, resource
+figures — survives unchanged. A new
 `session.erasure` event is appended recording that this ran, why (an
 operator-supplied `-reason`, required — an erasure with no stated reason
 would be exactly the kind of unaccountable action this product's whole
@@ -11470,6 +11486,28 @@ writer of that field puts there is covered without anyone having to
 remember. Either fix alone would have drifted: an exemption is what tells
 the next writer of a field that it is a safe place to put a string.
 `error.kind` — the fixed enumeration an auditor reads — is still exempt.
+
+**`error.kind` is exempt on a condition, not yet on a fact.** It is meant to
+be a fixed enumeration — `internal`, `tool`, `timeout` and the rest — and an
+auditor reads it as one, which is why an erasure keeps it: it says *what kind
+of thing went wrong* without saying what was in it. The host does not yet
+enforce that. `host/exec.go` copies the guest supervisor's `kind` verbatim off
+the wire and nothing checks it against the protocol's own set, so guest-chosen
+text in that field survives an erasure today. The fix is validation on ingest,
+mapping anything unknown to a fixed value, which belongs at the edge with the
+rest of the guest-string sanitising rather than here — widening the redacted
+list instead would remove the one part of an error an auditor most needs to
+keep, to make up for a check missing somewhere else. Until that lands, read
+this exemption as conditional: `error.kind` survives unchanged, and on the
+`kelyfos exec` path what survives is whatever the guest put there.
+
+A second route deserves the same honesty. `error.message` is redacted now, so
+an **erased** chain is clean whatever writes it — but an un-erased one can
+still carry guest bytes there by a route the audit lane's own fix does not
+cover: `host/servemcptools.go` records `err.Error()` from `sandbox.Exec`, and
+one of those errors embeds the guest-chosen stream name. `proto.SafeText`
+bounds its character class, not its length. The record holds it until an
+erasure removes it.
 
 **What is deliberately out of scope.** Per-agent or
 per-event scoping — "erase only what agent X said," rather than a whole

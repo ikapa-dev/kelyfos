@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"strings"
 	"testing"
@@ -326,6 +327,15 @@ func failingExecResult() *mcp.CallToolResult {
 // about whether a field holds guest content. If sandbox_exec ever stops
 // building its result out of the guest's stdout, the fixture above stops
 // standing for anything and this test says so.
+//
+// The exit-status key is the load-bearing half, and the first version of this
+// test could not fail on it: it checked two lines resultErrorShape never
+// reads, so renaming the structured key to `exitCode` left all three F12 tests
+// green while every failing sandbox_exec silently fell through to the
+// byte-count branch. It now checks the key resultErrorShape ACTUALLY reads,
+// spelled from the constant itself, against the tool that writes it — which is
+// a guard that fails when the two drift, and which becomes unnecessary the day
+// servemcptools.go uses execExitCodeKey instead of the literal.
 func TestF12_TheExecResultFixtureStillMatchesTheTool(t *testing.T) {
 	src := readSource(t, "servemcptools.go")
 	for _, want := range []string{"text.Write(res.Stdout)", "IsError: res.Code != 0"} {
@@ -333,6 +343,56 @@ func TestF12_TheExecResultFixtureStillMatchesTheTool(t *testing.T) {
 			t.Errorf("servemcptools.go no longer contains %q — failingExecResult() no longer "+
 				"stands for what sandbox_exec actually returns", want)
 		}
+	}
+	if key := `"` + execExitCodeKey + `":`; !strings.Contains(src, key) {
+		t.Errorf("servemcptools.go does not write %s into its structured result, but resultErrorShape "+
+			"reads that key: every failing sandbox_exec would fall through to the byte-count branch "+
+			"instead of recording its exit status, and nothing else would say so", key)
+	}
+}
+
+// TestF12_TheExitStatusIsAnExitStatus. resultErrorShape puts a number from the
+// tool result straight into the record, so the one thing it must not do is
+// format something that is not an exit status as one. +Inf survives
+// math.Trunc unchanged and saturates to MaxInt64 on conversion; 1e300 does the
+// same.
+func TestF12_TheExitStatusIsAnExitStatus(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		v    any
+		want int
+		ok   bool
+	}{
+		{"an ordinary status", 2, 2, true},
+		{"zero", 0, 0, true},
+		{"the no-exit-code sentinel", -1, -1, true},
+		{"the top of the range", 255, 255, true},
+		{"a JSON round trip", float64(2), 2, true},
+		{"positive infinity", math.Inf(1), 0, false},
+		{"negative infinity", math.Inf(-1), 0, false},
+		{"not a number", math.NaN(), 0, false},
+		{"far past any exit status", 1e300, 0, false},
+		{"above the range", 256, 0, false},
+		{"below the sentinel", -2, 0, false},
+		{"not whole", 2.5, 0, false},
+		{"a string", "2", 0, false},
+		{"absent", nil, 0, false},
+		{"an object", map[string]any{"exit_code": 2}, 0, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := structuredExitCode(tc.v)
+			if ok != tc.ok || got != tc.want {
+				t.Errorf("structuredExitCode(%v) = (%d, %v), want (%d, %v)", tc.v, got, ok, tc.want, tc.ok)
+			}
+		})
+	}
+
+	// And end to end: a result whose exit_code is nonsense must not produce a
+	// line claiming an exit status.
+	res := failingExecResult()
+	res.StructuredContent = map[string]any{execExitCodeKey: math.Inf(1)}
+	if msg := resultErrorShape(res); strings.Contains(msg, "exit status") {
+		t.Errorf("resultErrorShape reported %q for an exit_code of +Inf", msg)
 	}
 }
 

@@ -458,7 +458,10 @@ type Recorder struct {
 	//
 	// So the first failure is final. failure holds it, failedAt is the seq
 	// the event that could not be written would have had, and broken is
-	// closed so a run loop can select on it and bring the machine down.
+	// closed so a run loop can select on it and bring the machine down — which
+	// nothing does yet, and is the other half of this change (F13(b)); until it
+	// lands, the guarantee here is that the record stops, not that the machine
+	// does.
 	// Nothing is ever recorded through this Recorder again — the one
 	// exception being the single session.end writeEpitaphLocked adds, which
 	// says why the record stops where it does.
@@ -533,6 +536,36 @@ func (r *Recorder) catchUp() error {
 	}
 	if info.Size() == r.off {
 		return nil
+	}
+	// A file that does not end in a newline had its last line cut short, and
+	// nothing may be appended after it.
+	//
+	// Append writes the line and its newline in one Write, and Erase writes a
+	// buffer that ends in one, so no writer of this file finishes without it.
+	// A file missing it was left that way by a writer that did not finish — a
+	// process killed mid-write, or a write the filesystem served short because
+	// the disk filled. Both leave a partial line, and the partial line can
+	// still be a COMPLETE JSON object: 313 bytes of a 314-byte line is the
+	// whole event without its terminator. json.Unmarshal parses that happily,
+	// so the scan below used to accept it, and the next Append landed straight
+	// on the end of it — producing {…}{…} on one physical line and turning a
+	// chain that verified into one that reports "line 2 is not a valid event".
+	//
+	// This is why the check is here rather than in Verify: Verify is a reader,
+	// and a final line that is a complete, correctly chained event is a
+	// question about presentation. catchUp is what every writer consults
+	// before extending the file, and extending a file whose last line was
+	// never finished is what actually destroys the record. Refusing here
+	// latches the recorder (F13) and nothing is appended after it.
+	if info.Size() > 0 {
+		var last [1]byte
+		if _, err := r.f.ReadAt(last[:], info.Size()-1); err != nil {
+			return err
+		}
+		if last[0] != '\n' {
+			return fmt.Errorf("flight recorder is corrupt: the file does not end in a newline, so its "+
+				"last line was never finished — a writer was cut short at byte %d", info.Size())
+		}
 	}
 	sc := bufio.NewScanner(io.NewSectionReader(r.f, 0, info.Size()))
 	sc.Buffer(make([]byte, 0, 64<<10), MaxLine)
@@ -694,7 +727,7 @@ func (r *Recorder) failLocked(err error) {
 	// that turns a truncated chain into one that says why it is truncated.
 	// It usually cannot be written — a full disk has no room for it either,
 	// and a corrupt chain fails catchUp again — which is exactly why
-	// EndBroken exists for the shutdown path to try once more.
+	// EndBroken exists for a shutdown path to try once more.
 	_ = r.writeEpitaphLocked()
 }
 
@@ -705,10 +738,21 @@ func (r *Recorder) failLocked(err error) {
 // this: `reason` is already the field that says why a session ended, this is
 // why this session ended, and a schema whose answer to every new circumstance
 // is a new field is a schema no independent reader can keep up with. The
-// chain that results is a complete, verifiable session whose last line says
-// the recording was cut short and at which sequence number — which is the
-// distinction docs/events.md notes the record could not previously draw,
-// where a truncated chain and a session still open are indistinguishable.
+// When it can be written, the chain that results is a complete, verifiable
+// session whose last line says the recording was cut short and at which
+// sequence number — which is the distinction docs/events.md notes the record
+// could not previously draw, where a truncated chain and a session still open
+// are indistinguishable.
+//
+// It often cannot be written, and the two reachable failures are exactly the
+// two that block it. A chain that no longer parses fails catchUp again. And a
+// disk that filled part-way through a line leaves a torn one: measured, 40
+// bytes of a partial event, after which catchUp refuses the file outright
+// (see its own comment) and no epitaph is possible — the chain does not
+// verify at all, and what a reader has is a record that visibly stops rather
+// than one that says why. That is a worse artefact than the epitaph and a far
+// better one than a chain that quietly carries on, which is what this all
+// replaced. docs/events.md says so rather than promising the good case.
 //
 // When it does land it takes failedAt as its own seq, since that number was
 // freed when the lost event rolled back: seq N is where the lost event would
@@ -735,6 +779,11 @@ func (r *Recorder) writeEpitaphLocked() error {
 // the machine down when it fires. Nothing else in this package closes it, and
 // it is never reopened — a recorder that has lost an event stays lost.
 //
+// It has no caller outside this package yet. Wiring it into host/run.go is
+// F13(b), and until that lands a sandbox whose recorder has broken goes on
+// running with nothing recorded — the harm the finding describes, narrowed to
+// "the record stops and says so" from "the record carries on and lies."
+//
 // A nil Recorder is recording disabled, not a broken one, and returns a nil
 // channel: a receive on nil blocks forever, so a caller that selects on this
 // needs no special case for the sandbox that was asked not to record.
@@ -758,7 +807,7 @@ func (r *Recorder) Failure() (seq int, err error) {
 }
 
 // EndBroken makes one more attempt to get the "why the record stops here"
-// session.end onto the chain, for the shutdown path to call after it has seen
+// session.end onto the chain, for a shutdown path to call after it has seen
 // Broken fire and stopped the machine. A no-op on an intact recorder, and a
 // no-op once the line is on the chain, so it is safe to call unconditionally
 // on the way out.
