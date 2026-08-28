@@ -69,6 +69,14 @@ type imageEntry struct {
 	mode os.FileMode
 	kind entryKind
 	link string // the target, for a symlink
+	// size is what the inode says it holds, straight out of `ls -l -p`. It is
+	// the only independent statement about a file the host has, and it is what
+	// makes a short dump detectable: `debugfs dump` opens its destination
+	// O_CREAT|O_TRUNC and copies block by block, reporting a per-command
+	// failure on stderr and exiting 0 regardless, so a file that exists is not
+	// evidence that a file came back (F17). Zero for a directory, where debugfs
+	// leaves the field empty.
+	size int64
 }
 
 // ErrHostileImage is returned for an image the host will not read.
@@ -215,6 +223,23 @@ func entryFrom(dir, record string) (*imageEntry, error) {
 		return nil, refuse("%s is neither a file, a directory nor a symlink (mode %o); "+
 			"a device node, a socket or a fifo is not something to create in somebody's project",
 			path.Join(dir, name), raw)
+	}
+	// The size the inode records. debugfs prints a byte count for everything
+	// but a directory, where the field is empty — verified against the real
+	// tool, whose records read `/18/100664/501/1000/top.txt/4/` for a file and
+	// `/16/040775/501/1000/plain//` for a directory.
+	//
+	// A file whose count does not parse is refused rather than defaulted,
+	// because the count is the only thing the host has to check a dump against
+	// and a defaulted one would check nothing (F17).
+	if e.kind != kindDir {
+		size, err := strconv.ParseInt(fields[6], 10, 64)
+		if err != nil || size < 0 {
+			return nil, refuse("%s records an unreadable size (%q), and the size is what says "+
+				"whether what comes out of the image is the whole file",
+				path.Join(dir, name), fields[6])
+		}
+		e.size = size
 	}
 	return e, nil
 }
@@ -425,20 +450,129 @@ func extractImage(imagePath string, entries []imageEntry, root *os.Root) error {
 	return nil
 }
 
-// dumpFiles pulls every file's contents out in one debugfs process.
+// stagingRoot is the directory a dump lands in before anything is put in the
+// person's tree.
+//
+// Under Root() rather than os.TempDir(), and that is a correctness choice
+// rather than a tidiness one. On most Linux hosts /tmp is a tmpfs — RAM — and
+// the guest chooses how many bytes it asks the host to stage: `truncate -s 100G
+// /work/000` is a sparse file inside the image that `dump` materialises as
+// zeros. Staging it in RAM fills the host's memory and then fails with ENOSPC,
+// at which point every remaining dump in the same script writes nothing and
+// exits 0 (F17). Root() is the filesystem the images already live on, which is
+// the disk the person chose for this tool.
+//
+// A quote character anywhere in the path is refused, because the destination is
+// interpolated into a double-quoted debugfs argument below — the same rule
+// validName applies to the guest's half of that command line, applied to the
+// host's half. It is close to unreachable (it needs a `"` in $HOME or in
+// KELYFOS_CACHE) and it is one line.
+func stagingRoot() (string, error) {
+	dir := filepath.Join(Root(), "extract")
+	if strings.ContainsAny(dir, `"'`) {
+		return "", fmt.Errorf("the staging directory %s contains a quote character, which cannot be "+
+			"closed safely inside the debugfs command that writes into it; set KELYFOS_CACHE "+
+			"to a path without one", dir)
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	return dir, nil
+}
+
+// debugfsErrors picks debugfs's own per-command failures out of its stderr.
+//
+// This is the stream both callers used to discard, and discarding it is what
+// made a per-command failure invisible: debugfs reports one through com_err —
+// "<command>: <message>", so the prefix is the name of the command that failed
+// — and then carries straight on to the next command and exits 0. Only a
+// whole-process failure ever reached the caller.
+//
+// Matched on the prefix rather than anywhere in the line, which is a deliberate
+// narrowing of what the review asked for. com_err always writes the name first,
+// and a workspace is allowed to contain a file called `dump:notes`; refusing on
+// the substring would refuse that person's whole image, and a refusal on this
+// path costs them the session's work.
+//
+// The version banner debugfs prints at startup ("debugfs 1.47.0 (5-Feb-2023)")
+// is not one of these — no colon after the name — and is not a failure.
+func debugfsErrors(stderr string) []string {
+	var out []string
+	for _, line := range strings.Split(stderr, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		for _, prefix := range []string{"dump: ", "ls: ", "stat: ", "debugfs: "} {
+			if strings.HasPrefix(line, prefix) {
+				out = append(out, line)
+				break
+			}
+		}
+	}
+	return out
+}
+
+// runDebugfs runs one script over an image and hands back both streams.
+//
+// Separately, because they say different things: the records are on stdout and
+// the failures are on stderr, and the previous CombinedOutput mixed them into
+// one blob that nothing parsed.
+func runDebugfs(imagePath, script string) (stdout, stderr string, err error) {
+	f, err := os.CreateTemp("", "kelyfos-debugfs-*")
+	if err != nil {
+		return "", "", err
+	}
+	defer os.Remove(f.Name())
+	if _, err := f.WriteString(script); err != nil {
+		f.Close()
+		return "", "", err
+	}
+	if err := f.Close(); err != nil {
+		return "", "", err
+	}
+	var outBuf, errBuf strings.Builder
+	cmd := exec.Command("debugfs", "-f", f.Name(), imagePath)
+	cmd.Stdout = &outBuf
+	cmd.Stderr = &errBuf
+	err = cmd.Run()
+	return outBuf.String(), errBuf.String(), err
+}
+
+// dumpFiles pulls every file's contents out of the image.
 //
 // The destinations are numbered by this package. That is the point of the whole
 // arrangement: debugfs is given no guest-chosen name to write to, so the worst a
 // crafted entry can do here is name a file that does not exist.
+//
+// Two invocations rather than one, and the split is not cosmetic. A *fast*
+// symlink — one whose target is short enough to live inside the inode — has no
+// data block, so `dump` on it legitimately writes nothing and legitimately
+// prints `dump: Attempt to read block from filesystem resulted in short read`.
+// Measured, against a five-character link:
+//
+//	/15/120777/501/1000/short/5/     ← the record
+//	dump -p "/short" …/15            → 0 bytes, exit 0, that line on stderr
+//
+// readLink already expects this and falls back to `stat`. So treating stderr as
+// fatal across one combined script would refuse every workspace containing a
+// short symlink, which is most of them — the fix would cost more work than the
+// defect. Regular files are dumped in their own process, where a line on stderr
+// means exactly what it says.
 func dumpFiles(imagePath string, entries []imageEntry) (map[string]string, func(), error) {
-	dir, err := os.MkdirTemp("", "kelyfos-extract-")
+	root, err := stagingRoot()
+	if err != nil {
+		return nil, func() {}, err
+	}
+	dir, err := os.MkdirTemp(root, "kelyfos-extract-")
 	if err != nil {
 		return nil, func() {}, err
 	}
 	cleanup := func() { os.RemoveAll(dir) }
 
 	staged := map[string]string{}
-	var script strings.Builder
+	var files, links strings.Builder
+	var total int64
 	for i, e := range entries {
 		if e.kind == kindDir {
 			continue
@@ -453,33 +587,52 @@ func dumpFiles(imagePath string, entries []imageEntry) (map[string]string, func(
 		// that could close this quoted argument early. With it refused,
 		// everything that can still appear — including whitespace — sits
 		// safely inside this quoting.
-		fmt.Fprintf(&script, "dump -p \"/%s\" %s\n", e.path, dest)
-	}
-	if script.Len() == 0 {
-		return staged, cleanup, nil
+		//
+		// The destination is quoted for the same reason and was not: debugfs
+		// splits its command line on whitespace, so a staging path containing a
+		// space produced `dump: Usage: dump_inode [-p] <file> <output_file>`
+		// and no dump at all, for every file in the image.
+		line := fmt.Sprintf("dump -p \"/%s\" \"%s\"\n", e.path, dest)
+		if e.kind == kindSymlink {
+			links.WriteString(line)
+			continue
+		}
+		files.WriteString(line)
+		total += e.size
 	}
 
-	f, err := os.CreateTemp("", "kelyfos-dump-*")
-	if err != nil {
+	// Before a byte is written rather than after the disk is full. checkFreeSpace
+	// says nothing when it cannot tell, which is the right silence: an
+	// unanswerable statfs is not evidence of a full disk, and the size check in
+	// copyThrough catches the case this misses anyway.
+	if err := checkFreeSpace(dir, total); err != nil {
 		cleanup()
-		return nil, func() {}, err
+		return nil, func() {}, fmt.Errorf("stage the workspace image: %w", err)
 	}
-	defer os.Remove(f.Name())
-	if _, err := f.WriteString(script.String()); err != nil {
-		f.Close()
-		cleanup()
-		return nil, func() {}, err
-	}
-	if err := f.Close(); err != nil {
-		cleanup()
-		return nil, func() {}, err
-	}
-	// debugfs reports a failure per command on stderr and still exits 0, so the
-	// per-file check is the copy below finding nothing staged. A whole-process
-	// failure is what this catches.
-	if out, err := exec.Command("debugfs", "-f", f.Name(), imagePath).CombinedOutput(); err != nil {
-		cleanup()
-		return nil, func() {}, fmt.Errorf("read the workspace image: %w: %s", err, strings.TrimSpace(string(out)))
+
+	for _, pass := range []struct {
+		script      string
+		stderrFatal bool
+	}{
+		{files.String(), true},
+		{links.String(), false},
+	} {
+		if pass.script == "" {
+			continue
+		}
+		_, stderr, err := runDebugfs(imagePath, pass.script)
+		if err != nil {
+			cleanup()
+			return nil, func() {}, fmt.Errorf("read the workspace image: %w: %s",
+				err, strings.TrimSpace(stderr))
+		}
+		if pass.stderrFatal {
+			if bad := debugfsErrors(stderr); len(bad) > 0 {
+				cleanup()
+				return nil, func() {}, refuse("the image did not give up its contents: %s",
+					strings.Join(bad, "; "))
+			}
+		}
 	}
 	return staged, cleanup, nil
 }
@@ -488,11 +641,33 @@ func copyThrough(root *os.Root, e imageEntry, from string) error {
 	if from == "" {
 		return fmt.Errorf("%s was not extracted from the image", e.path)
 	}
-	src, err := os.Open(from)
+	// The size the record carries, against the size that came out. This is the
+	// check that makes a partial dump structural rather than a matter of
+	// noticing a message: `debugfs dump` opens its destination O_CREAT|O_TRUNC
+	// and copies block by block, so a read error or an ENOSPC part way through
+	// leaves a file that *exists* and is short — and "nothing staged", which was
+	// the whole per-file check, is satisfied by it. What used to happen next was
+	// that copyThrough installed it and Commit renamed the tree over the
+	// project, with "workspace written back" printed underneath (F17).
+	//
+	// The whole extraction is refused rather than the one file, because a dump
+	// that failed once has no reason to have succeeded for the entries after it
+	// — the ENOSPC case fails every one of them — and because the person's own
+	// copy is worth more than a partial write-back of the sandbox's.
+	info, err := os.Stat(from)
 	if err != nil {
 		// A file debugfs could not read is a hole in the record of what came
 		// back, and a workspace missing a file without saying so is worse than
 		// one that refuses.
+		return fmt.Errorf("read %s out of the workspace image: %w", e.path, err)
+	}
+	if info.Size() != e.size {
+		return refuse("%s came out of the image as %d bytes and its record says it holds %d; "+
+			"the dump did not finish, so nothing from this image is written back",
+			e.path, info.Size(), e.size)
+	}
+	src, err := os.Open(from)
+	if err != nil {
 		return fmt.Errorf("read %s out of the workspace image: %w", e.path, err)
 	}
 	defer src.Close()
@@ -501,12 +676,19 @@ func copyThrough(root *os.Root, e imageEntry, from string) error {
 	if err != nil {
 		return fmt.Errorf("write %s into the workspace: %w", e.path, err)
 	}
-	if _, err := io.Copy(dst, src); err != nil {
+	n, err := io.Copy(dst, src)
+	if err != nil {
 		dst.Close()
 		return fmt.Errorf("write %s into the workspace: %w", e.path, err)
 	}
 	if err := dst.Close(); err != nil {
 		return err
+	}
+	// And what actually landed, which is the statement the person's disk cares
+	// about. The Stat above is about the staged copy; this is about theirs.
+	if n != e.size {
+		return refuse("%d bytes of %s reached the workspace and its record says it holds %d",
+			n, e.path, e.size)
 	}
 	// O_CREATE's mode is masked by umask, and the executable bit is the half of
 	// the guest's intent worth keeping. What goes on here is the final mode

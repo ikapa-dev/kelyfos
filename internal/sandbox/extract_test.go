@@ -1,11 +1,180 @@
 package sandbox
 
 import (
+	"bytes"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
 )
+
+// F17. A file the image could not give back is written over the user's own copy
+// of it, empty, and the sync-back reports success.
+//
+// "Nothing staged" was the whole per-file check, and it is the wrong test.
+// `debugfs dump` opens its destination with O_CREAT|O_TRUNC and then copies
+// block by block; a failure part way through — a read error, or ENOSPC on the
+// staging filesystem — leaves a file that *exists* and is short. copyThrough
+// finds it, installs it, and Commit renames the tree over the project. The only
+// other copy of the person's work at that moment is `.kelyfos-previous`.
+//
+// Reproduced rather than argued, against the real tool. The image is built from
+// the project and then cut short, so every data block of big.txt is unreadable
+// while the inode that names it — and the size it records — still reads
+// perfectly:
+//
+//	debugfs -f script ws.ext4     exit 0
+//	  stdout: debugfs: dump -p "/big.txt" …/0
+//	  stderr: dump: Attempt to read block from filesystem resulted in short read
+//	  …/0 is 0 bytes
+//
+// Exit 0 is what makes it silent: dumpFiles only looked at the process's own
+// status, and debugfs reports a per-command failure through com_err and carries
+// on. The record already carries the answer — `ls -l -p` prints the inode's
+// size — so the extraction can tell that what came out is not what was in there.
+func TestF17_APartiallyDumpedFileIsNotCommittedOverTheProject(t *testing.T) {
+	needsImageTools(t)
+
+	root := t.TempDir()
+	proj := filepath.Join(root, "proj")
+	if err := os.MkdirAll(proj, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	want := bytes.Repeat([]byte("A"), 1<<20)
+	if err := os.WriteFile(filepath.Join(proj, "big.txt"), want, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	img := filepath.Join(root, "ws.ext4")
+	if out, err := exec.Command("mke2fs", "-q", "-t", "ext4", "-F",
+		"-d", proj, img, "8192k").CombinedOutput(); err != nil {
+		t.Fatalf("mke2fs: %v %s", err, out)
+	}
+	// The damage. Metadata — the superblock, the group descriptors, the inode
+	// table and the root directory's own block — lives at the front of an ext4
+	// image and survives this; the file's data blocks do not.
+	if err := os.Truncate(img, 2000<<10); err != nil {
+		t.Fatal(err)
+	}
+
+	entries, err := listImage(img)
+	if err != nil {
+		t.Fatalf("the damaged image was refused at enumeration, so this test never reaches "+
+			"the dump it is about: %v", err)
+	}
+	var named bool
+	for _, e := range entries {
+		if e.path == "big.txt" {
+			named = true
+		}
+	}
+	if !named {
+		t.Fatalf("enumeration did not find big.txt in the damaged image (%+v); the fixture is wrong", entries)
+	}
+
+	ws := &Workspace{HostDir: proj, ImagePath: img}
+	if ws.fingerprint, err = Fingerprint(proj); err != nil {
+		t.Fatal(err)
+	}
+	dest, diverted, err := ws.SyncBack()
+
+	if err == nil {
+		// It went through. What is on the person's disk now?
+		info, statErr := os.Stat(filepath.Join(proj, "big.txt"))
+		if statErr != nil {
+			t.Fatalf("the sync-back reported success (dest %s, diverted %v) and big.txt is gone: %v",
+				dest, diverted, statErr)
+		}
+		t.Fatalf("the sync-back reported success (dest %s, diverted %v) and replaced a %d byte file "+
+			"with a %d byte one; a file the image could not give back must refuse the whole "+
+			"extraction, not be committed over the only copy of it",
+			dest, diverted, len(want), info.Size())
+	}
+
+	// Refused — and a refusal is only worth anything if it changed nothing.
+	if !errors.Is(err, ErrHostileImage) {
+		t.Errorf("the refusal is %v, which does not wrap ErrHostileImage", err)
+	}
+	got, readErr := os.ReadFile(filepath.Join(proj, "big.txt"))
+	if readErr != nil {
+		t.Fatalf("the refusal did not leave the project alone: %v", readErr)
+	}
+	if !bytes.Equal(got, want) {
+		t.Errorf("big.txt is %d bytes after the refusal, want the %d it had", len(got), len(want))
+	}
+	if _, err := os.Stat(proj + ".kelyfos-previous"); err == nil {
+		t.Error("a refused extraction rotated the person's project away anyway")
+	}
+	// And nothing half-extracted left beside it.
+	beside, _ := filepath.Glob(proj + ".kelyfos-sync-*")
+	if len(beside) != 0 {
+		t.Errorf("a refused extraction left its staging tree behind: %v", beside)
+	}
+}
+
+// F17, the other half: where the dump lands, and whether that path can be
+// spelled at all.
+//
+// Two things were wrong and they are one line apart. The staging directory came
+// from os.MkdirTemp("", …) — on most Linux hosts a tmpfs, which is RAM, and the
+// guest decides how many bytes the host is asked to stage — and the destination
+// was interpolated into the debugfs command line unquoted, where debugfs splits
+// on whitespace:
+//
+//	debugfs: dump -p "/c.txt" /tmp/dir with space/oc
+//	dump: Usage: dump_inode [-p] <file> <output_file>
+//
+// So a TMPDIR containing a space broke every dump in every image. This asserts
+// both at once: the extraction goes through with a space in the path, and the
+// staging happened under Root() — the disk the person chose for this tool — and
+// not in the system temp directory.
+func TestF17_TheDumpStagesUnderRootAndSurvivesASpaceInThePath(t *testing.T) {
+	needsImageTools(t)
+
+	root := t.TempDir()
+	t.Setenv("TMPDIR", mkdirT(t, filepath.Join(root, "temp dir")))
+	t.Setenv("KELYFOS_CACHE", mkdirT(t, filepath.Join(root, "cache dir")))
+
+	src := mkdirT(t, filepath.Join(root, "proj"))
+	if err := os.WriteFile(filepath.Join(src, "a.txt"), []byte("hello\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	img := filepath.Join(root, "ws.ext4")
+	if out, err := exec.Command("mke2fs", "-q", "-t", "ext4", "-F",
+		"-d", src, img, "8192k").CombinedOutput(); err != nil {
+		t.Fatalf("mke2fs: %v %s", err, out)
+	}
+
+	entries, err := listImage(img)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dest := mkdirT(t, filepath.Join(root, "back"))
+	r, err := os.OpenRoot(dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	if err := extractImage(img, entries, r); err != nil {
+		t.Fatalf("a space in the staging path broke the extraction: %v", err)
+	}
+	if b, err := os.ReadFile(filepath.Join(dest, "a.txt")); err != nil || string(b) != "hello\n" {
+		t.Errorf("a.txt came back as %q, %v", b, err)
+	}
+	if _, err := os.Stat(filepath.Join(Root(), "extract")); err != nil {
+		t.Errorf("the dump did not stage under Root(): %v — on most Linux hosts the system temp "+
+			"directory is a tmpfs, and the guest chooses how many bytes it asks the host to stage", err)
+	}
+}
+
+func mkdirT(t *testing.T, dir string) string {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
 
 // handBack puts owner-write back on a directory once the test is over.
 //

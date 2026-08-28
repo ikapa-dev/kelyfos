@@ -114,7 +114,7 @@ guest's bytes two directories above the tree. Outside the workspace, outside the
 run directory, anywhere the user running `kelyfos` could write. An external audit
 of 2026-08-24 found it and it was reproduced here with the exact command.
 
-Two layers close it, and the second exists because the first will one day be
+Three layers close it, and the second exists because the first will one day be
 wrong:
 
 1. **The image is validated before it is read.** Every entry is enumerated and
@@ -129,6 +129,20 @@ wrong:
    guest-chosen name is used through an `os.Root`, which is `openat2` with
    `RESOLVE_BENEATH` and `RESOLVE_NO_SYMLINKS`. The kernel is what refuses, not
    this code's arithmetic.
+3. **What comes back is checked against what the image says it holds.**
+   `debugfs dump` opens its destination `O_CREAT|O_TRUNC` and copies block by
+   block, and it reports a failed command on stderr while still exiting 0. So a
+   read error, or a staging disk that fills part way through, leaves a file that
+   *exists* and is short — and "nothing was staged" used to be the whole
+   per-file check, so a truncated file was installed, the tree was renamed over
+   the project and `workspace written back` was printed underneath. Every file
+   is now compared against the size its own inode records, and a mismatch
+   refuses the **whole** extraction: a dump that failed once has no reason to
+   have succeeded for the entries after it, and the person's own copy is worth
+   more than a partial write-back of the sandbox's. The dump also stages on the
+   same disk as the images rather than in the system temp directory, which on
+   most Linux hosts is RAM the guest can fill from inside — `truncate -s 100G
+   /work/000` is a sparse file in the image that `dump` materialises as zeros.
 
 Guest-chosen **modes** are filtered too. The executable bit survives, because an
 agent that built a binary needs it; world write, setuid, setgid and the sticky
