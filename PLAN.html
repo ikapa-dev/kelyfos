@@ -5986,6 +5986,60 @@ after:
         <code>govulncheck</code> &rarr; &ldquo;No vulnerabilities found.&rdquo;, <code>make docs</code> regenerated
         cleanly; <code>python3 tools/check-plan.py</code> &rarr; &ldquo;PLAN.html is coherent: 101 tasks, 87
         checked, 68 decisions&rdquo;.</td></tr>
+    <tr><td class="mono">2026-08-28</td><td class="mono">P7-11</td>
+        <td><b>OTLP export (<code>kelyfos log --export-otlp</code>), implemented on its own worktree branch as
+        <code>02d0c81</code> and now verified by the orchestrator directly.</b> New package
+        <code>internal/otlp</code>: hand-written OTLP-JSON wire types (hex trace/span IDs, integer enum kinds,
+        decimal-string int64s &mdash; the JSON protobuf mapping's actual wire shape, not Go's native types),
+        deterministic SHA-256-derived span/trace IDs so re-exporting the same chain is byte-for-byte stable, and
+        a mapping from <code>internal/digest</code>'s fold to <code>invoke_agent</code>/<code>execute_tool</code>
+        spans per the <code>gen_ai.*</code> semantic conventions. Explicitly a one-way, lossy projection: never
+        read back, never an input to <code>kelyfos verify</code>, documented in <code>docs/otlp.md</code>. The
+        IETF <code>draft-sharif-agent-audit-trail-01</code> mapping was deliberately skipped rather than
+        partially built, per D59's &ldquo;don&rsquo;t invent facts&rdquo; principle &mdash; recorded in
+        <code>docs/otlp.md</code> &sect;7.
+        <br><b>Two real gaps found and fixed by the orchestrator before review:</b> (1) <code>gofmt -l .</code>
+        flagged <code>internal/otlp/otlp.go</code> (a stray alignment gofmt itself introduces around
+        <code>strAttr</code>/<code>boolAttr</code>) &mdash; fixed with <code>gofmt -w</code>. (2)
+        <code>docs/otlp.md</code> existed and was correctly linked from <code>docs/README.md</code> and woven
+        into <code>llms-full.txt</code>'s prose, but was never added to <code>tools/gendocs/llms.go</code>'s
+        <code>docSet()</code> &mdash; the exact hand-maintained-list gap
+        <code>TestEveryDocumentUnderDocsIsInTheLLMsSet</code> exists to catch (its own doc comment records it
+        catching <code>docs/qol.md</code> going missing once before). Added the entry, reran <code>make docs</code>
+        (regenerated <code>docs/reference/cli.md</code>, <code>llms.txt</code>, <code>llms-full.txt</code>
+        cleanly), test now passes. Both fixes committed as <code>c8892f1</code>.
+        <br><b>RENDER-surface spot check (this task's core security property, since OTLP-JSON output can carry
+        guest-influenced strings: command argv, cwd, error messages, MCP tool call ids):</b> every guest-reachable
+        string field in <code>buildCommandSpan</code> (<code>internal/otlp/otlp.go</code>) passes through
+        <code>safe()</code>, a thin wrapper on <code>proto.SafeText</code> &mdash; <code>gen_ai.tool.name</code>,
+        <code>gen_ai.tool.call.id</code>, <code>gen_ai.agent.name</code>, <code>kelyfos.command.argv</code>,
+        <code>kelyfos.command.cwd</code>, <code>error.type</code> and the error status message all wrapped.
+        One field, <code>kelyfos.command.via</code>, is <i>not</i> wrapped in <code>safe()</code> &mdash; traced
+        every assignment site of <code>recorder.Event.Via</code>/<code>digest.Entry.Via</code>
+        (<code>host/exec.go</code>, <code>host/mcpobserve.go</code>, <code>host/servemcpfiles.go</code>,
+        <code>host/servemcptools.go</code>, <code>host/team.go</code>): every one is a host-written literal
+        (<code>"exec"</code>, <code>"mcp"</code>, <code>"serve-mcp"</code>) or, in
+        <code>mcpobserve.go</code>'s <code>writeEvent</code>, a value gated through a
+        <code>switch tool { case "write_file": … case "upload": … default: return nil }</code> that structurally
+        can never carry the guest's raw MCP tool-call string through to the event &mdash; considered and
+        rejected as a finding, not a gap. Agent and team names are separately unable to carry injection
+        characters at all: the CLI rejects any team-config name outside <code>[A-Za-z0-9._-]</code> before a
+        session is ever created (reproduced with <code>evil\"agent&lt;script&gt;x&lt;/script&gt;</code> as an
+        agent name &rarr; rejected at config-parse, no session written).</td>
+        <td class="mono"><code>gofmt -l .</code> clean; <code>go vet ./...</code> clean; <code>go build ./...</code>
+        clean; <code>go test -count=1 ./...</code> every package <code>ok</code> (25 packages, including
+        <code>internal/otlp</code> and <code>tools/gendocs</code> after the docSet fix); <code>govulncheck</code>
+        &rarr; &ldquo;No vulnerabilities found.&rdquo;; <code>make docs</code> regenerates cleanly with
+        <code>docs/otlp.md</code> now indexed.
+        <br>Live end-to-end on the real VM: <code>kelyfos run --image dev -- sh -c 'echo hello-otlp-test'</code>
+        &rarr; session <code>d975ded1</code>; <code>kelyfos log --session d975ded1 --export-otlp
+        otlp-fresh.json</code> &rarr; &ldquo;wrote otlp-fresh.json (2 spans)&rdquo;; parsed with Python
+        <code>json.load</code>, <code>resourceSpans</code> present, every <code>traceId</code> exactly 32 lowercase
+        hex chars and every <code>spanId</code> exactly 16, spans named <code>kelyfos.session</code> and
+        <code>invoke_agent</code> with the expected <code>gen_ai.*</code>/<code>kelyfos.*</code> attribute keys.
+        Re-ran against a team with a JSON/HTML-hostile string in the team name
+        (<code>adv"&lt;/script&gt;&lt;script&gt;alert(1)&lt;/script&gt;team</code>) &mdash; export still produced
+        valid JSON (Python <code>json.load</code> round-trip clean).</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
