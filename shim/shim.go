@@ -308,7 +308,7 @@ func (s *Server) boot(parent context.Context) (*box, error) {
 				return nil, err
 			}
 		}
-		b.proxy = &egress.Proxy{Policy: pol, CA: ca}
+		b.proxy = &egress.Proxy{Policy: pol, CA: ca, Peer: b.net.GuestAddr()}
 		port, err := b.proxy.Listen(b.net.HostIP.String() + ":0")
 		if err != nil {
 			return nil, err
@@ -404,6 +404,12 @@ func (s *Server) wireEgressAudit(b *box) {
 			Type: recorder.TypeEgressAttempt, Host: a.Host, Port: a.Port,
 			Allowed: &allowed, Reason: a.Reason, Mode: a.Mode,
 			BytesIn: a.BytesIn, BytesOut: a.BytesOut,
+			// This is wireProxyAudit's twin, and it has to carry every field
+			// wireProxyAudit carries. It did not carry Peer, so a foreign-peer
+			// refusal on the E2B path recorded with no peer, no host and no
+			// port — an event that says a connection was refused and nothing
+			// whatever about which one (F9).
+			Peer: a.Peer,
 		})
 	}
 }

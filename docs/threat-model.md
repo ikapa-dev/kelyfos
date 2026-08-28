@@ -434,6 +434,36 @@ someone who reached the port, and the process exits on its own once the
 session it is showing ends or after a bounded idle period — it does not sit
 open indefinitely the way an unattended shim can.
 
+### The egress proxy binds a host address, and the address is not what makes it private (F9)
+The proxy listens on the host's own end of the sandbox's `/30`, and until this
+was found the code claimed that address did the work: "reachable from exactly
+one sandbox and from nothing else on the machine." It is not true and it never
+was. An address on a TAP is a local address of the host like any other, so
+**any other local process on the machine can connect to it exactly as easily as
+the guest can** — the same fact the shim and `kelyfos view` entries above state
+about their own ports. The packet is routed over `lo`, never touches the
+interface the firewall inspects, and reaches a proxy that terminates TLS and
+attaches the operator's credential for whoever asked. The value still never
+leaves the host, which is what the entry on credential theft above defends; it
+is simply spent by somebody who cannot read it.
+
+Two checks separate the guest from everyone else, and the bind address is
+neither of them: the proxy serves one peer — the guest's own address — and
+closes every other connection unread, recording it once per address that
+knocks; and the sandbox's input
+chain drops anything addressed to the host's TAP address that did not arrive on
+the TAP, which closes the LAN case at the same time, since a packet that reached
+the host because it answered ARP for that address on the physical segment is
+also `iifname != <tap>`. Either check alone would close this; both are there
+because each is what catches the day the other is wrong.
+
+What remains is the shape of the residual, not the hole: this is a listener on a
+local address, so its privacy is a property of two rules that have to keep
+holding rather than of the address itself. Anything running as root on the host
+can flush the table, and root on the host is outside this model already
+(see "The host's own tooling"). `docs/networking.md` §3 and §6 carry both rules
+in the words the code installs them.
+
 ### Two more ways the record leaves the host, neither one a socket (P7-9, P7-11)
 `kelyfos log --export --refresh` and `kelyfos log --export-otlp` both write a
 file and stop there — no listener, no socket, in either path. `--refresh`

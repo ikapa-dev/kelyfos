@@ -329,7 +329,12 @@ func bootSourceForSnapshot(t *testing.T, base sandbox.Options) (*sandbox.Sandbox
 		}
 	}()
 
-	proxy := &egress.Proxy{Policy: egress.Policy{Allow: []string{"127.0.0.1"}}}
+	// Peer is set here for the same reason the five production sites set it:
+	// this proxy binds a real TAP address and is the only one in the tree the
+	// repo-wide audit cannot see, _test.go being excluded from it. Without it
+	// the nftables drop would be the single layer under a proxy on a live
+	// address — the layer F9's own fix argues may be wrong (F9).
+	proxy := &egress.Proxy{Policy: egress.Policy{Allow: []string{"127.0.0.1"}}, Peer: netw.GuestAddr()}
 	port, err := proxy.Listen(netw.HostIP.String() + ":0")
 	if err != nil {
 		t.Fatalf("listen proxy: %v", err)

@@ -364,7 +364,7 @@ status. This is how you hand an agent a sandbox and nothing else:
 			}
 		}
 		boundSecrets = policy.Secrets
-		proxy = &egress.Proxy{Policy: policy, CA: ca}
+		proxy = &egress.Proxy{Policy: policy, CA: ca, Peer: opts.Net.GuestAddr()}
 		port, err := proxy.Listen(opts.Net.HostIP.String() + ":0")
 		if err != nil {
 			return err

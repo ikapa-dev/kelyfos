@@ -14,6 +14,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"strconv"
 	"strings"
 	"sync"
@@ -68,6 +69,34 @@ const (
 	// hostname string; this is the check that looks at where it actually
 	// leads.
 	ReasonUnsafeResolvedAddr = "unsafe_resolved_address"
+	// ReasonForeignPeer is a connection refused before anything was read from
+	// it, because it did not come from the sandbox this proxy serves (F9). It
+	// is the only reason on this list that says nothing about what was asked
+	// for — the request was never parsed, so Host and Port are empty and the
+	// address the connection came from is in Attempt.Peer instead.
+	//
+	// It is recorded rather than dropped silently because a connection from
+	// somewhere else to this port is not a policy question, it is an event: the
+	// port carries the operator's credentials, and something on the machine
+	// that is not the guest just knocked on it. It is recorded and not printed
+	// during the run: blockedOnce prints the refusals that carry a fix line the
+	// reader can act on, and this one has none — it is a fact about the host,
+	// not about the policy.
+	//
+	// The address is in the chain and is NOT YET RENDERED anywhere, which is
+	// worth saying plainly because the sentence that used to sit here claimed
+	// the opposite. An `egress.attempt` carrying reason=foreign_peer and
+	// peer=127.0.0.1 prints today as `egress BLOCKED :0  mode= foreign_peer`
+	// in `kelyfos log`, as `egress BLOCKED :0` in `kelyfos view` — which does
+	// not print the reason at all — and lands in the digest as one more
+	// egress_blocked. None of the four branches that render this event type
+	// read Event.Peer: host/log.go:818, host/view.go:580, host/watch.go:539
+	// and internal/report/report.go:397 and :604. Until they do, a foreign-peer
+	// refusal is indistinguishable on screen from an ordinary blocked egress
+	// with an empty host, and only `kelyfos log --export` or reading the chain
+	// itself shows who knocked. Those four branches are F20's surface, and the
+	// change is routed there rather than made here.
+	ReasonForeignPeer = "foreign_peer"
 )
 
 // WithheldNotViaConnect belongs beside scope.go's own WithheldPath,
@@ -96,6 +125,18 @@ type Attempt struct {
 	Mode     string
 	BytesIn  int64
 	BytesOut int64
+	// Peer is who connected, for ReasonForeignPeer and for nothing else — the
+	// address a refused connection came from. Appended as its own field rather
+	// than folded into Host, which was the first attempt and was wrong: five
+	// readers treat Host as a destination — internal/digest enters it in the
+	// Domains table and counts it Blocked, internal/report titles the row
+	// "BLOCKED "+Host, and log, view and watch all print it as somewhere the
+	// sandbox tried to reach. A source address in that field makes every one of
+	// them say the guest named a host it never named, and in the digest it also
+	// consumes one of MaxDistinctKeys, so foreign traffic could evict the
+	// guest's own blocked-domain records. recorder.Event already has a peer
+	// field, which is where this lands.
+	Peer string
 }
 
 // DefaultPorts is what every sandbox in this product gets: the two ports the
@@ -176,7 +217,52 @@ func (p *Policy) allowsPort(port int) bool {
 
 // Proxy is an HTTP proxy that enforces a Policy and reports every attempt.
 type Proxy struct {
-	Policy  Policy
+	Policy Policy
+	// Peer is the single address this proxy will serve: the guest's own TAP
+	// address, `Network.GuestIP`. Every connection from anywhere else is closed
+	// before a byte is read from it and recorded as ReasonForeignPeer.
+	//
+	// This check exists because the address the proxy binds does not do the
+	// work the code here used to claim it did. An address on the TAP is still a
+	// local address of the host, so a connection to it from a local process
+	// never reaches the TAP at all — the kernel routes it over `lo`, where the
+	// firewall's `iifname` match has no opinion about it — and the proxy would
+	// then attach the operator's credential for whoever asked. Measured, not
+	// reasoned about: a local process dialling the bound address is answered,
+	// and the source address the kernel picks for it is the host's own end of
+	// the /30 (F9).
+	//
+	// Set it. A zero Addr means no peer restriction at all, which is what every
+	// test in this package wants and what no sandbox does. The ruleset's own
+	// `ip daddr <host> iifname != <tap> drop` covers the same ground from the
+	// other side, and each is there for the day the other is wrong.
+	//
+	// Five callers build a Proxy and bind it on a TAP address, and all five set
+	// this from the Network they already hold — host/run.go, host/team.go,
+	// host/servemcptools.go, host/snapshot.go and shim/shim.go, each with
+	// `Peer: <net>.GuestAddr()`. That is not left to review:
+	// TestF9_EveryProxyConstructionArmsThePeerCheck reads every non-test .go
+	// file in the repository and fails on each construction of this type that
+	// does not set Peer in its own composite literal. The first pass at F9
+	// shipped this field with nothing setting it — a check that existed, was
+	// tested, and defended nothing — and the first pass at that test excused a
+	// whole file if any `X.Peer` appeared in it, which recorder.Event provides
+	// for free.
+	//
+	// What it does not cover, stated because a guarantee is only worth what its
+	// edges are, and because the first version of this list was wrong in the
+	// same way the Listen comment was. It reads syntax, not types, so it sees a
+	// Proxy only where the source names one: it resolves import aliases, dot
+	// imports, the in-package spelling, local aliases and defined types,
+	// elided element types in slice, array and map literals, elided values of
+	// Proxy-typed struct fields declared in the same package, new() and zero
+	// var declarations, and it refuses outright a struct that embeds Proxy,
+	// because embedding hides the construction from any syntactic check. It
+	// does NOT cover: _test.go files; a type declared in ANOTHER package that
+	// embeds or aliases Proxy; type parameters; and any construction that
+	// reaches a Proxy through an interface or reflection. The one test proxy
+	// that binds a real TAP address sets Peer by hand for the first of those.
+	Peer    netip.Addr
 	OnEvent func(Attempt)
 	// OnSecret is called with the secret's NAME and the host it went to —
 	// never the value, in any form (docs/events.md §4).
@@ -214,6 +300,12 @@ type Proxy struct {
 	// many goroutines pile up behind it.
 	sem chan struct{}
 
+	// foreignSeen is the set of addresses a foreign_peer event has already been
+	// written for, so a refusal loop costs one event rather than one per
+	// connection. See maxForeignPeersRecorded.
+	foreignMu   sync.Mutex
+	foreignSeen map[string]bool
+
 	// lastActive is the last moment any byte crossed this proxy, in Unix
 	// nanoseconds. It exists for the idle timeout (E1-6): a sandbox pulling a
 	// large file down a tunnel is not idle, and reporting only completed
@@ -246,8 +338,22 @@ func (a activeWriter) Write(b []byte) (int, error) {
 	return a.w.Write(b)
 }
 
-// Listen binds the proxy. The address is the host's TAP address, so the proxy
-// is reachable from exactly one sandbox and from nothing else on the machine.
+// Listen binds the proxy. The address is the host's TAP address.
+//
+// That address is not what keeps the port private, and this comment used to say
+// it was: "the proxy is reachable from exactly one sandbox and from nothing
+// else on the machine". It was false, and being written here is part of why the
+// first security pass read it and marked credential injection sound. An address
+// on a TAP is a local address like any other — every process on the host can
+// route to it over `lo`, without a packet ever reaching the interface the
+// firewall inspects.
+//
+// Two checks make the sentence true, and neither of them is the bind address:
+//   - Peer, below in handle: one address is served and every other connection
+//     is closed unread and recorded (F9).
+//   - `ip daddr <host_ip> iifname != "<tap>" counter drop` in the input chain,
+//     so the port is unreachable even from a proxy that forgot the first check
+//     (docs/networking.md §3).
 func (p *Proxy) Listen(addr string) (int, error) {
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
@@ -373,8 +479,91 @@ func (h *headerLimitReader) Read(p []byte) (int, error) {
 	return n, err
 }
 
+// foreignPeer reports whether this connection came from somewhere other than
+// the sandbox, and records the refusal when it did. It is the first thing
+// handle does, before a deadline is set or a byte is read, because everything
+// after it either reads what the caller sent or attaches a credential on the
+// caller's behalf, and neither should happen for a caller that is not the guest.
+//
+// Fail closed: a remote address this cannot resolve to an IP is refused rather
+// than let through. The published fix for F9 dereferenced the type assertion
+// before testing whether it succeeded, which would panic on the one case the
+// check is there to catch.
+func (p *Proxy) foreignPeer(client net.Conn) bool {
+	if !p.Peer.IsValid() {
+		return false
+	}
+	ra, ok := client.RemoteAddr().(*net.TCPAddr)
+	if !ok {
+		p.reportForeignPeer("")
+		return true
+	}
+	peer, ok := netip.AddrFromSlice(ra.IP)
+	// Unmap on both sides: a caller setting Peer from a net.IP holding an
+	// IPv4-in-IPv6 form and a v4 connection arriving as four bytes are the same
+	// address, and comparing the netip.Addr values without unmapping says they
+	// are not — which would refuse the guest.
+	if !ok || peer.Unmap() != p.Peer.Unmap() {
+		var from string
+		if ok {
+			from = peer.Unmap().String()
+		}
+		p.reportForeignPeer(from)
+		return true
+	}
+	return false
+}
+
+// maxForeignPeersRecorded bounds how many distinct addresses this proxy will
+// ever write a foreign_peer event for.
+//
+// Every other refusal on this proxy costs the guest a request it had to
+// assemble and send; this one costs a local process a TCP handshake, and it can
+// drive it in a tight loop from as many source addresses as the host has —
+// 127.0.0.0/8 alone is sixteen million. Without a bound that is an unbounded,
+// unprivileged, cheap write into the flight recorder, and through the digest's
+// own MaxDistinctKeys it would evict the records the operator actually wants.
+//
+// So: one event per distinct address, and past this many distinct addresses,
+// none. The same shape and the same failure mode as host/denials.go's
+// maxBlockedEntries — "no more new lines", never unbounded memory — and sized
+// far above the handful of local addresses a real machine answers on.
+const maxForeignPeersRecorded = 256
+
+// reportForeignPeer records the refusal, once per distinct peer, without going
+// through report.
+//
+// Not through report because report touches lastActive, and lastActive is what
+// the idle timeout reads (E1-6). A connection from a process that is not the
+// guest is not the guest doing something, and letting it advance that clock
+// would hand any local process a way to keep an idle sandbox alive
+// indefinitely — a smaller door than F9's, opened by the fix for it.
+func (p *Proxy) reportForeignPeer(from string) {
+	if p.OnEvent == nil {
+		return
+	}
+	p.foreignMu.Lock()
+	if p.foreignSeen == nil {
+		p.foreignSeen = map[string]bool{}
+	}
+	if p.foreignSeen[from] || len(p.foreignSeen) >= maxForeignPeersRecorded {
+		p.foreignMu.Unlock()
+		return
+	}
+	p.foreignSeen[from] = true
+	p.foreignMu.Unlock()
+	p.OnEvent(Attempt{Reason: ReasonForeignPeer, Peer: from})
+}
+
 func (p *Proxy) handle(client net.Conn) {
 	defer client.Close()
+	if p.foreignPeer(client) {
+		// Closed with nothing written back. A caller that is not the sandbox
+		// gets no status line, no fix line and no evidence of what is behind
+		// this port — everything the guest is told exists to help the guest,
+		// and this one is not the guest.
+		return
+	}
 	p.touch()
 	// Set before anything is read, so a connection that never finishes sending
 	// a request is closed by the deadline rather than held open indefinitely

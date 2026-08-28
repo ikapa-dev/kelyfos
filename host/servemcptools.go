@@ -421,7 +421,7 @@ func (s *hostServer) boot(opts sandbox.Options, traceparent string) (*servedBox,
 				return nil, err
 			}
 		}
-		b.proxy = &egress.Proxy{Policy: pol, CA: ca}
+		b.proxy = &egress.Proxy{Policy: pol, CA: ca, Peer: b.net.GuestAddr()}
 		port, err := b.proxy.Listen(b.net.HostIP.String() + ":0")
 		if err != nil {
 			return nil, err

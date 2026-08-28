@@ -2,6 +2,7 @@ package sandbox
 
 import (
 	"net"
+	"strings"
 	"testing"
 )
 
@@ -62,5 +63,44 @@ func TestDerivedAddressingIsUnchangedForEveryOtherIndex(t *testing.T) {
 		if !hostIP.Equal(wantHost) || !guestIP.Equal(wantGuest) {
 			t.Fatalf("index %d derived %s/%s, want %s/%s", idx, hostIP, guestIP, wantHost, wantGuest)
 		}
+	}
+}
+
+// The ruleset half of F9, read rather than run: the line that makes HostIP
+// private has to be in the input chain, and it has to be above the jump.
+//
+// Order is the assertion, not a stylistic preference. nftables evaluates a
+// chain top to bottom and the jump is unconditional for anything arriving on
+// the TAP; putting the drop after it would still work for a local process,
+// because that packet never matches the jump — but the rule is written to be
+// read as "nothing but the TAP reaches this address", and a reader who finds it
+// underneath cannot tell whether it is doing anything at all.
+func TestF9_RulesetDropsHostIPFromEverythingButTheTAP(t *testing.T) {
+	n := &Network{
+		TAP:       "kelyfos0123abcd",
+		HostIP:    net.IPv4(169, 254, 8, 1),
+		GuestIP:   net.IPv4(169, 254, 8, 2),
+		Netmask:   "255.255.255.252",
+		ProxyPort: 41234,
+		table:     "kelyfos_0123abcd",
+	}
+	rs := n.ruleset()
+
+	want := `ip daddr 169.254.8.1 iifname != "kelyfos0123abcd" counter drop`
+	drop := strings.Index(rs, want)
+	if drop < 0 {
+		t.Fatalf("the input chain does not carry\n\t%s\ngot:\n%s", want, rs)
+	}
+	jump := strings.Index(rs, `iifname "kelyfos0123abcd" jump kelyfos_guest_in`)
+	if jump < 0 {
+		t.Fatalf("the jump into kelyfos_guest_in is gone:\n%s", rs)
+	}
+	if drop > jump {
+		t.Errorf("the drop is below the jump; it belongs above it:\n%s", rs)
+	}
+	// The base chains stay `policy accept`: a drop policy on the input hook
+	// filters every packet reaching the host, not only this sandbox's.
+	if !strings.Contains(rs, "type filter hook input priority filter; policy accept;") {
+		t.Errorf("the input base chain no longer has policy accept:\n%s", rs)
 	}
 }

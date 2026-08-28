@@ -489,7 +489,7 @@ func restoreNetwork(meta *sandbox.SnapshotMeta, allow []string, secrets []*egres
 			return fail(err)
 		}
 	}
-	proxy := &egress.Proxy{Policy: policy, CA: ca}
+	proxy := &egress.Proxy{Policy: policy, CA: ca, Peer: opts.Net.GuestAddr()}
 	// Same reasoning as the address: the port is baked into the guest's proxy
 	// environment, so the restored proxy has to bind the one the snapshot
 	// recorded rather than whatever the kernel offers.

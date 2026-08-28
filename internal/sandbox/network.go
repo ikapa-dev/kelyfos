@@ -3,8 +3,10 @@ package sandbox
 import (
 	"encoding/binary"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"net"
+	"net/netip"
 	"os/exec"
 	"strings"
 )
@@ -157,7 +159,35 @@ func newNetworkAt(sandboxID, user, hostIP, guestIP, netmask, hostMACAddr string)
 	return n, nil
 }
 
+// GuestAddr is GuestIP in the form egress.Proxy.Peer takes: the one address the
+// proxy will serve.
+//
+// It returns a bare Addr rather than an (Addr, bool) pair because up() refuses
+// to bring a network into existence whose guest address will not convert, so
+// every *Network a caller can hold has one that does. That ordering is the
+// point: a conversion failure here would silently leave Peer zero, and a zero
+// Peer means "serve everyone" — the F9 hole, re-opened by the plumbing meant to
+// close it. Failing the sandbox at setup is the only acceptable direction for
+// that error, and it is where it is checked.
+func (n *Network) GuestAddr() netip.Addr {
+	addr, ok := netip.AddrFromSlice(n.GuestIP)
+	if !ok {
+		return netip.Addr{}
+	}
+	// Unmapped, so a 16-byte IPv4-in-IPv6 GuestIP and the four bytes a v4
+	// connection arrives as compare equal in the proxy.
+	return addr.Unmap()
+}
+
 func (n *Network) up(user string) error {
+	// Before the interface exists, because a half-created network is worse than
+	// none: every constructor reaches here, so this is the one door through
+	// which a Network whose guest address cannot arm the proxy's peer check
+	// would otherwise pass.
+	if !n.GuestAddr().IsValid() {
+		return fmt.Errorf("guest address %v is not usable as an address, so the egress proxy's "+
+			"peer check could not be armed for this sandbox", n.GuestIP)
+	}
 	steps := [][]string{
 		{"ip", "tuntap", "add", n.TAP, "mode", "tap", "user", user},
 		{"ip", "link", "set", n.TAP, "address", n.HostMAC},
@@ -180,17 +210,15 @@ func (n *Network) Restrict(proxyPort int) error {
 	return n.applyFirewall()
 }
 
-// applyFirewall installs the table from docs/networking.md §3.
-//
-// The base chains use policy accept and drop by iifname. A base chain on the
-// input hook with a drop policy would filter every packet reaching the host,
-// not just this sandbox's — which on a developer's machine means locking
-// yourself out of your own box the first time you run kelyfos.
-func (n *Network) applyFirewall() error {
-	ruleset := fmt.Sprintf(`
+// ruleset is the table this sandbox installs, as docs/networking.md §3 states
+// it. Built here rather than inline in applyFirewall so a test can read what
+// would be loaded without needing root.
+func (n *Network) ruleset() string {
+	return fmt.Sprintf(`
 table inet %[1]s {
 	chain input {
 		type filter hook input priority filter; policy accept;
+		ip daddr %[3]s iifname != "%[2]s" counter drop
 		iifname "%[2]s" jump kelyfos_guest_in
 	}
 
@@ -206,6 +234,28 @@ table inet %[1]s {
 	}
 }
 `, n.table, n.TAP, n.HostIP, n.ProxyPort)
+}
+
+// applyFirewall installs the table from docs/networking.md §3.
+//
+// The base chains use policy accept and drop by iifname. A base chain on the
+// input hook with a drop policy would filter every packet reaching the host,
+// not just this sandbox's — which on a developer's machine means locking
+// yourself out of your own box the first time you run kelyfos.
+//
+// The first line of the input chain is what makes the host address private, and
+// it is not an optimisation of the jump below it. HostIP is a local address of
+// the host, so a local process's connection to it never reaches the TAP: the
+// kernel routes it over `lo`, the jump's iifname match never fires, the packet
+// falls through to `policy accept`, and the proxy — with the operator's
+// credentials attached — answers whoever asked (F9). Matching on the
+// destination and dropping everything that did not arrive on this sandbox's own
+// interface closes that, and closes the physical-NIC case with it: a packet for
+// HostIP that arrived because the host answered ARP for it on the LAN has
+// iifname != TAP too, and is dropped by the same line. The guest's packets do
+// arrive on the TAP and reach the jump exactly as before.
+func (n *Network) applyFirewall() error {
+	ruleset := n.ruleset()
 
 	cmd := exec.Command("sudo", "-n", "nft", "-f", "-")
 	cmd.Stdin = strings.NewReader(ruleset)
@@ -225,20 +275,77 @@ func (n *Network) Down() {
 	_, _ = sudo("ip", "link", "del", n.TAP)
 }
 
-// BlockedPackets reports how many packets the drop rule counted, which is what
-// lets a session say traffic was blocked rather than merely not allowed.
+// BlockedPackets reports how many of the GUEST's packets the drop rules
+// counted, which is what lets a session say traffic was blocked rather than
+// merely not allowed.
+//
+// The input chain is excluded, and that exclusion is the whole reason this
+// decodes the JSON instead of scanning it for `"packets":` the way it used to.
+// Every counter in this table used to belong to the guest — the drop at the end
+// of kelyfos_guest_in and the two in forward all count packets that arrived on,
+// or were headed for, this sandbox's TAP. The F9 rule does not: it counts
+// packets addressed to the host's TAP address that came from somewhere else
+// entirely — another process on this machine, another sandbox's guest, or the
+// physical segment. Summing it in would put traffic the guest never sent into
+// resource.summary's blocked_packets, which docs/events.md documents beside
+// figures it calls "from the guest's point of view". A receipt that attributes
+// somebody else's packets to this sandbox is the record saying something
+// untrue, so the number stays the guest's and the F9 counter stays readable
+// where it is, in `nft list table`.
 func (n *Network) BlockedPackets() int64 {
-	out, err := sudo("nft", "-j", "list", "table", "inet", n.table)
+	return n.countDrops(func(chain string) bool { return chain != "input" })
+}
+
+// ForeignPacketsDropped is the F9 rule's own counter: packets addressed to this
+// sandbox's host address that did not arrive on its TAP, and were dropped.
+//
+// Separate from BlockedPackets because it is a fact about the host rather than
+// about the guest, and nothing may add the two together. It has no caller in
+// the product yet; it exists so the counter the ruleset keeps is readable from
+// Go at all, and so the test that proves the drop rule is what refused a
+// connection can read that rule rather than the table's total.
+func (n *Network) ForeignPacketsDropped() int64 {
+	return n.countDrops(func(chain string) bool { return chain == "input" })
+}
+
+// countDrops sums the counters on rules in the chains want accepts.
+//
+// It decodes rather than scanning the JSON for `"packets":`, which is what this
+// did before F9 and what made the split above impossible: with every counter in
+// the table belonging to the guest, a total was the same number either way.
+func (n *Network) countDrops(want func(chain string) bool) int64 {
+	// sudoJSON, not sudo: sudo folds stderr into the output, and a single nft
+	// warning on the way would make this JSON unparseable and the count
+	// silently zero. The textual scan this replaced coped with that by
+	// accident; a decoder does not.
+	out, err := sudoJSON("nft", "-j", "list", "table", "inet", n.table)
 	if err != nil {
 		return 0
 	}
-	// Cheap enough to scan rather than decode: the JSON has one counter object
-	// per drop rule and we only want the total.
+	var doc struct {
+		Nftables []struct {
+			Rule *struct {
+				Chain string `json:"chain"`
+				Expr  []struct {
+					Counter *struct {
+						Packets int64 `json:"packets"`
+					} `json:"counter"`
+				} `json:"expr"`
+			} `json:"rule"`
+		} `json:"nftables"`
+	}
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		return 0
+	}
 	var total int64
-	for _, part := range strings.Split(out, `"packets":`)[1:] {
-		var v int64
-		if _, err := fmt.Sscanf(part, "%d", &v); err == nil {
-			total += v
+	for _, item := range doc.Nftables {
+		if item.Rule == nil || !want(item.Rule.Chain) {
+			continue
+		}
+		for _, e := range item.Rule.Expr {
+			if e.Counter != nil {
+				total += e.Counter.Packets
+			}
 		}
 	}
 	return total
@@ -246,6 +353,15 @@ func (n *Network) BlockedPackets() int64 {
 
 func sudo(args ...string) (string, error) {
 	out, err := exec.Command("sudo", append([]string{"-n"}, args...)...).CombinedOutput()
+	return strings.TrimSpace(string(out)), err
+}
+
+// sudoJSON is sudo for a command whose stdout is parsed rather than shown.
+// CombinedOutput is right for the others — a failure's message is the whole
+// value of the output — and wrong here, where one line on stderr turns a
+// document into a parse error.
+func sudoJSON(args ...string) (string, error) {
+	out, err := exec.Command("sudo", append([]string{"-n"}, args...)...).Output()
 	return strings.TrimSpace(string(out)), err
 }
 

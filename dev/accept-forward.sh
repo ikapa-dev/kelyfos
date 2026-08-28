@@ -120,6 +120,22 @@ fi
 # are there, and nothing anywhere mentions a forwarded port.
 check "$(grep -q 'jump kelyfos_guest_in' forwarded.rules && echo yes || echo no)" \
       "the egress-only chains are in force while ports are forwarded"
+# F9. The jump above only inspects what arrives on the TAP, and a local
+# process's connection to the host's TAP address never arrives there — it is
+# routed over lo, matches no rule, falls through to `policy accept`, and reaches
+# a proxy holding the operator's credentials. This line is what closes that, and
+# it has to be above the jump to read as what it is.
+check "$(grep -q 'ip daddr GUEST_IP iifname != "kelyfosSANDBOX" counter COUNTERS drop' forwarded.rules && echo yes || echo no)" \
+      "the host's TAP address is dropped for anything that did not arrive on the TAP"
+# Per table, not per file: `nft list ruleset` shows every table on the host, so
+# on a machine running more than one sandbox the last drop and the first jump
+# belong to different tables and comparing line numbers across the whole capture
+# says nothing. Every jump must have a drop above it inside its own table.
+check "$(awk '/^table inet /{d=0}
+              /iifname != "kelyfosSANDBOX" counter COUNTERS drop/{d=NR}
+              /jump kelyfos_guest_in/{if(!d || d>NR) bad=1; seen=1}
+              END{print (seen && !bad) ? "yes" : "no"}' forwarded.rules)" \
+      "and that drop is above the jump, in every table, not below it"
 check "$(grep -qE '18080|18081|dnat|redirect' forwarded.rules && echo no || echo yes)" \
       "no rule mentions a forwarded port, and there is no dnat anywhere"
 

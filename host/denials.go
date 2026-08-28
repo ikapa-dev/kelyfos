@@ -191,6 +191,11 @@ func wireProxyAudit(proxy *egress.Proxy, rec *recorder.Recorder, agent string, b
 			Host: a.Host, Port: a.Port, Allowed: &allowed,
 			Reason: a.Reason, Mode: a.Mode,
 			BytesIn: a.BytesIn, BytesOut: a.BytesOut,
+			// Who connected, on a foreign_peer refusal and nothing else. It
+			// goes in peer rather than host because host is read as a
+			// destination by the digest, the report and all three renderers
+			// (F9).
+			Peer: a.Peer,
 		})
 	}
 }

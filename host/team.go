@@ -910,7 +910,7 @@ func bootAgent(ctx context.Context, a plannedAgent, broker *team.Broker, rec *re
 				return nil, err
 			}
 		}
-		rig.proxy = &egress.Proxy{Policy: policy, CA: ca}
+		rig.proxy = &egress.Proxy{Policy: policy, CA: ca, Peer: rig.net.GuestAddr()}
 		port, err := rig.proxy.Listen(rig.net.HostIP.String() + ":0")
 		if err != nil {
 			return nil, err

@@ -73,6 +73,7 @@ sandboxes can never interfere:
 table inet kelyfos_<id> {
         chain input {
                 type filter hook input priority filter; policy accept;
+                ip daddr <host_ip> iifname != "<tap>" counter drop
                 iifname "<tap>" jump kelyfos_guest_in
         }
 
@@ -89,20 +90,44 @@ table inet kelyfos_<id> {
 }
 ```
 
-Two details are deliberate and easy to get wrong:
+Three details are deliberate and easy to get wrong:
 
 - **The base chains have `policy accept`, not `policy drop`.** A base chain on
   the `input` hook with a drop policy filters *all* traffic to the host, not
   only the sandbox's — on a developer's machine that means locking yourself out
   of your own box the first time you run `kelyfos`. Isolation comes from
   matching `iifname` and dropping explicitly, which affects nothing else.
+- **The first line of `input` is what makes `<host_ip>` private**, and it is not
+  a faster spelling of the jump below it. An address on a TAP is a local address
+  of the host like any other, so a *local process's* connection to it never
+  reaches the TAP at all: the kernel routes it over `lo`, the jump's `iifname`
+  match never fires, the packet falls through to `policy accept`, and the proxy
+  — with the operator's credentials attached — answers whoever asked. Measured,
+  not argued: with only the jump in place, a process on the host dialling
+  `<host_ip>:<proxy_port>` is served, and the source address the kernel picks
+  for it is `<host_ip>` itself. Matching on the destination and dropping
+  anything that did not arrive on this sandbox's own interface closes that, and
+  closes the LAN case with it — a packet for `<host_ip>` that arrives on the
+  physical NIC because the host answered ARP for it has `iifname != <tap>` too,
+  and the same line drops it. The guest's packets do arrive on the TAP and reach
+  the jump exactly as before. This was F9 of the 2026-08-28 review; the proxy's
+  own `Peer` check is the other half, and each is there for the day the other is
+  wrong.
 - **`forward` drops in both directions.** IP forwarding is off and nothing turns
   it on, but a rule that states the intent survives someone else's sysctl.
 
-Each drop carries a `counter`, which `nft list table` will show you. Nothing
-reads it yet: `kelyfos log` reports what the **proxy** saw, so a packet the
-firewall dropped before it reached the proxy is counted here and appears in no
-event. Carrying that count into the session receipt is open work.
+Each drop carries a `counter`, which `nft list table` will show you.
+
+**The `input` chain's counter is deliberately not part of `blocked_packets`.**
+The session receipt's figure is the guest's — `resource.summary` documents it
+beside numbers it calls "from the guest's point of view" — and the drops in
+`kelyfos_guest_in` and `forward` are all packets this sandbox sent or would
+have received. The F9 rule's are not: they are packets *somebody else*
+addressed to the host's TAP address, from another process on this machine, from
+another sandbox, or from the physical segment. Adding them in would attribute
+another party's traffic to this sandbox's receipt. `BlockedPackets()` therefore
+sums every chain but `input`, and `ForeignPacketsDropped()` reads that one on
+its own.
 
 ### 3.0 The guest always has a loopback interface
 
@@ -229,6 +254,31 @@ hoped for.
   sandbox that can reach an arbitrary port, and widening what every sandbox in
   this product can reach is a bigger, more security-relevant change than
   fixing the fact that the existing, correct default was invisible.
+- **The proxy serves one address and closes every other connection unread.**
+  `Peer` is the guest's own end of the /30, and a connection from anywhere else
+  is closed before a byte is read from it, before a deadline is set, and before
+  anything can attach a credential on its behalf — recorded as an
+  `egress.attempt` with reason `foreign_peer`, and answered with nothing at all.
+  No status line, no fix line, no confirmation that there is a proxy here:
+  everything the guest is told exists to help the guest, and a caller that is
+  not the guest is not owed it. Because no request was ever parsed there is no
+  destination to name, so `host` and `port` are absent on those events and the
+  address the connection came from is in `peer` — the same field a team
+  delivery and a forwarded port already use for "who connected". It is not put
+  in `host`: `kelyfos log`, `kelyfos view`, `kelyfos watch`, the HTML report and
+  the digest all read `host` as somewhere the sandbox tried to reach, and the
+  digest counts it against that domain, so a source address there would make
+  five readers say the guest named a host it never named. One event per
+  distinct address, not one per connection: this is the only refusal here a
+  local process can drive in a loop without the guest doing any work.
+  **The address is in the chain and is not yet rendered.** `kelyfos log` shows
+  such a refusal as `egress BLOCKED :0  mode= foreign_peer` and `kelyfos view`
+  as `egress BLOCKED :0`, neither reading the `peer` field — so today, reading
+  the chain or `kelyfos log --export` is what tells you who knocked. Carrying
+  it into the four rendering branches is open work.
+  The other half of this is the ruleset's own `ip daddr … iifname != …` drop in
+  §3; the address the proxy binds is not, and never was, what kept the port
+  private (F9).
 - A refusal is answered with `403` and a body naming the domain and the edit
   that would allow it (`[egress.host]` in [`denials.md`](denials.md)). For plain
   HTTP the guest reads it; for a refused `CONNECT` most clients discard the
