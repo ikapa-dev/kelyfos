@@ -1370,7 +1370,7 @@
         &ldquo;what&rdquo;; every guest-influenced string goes through <code>proto.SafeText</code> first. <b>The
         three modes get their names here and keep them everywhere</b>: <i>declared</i>, <i>aggregate</i>,
         <i>as-it-ran</i> &mdash; three questions, and only the first is one anybody else can answer.</span></li>
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">P7-8</span><span class="tk"><b>The report&rsquo;s run section.</b> The run map, the agent sheets, the reach matrix and the
         store panel, above the existing lane timeline, which does not change. Still one file, still no scripts,
         still no external request. Three fixes ride with it because this is the task that touches the template:
@@ -1465,6 +1465,23 @@
         original kill. Not gated by D62's barrier and not owned by any of the four lanes &mdash;
         <code>internal/recorder/fuzz_test.go</code>'s harness, not any lane's feature code, is the file in
         question; pick this up whenever convenient.</span></li>
+    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+        <span class="tid">P7-16</span><span class="tk"><b>Concurrent teams on one host collide over shared,
+        single-slot state.</b> Two independent adversarial reviews (P7-7's, P7-8's), running in separate
+        worktrees on the same development VM, each hit the same class of collision unprompted while this phase's
+        stage-two agents worked in parallel: <code>run/team.json</code> is a single file per host, so tearing
+        down one review's team briefly overwrote the file another review's still-running team needed (caught and
+        restored before real harm); separately, <code>kelyfos sessions erase</code>/<code>team down</code>/
+        <code>pkill -f "team up"</code> issued by one review against the shared
+        <code>~/.cache/kelyfos</code> produced spurious failures in an unrelated <code>dev/demo-team.sh</code> run
+        by another. This is the same class S20 (<code>0b3dfb8</code>) already fixed once for
+        <code>demo-team.sh</code>'s own teardown check; it has now recurred in two more places under this
+        project's own newly-routine pattern of several concurrent agent-driven teams on one dev machine.
+        <b>Audit every host-level singleton a team or a session touches</b> (starting with
+        <code>run/team.json</code> and anything else keyed by host rather than by session or team id) <b>and
+        either scope each one per-team/per-session, or add real locking</b> &mdash; a design pass, not
+        necessarily a large one, since the shape of the fix (S20's own precedent) is already known. Not gated by
+        D62's barrier and not owned by any of the four lanes.</span></li>
   </ul>
 
   <div class="accept">
@@ -5940,6 +5957,35 @@ after:
         <code>javascript:</code>, CSP/<code>role="img"</code>/<code>@media print</code> all present;
         <code>python3 tools/check-plan.py</code> coherent; PLAN.html byte-identical across all 17 checkboxes,
         untouched by the review itself.</td></tr>
+    <tr><td class="mono">2026-08-28</td><td class="mono">P7-8</td>
+        <td><b>Ticked, by the orchestrator, after adversarial review confirmed GO on the fix round.</b> The
+        task's own explicit security constraint &mdash; adversary strings reach element text content only,
+        every SVG attribute a number computed in Go &mdash; held throughout both review rounds, verified
+        against real exports each time. Round one found a real, if narrower, gap in the escaping the code
+        claimed: several guest-influenced fields from the guest's own boot handshake reached the page raw, and
+        <code>safeBody</code> (half the escaping fix) had zero test coverage, mutation-provably. Both closed,
+        along with a print-CSS legibility regression, a label-overflow bug, and a domain/store-key node
+        collision, all independently re-verified by the reviewer through execution rather than by reading.
+        Reviewer's final verdict: <b>GO.</b>
+        <br>Merged to <code>main</code>. The predicted <code>internal/digest</code> overlap with P7-7 (both
+        authors flagged it in advance, both built the identical <code>Agent.Policy</code>/
+        <code>Digest.Policy</code>/<code>Digest.Topology</code> shape independently) resolved by keeping P7-7's
+        already-merged, already-twice-reviewed version; confirmed P7-8's own version added no test coverage
+        P7-7's didn't already have before discarding the duplicate.
+        <br><b>A second, independent report of the same shared-host hazard S20 already fixed once</b>: P7-7's
+        reviewer backed up and restored a <code>run/team.json</code> collision between two concurrent worktree
+        teams; P7-8's reviewer separately traced two spurious <code>demo-team.sh</code> failures to a sibling
+        worktree's review issuing <code>team up</code>/<code>sessions erase</code>/<code>team down</code>
+        against the same shared <code>~/.cache/kelyfos</code> mid-run. Two independent reviewers hitting the
+        same class of collision, unprompted, is enough to open it as its own task rather than note it twice
+        more &mdash; see P7-16 (D70), added alongside this row.</td>
+        <td class="mono">merge commit; conflict in <code>internal/digest/{digest,digest_test}.go</code> (the
+        predicted P7-7/P7-8 overlap, resolved as described at left) and <code>PLAN.html</code> (Progress Log
+        append zone, both branches' rows kept in full); post-merge <code>gofmt -l .</code> clean,
+        <code>go vet ./...</code> clean, <code>go test -count=1 ./...</code> every package <code>ok</code>,
+        <code>govulncheck</code> &rarr; &ldquo;No vulnerabilities found.&rdquo;, <code>make docs</code> regenerated
+        cleanly; <code>python3 tools/check-plan.py</code> &rarr; &ldquo;PLAN.html is coherent: 101 tasks, 87
+        checked, 68 decisions&rdquo;.</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
@@ -7282,6 +7328,20 @@ after:
         indistinguishable from one nobody ran, which is exactly the failure mode &sect;8 rule 8 exists to catch
         for CI as a whole, one target at a time. Not gated by D62's barrier: it touches no lane's feature code,
         only the fuzz harness itself.</td></tr>
+    <tr><td class="mono">D70</td><td class="mono">2026-08-28</td>
+        <td>P7-16 added mid-phase: two independent adversarial reviews, in separate worktrees on the same
+        development VM, each hit a different instance of concurrent teams colliding over host-level singleton
+        state (<code>run/team.json</code>; shared session-cache mutation from one team's teardown affecting
+        another's live run) &mdash; unprompted, while stage two's agents worked in parallel. Same disposition as
+        D67/P7-14 and D69/P7-15: tracked as a new Phase 7 task rather than absorbed into either reviewing task or
+        left as a note, since two independent, unprompted reports of the same class is a real pattern, not a
+        one-off.</td>
+        <td>The same failure class already cost a fix once, in S20 (<code>0b3dfb8</code>), for exactly one
+        symptom of it (<code>demo-team.sh</code>'s own teardown check false-failing on a shared host). It has
+        now resurfaced in two more places under a usage pattern this project did not have when S20 landed:
+        several agent-driven teams running concurrently on one development machine, which this phase's own
+        multi-lane, multi-reviewer structure made routine rather than exceptional. Not gated by D62's barrier:
+        it touches no lane's feature code, only host-level state shared across sessions and teams.</td></tr>
     <!-- Claude Code: append rows above this line. -->
   </table>
 </section>
