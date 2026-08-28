@@ -41,6 +41,8 @@ usage:
   kelyfos connect <client>         write a client's own MCP configuration, and
                                    check it by starting the server it names
   kelyfos watch [flags]            live view of a sandbox (reads the record only)
+  kelyfos view [flags]             serve a session's report live, over HTTP,
+                                   loopback-only and token-required (D60)
   kelyfos bench [flags]            measure cold boot-to-ready over several runs
   kelyfos version                  print the version and exit
   kelyfos help                     print this list
@@ -104,6 +106,8 @@ func main() {
 		err = teamCmd(os.Args[2:])
 	case "watch":
 		err = watchCmd(os.Args[2:])
+	case "view":
+		err = viewCmd(os.Args[2:])
 	case "bench":
 		err = benchCmd(os.Args[2:])
 	case "version", "--version", "-v":

@@ -152,14 +152,24 @@ func markerAbove(lines []string, i int) bool {
 // The cookbook opens by saying how many recipes it has, in words, and that
 // sentence is exactly the kind of thing that goes stale the moment somebody
 // adds one — it already had, silently, before this check existed (E4-5).
+//
+// Twenty-one through twenty-nine and thirty are here because P7-12 was the
+// first recipe to cross twenty — the original map stopped exactly at the
+// round number after nineteen, which is the shape of gap that only shows up
+// the day something needs the next one. A little headroom past today's
+// count is cheap; hitting this exact wall a second time at twenty-one
+// recipes would not be.
 var countWords = map[string]int{
 	"One": 1, "Two": 2, "Three": 3, "Four": 4, "Five": 5, "Six": 6,
 	"Seven": 7, "Eight": 8, "Nine": 9, "Ten": 10, "Eleven": 11, "Twelve": 12,
 	"Thirteen": 13, "Fourteen": 14, "Fifteen": 15, "Sixteen": 16, "Seventeen": 17,
 	"Eighteen": 18, "Nineteen": 19, "Twenty": 20,
+	"Twenty-one": 21, "Twenty-two": 22, "Twenty-three": 23, "Twenty-four": 24,
+	"Twenty-five": 25, "Twenty-six": 26, "Twenty-seven": 27, "Twenty-eight": 28,
+	"Twenty-nine": 29, "Thirty": 30,
 }
 
-var countLine = regexp.MustCompile(`(?m)^([A-Z][a-z]+) recipes,`)
+var countLine = regexp.MustCompile(`(?m)^([A-Z][a-z]+(?:-[a-z]+)?) recipes,`)
 
 func checkCount(doc string, n int) error {
 	m := countLine.FindStringSubmatch(doc)

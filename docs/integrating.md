@@ -568,8 +568,8 @@ different protocol stack from the REST endpoints the shim serves. Use
 
 ## 7. Where to look next
 
-- [`cookbook.md`](cookbook.md) — twenty recipes that run, including the Python
-  client above
+- [`cookbook.md`](cookbook.md) — twenty-one recipes that run, including the
+  Python client above
 - [`reference/`](reference/) — every command, flag, key, tool, event and exit
   code, generated from the source
 - [`teams.md`](teams.md) — the full account of the schema, the broker and the

@@ -32,6 +32,7 @@ Go's `flag` accepts one dash or two, so `-image` and `--image` are the same flag
 | [`kelyfos verify`](#kelyfos-verify) | check the record an exported report carries, offline and with no key |
 | [`kelyfos connect`](#kelyfos-connect) | write a client's own MCP configuration, and check it by starting the server it names |
 | [`kelyfos watch`](#kelyfos-watch) | live view of a sandbox (reads the record only) |
+| [`kelyfos view`](#kelyfos-view) | serve a session's report live, over HTTP, loopback-only and token-required (D60) |
 | [`kelyfos bench`](#kelyfos-bench) | measure cold boot-to-ready over several runs |
 | [`kelyfos version`](#kelyfos-version) | print the version and exit |
 | [`kelyfos help`](#kelyfos-help) | print this list |
@@ -393,6 +394,19 @@ kelyfos watch [flags]
 | Flag | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `--json` | boolean | — | print one snapshot of the digest — every counter, the policy and the topology (P7-10) — as JSON, instead of opening the live view |
+| `--session` | string | the most recent | session id |
+
+## kelyfos view
+
+Serve a session's report live, over HTTP, loopback-only and token-required (D60).
+
+```
+kelyfos view [flags]
+```
+
+| Flag | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `--idle-timeout` | duration | 30m0s | exit after this long with nobody connected and nothing new recorded |
 | `--session` | string | the most recent | session id |
 
 ## kelyfos bench

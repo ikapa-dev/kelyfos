@@ -95,6 +95,8 @@ func docSet() []doc {
 			Summary: "the [sessions] retention_days floor, kelyfos sessions prune, the size warning, and kelyfos sessions erase's replacement-record pattern"},
 		{Path: "docs/otlp.md", Title: "Mapping the chain to a standard, without adopting it", Full: true,
 			Summary: "how kelyfos log --export-otlp maps a session's chain to OTLP-JSON spans, why the mapping is versioned apart from the flight recorder and never an input to kelyfos verify, and what is deliberately not mapped"},
+		{Path: "docs/view.md", Title: "kelyfos view — the localhost read-only viewer", Full: true,
+			Summary: "the one place KelyfOS opens a listening socket (D60): loopback-only, per-process token, Host-header check, GET/HEAD only, hash-pinned CSP, and the residual risk stated plainly"},
 		{Path: "docs/README.md", Title: "Documentation map", Full: true,
 			Summary: "what every document is, and — deliberately — where each is still thin"},
 	}

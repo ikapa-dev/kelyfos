@@ -358,6 +358,25 @@ recorder. One shim holds at most sixteen machines at once, so the port is not a
 way to make an unbounded number of them. What remains is the port itself — run
 it when you need it and stop it when you do not.
 
+### `kelyfos view` is loopback- and token-scoped, not user-scoped (P7-12, D60)
+`kelyfos view` is the one place KelyfOS opens a listening socket at all —
+every other non-goal in this project forbids one; D60 admits this one,
+narrowly, and docs/view.md is the full account. It is meaningfully more
+defended than the shim above it on this page: a 256-bit token, minted fresh
+per process and never written to disk, is required and compared in constant
+time on every route including the live-update stream, there is no opt-out.
+But binding `127.0.0.1` does not make the port private to the account that
+started it — **any other local user on a shared host can connect to it
+exactly as easily as the person who ran the command**, the same fact the
+shim entry above states about its own port. The token is what actually
+separates users here; the loopback address is not doing that work by
+itself, and docs/view.md says so in the same words this entry does. What is
+different from the shim: there is no unauthenticated default to opt out of,
+every route is `GET`/`HEAD` only so there is nothing to mutate even for
+someone who reached the port, and the process exits on its own once the
+session it is showing ends or after a bounded idle period — it does not sit
+open indefinitely the way an unattended shim can.
+
 ### The supply chain of what you run *inside*
 `--allow github.com` means the agent can fetch and execute whatever is at
 github.com. KelyfOS controls *where* it can reach, not *what comes back*. There
