@@ -160,10 +160,19 @@ func runView(ctx context.Context, sessionID, path string, idleTimeout time.Durat
 
 	v := newViewServer(sessionID, path, token, ln.Addr().String())
 
+	// wrap has to sit outside the mux, not inside it on each pattern:
+	// http.ServeMux.ServeHTTP runs its own path-cleaning redirect (double
+	// slashes, "." and ".." segments) *before* dispatching to any registered
+	// handler, so a per-pattern wrap never sees a "dirty" request at all —
+	// it answers with none of the method, Host or token checks applied. This
+	// was found live: an unauthenticated, wrong-Host, POST request to "//"
+	// or "//events" got a 307 with none of wrap's headers set. Wrapping the
+	// mux itself means every request, dirty path included, clears all three
+	// checks before ServeMux ever runs its own redirect logic.
 	mux := http.NewServeMux()
-	mux.HandleFunc("/", v.wrap(v.handleIndex))
-	mux.HandleFunc("/events", v.wrap(v.handleEvents))
-	srv := &http.Server{Handler: mux}
+	mux.HandleFunc("/", v.handleIndex)
+	mux.HandleFunc("/events", v.handleEvents)
+	srv := &http.Server{Handler: v.wrap(mux.ServeHTTP)}
 
 	serverErr := make(chan error, 1)
 	go func() { serverErr <- srv.Serve(ln) }()

@@ -67,10 +67,15 @@ func newTestView(t *testing.T, sessionID, path string) *testView {
 	t.Helper()
 	tv := &testView{token: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcd"}
 	tv.v = newViewServer(sessionID, path, tv.token, "")
+	// Wrap the mux itself, not each pattern — the same structure runView
+	// uses. A per-pattern wrap never sees a "dirty" path request at all,
+	// because http.ServeMux answers those with its own redirect before any
+	// registered handler runs; wrapping the mux is what makes every request,
+	// dirty path included, clear the method/Host/token checks first.
 	mux := http.NewServeMux()
-	mux.HandleFunc("/", tv.v.wrap(tv.v.handleIndex))
-	mux.HandleFunc("/events", tv.v.wrap(tv.v.handleEvents))
-	tv.ts = httptest.NewServer(mux)
+	mux.HandleFunc("/", tv.v.handleIndex)
+	mux.HandleFunc("/events", tv.v.handleEvents)
+	tv.ts = httptest.NewServer(tv.v.wrap(mux.ServeHTTP))
 	// Set only after Start: the listener's real address is only known once
 	// it exists, and nothing calls into the mux before the test itself
 	// issues a request below.
@@ -214,6 +219,72 @@ func TestMismatchedHostRefusedEvenWithACorrectToken(t *testing.T) {
 	}
 }
 
+// F1, found by adversarial review: http.ServeMux runs its own path-cleaning
+// redirect (double slashes, "."/".." segments) *inside* ServeMux.ServeHTTP,
+// before dispatching to any registered handler — so a security wrapper
+// applied per-pattern (mux.HandleFunc(p, wrap(h))) never runs on a "dirty"
+// path at all; ServeMux answers with its own 307 first, with none of
+// wrap's method/Host/token checks evaluated. Live repro: an unauthenticated,
+// wrong-Host, POST to "//" or "//events" got a 307. The fix wraps the mux
+// itself (http.Server{Handler: wrap(mux.ServeHTTP)}) so every request,
+// dirty path included, clears the checks before ServeMux's own routing —
+// redirect or otherwise — ever runs.
+func TestDirtyPathsStillGoThroughEveryCheckBeforeServeMuxsOwnRedirect(t *testing.T) {
+	sessionID, path, _ := newFixtureSession(t)
+	tv := newTestView(t, sessionID, path)
+
+	dirtyPaths := []string{"//", "//events", "/a/../b", "/./", "///"}
+
+	for _, dirty := range dirtyPaths {
+		// No token, correct Host: must not be answered by a bare redirect —
+		// the missing-token refusal has to fire first.
+		req := tv.req(t, http.MethodGet, dirty, "")
+		resp, err := tv.ts.Client().Do(req)
+		if err != nil {
+			t.Fatalf("%s (no token): %v", dirty, err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode == http.StatusTemporaryRedirect || resp.StatusCode == http.StatusMovedPermanently {
+			t.Errorf("%s with no token: got %d — ServeMux's own redirect answered before the token check ran", dirty, resp.StatusCode)
+		}
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Errorf("%s with no token: got %d, want %d", dirty, resp.StatusCode, http.StatusUnauthorized)
+		}
+
+		// Correct token, wrong Host: must not be answered by a bare redirect
+		// either — the Host check has to fire regardless of path shape.
+		req = tv.req(t, http.MethodGet, dirty, tv.token)
+		req.Host = "evil.example.com:1234"
+		resp, err = tv.ts.Client().Do(req)
+		if err != nil {
+			t.Fatalf("%s (wrong Host): %v", dirty, err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode == http.StatusTemporaryRedirect || resp.StatusCode == http.StatusMovedPermanently {
+			t.Errorf("%s with a mismatched Host: got %d — ServeMux's own redirect answered before the Host check ran", dirty, resp.StatusCode)
+		}
+		if resp.StatusCode != http.StatusForbidden {
+			t.Errorf("%s with a mismatched Host: got %d, want %d", dirty, resp.StatusCode, http.StatusForbidden)
+		}
+
+		// Correct token, correct Host, POST: must not be answered by a bare
+		// redirect either — the method check has to fire regardless of path
+		// shape, matching the structural "GET/HEAD only" requirement.
+		req = tv.req(t, http.MethodPost, dirty, tv.token)
+		resp, err = tv.ts.Client().Do(req)
+		if err != nil {
+			t.Fatalf("%s (POST): %v", dirty, err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode == http.StatusTemporaryRedirect || resp.StatusCode == http.StatusMovedPermanently {
+			t.Errorf("POST %s: got %d — ServeMux's own redirect answered before the method check ran", dirty, resp.StatusCode)
+		}
+		if resp.StatusCode != http.StatusMethodNotAllowed {
+			t.Errorf("POST %s: got %d, want %d", dirty, resp.StatusCode, http.StatusMethodNotAllowed)
+		}
+	}
+}
+
 // http.ServeMux's "/" pattern is a catch-all for anything not more
 // specifically registered; handleIndex refuses that rather than silently
 // rendering the report for an arbitrary path.
@@ -343,9 +414,15 @@ func TestInjectLiveFailsLoudlyIfItsAnchorsAreMissing(t *testing.T) {
 
 func TestSSEDeliversHostileContentAsInertJSONData(t *testing.T) {
 	sessionID, path, rec := newFixtureSession(t)
-	tv := newTestView(t, sessionID, path)
+	// Set before newTestView, which spawns poll()'s goroutine immediately —
+	// poll reads viewPollInterval once, at startup, to build its ticker
+	// (view.go's time.NewTicker(viewPollInterval)), so setting it afterward
+	// races that read under -race (found live: WARNING: DATA RACE between
+	// this line and view.go:461, two other tests below had the identical
+	// bug).
 	viewPollInterval = 20 * time.Millisecond
 	defer func() { viewPollInterval = time.Second }()
+	tv := newTestView(t, sessionID, path)
 
 	req := tv.req(t, http.MethodGet, "/events", tv.token)
 	req = req.WithContext(withTimeout(t, 10*time.Second))
@@ -408,9 +485,11 @@ func TestSSECatchesUpNewClientsWithoutReplayingOldEvents(t *testing.T) {
 	if err := rec.Append(recorder.Event{Type: recorder.TypeCommandStart, Cmd: []string{"echo", "hi"}}); err != nil {
 		t.Fatal(err)
 	}
-	tv := newTestView(t, sessionID, path)
+	// Set before newTestView spawns poll()'s goroutine — see the comment on
+	// the identical fix in TestSSEDeliversHostileContentAsInertJSONData.
 	viewPollInterval = 20 * time.Millisecond
 	defer func() { viewPollInterval = time.Second }()
+	tv := newTestView(t, sessionID, path)
 
 	// Let at least one poll tick happen before connecting, so lastCount is
 	// already caught up to the two pre-existing events.
@@ -445,9 +524,11 @@ func TestSSECatchesUpNewClientsWithoutReplayingOldEvents(t *testing.T) {
 
 func TestSessionEndBroadcastsEndAndStopsFurtherUpdates(t *testing.T) {
 	sessionID, path, rec := newFixtureSession(t)
-	tv := newTestView(t, sessionID, path)
+	// Set before newTestView spawns poll()'s goroutine — see the comment on
+	// the identical fix in TestSSEDeliversHostileContentAsInertJSONData.
 	viewPollInterval = 20 * time.Millisecond
 	defer func() { viewPollInterval = time.Second }()
+	tv := newTestView(t, sessionID, path)
 
 	req := tv.req(t, http.MethodGet, "/events", tv.token)
 	req = req.WithContext(withTimeout(t, 10*time.Second))
@@ -483,11 +564,18 @@ func TestRunViewExitsWhenTheSessionEnds(t *testing.T) {
 	viewPollInterval = 20 * time.Millisecond
 	defer func() { viewPollInterval = time.Second }()
 
-	var out bytes.Buffer
+	// A plain bytes.Buffer here is a real data race under -race: runView's
+	// goroutine keeps writing to it (its own progress lines) for the rest of
+	// the test, and waitFor below reads it concurrently, before the `done`
+	// channel receive gives the two goroutines a synchronization point.
+	// syncBuffer below is a mutex-guarded stand-in for exactly that window;
+	// production code never has this problem (viewCmd passes os.Stdout, and
+	// nothing else ever reads it concurrently).
+	out := &syncBuffer{}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	done := make(chan error, 1)
-	go func() { done <- runView(ctx, sessionID, path, time.Hour, &out) }()
+	go func() { done <- runView(ctx, sessionID, path, time.Hour, out) }()
 
 	// Give runView a moment to bind and print the URL before ending the
 	// session, so the end is observed by an already-running poll loop
@@ -539,6 +627,17 @@ func TestRunViewExitsAfterIdleTimeoutWithNobodyConnected(t *testing.T) {
 }
 
 // --- helpers ---
+
+// String is a non-destructive read of syncBuffer's content (unlike take,
+// which empties it) — what the one test above needs, since it reads
+// runView's output while runView's own goroutine is still writing to it. A
+// plain bytes.Buffer there is a genuine data race; syncBuffer already exists
+// (servemcpteam.go) for the identical problem elsewhere in this package.
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
 
 func withTimeout(t *testing.T, d time.Duration) context.Context {
 	t.Helper()
