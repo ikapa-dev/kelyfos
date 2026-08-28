@@ -412,13 +412,28 @@ func readCapped(path string) ([]byte, *mcp.CallToolResult) {
 // A confined exec holds MAKE_SYM on every tree it can write, so a loop planting
 // and removing a link at the target was the whole of the attack.
 //
-// Now the tree is opened as an *os.Root and every step goes through it. On Linux
-// that is openat2 with RESOLVE_BENEATH: a component that resolves outside the
-// tree is refused by the kernel at the moment of the open, atomically, with no
-// window for anything to change underneath. The lexical checks stay in front of
-// it for their error messages and for the in-tree symlink this project already
-// refused — RESOLVE_BENEATH would follow that one — but they are no longer what
-// makes the write safe.
+// Now the tree is opened as an *os.Root and every step goes through it. What that
+// buys is worth stating precisely, because the obvious guess about the mechanism
+// is wrong: Go 1.27's os.Root does *not* use openat2 or RESOLVE_BENEATH.
+// openat2Trap is declared in internal/syscall/unix and called from nowhere in
+// GOROOT. os/root_unix.go walks the path one component at a time with
+// openat(parent, name, O_NOFOLLOW|O_CLOEXEC), and resolves any symlink it meets
+// itself, in Go, against the parts of the path it is still holding.
+//
+// The guarantee is what matters and it is real: the walk never lets a component
+// leave the tree, and each step is an openat against a directory handle it
+// already holds, so there is no name to re-resolve and nothing for a planted
+// link to change underneath. Measured semantics, which are stricter than
+// RESOLVE_BENEATH in one place:
+//
+//	a relative symlink that stays inside the tree is followed;
+//	an *absolute* symlink is refused even when it points inside the tree,
+//	  because splitPathInRoot rejects a leading separator outright;
+//	anything resolving above the tree is refused, ".." included.
+//
+// The lexical checks stay in front of it for their error messages and for the
+// in-tree relative symlink this project already refused — the walk would follow
+// that one — but they are no longer what makes the write safe.
 func writeFile(path string, data []byte, mode os.FileMode) *mcp.CallToolResult {
 	// Before the size check, because "where" is a question about whether this
 	// call should happen at all and "how big" is a question about this call
@@ -471,7 +486,7 @@ func writeFile(path string, data []byte, mode os.FileMode) *mcp.CallToolResult {
 
 // writeThroughErr names a symlink when one is what the root refused.
 //
-// openat2 reports only that the path left its root, which is the right thing for
+// os.Root reports only that the path left its root, which is the right thing for
 // it to know and the wrong thing for an agent to read: "path escapes from parent"
 // does not say what to do about it. If a link is still there to be found, say so
 // in the words the tools used before F11; if it is not — the racing case, where

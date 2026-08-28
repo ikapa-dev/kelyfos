@@ -94,7 +94,11 @@ Both halves are closed. `kelyfos.fragment` pins
 `check-config.sh` asserts — a build where it returns as `=y` or `=m` now fails.
 And `internal/vsock` refuses a peer whose CID is not `VMADDR_CID_HOST`, closes
 it, reports it on the console and carries on accepting, so the guarantee does
-not rest on a build staying correct. CID 2 is what Firecracker's hybrid vsock
+not rest on a build staying correct. The report is one line per listening port,
+not per connection, with the total printed when the listener closes: the
+scenario this check exists for is precisely the one in which a guest process can
+connect in a loop, and a line each would let it drive unbounded output from PID 1
+onto the operator's console. CID 2 is what Firecracker's hybrid vsock
 actually delivers, which was read off a running guest before the check was
 written, because a check on the wrong constant would refuse every channel this
 machine has.
@@ -279,8 +283,14 @@ Two layers now, because one of them is a grant and grants get widened:
   anything to the merged mount on top. The image ships no device node outside
   `/dev`, and `/dev` is a devtmpfs moved across afterwards with its own flags,
   so `nodev` costs the guest nothing; `nosuid` retires the setuid bit on
-  `/bin/busybox`, which buys nothing today because every process here is already
-  root, and is therefore exactly the moment to drop it.
+  `/bin/busybox`. The reason to retire it is *not* that everything here runs as
+  root — `su -s /bin/sh nobody -c id` works in this image and returns
+  `uid=65534(nobody)`. It is that every confined process carries `NoNewPrivs`,
+  which makes `execve` ignore set-user-ID outright and is inherited across fork
+  and exec, so that `nobody` gains nothing from a `4755` copy of BusyBox
+  (measured: `uid=65534` through one). `nosuid` states the same thing on the
+  filesystem rather than on the process, and so covers anything that ever runs
+  here without `NoNewPrivs` set.
 
 **`mknod` and `mknodat` are deliberately not on the seccomp refusal list**, and
 a test pins them off it. `mkfifo(3)` *is* `mknodat` with `S_IFIFO`, and this
@@ -424,8 +434,8 @@ not governed at all.
 `--confine` helper and nowhere else, so PID 1 is not confined by the profile it
 applies to everything it spawns, and a tool running inside the supervisor has
 the whole filesystem in front of it. `write_file` is bounded to the
-same three lists the profile is built from instead (`writableFor`, P6-24), so
-the file tools get the reach a confined child gets and no more. *Since F11 of
+same three lists the profile is built from instead (`writableTarget`, P6-24 and
+F11), so the file tools get the reach a confined child gets and no more. *Since F11 of
 the 2026-08-28 review that bound is enforced at the open rather than checked
 before it:* the tool used to walk the path with `Lstat`, twice, and then hand the
 absolute path to `os.MkdirAll` and `os.WriteFile`, which resolve it again — and
@@ -434,10 +444,24 @@ A confined exec holds `MAKE_SYM` on every tree it can write, so a loop planting
 and removing a link at the target raced that gap; the walk returns at the first
 component that does not exist, which for a file being created is immediately, so
 the window was the whole of `MkdirAll`. The write now goes through an `os.Root`
-anchored on the matched tree — `openat2` with `RESOLVE_BENEATH` — which refuses a
-path that leaves the tree at the moment it opens it, with nothing to race. The
-`Lstat` walk stays in front for its error message and for the in-tree symlink
-this project already refused, which `RESOLVE_BENEATH` alone would follow. Reads are
+anchored on the matched tree, which refuses a path that leaves the tree at the
+moment it opens it, with nothing to race.
+
+The mechanism is worth naming correctly, because the obvious guess is wrong: Go
+1.27's `os.Root` does **not** use `openat2` or `RESOLVE_BENEATH`. `openat2Trap`
+is declared in `internal/syscall/unix` and called from nowhere in `GOROOT`;
+`os/root_unix.go` walks the path one component at a time with
+`openat(parent, name, O_NOFOLLOW|O_CLOEXEC)` and resolves any symlink it meets
+itself, in Go. The guarantee is the same and is real — each step is an `openat`
+against a directory handle already held, so there is no name left to re-resolve
+and nothing a planted link can change underneath — and in one respect it is
+*stricter* than `RESOLVE_BENEATH`: a relative symlink inside the tree is
+followed, but an **absolute** symlink is refused even when it points inside the
+tree, because a leading separator is rejected outright. One thing it does not do
+is stop at a mount boundary; nothing is mounted beneath the writable trees today,
+and `writable.go` records that as a residual. The `Lstat` walk stays in front for
+its error message and for the relative in-tree symlink this project already
+refused, which the root walk would follow. Reads are
 deliberately not restricted at all: the profile grants read beneath `/` to those
 children anyway, so restricting the tool would make it weaker than the thing it
 serves while closing nothing.

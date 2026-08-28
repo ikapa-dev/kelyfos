@@ -134,7 +134,7 @@ func TestHostileWriteFileRefusesTheBlockDevicesBeforeOpening(t *testing.T) {
 }
 
 // F1. A symlink planted inside a tree the sandbox may write, pointing at
-// something it may not, was a way around every check above: writableFor's
+// something it may not, was a way around every check above: the tree check's
 // prefix comparison and write_file's own os.WriteFile both take the name at
 // face value and let open(2) resolve it. Creating the symlink costs a confined
 // exec nothing beyond what it already has — LANDLOCK_ACCESS_FS_MAKE_SYM is

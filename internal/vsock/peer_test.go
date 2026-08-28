@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net"
 	"os"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -47,10 +48,23 @@ func hostPort(t *testing.T) uint32 {
 // loopbackOrSkip reports whether this machine can speak vsock to itself.
 //
 // A skip rather than a failure, and loud about why: the KelyfOS guest kernel
-// deliberately has no loopback transport, so this fixture can only run where one
-// exists — a developer VM or a CI runner with vsock_loopback loaded. The
-// decision this exercises is also covered by a pure test below that always runs,
-// so a machine that skips this is not a machine with no coverage.
+// deliberately has no loopback transport — that is F3's first layer — so a
+// fixture that drives the real Listen/Accept can only run where one exists.
+//
+// **Read this before treating a green run as coverage.** On a stock CI runner
+// vsock_loopback is built as a module and is *not* loaded, so this and
+// TestF3_ARefusedPeerIsReported both SKIP, and the only F3 test that actually
+// executes is TestF3_OnlyTheHostIsServed — the decision table, which is real
+// coverage of `fromHost` but does not touch Accept. The two end-to-end fixtures
+// have been run, on a developer VM with `sudo modprobe vsock_loopback`, and that
+// is where the failing-on-the-parent evidence for this finding comes from. To
+// make CI cover them, load the module in the workflow before `make test`:
+//
+//	sudo modprobe vsock_loopback
+//
+// Until that lands, a green CI run means the table passed and these two were
+// skipped. Saying so here rather than letting a skipped fixture read like a
+// passing one, which is the failure mode this whole review round is about.
 func loopbackOrSkip(t *testing.T) {
 	t.Helper()
 	fd, err := unix.Socket(unix.AF_VSOCK, unix.SOCK_STREAM|unix.SOCK_CLOEXEC, 0)
@@ -203,5 +217,56 @@ func TestF3_ARefusedPeerIsReported(t *testing.T) {
 		}
 	case <-time.After(3 * time.Second):
 		t.Error("a peer that was not the host was turned away without a word about it")
+	}
+}
+
+// The refusal log is rate-limited, and the count is not. A peer that can connect
+// at all can connect in a loop — that is the same scenario the check exists for
+// — so a line per connection would hand a guest process the operator's console.
+func TestF3_TheRefusalLogIsRateLimitedButCounted(t *testing.T) {
+	loopbackOrSkip(t)
+
+	saved := OnRefusedPeer
+	t.Cleanup(func() { OnRefusedPeer = saved })
+	var lines atomic.Uint64
+	OnRefusedPeer = func(cid, peerPort, localPort uint32) { lines.Add(1) }
+
+	port := hostPort(t)
+	ln, err := Listen(port)
+	if err != nil {
+		t.Skipf("could not bind vsock port %d: %v", port, err)
+	}
+	defer ln.Close()
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			c.Close()
+		}
+	}()
+
+	const knocks = 40
+	for i := 0; i < knocks; i++ {
+		c, err := Dial(unix.VMADDR_CID_LOCAL, port)
+		if err != nil {
+			t.Skipf("the loopback peer could not connect: %v", err)
+		}
+		c.Close()
+	}
+
+	l := ln.(*listener)
+	deadline := time.Now().Add(5 * time.Second)
+	for l.Refusals() < knocks && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	if got := l.Refusals(); got != knocks {
+		t.Errorf("the listener counted %d refusals, not the %d peers that knocked", got, knocks)
+	}
+	if got := lines.Load(); got != 1 {
+		t.Errorf("%d connections from a non-host peer produced %d log lines; one per listener is the bound, "+
+			"or a guest that can reach the port can write the operator's console without limit", knocks, got)
 	}
 }

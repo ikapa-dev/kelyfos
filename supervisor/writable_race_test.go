@@ -12,9 +12,9 @@ import (
 // F11 (security review of 2026-08-28) — write_file re-checks for symlinks and
 // then opens through one anyway.
 //
-// The supervisor's file tools run in PID 1, which is not confined, so writableFor
-// checks that a path is inside a writable tree and that no component is a
-// symlink. The comment on the second check is candid about why it is there: "a
+// The supervisor's file tools run in PID 1, which is not confined, so the tree
+// check bounds a path to a writable tree and refuses one whose components are
+// symlinks. The comment on the second check is candid about why it is there: "a
 // symlink can be planted in the gap between that decision and this call." But
 // the second check is the same lexical Lstat walk as the first, and what follows
 // it was an ordinary os.MkdirAll and os.WriteFile — both of which resolve
@@ -144,9 +144,10 @@ func TestF11_UploadSharesTheSameGuardedWrite(t *testing.T) {
 
 // The other direction, which the fix must not break: a symlink that stays inside
 // the same writable tree is still refused by name, and an ordinary write still
-// works. os.Root would follow an in-tree link — RESOLVE_BENEATH only refuses one
-// that leaves — so this pins that the lexical refusal in writableFor is still in
-// front of it and no existing refusal was traded away for the atomic one.
+// works. An *os.Root follows a relative in-tree link — its walk only refuses one
+// that leaves the tree — so this pins that the lexical refusal in writableTarget
+// is still in front of it and no existing refusal was traded away for the atomic
+// one.
 func TestF11_OrdinaryWritesStillWorkAndInTreeSymlinksAreStillRefused(t *testing.T) {
 	treeDir, err := os.MkdirTemp("/tmp", "kelyfos-f11-ok-*")
 	if err != nil {
@@ -172,7 +173,7 @@ func TestF11_OrdinaryWritesStillWorkAndInTreeSymlinksAreStillRefused(t *testing.
 	}
 	res := writeFile(link, []byte("through the link\n"), 0o644)
 	if res == nil {
-		t.Errorf("a symlink inside the tree was written through; writableFor refused these before F11 " +
+		t.Errorf("a symlink inside the tree was written through; the tree check refused these before F11 " +
 			"and F11 must not have traded that refusal for the atomic one")
 	} else if !mentions(resultText(res), "symlink") {
 		t.Errorf("it was refused, but not as a symlink, so the message got worse: %s", resultText(res))

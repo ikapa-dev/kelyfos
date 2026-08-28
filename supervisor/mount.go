@@ -62,11 +62,17 @@ func setupRoot() (overlay bool) {
 //	           device. The image ships no device node outside /dev, and /dev
 //	           is a devtmpfs moved across afterwards with its own flags, so
 //	           this takes nothing away from the guest.
-//	MS_NOSUID  /bin/busybox in this image is mode 4755. Every process here is
-//	           already root, so today the bit buys an attacker nothing and
-//	           costs the guest nothing to drop — which is exactly when to drop
-//	           it, rather than after something in this guest first runs as a
-//	           uid that is not 0.
+//	MS_NOSUID  /bin/busybox in this image is mode 4755. It is worth retiring
+//	           that bit even though nothing needs it today, and the reason is
+//	           not that everything here runs as root — `su -s /bin/sh nobody`
+//	           works in this image and gives uid 65534. The reason is that
+//	           every confined process carries NoNewPrivs, which makes execve
+//	           ignore set-user-ID outright and is inherited across fork and
+//	           exec, so a setuid binary run by that nobody gains nothing:
+//	           measured, uid=65534 through a 4755 copy of busybox. This flag
+//	           is the second statement of that, on the filesystem rather than
+//	           on the process, and it holds for anything that ever runs here
+//	           without NoNewPrivs set.
 //
 // MS_NOEXEC is not here and must not be: this is the filesystem the programs
 // are on.

@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/sys/unix"
@@ -91,16 +92,31 @@ func Listen(port uint32) (net.Listener, error) {
 }
 
 type listener struct {
-	f    *os.File
-	addr *Addr
+	f        *os.File
+	addr     *Addr
+	refusals atomic.Uint64
 }
 
 func (l *listener) Addr() net.Addr { return l.addr }
-func (l *listener) Close() error   { return l.f.Close() }
 
-// OnRefusedPeer is called when Accept turns a connection away. It is a package
-// variable because this package cannot see the supervisor's console logger and
-// must not grow a dependency on it; the supervisor points it at logf.
+// Close reports the total refused on this port, so rate-limiting the per-
+// connection line does not turn a flood into silence.
+func (l *listener) Close() error {
+	if n := l.refusals.Load(); n > 1 && OnRefusedPeer != nil {
+		fmt.Fprintf(os.Stderr, "vsock: port %d refused %d connections from peers that were not the host\n",
+			l.addr.Port, n)
+	}
+	return l.f.Close()
+}
+
+// Refusals is how many connections this listener has turned away. Exported for
+// the tests, which need to see the count the rate-limited log does not print.
+func (l *listener) Refusals() uint64 { return l.refusals.Load() }
+
+// OnRefusedPeer is called when Accept turns a connection away, at most once per
+// listening port. It is a package variable because this package cannot see the
+// supervisor's console logger and must not grow a dependency on it; the
+// supervisor points it at logf.
 //
 // The default is not a no-op, deliberately. The whole value of the refusal below
 // is that a kernel which regains the loopback transport is *noticed*, and a
@@ -134,7 +150,15 @@ func (l *listener) Accept() (net.Conn, error) {
 		}
 		if !fromHost(sa) {
 			unix.Close(nfd)
-			if OnRefusedPeer != nil {
+			// One line per listener, not one per connection. The scenario this
+			// check exists for — the loopback transport coming back — is also
+			// the one in which a guest process can knock in a loop, and a line
+			// each would let it drive unbounded output from PID 1 onto the
+			// operator's console. What an operator needs to know is that a peer
+			// which should not exist is reaching a channel, not how many times
+			// it tried; the count is kept and reported once, on Close, so the
+			// volume is not lost either.
+			if l.refusals.Add(1) == 1 && OnRefusedPeer != nil {
 				OnRefusedPeer(peerCID(sa), peerPort(sa), l.addr.Port)
 			}
 			continue

@@ -51,16 +51,21 @@ type writeTarget struct {
 	dev  string // the exact device node, "" for a tree write
 }
 
-// writableFor reports why a path may not be written, or nil if it may.
+// writableTarget reports where a write may land, or why it may not.
 //
 // The comparison is against the same three lists the profile is built from, so
-// the two cannot drift into disagreeing about what a sandbox may write.
-func writableFor(path string) error {
-	_, err := writableTarget(path)
-	return err
-}
-
-// writableTarget is writableFor with the answer the write needs.
+// the two cannot drift into disagreeing about what a sandbox may write. It
+// replaced a writableFor that answered only yes or no: F11 needed the tree as
+// well, because a decision about a path is worth nothing to a caller that then
+// opens the path by name.
+//
+// One residual it does not cover, stated because it is invisible otherwise.
+// Go's *os.Root refuses a component that leaves the tree, but it does **not**
+// stop at a mount boundary — a bind mount underneath a writable tree would be
+// walked into as ordinary directories. Nothing is mounted beneath /work, /tmp,
+// /run or /root in this image (/work is itself the mount, which is the anchor
+// rather than something below it), so there is no exposure today; a future
+// submount under one of these trees would need this reading again.
 func writableTarget(path string) (writeTarget, error) {
 	clean := filepath.Clean(path)
 	if !filepath.IsAbs(clean) {
@@ -70,9 +75,9 @@ func writableTarget(path string) (writeTarget, error) {
 	// Kept in front of the open, and no longer the thing that makes the write
 	// safe — that is the *os.Root in writeFile now (F11). What this still buys
 	// is the message: a link planted and left in place is named here, as a
-	// symlink and by component, where openat2 can only say that the path left
-	// its root. It also keeps the refusal this project already documented for
-	// an in-tree link, which RESOLVE_BENEATH on its own would follow.
+	// symlink and by component, where the root walk can only say that the path
+	// left its root. It also keeps the refusal this project already documented
+	// for a relative in-tree link, which that walk would follow.
 	if err := noSymlinksBeneath(clean); err != nil {
 		return writeTarget{}, err
 	}
@@ -127,9 +132,11 @@ func writableTarget(path string) (writeTarget, error) {
 // statement about names at the moment it runs, while the write is a statement
 // about the filesystem at the moment it opens. Between the two, a confined exec
 // holding MAKE_SYM could put a link where the name had just been checked. The
-// write is now done through an *os.Root — openat2 with RESOLVE_BENEATH, refusing
-// at the open, atomically — and this walk stays in front of it for the error
-// message and for the in-tree link RESOLVE_BENEATH would follow.
+// write is now done through an *os.Root, which walks the path one component at a
+// time with openat(O_NOFOLLOW) against a directory handle it already holds — see
+// writeFile in tools.go for what that does and does not mean — and this walk
+// stays in front of it for the error message and for the relative in-tree link
+// the root walk would follow.
 //
 // The rule it states is still the rule: nothing along the way is allowed to be a
 // symlink, existing or not. It is simply no longer the thing enforcing it.
