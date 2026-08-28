@@ -176,16 +176,17 @@ func planTeam(cfg *config.Config) (*teamPlan, error) {
 // is strictly better than the silence it replaces — the same ruling
 // checkAgentPolicy already made for idle_timeout and a spawn budget's dead
 // keys, just above. Checked before a single agent is resolved, so a file
-// naming either is refused the same way `kelyfos team graph` will refuse it
-// once P7-7 exists: with nothing booted yet.
+// naming either is refused the same way `kelyfos team graph` refuses it
+// (P7-7), with nothing booted yet, through this exact function.
 func checkTeamFileScope(cfg *config.Config) error {
 	if len(cfg.Plugins) > 0 {
 		return fmt.Errorf("%s:%d: [[plugin]] has no effect inside a team\n"+
 			"    a team boot does not launch plugin servers yet, so this block would parse "+
 			"and then silently do nothing\n"+
 			"    drop it — `kelyfos run` and `serve-mcp` still launch it fine, from this exact "+
-			"file, [team] and all; only `kelyfos team up` refuses a file combining the two, "+
-			"and it has no --policy flag yet to point at a different, team-only file",
+			"file, [team] and all; `kelyfos team up` and `kelyfos team graph` both refuse a file "+
+			"combining the two. `kelyfos team up` has no --policy flag, so the block has to leave "+
+			"this file; `kelyfos team graph --policy` can point at a team-only copy instead",
 			cfg.Path, cfg.Plugins[0].Line)
 	}
 	if len(cfg.Forwards) > 0 {

@@ -511,7 +511,7 @@ And the parts that make it a thing you reach for rather than tolerate (v0.8):
 | [`llms.txt`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/llms.txt) · [`llms-full.txt`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/llms-full.txt) | for machine readers: an index per the llmstxt.org spec, and the whole set in one file, whose current size `llms.txt` states |
 | [`docs/reference/`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/reference/README.md) | every command, flag, toml key, MCP tool, event and exit code — generated from the source |
 | [`PLAN.html`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/PLAN.html) · [`PLAN-FEATURES.html`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/PLAN-FEATURES.html) | the living plan — every decision and the full progress log, phases then epics |
-| [`docs/cookbook.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/cookbook.md) | fifteen recipes that work: run one, allowlist a domain, fork, build a team, point a client at it, write a plugin, verify the log, pause and resume, review a diff, forward a port |
+| [`docs/cookbook.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/cookbook.md) | sixteen recipes that work: run one, allowlist a domain, fork, build a team, point a client at it, write a plugin, verify the log, pause and resume, review a diff, forward a port, draw a team's topology |
 | [`docs/integrating.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/integrating.md) | building on it: the four ways in, orchestrator patterns, common mistakes |
 | [`docs/mcp-surface.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/mcp-surface.md) | MCP in both directions: `serve-mcp` as a tool for any client, `[[plugin]]` servers inside the guest |
 | [`docs/threat-model.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/threat-model.md) | what is defended, and what is not |
@@ -3240,6 +3240,17 @@ columns, says how wide the terminal would have to be, and shows one column with
 each line labelled by the agent it came from — the information without the
 layout, rather than the layout without the information.
 
+Two more panes sit behind this one (P7-7): `2` (or `m`) draws the **map** —
+the team's topology, read off its own recorded `team.topology` and every
+agent's `session.policy`, the same rendering `kelyfos team ps --graph` (§8.4)
+draws for a one-shot look — with a "refused since boot" section underneath it
+naming every `no_edge`/store-denied refusal seen so far, each carrying the fix
+line `internal/denial`'s catalog already writes for it. `3` (or `s`) draws the
+**agent sheet**: one row per agent, its declared caps and allowlist size
+beside what it has actually done — the declared and the aggregate side by
+side. `1` (or `v`) returns to the activity view above. All three read the
+same fold; switching panes changes nothing about what is being watched.
+
 ### 8.3 The recorder is not a delivery buffer
 
 These two facts are orthogonal and are stated together because they look
@@ -3260,6 +3271,105 @@ guess. `outcome: timeout` is **an ask that nobody answered in time**. A
 writes *no event at all*, because nothing happened: no message was sent, none was
 delivered, and a recorder of message outcomes has no outcome to record. An
 orchestrator waiting on a quiet agent should not expect the record to say so.
+
+### 8.4 `kelyfos team graph` and `kelyfos team ps --graph` (P7-7)
+
+Three questions about a team, and P7-7 names them so the rest of this
+document — and everything built on top of it — can keep the names straight.
+They are *modes*, not a one-to-one map to commands: more than one surface can
+answer the same question, and this section's own two commands both answer
+the same one of the three.
+
+- **Declared** — what a policy says is permitted, independent of whether
+  anything has run. `kelyfos.toml` itself is the original; `kelyfos team
+  graph` reads it with nothing booted, and `kelyfos team ps --graph`, against
+  a *running* team, still answers this question rather than a different one —
+  it reads back the `team.topology`/`session.policy` the team recorded **at
+  boot**, not anything that happened since, so "running" describes the team,
+  not the freshness of the picture. A worker spawned after boot
+  (`broker.OnSpawn`) is real and current but is not in that recorded
+  declaration, and this view says so explicitly (§8.4.1) rather than quietly
+  blending the two questions into one answer.
+- **Aggregate** — a fold of what has actually happened, summed up:
+  `kelyfos watch`'s agent sheet pane (declared caps beside live counters,
+  §8.2) is the first reader of this question; the exported report's run
+  section (P7-8) is the next.
+- **As-it-ran** — the live or replayed timeline, in order: `kelyfos watch`'s
+  activity pane and `kelyfos log`, both already discussed above, unchanged by
+  this task.
+
+Only *declared* is something anyone else — an auditor, a teammate reading the
+file over your shoulder — can currently answer without this feature.
+
+`kelyfos team graph` renders the **declared** topology straight from
+`kelyfos.toml`, with nothing booted: a pre-flight lint in the same category as
+`kelyfos doctor`, not a monitor. It runs the exact plan-time checks
+`kelyfos team up` runs before it boots anything — the same file that combines
+`[team]` with `[[plugin]]` or `[[forward]]` is refused here with the same
+sentence `kelyfos team up` refuses it with (`host/teamplan.go`'s
+`checkTeamFileScope`), before it costs anybody an afternoon.
+The picture: every agent, the resolved edges, the domains and secrets each
+agent reaches, and the store's rules — including one entry standing for
+*every key no `[[team.store.key]]` rule names*, because such a key is
+readable and writable by the whole team by default (§4) and a picture that
+omitted it would understate what the team can touch. Egress ports are the
+fixed pair every sandbox in this product gets (`docs/networking.md` §6),
+printed once rather than per domain.
+
+```
+$ kelyfos team graph
+team suppliers — declared topology (kelyfos team graph), nothing booted: 5 agents, 8 edges
+
+●───┐
+│   │
+●───●
+...
+
+edges — read from the authoritative table, not the picture above
+  master -> worker-1
+  ...
+```
+
+`kelyfos team ps --graph` draws the same declared picture against a running
+team, sourced from that team's own recorded `team.topology` and
+`session.policy` events rather than from `kelyfos.toml` (which somebody can
+edit after the team came up) or `run/team.json` (which does not outlive the
+run) — D59's own reasoning for putting the declaration in the chain applies
+here too. A declared graph and a running one are never two independent
+readings of one file: both go through the same conversion
+(`host/teamgraph.go`'s `buildGraphInput`), so `kelyfos team graph` in a
+project directory and `kelyfos team ps --graph` against the team it boots
+print the identical topology, except in the one case §8.4.1 names — a
+store enabled with no `[[team.store.key]]` rule, which the recorded
+`team.topology` cannot currently distinguish from the store being off at
+all. It also lists every refusal recorded since
+boot — every reason `team.refused`, `team.store` and `team.spawn` can carry
+except an absence (`no_such_key`, which §8.3 above already says is not a
+refusal) and an internal despawn condition nobody watching the policy file
+can act on — each with the fix line `internal/denial`'s catalog already
+writes for it where one exists, bounded to the most recent twenty with a
+note when more happened.
+
+#### 8.4.1 What this view cannot know from the record alone
+
+Two honest gaps, both stated in the view itself rather than left silent:
+
+- **A worker spawned at runtime is not in the declared topology.**
+  `team.topology` is written once, at boot; a worker a running agent spawns
+  afterwards (§3.6) attaches with a real edge and store access that event can
+  never carry. `kelyfos team ps --graph` and `kelyfos watch`'s map pane both
+  name any such agent in a separate line — "N agent(s) spawned at runtime,
+  not in the topology declared at boot" — rather than quietly merging it into
+  the picture, which would blur declared and aggregate into one answer.
+- **A store enabled with no rules looks the same as no store at all, from
+  the record.** `team.topology`'s `store_keys` field is only ever the
+  declared `[[team.store.key]]` rules (§8); it carries no separate flag for
+  whether `[team.store]` itself is enabled. A store with rules is
+  unambiguous. A store enabled with zero rules is real and, per §4, wide open
+  to the whole team — and looks identical, from this one recorded event, to
+  a team with no store at all. This view says so when the rule list is
+  empty, rather than guessing either way; `kelyfos team graph`, reading
+  `kelyfos.toml` directly, does not have this gap.
 
 ---
 
@@ -6756,7 +6866,7 @@ description: complete recipes, each one a script CI runs on a real machine
 
 # KelyfOS cookbook
 
-Fifteen recipes, each one complete, each one runnable as it stands.
+Sixteen recipes, each one complete, each one runnable as it stands.
 
 These are not illustrations. `bash dev/cookbook.sh` extracts every script below
 and runs it on a real machine. Every commit checks that each recipe still
@@ -8231,6 +8341,98 @@ echo "reached a server inside the sandbox without touching the firewall"
 
 ---
 
+## 15. See a team's topology before booting it, and confirm the running team draws the same one
+
+`kelyfos team graph` reads `kelyfos.toml` and draws the team it declares —
+agents, edges, domains, secrets and store rules — with **nothing booted**: a
+pre-flight lint, not a monitor. It runs the same plan-time checks
+`kelyfos team up` runs before it boots anything, so a file that combines
+`[team]` with `[[plugin]]` or `[[forward]]` is refused here too, before it
+costs anybody an afternoon. `kelyfos team ps --graph` draws the identical
+picture for a team that is actually running, read from its own recorded
+`team.topology` and `session.policy` events rather than from the file — the
+two are never independent readings of one topology.
+
+<!-- recipe: team-graph -->
+
+```bash
+set -euo pipefail
+work="$(mktemp -d)"
+cd "$work"
+trap 'kelyfos team down >/dev/null 2>&1 || true; pkill -f "kelyfos team up" 2>/dev/null || true; rm -rf "$work"' EXIT
+
+cat > kelyfos.toml <<'TOML'
+[team]
+name = "cookbook-graph"
+
+[[team.agent]]
+name  = "master"
+image = "dev"
+allow = ["example.com"]
+
+[[team.agent]]
+name  = "worker"
+image = "dev"
+count = 2
+
+[[team.edge]]
+from = "master"
+to   = "worker-*"
+
+[team.store]
+enabled = true
+
+[[team.store.key]]
+name  = "findings"
+write = ["worker-*"]
+read  = ["master"]
+TOML
+
+echo "== declared, nothing booted =="
+declared="$(kelyfos team graph)"
+echo "$declared"
+
+echo
+echo "== the same file, refused, when it also carries [[plugin]] =="
+mkdir -p plugins/demo
+cat kelyfos.toml > refused.toml
+cat >> refused.toml <<'TOML'
+
+[[plugin]]
+name    = "demo"
+path    = "./plugins/demo"
+command = "python3"
+args    = ["server.py"]
+TOML
+# The refusal is expected, so its non-zero status must not abort this script
+# under set -e: captured into a variable first (the left side of an && list
+# is exempt), then the message is checked as its own, separate, successful
+# pipeline.
+refusal="$(kelyfos team graph --policy refused.toml 2>&1)" && { echo "expected a refusal, got:"; echo "$refusal"; exit 1; }
+echo "$refusal" | grep -q '\[\[plugin\]\] has no effect inside a team'
+
+echo
+echo "== boot it, and confirm the running team draws the same topology =="
+kelyfos team up >up.log 2>&1 &
+for _ in $(seq 1 600); do grep -q 'team up in' up.log && break; sleep 0.25; done
+grep -q 'team up in' up.log || { cat up.log; exit 1; }
+
+running="$(kelyfos team ps --graph)"
+echo "$running"
+
+# The title line differs (one says "nothing booted", the other says how many
+# agents came up), and a running team's legend may carry "(fork group ...)"
+# on a forked agent — knowable only once something has actually booted, never
+# from the file alone. Strip both and everything else has to agree exactly.
+norm() { echo "$1" | tail -n +2 | sed -E 's/ \(fork group [0-9a-f]+\)//'; }
+diff <(norm "$declared") <(norm "$running")
+echo "declared and running topologies match"
+
+kelyfos team down
+```
+
+---
+
 ## Running them yourself
 
 ```
@@ -8836,7 +9038,7 @@ different protocol stack from the REST endpoints the shim serves. Use
 
 ## 7. Where to look next
 
-- [`cookbook.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/cookbook.md) — fifteen recipes that run, including the Python
+- [`cookbook.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/cookbook.md) — sixteen recipes that run, including the Python
   client above
 - [`reference/`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/reference/README.md) — every command, flag, key, tool, event and exit
   code, generated from the source
@@ -9792,7 +9994,7 @@ hand-written half, and this page says where each is still thin.
 | stuck on something KelyfOS refused | [`denials.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/denials.md), then [`reference/denials.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/reference/denials.md) for the exact one |
 | running something long and walking away | [`denials.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/denials.md) on `--notify`, and [`events.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/events.md) §6 for the history afterwards |
 | keeping an agent off the network | [`networking.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/networking.md) |
-| after something that works, right now | [`cookbook.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/cookbook.md) — fifteen recipes, each one runnable as it stands |
+| after something that works, right now | [`cookbook.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/cookbook.md) — sixteen recipes, each one runnable as it stands |
 | putting KelyfOS inside something else | [`integrating.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/integrating.md) |
 | building KelyfOS into something else | [`protocol.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/protocol.md), then [`e2b-shim.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/e2b-shim.md) |
 | driving KelyfOS from an MCP client | [`mcp-surface.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/mcp-surface.md) — `serve-mcp` and `[[plugin]]`, and [recipe 9](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/cookbook.md) for the configuration |
@@ -9817,7 +10019,7 @@ hand-written half, and this page says where each is still thin.
 | [`hardening.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/hardening.md) | concept | The v0.9 specification, written before the code: what a compromised agent reaches today, what the jailer and the guest profiles take away, and what remains reachable afterwards. |
 | [`host-seccomp.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/host-seccomp.md) | mixed | The syscall filter around the VMM process: which one is in force and why that is settled, how it is proved from the kernel's own copy rather than from the absence of a flag, and every syscall it permits. |
 | [`threat-model.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/threat-model.md) | concept | What KelyfOS defends against and — the longer half — what it does not. |
-| [`cookbook.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/cookbook.md) | recipes | Fifteen complete, copy-pasteable recipes. Every one is a script CI extracts and runs on a real machine. |
+| [`cookbook.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/cookbook.md) | recipes | Sixteen complete, copy-pasteable recipes. Every one is a script CI extracts and runs on a real machine. |
 | [`integrating.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/integrating.md) | mixed | For building on KelyfOS: the four ways in, orchestrator patterns, and a long list of the mistakes people actually make. |
 | [`e2b-shim.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/e2b-shim.md) | mixed | The E2B-compatible REST subset: what it implements, what it does not, and why. |
 | [`../llms.txt`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/llms.txt) | **generated** | The index a machine reads first: every page above as a link with a one-line description, per the llmstxt.org spec. |
@@ -9964,7 +10166,7 @@ neither refusal mentions the other, so a user who follows the first message hits
 the second; `team ps` has no sample output; the store's `not_found` is described as
 "not a refusal" and is recorded as one.
 
-### `cookbook.md` — fifteen things that work
+### `cookbook.md` — sixteen things that work
 
 *Recipes:* one sandbox; an allowlist and an injected credential; a workspace
 round-trip; snapshot and fork; a three-agent team with an ask round-trip and a
@@ -9980,9 +10182,11 @@ kept of its own calls; and both MCP directions at once, with a plugin written ou
 in full, ending in the two transcripts that hold what each side did; pausing a
 machine and picking the same one up with its scratch intact, under the policy it
 was frozen with; seeing what an agent changed before keeping it, including what
-`--review` does when there is nobody to ask; and reaching a server inside a
+`--review` does when there is nobody to ask; reaching a server inside a
 sandbox that has no network, including how to start a long-running process
-through `kelyfos exec` without hanging on it.
+through `kelyfos exec` without hanging on it; and a team's declared topology,
+drawn with nothing booted and then confirmed to match the same team once it
+is actually running (`team graph`, `team ps --graph`).
 *Thin:* nothing hidden — every script is extracted and executed by
 `dev/cookbook.sh` and by the `cookbook` workflow, so a recipe that stops working
 fails rather than misleading anyone.
@@ -10170,9 +10374,10 @@ Go's `flag` accepts one dash or two, so `-image` and `--image` are the same flag
 | [`kelyfos diff`](#kelyfos-diff) | what a sandbox has done to its workspace |
 | [`kelyfos shell`](#kelyfos-shell) | an interactive terminal inside a sandbox |
 | [`kelyfos fork`](#kelyfos-fork) | restore one snapshot into several sandboxes |
-| [`kelyfos team up`](#kelyfos-team-up) | run several agents with the paths between them written down and enforced |
-| [`kelyfos team ps`](#kelyfos-team-ps) | run several agents with the paths between them written down and enforced |
-| [`kelyfos team down`](#kelyfos-team-down) | run several agents with the paths between them written down and enforced |
+| [`kelyfos team up`](#kelyfos-team-up) | run several agents with the paths between them written down and enforced, and inspect that topology with or without booting it |
+| [`kelyfos team ps`](#kelyfos-team-ps) | run several agents with the paths between them written down and enforced, and inspect that topology with or without booting it |
+| [`kelyfos team down`](#kelyfos-team-down) | run several agents with the paths between them written down and enforced, and inspect that topology with or without booting it |
+| [`kelyfos team graph`](#kelyfos-team-graph) | run several agents with the paths between them written down and enforced, and inspect that topology with or without booting it |
 | [`kelyfos shim`](#kelyfos-shim) | serve an E2B-compatible REST subset |
 | [`kelyfos runs`](#kelyfos-runs) | what has run here, from the records themselves |
 | [`kelyfos rerun`](#kelyfos-rerun) | run a recorded session again, under its own policy |
@@ -10388,7 +10593,7 @@ kelyfos fork [flags]
 
 ## kelyfos team up
 
-Run several agents with the paths between them written down and enforced.
+Run several agents with the paths between them written down and enforced, and inspect that topology with or without booting it.
 
 ```
 kelyfos team up
@@ -10401,23 +10606,37 @@ kelyfos team up
 
 ## kelyfos team ps
 
-Run several agents with the paths between them written down and enforced.
+Run several agents with the paths between them written down and enforced, and inspect that topology with or without booting it.
 
 ```
 kelyfos team ps
 ```
 
-No flags.
+| Flag | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `--graph` | boolean | — | draw the topology this team was declared with at boot (P7-7) instead of the table below |
 
 ## kelyfos team down
 
-Run several agents with the paths between them written down and enforced.
+Run several agents with the paths between them written down and enforced, and inspect that topology with or without booting it.
 
 ```
 kelyfos team down
 ```
 
 No flags.
+
+## kelyfos team graph
+
+Run several agents with the paths between them written down and enforced, and inspect that topology with or without booting it.
+
+```
+kelyfos team graph
+```
+
+| Flag | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `--policy` | string | — | a specific kelyfos.toml, instead of the one found by walking up from here |
 
 ## kelyfos shim
 

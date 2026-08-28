@@ -27,11 +27,14 @@ import (
 	"github.com/p4r4n0rm4l/KelyfOS/internal/team"
 )
 
-const teamUsage = `usage: kelyfos team up | ps | down
+const teamUsage = `usage: kelyfos team up | ps | down | graph
 
   up     boot the team declared in kelyfos.toml and hold it until Ctrl-C
   ps     show the running team: agents, edges, and what each is consuming
+         --graph draws the topology instead (see graph, below)
   down   stop a running team, syncing every workspace on the way out
+  graph  draw the topology declared in kelyfos.toml, with nothing booted —
+         a pre-flight lint, not a monitor (P7-7)
 
 A team is several sandboxes on one host with the paths between them written
 down. No guest has a network path to any other guest: every message travels the
@@ -51,6 +54,8 @@ func teamCmd(argv []string) error {
 		return teamPS(argv[1:])
 	case "down":
 		return teamDown(argv[1:])
+	case "graph":
+		return teamGraphCmd(argv[1:])
 	case "-h", "--help", "help":
 		fmt.Print(teamUsage)
 		return nil
@@ -1333,12 +1338,17 @@ func readTeamBudget(st *teamState) *teamBudget {
 
 func teamPS(argv []string) error {
 	fs := flag.NewFlagSet("kelyfos team ps", flag.ExitOnError)
+	showGraph := fs.Bool("graph", false,
+		"draw the topology this team was declared with at boot (P7-7) instead of the table below")
 	if err := fs.Parse(argv); err != nil {
 		return err
 	}
 	st, err := readTeamState()
 	if err != nil {
 		return err
+	}
+	if *showGraph {
+		return teamPSGraph(st)
 	}
 	fmt.Printf("team %s — up %s, session %s\n\n", st.Name,
 		time.Since(st.StartedAt).Truncate(time.Second), st.Session)

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"github.com/p4r4n0rm4l/KelyfOS/internal/digest"
+	"github.com/p4r4n0rm4l/KelyfOS/internal/proto"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/report"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/sandbox"
@@ -44,6 +46,13 @@ it is consuming against its own caps — with the messages between agents in a
 ticker underneath and the team's collective budget above. There is no flag for
 it: a session whose events name agents is a team.
 
+Two more panes sit behind that one (P7-7), reading the same fold: a map of
+the declared topology, with any refusals seen so far and their fix lines, and
+an agent sheet — each agent's declared caps beside what it has actually done.
+
+  1, v             activity pane (the default, above)
+  2, m             map pane — declared topology
+  3, s             agent sheet — caps beside live counters
   q, esc, ctrl-c   quit
 
 `)
@@ -101,6 +110,19 @@ type lane struct {
 	cpuPercent float64
 }
 
+// pane selects which of watch's three panes render() draws. activity is the
+// default — everything this view showed before P7-7 — and map/sheet are
+// P7-7's addition: the declared shape of the run (map) and each agent's
+// declared caps beside what it has actually done so far (sheet), both read
+// off m.d rather than kept a second time here.
+type pane int
+
+const (
+	paneActivity pane = iota
+	paneMap
+	paneSheet
+)
+
 type watchModel struct {
 	session string
 	path    string
@@ -109,6 +131,23 @@ type watchModel struct {
 
 	width, height int
 	lines         []string
+	// pane is which of the three views render() draws. Starts on activity —
+	// what this view always showed — so opening `kelyfos watch` looks
+	// exactly as it did before P7-7 until a key asks for something else.
+	pane pane
+	// refusals is a bounded, live-appended list of denial fix lines —
+	// everything refusalLine recognises across team.refused, team.store and
+	// team.spawn — the map pane's "now what" section. Kept here rather than
+	// read off m.d.Timeline because a live watch's Digest deliberately does
+	// not retain one (KeepTimeline is false by default): the same
+	// unbounded-growth reason that keeps it off applies to this list too, so
+	// it is capped the same way MaxDistinctKeys caps internal/digest's own
+	// collections.
+	refusals []string
+	// refusalsTruncated is set once pushRefusal has dropped an entry to stay
+	// under maxRefusalLines, so the pane can say its list is a tail rather
+	// than the whole story.
+	refusalsTruncated bool
 
 	// d is the one fold (internal/digest), absorbed live as each event
 	// arrives off the tail of the running session — no call to digest.New
@@ -265,6 +304,12 @@ func (m *watchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "q", "esc", "ctrl+c":
 			return m, tea.Quit
+		case "1", "v":
+			m.pane = paneActivity
+		case "2", "m":
+			m.pane = paneMap
+		case "3", "s":
+			m.pane = paneSheet
 		}
 	case tickMsg:
 		// A team samples every agent; a single sandbox samples itself. Which
@@ -334,6 +379,34 @@ func (m *watchModel) agentCounters(name string) digest.Counters {
 func (m *watchModel) agentReceipt(name string) *recorder.Event {
 	if a := m.d.Agents[name]; a != nil {
 		return a.Receipt
+	}
+	return nil
+}
+
+// pushRefusal appends one denial fix line to the live, bounded list the map
+// pane's "refused since boot" section reads (see watchModel.refusals). Past
+// maxRefusalLines the oldest line is dropped and refusalsTruncated is set,
+// so a hostile session looping a refused call cannot grow this list without
+// bound — and the pane says so, rather than silently showing a partial list
+// as though it were complete (RENDER checklist: "bounded, and saying so
+// when it truncates").
+func (m *watchModel) pushRefusal(line string) {
+	m.refusals = append(m.refusals, line)
+	if len(m.refusals) > maxRefusalLines {
+		m.refusals = m.refusals[len(m.refusals)-maxRefusalLines:]
+		m.refusalsTruncated = true
+	}
+}
+
+// agentPolicy is an agent's session.policy, or nil before one has been
+// absorbed — the same nil-safety agentReceipt needs. Outside a team, name is
+// the session itself and the agentless m.d.Policy is what applies (P7-7).
+func (m *watchModel) agentPolicy(name string) *recorder.Event {
+	if a := m.d.Agents[name]; a != nil && a.Policy != nil {
+		return a.Policy
+	}
+	if name == m.session {
+		return m.d.Policy
 	}
 	return nil
 }
@@ -438,6 +511,9 @@ func (m *watchModel) absorb(e recorder.Event) {
 		body := fmt.Sprintf("%s %s %s  %s · %d bytes", e.Agent, arrow, e.Peer, e.Kind, e.Bytes)
 		if entry.Refused {
 			tick(styleWarn.Render("REFUSED ") + body + dim.Render("  ("+e.Reason+")"))
+			if l, ok := refusalLine(e); ok {
+				m.pushRefusal(l)
+			}
 			break
 		}
 		tick(styleMuted.Render("msg     ") + body)
@@ -450,11 +526,17 @@ func (m *watchModel) absorb(e recorder.Event) {
 			style, label = styleWarn, "DENIED"
 			tick(styleWarn.Render("DENIED  ") +
 				fmt.Sprintf("%s %s %s", e.Agent, e.Kind, e.Peer) + dim.Render("  ("+e.Reason+")"))
+			if l, ok := refusalLine(e); ok {
+				m.pushRefusal(l)
+			}
 		}
 		add(style, label, fmt.Sprintf("%s %s", e.Kind, e.Peer))
 	case recorder.TypeTeamSpawn:
 		if entry.Refused {
 			tick(styleWarn.Render("REFUSED ") + e.Agent + " may not spawn" + dim.Render("  ("+e.Reason+")"))
+			if l, ok := refusalLine(e); ok {
+				m.pushRefusal(l)
+			}
 			break
 		}
 		tick(styleOK.Render("spawn   ") + fmt.Sprintf("%s %s by %s", e.Kind, e.Peer, e.Agent))
@@ -494,6 +576,16 @@ func (m *watchModel) render() string {
 		height = 24
 	}
 
+	// P7-7's two added panes render the same regardless of whether this turns
+	// out to be a team or a single sandbox — both read m.d, and both say so
+	// when there is nothing yet to draw.
+	switch m.pane {
+	case paneMap:
+		return m.mapPane(width, height)
+	case paneSheet:
+		return m.sheetPane(width, height)
+	}
+
 	// The chain decides which view this is: a session that carries agents is a
 	// team, and there is nothing to ask the user.
 	if len(m.order) > 0 {
@@ -531,8 +623,12 @@ func (m *watchModel) render() string {
 
 	return header + "\n" + status + "\n" + resources + "\n" +
 		strings.Repeat("─", min(width, 120)) + "\n" +
-		body + "\n" + dim.Render("q to quit — the sandbox keeps running")
+		body + "\n" + dim.Render(paneHint+" — the sandbox keeps running")
 }
+
+// paneHint is the key legend every pane's last line ends with — one place so
+// the three panes cannot describe their own switching differently.
+const paneHint = "1 activity · 2 map · 3 agent sheet · q to quit"
 
 // laneMinWidth is the narrowest a lane can be and still say anything. Below it
 // the view stops pretending: N columns of eight characters is not a team view,
@@ -617,7 +713,7 @@ func (m *watchModel) teamView(width, height int) string {
 	return header + "\n" + status + "\n" + budget + "\n" + rule + "\n" +
 		body + "\n" + rule + "\n" +
 		barStyle.Render("message flow") + "\n" + ticker + "\n" +
-		dim.Render("q to quit — the team keeps running")
+		dim.Render(paneHint+" — the team keeps running")
 }
 
 // laneBlock renders one agent's column as exactly laneH+2 lines of exactly
@@ -680,6 +776,191 @@ func (m *watchModel) teamBudgetLine() string {
 		line += fmt.Sprintf(" · %.1fs throttled", m.teamThrott)
 	}
 	return barStyle.Render(line)
+}
+
+// fitToBudget returns at most budget lines: all of lines when they already
+// fit, or the first budget-1 lines plus note when they do not — so the
+// total is never more than budget, note included, rather than budget lines
+// of content plus one more for the note on top (an off-by-one a review
+// caught: the old per-pane logic added its truncation line after already
+// selecting a full budget's worth of content, so every pane emitted one
+// line more than its own height every time it truncated). budget <= 0
+// returns nil.
+func fitToBudget(lines []string, budget int, note string) []string {
+	if budget <= 0 {
+		return nil
+	}
+	if len(lines) <= budget {
+		return lines
+	}
+	if budget == 1 {
+		return []string{note}
+	}
+	out := append([]string{}, lines[:budget-1]...)
+	return append(out, note)
+}
+
+// mapPane draws the declared topology (P7-7): a team's, once its
+// team.topology has landed, joined against every agent's own session.policy
+// for the domains and secrets each one reaches — the exact conversion
+// `kelyfos team ps --graph` uses (host/teamgraph.go's buildGraphInput), so a
+// live map and a one-shot one never disagree about what the team declared.
+// Outside a team, a single sandbox's own session.policy draws a one-node map
+// of what that machine itself was permitted to reach.
+//
+// The refusals (and any notes on what this live view cannot know — see
+// spawnedAgentsNotInTopology and the store-enabled caveat) are laid out
+// separately from the graph body and guaranteed their own share of the
+// height budget below, rather than appended to one string and truncated
+// from the top: a review found that on a real 5-agent team under a 120x24
+// terminal, the refusals section — the whole point of "now what" — was the
+// first thing cut, along with the edge table and the pane-switching hint.
+func (m *watchModel) mapPane(width, height int) string {
+	header := fmt.Sprintf("%s  map — declared topology  session %s",
+		titleStyle.Render("KelyfOS"), m.session)
+
+	var graphBody string
+	var notes []string
+	switch {
+	case m.d.Topology != nil:
+		agents := graphAgentsFromTopology(m.d.Topology, m.d.Agents)
+		store := graphStoreFromTopology(m.d.Topology)
+		// See buildGraphInput's own doc comment: team.topology carries no
+		// "store enabled" flag independent of its rule count, so this is a
+		// documented best-effort rather than a silent gap — the note below
+		// says so when the rule list is empty.
+		storeEnabled := len(store) > 0
+		in, err := buildGraphInput(agents, m.d.Topology.Edges, store, storeEnabled)
+		if err != nil {
+			graphBody = dim.Render("  " + err.Error())
+			break
+		}
+		var b strings.Builder
+		title := fmt.Sprintf("%d agents, %d edges", len(agents), len(in.Edges))
+		if rerr := renderTeamGraph(&b, in, title); rerr != nil {
+			graphBody = dim.Render("  " + rerr.Error())
+			break
+		}
+		graphBody = b.String()
+		if !storeEnabled {
+			notes = append(notes, "note: no store rule recorded, and the chain cannot say whether "+
+				"[team.store] is enabled with none — if it is, every key is team-wide by default and "+
+				"would not appear above (P7-3 recorder gap)")
+		}
+		if extra := spawnedAgentsNotInTopology(m.d.Topology, m.d.Agents); len(extra) > 0 {
+			notes = append(notes, fmt.Sprintf("+%d agent(s) spawned at runtime, not in the topology "+
+				"declared at boot above: %s", len(extra), safeJoinNames(extra, maxSpawnedNamesShown)))
+		}
+	case m.d.Policy != nil:
+		agents := []graphAgent{{Name: m.session, Allow: m.d.Policy.Allow, Secrets: m.d.Policy.Secrets}}
+		in, err := buildGraphInput(agents, nil, nil, false)
+		if err != nil {
+			graphBody = dim.Render("  " + err.Error())
+			break
+		}
+		var b strings.Builder
+		_ = renderTeamGraph(&b, in, "one machine, its declared domains and secrets")
+		graphBody = b.String()
+	default:
+		graphBody = dim.Render("  waiting for session.policy / team.topology to be recorded…")
+	}
+
+	var refusalLines []string
+	if len(m.refusals) > 0 {
+		refusalLines = append(refusalLines, "refused since boot")
+		for _, l := range m.refusals {
+			for _, ln := range strings.Split(l, "\n") {
+				refusalLines = append(refusalLines, "  "+ln)
+			}
+		}
+		if m.refusalsTruncated {
+			refusalLines = append(refusalLines, dim.Render(fmt.Sprintf(
+				"  … only the most recent %d refusals are kept; earlier ones were dropped", maxRefusalLines)))
+		}
+	}
+	for _, n := range notes {
+		refusalLines = append(refusalLines, dim.Render("  "+n))
+	}
+
+	// Chrome is header + rule + hint = 3 lines. Refusals/notes are
+	// guaranteed up to half of what remains — their own size if that is
+	// less — before the graph body gets whatever is left, so a short
+	// refusal list is never starved by a long graph.
+	budget := height - 3
+	if budget < 1 {
+		budget = 1
+	}
+	refusalBudget := len(refusalLines)
+	if half := budget / 2; refusalBudget > half && half > 0 {
+		refusalBudget = half
+	}
+	if refusalBudget > budget {
+		refusalBudget = budget
+	}
+	graphBudget := budget - refusalBudget
+
+	shownGraph := fitToBudget(strings.Split(graphBody, "\n"), graphBudget,
+		dim.Render("  … more than fits this window; resize to see the rest"))
+	shownRefusals := fitToBudget(refusalLines, refusalBudget,
+		dim.Render("  … more than fits this window; see `kelyfos team ps --graph`"))
+
+	all := make([]string, 0, len(shownGraph)+len(shownRefusals))
+	all = append(all, shownGraph...)
+	all = append(all, shownRefusals...)
+
+	return header + "\n" + strings.Repeat("─", min(width, 120)) + "\n" +
+		strings.Join(all, "\n") + "\n" + dim.Render(paneHint)
+}
+
+// sheetPane draws the agent sheet (P7-7): one row per agent with its
+// declared caps and allowlist size beside what it has actually done so far
+// — the declared and the aggregate, side by side, read off m.d rather than
+// kept a second time here. Outside a team it draws one row for the sandbox
+// itself.
+func (m *watchModel) sheetPane(width, height int) string {
+	header := fmt.Sprintf("%s  agent sheet  session %s",
+		titleStyle.Render("KelyfOS"), m.session)
+
+	names := m.order
+	if len(names) == 0 {
+		names = []string{m.session}
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "%-18s %-10s %-16s %6s %6s %6s %8s %8s %6s\n",
+		"AGENT", "SANDBOX", "CAPS", "ALLOW", "CMD", "FAIL", "EGR-OK", "EGR-BLK", "SECR")
+	for _, name := range names {
+		c := m.agentCounters(name)
+		policy := m.agentPolicy(name)
+		sandboxID, caps, allow := "—", "—", "—"
+		if policy != nil {
+			caps = fmt.Sprintf("%dc/%dM/%d%%", policy.VcpuCount, policy.MemMiB, policy.CPUQuota)
+			allow = strconv.Itoa(len(policy.Allow))
+		}
+		if t := m.d.Topology; t != nil {
+			for _, a := range t.Agents {
+				if a.Name == name {
+					sandboxID = a.Sandbox
+				}
+			}
+		} else if name == m.session {
+			sandboxID = m.session
+		}
+		fmt.Fprintf(&b, "%-18s %-10s %-16s %6s %6d %6d %8d %8d %6d\n",
+			fit(proto.SafeText(name), 18), fit(sandboxID, 10), caps, allow,
+			c.Commands, c.Failed, c.EgressOK, c.EgressBlocked, c.Secrets)
+	}
+
+	lines := strings.Split(strings.TrimRight(b.String(), "\n"), "\n")
+	budget := height - 3
+	if budget < 1 {
+		budget = 1
+	}
+	shown := fitToBudget(lines, budget,
+		dim.Render("  … more agents than fit this window; resize to see the rest"))
+
+	return header + "\n" + strings.Repeat("─", min(width, 120)) + "\n" +
+		strings.Join(shown, "\n") + "\n" + dim.Render(paneHint)
 }
 
 // fit pads or truncates a plain string to exactly w columns. Every line this

@@ -21,9 +21,10 @@ Go's `flag` accepts one dash or two, so `-image` and `--image` are the same flag
 | [`kelyfos diff`](#kelyfos-diff) | what a sandbox has done to its workspace |
 | [`kelyfos shell`](#kelyfos-shell) | an interactive terminal inside a sandbox |
 | [`kelyfos fork`](#kelyfos-fork) | restore one snapshot into several sandboxes |
-| [`kelyfos team up`](#kelyfos-team-up) | run several agents with the paths between them written down and enforced |
-| [`kelyfos team ps`](#kelyfos-team-ps) | run several agents with the paths between them written down and enforced |
-| [`kelyfos team down`](#kelyfos-team-down) | run several agents with the paths between them written down and enforced |
+| [`kelyfos team up`](#kelyfos-team-up) | run several agents with the paths between them written down and enforced, and inspect that topology with or without booting it |
+| [`kelyfos team ps`](#kelyfos-team-ps) | run several agents with the paths between them written down and enforced, and inspect that topology with or without booting it |
+| [`kelyfos team down`](#kelyfos-team-down) | run several agents with the paths between them written down and enforced, and inspect that topology with or without booting it |
+| [`kelyfos team graph`](#kelyfos-team-graph) | run several agents with the paths between them written down and enforced, and inspect that topology with or without booting it |
 | [`kelyfos shim`](#kelyfos-shim) | serve an E2B-compatible REST subset |
 | [`kelyfos runs`](#kelyfos-runs) | what has run here, from the records themselves |
 | [`kelyfos rerun`](#kelyfos-rerun) | run a recorded session again, under its own policy |
@@ -239,7 +240,7 @@ kelyfos fork [flags]
 
 ## kelyfos team up
 
-Run several agents with the paths between them written down and enforced.
+Run several agents with the paths between them written down and enforced, and inspect that topology with or without booting it.
 
 ```
 kelyfos team up
@@ -252,23 +253,37 @@ kelyfos team up
 
 ## kelyfos team ps
 
-Run several agents with the paths between them written down and enforced.
+Run several agents with the paths between them written down and enforced, and inspect that topology with or without booting it.
 
 ```
 kelyfos team ps
 ```
 
-No flags.
+| Flag | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `--graph` | boolean | — | draw the topology this team was declared with at boot (P7-7) instead of the table below |
 
 ## kelyfos team down
 
-Run several agents with the paths between them written down and enforced.
+Run several agents with the paths between them written down and enforced, and inspect that topology with or without booting it.
 
 ```
 kelyfos team down
 ```
 
 No flags.
+
+## kelyfos team graph
+
+Run several agents with the paths between them written down and enforced, and inspect that topology with or without booting it.
+
+```
+kelyfos team graph
+```
+
+| Flag | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `--policy` | string | — | a specific kelyfos.toml, instead of the one found by walking up from here |
 
 ## kelyfos shim
 

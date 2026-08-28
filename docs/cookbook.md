@@ -1,6 +1,6 @@
 # KelyfOS cookbook
 
-Fifteen recipes, each one complete, each one runnable as it stands.
+Sixteen recipes, each one complete, each one runnable as it stands.
 
 These are not illustrations. `bash dev/cookbook.sh` extracts every script below
 and runs it on a real machine. Every commit checks that each recipe still
@@ -1471,6 +1471,98 @@ kelyfos run --image dev -p 8080:80 -- bash -c '
 # packet crossed the TAP, because the packet the server answered was created
 # inside the machine, on its own loopback.
 echo "reached a server inside the sandbox without touching the firewall"
+```
+
+---
+
+## 15. See a team's topology before booting it, and confirm the running team draws the same one
+
+`kelyfos team graph` reads `kelyfos.toml` and draws the team it declares —
+agents, edges, domains, secrets and store rules — with **nothing booted**: a
+pre-flight lint, not a monitor. It runs the same plan-time checks
+`kelyfos team up` runs before it boots anything, so a file that combines
+`[team]` with `[[plugin]]` or `[[forward]]` is refused here too, before it
+costs anybody an afternoon. `kelyfos team ps --graph` draws the identical
+picture for a team that is actually running, read from its own recorded
+`team.topology` and `session.policy` events rather than from the file — the
+two are never independent readings of one topology.
+
+<!-- recipe: team-graph -->
+
+```bash
+set -euo pipefail
+work="$(mktemp -d)"
+cd "$work"
+trap 'kelyfos team down >/dev/null 2>&1 || true; pkill -f "kelyfos team up" 2>/dev/null || true; rm -rf "$work"' EXIT
+
+cat > kelyfos.toml <<'TOML'
+[team]
+name = "cookbook-graph"
+
+[[team.agent]]
+name  = "master"
+image = "dev"
+allow = ["example.com"]
+
+[[team.agent]]
+name  = "worker"
+image = "dev"
+count = 2
+
+[[team.edge]]
+from = "master"
+to   = "worker-*"
+
+[team.store]
+enabled = true
+
+[[team.store.key]]
+name  = "findings"
+write = ["worker-*"]
+read  = ["master"]
+TOML
+
+echo "== declared, nothing booted =="
+declared="$(kelyfos team graph)"
+echo "$declared"
+
+echo
+echo "== the same file, refused, when it also carries [[plugin]] =="
+mkdir -p plugins/demo
+cat kelyfos.toml > refused.toml
+cat >> refused.toml <<'TOML'
+
+[[plugin]]
+name    = "demo"
+path    = "./plugins/demo"
+command = "python3"
+args    = ["server.py"]
+TOML
+# The refusal is expected, so its non-zero status must not abort this script
+# under set -e: captured into a variable first (the left side of an && list
+# is exempt), then the message is checked as its own, separate, successful
+# pipeline.
+refusal="$(kelyfos team graph --policy refused.toml 2>&1)" && { echo "expected a refusal, got:"; echo "$refusal"; exit 1; }
+echo "$refusal" | grep -q '\[\[plugin\]\] has no effect inside a team'
+
+echo
+echo "== boot it, and confirm the running team draws the same topology =="
+kelyfos team up >up.log 2>&1 &
+for _ in $(seq 1 600); do grep -q 'team up in' up.log && break; sleep 0.25; done
+grep -q 'team up in' up.log || { cat up.log; exit 1; }
+
+running="$(kelyfos team ps --graph)"
+echo "$running"
+
+# The title line differs (one says "nothing booted", the other says how many
+# agents came up), and a running team's legend may carry "(fork group ...)"
+# on a forked agent — knowable only once something has actually booted, never
+# from the file alone. Strip both and everything else has to agree exactly.
+norm() { echo "$1" | tail -n +2 | sed -E 's/ \(fork group [0-9a-f]+\)//'; }
+diff <(norm "$declared") <(norm "$running")
+echo "declared and running topologies match"
+
+kelyfos team down
 ```
 
 ---

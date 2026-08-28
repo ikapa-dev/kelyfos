@@ -1,10 +1,12 @@
 package main
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
 	"github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
@@ -297,5 +299,210 @@ func TestLaneLinesSpendTheirWidthOnContent(t *testing.T) {
 	// And the ticker carries the clock for the messages.
 	if !strings.Contains(strings.Join(m.flow, "\n"), "10:00:0") {
 		t.Error("the ticker has no timestamps")
+	}
+}
+
+// P7-7: watch opens on the activity pane exactly as it always rendered —
+// switching panes must be something a key does, not something that changes
+// what a session with no key pressed shows.
+func TestWatchOpensOnTheActivityPaneByDefault(t *testing.T) {
+	m := teamModel()
+	m.width, m.height = 100, 30
+	if m.pane != paneActivity {
+		t.Fatalf("pane = %v, want paneActivity", m.pane)
+	}
+	out := m.render()
+	if strings.Contains(out, "map — declared topology") || strings.Contains(out, "AGENT") {
+		t.Errorf("the default render already shows a P7-7 pane:\n%s", out)
+	}
+}
+
+// The three panes are reachable by number and by mnemonic, and quitting
+// still works from any of them.
+func TestWatchKeysSwitchPanes(t *testing.T) {
+	m := teamModel()
+	m.width, m.height = 100, 30
+	for key, want := range map[string]pane{"2": paneMap, "m": paneMap, "3": paneSheet, "s": paneSheet, "1": paneActivity, "v": paneActivity} {
+		m.pane = paneActivity
+		m.Update(pressKey(key))
+		if m.pane != want {
+			t.Errorf("key %q switched to pane %v, want %v", key, m.pane, want)
+		}
+	}
+	m.pane = paneMap
+	_, cmd := m.Update(pressKey("q"))
+	if cmd == nil {
+		t.Error("q did not quit from a non-default pane")
+	}
+}
+
+// The map pane draws a team's recorded topology once team.topology has
+// landed, and says so plainly before it has.
+func TestMapPaneDrawsTheRecordedTopology(t *testing.T) {
+	m := &watchModel{session: "team1234", started: time.Now(), width: 100, height: 30}
+	if out := m.mapPane(m.width, m.height); !strings.Contains(out, "waiting for") {
+		t.Errorf("no topology yet, and the pane did not say so: %q", out)
+	}
+
+	topo := recorder.NewTeamTopology(recorder.TopologyFields{
+		Agents: []recorder.EvAgent{{Name: "master", Sandbox: "aaa"}, {Name: "worker-1", Sandbox: "bbb"}},
+		Edges:  []string{"master -> worker-1", "worker-1 -> master"},
+	})
+	m.absorb(topo)
+	out := m.mapPane(m.width, m.height)
+	for _, want := range []string{"master", "worker-1", "2 agents", "2 edges"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("map pane is missing %q:\n%s", want, out)
+		}
+	}
+	if !strings.Contains(out, paneHint) {
+		t.Error("the map pane does not carry the pane-switching hint")
+	}
+}
+
+// Outside a team, the map pane still draws something — the single machine's
+// own declared reach — once its session.policy has landed.
+func TestMapPaneDrawsASingleMachineOutsideATeam(t *testing.T) {
+	m := &watchModel{session: "abcd1234", started: time.Now(), width: 100, height: 30}
+	policy := recorder.NewSessionPolicy("", recorder.PolicyFields{Allow: []string{"example.com"}})
+	m.absorb(policy)
+	out := m.mapPane(m.width, m.height)
+	if !strings.Contains(out, "example.com") {
+		t.Errorf("a single sandbox's own allowlist did not reach the map pane: %q", out)
+	}
+}
+
+// The agent sheet shows each agent's declared caps beside its live counters,
+// with the header row naming every column.
+func TestSheetPaneShowsCapsBesideCounters(t *testing.T) {
+	m := teamModel()
+	m.width, m.height = 100, 30
+	policy := recorder.NewSessionPolicy("master", recorder.PolicyFields{
+		VcpuCount: 2, MemMiB: 512, CPUQuota: 50, Allow: []string{"a.com", "b.com"},
+	})
+	m.absorb(policy)
+	out := m.sheetPane(m.width, m.height)
+	for _, want := range []string{"AGENT", "CAPS", "master", "2c/512M/50%", "worker-1"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("agent sheet is missing %q:\n%s", want, out)
+		}
+	}
+}
+
+// pressKey builds the tea.KeyPressMsg m.Update expects, for a plain
+// single-rune key with no modifiers.
+func pressKey(s string) tea.KeyPressMsg {
+	return tea.KeyPressMsg{Text: s, Code: rune(s[0])}
+}
+
+// A live watch's own Digest never retains Timeline (KeepTimeline is false
+// for a zero-value Digest), so the map pane's "refused since boot" section
+// cannot read it back the way `kelyfos team ps --graph` does — it has to be
+// tracked live, as each refusal is absorbed, which is exactly what
+// teamModel() (the fixture used above) already does via its team.refused and
+// team.store events.
+func TestMapPaneShowsLiveRefusalsWithTheirFixLine(t *testing.T) {
+	m := teamModel()
+	m.width, m.height = 100, 30
+	m.absorb(recorder.NewTeamTopology(recorder.TopologyFields{
+		Agents: []recorder.EvAgent{{Name: "master", Sandbox: "a"}, {Name: "worker-1", Sandbox: "b"}},
+		Edges:  []string{"master -> worker-1"},
+	}))
+	out := m.mapPane(m.width, m.height)
+	if !strings.Contains(out, "refused since boot") {
+		t.Fatalf("no refusals section even though teamEvents() carries a no_edge and a denied store "+
+			"access:\n%s", out)
+	}
+	for _, want := range []string{"add [[team.edge]]", "add \"worker-1\" to read"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("map pane is missing the fix line %q:\n%s", want, out)
+		}
+	}
+}
+
+// Neither pane may emit more lines than its own height, note included — the
+// off-by-one a review caught: the old logic picked a full budget's worth of
+// content and then appended a truncation note on top of it.
+//
+// The floor starts at 4, not 1: both panes' chrome is a fixed
+// header + rule + hint, joined with "\n" around whatever body content the
+// budget allows — even a zero-width body still costs a line for the
+// separator between "rule" and "hint" ("header\nrule\n\nhint"). Going below
+// 4 would mean conditionally dropping the rule or the hint for a terminal
+// too small to show either meaningfully, which is real UI work this task
+// was never asked to do — the review's own realistic case was 120x24, and
+// nobody runs `kelyfos watch` in a 2-line terminal. 4 is the true minimum:
+// verified by removing fitToBudget's own floor of 1 and confirming the
+// total is still 4, not fewer, at height 1-3.
+func TestMapAndSheetPanesNeverExceedTheirHeightBudget(t *testing.T) {
+	m := teamModel()
+	m.width = 100
+	m.absorb(recorder.NewTeamTopology(recorder.TopologyFields{
+		Agents: []recorder.EvAgent{{Name: "master", Sandbox: "a"}, {Name: "worker-1", Sandbox: "b"}},
+		Edges:  []string{"master -> worker-1", "worker-1 -> master"},
+	}))
+	for h := 4; h <= 30; h++ {
+		if got := strings.Count(m.mapPane(m.width, h), "\n") + 1; got > h {
+			t.Errorf("mapPane(height=%d) emitted %d lines", h, got)
+		}
+		if got := strings.Count(m.sheetPane(m.width, h), "\n") + 1; got > h {
+			t.Errorf("sheetPane(height=%d) emitted %d lines", h, got)
+		}
+	}
+}
+
+// A real refusal must survive truncation at a real, small terminal size —
+// the failure a review captured live under tmux at 120x24 against a real
+// 5-agent team: the refusals section, the whole edge table and the
+// pane-switching hint were all off-screen, because the old logic truncated
+// from the top of one monolithic string and the graph body alone was
+// already longer than the window.
+func TestMapPaneRefusalsSurviveTruncationAtARealisticHeight(t *testing.T) {
+	m := &watchModel{session: "team1234", started: time.Now(), width: 120}
+	agents := make([]recorder.EvAgent, 0, 8)
+	var edges []string
+	for i := 1; i <= 8; i++ {
+		name := fmt.Sprintf("worker-%d", i)
+		agents = append(agents, recorder.EvAgent{Name: name, Sandbox: fmt.Sprintf("sb%d", i)})
+		edges = append(edges, "master -> "+name, name+" -> master")
+	}
+	agents = append(agents, recorder.EvAgent{Name: "master", Sandbox: "sbm"})
+	m.absorb(recorder.NewTeamTopology(recorder.TopologyFields{Agents: agents, Edges: edges}))
+	m.absorb(recorder.Event{Type: recorder.TypeTeamRefused, Agent: "worker-1", Peer: "worker-2",
+		Kind: "send", Reason: "no_edge"})
+
+	out := m.mapPane(m.width, 24)
+	if got := strings.Count(out, "\n") + 1; got > 24 {
+		t.Fatalf("mapPane emitted %d lines at height 24", got)
+	}
+	for _, want := range []string{"refused since boot", "add [[team.edge]]", paneHint} {
+		if !strings.Contains(out, want) {
+			t.Errorf("at a realistic 120x24, the map pane is missing %q:\n%s", want, out)
+		}
+	}
+}
+
+// The live map pane has the same two honest gaps as `kelyfos team ps
+// --graph` (host/teamgraph.go), since it reads the same recorded
+// team.topology: a store enabled with zero rules still needs its synthetic
+// resource and a caveat, and a runtime-spawned agent gets an explicit note
+// rather than being silently folded into the declared picture.
+func TestMapPaneCaveatsMatchTeamPSGraphsHonestGaps(t *testing.T) {
+	m := teamModel() // absorbs master, worker-1 via teamEvents()
+	m.width, m.height = 100, 40
+	m.absorb(recorder.NewTeamTopology(recorder.TopologyFields{
+		Agents: []recorder.EvAgent{{Name: "master"}, {Name: "worker-1"}},
+	}))
+	// A worker this fixture's own events already named, but that the
+	// topology above does not list, stands in for a runtime spawn.
+	m.absorb(recorder.Event{Type: recorder.TypeCommandStart, Agent: "worker-1-spawn-1",
+		Cmd: []string{"true"}, Call: "cX"})
+
+	out := m.mapPane(m.width, m.height)
+	if !strings.Contains(out, "team.store") && !strings.Contains(out, "P7-3 recorder gap") {
+		t.Errorf("no store-enabled-ambiguity caveat for a topology with zero store rules:\n%s", out)
+	}
+	if !strings.Contains(out, "spawned at runtime") || !strings.Contains(out, "worker-1-spawn-1") {
+		t.Errorf("no note naming the agent spawned at runtime, not in the declared topology:\n%s", out)
 	}
 }
