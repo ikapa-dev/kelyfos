@@ -393,9 +393,21 @@ not governed at all.
 **The supervisor itself.** Both mechanisms are applied by the re-exec'd
 `--confine` helper and nowhere else, so PID 1 is not confined by the profile it
 applies to everything it spawns, and a tool running inside the supervisor has
-the whole filesystem in front of it. `write_file` is checked by hand against the
+the whole filesystem in front of it. `write_file` is bounded to the
 same three lists the profile is built from instead (`writableFor`, P6-24), so
-the file tools get the reach a confined child gets and no more. Reads are
+the file tools get the reach a confined child gets and no more. *Since F11 of
+the 2026-08-28 review that bound is enforced at the open rather than checked
+before it:* the tool used to walk the path with `Lstat`, twice, and then hand the
+absolute path to `os.MkdirAll` and `os.WriteFile`, which resolve it again — and
+the second walk's own comment named the gap between the two without closing it.
+A confined exec holds `MAKE_SYM` on every tree it can write, so a loop planting
+and removing a link at the target raced that gap; the walk returns at the first
+component that does not exist, which for a file being created is immediately, so
+the window was the whole of `MkdirAll`. The write now goes through an `os.Root`
+anchored on the matched tree — `openat2` with `RESOLVE_BENEATH` — which refuses a
+path that leaves the tree at the moment it opens it, with nothing to race. The
+`Lstat` walk stays in front for its error message and for the in-tree symlink
+this project already refused, which `RESOLVE_BENEATH` alone would follow. Reads are
 deliberately not restricted at all: the profile grants read beneath `/` to those
 children anyway, so restricting the tool would make it weaker than the thing it
 serves while closing nothing.

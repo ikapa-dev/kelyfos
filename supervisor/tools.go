@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"syscall"
 	"unicode/utf8"
 
 	"github.com/p4r4n0rm4l/KelyfOS/internal/mcp"
@@ -395,31 +396,90 @@ func readCapped(path string) ([]byte, *mcp.CallToolResult) {
 	return b, nil
 }
 
+// writeFile is the one write the file tools do — write_file and upload share it,
+// which is why there is one place for the guard to be.
+//
+// The guard is the open, not a check before it (F11, security review of
+// 2026-08-28). It used to be a check: writableFor decided the path was inside a
+// writable tree and carried no symlink, the same Lstat walk ran a second time
+// immediately before the write, and then os.MkdirAll and os.WriteFile opened the
+// absolute path — resolving, at that moment, whatever the filesystem said. The
+// second check's own comment named the gap it was there to close and did not
+// close it, because a second lexical check is not atomic with an open any more
+// than the first one was. The gap is wide, too: noSymlinksBeneath returns nil at
+// the first component that does not exist, which for a file being created is
+// immediately, so the window ran from there to the open with MkdirAll inside it.
+// A confined exec holds MAKE_SYM on every tree it can write, so a loop planting
+// and removing a link at the target was the whole of the attack.
+//
+// Now the tree is opened as an *os.Root and every step goes through it. On Linux
+// that is openat2 with RESOLVE_BENEATH: a component that resolves outside the
+// tree is refused by the kernel at the moment of the open, atomically, with no
+// window for anything to change underneath. The lexical checks stay in front of
+// it for their error messages and for the in-tree symlink this project already
+// refused — RESOLVE_BENEATH would follow that one — but they are no longer what
+// makes the write safe.
 func writeFile(path string, data []byte, mode os.FileMode) *mcp.CallToolResult {
 	// Before the size check, because "where" is a question about whether this
 	// call should happen at all and "how big" is a question about this call
 	// (P6-24, writable.go).
-	if err := writableFor(path); err != nil {
+	target, err := writableTarget(path)
+	if err != nil {
 		return mcp.Errorf("%v", err)
 	}
 	if len(data) > maxToolBytes {
 		return mcp.Errorf("content is %d bytes, over the %d byte per-call limit", len(data), maxToolBytes)
 	}
-	// Checked again immediately before the write, not only inside
-	// writableFor: a symlink can be planted in the gap between that decision
-	// and this call, and MkdirAll below will walk straight through one in a
-	// parent directory exactly as willingly as os.WriteFile follows one at
-	// the leaf (F1).
-	if err := noSymlinksBeneath(path); err != nil {
-		return mcp.Errorf("%v", err)
-	}
-	if dir := filepath.Dir(path); dir != "" && dir != "." {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
+
+	// One of the named device nodes: an exact path from a fixed list, not a
+	// tree, so there is no root to be beneath. O_NOFOLLOW instead, and no
+	// O_CREATE — /dev/null is a thing that exists or the machine is not the
+	// machine this profile describes.
+	if target.dev != "" {
+		f, err := os.OpenFile(target.dev, os.O_WRONLY|syscall.O_NOFOLLOW, mode)
+		if err != nil {
 			return mcp.Errorf("%v", err)
 		}
+		defer f.Close()
+		if _, err := f.Write(data); err != nil {
+			return mcp.Errorf("%v", err)
+		}
+		return nil
 	}
-	if err := os.WriteFile(path, data, mode); err != nil {
+
+	root, err := os.OpenRoot(target.tree)
+	if err != nil {
+		return mcp.Errorf("%v", err)
+	}
+	defer root.Close()
+
+	if dir := filepath.Dir(target.rel); dir != "" && dir != "." {
+		if err := root.MkdirAll(dir, 0o755); err != nil {
+			return mcp.Errorf("%v", writeThroughErr(path, err))
+		}
+	}
+	f, err := root.OpenFile(target.rel, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode)
+	if err != nil {
+		return mcp.Errorf("%v", writeThroughErr(path, err))
+	}
+	defer f.Close()
+	if _, err := f.Write(data); err != nil {
 		return mcp.Errorf("%v", err)
 	}
 	return nil
+}
+
+// writeThroughErr names a symlink when one is what the root refused.
+//
+// openat2 reports only that the path left its root, which is the right thing for
+// it to know and the wrong thing for an agent to read: "path escapes from parent"
+// does not say what to do about it. If a link is still there to be found, say so
+// in the words the tools used before F11; if it is not — the racing case, where
+// it has already been removed again — the kernel's own error is the honest
+// answer and is left alone.
+func writeThroughErr(path string, err error) error {
+	if why := noSymlinksBeneath(path); why != nil {
+		return why
+	}
+	return err
 }

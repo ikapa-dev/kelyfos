@@ -324,8 +324,10 @@ What that leaves:
 - **The supervisor itself is not confined.** Landlock and seccomp are applied by
   a re-exec'd helper on the way to each spawned program, so PID 1 has the whole
   guest filesystem in front of it — and the MCP file tools run there rather than
-  in a child. `write_file` is checked against the same three writable lists the
-  profile is built from, so it gets the reach a confined child gets and no more;
+  in a child. `write_file` is bounded to the same three lists the
+  profile is built from, so it gets the reach a confined child gets and no more —
+  and since F11 that bound is the open itself, an `os.Root` on the matched tree
+  rather than an `Lstat` walk a symlink could be planted behind;
   `read_file` is not checked, because a confined child is granted read beneath
   `/` anyway. Until that check existed, `write_file` passed the agent's path
   straight to `os.WriteFile` and reached `/dev/vda` and `/dev/vdb`, the raw
