@@ -8423,6 +8423,27 @@ after:
         everything downstream was designed on the guarantee. The three Phase 7 tasks this jumps ahead of
         (P7-14, P7-15, P7-16) are already logged as deferred and non-blocking, and none of them is what an
         attacker reaches first.</td></tr>
+    <tr><td class="mono">D72</td><td class="mono">2026-08-29</td>
+        <td>P7-17/F19 moves <code>sandbox.json</code> and the <code>paused</code> marker out of the jailer&rsquo;s
+        chroot, from <code>&lt;base&gt;/firecracker/&lt;id&gt;/root/</code> up to
+        <code>&lt;base&gt;/firecracker/&lt;id&gt;/</code>. This is a <b>deliberate one-way compatibility
+        break</b>: a <code>kelyfos</code> built before this cannot read a sandbox started after it, and a
+        <code>kelyfos</code> built after cannot read one started before. The narrow consequence is during an
+        upgrade &mdash; <code>RunningSessions()</code> loses the id&rarr;session mapping for machines started by
+        the older binary, so <code>kelyfos sessions erase</code> and <code>prune</code> fall back to
+        <code>hasLiveRunDir</code> for those. Recorded here rather than softened, and written into
+        <code>docs/upgrading.md</code>.</td>
+        <td>The obvious kindness &mdash; read the new location and fall back to the in-chroot copy when it is
+        absent &mdash; <i>is the hole</i>. A compromised VMM writes the in-chroot copy, and a fallback path is a
+        path an attacker can force by deleting the file above it. F19 exists because
+        <code>host/sessions.go</code> trusts what it reads: <code>pause</code> copies
+        <code>WorkspaceHost</code> into the session, <code>resume</code> runs <code>AdoptWorkspace</code> and
+        <code>SyncBack</code> against it and ends in a rename of the guest&rsquo;s tree over that host directory,
+        and <code>snapshot save</code> copies <code>st.Workspace</code> &mdash; any host path &mdash; into the
+        snapshot the next guest boots from. A boundary with a fallback is not a boundary. The cost is bounded and
+        visible (one upgrade, one class of stale machine, a documented fallback for erase and prune); the
+        alternative is unbounded and silent. The same reasoning the project already applied at D29 and at P5-1:
+        depth is worth having, but not at the price of the boundary it sits behind.</td></tr>
     <!-- Claude Code: append rows above this line. -->
   </table>
 </section>
