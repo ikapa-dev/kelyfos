@@ -50,6 +50,15 @@ type View struct {
 	Fingerprint string
 	Summary     Summary
 	Rows        []Row
+	// RunMap, AgentSheets, ReachMatrix, StorePanel and RunNote are P7-8: the
+	// declared shape of the run, read out of session.policy and
+	// team.topology rather than out of anything that happened. They render
+	// above Lanes, which they do not change. See internal/report/rungraph.go.
+	RunMap      *RunMapView
+	AgentSheets []AgentSheetView
+	ReachMatrix *ReachMatrixView
+	StorePanel  *StorePanelView
+	RunNote     string
 	// Lanes is the team view: one column per agent, in boot order. Empty for a
 	// session with one machine in it, and the whole lane section then does not
 	// render at all (E2-7).
@@ -194,6 +203,8 @@ func RenderSigned(w io.Writer, sessionID string, chain []byte, key ed25519.Priva
 	d := digest.Walk(parsed)
 	fillSummary(&v, d)
 	v.Rows = timelineRows(d)
+	run := buildRunSection(d)
+	v.RunMap, v.AgentSheets, v.ReachMatrix, v.StorePanel, v.RunNote = run.Map, run.Agents, run.Reach, run.Store, run.Note
 	v.Lanes, v.LaneRows = buildLanes(d)
 	if n := len(v.Lanes); n > 0 {
 		v.LaneWidth = template.CSS(fmt.Sprintf("grid-template-columns:88px repeat(%d,minmax(0,1fr))", n))
@@ -683,4 +694,9 @@ func short(h string) string {
 	return h
 }
 
-var tmpl = template.Must(template.New("report").Parse(reportHTML))
+// safe and safeBody (internal/report/safe.go) are the template's own
+// control-byte defence — see that file's doc comment for why html/template's
+// contextual escaping alone is not the whole story.
+var tmpl = template.Must(template.New("report").Funcs(template.FuncMap{
+	"safe": safe, "safeBody": safeBody,
+}).Parse(reportHTML))
