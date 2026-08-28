@@ -6432,6 +6432,48 @@ after:
         <code>Allow: GET, HEAD</code> and the full security-header set, versus the control case
         (<code>curl</code> a clean path with no token) &rarr; <code>401 Unauthorized</code> with the
         identical header set &mdash; same defense, same headers, dirty path or clean.</td></tr>
+    <tr><td class="mono">2026-08-28</td><td class="mono">P7-12</td>
+        <td><b>Re-review's finding, fixed by the orchestrator.</b> The re-reviewer independently re-attacked
+        the fixed server with 19 live adversarial probes &mdash; the original repro plus encoded traversal
+        variants, backslashes, an absolute-URI request line, <code>CONNECT</code>, HTTP/1.0, malformed/missing
+        Host headers over a raw socket, and more &mdash; and every one was refused with the correct status and
+        the full security-header set; the F1 production fix itself held under real, harder pressure than the
+        first review applied. Spot-re-checked five of the nine already-passing conditions live too (token
+        handling, CSP hash, no <code>innerHTML</code>, exit-on-end/idle-timeout, no mutating route) &mdash; all
+        still correct. Verdict on the live security posture: sound.
+        <br><b>But the regression test built to keep F1 fixed doesn't actually test it.</b> Per this project's
+        own standard for proving rather than promising, the reviewer reverted just the fix in a scratch clone
+        and reran <code>TestDirtyPathsStillGoThroughEveryCheckBeforeServeMuxsOwnRedirect</code>: it still
+        passed, 15 times out of 15. Root cause: the shared <code>tv.ts.Client()</code> follows redirects
+        transparently (a <code>307</code> preserves method and body), so against the vulnerable code the
+        client silently re-sent each request to the redirect target and <code>resp.StatusCode</code> ended up
+        being the <i>final</i>, post-redirect status &mdash; which happened to coincide with what the test
+        asserted, masking the exact <code>307</code> the test exists to catch. A HIGH finding's own guard rail
+        was dead. Fixed with a dedicated <code>http.Client</code> for this one test,
+        <code>CheckRedirect</code> short-circuited via <code>http.ErrUseLastResponse</code>, so
+        <code>resp.StatusCode</code> is the server's real first-hop answer &mdash; every other test in the
+        file keeps the default client, since none of the others exercise a path <code>ServeMux</code> would
+        redirect. Re-confirmed non-tautological the same way the reviewer did: reverted the fix, watched all
+        15 sub-cases fail with the real <code>307</code>, restored it, watched it pass clean again.
+        <br>Also noted by the re-review, not fixed here (confirmed via <code>git log</code>/<code>git
+        diff</code> that no P7-12 commit touches <code>internal/sandbox/</code> at all): a pre-existing, real,
+        reproducible data race in <code>internal/sandbox</code>
+        (<code>TestSilentEventsConnectionsAreCappedAndReclaimed</code>,
+        <code>TestSilentTeamConnectionsAreCappedAndReclaimed</code>), last touched at <code>fa68981</code>
+        (P7-5/Lane 1). Out of scope for this task; worth its own item when Lane 1 work next resumes, or for
+        P7-13's whole-phase read-back to pick up.
+        <br>Not self-ticked: still holding for the reviewer to confirm the test fix is actually non-tautological
+        before this task ticks.</td>
+        <td class="mono">fix commit <code>74c9a98</code>. <code>gofmt -l .</code> clean; <code>go vet
+        ./...</code> clean; <code>go build ./...</code> clean; every <code>host/view_test.go</code> test
+        <code>PASS</code> individually and as a suite; <code>go test -race -count=5 ./host/...</code> clean
+        (107s); <code>go test -count=1 ./...</code> 25 packages <code>ok</code>; <code>govulncheck</code>
+        &rarr; &ldquo;No vulnerabilities found.&rdquo;
+        <br>Non-tautology re-check: reverted <code>host/view.go</code>'s server construction and
+        <code>newTestView</code>'s mux wiring to the vulnerable per-pattern form in a scratch copy &mdash;
+        <code>TestDirtyPathsStillGoThroughEveryCheckBeforeServeMuxsOwnRedirect</code> failed on all 15
+        sub-cases with the real <code>307</code> (&ldquo;got 307, want 401/403/405&rdquo;); restored the fix
+        &rarr; <code>PASS</code> again.</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
