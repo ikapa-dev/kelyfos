@@ -2,9 +2,14 @@ package recorder
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"reflect"
+	"sort"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -552,4 +557,447 @@ func TestClipLargestFieldCoversEverySliceField(t *testing.T) {
 			}
 		})
 	}
+}
+
+// FuzzEraseRoundTrip drives Erase's own parser (P7-17, F6).
+//
+// F6 replaced Erase's rewrite: it used to go Read -> redact -> hash ->
+// re-marshal, and Read is json.Unmarshal into Event, so every member this
+// build's struct did not carry was dropped. The replacement holds each line as
+// its own members and writes back only the ones a redaction changed — which
+// means parseObject and applyRedaction are now a second parser on the audit
+// chain, beside Verify and Read. A parser on the evidence path without a fuzz
+// target is the gap P6-3 was written about, and this is that gap closed for
+// the parser F6 added.
+//
+// The property, on any line at all: erase either refuses and leaves the chain
+// byte-for-byte as it was, or rewrites it into something that still verifies,
+// still reads back as events, keeps every member it was not entitled to
+// redact byte-for-byte, keeps the order of every member, and loses no member
+// name at any depth — including names inside objects this build's own structs
+// do not fully know, which is the whole of what F6 was about.
+//
+// The fuzzed line becomes the first event of a real three-event chain: it,
+// then a command.output that is always redactable so Erase never refuses for
+// want of anything to do, then a session.end so it never refuses for want of
+// one. seq, prev and hash are stripped from the fuzzed line and re-added, so
+// the input is a chain rather than three unrelated objects — but a duplicate
+// of any OTHER name is left exactly where the fuzzer put it, because refusing
+// one is behaviour worth reaching.
+func FuzzEraseRoundTrip(f *testing.F) {
+	// An ordinary event with two redactable fields.
+	f.Add(`{"v":1,"ts":"2026-01-01T00:00:00.000Z","sandbox":"fz","type":"command.start","source":"host","call":"c1","cmd":["curl","https://api.example.com/"],"cwd":"/work/jane"}`)
+	// A member this build's Event does not carry — F6's own case.
+	f.Add(`{"v":1,"ts":"2026-01-01T00:00:00.000Z","sandbox":"fz","type":"command.start","source":"host","cwd":"/work/jane","quarantined_by":"policy-v2"}`)
+	// A member this build does not carry, one level down, inside a struct
+	// slice it does: TestF6_EraseKeepsANestedFieldThisBuildDoesNotKnow.
+	f.Add(`{"v":1,"ts":"2026-01-01T00:00:00.000Z","sandbox":"fz","type":"team.topology","source":"host","agents":[{"name":"planner","sandbox":"aa11bb22","region":"eu-central-1"}],"edges":["planner -> worker"]}`)
+	// And one inside *EvError, which is the pointer-to-struct descent.
+	f.Add(`{"v":1,"ts":"2026-01-01T00:00:00.000Z","sandbox":"fz","type":"command.exit","source":"host","error":{"kind":"internal","message":"exec: \"/tmp/x\": not found","detail":"from a newer build"}}`)
+	// An explicit zero omitempty would have dropped on a struct round trip.
+	f.Add(`{"v":1,"ts":"2026-01-01T00:00:00.000Z","sandbox":"fz","type":"command.output","source":"host","data":"Zm9v","bytes":0}`)
+	// A duplicate member name: json.Unmarshal keeps the last, parseObject
+	// keeps the first, so the rewrite refuses rather than picking one.
+	f.Add(`{"v":1,"ts":"2026-01-01T00:00:00.000Z","sandbox":"fz","type":"command.output","source":"host","data":"Zm9v","data":"YmFy"}`)
+	// Valid JSON, not an object.
+	f.Add(`[1,2,3]`)
+	// Valid JSON, an object, nothing else.
+	f.Add(`{}`)
+	// The mixed struct slice: StoreKeys.Name is content, Read and Write are not.
+	f.Add(`{"v":1,"ts":"2026-01-01T00:00:00.000Z","sandbox":"fz","type":"team.topology","source":"host","store_keys":[{"name":"plan","read":["a"],"write":["b"]}]}`)
+	// Already a fingerprint from an earlier erasure (B2's path).
+	f.Add(`{"v":1,"ts":"2026-01-01T00:00:00.000Z","sandbox":"fz","type":"command.output","source":"host","data":"(erased — sha256:` + strings.Repeat("ab", 32) + `)"}`)
+	// An empty redactable field: nothing to redact, and not counted.
+	f.Add(`{"v":1,"ts":"2026-01-01T00:00:00.000Z","sandbox":"fz","type":"command.output","source":"host","data":"","cwd":""}`)
+	// A nested `hash` member ahead of the real one, which is what would break
+	// the digest substitution if it were not anchored on the value.
+	f.Add(`{"v":1,"ts":"2026-01-01T00:00:00.000Z","sandbox":"fz","type":"command.exit","source":"host","error":{"kind":"x","message":"y"},"extra":{"hash":""}}`)
+	// A schema version ahead of this build: refused before any rewrite.
+	f.Add(`{"v":99,"ts":"2026-01-01T00:00:00.000Z","sandbox":"fz","type":"command.output","source":"host","data":"Zm9v"}`)
+	// Not JSON at all.
+	f.Add(`not json`)
+
+	f.Fuzz(func(t *testing.T, line string) {
+		// One event per line is the file format; a line that carries a newline
+		// is not one line.
+		if strings.ContainsAny(line, "\n\r") {
+			return
+		}
+		root := t.TempDir()
+		const id = "fz"
+		path := Path(root, id)
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+
+		first, ok := chainableLine([]byte(line), 1, "")
+		if !ok {
+			// Not an object, so it can never be an event. Erase must refuse it
+			// and leave it alone — the file is the evidence, and a refusal
+			// that has already half-rewritten it is not a refusal.
+			writeChainFile(t, path, [][]byte{[]byte(line)})
+			assertRefusedAndUntouched(t, root, id, path)
+			return
+		}
+
+		// A command.output that is always redactable, so Erase never refuses
+		// for want of something to do, and a session.end so it never refuses
+		// for want of one.
+		second, ok := chainableLine([]byte(`{"v":1,"ts":"2026-01-01T00:00:01.000Z","sandbox":"fz","type":"command.output","source":"host","call":"c1","stream":"stdout","data":"Zm9vCg==","bytes":4}`), 2, digestOf(first))
+		if !ok {
+			t.Fatal("this target's own fixed second line is not chainable")
+		}
+		third, ok := chainableLine([]byte(`{"v":1,"ts":"2026-01-01T00:00:02.000Z","sandbox":"fz","type":"session.end","source":"host","reason":"shutdown"}`), 3, digestOf(second))
+		if !ok {
+			t.Fatal("this target's own fixed third line is not chainable")
+		}
+		writeChainFile(t, path, [][]byte{first, second, third})
+
+		before, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Erase(root, id, "fuzz"); err != nil {
+			assertUntouched(t, path, before, err)
+			return
+		}
+
+		after, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		events, head, verr := Verify(bytes.NewReader(after))
+		if verr != nil {
+			t.Fatalf("Erase rewrote the chain into one that does not verify: %v\nbefore:\n%s\nafter:\n%s", verr, before, after)
+		}
+		if events != 4 {
+			t.Fatalf("Verify counted %d events after erasing a 3-event chain, want 4 (the erasure event is appended)", events)
+		}
+		if head == "" {
+			t.Fatal("the rewritten chain has no head")
+		}
+		parsed, rerr := Read(bytes.NewReader(after))
+		if rerr != nil {
+			t.Fatalf("Verify accepted the rewritten chain but Read refused it: %v\nafter:\n%s", rerr, after)
+		}
+		if len(parsed) != events {
+			t.Fatalf("Verify counted %d events and Read found %d in the rewritten chain", events, len(parsed))
+		}
+
+		last := parsed[len(parsed)-1]
+		if last.Type != TypeSessionErasure {
+			t.Fatalf("the rewritten chain's last event is %q, want %q", last.Type, TypeSessionErasure)
+		}
+		if last.Modified < 1 {
+			t.Fatalf("Erase succeeded but the erasure event says %d events were modified", last.Modified)
+		}
+		if last.RedactedFields < last.Modified {
+			t.Fatalf("erasure event: redacted_fields=%d is below modified=%d — every event counted "+
+				"as touched had at least one field replaced", last.RedactedFields, last.Modified)
+		}
+
+		// The fuzzed line, before and after, is what F6 is actually about.
+		gotLine := bytes.Split(bytes.TrimRight(after, "\n"), []byte("\n"))[0]
+		assertRewriteKeptEverythingItShould(t, first, gotLine)
+	})
+}
+
+// --- FuzzEraseRoundTrip's own helpers ----------------------------------------
+//
+// None of these use parseObject or applyRedaction. A fuzz target whose fixture
+// builder and whose oracle are the code under test can only ever agree with
+// it, which is the one thing a target on a parser must not do.
+
+// jsonMember is one member of a JSON object as the bytes carried it. A slice
+// of these rather than a map, because a map would silently collapse a
+// duplicate name and a duplicate name is one of the inputs worth reaching.
+type jsonMember struct {
+	key   string
+	value json.RawMessage
+}
+
+// splitMembers reads a JSON object's members in order, keeping duplicates.
+func splitMembers(raw []byte) ([]jsonMember, bool) {
+	var probe map[string]json.RawMessage
+	if json.Unmarshal(raw, &probe) != nil {
+		return nil, false // not valid JSON, or valid JSON that is not an object
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	tok, err := dec.Token()
+	if err != nil {
+		return nil, false
+	}
+	if d, ok := tok.(json.Delim); !ok || d != '{' {
+		return nil, false
+	}
+	var out []jsonMember
+	for dec.More() {
+		kt, err := dec.Token()
+		if err != nil {
+			return nil, false
+		}
+		key, ok := kt.(string)
+		if !ok {
+			return nil, false
+		}
+		var v json.RawMessage
+		if err := dec.Decode(&v); err != nil {
+			return nil, false
+		}
+		out = append(out, jsonMember{key, v})
+	}
+	return out, true
+}
+
+func renderMembers(ms []jsonMember) []byte {
+	var b bytes.Buffer
+	b.WriteByte('{')
+	for i, m := range ms {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		k, _ := json.Marshal(m.key)
+		b.Write(k)
+		b.WriteByte(':')
+		b.Write(m.value)
+	}
+	b.WriteByte('}')
+	return b.Bytes()
+}
+
+// chainableLine turns one candidate object into a line that can sit at
+// position seq of a chain: its own seq, prev and hash are dropped wherever
+// they were and re-added at the end, and the digest is computed over the bytes
+// as written — which is what digestOfLine reconstructs on a read. Every other
+// member, including a duplicate one, is left exactly where and as it was.
+func chainableLine(raw []byte, seq int, prev string) ([]byte, bool) {
+	ms, ok := splitMembers(raw)
+	if !ok {
+		return nil, false
+	}
+	kept := ms[:0:0]
+	for _, m := range ms {
+		switch m.key {
+		case "seq", "prev", "hash":
+		default:
+			kept = append(kept, m)
+		}
+	}
+	kept = append(kept,
+		jsonMember{"seq", json.RawMessage(strconv.Itoa(seq))},
+		jsonMember{"prev", mustJSON(prev)},
+		jsonMember{"hash", json.RawMessage(`""`)},
+	)
+	line := renderMembers(kept)
+	if bytes.ContainsAny(line, "\n\r") {
+		return nil, false
+	}
+	sum := sha256.Sum256(line)
+	digest := hex.EncodeToString(sum[:])
+	// Anchored on the exact bytes this function just wrote, which are the LAST
+	// `"hash":""` in the line — a nested one the fuzzer supplied earlier would
+	// otherwise take the substitution.
+	i := bytes.LastIndex(line, []byte(`"hash":""`))
+	if i < 0 {
+		return nil, false
+	}
+	out := append([]byte{}, line[:i]...)
+	out = append(out, []byte(`"hash":"`+digest+`"`)...)
+	out = append(out, line[i+len(`"hash":""`):]...)
+	return out, true
+}
+
+// digestOf reads back the hash a chainableLine line carries.
+func digestOf(line []byte) string {
+	var e Event
+	if json.Unmarshal(line, &e) != nil {
+		return ""
+	}
+	return e.Hash
+}
+
+func mustJSON(s string) json.RawMessage {
+	b, _ := json.Marshal(s)
+	return b
+}
+
+func writeChainFile(t *testing.T, path string, lines [][]byte) {
+	t.Helper()
+	var buf bytes.Buffer
+	for _, l := range lines {
+		buf.Write(l)
+		buf.WriteByte('\n')
+	}
+	if err := os.WriteFile(path, buf.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func assertRefusedAndUntouched(t *testing.T, root, id, path string) {
+	t.Helper()
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, eraseErr := Erase(root, id, "fuzz")
+	if eraseErr == nil {
+		t.Fatalf("Erase accepted a chain whose first line is not an event:\n%s", before)
+	}
+	assertUntouched(t, path, before, eraseErr)
+}
+
+// assertUntouched is the property a refusal has to carry. Erase rewrites the
+// file in place, on the same inode, so "it refused" and "it did not write" are
+// two different claims and only the second one protects the evidence.
+func assertUntouched(t *testing.T, path string, before []byte, eraseErr error) {
+	t.Helper()
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(before, after) {
+		t.Fatalf("Erase refused (%v) and rewrote the chain anyway\nbefore:\n%s\nafter:\n%s", eraseErr, before, after)
+	}
+}
+
+// assertRewriteKeptEverythingItShould is the oracle: what a lossless rewrite
+// is allowed to have changed, and nothing else.
+func assertRewriteKeptEverythingItShould(t *testing.T, before, after []byte) {
+	t.Helper()
+	wantMembers, ok := splitMembers(before)
+	if !ok {
+		t.Fatalf("this target built an unparseable line: %s", before)
+	}
+	gotMembers, ok := splitMembers(after)
+	if !ok {
+		t.Fatalf("Erase wrote a line that is not a JSON object: %s", after)
+	}
+
+	if len(gotMembers) != len(wantMembers) {
+		t.Fatalf("the rewritten line has %d members and the original had %d\nbefore:\n%s\nafter:\n%s",
+			len(gotMembers), len(wantMembers), before, after)
+	}
+	redactable := redactableMembers()
+	for i := range wantMembers {
+		w, g := wantMembers[i], gotMembers[i]
+		if w.key != g.key {
+			t.Fatalf("member %d is %q in the rewritten line and %q in the original — the order of a "+
+				"line's members is what every digest over it is computed on\nbefore:\n%s\nafter:\n%s",
+				i, g.key, w.key, before, after)
+		}
+		switch w.key {
+		case "seq", "prev", "hash":
+			continue // rewritten by design: the whole chain is rehashed
+		}
+		if redactable[w.key] {
+			continue // erase is entitled to replace this one's value
+		}
+		if !bytes.Equal(w.value, g.value) {
+			t.Fatalf("member %q is not redactable but its value changed from %s to %s — a rewrite may "+
+				"only touch what a redaction is entitled to touch", w.key, w.value, g.value)
+		}
+	}
+
+	// And no member NAME may go missing at any depth, including inside a
+	// member erase was entitled to rewrite. This is the F6 property stated
+	// where it is hardest to hold: a newer build's field inside *EvError or
+	// inside an element of a struct slice.
+	if wantShape, gotShape := memberShape(before), memberShape(after); wantShape != gotShape {
+		t.Fatalf("the rewritten line lost or gained a member somewhere\n  before: %s\n  after:  %s\nbefore:\n%s\nafter:\n%s",
+			wantShape, gotShape, before, after)
+	}
+}
+
+// memberShape renders a value's member NAMES at every depth and nothing else:
+// an object becomes its sorted `name:shape` pairs, an array becomes the set of
+// its elements' shapes, and any scalar becomes ".".
+//
+// Values are deliberately invisible to it, because a redaction changes values
+// by design. An array is a SET of its elements' shapes rather than a list, so
+// that a []string collapsing from four elements to one fingerprint reads the
+// same both ways while a struct element losing one of its own members does
+// not.
+func memberShape(raw json.RawMessage) string {
+	var obj map[string]json.RawMessage
+	if json.Unmarshal(raw, &obj) == nil && obj != nil {
+		keys := make([]string, 0, len(obj))
+		for k := range obj {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		parts := make([]string, 0, len(keys))
+		for _, k := range keys {
+			parts = append(parts, k+":"+memberShape(obj[k]))
+		}
+		return "{" + strings.Join(parts, ",") + "}"
+	}
+	var arr []json.RawMessage
+	if json.Unmarshal(raw, &arr) == nil && arr != nil {
+		seen := map[string]bool{}
+		for _, e := range arr {
+			seen[memberShape(e)] = true
+		}
+		shapes := make([]string, 0, len(seen))
+		for s := range seen {
+			shapes = append(shapes, s)
+		}
+		sort.Strings(shapes)
+		return "[" + strings.Join(shapes, "|") + "]"
+	}
+	return "."
+}
+
+// redactableMembers is every top-level member name Erase is entitled to
+// replace: derived from Event and eraseExempt rather than listed, so a field
+// that becomes redactable later is not silently excused from the byte-for-byte
+// check above. The json tag is read here rather than through erase.go's own
+// jsonName, for the reason the helpers above give: the oracle does not borrow
+// from the code it is judging.
+func redactableMembers() map[string]bool {
+	out := map[string]bool{}
+	tag := func(f reflect.StructField) string {
+		name := f.Tag.Get("json")
+		if i := strings.IndexByte(name, ','); i >= 0 {
+			name = name[:i]
+		}
+		if name == "" {
+			return f.Name
+		}
+		return name
+	}
+	anyInnerRedactable := func(outer string, st reflect.Type) bool {
+		for j := 0; j < st.NumField(); j++ {
+			if _, exempt := eraseExempt[outer+"."+st.Field(j).Name]; !exempt {
+				return true
+			}
+		}
+		return false
+	}
+	et := reflect.TypeOf(Event{})
+	for i := 0; i < et.NumField(); i++ {
+		f := et.Field(i)
+		_, exempt := eraseExempt[f.Name]
+		switch f.Type.Kind() {
+		case reflect.String:
+			if !exempt {
+				out[tag(f)] = true
+			}
+		case reflect.Slice:
+			switch f.Type.Elem().Kind() {
+			case reflect.String:
+				if !exempt {
+					out[tag(f)] = true
+				}
+			case reflect.Struct:
+				if anyInnerRedactable(f.Name, f.Type.Elem()) {
+					out[tag(f)] = true
+				}
+			}
+		case reflect.Ptr:
+			if f.Type.Elem().Kind() == reflect.Struct && anyInnerRedactable(f.Name, f.Type.Elem()) {
+				out[tag(f)] = true
+			}
+		}
+	}
+	return out
 }

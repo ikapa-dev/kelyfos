@@ -265,3 +265,57 @@ func TestF6_TheRewrittenChainStillReadsAsEvents(t *testing.T) {
 	}
 
 }
+
+// TestF6_EraseRefusesAMemberThatDiffersOnlyInCase is FuzzEraseRoundTrip's
+// first find, kept as a named test so the finding is legible without reading a
+// corpus file. The fuzzer's own minimised input is committed beside it, in
+// testdata/fuzz/FuzzEraseRoundTrip/.
+//
+// encoding/json matches a member to a field by exact tag first and
+// case-insensitively second. So a line carrying "Cmd" decodes into Cmd,
+// redactEventFields replaces its content, and the fingerprint was written back
+// under the canonical "cmd" — appending a member and leaving "Cmd", content
+// intact, in the line beside its own fingerprint. Erase reported the event
+// redacted. The content was still in the file.
+func TestF6_EraseRefusesAMemberThatDiffersOnlyInCase(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		members string
+	}{
+		// The fuzzer's own case: only the folded spelling is present.
+		{"folded spelling alone", `"Cmd":["MARKER-guest-content"]`},
+		// And from the other side: the exact member is what decodes, so a
+		// redaction never reaches the folded one at all.
+		{"both spellings", `"cmd":["ordinary"],"CMD":["MARKER-guest-content"]`},
+		// One level down, inside *EvError.
+		{"nested", `"error":{"kind":"tool","Message":"MARKER-guest-content"}`},
+		// And inside an element of a struct slice.
+		{"nested in a slice", `"store_keys":[{"Name":"MARKER-guest-content"}]`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			writeChainWithUnknownMember(t, root, "f6case", []Event{
+				{Type: TypeCommandStart, V: Version, TS: "2026-01-01T00:00:00.000Z", Sandbox: "f6case"},
+				{Type: TypeCommandOutput, V: Version, TS: "2026-01-01T00:00:01.000Z", Sandbox: "f6case",
+					Data: "something else that is redactable"},
+				{Type: TypeSessionEnd, V: Version, TS: "2026-01-01T00:00:02.000Z", Sandbox: "f6case", Reason: "shutdown"},
+			}, 0, tc.members)
+			before := readFile(t, Path(root, "f6case"))
+
+			_, err := Erase(root, "f6case", "GDPR Article 17 request")
+			if err == nil {
+				after := readFile(t, Path(root, "f6case"))
+				if bytes.Contains(after, []byte("MARKER-guest-content")) {
+					t.Fatalf("Erase reported success and left the content in the file:\n%s", after)
+				}
+				t.Fatalf("Erase accepted a line whose member name only folds to a field name:\n%s", after)
+			}
+			if !strings.Contains(err.Error(), "only in case") {
+				t.Errorf("Erase refused for the wrong reason: %v", err)
+			}
+			if after := readFile(t, Path(root, "f6case")); !bytes.Equal(before, after) {
+				t.Error("a refused erasure still rewrote the file")
+			}
+		})
+	}
+}

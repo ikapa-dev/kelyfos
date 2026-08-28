@@ -293,6 +293,19 @@ removed. Adding a *field* does not move `v` (`docs/events.md` says adding one
 is not breaking), which is why the lossless rewrite above is the part that
 carries the ordinary case; this covers the case where `v` really did move.
 
+It refuses one more shape, found by fuzzing the rewrite (`FuzzEraseRoundTrip`,
+`internal/recorder/fuzz_test.go`): a line carrying a member whose name differs
+from a field's own name only in case — `"Cmd"` where the schema says `cmd`. Go's
+JSON decoder matches a member to a field case-insensitively when there is no
+exact match, so such a member *is* decoded, *is* redacted, and the fingerprint
+was written back under the canonical name — appending a member and leaving the
+original, content intact, in the line beside its own fingerprint. `erase`
+reported the event redacted and the content was still in the file. Every line
+KelyfOS writes uses the canonical names, so the only chains this refuses are
+hand-edited ones or ones written by something else against `docs/events.md`;
+they still verify, because verification works on the raw bytes, so refusing
+loses no evidence. The message names the member.
+
 **Two counts, not one.** `modified` is how many events were touched;
 `redacted_fields` is how many fields were replaced across all of them. An
 event with three redactable fields set moves the first by one and the second

@@ -148,10 +148,12 @@ func Erase(root, sandboxID, reason string) (redacted int, err error) {
 	// (an explicit zero that `omitempty` would drop). Only seq, prev and hash
 	// are rewritten besides, because the whole chain is rehashed.
 	//
-	// The one thing that does not survive verbatim is an exotic encoding of a
-	// member NAME — "data" comes back as "data" — since names are
-	// re-encoded from their decoded form. No encoder in this project produces
-	// one, the value behind it is untouched, and the chain is rehashed anyway.
+	// The one thing that does not survive verbatim is an unusual encoding of a
+	// member NAME — "\u0064ata" comes back as "data", and an invalid UTF-8
+	// byte in a name comes back as U+FFFD, which is corruption rather than
+	// normalisation. Neither is reachable: Verify and Read both accept the
+	// line first, and no encoder in this project emits either. The values
+	// behind those names are untouched in any case.
 	sc := bufio.NewScanner(bytes.NewReader(blob))
 	sc.Buffer(make([]byte, 0, 64<<10), MaxLine)
 	var objs []*rawObject
@@ -168,6 +170,9 @@ func Erase(root, sandboxID, reason string) (redacted int, err error) {
 		raw := append([]byte(nil), sc.Bytes()...)
 		obj, err := parseObject(raw)
 		if err != nil {
+			return 0, fmt.Errorf("%s: event %d: %w", sandboxID, len(objs)+1, err)
+		}
+		if err := checkMemberNames(obj, reflect.TypeOf(Event{})); err != nil {
 			return 0, fmt.Errorf("%s: event %d: %w", sandboxID, len(objs)+1, err)
 		}
 		// Two independent parses: redactEventFields mutates in place, and a
@@ -353,6 +358,14 @@ func parseObject(raw []byte) (*rawObject, error) {
 	if _, err := dec.Token(); err != nil { // the closing brace
 		return nil, err
 	}
+	// And nothing after it. `{"a":1} trailing` would otherwise parse as
+	// {"a":1} with the rest quietly dropped. Erase only ever reaches this on a
+	// line Verify and Read have already accepted, so it cannot happen today —
+	// which is exactly why it is checked here rather than left resting on the
+	// order two other functions happen to run in.
+	if _, err := dec.Token(); err != io.EOF {
+		return nil, fmt.Errorf("trailing bytes after the object")
+	}
 	return o, nil
 }
 
@@ -402,6 +415,85 @@ func jsonName(f reflect.StructField) string {
 		return f.Name
 	}
 	return tag
+}
+
+// checkMemberNames refuses a line carrying a member whose name differs from a
+// field's own name only in case (F6, found by FuzzEraseRoundTrip).
+//
+// encoding/json matches a member to a struct field by exact tag first and by a
+// case-insensitive comparison second. So a line carrying "Cmd" is decoded into
+// Cmd, redactEventFields replaces its content, and applyRedaction writes the
+// fingerprint back under the canonical "cmd" — appending a new member and
+// leaving "Cmd", with the content still in it, sitting in the line beside its
+// own fingerprint. `kelyfos sessions erase` would report the event redacted
+// and the content would still be in the file. That is the same failure F12 is
+// about, reached through the parser instead of through an exemption.
+//
+// Two members that both fold to one field are refused for the same reason from
+// the other direction: {"cmd":[…],"Cmd":[…]} decodes only the exact one, so a
+// redaction reaches one of the two and the other keeps whatever it holds.
+//
+// Refusing rather than rewriting the member in place is the fail-closed
+// answer, and it costs nothing real: every line this product writes uses the
+// canonical names, so the only chains this can refuse are hand-edited ones or
+// ones written by something else against docs/events.md. Such a chain still
+// verifies — Verify works on the raw bytes — so refusing loses no evidence,
+// and the message names the member so it can be normalised and retried.
+// strings.EqualFold is broader than the decoder's own fold, which makes this
+// check at least as strict as the behaviour it is guarding.
+func checkMemberNames(obj *rawObject, t reflect.Type) error {
+	canon := make(map[string]reflect.StructField, t.NumField())
+	for i := 0; i < t.NumField(); i++ {
+		f := t.Field(i)
+		canon[jsonName(f)] = f
+	}
+	for _, k := range obj.keys {
+		if _, exact := canon[k]; exact {
+			continue
+		}
+		for name := range canon {
+			if strings.EqualFold(k, name) {
+				return fmt.Errorf("member %q differs from %q only in case, so it is decoded as that "+
+					"field but cannot be written back to without leaving %q where it is — refusing "+
+					"rather than reporting an erasure that left content in the file", k, name, k)
+			}
+		}
+	}
+	// The same question one level down, on every nested object, whether or not
+	// anything in it is going to change: a member that keeps its content is a
+	// problem even when the redaction never reaches it.
+	for i := 0; i < t.NumField(); i++ {
+		f := t.Field(i)
+		raw, ok := obj.values[jsonName(f)]
+		if !ok {
+			continue
+		}
+		switch {
+		case f.Type.Kind() == reflect.Ptr && f.Type.Elem().Kind() == reflect.Struct:
+			nested, err := parseObject(raw)
+			if err != nil {
+				continue // null, or not an object at all; Read has already had its say
+			}
+			if err := checkMemberNames(nested, f.Type.Elem()); err != nil {
+				return fmt.Errorf("member %q: %w", jsonName(f), err)
+			}
+		case f.Type.Kind() == reflect.Slice && f.Type.Elem().Kind() == reflect.Struct:
+			var elems []json.RawMessage
+			if json.Unmarshal(raw, &elems) != nil {
+				continue
+			}
+			for j, el := range elems {
+				nested, err := parseObject(el)
+				if err != nil {
+					continue
+				}
+				if err := checkMemberNames(nested, f.Type.Elem()); err != nil {
+					return fmt.Errorf("member %q element %d: %w", jsonName(f), j, err)
+				}
+			}
+		}
+	}
+	return nil
 }
 
 // applyRedaction walks a struct before and after redactEventFields ran over
@@ -589,7 +681,7 @@ var eraseExempt = map[string]string{
 	// host-built diff of policy values) — the same category of
 	// operator-chosen identifier Sandbox and ParentSession already are,
 	// not typed content.
-	"Reason": "mostly a fixed enumeration; its one free-text use (session.erasure's own -reason) must survive an erasure to remain auditable",
+	"Reason": "mostly a fixed enumeration; its two free-text uses must both survive an erasure to remain auditable — session.erasure's own operator-supplied -reason, and the session.end the recorder writes for itself when it breaks (F13), which is bounded to maxFailureReason and built only from host-side errors",
 
 	"Call":   "a host-generated correlation id (\"c<nanotime>\"), never content",
 	"Via":    "which door was used, a fixed enumeration",
