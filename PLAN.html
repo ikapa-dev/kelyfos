@@ -1360,7 +1360,7 @@
         not the isolation it looks like, and OWASP names transitive privilege inheritance by name. Deterministic,
         golden-tested and fuzzed: a layout that moves between two runs of the same team is a diff nobody can read.
         One implementation, two backends &mdash; runes for the terminal, coordinates for the SVG.</span></li>
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">P7-7</span><span class="tk"><b>The terminal views.</b> <code>kelyfos team graph</code> renders the topology straight from
         <code>kelyfos.toml</code> with nothing booted: a pre-flight lint in the category of <code>doctor</code>
         rather than a monitor, and the place P7-4&rsquo;s two silences become visible before they cost somebody an
@@ -5569,6 +5569,31 @@ after:
         package <code>ok</code>, <code>govulncheck</code> &rarr; &ldquo;No vulnerabilities found.&rdquo;,
         <code>make docs</code> &rarr; zero diff (idempotent); <code>python3 tools/check-plan.py</code> &rarr;
         &ldquo;PLAN.html is coherent: 101 tasks, 84 checked, 68 decisions&rdquo;</td></tr>
+    <tr><td class="mono">2026-08-28</td><td class="mono">P7-7</td>
+        <td><b>Ticked, by the orchestrator, after adversarial review confirmed GO across two rounds.</b> Round
+        one found two HIGH-severity correctness bugs in the reach computation itself &mdash; a store-mediated
+        one-hop relation was being filtered out of the indirect-reach section entirely, and store-enabled state
+        wasn't tracked independent of rule count, so a store with zero key rules (a valid, documented
+        configuration) drew no store node at all &mdash; both confirmed live on adversarial configs the reviewer
+        constructed, not just from the diff. Four medium findings (spawned-agent visibility, pane height-budget
+        math, live-truncation notices, refusal-reason coverage) and eight low findings, all fixed and re-verified
+        by rebooting a real team and driving <code>kelyfos watch</code> under tmux at exactly the 120&times;24
+        terminal size the first review captured live. Two small doc/log corrections landed after the reviewer's
+        final GO (an overclaim in <code>docs/teams.md</code> contradicting its own &sect;8.4.1 two paragraphs
+        later; a stale test-count metric in two prior rows). Reviewer's final verdict: <b>GO</b>.
+        <br>One infrastructure near-miss surfaced during review, not a code defect: <code>run/team.json</code> is
+        a single slot per host, and with three worktrees running real team boots concurrently on the shared dev
+        VM, tearing down one review's team briefly overwrote the file another agent's still-running team needed.
+        The reviewer caught it, backed the file up, and restored it before any real harm; the other agent's team
+        stayed intact. Worth a decision on whether this is worth hardening (a lock, or a PID-scoped path) given
+        this project now runs multiple concurrent agent teams on one host routinely &mdash; not opened as its own
+        task here since it reflects this session's unusual concurrency, not a gap a single KelyfOS user would
+        normally hit.</td>
+        <td class="mono">merge commit; clean, no conflicts (P7-8 not yet merged, so no
+        <code>internal/digest</code> overlap to resolve here); post-merge <code>go vet ./...</code> and
+        <code>go test -count=1 ./...</code> (Lima <code>kelyfos-dev</code>) &rarr; every package <code>ok</code>;
+        <code>python3 tools/check-plan.py</code> &rarr; &ldquo;PLAN.html is coherent: 101 tasks, 85 checked, 68
+        decisions&rdquo;</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
