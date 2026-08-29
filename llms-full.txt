@@ -10245,11 +10245,26 @@ else. **An existing file is never widened**: whatever is already stricter wins,
 so a file you tightened yourself stays that way. Deciding by path prefix rather
 than by client name is what makes a client added later inherit the rule.
 
-**The write is atomic.** It goes to a temporary file beside the target, is
-fsynced, and is renamed over it — this is a read-modify-write of a file another
-program may have open, and a rename is the only atomic replacement available. A
-file that will not parse is refused before anything is written and is left
-exactly as it was.
+"Where the file lives" is decided **both** ways and the stricter answer wins:
+the path you named, and the path it resolves to. Either alone gets a real case
+wrong. A project's `.cursor` that is a symlink into your home directory — one
+MCP configuration shared across checkouts — resolves inside and gets `0600`; a
+`~/.codex/config.toml` that stow or chezmoi links *out* of your home is still
+named under it and gets `0600` too, where resolving alone would have called it
+project-local and left it `0644`.
+
+**The write is atomic, and it writes *through* a symlink rather than over
+one.** It goes to a temporary file beside the target, is fsynced, and is renamed
+over it — this is a read-modify-write of a file another program may have open,
+and a rename is the only atomic replacement available. Because a rename replaces
+a link where an ordinary write would follow it, the link is resolved first and
+the replacement happens in the target's own directory: a dotfiles-managed
+configuration stays a link to the file you version-control, and the write lands
+in the repository. A **dangling** link is written through as well, creating the
+file it names — that is a fresh machine before the dotfiles repository is
+cloned. A chain more than eight links deep is refused by name rather than
+followed. A file that will not parse is refused before anything is written and
+is left exactly as it was.
 
 **Two things it gets right that a copied snippet gets right by luck.** The policy
 path is written **absolutely**, because a server that has to find its own policy

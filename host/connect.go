@@ -229,16 +229,79 @@ func underHome(path, home string) bool {
 	if home == "" {
 		return false
 	}
-	// Resolved on both sides before the comparison (P7-17/F5, second review
-	// round). A textual prefix is walked around by a symlink — a project's
-	// .cursor pointing into $HOME, which is how somebody shares one MCP
-	// configuration across checkouts — and the file that lands there is the
-	// one that grows an API key. It is the same lesson F18 taught the
-	// extractor and F21's two scope rules already apply.
+	// BOTH readings, and the stricter answer wins (P7-17/B1).
 	//
-	// The leaf need not exist yet, so the deepest ancestor that does is what
-	// gets resolved.
+	// Resolved: a textual prefix is walked around by a symlink — a project's
+	// .cursor pointing into $HOME, which is how somebody shares one MCP
+	// configuration across checkouts — and the file that lands there is the one
+	// that grows an API key. That was F5's second review round, and it is the
+	// same lesson F18 taught the extractor and F21's two scope rules already
+	// apply. The leaf need not exist yet, so the deepest ancestor that does is
+	// what gets resolved.
+	//
+	// Literal: and resolving ALONE inverted the finding. A dotfiles-managed
+	// ~/.codex/config.toml is a link out of $HOME — that is what stow and
+	// chezmoi do — so the resolved path is outside, the file was judged
+	// project-local, and it got 0644 at the one path F5 exists to protect. The
+	// name the user gave is a fact about intent that resolution throws away.
+	//
+	// Neither reading is a superset of the other, so the file is home-scoped if
+	// either says so. That is the same "never widen" rule writeConfigAtomic
+	// already applies to a mode it finds.
+	if insideTree(home, litAbs(path, home)) {
+		return true
+	}
 	return insideTree(home, resolvePath(path, home))
+}
+
+// litAbs is the path as written, made absolute and lexically cleaned, with no
+// symlink followed. resolvePath's own base handling, minus the resolution.
+func litAbs(p, root string) string {
+	if !filepath.IsAbs(p) {
+		p = filepath.Join(root, p)
+	}
+	return filepath.Clean(p)
+}
+
+// maxConfigLinkHops bounds resolveLeafLink. Real dotfiles managers make one hop
+// and occasionally two; anything past this is a loop or an attempt at one, and
+// a refusal is the right answer either way. The number is the same order as the
+// kernel's own 40 and deliberately smaller: this walk exists to find a file a
+// person meant to edit, not to survive an adversary.
+const maxConfigLinkHops = 8
+
+// resolveLeafLink is the file a write has to land on: what a leaf symlink
+// names, or the path itself when it is not one (P7-17/B1).
+//
+// Readlink rather than filepath.EvalSymlinks, for two reasons that both matter
+// here. EvalSymlinks refuses a DANGLING link — and a dangling
+// ~/.codex/config.toml pointing into a dotfiles repository that has not been
+// cloned yet is exactly the state `kelyfos connect` should write into, creating
+// the target. And EvalSymlinks resolves every component, which would relocate a
+// write that only ever needed its last name followed.
+func resolveLeafLink(path string) (string, error) {
+	seen := path
+	for hop := 0; hop < maxConfigLinkHops; hop++ {
+		fi, err := os.Lstat(path)
+		if err != nil || fi.Mode()&os.ModeSymlink == 0 {
+			// Not there, or not a link. Either way this is where the write goes;
+			// an unreadable path is the caller's error to report, with its own
+			// message, from the write itself.
+			return path, nil
+		}
+		target, err := os.Readlink(path)
+		if err != nil {
+			return "", err
+		}
+		if !filepath.IsAbs(target) {
+			target = filepath.Join(filepath.Dir(path), target)
+		}
+		path = filepath.Clean(target)
+	}
+	return "", fmt.Errorf("%s is a symlink chain more than %d links deep, so kelyfos will not "+
+		"guess which file you meant.\n"+
+		"    That is either a loop or something a configuration file should not be. Point the\n"+
+		"    link at the file, or write to the file directly", seen, maxConfigLinkHops)
 }
 
 // configModes is the file and directory mode for a path, before the existing
@@ -292,6 +355,21 @@ func writeTo(c client, path, home string, cmd command) error {
 // this command is a guest in that file, which is the same rule the JSON writers
 // already follow for its contents.
 func writeConfigAtomic(path string, body []byte, mode os.FileMode) error {
+	// Through a leaf symlink rather than over it (P7-17/B1). The os.WriteFile
+	// this replaced followed one; a rename does not, so moving to a rename
+	// silently changed the answer for every dotfiles-managed configuration — a
+	// ~/.codex/config.toml that stow or chezmoi links into a repository was
+	// replaced by a plain file, the repository copy stopped being what the
+	// client reads, and the next `stow -R` would put the link back over the
+	// entry `kelyfos connect` had just written.
+	//
+	// The atomic replacement then happens in the TARGET's directory, because a
+	// rename cannot cross a filesystem and a dotfiles repository often is one.
+	dest, err := resolveLeafLink(path)
+	if err != nil {
+		return err
+	}
+	path = dest
 	if fi, err := os.Stat(path); err == nil {
 		mode &= fi.Mode().Perm()
 	} else if !errors.Is(err, os.ErrNotExist) {

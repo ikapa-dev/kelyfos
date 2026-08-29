@@ -73,6 +73,21 @@ reference described in the README and re-measured per release.
   coming) or on Ctrl-C (P7-9).
 
 ### Fixed
+- **`kelyfos connect` replaced a dotfiles-managed client configuration instead
+  of writing through it.** The atomic temp-file-and-rename this release
+  introduced is right for a file another program may be editing, and it changed
+  one thing nobody looked at: `os.WriteFile` follows a leaf symlink and a rename
+  replaces one. A `~/.codex/config.toml` or `~/.gemini/settings.json` that stow,
+  chezmoi or a hand-made link points into a repository became a plain file, the
+  version-controlled copy stopped being what the client reads, and the next
+  `stow -R` would put the link back over the entry that had just been written.
+  The write now resolves a leaf link and replaces the file it names, atomically,
+  in that file's own directory — including when the link is dangling, which is
+  what a fresh machine looks like before the dotfiles repository is cloned.
+  **And the mode rule is decided by the path you named as well as by where it
+  resolves**, whichever is stricter: a link out of `$HOME` made the file read as
+  project-local and get `0644`, which is this release's own `0600` rule inverted
+  at the one path it exists to protect (P7-17/B1).
 - **`kelyfos serve-mcp --policy` did not check the policy file it was given, and
   it is the file every MCP client is pointed at.** The ownership and writability
   rules a discovered `kelyfos.toml` gets were applied in one function that

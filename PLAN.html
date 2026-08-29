@@ -9433,6 +9433,39 @@ after:
         <code>internal/report</code> at load average ~11 with five agents working, and both passed individually
         and together once the machine was quiet, so a red from this script is not a defect until it is
         reproduced on an idle machine.</td></tr>
+    <tr><td class="mono">D74</td><td class="mono">2026-08-29</td>
+        <td><b>The 30-second <code>ResponseHeaderTimeout</code> F15 added to both egress transports is raised
+        to ten minutes, not removed, and the two transports keep the same value.</b> Logged before implementation
+        (&sect;8 rule 5) because it is product-facing: it changes what a sandbox can do rather than what the
+        record says about it. F15 added the field at 30s
+        (<code>internal/egress/dial.go</code>, <code>terminate.go</code>) on the review&rsquo;s correct
+        observation that neither <code>DefaultTransport</code> nor a zero value supplies one, so an origin that
+        accepts, completes TLS and then says nothing held a goroutine, a socket and &mdash; on the terminated leg
+        &mdash; the credential, indefinitely. The value was never argued and never documented. Thirty seconds is
+        below the time a non-streaming completion from an LLM API legitimately takes to its first byte, and the
+        terminated leg <i>is</i> the credentialed LLM-API path: the failure it produces is
+        <code>timeout awaiting response headers</code> on a request that was going to succeed. <b>Chosen: ten
+        minutes on both</b>, the same number as F16&rsquo;s <code>maxTerminatedIdleTotal</code>, which is the
+        cumulative idle budget that already bounds this leg.
+        <br><b>Removal was the other option offered and is rejected, with the reason.</b> On the terminated leg
+        removal would be defensible &mdash; F16&rsquo;s 10s rolling body stall, 10 min cumulative idle and 1 h
+        connection ceiling already close everything a guest could drive with it. The forward transport has none of
+        that machinery: <code>forwardHTTP</code> re-issues with <code>context.Background</code>, so no context
+        covers it, and F15&rsquo;s own row records that before it the upstream dial had no timeout at all.
+        Removing the field there would reopen exactly what F15 closed, and giving the two legs different values
+        would be a third number nobody can hold in their head &mdash; the shape this project has refused since the
+        <code>jailed</code> bug.</td>
+        <td>The bound that matters is the one on <i>idleness</i>, and that is F16&rsquo;s, which charges
+        header-read time against the same ten-minute budget it charges everything else against. A separate,
+        shorter, undocumented header timeout adds nothing a hostile guest can reach that the cumulative budget
+        does not already close, and it subtracts a legitimate use: the exact traffic KelyfOS exists to
+        broker &mdash; an agent calling a model API with a bound credential, over the leg that termination and
+        secret injection require. Ten minutes is also the honest ceiling to state, because it is the one already
+        in force: a connection that spends ten minutes waiting for a first byte has spent the whole idle budget
+        and would be closed by <code>notAfter</code> regardless, so this makes the transport agree with the leg it
+        runs on rather than fail earlier for a different reason. The number is written into
+        <code>docs/networking.md</code> and <code>CHANGELOG.md</code> rather than living only in a struct
+        literal, which is the half of F15 that was missing.</td></tr>
     <!-- Claude Code: append rows above this line. -->
   </table>
 </section>
