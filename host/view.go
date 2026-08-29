@@ -558,6 +558,13 @@ func (v *viewServer) tick() (ended bool) {
 // also a candidate for landing in someone's terminal if they curl /events
 // directly instead of opening a browser.
 func viewLogLine(e recorder.Event) string {
+	// The same one-place rule kelyfos log uses (host/log.go's safeEvent). This
+	// renderer was already the model for the rest, and it still read four
+	// fields raw — Kind on a spawn, Via, Outcome, Signal — because "every
+	// field" was a claim about a list somebody kept (P7-17/F20, second review
+	// round).
+	e = safeEvent(e)
+
 	ts := e.TS
 	if len(ts) > 23 {
 		ts = ts[11:23]

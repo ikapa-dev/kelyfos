@@ -64,11 +64,34 @@ type ShellExit struct {
 	Error  string `json:"error,omitempty"`
 }
 
+// Sanitize is Sanitizer for the shell channel's last word, which the host
+// decodes off a channel the guest writes to (host/shell.go:203).
+//
+// Error was already cleaned at that call site; Signal was not, and it goes
+// straight into the flight recorder beside it (host/shell.go:112). That is the
+// shape this whole finding is: one field somebody remembered and one nobody
+// did. The rule belongs to the frame, so there is one thing to remember rather
+// than four (P7-17/F20, second review round).
+//
+// The LENGTH bound on Error stays at the call site: SafeText has no length
+// policy, and clipping is a decision about how much of a guest's sentence the
+// host keeps, not about which characters it may contain.
+func (e *ShellExit) Sanitize() {
+	e.Op, e.Signal, e.Error = SafeText(e.Op), SafeText(e.Signal), SafeText(e.Error)
+}
+
 // ShellOp reads just the op out of a control frame, so a reader can tell which
 // shape to unmarshal into.
 type ShellOp struct {
 	Op string `json:"op"`
 }
+
+// Sanitize is Sanitizer for the one-field peek. Op is only ever compared
+// against a constant, so a clean value is unchanged and a hostile one simply
+// stops matching — but it implements the interface because every guest->host
+// frame does, and "this one's string does not matter" is the reasoning that
+// left ExecResponse.ID and the whole of TeamRequest unsanitised.
+func (o *ShellOp) Sanitize() { o.Op = SafeText(o.Op) }
 
 // WriteShellFrame writes one frame.
 func WriteShellFrame(w io.Writer, kind byte, payload []byte) error {

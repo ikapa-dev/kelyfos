@@ -315,7 +315,7 @@ type ExecResponse struct {
 // and is decoded by the caller, which is what SafeBody is for; every other
 // field here is a short string the guest chose.
 func (r *ExecResponse) Sanitize() {
-	r.Stream, r.Signal = SafeText(r.Stream), SafeText(r.Signal)
+	r.ID, r.Stream, r.Signal = SafeText(r.ID), SafeText(r.Stream), SafeText(r.Signal)
 	r.Error.Sanitize()
 }
 
@@ -362,6 +362,14 @@ type Heartbeat struct {
 	Type     string `json:"type"` // "heartbeat"
 	UptimeMS int64  `json:"uptime_ms"`
 }
+
+// Sanitize is Sanitizer for the heartbeat. One string, and it is compared
+// against a constant — but the rule here is that EVERY frame the host decodes
+// off a guest channel implements this interface, because the alternative is
+// deciding case by case which strings are "really" dangerous, and the two
+// defects this round found were both a field somebody had decided did not
+// matter (P7-17/F20, second review round).
+func (h *Heartbeat) Sanitize() { h.Type = SafeText(h.Type) }
 
 // GuestEvent is one guest-originated report on the events channel (§5.5).
 //
@@ -444,6 +452,29 @@ type TeamRequest struct {
 	TimeoutMS int64  `json:"timeout_ms,omitempty"`
 }
 
+// Sanitize is Sanitizer for the team channel's request frame, and it was the
+// one guest->host frame that had none (P7-17/F20, second review round).
+//
+// It is also the one that mattered most, because of what these fields are and
+// where they go. To is another agent's name and Key is a store key — the
+// identity-like strings F1 widened the predicate for, since two keys that
+// render identically and compare differently is the whole Trojan Source
+// problem. And they do not stop at the terminal: internal/team/record.go puts
+// To and Key into the event the broker records, host/team.go appends it, and
+// the bytes are in the hash chain. F20's own doc comment says why that is the
+// half that matters — "cleaning it here means it is never recorded in the first
+// place" — and this channel was the one place that sentence was not true.
+//
+// They also become map keys in internal/digest (Domains, PeerOnly, Pairs),
+// where two visually identical spellings are two entries against
+// MaxDistinctKeys.
+//
+// Body is base64 and is decoded by the broker, so it is not SafeText's business.
+func (r *TeamRequest) Sanitize() {
+	r.ID, r.Op, r.To = SafeText(r.ID), SafeText(r.Op), SafeText(r.To)
+	r.Correlate, r.Key, r.Image = SafeText(r.Correlate), SafeText(r.Key), SafeText(r.Image)
+}
+
 type TeamResponse struct {
 	V     int      `json:"v"`
 	ID    string   `json:"id"`
@@ -514,6 +545,7 @@ type ControlResponse struct {
 // never sends a ready frame, so this is the only place its profile string
 // reaches the host — the same field, and so the same rule.
 func (r *ControlResponse) Sanitize() {
+	r.ID = SafeText(r.ID)
 	r.Profile, r.ProfileError = SafeText(r.Profile), SafeText(r.ProfileError)
 	r.Error.Sanitize()
 }

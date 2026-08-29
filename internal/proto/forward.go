@@ -96,8 +96,19 @@ func ReadForwardReply(r *bufio.Reader) (ForwardReply, error) {
 	if err := json.Unmarshal(line, &reply); err != nil {
 		return reply, fmt.Errorf("proto: forward reply is not JSON: %w", err)
 	}
+	// The same edge rule every other guest->host frame gets, applied here
+	// rather than through Reader.Read because this channel does its own
+	// framing (P7-17/F20, second review round). Error is the guest's own
+	// sentence and host/forward.go:181 puts it straight into the flight
+	// recorder's Reason field, so it is cleaned before it is either recorded or
+	// shown.
+	reply.Sanitize()
 	return reply, nil
 }
+
+// Sanitize is Sanitizer for the forward channel's reply. Error is the only
+// string the guest chooses here, and it is the one that reaches the record.
+func (r *ForwardReply) Sanitize() { r.Error = SafeText(r.Error) }
 
 func readForwardLine(r *bufio.Reader) ([]byte, error) {
 	line, err := r.ReadSlice('\n')

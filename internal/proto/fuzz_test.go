@@ -84,6 +84,11 @@ func FuzzReaderRead(f *testing.F) {
 	// field: an OSC title-set, and a right-to-left override.
 	f.Add([]byte("{\"v\":1,\"kernel\":\"\x1b]0;pwned\x07\"}\n"))
 	f.Add([]byte("{\"v\":1,\"type\":\"resource.oom\",\"comm\":\"‮elbatpecca\"}\n"))
+	// The regression seed for the second review round: ExecResponse.ID and
+	// ControlResponse.ID were not in their own Sanitize, and this is the input
+	// that found it (dev/fuzz.sh: commit the failing input with the fix). Also
+	// committed under testdata/fuzz, which is what makes it permanent.
+	f.Add([]byte("{\"id\":\"\x7f\"}"))
 
 	f.Fuzz(func(t *testing.T, data []byte) {
 		decode := func(next func() any) {
@@ -98,20 +103,31 @@ func FuzzReaderRead(f *testing.F) {
 				// the decoded struct rather than at any one print site,
 				// because the print sites are exactly what this defence exists
 				// to stop having to enumerate.
-				if _, ok := v.(Sanitizer); ok {
-					if field, bad := unsafeStringField(v); bad {
-						t.Fatalf("%T.%s survived Read carrying %q", v, field, data)
-					}
+				//
+				// The assertion is POSITIVE about the interface, and that is
+				// the whole lesson of the second review round. It used to read
+				// `if _, ok := v.(Sanitizer); ok { ... }`, which excused any
+				// type that did not implement it — so the one type whose
+				// MISSING Sanitize was the defect, proto.TeamRequest, was the
+				// one type this harness enumerated and then skipped. A guard
+				// that forgives exactly what it exists to catch is not a guard.
+				if _, ok := v.(Sanitizer); !ok {
+					t.Fatalf("%T is decoded here and does not implement Sanitizer", v)
+				}
+				if field, bad := unsafeStringField(v); bad {
+					t.Fatalf("%T.%s survived Read carrying %q", v, field, data)
 				}
 			}
 		}
-		decode(func() any { return new(Ready) })
-		decode(func() any { return new(GuestEvent) })
-		decode(func() any { return new(ExecResponse) })
-		decode(func() any { return new(TeamRequest) })
-		decode(func() any { return new(ControlResponse) })
-		decode(func() any { return new(Heartbeat) })
-		decode(func() any { return new(Error) })
+		// Every guest->host frame, from the one list guestframes_test.go keeps
+		// and TestGuestFrameListIsComplete proves is complete — rather than a
+		// second list here that can fall behind it.
+		for _, f := range guestFrames() {
+			if _, viaReader := f.new().(interface{ shellFramed() }); viaReader {
+				continue
+			}
+			decode(f.new)
+		}
 	})
 }
 

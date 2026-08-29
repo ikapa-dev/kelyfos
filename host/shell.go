@@ -190,7 +190,11 @@ func pumpShell(conn io.ReadWriter, tape *os.File) proto.ShellExit {
 			}
 		case proto.ShellControl:
 			var op proto.ShellOp
-			if json.Unmarshal(payload, &op) != nil || op.Op != "exit" {
+			if json.Unmarshal(payload, &op) != nil {
+				continue
+			}
+			op.Sanitize()
+			if op.Op != "exit" {
 				continue
 			}
 			// The check above reads one string, so a frame that says "exit" and
@@ -214,9 +218,14 @@ func pumpShell(conn io.ReadWriter, tape *os.File) proto.ShellExit {
 					Error: "the guest sent an exit frame this host cannot read: " +
 						proto.SafeText(clip(err.Error(), 200))}
 			}
-			// The guest picked this string too, and it is bound for the record
-			// and for a terminal.
-			exit.Error = proto.SafeText(clip(exit.Error, 2048))
+			// The guest picked these strings too, and they are bound for the
+			// record and for a terminal. The clip is the length decision and
+			// stays here; Sanitize is the character rule and belongs to the
+			// frame, which is what makes it cover Signal as well — that field
+			// went into the chain raw until P7-17/F20's second review round,
+			// beside an Error two lines away that did not.
+			exit.Error = clip(exit.Error, 2048)
+			exit.Sanitize()
 			return exit
 		}
 	}

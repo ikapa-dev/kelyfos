@@ -212,16 +212,26 @@ reads about the guest.
 The defence is applied **at the edge** rather than at each print. `proto.Reader`
 — the one function every host-side channel decodes a frame through — calls
 `Sanitize` on the decoded value, so a guest-chosen string is cleaned once,
-before it is either shown or appended to the flight recorder. Cleaning it
+before it is either shown or appended to the flight recorder. **Every** frame
+the host decodes off a guest channel implements that interface, and a test
+asserts the list is complete rather than checking whichever types somebody
+listed: the first round of this fix left `proto.TeamRequest` — the team
+channel's frame, carrying a store key and an agent name straight into the hash
+chain — with no `Sanitize` at all, and left `ID` out of two others. The shell
+and forward channels do their own framing and sanitise at their own decode
+sites, for the same reason and by the same rule. Cleaning it
 before the append is the half that matters longest: an escape sequence written
 into the chain outlives the run and comes back on every later replay, and
 `strconv.Quote` is reversible, so the record loses nothing by carrying the
 escaped form.
 
 Replay is defended separately, because a chain on disk may have been written by
-an older build, hand-edited, or torn by a crash: every field the three
-renderers draw goes through `proto.SafeText`, and a command's captured output —
-legitimately multi-line and legitimately coloured — through `proto.SafeBody`,
+an older build, hand-edited, or torn by a crash. Every field the three renderers
+draw goes through `proto.SafeText` — applied **once per event** rather than once
+per field, because the per-field version missed nineteen of them across the
+three surfaces, `agent` included, which is the `[who]` prefix on nearly every
+line. A command's captured output — legitimately multi-line and legitimately
+coloured — goes through `proto.SafeBody`,
 which keeps `\n`, `\t` and SGR colour and replaces everything else. What
 `SafeBody` never passes through is `ESC ]` (OSC: window titles and hyperlinks),
 `ESC [ … J` and `ESC [ … H` (erase and cursor movement), and a bare `\r`, which

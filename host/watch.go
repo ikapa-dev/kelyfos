@@ -470,7 +470,11 @@ func bound(lines []string, max int) []string {
 // chunk) rather than recomputing it, and keeps only what is genuinely this
 // view's own: the styled text and which buffer it goes in.
 func (m *watchModel) absorb(e recorder.Event) {
+	// The fold sees the record as written; the view sees it cleaned. Absorb
+	// first, then sanitise, so internal/digest's counters and keys are of the
+	// chain rather than of this view's rendering of it.
 	entry := m.d.Absorb(e)
+	e = safeEvent(e)
 
 	ts := e.TS
 	if len(ts) > 23 {

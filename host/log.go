@@ -20,6 +20,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -678,6 +679,12 @@ func printEvent(line []byte, asJSON bool) {
 		fmt.Printf("  ?? unparseable event: %s\n", proto.SafeText(strings.TrimSpace(string(line))))
 		return
 	}
+	// Once, here, rather than at each of the fifty-odd fields the switch below
+	// reads (P7-17/F20, second review round). The per-field version missed
+	// nineteen of them, e.Agent included — which is the `[who]` prefix on
+	// nearly every line.
+	e = safeEvent(e)
+
 	ts := e.TS
 	if len(ts) > 23 {
 		ts = ts[11:23]
@@ -950,4 +957,65 @@ func sessionIsServed(path string) (bool, error) {
 		}
 	}
 	return false, nil
+}
+
+// safeEvent returns e with every guest-influenced string cleaned, once, for a
+// renderer to draw from (P7-17/F20, second review round).
+//
+// The first round did this field by field, and the second review found what
+// that always finds: `session.start`'s image, arch and kelyfos printed raw two
+// lines under a Reason that was SafeText'd; `team.message`'s kind raw beside an
+// agent and a peer that were not; and — worst, because it is on nearly every
+// line — `e.Agent`, which becomes the `[who]` prefix. `kelyfos watch` was clean
+// for the same events, because its code was written later by a different hand.
+// Nineteen fields across three renderers is not a list anybody keeps correct.
+//
+// So it is reflective and it is exclusive: every string and every []string on
+// recorder.Event is cleaned EXCEPT the five named below, each for a stated
+// reason. A field added to Event later is covered without anybody adding a
+// line, which is the property the hand-written version could not have.
+//
+// SafeText is a no-op on anything that was already fine, so a value used for
+// control flow — Kind in a verb lookup, Outcome in a comparison — still
+// matches when it is legitimate and stops matching when it is not, which is
+// the fail-safe direction.
+func safeEvent(e recorder.Event) recorder.Event {
+	rv := reflect.ValueOf(&e).Elem()
+	rt := rv.Type()
+	for i := 0; i < rt.NumField(); i++ {
+		f := rt.Field(i)
+		if !f.IsExported() {
+			continue
+		}
+		switch f.Name {
+		case "Type":
+			// Selects the branch. Quoting it would route every hostile event
+			// to the default arm, which prints the raw line — worse, not
+			// better. It is compared against constants and never printed
+			// except by that arm, which JSON-escapes.
+			continue
+		case "TS":
+			// Sliced as a timestamp (ts[11:23]); quoting it would shift the
+			// window. Host-written from the host's own clock.
+			continue
+		case "Prev", "Hash":
+			// Host-computed digests. Hex or empty, never guest text.
+			continue
+		case "Data":
+			// base64 on the wire. The renderers decode it and hand it to
+			// proto.SafeBody, which keeps the colour a terminal transcript
+			// legitimately carries — SafeText would quote the whole blob.
+			continue
+		}
+		fv := rv.Field(i)
+		switch {
+		case fv.Kind() == reflect.String:
+			fv.SetString(proto.SafeText(fv.String()))
+		case fv.Kind() == reflect.Slice && fv.Type().Elem().Kind() == reflect.String:
+			for j := 0; j < fv.Len(); j++ {
+				fv.Index(j).SetString(proto.SafeText(fv.Index(j).String()))
+			}
+		}
+	}
+	return e
 }

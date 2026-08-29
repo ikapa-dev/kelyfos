@@ -114,6 +114,18 @@ reference described in the README and re-measured per release.
   those headers. `POST /sandboxes` now answers `400` to a body that is not
   JSON, reads it to a ceiling of 64 KiB, and still treats an absent body as
   "the defaults" (P7-17/F2).
+- **The team channel's request frame reached the host, and the hash chain, with
+  no sanitiser at all.** `proto.TeamRequest` is decoded straight off the guest's
+  team vsock channel and carries the identity-like fields the Trojan Source
+  widening exists for — a store key and another agent's name — which
+  `internal/team/record.go` puts into the event the broker records. Two other
+  frames had their `id` left out of an otherwise complete `Sanitize`, and the
+  shell channel's exit frame had its `signal` left out beside an `error` that
+  was cleaned. Every frame the host decodes off a guest channel now implements
+  the interface, and a test asserts that list is complete rather than checking
+  whichever types somebody remembered — the fuzz harness that should have
+  caught this listed `TeamRequest` and then skipped it, because its guard only
+  asserted on types that already implemented the interface (P7-17/F20).
 - **Guest-chosen strings reached the operator's terminal without
   `proto.SafeText`.** A process name, a plugin name, a crash message, the
   kernel and supervisor strings on the boot line, and a command's captured
@@ -124,7 +136,9 @@ reference described in the README and re-measured per release.
   bytes into the hash chain, where they came back on every later replay. They
   are now sanitised at the edge, in `proto.Reader.Read`, before the value is
   either shown or recorded; the three replay surfaces sanitise again on the way
-  out, because a chain on disk may predate this. Command output keeps `\n`,
+  out, because a chain on disk may predate this — once per event rather than
+  once per field, because the per-field version missed nineteen of them,
+  `agent` included, which is the `[who]` prefix on nearly every line. Command output keeps `\n`,
   `\t` and SGR colour and loses everything else, including OSC (window titles
   and hyperlinks), the CSI erase and cursor-movement sequences, and a bare
   `\r`. The predicate is now `unicode.IsPrint` rather than an ASCII control
