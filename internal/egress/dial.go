@@ -331,10 +331,21 @@ func newForwardTransport() *http.Transport {
 		// origin that accepts the connection, completes TLS and then says
 		// nothing holds a goroutine and a socket — and on the terminated leg
 		// the credential with them — for as long as it likes. forwardHTTP
-		// re-issues with context.Background, so no context covers this. Thirty
-		// seconds is longer than any origin worth reaching takes to begin a
-		// reply, and it bounds only the wait for the first byte of the
-		// response head, never the body behind it.
-		ResponseHeaderTimeout: 30 * time.Second,
+		// re-issues with context.Background, so no context covers this.
+		//
+		// The value is maxTerminatedIdleTotal and not the thirty seconds F15
+		// first wrote (D74). Thirty seconds was never argued and never
+		// documented, and it is below the time a non-streaming completion from
+		// a model API legitimately takes to its first byte — which is the
+		// traffic this proxy exists to broker. Ten minutes is the bound already
+		// in force on the terminated leg: a connection that has waited that
+		// long for a first byte has spent F16's whole cumulative idle budget
+		// and would be closed by notAfter regardless, so this makes the
+		// transport agree with the leg it runs on rather than fail earlier for
+		// a different reason. It still bounds only the wait for the first byte
+		// of the response head, never the body behind it. Both transports carry
+		// the same number, deliberately: a third bound nobody can hold in their
+		// head is the shape this project has refused since the `jailed` bug.
+		ResponseHeaderTimeout: maxTerminatedIdleTotal,
 	}
 }

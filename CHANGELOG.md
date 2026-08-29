@@ -621,6 +621,22 @@ reference described in the README and re-measured per release.
   proxy did decrypt.
 
 ### Changed
+- **The proxy waits ten minutes for an origin's first byte, not thirty
+  seconds.** Both egress transports set `ResponseHeaderTimeout`, which neither
+  Go's default nor a zero value supplies — without it an allowlisted origin that
+  accepts, completes TLS and then says nothing holds a goroutine, a socket and,
+  on the terminated leg, your credential. It shipped earlier in this release at
+  thirty seconds, which is below the time a non-streaming completion from a
+  model API legitimately takes to begin its reply: that request failed with
+  `net/http: timeout awaiting response headers` on the one leg that carries a
+  credential. The value is now the ten-minute cumulative idle budget the
+  terminated leg already enforces, on both transports, and it is written down in
+  [`docs/networking.md`](docs/networking.md) rather than living in a struct
+  literal. Measured either way against an origin taking 35 seconds to answer:
+  `30s -> timeout awaiting response headers` after 30s, `10m -> 200 OK` after
+  35s. It still bounds only the wait for the first byte of the response head;
+  the body is the ten-second rolling stall bound's, and the hour ceiling on the
+  whole connection is unchanged (**D74**).
 - **`kelyfos shim` now requires a credential, and mints one if you do not.**
   Unauthenticated was the default for three phases, with `KELYFOS_SHIM_TOKEN` as
   an opt-in. It is now the other way round: with that variable unset the shim

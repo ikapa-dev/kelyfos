@@ -475,6 +475,19 @@ const (
 // It is the one that matters most here: this is the leg carrying the
 // credential, and an origin that accepts, completes TLS and then says nothing
 // would otherwise hold the slot and the credential indefinitely.
+//
+// Its VALUE is maxTerminatedIdleTotal rather than the thirty seconds F15 first
+// wrote (D74). This is the credentialed model-API path, and a non-streaming
+// completion that takes longer than thirty seconds to its first byte is
+// ordinary rather than hostile — that request failed with "timeout awaiting
+// response headers" and nothing in the tree said why the number was thirty.
+// Removing the field instead would have been defensible here, where the rolling
+// stall bound, the cumulative idle budget and the connection ceiling already
+// close everything a guest can drive with it, and indefensible on the forward
+// transport, which has none of that machinery. So both carry the same number,
+// and it is the one the idle budget already enforces: a connection that has
+// waited ten minutes for a first byte has spent that budget and notAfter closes
+// it regardless.
 var terminatedTransport = &http.Transport{
 	DisableCompression:  true,
 	ForceAttemptHTTP2:   false,
@@ -486,7 +499,7 @@ var terminatedTransport = &http.Transport{
 	IdleConnTimeout:       90 * time.Second,
 	TLSHandshakeTimeout:   10 * time.Second,
 	ExpectContinueTimeout: 1 * time.Second,
-	ResponseHeaderTimeout: 30 * time.Second,
+	ResponseHeaderTimeout: maxTerminatedIdleTotal,
 }
 
 func (p *Proxy) upstream() http.RoundTripper {

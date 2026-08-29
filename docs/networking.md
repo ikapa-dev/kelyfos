@@ -428,6 +428,21 @@ hoped for.
   charging only the gaps bounded silence rather than occupancy, which let 4096
   requests each taking the full ten-second header deadline add up to eleven
   hours of held slot while the idle budget barely moved.
+
+  **How long the proxy waits for the ORIGIN to answer is a separate bound, and
+  it is ten minutes.** The bounds above are about what the guest may do to the
+  proxy; this one is about what an allowlisted origin may do to it — accept the
+  connection, complete TLS, and then say nothing, holding a goroutine, a socket
+  and, on the terminated leg, the credential. Both transports set
+  `ResponseHeaderTimeout`, which neither Go's default nor a zero value supplies,
+  and both set it to the same ten minutes the cumulative idle budget already
+  enforces. It shipped at thirty seconds and was raised (**D74**): thirty is
+  below the time a non-streaming completion from a model API legitimately takes
+  to its first byte, which is the traffic this proxy exists to broker, and a
+  connection that has waited ten minutes has spent the whole idle budget and is
+  closed by the ceiling clamp regardless. It bounds only the wait for the first
+  byte of the response head, never the body behind it — the body is the rolling
+  stall bound's.
 - **A credential can be bound to an endpoint rather than a domain.**
   `--secret NAME@host/path` binds it to that path on that host *exactly* — no
   subdomains, because naming an endpoint and then expanding to a family of hosts
