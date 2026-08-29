@@ -130,7 +130,7 @@
      injected secrets, full audit replay, and millisecond forking.</p>
   <div class="meta">
     owner: <b>John</b> &nbsp;·&nbsp; developer: <b>Claude Code</b> &nbsp;·&nbsp;
-    status: <b class="amber" id="meta-status">ACTIVE &mdash; <b>Phase 7</b>. P7-0 through P7-13 done; P7-14, P7-15 and P7-16 deferred (D67, D69, D70). <b>P7-17</b>: all twenty-one findings of the 2026-08-28 security review are fixed, and so are the seven items an independent verification pass then found in those fixes &mdash; each reviewed by an agent that wrote none of it, and all on <code>main</code>. The task still stays <i>open</i>. GitHub Actions is disabled at the account level (D73), so the evidence is local: <code>dev/ci-local.sh</code>, a step-for-step reproduction of <code>ci.yml</code>&rsquo;s <code>checks</code> job, and now also the real <code>ci.yml</code> run under <code>nektos/act</code>. Neither is a green pipeline. Nothing closes and nothing is tagged until <code>ci.yml</code> and <code>security.yml</code> are both green on the final head.</b> &nbsp;&middot;&nbsp;
+    status: <b class="amber" id="meta-status">ACTIVE &mdash; <b>Phase 7</b>. P7-0 through P7-13 done; <b>P7-14 fixed and ticked 2026-08-29</b> (D67, D78); P7-15 and P7-16 still deferred (D69, D70). <b>P7-17</b>: all twenty-one findings of the 2026-08-28 security review are fixed, and so are the seven items an independent verification pass then found in those fixes &mdash; each reviewed by an agent that wrote none of it, and all on <code>main</code>. The task still stays <i>open</i>. GitHub Actions is disabled at the account level (D73), so the evidence is local: <code>dev/ci-local.sh</code>, a step-for-step reproduction of <code>ci.yml</code>&rsquo;s <code>checks</code> job, and now also the real <code>ci.yml</code> run under <code>nektos/act</code>. Neither is a green pipeline. Nothing closes and nothing is tagged until <code>ci.yml</code> and <code>security.yml</code> are both green on the final head.</b> &nbsp;&middot;&nbsp;
     last updated: <b id="meta-updated">2026-08-29</b><br>
     repo file: <b>PLAN.html</b> (commit this document at the repository root — it is the single source of truth)<br>
     <span class="quiet">KelyfOS — from κέλυφος (kélyfos), "shell": the guest OS wrapped around the agent. Formerly working-titled "agos" (D4 → D10).</span>
@@ -1426,7 +1426,7 @@
         made it worth having was that nothing was fixed from a description. Findings are answered in the log one by
         one, <i>including the ones rejected and the reason</i>. A phase that adds a socket, twenty event fields and
         two renderers does not exit on its acceptance test alone.</span></li>
-    <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+    <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
         <span class="tid">P7-14</span><span class="tk"><b>A path-scoped credential can attach across a
         double-trailing-slash boundary.</b> <code>internal/egress/scope.go</code>'s <code>covered()</code> trims
         exactly one trailing slash off a bound <code>Scope.Path</code> before comparing
@@ -8737,6 +8737,89 @@ after:
         <b>Unchanged:</b> P7-17 is not ticked and nothing is tagged. This row records a red local check on
         the head, which under &sect;8 rule 8 as amended is a fact about <code>main</code> and not a reason
         to close anything.</td></tr>
+    <tr><td class="mono">2026-08-29</td><td class="mono">P7-14</td>
+        <td><b>A path-scoped credential could attach across a double-trailing-slash boundary; a scope path
+        that is not in normal form is now refused where it enters.</b> <code>covered()</code> trimmed
+        exactly one trailing slash off a bound prefix, so a scope written <code>/repos//</code> approved
+        <code>/repos/</code> &mdash; which an origin that strips matrix parameters resolves to
+        <code>/repos</code>, one segment wider than the literal prefix. <b>Fixed as a refusal, not a second
+        trim</b>, which is the opposite of what this task&rsquo;s own text prescribes and is recorded as
+        <b>D78</b> rather than left for a reader to notice: <code>canonicalScopePath</code> requires
+        <code>path.Clean</code> normal form with the collection&rsquo;s trailing slash allowed back except
+        on <code>"/"</code> itself; <code>ParseSecretSpec</code> &mdash; the only door a scope enters by,
+        verified across <code>host/</code>, <code>internal/</code> and <code>shim/</code> &mdash; refuses
+        anything else with the form to write; <code>Scope.covers</code> withholds
+        (<code>path_not_covered</code>) on a scope built past the parser. Shape only, not alphabet:
+        D44&rsquo;s <code>":"</code> and <code>"+"</code> stay accepted.
+        <br><b>Reviewed adversarially by an agent that wrote none of it</b> (rule 10, PROXY). Two findings
+        taken &mdash; <code>"//"</code> alone passed the collection rule and is now refused, and
+        <code>llms-full.txt</code> was not regenerated for the <code>networking.md</code> paragraph and now
+        is. Both are corroborated in the tree from this seat rather than taken on report, which is as
+        close to verifying a review as a reader of it can get.
+        <br><b>Written by the session that made the change; ticked by this one, on its own verification.</b>
+        &sect;8 rule 3 ties the checkbox to a task being verified working, and this document has one
+        writer, so the tick waited on the checks in the next column rather than on the report of them.</td>
+        <td class="mono"><b>Verified here, not cited:</b><br>
+        <code>TestP714_*</code> on the parent <code>f49297e</code>, this commit&rsquo;s own test file
+        copied onto it &rarr; <b>3 of 3 FAIL</b>:
+        <code>ParseSecretSpec("TOKEN@github.com/repos//") accepted a scope path that is not in normal
+        form</code> (5 shapes), <code>Scope{Path: "/repos//"}.covers(/repos/) approved the request</code>,
+        <code>covers("/repo//") approved /repo/, and under matrix-param strip it resolves to /repo</code>.
+        On <code>312e3a9</code> &rarr; <b>3 of 3 PASS</b>.<br>
+        <b>Not over-refusing</b>, probed directly rather than assumed &mdash; a refusal on the field that
+        decides credential attachment is the kind that costs somebody a session:
+        <code>/repos</code>, <code>/repos/</code>, <code>/</code>,
+        <code>/v1/models/x:generateContent</code>, <code>/search/A+B</code> and
+        <code>/a-b_c.d~e/</code> all parse; <code>//</code>, <code>/repos//</code>, <code>/a/./b</code>
+        and <code>/a/../b</code> are all refused.<br>
+        <b>The refusal says what to write:</b> <code>--secret "T@h.com//": scope path "//" is not in normal
+        form (a doubled slash, or a "." or ".." segment); write it as "/"</code>.<br>
+        <b>The target that made <code>main</code> red is clean:</b> <code>FuzzScopeCovers</code> at 6
+        workers for 120s &rarr; <b>8,971,418 execs, 399 seeds, PASS</b>, where before the fix act reached
+        the input in 4.40s. The seed corpus as <code>make test</code> runs it &rarr; <code>ok 0.003s</code>,
+        and the minimised input is committed at
+        <code>testdata/fuzz/FuzzScopeCovers/p714-doubled-trailing-slash</code>
+        (<code>string("/repo//")</code>, <code>string("/repo/")</code>).<br>
+        <b><code>make ci-act</code> on <code>312e3a9</code> &mdash; the exact merged commit, as the
+        protocol requires &mdash; 16 of 16 pass</b>, pasted whole:
+        <code>Set up job &middot; checkout &middot; setup-go &middot; gofmt &middot; go vet &middot; the
+        vsock loopback transport &middot; unit tests 2m36.265s &middot; fuzz, briefly 5m31.248s &middot;
+        The boundary holds 54.641s &middot; the plan is still coherent &middot; every released tag has its
+        notes &middot; new commits carry a DCO sign-off &middot; The generated reference still matches the
+        source &middot; Every cookbook recipe extracts and parses &middot; post-setup-go &middot; Complete
+        job</code>, and <code>job 'checks' passed on 312e3a9 under act</code>. <b>This is the run that
+        turns the previous row&rsquo;s red head green</b>, and the fuzz step is the one that was failing.
+        Local evidence, not a hosted run; D73 and D77 unchanged, and the only commits after it are the
+        rows recording it.<br>
+        <code>go test -count=1 ./...</code> every package ok &middot; <code>make docs</code> leaves
+        <code>llms.txt</code>, <code>llms-full.txt</code> and <code>docs/reference</code> clean &middot;
+        CHANGELOG entry present.</td></tr>
+
+    <tr><td class="mono">2026-08-29</td><td class="mono">P7-17</td>
+        <td><b>Two more candidates, from P7-14&rsquo;s review, added to the P7-16-shaped list this round
+        opened.</b> Neither is fixed: the brief scopes new findings out, and both are about a grammar this
+        round did not write.
+        <br><b>1. A scope the grammar accepts can never match a request.</b> A spec carrying
+        <code>":"</code> or <code>"+"</code> parses &mdash; D44 settled that they are ordinary path
+        characters &mdash; but <code>literalAndNormal</code> refuses those bytes in a REQUEST path, and
+        Go&rsquo;s <code>EscapedPath</code> leaves them raw, so a credential scoped to
+        <code>/v1/models/x:generateContent</code> or <code>/search/A+B</code> can never attach. The
+        binding is accepted, the request goes without the credential, and the operator meets a 401 from
+        somewhere else. Same family: <code>/a%20b/</code> never matches, because the parser does not
+        decode and the request does. This is the shape P7-4 was opened for &mdash; a key that parses and
+        then does nothing &mdash; and it is worse here, because the thing that silently does nothing is a
+        credential.
+        <br><b>2. <code>--secret</code>&rsquo;s help text does not mention the path at all.</b>
+        <code>host/run.go:76</code> and <code>host/snapshot.go:143</code> and therefore
+        <code>docs/reference/cli.md</code> describe <code>NAME@domain[:bearer|basic]</code> with no
+        <code>[/path]</code>; <code>docs/reference/config.md</code> carries the path but not the form rule
+        the fix above now enforces. Pre-existing, and newly worth fixing because a refusal now exists that
+        the help text gives a reader no way to anticipate.</td>
+        <td class="mono">Not fixed by design; credited to the adversarial review of P7-14. Item 1 is the
+        more serious of the two and is a <i>silent</i> failure, which is the class this phase has spent
+        itself on: the grammar says yes, the wire says no, and nothing records the disagreement.<br>
+        Both belong with the ten &ldquo;Also noted&rdquo; items of the 2026-08-28 review and the four this
+        round already logged, as candidates the owner opens or declines.</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
@@ -10356,6 +10439,42 @@ after:
         <br>The scope of this row is evidence, not policy: it names what a Progress Log row should cite and
         what a reader may conclude from it. It amends neither &sect;8 rule 8 nor D73, both of which stand
         exactly as written.</td></tr>
+    <tr><td class="mono">D78</td><td class="mono">2026-08-29</td>
+        <td><b>P7-14 is fixed by <i>refusing</i> a scope path that is not in normal form, not by
+        normalising one &mdash; which is the opposite of what P7-14&rsquo;s own text prescribes.</b> That
+        text says &ldquo;fix <code>covered()</code> to normalize away every trailing slash on both sides
+        before comparing (not just one)&rdquo;. The implementation on <code>main</code> at
+        <code>312e3a9</code> does not: <code>canonicalScopePath</code> requires
+        <code>path.Clean</code> normal form with the trailing slash that names a collection allowed back,
+        <code>ParseSecretSpec</code> refuses anything else with the form to write, and
+        <code>Scope.covers</code> withholds on a scope built past the parser. Owner&rsquo;s fix ruling, as
+        relayed to this seat.
+        <br><b>Recorded after the fact rather than before it, which rule 5 asks for and did not get.</b>
+        The row is written by the seat that owns this document rather than by the one that made the
+        change, and the alternative &mdash; ticking a task whose implementation contradicts its own text
+        with nothing in the log saying so &mdash; is worse than a late row. Stated plainly so that a
+        reader comparing the task text against the code is not left to wonder which is authoritative: the
+        code is, and this row is why.</td>
+        <td>Normalising is a guess at intent and refusing is not. A scope written <code>/repos//</code> is
+        a typo, and the two readings of it &mdash; &ldquo;they meant <code>/repos/</code>&rdquo; and
+        &ldquo;they meant something this proxy will not match&rdquo; &mdash; are not distinguishable from
+        the string. Trimming picks one silently, on the field that decides which requests carry a
+        credential; refusing hands it back to the person who typed it, at parse time, with the form to
+        write. That is the ruling F17 and F18 both reached on their own inputs in this same phase: F18
+        declined the report&rsquo;s prescribed <code>..</code> rule because it would have refused every
+        pnpm workspace, and F17 substituted a free-space check for an enumerated ceiling because the
+        prescribed rule would have refused every hardlinked <code>node_modules</code>. The direction here
+        is the reverse &mdash; refusing where the text said repair &mdash; and the discipline is the same
+        one: do not repair a name that was built wrong, because the repair is a guess about intent.
+        <br>It is also the smaller change. Normalising both sides would have widened what
+        <code>covered()</code> approves, on the function that decides credential attachment, to make a
+        typo work; the refusal narrows what can exist, at one door, and leaves the comparison exactly as
+        it was. The second lock in <code>covers</code> is there for a <code>Scope</code> built past the
+        parser by a caller added later, which is the shape F7 and F21 both spent a commit on.
+        <br>The cost is a refusal somebody can meet: a spec that parsed before now does not. It shipped
+        for the first time in this same unreleased cycle&rsquo;s <code>--secret</code> path grammar, so
+        no release has ever accepted it, and a <code>### Fixed</code> entry says what is refused and what
+        to write instead.</td></tr>
     <!-- Claude Code: append rows above this line. -->
   </table>
 </section>
