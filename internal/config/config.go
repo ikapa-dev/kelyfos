@@ -657,22 +657,53 @@ func writableByOthers(fi os.FileInfo) string {
 	return "everyone in the group " + name + " can rewrite it"
 }
 
-// isPrivateGroup reports whether gid is the invoking user's own user-private
-// group: their primary gid, named after them. Anything else is a group with
-// other people in it, as far as this check is willing to assume.
+// isPrivateGroup reports whether gid — the FILE's group — is the invoking
+// user's own user-private group: their primary group, named after them.
+//
+// It wires privateGroup to the real sources. The decision is separate because
+// the first version of it got the sources wrong in a way no test on an ordinary
+// machine could show: it compared the file's gid against os.Getgid(), the
+// PROCESS's effective group, and then checked the name of the group named by
+// the PASSWD ENTRY's gid. Those are two different groups, and they coincide
+// only while os.Getgid() == u.Gid. Under newgrp or sg, or in a setgid
+// directory, they diverge — and a file whose group was `staff` was then
+// validated against the name of the user's private group and accepted, which is
+// precisely the case this rule exists to refuse (P7-17/F21, second review
+// round).
 func isPrivateGroup(gid int) bool {
-	if gid != os.Getgid() {
-		return false
-	}
 	u, err := user.Current()
 	if err != nil {
 		return false
 	}
-	g, err := user.LookupGroupId(u.Gid)
+	primary, err := strconv.Atoi(u.Gid)
 	if err != nil {
 		return false
 	}
-	return g.Name == u.Username
+	return privateGroup(gid, primary, u.Username, func(g int) (string, bool) {
+		grp, err := user.LookupGroupId(strconv.Itoa(g))
+		if err != nil {
+			return "", false
+		}
+		return grp.Name, true
+	})
+}
+
+// privateGroup is the decision, on explicit inputs.
+//
+// Both halves are about ONE group, which is the whole correction: gid must be
+// the user's primary group AND that same gid must resolve to a name equal to
+// the username. A gid nothing resolves to is not a private group — unresolvable
+// is not the same as safe, and this check exists to decide whether other people
+// can write the file.
+func privateGroup(gid, primaryGid int, username string, lookup func(int) (string, bool)) bool {
+	if gid != primaryGid {
+		return false
+	}
+	name, ok := lookup(gid)
+	if !ok {
+		return false
+	}
+	return name == username
 }
 
 // trustOwner is the uid half, shared by the symlink and the file it names.
