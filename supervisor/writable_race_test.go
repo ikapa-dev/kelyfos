@@ -1,6 +1,9 @@
 package main
 
 import (
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -107,9 +110,18 @@ func TestF11_WriteFileCannotBeRacedThroughASymlink(t *testing.T) {
 	t.Logf("%d writes raced against a symlink flip; the victim was never touched", writes)
 }
 
-// The same race against upload, which shares writeFile with write_file. Cheap to
-// state and it pins the sharing: if somebody gives upload its own write path,
-// this fails rather than silently losing the protection.
+// The same race against upload, which shares writeFile with write_file.
+//
+// It drives toolUpload — the real MCP tool, decoding a real base64 argument —
+// rather than writeFile, and it races the link rather than planting one.
+//
+// Both of those were wrong in the first version and the second is why: it
+// called writeFile directly and used a PRE-EXISTING symlink, which the lexical
+// check F11 replaced already refused. So it could not fail on a revert, which
+// makes it the fifteenth test on this task shown unable to fail. What it
+// claimed to pin — that upload goes through the same guarded write — is exactly
+// what calling writeFile assumes rather than establishes: give toolUpload its
+// own write path tomorrow and the old test stays green (P7-17/C).
 func TestF11_UploadSharesTheSameGuardedWrite(t *testing.T) {
 	victimDir, err := os.MkdirTemp("/var/tmp", "kelyfos-f11-upload-victim-*")
 	if err != nil {
@@ -128,18 +140,45 @@ func TestF11_UploadSharesTheSameGuardedWrite(t *testing.T) {
 	t.Cleanup(func() { os.RemoveAll(treeDir) })
 	target := filepath.Join(treeDir, "x")
 
-	if err := os.Symlink(victim, target); err != nil {
-		t.Fatal(err)
+	// The same three states the write_file race flips between: absent, a link
+	// out of the tree, absent again.
+	var stop atomic.Bool
+	flips := make(chan struct{})
+	go func() {
+		defer close(flips)
+		for !stop.Load() {
+			os.Remove(target)
+			_ = os.Symlink(victim, target)
+			os.Remove(target)
+		}
+	}()
+
+	arg := fmt.Sprintf(`{"path":%q,"data":%q}`,
+		target, base64.StdEncoding.EncodeToString([]byte(f11Payload)))
+	deadline := time.Now().Add(5 * time.Second)
+	uploads := 0
+	for i := 0; i < 200000 && time.Now().Before(deadline); i++ {
+		toolUpload(json.RawMessage(arg))
+		uploads++
 	}
-	// Pre-existing rather than raced, because what this asserts is that upload
-	// goes through the same door — the race above covers the timing.
-	res := writeFile(target, []byte(f11Payload), 0o644)
-	if res == nil {
-		t.Errorf("writeFile followed a pre-existing symlink out of the tree")
+	stop.Store(true)
+	<-flips
+
+	got, err := os.ReadFile(victim)
+	if err != nil {
+		t.Fatalf("the victim file is gone, which is its own kind of write-through: %v", err)
 	}
-	if got, err := os.ReadFile(victim); err == nil && strings.Contains(string(got), f11Payload) {
-		t.Errorf("the guest's bytes reached %s through the symlink at %s", victim, target)
+	if strings.Contains(string(got), f11Payload) {
+		t.Fatalf("upload wrote through a symlink planted between the check and the open:\n"+
+			"  %s holds the guest's bytes after %d uploads\n"+
+			"  It is outside every tree writableEverywhere names. On a real guest the link would "+
+			"point at\n  /dev/vdb and this would be a raw write to the workspace disk.",
+			victim, uploads)
 	}
+	if uploads < 1000 {
+		t.Errorf("only %d uploads were attempted; this fixture proves nothing at that rate", uploads)
+	}
+	t.Logf("%d uploads raced against a symlink flip; the victim was never touched", uploads)
 }
 
 // The other direction, which the fix must not break: a symlink that stays inside

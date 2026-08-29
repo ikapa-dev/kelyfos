@@ -323,11 +323,14 @@ hoped for.
   five readers say the guest named a host it never named. One event per
   distinct address, not one per connection: this is the only refusal here a
   local process can drive in a loop without the guest doing any work.
-  **The address is in the chain and is not yet rendered.** `kelyfos log` shows
-  such a refusal as `egress BLOCKED :0  mode= foreign_peer` and `kelyfos view`
-  as `egress BLOCKED :0`, neither reading the `peer` field — so today, reading
-  the chain or `kelyfos log --export` is what tells you who knocked. Carrying
-  it into the four rendering branches is open work.
+  **The address is in the chain and every reader shows it.** `kelyfos log`,
+  `kelyfos view`, `kelyfos watch` and the exported HTML report all print
+  `from <address>` on such a refusal, so it is distinguishable on screen from an
+  ordinary blocked egress with an empty host. Every one of them puts the peer
+  through the guest-text sanitiser first, because it is an address a local
+  process chose. It is deliberately kept out of the digest's per-domain table
+  and its blocked count: those are the sandbox's receipt, and a knock from
+  somewhere else on the machine is not the sandbox's traffic.
   The other half of this is the ruleset's own `ip daddr … iifname != …` drop in
   §3; the address the proxy binds is not, and never was, what kept the port
   private (F9).

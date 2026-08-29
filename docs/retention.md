@@ -477,19 +477,21 @@ remember. Either fix alone would have drifted: an exemption is what tells
 the next writer of a field that it is a safe place to put a string.
 `error.kind` — the fixed enumeration an auditor reads — is still exempt.
 
-**`error.kind` is exempt on a condition, not yet on a fact.** It is meant to
-be a fixed enumeration — `internal`, `tool`, `timeout` and the rest — and an
-auditor reads it as one, which is why an erasure keeps it: it says *what kind
-of thing went wrong* without saying what was in it. The host does not yet
-enforce that. `host/exec.go` copies the guest supervisor's `kind` verbatim off
-the wire and nothing checks it against the protocol's own set, so guest-chosen
-text in that field survives an erasure today. The fix is validation on ingest,
-mapping anything unknown to a fixed value, which belongs at the edge with the
-rest of the guest-string sanitising rather than here — widening the redacted
-list instead would remove the one part of an error an auditor most needs to
-keep, to make up for a check missing somewhere else. Until that lands, read
-this exemption as conditional: `error.kind` survives unchanged, and on the
-`kelyfos exec` path what survives is whatever the guest put there.
+**`error.kind` is exempt on a fact, and until v1.1 it was exempt on a
+condition.** It is a fixed enumeration — `internal`, `tool`, `timeout` and the
+rest — and an auditor reads it as one, which is why an erasure keeps it: it says
+*what kind of thing went wrong* without saying what was in it. For one release
+the host did not enforce that. `host/exec.go` copied the guest supervisor's
+`kind` verbatim off the wire, nothing checked it against the protocol's own set,
+and guest-chosen text in that field survived an erasure. The page said so rather
+than promising the property.
+
+It is enforced now, at the place the note named as the right one: the edge. Every
+frame the host decodes from a guest goes through `Sanitize`, and an error whose
+`kind` is not one of the seven is clamped to `internal` with the guest's own
+string moved into `message` — which *is* redacted. Nothing diagnostic is lost;
+it is moved to the field that is allowed to hold it. So `error.kind` survives an
+erasure unchanged, and what survives is one of seven values the host chose.
 
 A second route deserves the same honesty. `error.message` is redacted now, so
 an **erased** chain is clean whatever writes it — but an un-erased one can

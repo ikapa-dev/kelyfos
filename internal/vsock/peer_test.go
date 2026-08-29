@@ -51,20 +51,20 @@ func hostPort(t *testing.T) uint32 {
 // deliberately has no loopback transport — that is F3's first layer — so a
 // fixture that drives the real Listen/Accept can only run where one exists.
 //
-// **Read this before treating a green run as coverage.** On a stock CI runner
-// vsock_loopback is built as a module and is *not* loaded, so this and
-// TestF3_ARefusedPeerIsReported both SKIP, and the only F3 test that actually
-// executes is TestF3_OnlyTheHostIsServed — the decision table, which is real
-// coverage of `fromHost` but does not touch Accept. The two end-to-end fixtures
-// have been run, on a developer VM with `sudo modprobe vsock_loopback`, and that
-// is where the failing-on-the-parent evidence for this finding comes from. To
-// make CI cover them, load the module in the workflow before `make test`:
+// **CI loads the module, and it did not until v1.1.** Ubuntu builds
+// vsock_loopback as a module and does not load it, so on a stock runner this
+// and TestF3_ARefusedPeerIsReported both SKIPPED and the only F3 test that
+// executed was TestF3_OnlyTheHostIsServed — the decision table, which is real
+// coverage of `fromHost` and does not touch Accept. A green run meant the table
+// passed and these two were not run, which is a skipped fixture reading like a
+// passing one: the failure mode this whole review round is about. The `checks`
+// job now runs `sudo modprobe vsock_loopback` before the unit tests, and
+// dev/ci-local.sh does the same (P7-17/C).
 //
-//	sudo modprobe vsock_loopback
-//
-// Until that lands, a green CI run means the table passed and these two were
-// skipped. Saying so here rather than letting a skipped fixture read like a
-// passing one, which is the failure mode this whole review round is about.
+// The skip below stays, and stays loud, because the module is still not on
+// every machine: a container with no vsock, a runner image that drops it, a
+// developer's Mac. What changed is that the ordinary path now runs the fixture
+// rather than passing over it.
 func loopbackOrSkip(t *testing.T) {
 	t.Helper()
 	fd, err := unix.Socket(unix.AF_VSOCK, unix.SOCK_STREAM|unix.SOCK_CLOEXEC, 0)

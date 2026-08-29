@@ -585,7 +585,7 @@ quickstart downloads still extracts a workspace the old way.
 | the VMM's syscalls | Firecracker's own seccomp filter, **read out of `/proc` on every one of its threads** at boot rather than assumed from the absence of a flag. A VMM without it is refused, not run. [`docs/host-seccomp.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/host-seccomp.md) lists every syscall it permits, read back out of the running kernel. |
 | inside the guest | every process the supervisor spawns — `exec`, a plugin, the shell — is confined by Landlock (writes only `/work`, `/tmp`, `/run`, `$HOME`, `/dev/pts` and `/dev/shm`, plus seven named device nodes) and a seccomp refusal list of 28 syscalls. Per flavor; [`docs/reference/profiles.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/reference/profiles.md) is generated from the code that enforces it. **The supervisor is PID 1 and the profile does not confine it**, which is where `write_file` and `upload` could once write anywhere the guest asked, including the block devices the profile withholds; those two are now held to the same three lists the profile is built from. Reads are deliberately not restricted. |
 | the network | no interface at all without `--allow`; then deny-all plus a hostname allowlist, with credentials attached by the host's proxy so the value never exists inside the guest. |
-| the workspace disk | the guest writes that filesystem, so the host reads it back the way it reads anything hostile: every entry validated and the image refused whole if one is a name the host cannot use, and the extraction written through `openat2` with `RESOLVE_BENEATH` and `RESOLVE_NO_SYMLINKS` so a name that got past the check still cannot leave the tree. Setuid, setgid, sticky and world-write do not survive onto your filesystem; the rest of the mode does, including the executable bit, because an agent that built a binary needs it. |
+| the workspace disk | the guest writes that filesystem, so the host reads it back the way it reads anything hostile: every entry validated and the image refused whole if one is a name the host cannot use, and the extraction written through an `os.Root`, which walks the path one component at a time with `openat(O_NOFOLLOW)` and resolves each link itself, so a name that got past the check still cannot leave the tree — a relative link that stays inside is followed, and one that climbs out, or any absolute link at all, is refused. Setuid, setgid, sticky and world-write do not survive onto your filesystem; the rest of the mode does, including the executable bit, because an agent that built a binary needs it. |
 | the record | hash-chained, written by the host, and it names which walls were around each machine — so a transcript cannot make an unconfined run look like a confined one. |
 
 **What is not.** None of this is a claim to be a multi-tenant sandbox for
@@ -2912,11 +2912,14 @@ hoped for.
   five readers say the guest named a host it never named. One event per
   distinct address, not one per connection: this is the only refusal here a
   local process can drive in a loop without the guest doing any work.
-  **The address is in the chain and is not yet rendered.** `kelyfos log` shows
-  such a refusal as `egress BLOCKED :0  mode= foreign_peer` and `kelyfos view`
-  as `egress BLOCKED :0`, neither reading the `peer` field — so today, reading
-  the chain or `kelyfos log --export` is what tells you who knocked. Carrying
-  it into the four rendering branches is open work.
+  **The address is in the chain and every reader shows it.** `kelyfos log`,
+  `kelyfos view`, `kelyfos watch` and the exported HTML report all print
+  `from <address>` on such a refusal, so it is distinguishable on screen from an
+  ordinary blocked egress with an empty host. Every one of them puts the peer
+  through the guest-text sanitiser first, because it is an address a local
+  process chose. It is deliberately kept out of the digest's per-domain table
+  and its blocked count: those are the sandbox's receipt, and a knock from
+  somewhere else on the machine is not the sandbox's traffic.
   The other half of this is the ruleset's own `ip daddr … iifname != …` drop in
   §3; the address the proxy binds is not, and never was, what kept the port
   private (F9).
@@ -12246,19 +12249,21 @@ remember. Either fix alone would have drifted: an exemption is what tells
 the next writer of a field that it is a safe place to put a string.
 `error.kind` — the fixed enumeration an auditor reads — is still exempt.
 
-**`error.kind` is exempt on a condition, not yet on a fact.** It is meant to
-be a fixed enumeration — `internal`, `tool`, `timeout` and the rest — and an
-auditor reads it as one, which is why an erasure keeps it: it says *what kind
-of thing went wrong* without saying what was in it. The host does not yet
-enforce that. `host/exec.go` copies the guest supervisor's `kind` verbatim off
-the wire and nothing checks it against the protocol's own set, so guest-chosen
-text in that field survives an erasure today. The fix is validation on ingest,
-mapping anything unknown to a fixed value, which belongs at the edge with the
-rest of the guest-string sanitising rather than here — widening the redacted
-list instead would remove the one part of an error an auditor most needs to
-keep, to make up for a check missing somewhere else. Until that lands, read
-this exemption as conditional: `error.kind` survives unchanged, and on the
-`kelyfos exec` path what survives is whatever the guest put there.
+**`error.kind` is exempt on a fact, and until v1.1 it was exempt on a
+condition.** It is a fixed enumeration — `internal`, `tool`, `timeout` and the
+rest — and an auditor reads it as one, which is why an erasure keeps it: it says
+*what kind of thing went wrong* without saying what was in it. For one release
+the host did not enforce that. `host/exec.go` copied the guest supervisor's
+`kind` verbatim off the wire, nothing checked it against the protocol's own set,
+and guest-chosen text in that field survived an erasure. The page said so rather
+than promising the property.
+
+It is enforced now, at the place the note named as the right one: the edge. Every
+frame the host decodes from a guest goes through `Sanitize`, and an error whose
+`kind` is not one of the seven is clamped to `internal` with the guest's own
+string moved into `message` — which *is* redacted. Nothing diagnostic is lost;
+it is moved to the field that is allowed to hold it. So `error.kind` survives an
+erasure unchanged, and what survives is one of seven values the host chose.
 
 A second route deserves the same honesty. `error.message` is redacted now, so
 an **erased** chain is clean whatever writes it — but an un-erased one can

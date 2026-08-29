@@ -258,8 +258,37 @@ func (p *Proxy) reportDialFailure(w io.Writer, host string, port int, err error)
 			denial.EgressResolvedAddr.Render(denial.V{"host": host}))
 		return
 	}
-	p.report(Attempt{Host: host, Port: port, Reason: ReasonDialFailed})
-	writeStatus(w, http.StatusBadGateway, "kelyfos: "+err.Error())
+	// The address goes to the recorder and NOT into the answer, which is the
+	// same rule the 403 above follows and the same reconnaissance F14 closed
+	// there (P7-17/C). Go's own dial errors carry the resolved address —
+	// `dial tcp 93.184.216.34:443: connect: connection refused` — so writing
+	// err.Error() here handed the guest the result of a DNS lookup it has no
+	// resolver of its own to perform, one allowlisted name at a time, on the
+	// path that is reached by simply naming a host that does not answer.
+	//
+	// The message is fixed rather than summarised, because every shape of dial
+	// failure this can carry names the address: refused, timed out, no route,
+	// no such host. The address itself stays in the chain, in ResolvedAddr, for
+	// the operator.
+	p.report(Attempt{Host: host, Port: port, Reason: ReasonDialFailed,
+		ResolvedAddr: dialFailureAddr(err)})
+	writeStatus(w, http.StatusBadGateway,
+		"kelyfos: this proxy could not reach "+host+". The reason is in the flight recorder")
+}
+
+// dialFailureAddr digs the address out of a failed dial, for the recorder.
+//
+// net.OpError carries it as a structured field, so this reads the field rather
+// than the message — the string is what must not reach the guest, and parsing
+// it back out would be a second place for the same information to be spelled.
+// Empty when the error is not a dial against an address, which is the case for
+// a name that never resolved at all.
+func dialFailureAddr(err error) string {
+	var op *net.OpError
+	if errors.As(err, &op) && op.Addr != nil {
+		return op.Addr.String()
+	}
+	return ""
 }
 
 // forwardTransport is what forwardHTTP fetches through: a plain-HTTP

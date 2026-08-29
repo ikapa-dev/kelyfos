@@ -888,7 +888,19 @@ func printEvent(line []byte, asJSON bool) {
 		fmt.Printf("%s  OOM-killed      %s%s (pid %d) holding %s of a %d MiB machine\n",
 			ts, who, proto.SafeText(e.Comm), e.PID, report.HumanKiB(e.RSSKiB), e.MemMiB)
 	default:
-		fmt.Printf("%s  %-15s %s\n", ts, e.Type, strings.TrimSpace(string(line)))
+		// The raw line, through the sanitiser (P7-17/C). This arm is what an
+		// event type this build has no case for prints as — a chain written by
+		// a newer kelyfos, replayed by an older one, which docs/events.md §3
+		// says is a supported thing to do. The line is the JSON as it was
+		// written, so every guest-chosen string in it arrives here unfiltered,
+		// which is the one place F20's per-event sweep could not reach: it
+		// works from the decoded Event and this prints the bytes.
+		//
+		// SafeText and not SafeBody: a chain line is one line by construction,
+		// so there is no newline to preserve, and quoting the whole thing is
+		// the right answer for a record nobody has a renderer for yet.
+		fmt.Printf("%s  %-15s %s\n", ts, proto.SafeText(e.Type),
+			proto.SafeText(strings.TrimSpace(string(line))))
 	}
 }
 

@@ -188,6 +188,16 @@ func TestF8_StartAndRegisterRefusesToSpawnAnUnconfinedCommand(t *testing.T) {
 func TestF8_ConfinementHoldsIsTheInvariantStartAndRegisterAsserts(t *testing.T) {
 	p := profileFor("dev")
 
+	// guestProfile is a package-level var and this sets it, so it is restored
+	// on the way out (P7-17/C). The subtests below each save and restore it
+	// around their own case; this line, outside them, did not — so every test
+	// that ran after this one in the same binary inherited a dev profile it
+	// never asked for. Nothing was wrong today because the tests that follow
+	// set it themselves, which is exactly the kind of accident that stops being
+	// true when somebody adds a test between them.
+	savedProfile := guestProfile
+	t.Cleanup(func() { guestProfile = savedProfile })
+
 	wrapped := exec.Command("/bin/sh", "-c", "echo hello")
 	guestProfile = &p
 	confine(wrapped)

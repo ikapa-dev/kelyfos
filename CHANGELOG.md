@@ -73,6 +73,30 @@ reference described in the README and re-measured per release.
   coming) or on Ctrl-C (P7-9).
 
 ### Fixed
+- **A failed upstream dial told the guest which address an allowlisted name
+  resolved to.** The `403` for a name that resolves somewhere reserved stopped
+  naming the address earlier in this release — a guest that is told that has
+  been handed the result of a DNS lookup it has no resolver of its own to
+  perform, one name at a time. The `502` two lines below it still wrote Go's own
+  dial error, which carries the address by construction, and it is the easier
+  one to reach: the name only has to resolve somewhere that does not answer. The
+  body now names the host the guest asked for and nothing else; the address goes
+  to the flight recorder, in the same `resolved_addr` field the `403` path uses.
+- **A knock on the proxy's port from elsewhere on the machine was counted as the
+  sandbox's blocked egress.** A `foreign_peer` refusal is a fact about the host —
+  something that is not the guest connected to the port that carries your
+  credentials — and `kelyfos watch`, the digest and the exported report were
+  adding it to the sandbox's own `egress blocked` figure, so a session in which
+  the guest attempted nothing could report three blocked attempts. It is the
+  same distinction the nftables receipt already drew, where the F9 rule's counter
+  is deliberately not part of the guest's `blocked_packets`. The event stays in
+  the timeline, where it is worth reading.
+- **Two terminal paths printed guest-chosen text unsanitised.** `kelyfos log`'s
+  fallback for an event type the build has no renderer for printed the raw chain
+  line — the case that arises when an older binary replays a newer chain, which
+  is supported. And `kelyfos watch`'s two headers printed the session's image,
+  architecture and end reason straight off the chain, where `kelyfos view`
+  sanitises the same three in the same header.
 - **`kelyfos connect` replaced a dotfiles-managed client configuration instead
   of writing through it.** The atomic temp-file-and-rename this release
   introduced is right for a file another program may be editing, and it changed
@@ -780,9 +804,16 @@ what changed between them is documentation.
 - **A guest-authored directory entry could decide where the host wrote.** The
   workspace block device is a guest→host surface the threat model did not list.
   Every entry is now validated and the image refused whole if one carries a name
-  the host cannot use, and extraction goes through `openat2` with
-  `RESOLVE_BENEATH` and `RESOLVE_NO_SYMLINKS`, so a name that got past the check
-  still cannot leave the tree. Reported by an external security audit.
+  the host cannot use, and extraction goes through an `os.Root`, so a name that
+  got past the check still cannot leave the tree. Reported by an external
+  security audit. *(This entry named `openat2` with `RESOLVE_BENEATH` and
+  `RESOLVE_NO_SYMLINKS` until v1.1. The behaviour v1.0 shipped is unchanged and
+  the mechanism was described wrongly: Go's `os.Root` calls `openat2` nowhere —
+  `openat2Trap` is declared in GOROOT and never called — and walks the path one
+  component at a time with `openat(O_NOFOLLOW)`, resolving each link itself. The
+  guarantee it gives is stricter than `RESOLVE_BENEATH` in one respect: an
+  absolute link is refused even when it points back inside the tree. Corrected
+  at P7-17.)*
 - **`write_file` and `upload` could write anywhere the guest asked**, including
   the block devices the confinement profile deliberately withholds, because the
   supervisor is PID 1 and the profile does not confine it. Both are now held to

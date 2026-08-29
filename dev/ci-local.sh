@@ -56,7 +56,7 @@ if [ "$(uname -s)" != "Linux" ]; then
 fi
 
 # The digest of the `checks` job as this file last copied it. See "Drift" above.
-CHECKS_SHA256=9f65e6a073b8c3b46f4bba6ac00c3a228f792dd90beb52bcd6d0ba2eaf1e32d4
+CHECKS_SHA256=82823c06a81f3533519af950c8077f0cbe141a103408313cf42d964fee31a5ce
 
 boot=0
 dco_base=""
@@ -116,6 +116,22 @@ step_gofmt() {
 }
 
 step_vet() { go vet ./...; }
+
+# internal/vsock's two end-to-end F3 fixtures need a vsock transport. The
+# workflow modprobes it; here it is loaded the same way, and a machine that
+# cannot is left to the fixtures' own skip (P7-17/C).
+step_vsock() {
+  if [ -d /sys/module/vsock_loopback ]; then
+    echo "vsock_loopback already loaded"
+    return 0
+  fi
+  sudo -n modprobe vsock_loopback 2>/dev/null || true
+  if [ -d /sys/module/vsock_loopback ]; then
+    echo "vsock_loopback loaded"
+  else
+    echo "vsock_loopback is not available here; internal/vsock's two end-to-end F3 fixtures will skip"
+  fi
+}
 
 step_unit() { go test -count=1 ./...; }
 
@@ -201,6 +217,7 @@ echo "host    $(uname -srm), $(go version | cut -d' ' -f3)"
 
 step "gofmt"                                                   step_gofmt
 step "go vet"                                                  step_vet
+step "the vsock loopback transport, so the F3 fixtures run"    step_vsock
 step "unit tests"                                              step_unit
 step "fuzz, briefly"                                           step_fuzz
 step "keep any crashing input"                                 step_crashers

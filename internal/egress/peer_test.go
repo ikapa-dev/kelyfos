@@ -32,9 +32,40 @@ import (
 // substitution is faithful in the way that matters here — both are local
 // addresses, so both are reachable by any process on the machine over `lo`,
 // which is the whole of F9 — and it is the only way to run this without root.
+// loopbackAliasesOrSkip refuses to fail on a machine where 127.0.0.2 and
+// 127.0.0.3 are not usable (P7-17/C).
+//
+// The whole file stands the two ends of a TAP up as two loopback addresses,
+// which works on Linux — the entire 127/8 is local — and does NOT on macOS,
+// where only 127.0.0.1 is configured and binding 127.0.0.2 returns "can't
+// assign requested address". Every rig in here called t.Fatalf on that, so
+// running the package on a Mac reported nine failures that mean nothing about
+// the code. A machine that cannot stage the fixture has not found a defect; it
+// has not run the test. Saying which is the difference between a suite somebody
+// trusts and one they learn to ignore.
+//
+// The alias is probed rather than the platform named, because "which addresses
+// this kernel will bind" is the actual question and `runtime.GOOS` is a proxy
+// for it that is wrong the first time somebody runs this in a container with a
+// trimmed loopback.
+func loopbackAliasesOrSkip(t *testing.T) {
+	t.Helper()
+	for _, addr := range []string{"127.0.0.2:0", "127.0.0.3:0"} {
+		l, err := net.Listen("tcp", addr)
+		if err != nil {
+			t.Skipf("this machine cannot bind %s (%v), so the two ends of a TAP cannot be "+
+				"stood up as loopback addresses here — macOS configures only 127.0.0.1. "+
+				"On Linux, or with `sudo ifconfig lo0 alias 127.0.0.2 up`, this fixture runs.",
+				addr, err)
+		}
+		l.Close()
+	}
+}
+
 func peerRig(t *testing.T, peer netip.Addr) (proxyAddr, upstreamTarget string,
 	sawAuth func() string, roots *x509.CertPool, attempts func() []Attempt) {
 	t.Helper()
+	loopbackAliasesOrSkip(t)
 
 	var mu sync.Mutex
 	var auth string
@@ -227,6 +258,7 @@ func TestF9_ProxyStillServesTheGuest(t *testing.T) {
 // TestF9_EveryProxyConstructionArmsThePeerCheck: no proxy this product builds
 // is allowed to leave Peer unset.
 func TestF9_AnUnsetPeerRestrictsNothing(t *testing.T) {
+	loopbackAliasesOrSkip(t)
 	var got []Attempt
 	var mu sync.Mutex
 	p := &Proxy{OnEvent: func(a Attempt) { mu.Lock(); got = append(got, a); mu.Unlock() }}
@@ -269,6 +301,7 @@ func TestF9_AnUnsetPeerRestrictsNothing(t *testing.T) {
 // local process could keep an idle sandbox alive forever by knocking — a
 // smaller door than F9's, opened by the fix for it.
 func TestF9_AForeignPeerDoesNotKeepTheSandboxAlive(t *testing.T) {
+	loopbackAliasesOrSkip(t)
 	p := &Proxy{Peer: netip.MustParseAddr("127.0.0.3")}
 	port, err := p.Listen("127.0.0.2:0")
 	if err != nil {
@@ -599,8 +632,11 @@ func peerAudit(t *testing.T, root string) (findings []string, sites int) {
 // not trust a list.
 //
 // The repository, not one package: host/audit_wiring_test.go's equivalent scans
-// `host` alone and would never have seen shim/shim.go, which builds a sixth
-// proxy of its own.
+// `host` alone and would never have seen shim/shim.go, which builds a fifth
+// proxy of its own. ("Sixth" until P7-17/C — F9's own row said six and the
+// count is five: host/run.go, host/team.go, host/servemcptools.go,
+// host/snapshot.go and shim/shim.go. The assertion below has always said five;
+// only the prose disagreed.)
 func TestF9_EveryProxyConstructionArmsThePeerCheck(t *testing.T) {
 	findings, sites := peerAudit(t, filepath.Join("..", ".."))
 	for _, f := range findings {
@@ -663,6 +699,7 @@ func TestF9_ThePeerAuditCatchesEveryEvasionShape(t *testing.T) {
 // through the digest's own MaxDistinctKeys it would evict the blocked-domain
 // records the operator actually wants.
 func TestF9_AForeignPeerIsRecordedOncePerAddressNotOncePerConnection(t *testing.T) {
+	loopbackAliasesOrSkip(t)
 	var mu sync.Mutex
 	var got []Attempt
 	p := &Proxy{
@@ -702,6 +739,7 @@ func TestF9_AForeignPeerIsRecordedOncePerAddressNotOncePerConnection(t *testing.
 
 // The bound must not swallow a genuinely new address, up to its cap.
 func TestF9_ADifferentForeignAddressIsItsOwnEvent(t *testing.T) {
+	loopbackAliasesOrSkip(t)
 	var mu sync.Mutex
 	seen := map[string]int{}
 	p := &Proxy{

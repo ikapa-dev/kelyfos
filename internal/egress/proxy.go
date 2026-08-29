@@ -91,19 +91,19 @@ const (
 	// reader can act on, and this one has none — it is a fact about the host,
 	// not about the policy.
 	//
-	// The address is in the chain and is NOT YET RENDERED anywhere, which is
-	// worth saying plainly because the sentence that used to sit here claimed
-	// the opposite. An `egress.attempt` carrying reason=foreign_peer and
-	// peer=127.0.0.1 prints today as `egress BLOCKED :0  mode= foreign_peer`
-	// in `kelyfos log`, as `egress BLOCKED :0` in `kelyfos view` — which does
-	// not print the reason at all — and lands in the digest as one more
-	// egress_blocked. None of the four branches that render this event type
-	// read Event.Peer: host/log.go:818, host/view.go:580, host/watch.go:539
-	// and internal/report/report.go:397 and :604. Until they do, a foreign-peer
-	// refusal is indistinguishable on screen from an ordinary blocked egress
-	// with an empty host, and only `kelyfos log --export` or reading the chain
-	// itself shows who knocked. Those four branches are F20's surface, and the
-	// change is routed there rather than made here.
+	// The address reaches the reader as well as the chain. That was open work
+	// when this comment was written and F20 closed it: all four branches that
+	// render an `egress.attempt` now print `from <peer>` when the event carries
+	// one — `kelyfos log`, `kelyfos view`, `kelyfos watch` and the HTML report
+	// — so a foreign-peer refusal is no longer indistinguishable on screen from
+	// an ordinary blocked egress with an empty host. The peer goes through
+	// proto.SafeText on every one of them, because it is an address a local
+	// process chose.
+	//
+	// It is deliberately still not in the digest's per-domain table or its
+	// blocked count: this is a fact about the host, not about the guest, and
+	// counting it against the sandbox would put another party's traffic in this
+	// sandbox's receipt (P7-17/C).
 	ReasonForeignPeer = "foreign_peer"
 )
 

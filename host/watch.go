@@ -663,12 +663,20 @@ func (m *watchModel) render() string {
 		return m.teamView(width, height)
 	}
 
+	// EndReason, Image and Arch all come off the chain, and the chain carries
+	// what a guest reported: Image and Arch are host-set on this door, but the
+	// digest reads them out of a session.start that a chain from anywhere may
+	// have written, and EndReason is a free-text field on two of its branches.
+	// host/view.go sanitises the same three when it renders the same header;
+	// this one did not, which is the shape F20 is about — one renderer cleaned
+	// and the next one not (P7-17/C).
 	state := "running"
 	if m.d.EndReason != "" {
-		state = "stopped (" + m.d.EndReason + ")"
+		state = "stopped (" + proto.SafeText(m.d.EndReason) + ")"
 	}
 	header := fmt.Sprintf("%s  sandbox %s  %s  %s",
-		titleStyle.Render("KelyfOS"), m.session, m.d.Image+" · "+m.d.Arch, state)
+		titleStyle.Render("KelyfOS"), proto.SafeText(m.session),
+		proto.SafeText(m.d.Image)+" · "+proto.SafeText(m.d.Arch), state)
 
 	status := barStyle.Render(fmt.Sprintf(
 		"uptime %s · boot %d ms · %d commands (%d failed) · %d files · egress %d ok / %d blocked · %d secret uses",
@@ -719,10 +727,10 @@ func (m *watchModel) teamView(width, height int) string {
 
 	state := "running"
 	if m.d.EndReason != "" {
-		state = "stopped (" + m.d.EndReason + ")"
+		state = "stopped (" + proto.SafeText(m.d.EndReason) + ")"
 	}
 	header := fmt.Sprintf("%s  team session %s  %d agents  %s",
-		titleStyle.Render("KelyfOS"), m.session, n, state)
+		titleStyle.Render("KelyfOS"), proto.SafeText(m.session), n, state)
 	agentTot := m.d.AgentTotals()
 	status := barStyle.Render(fmt.Sprintf(
 		"uptime %s · %d messages · %d refused · %d commands (%d failed) · egress %d ok / %d blocked",

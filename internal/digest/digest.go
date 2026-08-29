@@ -38,6 +38,16 @@ import (
 	"github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
 )
 
+// reasonForeignPeer is internal/egress's ReasonForeignPeer, spelled here rather
+// than imported.
+//
+// This package walks a chain off disk and imports internal/recorder and nothing
+// else — a fold over recorded events has no business depending on the proxy
+// that wrote some of them, and every other reason string in the record reaches
+// this package the same way, as a value in a field. The coupling is pinned by
+// TestTheForeignPeerReasonMatchesTheProxy rather than left to a comment.
+const reasonForeignPeer = "foreign_peer"
+
 // MaxDistinctKeys bounds how many distinct domains, store keys, message
 // pairs, secrets and peer-only lane names a Digest will ever mint an entry
 // for.
@@ -726,6 +736,23 @@ func (d *Digest) Absorb(e recorder.Event) *Entry {
 		entry.Category = "egress"
 		allowed := e.Allowed != nil && *e.Allowed
 		entry.Refused = !allowed
+		// A foreign-peer refusal is a fact about the HOST, not about the guest,
+		// and it is left out of the counters for the same reason it is already
+		// left out of the Domains table below and out of BlockedPackets in
+		// internal/sandbox: something else on this machine knocked on the
+		// proxy's port, and counting it as this sandbox's blocked egress puts
+		// another party's traffic in this sandbox's receipt (P7-17/C).
+		//
+		// It stayed in the timeline and out of the counters deliberately: the
+		// event is worth reading — the proxy carries the operator's credentials
+		// and something that is not the guest just knocked — and "egress
+		// blocked: 3" beside a session in which the guest made no attempt at
+		// all is a number a reader will spend time on and then have to unlearn.
+		// The Domains exclusion below happens by construction, because such an
+		// event carries no host; this one has to be written down.
+		if e.Reason == reasonForeignPeer {
+			break
+		}
 		count(agent, &d.Session, func(c *Counters) {
 			if allowed {
 				c.EgressOK++

@@ -150,6 +150,20 @@ jobs:
       - name: go vet
         run: go vet ./...
 
+      # internal/vsock's two end-to-end F3 fixtures drive a real Listen/Accept
+      # and need a vsock transport to do it. Ubuntu builds vsock_loopback as a
+      # module and does not load it, so without this both SKIP and the only F3
+      # coverage that runs is the decision table — real coverage of fromHost,
+      # and it never touches Accept. A skipped fixture must not read like a
+      # passing one (P7-17/C).
+      #
+      # `|| true`: the module is not on every runner image and a missing one is
+      # a skip, which is the state this step is trying to improve on rather than
+      # a reason to fail the build. The fixtures say so themselves when they
+      # skip.
+      - name: the vsock loopback transport, so the F3 fixtures run
+        run: sudo modprobe vsock_loopback || true
+
       # The integration tests skip themselves without KVM and an image, so this
       # runs the unit tests and proves the integration ones at least compile.
       - name: unit tests
