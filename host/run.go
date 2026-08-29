@@ -66,16 +66,21 @@ func runWithSandbox(argv []string, reviewDeclinedOut *bool) error {
 		noJail = fs.Bool("no-jail", false, "run Firecracker outside the jailer. It then runs as you, "+
 			"in your namespace, with your home directory addressable if the VM boundary ever fails. "+
 			"Says so on every run that uses it.")
-		secrets    multiFlag
-		forwards   multiFlag
-		policyPath = fs.String("policy", "", "the kelyfos.toml to run under (default: the nearest one, found by walking up)")
-		pBind      = fs.String("p-bind", loopback, "address the forwarded ports bind to. "+
+		secrets     multiFlag
+		forwards    multiFlag
+		pluginPaths multiFlag
+		policyPath  = fs.String("policy", "", "the kelyfos.toml to run under (default: the nearest one, found by walking up)")
+		pBind       = fs.String("p-bind", loopback, "address the forwarded ports bind to. "+
 			"0.0.0.0 exposes them to every machine that can reach this one, and says so, every time.")
 	)
 	fs.Var(&secrets, "secret", "attach a credential to a domain: NAME@domain[:bearer|basic]. "+
 		"The value is read from the host environment and never enters the guest. Repeatable.")
 	fs.Var(&forwards, "p", "carry a host port to a guest-local port: host:guest, as in 8080:80. "+
 		"The transport is vsock, not the network, so the firewall is untouched. Repeatable.")
+	fs.Var(&pluginPaths, "plugin-path", "approve a [[plugin]] path outside the policy file's own "+
+		"directory tree. That directory is mounted read-only inside the guest, so everything in "+
+		"it is readable by whatever the agent runs; naming it here makes it your decision rather "+
+		"than the file's. Repeatable.")
 	fs.Usage = func() {
 		fmt.Fprintln(fs.Output(), `usage: kelyfos run [flags]
        kelyfos run [flags] -- <command>...
@@ -398,7 +403,7 @@ status. This is how you hand an agent a sandbox and nothing else:
 	// The plugins device, when the project declares any. Read-only, packed
 	// before boot for the same reason the workspace is: the image has to exist
 	// to be attached (E4-6).
-	plugins, err := packPlugins(cfg, sandboxID)
+	plugins, err := packPlugins(cfg, sandboxID, pluginPaths)
 	if err != nil {
 		return err
 	}
@@ -438,7 +443,15 @@ status. This is how you hand an agent a sandbox and nothing else:
 				fmt.Fprintf(os.Stderr, "kelyfos: workspace sync-back failed: %v\n", err)
 				return
 			}
-			defer staged.Discard()
+			// Cancellable, because the one path that must not discard is the
+			// one where the diversion failed: the staging tree is then one of
+			// only two copies of this run's work (P7-17, routed).
+			keepStaged := false
+			defer func() {
+				if !keepStaged {
+					staged.Discard()
+				}
+			}()
 
 			// With --review the summary prints and this waits. Declining routes
 			// the results beside the directory rather than over it, using the
@@ -447,16 +460,10 @@ status. This is how you hand an agent a sandbox and nothing else:
 				out := review(staged, ws.HostDir, notifier)
 				_, dest := staged.Diverted()
 				if !out.Sync {
-					where, err := staged.Divert()
-					if err != nil {
-						fmt.Fprintf(os.Stderr, "kelyfos: %v\n", err)
-					} else {
-						fmt.Printf("\nnothing was written back to %s.\nthe results are at %s\n",
-							ws.HostDir, where)
-					}
+					where, keep := finishDeclinedReview(staged, ws.HostDir, ws.ImagePath, os.Stdout, os.Stderr)
+					keepStaged = keep
 					recordReview(sandboxID, out, where)
 					*reviewDeclinedOut = true
-					_ = os.Remove(ws.ImagePath)
 					return
 				}
 				recordReview(sandboxID, out, dest)
@@ -464,7 +471,13 @@ status. This is how you hand an agent a sandbox and nothing else:
 
 			dest, diverted, err := staged.Commit()
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "kelyfos: workspace sync-back failed: %v\n", err)
+				// Same rule as the declined path above: a commit that did not
+				// happen leaves the image and the staging tree as the only two
+				// copies of this run's work, and neither is deleted here.
+				keepStaged = true
+				fmt.Fprintf(os.Stderr, "kelyfos: workspace sync-back failed: %v\n"+
+					"    Nothing was removed. The workspace image is kept at %s and the extracted\n"+
+					"    tree is left in place.\n", err, ws.ImagePath)
 				return
 			}
 			if diverted {
@@ -1162,28 +1175,8 @@ func ceiling(key, flagName string, cfg *config.Config, limit int, flagVal *int, 
 // extractor one layer down.
 func checkWorkspaceScope(policyPath, ws string) error {
 	root := filepath.Dir(policyPath)
-	abs := ws
-	if !filepath.IsAbs(abs) {
-		abs = filepath.Join(root, abs)
-	}
-	realRoot, err := filepath.EvalSymlinks(root)
-	if err != nil {
-		realRoot = filepath.Clean(root)
-	}
-	// The workspace itself may not exist yet, so resolve the deepest ancestor
-	// that does rather than failing on the leaf.
-	realWS := filepath.Clean(abs)
-	for probe := realWS; ; probe = filepath.Dir(probe) {
-		if resolved, err := filepath.EvalSymlinks(probe); err == nil {
-			realWS = filepath.Join(resolved, strings.TrimPrefix(realWS, probe))
-			break
-		}
-		if parent := filepath.Dir(probe); parent == probe {
-			break
-		}
-	}
-	rel, err := filepath.Rel(realRoot, realWS)
-	if err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+	abs := resolvePath(ws, root)
+	if insideTree(root, abs) {
 		return nil
 	}
 	return fmt.Errorf("%s names workspace %s, which is outside %s.\n"+
@@ -1243,4 +1236,115 @@ func printPolicyReach(w io.Writer, cfg *config.Config) {
 		fmt.Fprintf(w, "  secret      $%s of your environment, attached to requests to %s\n",
 			proto.SafeText(name), proto.SafeText(where))
 	}
+}
+
+// diverter is the part of *sandbox.Staged a declined review uses. An interface
+// so the decision below can be tested without an ext4 image and a real
+// extraction — the decision is what went wrong, not the extraction.
+type diverter interface {
+	Divert() (string, error)
+	Discard()
+}
+
+// finishDeclinedReview routes a declined review's results beside the host
+// directory, and decides what may be deleted afterwards.
+//
+// The second return says whether the caller must KEEP the staging tree. That
+// is the whole point of this function existing. The code it replaced printed
+// the diversion error and then removed the workspace image unconditionally,
+// with `defer staged.Discard()` already registered — so a failed Divert
+// deleted the image and, on the way out, the staging tree the extraction had
+// just been written into. Those are the only two places the session's work
+// exists at that moment, and a review is declined precisely because the
+// operator has not decided what to do with it yet.
+//
+// Remove only after a write-back that actually happened, which is the rule
+// syncResumedWorkspace already states twenty lines away.
+func finishDeclinedReview(d diverter, hostDir, imagePath string, out, errOut io.Writer) (string, bool) {
+	where, err := d.Divert()
+	if err != nil {
+		fmt.Fprintf(errOut,
+			"kelyfos: the results could not be written beside %s: %v\n"+
+				"    Nothing was removed. The workspace image is kept at %s, and the extracted\n"+
+				"    tree is left in place — this run's work is still on disk in both forms.\n",
+			hostDir, err, imagePath)
+		return "", true
+	}
+	fmt.Fprintf(out, "\nnothing was written back to %s.\nthe results are at %s\n", hostDir, where)
+	_ = os.Remove(imagePath)
+	return where, false
+}
+
+// checkPluginScope is checkWorkspaceScope's counterpart for [[plugin]] path
+// (P7-17/F21, second half).
+//
+// A plugin directory is packed into a read-only device and mounted inside the
+// guest, so everything in it becomes readable by whatever the agent runs. A
+// discovered kelyfos.toml naming plugin.path = "/home/you/.ssh" hands the agent
+// a key, and until --plugin-path existed there was no way to say "yes, that one
+// on purpose" — which is why this half was stopped on the first pass and is
+// shipping now that the flag does.
+//
+// allowed is what the operator typed. A path matches if it resolves to the same
+// directory, so the flag does not have to be spelled the same way the file
+// spells it.
+func checkPluginScope(cfg *config.Config, allowed []string) error {
+	if cfg == nil || len(cfg.Plugins) == 0 {
+		return nil
+	}
+	root := filepath.Dir(cfg.Path)
+	named := make(map[string]bool, len(allowed))
+	for _, a := range allowed {
+		named[resolvePath(a, root)] = true
+	}
+	for _, p := range cfg.Plugins {
+		if p.Path == "" {
+			continue
+		}
+		abs := resolvePath(p.Path, root)
+		if named[abs] || insideTree(root, abs) {
+			continue
+		}
+		return fmt.Errorf("%s:%d names plugin %q at %s, which is outside %s.\n"+
+			"    That directory is packed into a read-only device and mounted inside the guest,\n"+
+			"    so everything in it is readable by whatever the agent runs. A policy file\n"+
+			"    describes its own project.\n"+
+			"    Pass --plugin-path %s if that is what you meant — then it is your decision,\n"+
+			"    not the file's", cfg.Path, p.Line, p.Name, abs, root, abs)
+	}
+	return nil
+}
+
+// resolvePath makes p absolute against root and resolves every symlink it can,
+// leaf included. A path that does not exist yet keeps the part that does.
+func resolvePath(p, root string) string {
+	if !filepath.IsAbs(p) {
+		p = filepath.Join(root, p)
+	}
+	p = filepath.Clean(p)
+	for probe := p; ; probe = filepath.Dir(probe) {
+		if resolved, err := filepath.EvalSymlinks(probe); err == nil {
+			return filepath.Join(resolved, strings.TrimPrefix(p, probe))
+		}
+		if parent := filepath.Dir(probe); parent == probe {
+			return p
+		}
+	}
+}
+
+// insideTree reports whether an already-resolved path is root or beneath it.
+//
+// One copy, used by both scope rules. Two functions answering "is this inside
+// that" two slightly different ways is how the workspace rule and the plugin
+// rule end up disagreeing about a symlink.
+func insideTree(root, p string) bool {
+	realRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		realRoot = filepath.Clean(root)
+	}
+	rel, err := filepath.Rel(realRoot, p)
+	if err != nil {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
