@@ -458,171 +458,255 @@ func validLink(from, target string) error {
 // resolve the target through the entry set, which is the only lexical check
 // that is also true, and refuse the links that actually leave.
 
-// maxLinkHops bounds how far a chain is followed before the image is refused.
+// maxLinkHops bounds how far one chain is followed before the image is refused.
 //
 // **Exhausting it is a refusal. Do not turn that back into an acceptance.**
 //
-// This comment previously argued the opposite, and the argument was wrong in a
-// way worth keeping written down. It said: Linux stops at 40 links in one path
+// An earlier version of this comment argued the opposite and was wrong in a way
+// worth keeping written down. It said: Linux stops at 40 links in one path
 // resolution, so a chain longer than that is ELOOP for everything on the host,
-// so a walk that ran out of budget without leaving the tree could be accepted
-// because nothing could follow it anyway.
+// so a walk that ran out of budget without leaving the tree could be accepted.
 //
 // The first clause is true and the conclusion does not follow. The kernel's cap
 // governs *kernel* path resolution. F18's harm model is the link left behind for
 // the next tool that follows it, and those tools resolve links themselves, in
-// userspace, with a much higher cap or none at all. Measured here, on one chain,
-// against a target outside the tree:
+// userspace, with a much higher cap or none at all. Measured, on one chain
+// pointing at a file outside the tree:
 //
 //	links   cat(2)                                 os.path.realpath / EvalSymlinks
 //	   30   OUTSIDE                                /tmp/…/secret.txt
 //	   45   Too many levels of symbolic links      /tmp/…/secret.txt
 //	   60   Too many levels of symbolic links      /tmp/…/secret.txt
 //
-// Python's realpath has cycle detection and no hop cap; Go's own
-// filepath.EvalSymlinks caps at 255. So a chain of 41 links that leaves the
-// workspace is unreadable by `cat` and perfectly readable by an IDE, by
-// `rsync -L`, and by any Go program that calls EvalSymlinks — which is the whole
-// population this check exists to protect.
+// Python's realpath has no hop cap; Go's own filepath.EvalSymlinks caps at 255.
+// So a chain of 41 links out of the workspace is unreadable by `cat` and
+// perfectly readable by an IDE, by `rsync -L`, and by any Go program calling
+// EvalSymlinks.
 //
-// So the rule is one rule: a chain this cannot resolve to the end is refused.
-// That over-refuses the 41-to-64 band, where no kernel resolver could follow the
-// link either, and that cost is accepted deliberately — a single rule is simpler
-// to hold in the head than a split one, and a workspace containing a symlink
-// chain more than 64 links deep does not exist.
+// A genuine *cycle* is the one exception, and it is an exception on evidence
+// rather than on tidiness. Measured against the same population: `cat` gives
+// ELOOP, Go's EvalSymlinks gives "too many links", and Python's realpath — the
+// one with no cap — has cycle detection and returns the link's own path, so the
+// open that follows it gives ELOOP too. Nothing in the harm model can follow a
+// cycle anywhere, let alone out of the tree, and refusing an image over one
+// would cost a whole session for a link that reaches nothing. So a cycle is
+// carved out, and only the *acyclic* over-budget chain is refused.
 //
-// A cycle exhausts the budget and is therefore refused too. It is contained, and
-// it is also unfollowable by anything, so the image is not losing anything real.
+// The carve-out is safe to make because a cycle is *detected* rather than
+// guessed at: the walk below is a deterministic function of its own state, so a
+// repeated state is a loop with certainty, not an inference from having run out
+// of budget.
 const maxLinkHops = 64
+
+// maxLinkSteps bounds the whole image's link checking, not one chain's.
+//
+// Every part of the walk is guest-chosen: how many symlinks there are, how many
+// segments each target has, and how many hops each chain takes. Multiplied out
+// at this package's own entry ceiling that is hours of host CPU for one
+// `kelyfos diff`, so it is one shared budget for the image rather than a
+// per-link one that multiplies. Real workspaces use a rounding error of it: a
+// pnpm-shaped tree of 600 links costs a few thousand steps.
+const maxLinkSteps = 1 << 20
+
+// cycleWatchFrom is the hop at which the walk starts writing its state down.
+//
+// A cycle is detected by a repeated state, and recording one costs a join of
+// everything still to be resolved. Every real link is one or two hops, so
+// starting later keeps that cost off the ordinary path entirely; a cycle
+// necessarily runs past this, because its hop count has no end.
+const cycleWatchFrom = 8
 
 var (
 	errLinkEscapes = errors.New("the link leaves the workspace")
 	errLinkTooDeep = errors.New("the chain is longer than this host will follow")
+	errLinkCycles  = errors.New("the chain is a cycle")
+	errLinkBudget  = errors.New("checking this image's symlinks would cost more than it is worth")
 )
 
-// foldPath is the key a resolved component is looked up by.
+// linkWalker resolves a path the way a tool that follows symlinks would, asking
+// the filesystem the tree is actually on rather than a table this package keeps.
 //
-// Case-folded, and that is the second way a chain escaped (F18). walk decides
-// "is this component a symlink?" with a map lookup, and the map was keyed by the
-// name exactly as the image spells it. The destination filesystem does not have
-// to agree:
+// **The filesystem is the oracle, and that is the point.** The previous version
+// kept a map of the image's own entries keyed by a canonical form of the name,
+// and the canonical form has to answer "are these two spellings the same file?"
+// — which is a question about the destination, not about the image. Two rounds
+// of review found two answers to it that the map got wrong, both on this
+// project's own primary platform, and both reachable with the same two-link
+// chain:
 //
-//	sub/d1   -> ..                     accepted by validLink and by the walk
-//	sub/leak -> D1/../secret.txt       "sub/D1" is not a key, so D1 is treated as
-//	                                   an ordinary directory: sub -> .. -> sub,
-//	                                   then secret.txt, which looks like it stays
+//	sub/d1   -> ..                    keyed as "sub/d1"
+//	sub/leak -> D1/../secret.txt      "sub/D1" is not a key, so D1 reads as an
+//	                                  ordinary directory and the chain looks
+//	                                  like it stays
 //
-// On a case-insensitive filesystem sub/D1 *is* sub/d1, so sub/leak really points
-// outside the tree. That is not a hypothetical platform: measured on this
-// project's own primary one, the macOS home directory shared into the Lima VM —
-// where the project directory lives, per PLAN.html §7 — is case-insensitive,
-// while /tmp on the same machine is not.
+//	sub/café -> ..                    name written NFC
+//	sub/leak -> café/../secret.txt    target written NFD; strings.ToLower does
+//	                                  not equate the two, and the filesystem does
 //
-// Folding unconditionally rather than probing the destination, because
-// over-approximating "this component is a symlink" is the safe direction: it
-// makes the walk follow more chains and refuse more images, never fewer. Probing
-// would also be asking the wrong filesystem — the tree is extracted beside the
-// project and renamed into place, and a future caller could stage it elsewhere.
-func foldPath(p string) string { return strings.ToLower(p) }
-
-// linkResolver answers, for one image, where a name inside the tree really
-// lands once every symlink on the way has been followed.
+// Measured on the macOS home shared into the Lima VM, which is where this
+// project's own workspaces live (PLAN.html §7): `caf\xc3\xa9` and
+// `cafe\xcc\x81` are the same file there, and `/tmp` on the same machine
+// treats them as two. Case folding was the first equivalence, normalization the
+// second, and enumerating them one review round at a time is not a fix — it is a
+// list that is wrong until somebody finds the next entry.
 //
-// It holds the whole set, which is why the check that uses it runs after every
-// target has been read rather than link by link during extraction.
-type linkResolver struct {
-	links map[string]string // foldPath(entry path) -> target, symlinks only
+// So nothing is canonicalised. The symlinks are created in the staging tree
+// first and the walk asks that tree, with os.Readlink, whether a component is a
+// link. The filesystem answers for every equivalence it implements, including
+// the ones nobody here has heard of, and it answers about the filesystem that
+// actually matters: Stage builds the tree with stagingTree(w.HostDir), beside
+// the project, and Commit renames it into place — the same filesystem, so the
+// tree being probed is the tree that lands.
+//
+// It also removes a refusal that should never have existed. Keying by a folded
+// name made `Docs/link` and `docs/link` collide, so an ordinary case-sensitive
+// Linux checkout holding both was refused whole; and strings.ToLower maps every
+// invalid UTF-8 byte to U+FFFD, so any two Latin-1-named symlinks collided
+// whether or not their case differed. Neither is possible now, because there is
+// no key.
+type linkWalker struct {
+	root  string            // the staging tree, on the filesystem being asked
+	links map[string]string // path -> target, cached; "" means not a symlink
+	steps *int              // shared across the whole image
 }
 
-// newLinkResolver builds the set, and refuses two symlinks whose names differ
-// only by case.
+func newLinkWalker(root string, steps *int) *linkWalker {
+	return &linkWalker{root: root, links: map[string]string{}, steps: steps}
+}
+
+// readlink asks the tree, once per distinct path.
 //
-// One key can only hold one target, so a collision would silently drop one of
-// them and judge a chain through the survivor — a wrong answer in a check whose
-// whole job is to be right about where a chain lands. Two symlinks in one
-// directory differing only in case cannot both exist on the filesystem this tree
-// is renamed onto, so refusing is also the honest answer to what the image is
-// asking for.
-func newLinkResolver(targets map[string]string) (*linkResolver, error) {
-	r := &linkResolver{links: make(map[string]string, len(targets))}
-	seen := make(map[string]string, len(targets))
-	for from, target := range targets {
-		key := foldPath(from)
-		if other, ok := seen[key]; ok {
-			return nil, refuse("%s and %s are two symlinks whose names differ only in case; "+
-				"they cannot both exist where this workspace is going, and which one a chain "+
-				"resolves through is not something this host will guess", other, from)
+// The cache is what keeps the syscall count near the number of distinct names
+// touched rather than near the number of steps taken, which matters because a
+// chain can walk the same component many times.
+func (w *linkWalker) readlink(rel string) string {
+	if target, ok := w.links[rel]; ok {
+		return target
+	}
+	target, err := os.Readlink(filepath.Join(w.root, filepath.FromSlash(rel)))
+	if err != nil {
+		// EINVAL for something that is not a symlink, ENOENT for a name that is
+		// not there at all. Neither redirects, and a dangling link is ordinary.
+		target = ""
+	}
+	w.links[rel] = target
+	return target
+}
+
+// walk resolves from's target and reports where it lands.
+//
+// Iterative, with the remaining segments held explicitly, because that makes the
+// resolution state — where the walk stands, and what it has left to do —
+// something that can be written down and compared. A repeated state in a
+// deterministic walk is a cycle, with certainty; inferring one from an exhausted
+// budget would not be, and the difference decides whether a cycle can be safely
+// carved out.
+func (w *linkWalker) walk(from, target string) error {
+	if path.IsAbs(target) {
+		// validLink refuses these first. Answered anyway, because the point of
+		// this layer is that the one above it will one day be wrong.
+		return errLinkEscapes
+	}
+	// The directory the walk stands in, kept as the string it will be looked up
+	// by rather than as a list that has to be joined at every single component.
+	// Joining was O(depth) per step, which against a target near the kernel's
+	// own 4 KiB ceiling is kilobytes of copying per segment; this is the
+	// difference between a bounded check and a bounded check nobody can afford.
+	cur, depth := path.Dir(from), 0
+	if cur == "." {
+		cur = ""
+	} else {
+		depth = strings.Count(cur, "/") + 1
+	}
+	todo := splitPath(target)
+	hops := 0
+	seen := map[string]bool{}
+	for len(todo) > 0 {
+		if *w.steps++; *w.steps > maxLinkSteps {
+			return errLinkBudget
 		}
-		seen[key] = from
-		r.links[key] = target
-	}
-	return r, nil
-}
-
-// walk resolves p starting from the directory cur — a list of components below
-// the tree root — the way a resolver that follows links would.
-func (r *linkResolver) walk(cur []string, p string, hops *int) ([]string, error) {
-	if path.IsAbs(p) {
-		// validLink refuses these before this ever runs. Answered anyway,
-		// because the whole point of this layer is that the one above it will
-		// one day be wrong: an absolute target is the host's root, which is not
-		// inside the tree.
-		return nil, errLinkEscapes
-	}
-	for _, seg := range strings.Split(p, "/") {
+		seg := todo[0]
+		todo = todo[1:]
 		switch seg {
 		case "", ".":
 			continue
 		case "..":
-			if len(cur) == 0 {
-				return nil, errLinkEscapes
+			if depth == 0 {
+				return errLinkEscapes
 			}
-			cur = cur[:len(cur)-1]
+			if i := strings.LastIndexByte(cur, '/'); i >= 0 {
+				cur = cur[:i]
+			} else {
+				cur = ""
+			}
+			depth--
 			continue
 		}
-		next := append(append([]string(nil), cur...), seg)
-		target, isLink := r.links[foldPath(strings.Join(next, "/"))]
-		if !isLink {
-			// A file, a directory, or a name that is not in the image at all.
-			// A dangling link is ordinary and is not this function's business.
-			cur = next
-			continue
+		probe := seg
+		if cur != "" {
+			probe = cur + "/" + seg
 		}
-		*hops++
-		if *hops > maxLinkHops {
-			return cur, errLinkTooDeep
+		link := w.readlink(probe)
+		if link == "" {
+			cur, depth = probe, depth+1
+			continue // a file, a directory, or a name that is not there
 		}
-		// A link is resolved from its own directory, which is where the walk
-		// currently stands.
-		resolved, err := r.walk(cur, target, hops)
-		if err != nil {
-			return nil, err
+		// A symlink redirects: the walk stays in the directory the link sits in
+		// and resolves its target from there.
+		if path.IsAbs(link) {
+			return errLinkEscapes
 		}
-		cur = resolved
+		// The resolution state, written down so a repeat can be recognised. Only
+		// once a chain is long enough to be worth suspecting: building it means
+		// joining what is left to do, and an ordinary workspace's one- and
+		// two-hop links would pay that for nothing. A cycle grows its hop count
+		// without bound, so it always reaches this and is always caught — a
+		// period longer than the remaining budget is refused instead of
+		// accepted, which is the safe direction.
+		if hops++; hops > maxLinkHops {
+			return errLinkTooDeep
+		}
+		if hops > cycleWatchFrom {
+			state := cur + "\x00" + link + "\x00" + strings.Join(todo, "/")
+			if seen[state] {
+				return errLinkCycles
+			}
+			seen[state] = true
+		}
+		todo = append(splitPath(link), todo...)
 	}
-	return cur, nil
+	return nil
+}
+
+func splitPath(p string) []string {
+	if p == "" || p == "." {
+		return nil
+	}
+	return strings.Split(p, "/")
 }
 
 // validLinkChain refuses a symlink whose chain leaves the workspace, or which
 // this host cannot follow to the end.
-func validLinkChain(r *linkResolver, from, target string) error {
-	hops := 0
-	// The link's own directory is resolved first: a component of it may itself
-	// be a symlink, and the check has to start where a resolver would start.
-	cur, err := r.walk(nil, path.Dir(from), &hops)
-	if err == nil {
-		_, err = r.walk(cur, target, &hops)
-	}
-	switch {
+func validLinkChain(w *linkWalker, from, target string) error {
+	switch err := w.walk(from, target); {
 	case errors.Is(err, errLinkEscapes):
 		return refuse("%s points at %s, which leaves the workspace once the links on the way are "+
 			"followed; each link on its own looks like it stays", from, target)
 	case errors.Is(err, errLinkTooDeep):
-		return refuse("%s points at %s through a chain of more than %d links, which this host "+
-			"will not follow to the end and so cannot say stays inside the workspace",
+		return refuse("%s points at %s through more than %d links without repeating itself, which "+
+			"this host will not follow to the end and so cannot say stays inside the workspace",
 			from, target, maxLinkHops)
+	case errors.Is(err, errLinkBudget):
+		return refuse("this image's symlinks would take more than %d steps to check, which is more "+
+			"work than reading a workspace is worth; %s is where it gave up", maxLinkSteps, from)
+	case errors.Is(err, errLinkCycles):
+		// Contained by construction and unfollowable by anything: cat gives
+		// ELOOP, Go's EvalSymlinks gives "too many links", and Python's
+		// realpath returns the link's own path so the open gives ELOOP too. A
+		// link that reaches nothing is not work anybody loses.
+		return nil
 	}
-	return err
+	return nil
 }
 
 // extractImage writes the entries beneath root.
@@ -662,11 +746,11 @@ func extractImage(imagePath string, entries []imageEntry, root *os.Root) error {
 	}
 	defer cleanup()
 
-	// Every symlink's target is read and checked before any of them is created,
-	// and before a single file byte is written. A chain is only judgeable against
-	// the whole set — the link that makes `sub/d2` climb may be enumerated after
-	// the link that uses it — so there is no order in which a per-link check
-	// could have been enough (F18).
+	// Every symlink's target is read and given the per-link check first, then
+	// every one of them is created, and only then are the chains walked. A chain
+	// is only judgeable against the whole set — the link that makes `sub/d2`
+	// climb may be enumerated after the link that uses it — so there is no order
+	// in which a per-link check could have been enough (F18).
 	targets := map[string]string{}
 	for _, e := range sorted {
 		if e.kind != kindSymlink {
@@ -681,29 +765,40 @@ func extractImage(imagePath string, entries []imageEntry, root *os.Root) error {
 		}
 		targets[e.path] = target
 	}
-	resolver, err := newLinkResolver(targets)
-	if err != nil {
-		return err
-	}
+
+	// Created before they are judged, because the filesystem is what judges
+	// them: linkWalker asks this tree whether a component is a link rather than
+	// asking a table what its name canonicalises to, and it can only ask about
+	// links that exist. Nothing is written *through* a chain here — os.Root
+	// refuses a resolution that leaves the root — and no file contents have been
+	// written yet, so what exists between here and the check below is a
+	// staging tree of directories and links under a name this package minted,
+	// which Stage discards whole on the refusal.
 	for _, e := range sorted {
 		if e.kind != kindSymlink {
 			continue
 		}
-		if err := validLinkChain(resolver, e.path, targets[e.path]); err != nil {
+		if err := root.Symlink(targets[e.path], e.path); err != nil && !os.IsExist(err) {
+			return fmt.Errorf("create the symlink %s: %w", e.path, err)
+		}
+	}
+	steps := 0
+	walker := newLinkWalker(root.Name(), &steps)
+	for _, e := range sorted {
+		if e.kind != kindSymlink {
+			continue
+		}
+		if err := validLinkChain(walker, e.path, targets[e.path]); err != nil {
 			return err
 		}
 	}
 
 	for _, e := range sorted {
-		switch e.kind {
-		case kindFile:
-			if err := copyThrough(root, e, staged[e.path]); err != nil {
-				return err
-			}
-		case kindSymlink:
-			if err := root.Symlink(targets[e.path], e.path); err != nil && !os.IsExist(err) {
-				return fmt.Errorf("create the symlink %s: %w", e.path, err)
-			}
+		if e.kind != kindFile {
+			continue
+		}
+		if err := copyThrough(root, e, staged[e.path]); err != nil {
+			return err
 		}
 	}
 

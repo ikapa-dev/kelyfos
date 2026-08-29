@@ -190,6 +190,82 @@ func packImage(t *testing.T, src, img string) {
 	}
 }
 
+// foldsCase and foldsNormalization ask the filesystem a test's tree is on the
+// same question the extraction now asks it: are these two spellings one file?
+//
+// The answer decides what the assertion should be, because the answer decides
+// what is true. On the macOS home shared into the Lima VM — where this project's
+// workspaces live — both are yes; on /tmp beside it, both are no.
+func foldsCase(t *testing.T, dir string) bool {
+	t.Helper()
+	return sameFile(t, dir, "KelyfosProbe", "kelyfosprobe")
+}
+
+func foldsNormalization(t *testing.T, dir string) bool {
+	t.Helper()
+	return sameFile(t, dir, "caf\u00e9probe", "cafe\u0301probe")
+}
+
+func sameFile(t *testing.T, dir, written, lookedUpAs string) bool {
+	t.Helper()
+	probe := filepath.Join(dir, ".probe-"+written)
+	if err := os.WriteFile(probe, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(probe)
+	_, err := os.Lstat(filepath.Join(dir, ".probe-"+lookedUpAs))
+	return err == nil
+}
+
+// chainInAnotherSpelling builds the two-link chain that is F18's whole shape,
+// with the middle component named one way and referred to another:
+//
+//	sub/<name>  -> ..                          climbs to the tree root
+//	sub/leak    -> <spelling>/../secret.txt    which is the tree's parent, if the
+//	                                           filesystem says the two are one
+//
+// It returns the tree, and whatever the extraction said about it.
+func chainInAnotherSpelling(t *testing.T, root, name, spelling string) (string, error) {
+	t.Helper()
+	const secret = "a host file the guest was never given\n"
+	if err := os.WriteFile(filepath.Join(root, "secret.txt"), []byte(secret), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	src := mkdirT(t, filepath.Join(root, "src", "sub"))
+	if err := os.Symlink("..", filepath.Join(src, name)); err != nil {
+		t.Skipf("this filesystem will not hold the name %q: %v", name, err)
+	}
+	if err := os.Symlink(spelling+"/../secret.txt", filepath.Join(src, "leak")); err != nil {
+		t.Fatal(err)
+	}
+	img := filepath.Join(root, "ws.ext4")
+	packImage(t, filepath.Join(root, "src"), img)
+
+	// The tree's parent is `root`, which is where secret.txt is.
+	tree := mkdirT(t, filepath.Join(root, "tree"))
+	return tree, extractInto(t, img, tree)
+}
+
+// assertLandsInside follows a link the way the tools this finding is about do,
+// and requires that it reaches nothing outside the tree.
+//
+// Accepting a chain is only the right answer if that is true, so it is checked
+// rather than taken from the fact that the extraction did not complain.
+func assertLandsInside(t *testing.T, tree, link string) {
+	t.Helper()
+	realTree, err := filepath.EvalSymlinks(tree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := filepath.EvalSymlinks(link)
+	if err != nil {
+		return // dangling or looping: it reaches nothing at all, which is inside
+	}
+	if resolved != realTree && !strings.HasPrefix(resolved, realTree+string(os.PathSeparator)) {
+		t.Errorf("%s was accepted and resolves to %s, which is outside %s", link, resolved, realTree)
+	}
+}
+
 // extractInto runs the real enumeration and extraction into a fresh tree and
 // hands back whichever of the two refused, if either did.
 func extractInto(t *testing.T, img, tree string) error {
@@ -304,54 +380,72 @@ func TestF18_ASymlinkChainCannotBeLeftInTheProject(t *testing.T) {
 		}
 	})
 
-	// The same chain, spelled in a different case. This is F18's second route
-	// and it needs no hop budget at all.
+	// The same chain, spelled in a different case — and the answer is now the
+	// destination filesystem's rather than this package's.
 	//
-	// walk decides "is this component a symlink?" by looking the resolved path up
-	// in the entry set, and the set was keyed by the name exactly as the image
-	// spells it. `sub/D1` is not a key, so it read as an ordinary directory and
-	// the chain looked like it stayed inside. On a case-insensitive filesystem
-	// `sub/D1` *is* `sub/d1` and the chain leaves — and the filesystem this
-	// project's own primary platform puts the project on is case-insensitive:
-	// measured, the macOS home shared into the Lima VM folds case while /tmp on
-	// the same machine does not.
+	// This used to fold the key with strings.ToLower and refuse unconditionally.
+	// That was right on a case-insensitive filesystem and wrong on a
+	// case-sensitive one, where `sub/D1` genuinely is not `sub/d1` and the chain
+	// genuinely stays inside; and it was a list that had exactly one entry on it
+	// until the next equivalence turned up (see the normalization case below).
+	// So nothing is canonicalised any more: the links are created in the tree and
+	// the walk asks that tree what a component is.
 	//
-	// The refusal does not depend on where this test happens to run, because the
-	// fold is unconditional. That is deliberate: over-approximating "this is a
-	// symlink" makes the walk follow more and refuse more, never fewer.
+	// Which means the assertion has to ask the same question the code does.
 	t.Run("chain-climbs-out-in-a-different-case", func(t *testing.T) {
 		root := t.TempDir()
-		const secret = "a host file the guest was never given\n"
-		if err := os.WriteFile(filepath.Join(root, "secret.txt"), []byte(secret), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		src := mkdirT(t, filepath.Join(root, "src", "sub"))
-		for _, l := range []struct{ target, name string }{
-			{"..", "d1"},
-			{"D1/../secret.txt", "leak"},
-		} {
-			if err := os.Symlink(l.target, filepath.Join(src, l.name)); err != nil {
-				t.Fatal(err)
+		tree, err := chainInAnotherSpelling(t, root, "d1", "D1")
+		if err != nil {
+			if !errors.Is(err, ErrHostileImage) {
+				t.Errorf("the refusal is %v, which does not wrap ErrHostileImage", err)
 			}
+			if !foldsCase(t, root) {
+				t.Error("the chain was refused on a filesystem where D1 and d1 are two different " +
+					"names, so it cannot have escaped through one of them")
+			}
+			return
 		}
-		img := filepath.Join(root, "ws.ext4")
-		packImage(t, filepath.Join(root, "src"), img)
+		if foldsCase(t, root) {
+			got, _ := os.ReadFile(filepath.Join(tree, "sub", "leak"))
+			t.Fatalf("D1 and d1 are the same file here and the chain was accepted; sub/leak "+
+				"reads %q", got)
+		}
+		// Accepted, on a filesystem where the two spellings are two names. That
+		// is the right answer only if the link really does reach nothing outside
+		// the tree, so that is what is checked rather than assumed.
+		assertLandsInside(t, tree, filepath.Join(tree, "sub", "leak"))
+	})
 
-		tree := mkdirT(t, filepath.Join(root, "tree"))
-		err := extractInto(t, img, tree)
-		if err == nil {
-			got, readErr := os.ReadFile(filepath.Join(tree, "sub", "leak"))
-			if readErr == nil {
-				t.Fatalf("the extraction accepted the chain and sub/leak reads %q — the entry set "+
-					"was keyed by the exact spelling and the destination filesystem does not "+
-					"have to agree", got)
+	// The second equivalence, which is why this stopped enumerating them.
+	//
+	// The macOS home directory shared into the Lima VM — where this project's
+	// own workspaces live, per PLAN.html §7 — treats NFC `caf\xc3\xa9` and NFD
+	// `cafe\xcc\x81` as one file, and strings.ToLower does not equate them. So
+	// the fold that closed the case route left this one open, with the identical
+	// two-link chain. Measured on that mount and on /tmp beside it:
+	//
+	//	/Users/…  NFC vs NFD -> SAME FILE      ToLower equal? false
+	//	/tmp      NFC vs NFD -> different      ToLower equal? false
+	t.Run("chain-climbs-out-in-a-different-normalization", func(t *testing.T) {
+		root := t.TempDir()
+		const nfc, nfd = "caf\u00e9", "cafe\u0301"
+		tree, err := chainInAnotherSpelling(t, root, nfc, nfd)
+		if err != nil {
+			if !errors.Is(err, ErrHostileImage) {
+				t.Errorf("the refusal is %v, which does not wrap ErrHostileImage", err)
 			}
-			t.Fatal("the extraction accepted a chain whose middle component differs only in case " +
-				"from a symlink in the same directory")
+			if !foldsNormalization(t, root) {
+				t.Error("the chain was refused on a filesystem where the two spellings are two " +
+					"names, so it cannot have escaped through one of them")
+			}
+			return
 		}
-		if !errors.Is(err, ErrHostileImage) {
-			t.Errorf("the refusal is %v, which does not wrap ErrHostileImage", err)
+		if foldsNormalization(t, root) {
+			got, _ := os.ReadFile(filepath.Join(tree, "sub", "leak"))
+			t.Fatalf("NFC and NFD are the same file here and the chain was accepted; sub/leak "+
+				"reads %q", got)
 		}
+		assertLandsInside(t, tree, filepath.Join(tree, "sub", "leak"))
 	})
 
 	// A chain longer than the budget is refused rather than accepted, and the
@@ -410,59 +504,97 @@ func TestF18_ASymlinkChainCannotBeLeftInTheProject(t *testing.T) {
 		}
 	})
 
-	// Two symlinks whose names differ only in case, which the folded key cannot
-	// tell apart.
+	// Two symlinks whose names differ only in case are an ordinary thing to find
+	// in a Linux checkout, and were refused whole.
 	//
-	// One key holds one target, so a collision would silently drop one of them
-	// and judge every chain through the survivor — a wrong answer in the one
-	// check whose whole job is to be right about where a chain lands. They also
-	// cannot both exist where this tree is going, if that filesystem folds case.
-	t.Run("two-symlinks-differing-only-in-case-are-refused", func(t *testing.T) {
+	// Keying the entry set by a folded name made `Docs/link` and `docs/link`
+	// collide, and the refusal said they "cannot both exist where this workspace
+	// is going" — a sentence that is false on the platform such a tree comes
+	// from. strings.ToLower also maps every byte of invalid UTF-8 to U+FFFD, so
+	// any two Latin-1-named symlinks collided with no case difference at all.
+	// Both are gone with the key.
+	t.Run("two-spellings-of-one-name-are-an-ordinary-checkout", func(t *testing.T) {
 		root := t.TempDir()
-		src := mkdirT(t, filepath.Join(root, "src", "sub"))
-		if err := os.Symlink("a.txt", filepath.Join(src, "link")); err != nil {
+		src := filepath.Join(root, "src")
+		mkdirT(t, filepath.Join(src, "Docs"))
+		mkdirT(t, filepath.Join(src, "docs"))
+		if err := os.WriteFile(filepath.Join(src, "a.txt"), []byte("a\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.Symlink("b.txt", filepath.Join(src, "LINK")); err != nil {
+		if err := os.Symlink("../a.txt", filepath.Join(src, "Docs", "link")); err != nil {
 			t.Skipf("this filesystem will not hold both spellings: %v", err)
 		}
+		if err := os.Symlink("../a.txt", filepath.Join(src, "docs", "link")); err != nil {
+			t.Skipf("this filesystem will not hold both spellings: %v", err)
+		}
+		// And a pair of names that are not UTF-8 at all, which is what the fold
+		// collapsed to one key regardless of case.
+		for _, name := range []string{"\xff", "\xfe"} {
+			if err := os.Symlink("a.txt", filepath.Join(src, name)); err != nil {
+				t.Skipf("this filesystem will not hold a non-UTF-8 name: %v", err)
+			}
+		}
 		img := filepath.Join(root, "ws.ext4")
-		packImage(t, filepath.Join(root, "src"), img)
+		packImage(t, src, img)
 
 		tree := mkdirT(t, filepath.Join(root, "tree"))
-		err := extractInto(t, img, tree)
-		if err == nil {
-			t.Fatal("two symlinks differing only in case were accepted; one of them decides what " +
-				"every chain through that name resolves to and the other is silently gone")
-		}
-		if !errors.Is(err, ErrHostileImage) {
-			t.Errorf("the refusal is %v, which does not wrap ErrHostileImage", err)
+		if err := extractInto(t, img, tree); err != nil {
+			t.Fatalf("an ordinary case-sensitive checkout was refused whole: %v", err)
 		}
 	})
 
-	// A cycle exhausts the budget, so it is refused by the same one rule.
+	// A cycle is accepted, and the carve-out is on evidence rather than on
+	// tidiness.
 	//
-	// It is genuinely contained — a cycle reaches nothing, inside the tree or
-	// out — so this is the cost of having one rule instead of two, taken
-	// deliberately. A link that reaches nothing is not work anybody loses.
-	t.Run("two-link-cycle-is-refused", func(t *testing.T) {
-		root := t.TempDir()
-		src := mkdirT(t, filepath.Join(root, "src", "sub"))
-		if err := os.Symlink("c2", filepath.Join(src, "c1")); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.Symlink("c1", filepath.Join(src, "c2")); err != nil {
-			t.Fatal(err)
-		}
-		img := filepath.Join(root, "ws.ext4")
-		packImage(t, filepath.Join(root, "src"), img)
+	// The previous round refused it, on the reasoning that one rule is simpler
+	// than two. That reasoning was made on the premise that a cycle might be
+	// followable somewhere, and it is not — measured against the same population
+	// this finding is about: `cat` gives ELOOP, Go's filepath.EvalSymlinks gives
+	// "too many links", and Python's realpath, the one resolver with no hop cap
+	// at all, has cycle detection and returns the link's own path so the open
+	// after it gives ELOOP too. Nothing can follow a cycle anywhere, let alone
+	// out of the tree.
+	//
+	// So refusing one costs a whole session for a link that reaches nothing, and
+	// the two false refusals below are what that looked like. The carve-out is
+	// only safe because a cycle is *detected* — the walk is a deterministic
+	// function of its own state, so a repeated state is a loop with certainty —
+	// rather than inferred from having run out of budget.
+	t.Run("a-cycle-is-accepted-and-reaches-nothing", func(t *testing.T) {
+		for _, c := range []struct {
+			name  string
+			links map[string]string
+		}{
+			{"one-link-self-reference", map[string]string{"loop": "loop"}},
+			{"two-link-cycle", map[string]string{"c1": "c2", "c2": "c1"}},
+		} {
+			t.Run(c.name, func(t *testing.T) {
+				root := t.TempDir()
+				src := mkdirT(t, filepath.Join(root, "src", "sub"))
+				for name, target := range c.links {
+					if err := os.Symlink(target, filepath.Join(src, name)); err != nil {
+						t.Fatal(err)
+					}
+				}
+				img := filepath.Join(root, "ws.ext4")
+				packImage(t, filepath.Join(root, "src"), img)
 
-		tree := mkdirT(t, filepath.Join(root, "tree"))
-		if err := extractInto(t, img, tree); err == nil {
-			t.Fatal("a symlink cycle was accepted; it exhausts the hop budget, and exhausting the " +
-				"budget is a refusal")
-		} else if !errors.Is(err, ErrHostileImage) {
-			t.Errorf("the refusal is %v, which does not wrap ErrHostileImage", err)
+				tree := mkdirT(t, filepath.Join(root, "tree"))
+				if err := extractInto(t, img, tree); err != nil {
+					t.Fatalf("a symlink that reaches nothing cost the whole image: %v", err)
+				}
+				for name, target := range c.links {
+					got, err := os.Readlink(filepath.Join(tree, "sub", name))
+					if err != nil || got != target {
+						t.Errorf("sub/%s came back as %q, %v", name, got, err)
+					}
+					// And it reaches nothing, which is the whole reason it is
+					// safe to keep.
+					if _, err := os.ReadFile(filepath.Join(tree, "sub", name)); err == nil {
+						t.Errorf("sub/%s resolved to something", name)
+					}
+				}
+			})
 		}
 	})
 
@@ -1306,4 +1438,72 @@ func TestF17_BothSizeComparisonsEarnTheirPlace(t *testing.T) {
 				"was accepted: %q", len(got), got)
 		}
 	})
+}
+
+// The walk bounds its own work, because every part of it is guest-chosen.
+//
+// How many symlinks there are, how many segments each target has, and how many
+// hops each chain takes are all decided by the image. Multiplied out at this
+// package's own entry ceiling that is hours of host CPU for one `kelyfos diff`,
+// so the budget is one shared allowance for the whole image rather than a
+// per-link one that multiplies by the number of links.
+func TestF18_TheLinkWalkBoundsItsOwnWork(t *testing.T) {
+	tree := t.TempDir()
+	if err := os.Symlink("a/b/c/d", filepath.Join(tree, "l")); err != nil {
+		t.Fatal(err)
+	}
+
+	fresh := 0
+	if err := validLinkChain(newLinkWalker(tree, &fresh), "l", "a/b/c/d"); err != nil {
+		t.Fatalf("an ordinary link cost the image: %v", err)
+	}
+	if fresh == 0 {
+		t.Error("the walk reported no work at all, so the budget counts nothing")
+	}
+
+	// The same link, arriving when the image has already spent its allowance.
+	spent := maxLinkSteps - 1
+	err := validLinkChain(newLinkWalker(tree, &spent), "l", "a/b/c/d")
+	if err == nil {
+		t.Fatal("the walk carried on past the budget; the work is guest-chosen and this is the " +
+			"only thing bounding it")
+	}
+	if !errors.Is(err, ErrHostileImage) {
+		t.Errorf("the refusal is %v, which does not wrap ErrHostileImage", err)
+	}
+
+	// A pnpm-shaped tree is what the budget has to leave room for: a store of
+	// packages, every dependency a link into it, and a .bin full of links into
+	// those. It must cost a rounding error of the allowance.
+	real := t.TempDir()
+	store := mkdirT(t, filepath.Join(real, "node_modules", ".pnpm"))
+	bin := mkdirT(t, filepath.Join(real, "node_modules", ".bin"))
+	for i := range 300 {
+		pkg := fmt.Sprintf("pkg%d", i)
+		mkdirT(t, filepath.Join(store, pkg))
+		if err := os.Symlink("../.pnpm/"+pkg,
+			filepath.Join(real, "node_modules", pkg)); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink("../"+pkg+"/cli.js", filepath.Join(bin, pkg)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	used := 0
+	w := newLinkWalker(real, &used)
+	for i := range 300 {
+		pkg := fmt.Sprintf("pkg%d", i)
+		if err := validLinkChain(w, "node_modules/"+pkg, "../.pnpm/"+pkg); err != nil {
+			t.Fatalf("a pnpm-shaped workspace was refused: %v", err)
+		}
+		if err := validLinkChain(w, "node_modules/.bin/"+pkg, "../"+pkg+"/cli.js"); err != nil {
+			t.Fatalf("a pnpm-shaped workspace was refused: %v", err)
+		}
+	}
+	t.Logf("600 links of a pnpm-shaped tree cost %d steps of %d", used, maxLinkSteps)
+	if used > maxLinkSteps/64 {
+		t.Errorf("600 links cost %d steps, which is %d%% of the whole image's allowance — the "+
+			"budget does not leave room for an ordinary workspace",
+			used, used*100/maxLinkSteps)
+	}
 }
