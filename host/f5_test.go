@@ -229,3 +229,62 @@ func TestF5_EveryHomeScopedClientInTheCatalogIsOwnerOnly(t *testing.T) {
 			sawHome, sawProject)
 	}
 }
+
+// P7-17/F5, second review round, two corrections.
+//
+// 1. writeConfigAtomic fsynced the FILE and not the containing DIRECTORY, so a
+//    power cut could lose the rename. The stated property still held — the old
+//    file survives — but the comment claimed durability the code did not
+//    provide, and a comment that overstates is how the next reader stops
+//    checking.
+// 2. underHome was a textual prefix, so a project-local `.cursor` that is a
+//    symlink into $HOME got the project mode rather than 0600. A path rule that
+//    a symlink walks around is the same defect F18 found in the extractor and
+//    F21 fixed in the workspace and plugin scopes.
+
+func TestF5_APathSymlinkedIntoHomeIsTreatedAsBeingInHome(t *testing.T) {
+	home := t.TempDir()
+	project := t.TempDir()
+
+	// The project's .cursor is a symlink into the user's home, which is how
+	// somebody shares one MCP configuration across checkouts.
+	real := filepath.Join(home, "shared-cursor")
+	if err := os.MkdirAll(real, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(project, ".cursor")
+	if err := os.Symlink(real, link); err != nil {
+		t.Skipf("symlinks are not available here: %v", err)
+	}
+
+	path := filepath.Join(link, "mcp.json")
+	if !underHome(path, home) {
+		t.Fatal("a path that resolves into $HOME was not treated as being under it")
+	}
+
+	c, _ := findClient("cursor")
+	if err := writeTo(c, path, home, f5Cmd()); err != nil {
+		t.Fatal(err)
+	}
+	if got := f5Mode(t, path); got != 0o600 {
+		t.Errorf("a config written through a symlink into $HOME is %04o, want 0600", got)
+	}
+}
+
+// And the ordinary cases still decide the ordinary way: a real project path is
+// project-local, a real home path is home.
+func TestF5_UnderHomeStillAnswersTheSimpleCases(t *testing.T) {
+	home := t.TempDir()
+	project := t.TempDir()
+	if underHome(filepath.Join(project, ".mcp.json"), home) {
+		t.Error("a project-local path was treated as being under $HOME")
+	}
+	if !underHome(filepath.Join(home, ".codex", "config.toml"), home) {
+		t.Error("a path under $HOME was not treated as being under it")
+	}
+	// A sibling directory whose name merely starts with the home path is not
+	// under it — the textual-prefix trap in the other direction.
+	if underHome(home+"-other/x", home) {
+		t.Error("a sibling directory sharing the home prefix was treated as being under $HOME")
+	}
+}

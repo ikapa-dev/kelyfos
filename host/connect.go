@@ -229,7 +229,16 @@ func underHome(path, home string) bool {
 	if home == "" {
 		return false
 	}
-	return path == home || strings.HasPrefix(path, home+string(filepath.Separator))
+	// Resolved on both sides before the comparison (P7-17/F5, second review
+	// round). A textual prefix is walked around by a symlink — a project's
+	// .cursor pointing into $HOME, which is how somebody shares one MCP
+	// configuration across checkouts — and the file that lands there is the
+	// one that grows an API key. It is the same lesson F18 taught the
+	// extractor and F21's two scope rules already apply.
+	//
+	// The leaf need not exist yet, so the deepest ancestor that does is what
+	// gets resolved.
+	return insideTree(home, resolvePath(path, home))
 }
 
 // configModes is the file and directory mode for a path, before the existing
@@ -314,7 +323,21 @@ func writeConfigAtomic(path string, body []byte, mode os.FileMode) error {
 	if err := os.Chmod(tmp.Name(), mode); err != nil {
 		return err
 	}
-	return os.Rename(tmp.Name(), path)
+	if err := os.Rename(tmp.Name(), path); err != nil {
+		return err
+	}
+	// And the DIRECTORY, because the rename is a directory operation and
+	// fsyncing the file does not commit it (P7-17/F5, second review round).
+	// Without this the comment above claimed a durability the code did not
+	// provide: the old file survives either way, so nothing was ever lost —
+	// but a comment that overstates is how the next reader stops checking.
+	// Best-effort: some filesystems refuse to sync a directory, and failing a
+	// write that has already landed would be the worse answer.
+	if dir, err := os.Open(filepath.Dir(path)); err == nil {
+		_ = dir.Sync()
+		_ = dir.Close()
+	}
+	return nil
 }
 
 func removeFrom(c client, path, home string) error {
