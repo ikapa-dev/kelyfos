@@ -2,6 +2,8 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -373,6 +375,96 @@ func TestARefusedSyncBackKeepsTheWorkspaceImage(t *testing.T) {
 		}
 		if !strings.Contains(out, "nothing was removed") {
 			t.Errorf("the refusal does not say so:\n%s", out)
+		}
+	})
+}
+
+// `kelyfos diff` reads a disk the guest is still writing to, and the extraction
+// refuses an image that does not agree with itself.
+//
+// Those two facts together made F17's fix a regression on the most-used
+// read-only command: enumeration and dumping are separate debugfs processes, so
+// any file the agent appends to between them has a recorded size that no longer
+// matches, and the person got "the workspace image contains an entry this host
+// will not use … the dump did not finish, so nothing from this image is written
+// back" on a command whose own help says it shows what has reached the disk.
+// Before this branch they got a slightly stale file.
+//
+// Nothing in the extraction is softened for it — the same code writes the
+// workspace back at teardown, and a read-only mode would be a second, weaker
+// set of rules for the same bytes. It reads again instead.
+func TestDiffReadsAgainWhenTheWorkspaceIsBeingWrittenTo(t *testing.T) {
+	hostile := fmt.Errorf("%w: work.txt came out of the image as 40 bytes and its record says 32",
+		sandbox.ErrHostileImage)
+
+	t.Run("a-transient-disagreement-is-read-again", func(t *testing.T) {
+		calls := 0
+		_, err := stageTwice(func() (*sandbox.Staged, error) {
+			calls++
+			if calls == 1 {
+				return nil, hostile
+			}
+			return nil, nil
+		})
+		if err != nil {
+			t.Fatalf("a file that grew between the two passes was reported as a hostile image: %v", err)
+		}
+		if calls != 2 {
+			t.Errorf("stage was called %d time(s), want 2", calls)
+		}
+	})
+
+	t.Run("a-clean-read-is-not-repeated", func(t *testing.T) {
+		calls := 0
+		if _, err := stageTwice(func() (*sandbox.Staged, error) {
+			calls++
+			return nil, nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if calls != 1 {
+			t.Errorf("stage was called %d time(s) for an image that read cleanly, want 1", calls)
+		}
+	})
+
+	t.Run("twice-is-still-a-refusal-and-says-why", func(t *testing.T) {
+		calls := 0
+		_, err := stageTwice(func() (*sandbox.Staged, error) {
+			calls++
+			return nil, hostile
+		})
+		if err == nil {
+			t.Fatal("an image that contradicted itself twice was accepted")
+		}
+		if calls != 2 {
+			t.Errorf("stage was called %d time(s), want 2", calls)
+		}
+		if !errors.Is(err, sandbox.ErrHostileImage) {
+			t.Errorf("the refusal stopped wrapping ErrHostileImage: %v", err)
+		}
+		// Both readings, because the command cannot tell them apart and the
+		// person can.
+		for _, want := range []string{"still writing to", "Try again", "the image itself"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("the refusal does not mention %q:\n%v", want, err)
+			}
+		}
+	})
+
+	// A refusal that is not about the image — a missing file, a bad manifest —
+	// is passed straight back rather than retried and reworded.
+	t.Run("an-unrelated-failure-is-not-retried", func(t *testing.T) {
+		calls := 0
+		other := errors.New("no such file or directory")
+		_, err := stageTwice(func() (*sandbox.Staged, error) {
+			calls++
+			return nil, other
+		})
+		if !errors.Is(err, other) {
+			t.Errorf("the error came back as %v", err)
+		}
+		if calls != 1 {
+			t.Errorf("stage was called %d time(s) for an unrelated failure, want 1", calls)
 		}
 	})
 }

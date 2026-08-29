@@ -49,7 +49,7 @@ and is not here yet either.
 			"    give it one with:  kelyfos run --workspace ./dir", st.ID)
 	}
 	ws := sandbox.AdoptWorkspace(st.WorkspaceHost, st.Workspace)
-	staged, err := ws.Stage()
+	staged, err := stageTwice(ws.Stage)
 	if err != nil {
 		return err
 	}
@@ -63,6 +63,45 @@ and is not here yet either.
 	fmt.Print(sandbox.FormatChanges(changes))
 	fmt.Printf("\n%d added, %d modified, %d deleted\n", added, modified, deleted)
 	return nil
+}
+
+// stageTwice extracts a workspace image that is still being written to.
+//
+// `kelyfos diff` is the one caller of Stage whose source is a *live* disk — its
+// own help says so: "This reads the workspace image, so it shows what has
+// reached the disk." Enumeration and dumping are two separate debugfs
+// processes, so a file the agent appends to between them is read at two
+// different lengths, and the extraction refuses an image that does not agree
+// with itself. It is right to: that is exactly the check that stops a truncated
+// file being written over somebody's project (F17).
+//
+// So this reads again rather than believing less. Nothing in the extraction is
+// softened for this caller, because the same code writes the workspace back at
+// teardown and a read-only mode would be a second, weaker set of rules for the
+// same bytes.
+//
+// Twice, and then it says what is actually happening. A second disagreement is
+// still reported as a refusal — an image that contradicts itself twice running
+// is worth looking at — but the sentence names the likely cause instead of
+// handing somebody the hostile-image wording for a command that reads a disk
+// being written to.
+func stageTwice(stage func() (*sandbox.Staged, error)) (*sandbox.Staged, error) {
+	staged, err := stage()
+	if err == nil || !errors.Is(err, sandbox.ErrHostileImage) {
+		return staged, err
+	}
+	staged, retryErr := stage()
+	if retryErr == nil {
+		return staged, nil
+	}
+	if !errors.Is(retryErr, sandbox.ErrHostileImage) {
+		return nil, retryErr
+	}
+	return nil, fmt.Errorf("the workspace image did not read consistently, twice: %w\n"+
+		"    This command reads a disk the guest is still writing to, and a file that grew\n"+
+		"    between the two passes over the image reads exactly like this. Try again.\n"+
+		"    If the sandbox is idle, the image itself is the problem and the same refusal\n"+
+		"    will meet the write-back when it stops.", retryErr)
 }
 
 // reviewOutcome is what a person decided about a sync-back.
