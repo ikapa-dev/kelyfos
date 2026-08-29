@@ -28,7 +28,6 @@ import (
 	"mime"
 	"net"
 	"net/http"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -71,6 +70,14 @@ type Policy struct {
 	Version string
 	// PolicyPath is the file the above came from, empty when there was none.
 	PolicyPath string
+
+	// Token is the bearer token every route requires. Empty means the shim
+	// authenticates nobody, which since P7-17/F2 happens only when the
+	// operator asked for it with --insecure-no-token.
+	//
+	// The CLI decides it — from KELYFOS_SHIM_TOKEN, or minted — because the
+	// CLI is what can print it. This package only compares it.
+	Token string
 
 	// Addr is the literal address the listener bound to — net.Listener's own
 	// Addr().String(), not the string the operator typed, so `--addr :0` and
@@ -148,19 +155,19 @@ func New(p Policy) *Server {
 // request it already has.
 const MaxSandboxes = 16
 
-// tokenEnv names the credential the shim requires when it is set.
+// TokenEnv names the credential the shim requires, when the operator supplies
+// one rather than letting the CLI mint one.
 //
-// Unauthenticated is the documented default and stays the default: the shim is
-// a tool for a machine you already trust, and turning it into a service with
-// mandatory credentials would be answering a question nobody asked. What was
-// missing is the choice — there was no way to require one at all. Set it and
-// every route asks; leave it and the shim says out loud, once, what it is.
-const tokenEnv = "KELYFOS_SHIM_TOKEN"
-
-// TokenEnv is tokenEnv for the CLI, which has to decide before it binds
-// whether a credential is set (host/shim.go's shimBindNeedsAToken). Exported
-// so there is one spelling of the variable's name rather than two.
-const TokenEnv = tokenEnv
+// Unauthenticated was the documented default until P7-17/F2 and is not any
+// more. The argument for it — "the shim is a tool for a machine you already
+// trust" — was answering the wrong question: localhost plus no authentication
+// is also the configuration a web page can reach, and while the browser checks
+// in refuseBrowser close that structurally, every other process on the machine
+// could still boot microVMs and write files into a live sandbox for the price
+// of knowing the port. A token is now minted per process when this variable is
+// unset, and running without one takes --insecure-no-token, because an opt-out
+// is a choice the operator can see and an opt-in is a step nobody takes.
+const TokenEnv = "KELYFOS_SHIM_TOKEN"
 
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
@@ -189,7 +196,7 @@ func (s *Server) Handler() http.Handler {
 // compared carelessly is the kind of thing this repository spends a whole
 // document refusing to do elsewhere.
 func (s *Server) authenticated(next http.Handler) http.Handler {
-	want := os.Getenv(tokenEnv)
+	want := s.Policy.Token
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if why := s.refuseBrowser(r); why != "" {
 			writeErr(w, http.StatusForbidden, why)
@@ -202,7 +209,7 @@ func (s *Server) authenticated(next http.Handler) http.Handler {
 		got, _ := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
 		if subtle.ConstantTimeCompare([]byte(got), []byte(want)) != 1 {
 			writeErr(w, http.StatusUnauthorized,
-				"this shim requires a bearer token; it was started with "+tokenEnv+" set")
+				"this shim requires a bearer token on every route; the one it minted was printed when it started")
 			return
 		}
 		next.ServeHTTP(w, r)

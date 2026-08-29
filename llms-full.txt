@@ -1452,19 +1452,25 @@ ownership rule on `sudoers`, and the answer here is the same shape:
   `kelyfos team up`, `kelyfos sessions resume` and `kelyfos snapshot restore`
   all print it.
 
-Two parts of the original finding are **not** implemented, and are recorded here
-rather than left to be rediscovered. A `[[plugin]] path` outside the file's tree
-is *not* refused: there is no command-line flag for it, so the escape hatch that
-makes the workspace rule safe does not exist, and refusing it outright would
-break a shared plugin directory with no way out — it is named in the origin block
-instead. And a secret declared in the file does *not* additionally require
-`--secret NAME` on the command line: that is the documented, primary way to
-declare one, and requiring it twice on every invocation is a different product.
-The per-user trust record the finding suggests as the alternative — path plus
-content hash, added once explicitly — is a feature rather than a fix, and would
-need its own decision. Until then, the ownership rule covers the "somebody else
-left it there" case and the origin block covers the "you cloned it" case by
-saying what it is about to do.
+- **A `[[plugin]] path` outside the file's tree is refused** unless
+  `--plugin-path` names the same directory. That directory is packed into a
+  read-only device and mounted inside the guest, so everything in it is readable
+  by whatever the agent runs — a discovered `kelyfos.toml` naming
+  `plugin.path = "/home/you/.ssh"` hands the agent a key. This was stopped on
+  the first pass because no flag existed to approve one, which would have made
+  the rule a wall with no door; the flag exists now, on `kelyfos run` and on
+  `kelyfos serve-mcp`, and the check is inside `packPlugins` so both doors get it
+  rather than whichever one somebody remembered.
+
+One part of the original finding is **not** implemented, and is recorded here
+rather than left to be rediscovered as a new finding. A secret declared in the
+file does *not* additionally require `--secret NAME` on the command line: that
+is the documented, primary way to declare one, and requiring it twice on every
+invocation is a different product. The per-user trust record the finding
+suggests as the alternative — path plus content hash, added once explicitly — is
+a feature rather than a fix and has its own task. Until then, the ownership rule
+covers the "somebody else left it there" case and the origin block covers the
+"you cloned it" case by saying what it is about to do before it does it.
 
 ### The KelyfOS CLI itself
 The two sections above describe what stands around Firecracker. Nothing stands
@@ -1525,19 +1531,35 @@ confidentiality or integrity boundary; they bound consumption and nothing more.
 And nothing protects against a guest wedging its own kernel, which remains its
 own problem and not the host's.
 
-### The shim is a local port, unauthenticated by default
+### The shim is a local port, and since P7-17/F2 it requires a credential
 `kelyfos shim` serves an E2B-compatible REST subset, by default on
-`127.0.0.1:3000`, and by default it checks nothing: no key, no account, no
-authorisation. Setting `KELYFOS_SHIM_TOKEN` makes every route ask for that
-bearer token, compared in constant time, but it is opt-in and unauthenticated
-stays the default. While a shim without one is running, **any process on that
+`127.0.0.1:3000`. It used to check nothing — no key, no account, no
+authorisation — with `KELYFOS_SHIM_TOKEN` as an opt-in nobody opted in to. It
+now mints 256 bits from `crypto/rand` at start when that variable is unset,
+prints them once with the `export` line, and requires
+`Authorization: Bearer <token>` on every route, compared in constant time.
+Running with no credential takes `--insecure-no-token`, because an opt-out is a
+choice the operator can see.
+
+The residual is what that flag buys, and it is unchanged for anyone who uses
+it. While a shim with `--insecure-no-token` is running, **any process on that
 machine that can reach the port can boot microVMs, list them, kill them, read
 arbitrary paths inside a running guest, and write to any path that guest's
 profile makes writable** — writes go through a command in the guest, so they are
 confined like anything else the supervisor spawns, and reads are not, because a
 confined child is granted read beneath `/`. That is a local privilege surface
-the rest of the CLI does not have, and without the token `--addr` is the only
-thing between it and the network.
+the rest of the CLI does not have, and with `--insecure-no-token` the `--addr`
+bind is the only thing between it and the network — which is why an off-loopback
+bind without a token is refused outright.
+
+**One client cannot use the token: the E2B Python SDK.** Its control plane sends
+`X-API-KEY` and its file routes send `Authorization: Basic base64("<user>:")`
+derived from the sandbox user (`e2b` 2.45.1, `api/__init__.py:243` and
+`envd/utils.py:44`); neither is a bearer token and neither is settable. Driving
+this shim with that SDK therefore means `--insecure-no-token` on loopback, and
+`docs/cookbook.md`'s recipe says so where somebody will read it. This is stated
+here rather than left in the code because it is the one place the flipped
+default does not reach.
 
 **A web page is not one of those processes, and used to be** (P7-17/F2). This
 paragraph said "any process on that machine" and never named a browser, which
@@ -7420,9 +7442,12 @@ export E2B_API_KEY=e2b_0000000000000000000000000000000000000000
 export E2B_API_URL=http://127.0.0.1:3000
 ```
 
+…and start the shim with `--insecure-no-token`, because the SDK cannot carry the
+token the shim otherwise requires (see below).
+
 The key is not checked by anything — the shim has no accounts and no billing —
-but the SDK validates its *shape* client-side before sending it anywhere, so it
-has to look like an E2B key.
+but the SDK validates its *shape* client-side before sending it anywhere
+(`\Ae2b_[0-9a-f]+\Z`), so it has to look like an E2B key.
 
 `E2B_API_URL` is the variable to use, and it is the one the SDK's connection
 config consults first. **`E2B_DOMAIN` is not a substitute**: it is a *domain*
@@ -7479,11 +7504,46 @@ and `session.end` when it is killed. `kelyfos log --list` shows them and
 `kelyfos log --verify` checks the chain, exactly as for a sandbox `kelyfos run`
 started.
 
-**By default the shim does not authenticate anybody.** While it is running, any
-process on the machine that can reach its port can boot sandboxes, kill them, and
-read and write files inside them. That is a property of being an
-unauthenticated local API, not an oversight, and
-[`docs/threat-model.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/threat-model.md) says so.
+**The shim requires a credential, and mints one if you do not.** When
+`KELYFOS_SHIM_TOKEN` is unset it generates 256 bits from `crypto/rand` at start
+and prints them once, with the `export` line and a `curl` line:
+
+```
+kelyfos E2B shim listening on http://127.0.0.1:3000
+  token: 9f3c…  (64 hex characters)
+    minted for this process and stored nowhere; required on every route
+    export KELYFOS_SHIM_TOKEN=9f3c…
+    curl -H 'Authorization: Bearer 9f3c…' http://127.0.0.1:3000/health
+```
+
+Every route then requires `Authorization: Bearer <token>`, compared in constant
+time, and answers `401` without it. Set `KELYFOS_SHIM_TOKEN` yourself to choose
+the value instead — it is then not echoed back, because it is already in your
+environment.
+
+**Running with no credential takes `--insecure-no-token`.** While a shim like
+that is running, any process on the machine that can reach its port can boot
+sandboxes, kill them, and read and write files inside them. That was the
+default until v1.1 and is not any more: the argument for it — a tool for a
+machine you already trust — answered the wrong question, since an opt-in
+credential is a step nobody takes. An opt-out is a choice you can see.
+[`docs/threat-model.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/threat-model.md) has the residual.
+
+**The E2B SDK cannot carry this shim's token.** Read from the SDK's own source
+(`e2b` 2.45.1), because this is exactly the kind of claim that goes stale:
+
+| What | Header it sends | Where |
+| --- | --- | --- |
+| Control plane (`/sandboxes`) | `X-API-KEY: <E2B_API_KEY>`, no prefix | `e2b/api/__init__.py:243` |
+| File routes (`/files`) | `Authorization: Basic base64("<user>:")` — the sandbox *user* | `e2b/envd/utils.py:44` |
+
+Neither is a bearer token, and the file routes' `Authorization` header is
+derived from the sandbox user rather than from anything you can set. So a
+token-required shim answers `401` to `sbx.files.write()`. To drive this shim
+with the Python SDK, start it with `--insecure-no-token` on loopback — which is
+what `docs/cookbook.md`'s recipe does, and it says why in the recipe. Anything
+that is not the SDK — `curl`, your own client, `dev/accept-shim.sh` — sends the
+bearer token and needs no flag.
 
 **A web page is not one of those processes.** Localhost plus no authentication is
 the exact configuration a page you visit can reach, and `POST /files` is a
@@ -7515,12 +7575,6 @@ one — after the bind, so `--addr :0` and `--addr localhost:3000` are resolved
 first — and stops with a message naming the address and `KELYFOS_SHIM_TOKEN`.
 A loopback bind, which is the default and every setup on this page, is
 unchanged.
-
-**Set `KELYFOS_SHIM_TOKEN` and it does.** Every route then requires
-`Authorization: Bearer <token>`, compared in constant time, and answers `401`
-without it. The default is unchanged because the shim is a developer's stand-in
-for a hosted API on a machine you already trust; what was missing until v1.0 was
-the *choice*, since there was no way to require a credential at all.
 
 **And there is a ceiling on how many sandboxes it will hold: 16.** Each one is a
 microVM — memory, a disk image, a TAP device, a process — and the policy carried
@@ -7583,7 +7637,7 @@ description: complete recipes, each one a script CI runs on a real machine
 
 # KelyfOS cookbook
 
-Twenty-one recipes, each one complete, each one runnable as it stands.
+Twenty-two recipes, each one complete, each one runnable as it stands.
 
 These are not illustrations. `bash dev/cookbook.sh` extracts every script below
 and runs it on a real machine. Every commit checks that each recipe still
@@ -8179,11 +8233,25 @@ a published standard rather than one product's internal API.
 
 A shim sandbox is a sandbox like any other: the project's `kelyfos.toml` caps
 it, and it writes its own flight recorder — `kelyfos log --list` will show the
-one this recipe creates. By default the shim authenticates nobody, so treat the
-port the way you would any unauthenticated local API. Start it with
-`KELYFOS_SHIM_TOKEN` set and every route requires a matching
-`Authorization: Bearer <token>`, compared in constant time, and answers `401`
-without one.
+one this recipe creates.
+
+**The shim requires a credential.** It mints a 256-bit token at start, prints it
+once with an `export` line, and every route then requires
+`Authorization: Bearer <token>`, compared in constant time, answering `401`
+without one. Set `KELYFOS_SHIM_TOKEN` to supply your own instead. A web page
+cannot reach it either way: `Origin`, `Sec-Fetch-Site` and a `Host` that does
+not name the bound address are all refused before the token is even looked at.
+
+**The E2B SDK cannot carry that token**, which is why the recipe below passes
+`--insecure-no-token`. Read from the SDK's own source (`e2b` 2.45.1): the
+control plane sends `X-API-KEY` with no `Bearer` prefix
+(`e2b/api/__init__.py:243`), and every file route sends
+`Authorization: Basic base64("<user>:")` — the *sandbox user*, not a key
+(`e2b/envd/utils.py:44`). Neither is a bearer token and neither is settable, so
+a token-required shim answers `401` to `sbx.files.write`. The recipe is
+therefore a loopback demonstration on a machine you control; anything else
+should use the token, and `dev/accept-shim.sh` drives the whole REST surface
+with one.
 
 <!-- recipe: e2b-shim -->
 
@@ -8196,7 +8264,15 @@ cd "$work"
 # their SDK can point at a self-hosted KelyfOS box. It is a subset on purpose:
 # sandboxes and files work, commands do not, because the SDK runs those over
 # Connect RPC with protobuf rather than REST. Use `kelyfos mcp` for commands.
-kelyfos shim --addr 127.0.0.1:3000 --image dev >shim.log 2>&1 &
+# --insecure-no-token because this recipe drives the real E2B SDK, and that SDK
+# cannot carry this shim's token: its control plane sends X-API-KEY and its file
+# routes send `Authorization: Basic <sandbox user>`, neither of which is a
+# bearer token (e2b 2.45.1, api/__init__.py:243 and envd/utils.py:44). Without
+# the flag the shim mints one and every route answers 401. On loopback, on a
+# machine you control, that is the trade this recipe makes on purpose — and the
+# cross-site defences are unaffected by the flag, so no web page can reach it
+# regardless.
+kelyfos shim --addr 127.0.0.1:3000 --image dev --insecure-no-token >shim.log 2>&1 &
 shim=$!
 trap 'kill $shim 2>/dev/null; wait $shim 2>/dev/null; rm -rf "$work"' EXIT
 for _ in $(seq 1 100); do
@@ -8209,8 +8285,10 @@ echo "the shim is up"
 python3 -m venv .venv
 ./.venv/bin/pip install --quiet e2b
 
-# The key is never checked — the shim has no accounts and no billing — but the
-# SDK validates its shape before sending it anywhere, so it has to look like one.
+# The key is never checked — the shim has no accounts and no billing, and this
+# one is running with --insecure-no-token — but the SDK validates its shape
+# client-side before sending it anywhere (`\Ae2b_[0-9a-f]+\Z`), so it has to
+# look like one.
 export E2B_API_KEY=e2b_0000000000000000000000000000000000000000
 export E2B_API_URL=http://127.0.0.1:3000
 export E2B_SANDBOX_URL=http://127.0.0.1:3000
@@ -9011,7 +9089,96 @@ echo "diff showed A/M/D; --review left the directory alone and diverted the resu
 
 ---
 
-## 14. Look at the web app the agent is building
+## 14. Approve a plugin that lives outside the project
+
+A `[[plugin]] path` is a **host** directory. It is packed into a read-only
+device and mounted inside the guest, so everything in it is readable by whatever
+the agent runs — a `kelyfos.toml` naming `/home/you/.ssh` there hands the agent
+a key. Since v1.1 a path outside the policy file's own directory tree is refused
+unless you name it on the command line with `--plugin-path`, which is the same
+rule `workspace` gets and for the same reason: the file describes its own
+project, and reaching past it is your decision rather than the file's.
+
+Nothing changes for the common case — a plugin under the project, as in §11,
+needs no flag. This recipe is the other case: one shared plugin directory beside
+several projects.
+
+<!-- recipe: plugin-path -->
+
+```bash
+set -euo pipefail
+work="$(mktemp -d)"
+trap 'rm -rf "$work"' EXIT
+cd "$work"
+
+# The plugin lives beside the project rather than inside it, which is the whole
+# point of the recipe: one copy, several projects.
+mkdir -p shared/demo project
+cat > shared/demo/server.py <<'PLUGIN'
+import json, sys
+
+TOOLS = [{"name": "echo", "description": "Return the text it was given, prefixed.",
+          "inputSchema": {"type": "object",
+                          "properties": {"text": {"type": "string"}},
+                          "required": ["text"]}}]
+
+def answer(rid, value):
+    sys.stdout.write(json.dumps({"jsonrpc": "2.0", "id": rid, "result": value}) + "\n")
+    sys.stdout.flush()
+
+for line in sys.stdin:
+    msg = json.loads(line)
+    rid = msg.get("id")
+    if rid is None:
+        continue
+    if msg["method"] == "initialize":
+        answer(rid, {"protocolVersion": "2025-11-25", "capabilities": {"tools": {}},
+                     "serverInfo": {"name": "demo", "version": "1.0.0"}})
+    elif msg["method"] == "tools/list":
+        answer(rid, {"tools": TOOLS})
+    elif msg["method"] == "tools/call":
+        args = msg["params"].get("arguments") or {}
+        answer(rid, {"content": [{"type": "text", "text": "demo says: " + args["text"]}]})
+PLUGIN
+
+cd project
+cat > kelyfos.toml <<TOML
+[sandbox]
+image = "dev"
+
+[resources]
+cpus = 1
+mem  = "512M"
+
+[[plugin]]
+name    = "demo"
+path    = "$work/shared/demo"
+command = "python3"
+args    = ["server.py"]
+TOML
+
+# Without the flag it is refused, before anything boots, naming the path and
+# the flag that approves it.
+if kelyfos run -- true >refused.log 2>&1; then
+  echo "expected the out-of-tree plugin path to be refused"; cat refused.log; exit 1
+fi
+grep -q -- "--plugin-path" refused.log
+grep -q "outside" refused.log
+echo "refused, and said how to approve it:"
+sed -n '1,2p' refused.log
+
+# With it, the same run boots and the plugin's tools are advertised. The flag is
+# the operator's acknowledgement; nothing in the file can add to it.
+kelyfos run --plugin-path "$work/shared/demo" -- \
+  sh -c 'true' 2>&1 | tee approved.log
+grep -q "plugin demo" approved.log
+
+echo "the shared plugin directory was approved once, on the command line"
+```
+
+---
+
+## 15. Look at the web app the agent is building
 
 `-p` carries a port on your machine to a port inside the sandbox. It does not
 start anything: something in there has to be listening, and starting a
@@ -9058,7 +9225,7 @@ echo "reached a server inside the sandbox without touching the firewall"
 
 ---
 
-## 15. See a team's topology before booting it, and confirm the running team draws the same one
+## 16. See a team's topology before booting it, and confirm the running team draws the same one
 
 `kelyfos team graph` reads `kelyfos.toml` and draws the team it declares —
 agents, edges, domains, secrets and store rules — with **nothing booted**: a
@@ -9150,7 +9317,7 @@ kelyfos team down
 
 ---
 
-## 16. Keep the record, erase what it said
+## 17. Keep the record, erase what it said
 
 A retention floor and a deletion request pull in opposite directions on the
 same file until the record separates two claims: that a session happened,
@@ -9221,7 +9388,7 @@ grep -o '"type":"session.erasure"[^}]*}' "$record"
 
 ---
 
-## 17. Pipe a team's roster, its topology and its digest as JSON
+## 18. Pipe a team's roster, its topology and its digest as JSON
 
 `kelyfos team ps`, `kelyfos team graph` and `kelyfos watch` all gain `--json`
 (P7-10): the extensibility surface for a view this phase did not think of,
@@ -9348,7 +9515,7 @@ kelyfos team down
 
 ---
 
-## 18. Export the record as OTLP, for tools that already speak it
+## 19. Export the record as OTLP, for tools that already speak it
 
 `kelyfos log --export-otlp` maps the same session's chain to OTLP-JSON spans
 — the shape a Jaeger, a Grafana Tempo, or an OpenTelemetry Collector's file
@@ -9424,7 +9591,7 @@ kelyfos log --verify
 
 ---
 
-## 19. Follow a running team from a file, with no server behind it
+## 20. Follow a running team from a file, with no server behind it
 
 `kelyfos log --export` has never needed a session to be finished — it renders
 whatever the flight recorder holds right now, a still-running team included,
@@ -9537,7 +9704,7 @@ kelyfos team down
 
 ---
 
-## 20. Watch a running session live, from a browser, with `kelyfos view`
+## 21. Watch a running session live, from a browser, with `kelyfos view`
 
 `kelyfos log --export --refresh` (recipe 19) is the no-socket answer to
 "live." `kelyfos view` is the other one — the one place KelyfOS opens a
@@ -12799,6 +12966,7 @@ kelyfos run [flags]
 | `--notify` | boolean | — | send a desktop notification when this run finishes, is blocked, times out, or waits for a review |
 | `-p` | value | — | carry a host port to a guest-local port: host:guest, as in 8080:80. The transport is vsock, not the network, so the firewall is untouched. Repeatable. |
 | `--p-bind` | string | "127.0.0.1" | address the forwarded ports bind to. 0.0.0.0 exposes them to every machine that can reach this one, and says so, every time. |
+| `--plugin-path` | value | — | approve a [[plugin]] path outside the policy file's own directory tree. That directory is mounted read-only inside the guest, so everything in it is readable by whatever the agent runs; naming it here makes it your decision rather than the file's. Repeatable. |
 | `--policy` | string | the nearest one, found by walking up | the kelyfos.toml to run under |
 | `--ready-timeout` | duration | 30s | how long to wait for the guest to become ready |
 | `--review` | boolean | — | show what changed and ask before writing the workspace back |
@@ -12847,6 +13015,7 @@ kelyfos serve-mcp [flags]
 | Flag | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `--arch` | string | the build host's architecture | guest architecture (aarch64\|x86_64) |
+| `--plugin-path` | value | — | approve a [[plugin]] path outside the policy file's own directory tree. That directory is mounted read-only inside every sandbox this server creates. Repeatable. |
 | `--policy` | string | search upward from the working directory | path to the project's kelyfos.toml |
 
 ## kelyfos snapshot save
@@ -13048,6 +13217,7 @@ kelyfos shim [flags]
 | `--allow` | string | — | egress allowlist for sandboxes the shim creates |
 | `--arch` | string | the build host's architecture | guest architecture |
 | `--image` | string | "dev" | image flavor for sandboxes the shim creates |
+| `--insecure-no-token` | boolean | — | serve with no credential at all; every local process can then boot sandboxes and write files |
 
 ## kelyfos runs
 
@@ -13381,7 +13551,7 @@ One MCP server to run inside the guest; its tools are advertised as <name>_<tool
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `name` | string | — | the plugin's name and the prefix of every tool it advertises; lowercase letters, digits and dashes, at most 24 characters |
-| `path` | string | — | host directory packed into the read-only plugins device, resolved against this file |
+| `path` | string | — | host directory packed into the read-only plugins device, resolved against this file. It must be inside this file's own directory tree: the directory is mounted inside the guest, so everything in it is readable by whatever the agent runs. Pass --plugin-path with the same value to use one outside it, which makes it the operator's decision rather than the file's |
 | `command` | string | — | what the supervisor launches, resolved inside that plugin's directory |
 | `args` | string array | no arguments | arguments to the command |
 

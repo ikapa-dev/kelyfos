@@ -21,9 +21,12 @@ export E2B_API_KEY=e2b_0000000000000000000000000000000000000000
 export E2B_API_URL=http://127.0.0.1:3000
 ```
 
+…and start the shim with `--insecure-no-token`, because the SDK cannot carry the
+token the shim otherwise requires (see below).
+
 The key is not checked by anything — the shim has no accounts and no billing —
-but the SDK validates its *shape* client-side before sending it anywhere, so it
-has to look like an E2B key.
+but the SDK validates its *shape* client-side before sending it anywhere
+(`\Ae2b_[0-9a-f]+\Z`), so it has to look like an E2B key.
 
 `E2B_API_URL` is the variable to use, and it is the one the SDK's connection
 config consults first. **`E2B_DOMAIN` is not a substitute**: it is a *domain*
@@ -80,11 +83,46 @@ and `session.end` when it is killed. `kelyfos log --list` shows them and
 `kelyfos log --verify` checks the chain, exactly as for a sandbox `kelyfos run`
 started.
 
-**By default the shim does not authenticate anybody.** While it is running, any
-process on the machine that can reach its port can boot sandboxes, kill them, and
-read and write files inside them. That is a property of being an
-unauthenticated local API, not an oversight, and
-[`docs/threat-model.md`](threat-model.md) says so.
+**The shim requires a credential, and mints one if you do not.** When
+`KELYFOS_SHIM_TOKEN` is unset it generates 256 bits from `crypto/rand` at start
+and prints them once, with the `export` line and a `curl` line:
+
+```
+kelyfos E2B shim listening on http://127.0.0.1:3000
+  token: 9f3c…  (64 hex characters)
+    minted for this process and stored nowhere; required on every route
+    export KELYFOS_SHIM_TOKEN=9f3c…
+    curl -H 'Authorization: Bearer 9f3c…' http://127.0.0.1:3000/health
+```
+
+Every route then requires `Authorization: Bearer <token>`, compared in constant
+time, and answers `401` without it. Set `KELYFOS_SHIM_TOKEN` yourself to choose
+the value instead — it is then not echoed back, because it is already in your
+environment.
+
+**Running with no credential takes `--insecure-no-token`.** While a shim like
+that is running, any process on the machine that can reach its port can boot
+sandboxes, kill them, and read and write files inside them. That was the
+default until v1.1 and is not any more: the argument for it — a tool for a
+machine you already trust — answered the wrong question, since an opt-in
+credential is a step nobody takes. An opt-out is a choice you can see.
+[`docs/threat-model.md`](threat-model.md) has the residual.
+
+**The E2B SDK cannot carry this shim's token.** Read from the SDK's own source
+(`e2b` 2.45.1), because this is exactly the kind of claim that goes stale:
+
+| What | Header it sends | Where |
+| --- | --- | --- |
+| Control plane (`/sandboxes`) | `X-API-KEY: <E2B_API_KEY>`, no prefix | `e2b/api/__init__.py:243` |
+| File routes (`/files`) | `Authorization: Basic base64("<user>:")` — the sandbox *user* | `e2b/envd/utils.py:44` |
+
+Neither is a bearer token, and the file routes' `Authorization` header is
+derived from the sandbox user rather than from anything you can set. So a
+token-required shim answers `401` to `sbx.files.write()`. To drive this shim
+with the Python SDK, start it with `--insecure-no-token` on loopback — which is
+what `docs/cookbook.md`'s recipe does, and it says why in the recipe. Anything
+that is not the SDK — `curl`, your own client, `dev/accept-shim.sh` — sends the
+bearer token and needs no flag.
 
 **A web page is not one of those processes.** Localhost plus no authentication is
 the exact configuration a page you visit can reach, and `POST /files` is a
@@ -116,12 +154,6 @@ one — after the bind, so `--addr :0` and `--addr localhost:3000` are resolved
 first — and stops with a message naming the address and `KELYFOS_SHIM_TOKEN`.
 A loopback bind, which is the default and every setup on this page, is
 unchanged.
-
-**Set `KELYFOS_SHIM_TOKEN` and it does.** Every route then requires
-`Authorization: Bearer <token>`, compared in constant time, and answers `401`
-without it. The default is unchanged because the shim is a developer's stand-in
-for a hosted API on a machine you already trust; what was missing until v1.0 was
-the *choice*, since there was no way to require a credential at all.
 
 **And there is a ceiling on how many sandboxes it will hold: 16.** Each one is a
 microVM — memory, a disk image, a TAP device, a process — and the policy carried

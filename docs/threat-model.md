@@ -438,19 +438,25 @@ ownership rule on `sudoers`, and the answer here is the same shape:
   `kelyfos team up`, `kelyfos sessions resume` and `kelyfos snapshot restore`
   all print it.
 
-Two parts of the original finding are **not** implemented, and are recorded here
-rather than left to be rediscovered. A `[[plugin]] path` outside the file's tree
-is *not* refused: there is no command-line flag for it, so the escape hatch that
-makes the workspace rule safe does not exist, and refusing it outright would
-break a shared plugin directory with no way out — it is named in the origin block
-instead. And a secret declared in the file does *not* additionally require
-`--secret NAME` on the command line: that is the documented, primary way to
-declare one, and requiring it twice on every invocation is a different product.
-The per-user trust record the finding suggests as the alternative — path plus
-content hash, added once explicitly — is a feature rather than a fix, and would
-need its own decision. Until then, the ownership rule covers the "somebody else
-left it there" case and the origin block covers the "you cloned it" case by
-saying what it is about to do.
+- **A `[[plugin]] path` outside the file's tree is refused** unless
+  `--plugin-path` names the same directory. That directory is packed into a
+  read-only device and mounted inside the guest, so everything in it is readable
+  by whatever the agent runs — a discovered `kelyfos.toml` naming
+  `plugin.path = "/home/you/.ssh"` hands the agent a key. This was stopped on
+  the first pass because no flag existed to approve one, which would have made
+  the rule a wall with no door; the flag exists now, on `kelyfos run` and on
+  `kelyfos serve-mcp`, and the check is inside `packPlugins` so both doors get it
+  rather than whichever one somebody remembered.
+
+One part of the original finding is **not** implemented, and is recorded here
+rather than left to be rediscovered as a new finding. A secret declared in the
+file does *not* additionally require `--secret NAME` on the command line: that
+is the documented, primary way to declare one, and requiring it twice on every
+invocation is a different product. The per-user trust record the finding
+suggests as the alternative — path plus content hash, added once explicitly — is
+a feature rather than a fix and has its own task. Until then, the ownership rule
+covers the "somebody else left it there" case and the origin block covers the
+"you cloned it" case by saying what it is about to do before it does it.
 
 ### The KelyfOS CLI itself
 The two sections above describe what stands around Firecracker. Nothing stands
@@ -511,19 +517,35 @@ confidentiality or integrity boundary; they bound consumption and nothing more.
 And nothing protects against a guest wedging its own kernel, which remains its
 own problem and not the host's.
 
-### The shim is a local port, unauthenticated by default
+### The shim is a local port, and since P7-17/F2 it requires a credential
 `kelyfos shim` serves an E2B-compatible REST subset, by default on
-`127.0.0.1:3000`, and by default it checks nothing: no key, no account, no
-authorisation. Setting `KELYFOS_SHIM_TOKEN` makes every route ask for that
-bearer token, compared in constant time, but it is opt-in and unauthenticated
-stays the default. While a shim without one is running, **any process on that
+`127.0.0.1:3000`. It used to check nothing — no key, no account, no
+authorisation — with `KELYFOS_SHIM_TOKEN` as an opt-in nobody opted in to. It
+now mints 256 bits from `crypto/rand` at start when that variable is unset,
+prints them once with the `export` line, and requires
+`Authorization: Bearer <token>` on every route, compared in constant time.
+Running with no credential takes `--insecure-no-token`, because an opt-out is a
+choice the operator can see.
+
+The residual is what that flag buys, and it is unchanged for anyone who uses
+it. While a shim with `--insecure-no-token` is running, **any process on that
 machine that can reach the port can boot microVMs, list them, kill them, read
 arbitrary paths inside a running guest, and write to any path that guest's
 profile makes writable** — writes go through a command in the guest, so they are
 confined like anything else the supervisor spawns, and reads are not, because a
 confined child is granted read beneath `/`. That is a local privilege surface
-the rest of the CLI does not have, and without the token `--addr` is the only
-thing between it and the network.
+the rest of the CLI does not have, and with `--insecure-no-token` the `--addr`
+bind is the only thing between it and the network — which is why an off-loopback
+bind without a token is refused outright.
+
+**One client cannot use the token: the E2B Python SDK.** Its control plane sends
+`X-API-KEY` and its file routes send `Authorization: Basic base64("<user>:")`
+derived from the sandbox user (`e2b` 2.45.1, `api/__init__.py:243` and
+`envd/utils.py:44`); neither is a bearer token and neither is settable. Driving
+this shim with that SDK therefore means `--insecure-no-token` on loopback, and
+`docs/cookbook.md`'s recipe says so where somebody will read it. This is stated
+here rather than left in the code because it is the one place the flipped
+default does not reach.
 
 **A web page is not one of those processes, and used to be** (P7-17/F2). This
 paragraph said "any process on that machine" and never named a browser, which

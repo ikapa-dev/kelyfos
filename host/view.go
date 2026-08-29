@@ -112,10 +112,16 @@ func bindLoopback() (net.Listener, error) {
 	return net.Listen("tcp", "127.0.0.1:0")
 }
 
-// newViewToken mints P7-12's whole authentication story: 256 bits from
-// crypto/rand, hex-encoded, once per process. It is never a CLI argument —
-// see runView's own doc comment for how it reaches the browser instead.
-func newViewToken() (string, error) {
+// newLocalToken mints 256 bits from crypto/rand, hex-encoded, once per
+// process: P7-12's whole authentication story for `kelyfos view`, and since
+// P7-17/F2 the shim's as well. It is never a CLI argument — see runView's own
+// doc comment for how it reaches the browser instead, and shimCmd's for how it
+// reaches an SDK.
+//
+// One function on purpose. Two local listeners minting their own 256 bits two
+// slightly different ways is how the two of them end up with two different
+// answers about what a token is.
+func newLocalToken() (string, error) {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
 		return "", err
@@ -147,7 +153,7 @@ var viewPollInterval = time.Second
 // never does (default-src 'none') — but the caveat is about the mechanism,
 // not about this page's own behaviour, so it is stated rather than hidden.
 func runView(ctx context.Context, sessionID, path string, idleTimeout time.Duration, out io.Writer) error {
-	token, err := newViewToken()
+	token, err := newLocalToken()
 	if err != nil {
 		return fmt.Errorf("minting a viewer token: %w", err)
 	}

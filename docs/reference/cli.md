@@ -80,6 +80,7 @@ kelyfos run [flags]
 | `--notify` | boolean | — | send a desktop notification when this run finishes, is blocked, times out, or waits for a review |
 | `-p` | value | — | carry a host port to a guest-local port: host:guest, as in 8080:80. The transport is vsock, not the network, so the firewall is untouched. Repeatable. |
 | `--p-bind` | string | "127.0.0.1" | address the forwarded ports bind to. 0.0.0.0 exposes them to every machine that can reach this one, and says so, every time. |
+| `--plugin-path` | value | — | approve a [[plugin]] path outside the policy file's own directory tree. That directory is mounted read-only inside the guest, so everything in it is readable by whatever the agent runs; naming it here makes it your decision rather than the file's. Repeatable. |
 | `--policy` | string | the nearest one, found by walking up | the kelyfos.toml to run under |
 | `--ready-timeout` | duration | 30s | how long to wait for the guest to become ready |
 | `--review` | boolean | — | show what changed and ask before writing the workspace back |
@@ -128,6 +129,7 @@ kelyfos serve-mcp [flags]
 | Flag | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `--arch` | string | the build host's architecture | guest architecture (aarch64\|x86_64) |
+| `--plugin-path` | value | — | approve a [[plugin]] path outside the policy file's own directory tree. That directory is mounted read-only inside every sandbox this server creates. Repeatable. |
 | `--policy` | string | search upward from the working directory | path to the project's kelyfos.toml |
 
 ## kelyfos snapshot save
@@ -329,6 +331,7 @@ kelyfos shim [flags]
 | `--allow` | string | — | egress allowlist for sandboxes the shim creates |
 | `--arch` | string | the build host's architecture | guest architecture |
 | `--image` | string | "dev" | image flavor for sandboxes the shim creates |
+| `--insecure-no-token` | boolean | — | serve with no credential at all; every local process can then boot sandboxes and write files |
 
 ## kelyfos runs
 

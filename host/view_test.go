@@ -746,18 +746,18 @@ func TestViewLogLineHasNoPanicOnEveryKnownEventType(t *testing.T) {
 }
 
 func TestNewViewTokenIs256BitsHexEncoded(t *testing.T) {
-	tok, err := newViewToken()
+	tok, err := newLocalToken()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(tok) != 64 { // 32 bytes, hex-encoded
 		t.Fatalf("token %q is %d hex characters, want 64 (256 bits)", tok, len(tok))
 	}
-	tok2, err := newViewToken()
+	tok2, err := newLocalToken()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if tok == tok2 {
-		t.Fatal("two calls to newViewToken produced the same token")
+		t.Fatal("two calls to newLocalToken produced the same token")
 	}
 }

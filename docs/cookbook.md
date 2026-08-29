@@ -1,6 +1,6 @@
 # KelyfOS cookbook
 
-Twenty-one recipes, each one complete, each one runnable as it stands.
+Twenty-two recipes, each one complete, each one runnable as it stands.
 
 These are not illustrations. `bash dev/cookbook.sh` extracts every script below
 and runs it on a real machine. Every commit checks that each recipe still
@@ -596,11 +596,25 @@ a published standard rather than one product's internal API.
 
 A shim sandbox is a sandbox like any other: the project's `kelyfos.toml` caps
 it, and it writes its own flight recorder — `kelyfos log --list` will show the
-one this recipe creates. By default the shim authenticates nobody, so treat the
-port the way you would any unauthenticated local API. Start it with
-`KELYFOS_SHIM_TOKEN` set and every route requires a matching
-`Authorization: Bearer <token>`, compared in constant time, and answers `401`
-without one.
+one this recipe creates.
+
+**The shim requires a credential.** It mints a 256-bit token at start, prints it
+once with an `export` line, and every route then requires
+`Authorization: Bearer <token>`, compared in constant time, answering `401`
+without one. Set `KELYFOS_SHIM_TOKEN` to supply your own instead. A web page
+cannot reach it either way: `Origin`, `Sec-Fetch-Site` and a `Host` that does
+not name the bound address are all refused before the token is even looked at.
+
+**The E2B SDK cannot carry that token**, which is why the recipe below passes
+`--insecure-no-token`. Read from the SDK's own source (`e2b` 2.45.1): the
+control plane sends `X-API-KEY` with no `Bearer` prefix
+(`e2b/api/__init__.py:243`), and every file route sends
+`Authorization: Basic base64("<user>:")` — the *sandbox user*, not a key
+(`e2b/envd/utils.py:44`). Neither is a bearer token and neither is settable, so
+a token-required shim answers `401` to `sbx.files.write`. The recipe is
+therefore a loopback demonstration on a machine you control; anything else
+should use the token, and `dev/accept-shim.sh` drives the whole REST surface
+with one.
 
 <!-- recipe: e2b-shim -->
 
@@ -613,7 +627,15 @@ cd "$work"
 # their SDK can point at a self-hosted KelyfOS box. It is a subset on purpose:
 # sandboxes and files work, commands do not, because the SDK runs those over
 # Connect RPC with protobuf rather than REST. Use `kelyfos mcp` for commands.
-kelyfos shim --addr 127.0.0.1:3000 --image dev >shim.log 2>&1 &
+# --insecure-no-token because this recipe drives the real E2B SDK, and that SDK
+# cannot carry this shim's token: its control plane sends X-API-KEY and its file
+# routes send `Authorization: Basic <sandbox user>`, neither of which is a
+# bearer token (e2b 2.45.1, api/__init__.py:243 and envd/utils.py:44). Without
+# the flag the shim mints one and every route answers 401. On loopback, on a
+# machine you control, that is the trade this recipe makes on purpose — and the
+# cross-site defences are unaffected by the flag, so no web page can reach it
+# regardless.
+kelyfos shim --addr 127.0.0.1:3000 --image dev --insecure-no-token >shim.log 2>&1 &
 shim=$!
 trap 'kill $shim 2>/dev/null; wait $shim 2>/dev/null; rm -rf "$work"' EXIT
 for _ in $(seq 1 100); do
@@ -626,8 +648,10 @@ echo "the shim is up"
 python3 -m venv .venv
 ./.venv/bin/pip install --quiet e2b
 
-# The key is never checked — the shim has no accounts and no billing — but the
-# SDK validates its shape before sending it anywhere, so it has to look like one.
+# The key is never checked — the shim has no accounts and no billing, and this
+# one is running with --insecure-no-token — but the SDK validates its shape
+# client-side before sending it anywhere (`\Ae2b_[0-9a-f]+\Z`), so it has to
+# look like one.
 export E2B_API_KEY=e2b_0000000000000000000000000000000000000000
 export E2B_API_URL=http://127.0.0.1:3000
 export E2B_SANDBOX_URL=http://127.0.0.1:3000
@@ -1428,7 +1452,96 @@ echo "diff showed A/M/D; --review left the directory alone and diverted the resu
 
 ---
 
-## 14. Look at the web app the agent is building
+## 14. Approve a plugin that lives outside the project
+
+A `[[plugin]] path` is a **host** directory. It is packed into a read-only
+device and mounted inside the guest, so everything in it is readable by whatever
+the agent runs — a `kelyfos.toml` naming `/home/you/.ssh` there hands the agent
+a key. Since v1.1 a path outside the policy file's own directory tree is refused
+unless you name it on the command line with `--plugin-path`, which is the same
+rule `workspace` gets and for the same reason: the file describes its own
+project, and reaching past it is your decision rather than the file's.
+
+Nothing changes for the common case — a plugin under the project, as in §11,
+needs no flag. This recipe is the other case: one shared plugin directory beside
+several projects.
+
+<!-- recipe: plugin-path -->
+
+```bash
+set -euo pipefail
+work="$(mktemp -d)"
+trap 'rm -rf "$work"' EXIT
+cd "$work"
+
+# The plugin lives beside the project rather than inside it, which is the whole
+# point of the recipe: one copy, several projects.
+mkdir -p shared/demo project
+cat > shared/demo/server.py <<'PLUGIN'
+import json, sys
+
+TOOLS = [{"name": "echo", "description": "Return the text it was given, prefixed.",
+          "inputSchema": {"type": "object",
+                          "properties": {"text": {"type": "string"}},
+                          "required": ["text"]}}]
+
+def answer(rid, value):
+    sys.stdout.write(json.dumps({"jsonrpc": "2.0", "id": rid, "result": value}) + "\n")
+    sys.stdout.flush()
+
+for line in sys.stdin:
+    msg = json.loads(line)
+    rid = msg.get("id")
+    if rid is None:
+        continue
+    if msg["method"] == "initialize":
+        answer(rid, {"protocolVersion": "2025-11-25", "capabilities": {"tools": {}},
+                     "serverInfo": {"name": "demo", "version": "1.0.0"}})
+    elif msg["method"] == "tools/list":
+        answer(rid, {"tools": TOOLS})
+    elif msg["method"] == "tools/call":
+        args = msg["params"].get("arguments") or {}
+        answer(rid, {"content": [{"type": "text", "text": "demo says: " + args["text"]}]})
+PLUGIN
+
+cd project
+cat > kelyfos.toml <<TOML
+[sandbox]
+image = "dev"
+
+[resources]
+cpus = 1
+mem  = "512M"
+
+[[plugin]]
+name    = "demo"
+path    = "$work/shared/demo"
+command = "python3"
+args    = ["server.py"]
+TOML
+
+# Without the flag it is refused, before anything boots, naming the path and
+# the flag that approves it.
+if kelyfos run -- true >refused.log 2>&1; then
+  echo "expected the out-of-tree plugin path to be refused"; cat refused.log; exit 1
+fi
+grep -q -- "--plugin-path" refused.log
+grep -q "outside" refused.log
+echo "refused, and said how to approve it:"
+sed -n '1,2p' refused.log
+
+# With it, the same run boots and the plugin's tools are advertised. The flag is
+# the operator's acknowledgement; nothing in the file can add to it.
+kelyfos run --plugin-path "$work/shared/demo" -- \
+  sh -c 'true' 2>&1 | tee approved.log
+grep -q "plugin demo" approved.log
+
+echo "the shared plugin directory was approved once, on the command line"
+```
+
+---
+
+## 15. Look at the web app the agent is building
 
 `-p` carries a port on your machine to a port inside the sandbox. It does not
 start anything: something in there has to be listening, and starting a
@@ -1475,7 +1588,7 @@ echo "reached a server inside the sandbox without touching the firewall"
 
 ---
 
-## 15. See a team's topology before booting it, and confirm the running team draws the same one
+## 16. See a team's topology before booting it, and confirm the running team draws the same one
 
 `kelyfos team graph` reads `kelyfos.toml` and draws the team it declares —
 agents, edges, domains, secrets and store rules — with **nothing booted**: a
@@ -1567,7 +1680,7 @@ kelyfos team down
 
 ---
 
-## 16. Keep the record, erase what it said
+## 17. Keep the record, erase what it said
 
 A retention floor and a deletion request pull in opposite directions on the
 same file until the record separates two claims: that a session happened,
@@ -1638,7 +1751,7 @@ grep -o '"type":"session.erasure"[^}]*}' "$record"
 
 ---
 
-## 17. Pipe a team's roster, its topology and its digest as JSON
+## 18. Pipe a team's roster, its topology and its digest as JSON
 
 `kelyfos team ps`, `kelyfos team graph` and `kelyfos watch` all gain `--json`
 (P7-10): the extensibility surface for a view this phase did not think of,
@@ -1765,7 +1878,7 @@ kelyfos team down
 
 ---
 
-## 18. Export the record as OTLP, for tools that already speak it
+## 19. Export the record as OTLP, for tools that already speak it
 
 `kelyfos log --export-otlp` maps the same session's chain to OTLP-JSON spans
 — the shape a Jaeger, a Grafana Tempo, or an OpenTelemetry Collector's file
@@ -1841,7 +1954,7 @@ kelyfos log --verify
 
 ---
 
-## 19. Follow a running team from a file, with no server behind it
+## 20. Follow a running team from a file, with no server behind it
 
 `kelyfos log --export` has never needed a session to be finished — it renders
 whatever the flight recorder holds right now, a still-running team included,
@@ -1954,7 +2067,7 @@ kelyfos team down
 
 ---
 
-## 20. Watch a running session live, from a browser, with `kelyfos view`
+## 21. Watch a running session live, from a browser, with `kelyfos view`
 
 `kelyfos log --export --refresh` (recipe 19) is the no-socket answer to
 "live." `kelyfos view` is the other one — the one place KelyfOS opens a

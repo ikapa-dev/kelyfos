@@ -36,8 +36,10 @@ ADDR="127.0.0.1:3123"
 BASE="http://$ADDR"
 WORK="$(mktemp -d)"
 SHIM_PID=""
+MINT_PID=""
 cleanup() {
   [ -n "$SHIM_PID" ] && kill "$SHIM_PID" 2>/dev/null
+  [ -n "$MINT_PID" ] && kill "$MINT_PID" 2>/dev/null
   sleep 1
   for p in $(pgrep firecracker 2>/dev/null); do kill "$p" 2>/dev/null; done
   rm -rf "$WORK"
@@ -52,16 +54,39 @@ printf '[sandbox]\nimage = "%s"\n\n[resources]\ncpus = 1\nmem = "512M"\n' "$flav
 
 # --- the shim comes up -------------------------------------------------------
 
-say "1. the shim serves, and says so"
+say "1. the shim serves, says so, and requires a credential"
+# P7-17/F2: a token is minted per process unless --insecure-no-token is typed.
+# The suite supplies its own so every request below can carry it, and the next
+# section proves the minting default separately.
+export KELYFOS_SHIM_TOKEN="accept-shim-$(head -c 16 /dev/urandom | od -An -tx1 | tr -d " \n")"
+AUTH=(-H "Authorization: Bearer $KELYFOS_SHIM_TOKEN")
 kelyfos shim --addr "$ADDR" --image "$flavor" > shim.log 2>&1 &
 SHIM_PID=$!
 for _ in $(seq 1 60); do
-  curl -fsS -o /dev/null "$BASE/health" 2>/dev/null && break
+  curl -fsS "${AUTH[@]}" -o /dev/null "$BASE/health" 2>/dev/null && break
   sleep 0.5
 done
 
+code="$(curl -s "${AUTH[@]}" -o /dev/null -w '%{http_code}' "$BASE/health")"
+check "$([ "$code" = 204 ] && echo yes || echo no)" "GET /health answers 204 with the token (got $code)"
+
 code="$(curl -s -o /dev/null -w '%{http_code}' "$BASE/health")"
-check "$([ "$code" = 204 ] && echo yes || echo no)" "GET /health answers 204 (got $code)"
+check "$([ "$code" = 401 ] && echo yes || echo no)" "…and 401 without it (got $code)"
+code="$(curl -s -H 'Authorization: Bearer wrong' -o /dev/null -w '%{http_code}' "$BASE/health")"
+check "$([ "$code" = 401 ] && echo yes || echo no)" "…and 401 to the wrong token (got $code)"
+
+# The token this shim did NOT have to be told about: a second shim, on another
+# port, with the variable unset, mints one and prints it.
+env -u KELYFOS_SHIM_TOKEN kelyfos shim --addr 127.0.0.1:3125 > minted.log 2>&1 &
+MINT_PID=$!
+sleep 2
+kill "$MINT_PID" 2>/dev/null; wait "$MINT_PID" 2>/dev/null
+MINT_PID=""
+minted="$(cat minted.log)"
+check "$(printf '%s' "$minted" | grep -Eq 'token: [0-9a-f]{64}' && echo yes || echo no)" \
+  "a shim started with no KELYFOS_SHIM_TOKEN mints one and prints it"
+check "$(printf '%s' "$minted" | grep -q 'export KELYFOS_SHIM_TOKEN=' && echo yes || echo no)" \
+  "…with the export line that carries it to a client"
 
 # It answers before any sandbox exists, which is what makes it a liveness probe
 # for the shim rather than for a machine.
@@ -70,7 +95,7 @@ check "$(grep -q 'listening on' shim.log && echo yes || echo no)" "the shim name
 # --- the control plane -------------------------------------------------------
 
 say "2. POST /sandboxes boots a real microVM"
-created="$(curl -sS -X POST "$BASE/sandboxes" -H 'content-type: application/json' -d '{}')"
+created="$(curl -sS "${AUTH[@]}" -X POST "$BASE/sandboxes" -H 'content-type: application/json' -d '{}')"
 echo "  $created"
 sbx="$(printf '%s' "$created" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("sandboxID",""))' 2>/dev/null)"
 check "$([ -n "$sbx" ] && echo yes || echo no)" "the response carries a sandboxID ($sbx)"
@@ -84,7 +109,7 @@ done
 say "3. a templateID is echoed and not honoured"
 # Stated in docs/e2b-shim.md and worth a test rather than a sentence: the shim
 # has one image, set by the operator, and no request parameter widens it.
-echoed="$(curl -sS -X POST "$BASE/sandboxes" -H 'content-type: application/json' \
+echoed="$(curl -sS "${AUTH[@]}" -X POST "$BASE/sandboxes" -H 'content-type: application/json' \
   -d '{"templateID":"definitely-not-a-real-template"}')"
 sbx2="$(printf '%s' "$echoed" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("sandboxID",""))' 2>/dev/null)"
 check "$(printf '%s' "$echoed" | grep -q 'definitely-not-a-real-template' && echo yes || echo no)" \
@@ -92,7 +117,7 @@ check "$(printf '%s' "$echoed" | grep -q 'definitely-not-a-real-template' && ech
 check "$([ -n "$sbx2" ] && echo yes || echo no)" "…and a sandbox booted anyway, on the operator's image"
 
 say "4. GET /sandboxes lists what is running"
-listed="$(curl -sS "$BASE/sandboxes")"
+listed="$(curl -sS "${AUTH[@]}" "$BASE/sandboxes")"
 n="$(printf '%s' "$listed" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))' 2>/dev/null || echo 0)"
 check "$([ "$n" -ge 2 ] && echo yes || echo no)" "both sandboxes are listed (saw $n)"
 
@@ -101,22 +126,22 @@ check "$([ "$n" -ge 2 ] && echo yes || echo no)" "both sandboxes are listed (saw
 say "5. files go in and come back out, binary-safe"
 # One sandbox at a time for the file routes: the SDK addresses envd by URL per
 # sandbox and this shim does not, so it refuses to guess which one is meant.
-curl -sS -X DELETE "$BASE/sandboxes/$sbx2" -o /dev/null -w '' || true
+curl -sS "${AUTH[@]}" -X DELETE "$BASE/sandboxes/$sbx2" -o /dev/null -w '' || true
 sleep 2
 
 printf 'hello from an acceptance test\n' > payload.txt
-w="$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$BASE/files?path=/work/hello.txt" \
+w="$(curl -sS "${AUTH[@]}" -o /dev/null -w '%{http_code}' -X POST "$BASE/files?path=/work/hello.txt" \
       --data-binary @payload.txt)"
 check "$([ "$w" = 200 ] || [ "$w" = 201 ] || [ "$w" = 204 ] && echo yes || echo no)" \
   "POST /files writes (got $w)"
 
-got="$(curl -sS "$BASE/files?path=/work/hello.txt")"
+got="$(curl -sS "${AUTH[@]}" "$BASE/files?path=/work/hello.txt")"
 check "$([ "$got" = "$(cat payload.txt)" ] && echo yes || echo no)" "GET /files reads back exactly what was written"
 
 # Binary, because "binary-safe" is a claim docs/e2b-shim.md makes.
 head -c 4096 /dev/urandom > blob.bin
-curl -sS -o /dev/null -X POST "$BASE/files?path=/work/blob.bin" --data-binary @blob.bin
-curl -sS "$BASE/files?path=/work/blob.bin" > blob.out
+curl -sS "${AUTH[@]}" -o /dev/null -X POST "$BASE/files?path=/work/blob.bin" --data-binary @blob.bin
+curl -sS "${AUTH[@]}" "$BASE/files?path=/work/blob.bin" > blob.out
 check "$(cmp -s blob.bin blob.out && echo yes || echo no)" "4 KiB of random bytes survive the round trip unchanged"
 
 say "6. a web page cannot reach it, and a bind off loopback needs a credential"
@@ -127,34 +152,34 @@ say "6. a web page cannot reach it, and a bind off loopback needs a credential"
 # httptest recorder is not the same thing as header handling in net/http's own
 # server.
 for hdr in 'Origin: http://evil.example' 'Sec-Fetch-Site: cross-site'; do
-  c="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/sandboxes" -H "$hdr" -d '{}')"
+  c="$(curl -s "${AUTH[@]}" -o /dev/null -w '%{http_code}' -X POST "$BASE/sandboxes" -H "$hdr" -d '{}')"
   check "$([ "$c" = 403 ] && echo yes || echo no)" "a request carrying '$hdr' is refused (got $c)"
 done
-c="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/files?path=/work/pwned" \
+c="$(curl -s "${AUTH[@]}" -o /dev/null -w '%{http_code}' -X POST "$BASE/files?path=/work/pwned" \
       -H 'Origin: http://evil.example' -F 'file=@payload.txt')"
 check "$([ "$c" = 403 ] && echo yes || echo no)" "a cross-origin form POST to /files is refused (got $c)"
 
 # DNS rebinding: the one shape Origin and Sec-Fetch-Site cannot see, because a
 # rebound page is same-origin with itself. The Host header is what it cannot
 # change.
-c="$(curl -s -o /dev/null -w '%{http_code}' -H 'Host: evil.example:3123' "$BASE/health")"
+c="$(curl -s "${AUTH[@]}" -o /dev/null -w '%{http_code}' -H 'Host: evil.example:3123' "$BASE/health")"
 check "$([ "$c" = 403 ] && echo yes || echo no)" "a Host header naming a rebindable name is refused (got $c)"
-c="$(curl -s -o /dev/null -w '%{http_code}' -H "Host: localhost:${ADDR##*:}" "$BASE/health")"
+c="$(curl -s "${AUTH[@]}" -o /dev/null -w '%{http_code}' -H "Host: localhost:${ADDR##*:}" "$BASE/health")"
 check "$([ "$c" = 204 ] && echo yes || echo no)" "…and localhost still works, which is what people type (got $c)"
 
 # The decode error createSandbox used to discard: a body that is not JSON cost
 # the host a microVM.
-c="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/sandboxes" -d 'not json at all')"
+c="$(curl -s "${AUTH[@]}" -o /dev/null -w '%{http_code}' -X POST "$BASE/sandboxes" -d 'not json at all')"
 check "$([ "$c" = 400 ] && echo yes || echo no)" "a body that is not JSON answers 400 rather than booting (got $c)"
 
 # And the bind itself. A shim off loopback with no credential is reachable from
 # the LAN; it now refuses to start rather than saying so in a document.
-off="$(kelyfos shim --addr 0.0.0.0:3124 2>&1; echo "rc=$?")"
+off="$(env -u KELYFOS_SHIM_TOKEN kelyfos shim --addr 0.0.0.0:3124 --insecure-no-token 2>&1; echo "rc=$?")"
 check "$(printf '%s' "$off" | grep -q 'rc=0' && echo no || echo yes)" "kelyfos shim refuses a non-loopback bind with no token"
 check "$(printf '%s' "$off" | grep -q 'KELYFOS_SHIM_TOKEN' && echo yes || echo no)" "…and the refusal names the fix"
 
 say "7. a route the shim does not implement says so"
-ni="$(curl -s -o body.txt -w '%{http_code}' "$BASE/sandboxes/$sbx/commands")"
+ni="$(curl -s "${AUTH[@]}" -o body.txt -w '%{http_code}' "$BASE/sandboxes/$sbx/commands")"
 check "$([ "$ni" != 200 ] && echo yes || echo no)" "an unimplemented route does not answer 200 (got $ni)"
 check "$(grep -qi 'not implemented\|mcp' body.txt && echo yes || echo no)" \
   "…and the body says what to use instead: $(sed -n '1,1p' body.txt | cut -c1-70)"
@@ -179,10 +204,10 @@ if [ -f "$rec" ]; then
 fi
 
 say "9. DELETE /sandboxes/{id} stops the machine"
-d="$(curl -sS -o /dev/null -w '%{http_code}' -X DELETE "$BASE/sandboxes/$sbx")"
+d="$(curl -sS "${AUTH[@]}" -o /dev/null -w '%{http_code}' -X DELETE "$BASE/sandboxes/$sbx")"
 check "$([ "$d" = 200 ] || [ "$d" = 204 ] && echo yes || echo no)" "DELETE answers (got $d)"
 sleep 2
-after="$(curl -sS "$BASE/sandboxes" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))' 2>/dev/null || echo -1)"
+after="$(curl -sS "${AUTH[@]}" "$BASE/sandboxes" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))' 2>/dev/null || echo -1)"
 check "$([ "$after" = 0 ] && echo yes || echo no)" "nothing is left running (saw $after)"
 
 # --- the summary -------------------------------------------------------------

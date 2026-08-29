@@ -27,7 +27,9 @@ import (
 // bound is the address the fixtures pretend the listener took.
 const bound = "127.0.0.1:3000"
 
-// f2Shim is hostileShim with the bind address the Host check needs.
+// f2Shim is hostileShim with the bind address the Host check needs. It carries
+// no token so that the browser checks are tested on their own; the ordering
+// test below sets one explicitly.
 func f2Shim(t *testing.T) *Server {
 	t.Helper()
 	t.Setenv("KELYFOS_CACHE", t.TempDir())
@@ -148,8 +150,9 @@ func TestF2_AShimThatDoesNotKnowItsAddressRefusesEverything(t *testing.T) {
 // never depends on a credential comparison.
 func TestF2_TheBrowserChecksRunBeforeTheTokenCheck(t *testing.T) {
 	const token = "a-secret-the-caller-must-know"
-	t.Setenv(tokenEnv, token)
-	h := f2Shim(t).Handler()
+	t.Setenv("KELYFOS_CACHE", t.TempDir())
+	h := New(Policy{Arch: "aarch64", Flavor: "dev", Vcpus: 2, MemMiB: 512,
+		Addr: bound, Token: token}).Handler()
 
 	code, body := driveHeaders(t, h, "POST", "/sandboxes", `{}`, bound, map[string]string{
 		"Origin": "http://evil.example", "Authorization": "Bearer " + token})

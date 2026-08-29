@@ -4,6 +4,7 @@ import (
 	gocontext "context"
 	"flag"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -25,6 +26,8 @@ func shimCmd(argv []string) error {
 		arch   = fs.String("arch", sandbox.HostArch(), "guest architecture")
 		flavor = fs.String("image", "dev", "image flavor for sandboxes the shim creates")
 		allow  = fs.String("allow", "", "egress allowlist for sandboxes the shim creates")
+		noAuth = fs.Bool("insecure-no-token", false,
+			"serve with no credential at all; every local process can then boot sandboxes and write files")
 	)
 	fs.Usage = func() {
 		fmt.Fprint(fs.Output(), `usage: kelyfos shim [flags]
@@ -112,6 +115,12 @@ commands. See docs/e2b-shim.md.
 		}
 	}
 
+	token, err := shimToken(*noAuth)
+	if err != nil {
+		return err
+	}
+	pol.Token = token
+
 	srv := shim.New(pol)
 	defer srv.Close()
 
@@ -123,7 +132,7 @@ commands. See docs/e2b-shim.md.
 	// the kernel actually gave — `--addr :0` and `--addr localhost:3000` are
 	// both a different string by now — and the socket is closed again before
 	// anything can reach it.
-	if err := shimBindNeedsAToken(ln.Addr().String(), os.Getenv(shim.TokenEnv)); err != nil {
+	if err := shimBindNeedsAToken(ln.Addr().String(), token); err != nil {
 		ln.Close()
 		return err
 	}
@@ -135,6 +144,7 @@ commands. See docs/e2b-shim.md.
 	http := &http.Server{Handler: srv.Handler()}
 
 	fmt.Printf("kelyfos E2B shim listening on http://%s\n", ln.Addr())
+	printShimToken(os.Stdout, token, ln.Addr().String(), os.Getenv(shim.TokenEnv) != "")
 	if pol.PolicyPath != "" {
 		fmt.Printf("policy: %s\n", pol.PolicyPath)
 	}
@@ -194,4 +204,56 @@ func shimBindNeedsAToken(addr, token string) error {
 		"write files inside them. Set %s to a shared secret — every route then requires\n"+
 		"Authorization: Bearer <token> — or bind loopback (--addr 127.0.0.1:3000).",
 		addr, shim.TokenEnv)
+}
+
+// shimToken decides the credential every route will require (P7-17/F2).
+//
+// The default is flipped: KELYFOS_SHIM_TOKEN when the operator set one,
+// otherwise 256 bits from crypto/rand minted for this process, and nothing at
+// all only when --insecure-no-token was typed. host/view.go is the model, and
+// newLocalToken is literally its function — one mint, not two.
+//
+// An opt-out is a choice the operator can see; an opt-in is a step nobody
+// takes. That is the whole argument, and it is the one KELYFOS_SHIM_TOKEN's
+// own doc comment used to make in the other direction.
+func shimToken(insecureNoToken bool) (string, error) {
+	if env := os.Getenv(shim.TokenEnv); env != "" {
+		if insecureNoToken {
+			return "", fmt.Errorf("--insecure-no-token was given and %s is also set.\n"+
+				"    Those ask for opposite things. Unset the variable, or drop the flag",
+				shim.TokenEnv)
+		}
+		return env, nil
+	}
+	if insecureNoToken {
+		return "", nil
+	}
+	return newLocalToken()
+}
+
+// printShimToken says the credential once, at start, with the line that carries
+// it to a client.
+//
+// Printed rather than written anywhere: it lives in this process and nowhere
+// else, exactly as `kelyfos view`'s does. The export line is what a second
+// terminal, a script, or a restart of this shim uses; the header line is what
+// the request itself carries, because that is the only form the shim reads.
+func printShimToken(w io.Writer, token, addr string, fromEnv bool) {
+	if token == "" {
+		fmt.Fprintln(w, "  NO TOKEN (--insecure-no-token): every process on this machine can boot")
+		fmt.Fprintln(w, "            sandboxes here, kill them, and read and write files inside them")
+		return
+	}
+	if fromEnv {
+		// Not echoed. The operator put it in their own environment; printing
+		// it again only adds a scrollback and a screenshare to the places it
+		// has been.
+		fmt.Fprintf(w, "  token: from %s · required on every route\n", shim.TokenEnv)
+		fmt.Fprintf(w, "    curl -H \"Authorization: Bearer $%s\" http://%s/health\n", shim.TokenEnv, addr)
+		return
+	}
+	fmt.Fprintf(w, "  token: %s\n", token)
+	fmt.Fprintln(w, "    minted for this process and stored nowhere; required on every route")
+	fmt.Fprintf(w, "    export %s=%s\n", shim.TokenEnv, token)
+	fmt.Fprintf(w, "    curl -H 'Authorization: Bearer %s' http://%s/health\n", token, addr)
 }

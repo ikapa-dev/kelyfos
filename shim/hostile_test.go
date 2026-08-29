@@ -37,14 +37,30 @@ import (
 // default is "example.com", which is a name, and a name in a Host header is
 // exactly what the DNS-rebinding check refuses. A fixture that did not name a
 // Host was a fixture that could no longer reach a handler at all.
+// The token is carried because since P7-17/F2 every route requires one by
+// default: driveNoCredential is the fixture that deliberately does not.
 func drive(t *testing.T, h http.Handler, method, target, body string) (int, string) {
 	t.Helper()
-	req := httptest.NewRequest(method, target, strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	req.Host = bound
+	req := driveRequest(method, target, body)
+	req.Header.Set("Authorization", "Bearer "+fixtureToken)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
 	return rr.Code, strings.TrimSpace(rr.Body.String())
+}
+
+// driveNoCredential is drive with nothing to prove who is calling.
+func driveNoCredential(t *testing.T, h http.Handler, method, target, body string) (int, string) {
+	t.Helper()
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, driveRequest(method, target, body))
+	return rr.Code, strings.TrimSpace(rr.Body.String())
+}
+
+func driveRequest(method, target, body string) *http.Request {
+	req := httptest.NewRequest(method, target, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Host = bound
+	return req
 }
 
 // hostileShim builds a server that cannot reach a machine.
@@ -57,8 +73,14 @@ func drive(t *testing.T, h http.Handler, method, target, body string) (int, stri
 func hostileShim(t *testing.T) *Server {
 	t.Helper()
 	t.Setenv("KELYFOS_CACHE", t.TempDir())
-	return New(Policy{Arch: "aarch64", Flavor: "dev", Vcpus: 2, MemMiB: 512, Addr: bound})
+	return New(Policy{Arch: "aarch64", Flavor: "dev", Vcpus: 2, MemMiB: 512,
+		Addr: bound, Token: fixtureToken})
 }
+
+// fixtureToken stands in for what the CLI mints per process. Every fixture in
+// this file carries it, because a shim that authenticates nobody is no longer
+// what `kelyfos shim` builds (P7-17/F2).
+const fixtureToken = "a-secret-the-caller-must-know"
 
 // H-6. Nothing bounds how many sandboxes one caller may ask for.
 //
@@ -96,11 +118,12 @@ func TestHostileSandboxCountIsBounded(t *testing.T) {
 
 // H-6. No route asks who is calling.
 //
-// Recorded rather than argued: the shim is documented as a tool for a machine
-// you already trust. What the fixture pins is that the decision is still the
-// one in force — if a token is ever added, this case turns green and its line
-// comes off the ledger, and if it is not, the ledger is where the decision is
-// visible instead of being visible only to somebody reading the source.
+// This was recorded rather than argued for three phases: the shim was
+// documented as a tool for a machine you already trust, so the fixture pinned
+// the *decision* and its line sat on the ledger. P7-17/F2 changed the decision
+// — a token is minted per process unless --insecure-no-token is typed — so the
+// case holds now and the line came off in the commit that made it hold, which
+// is the only way the ledger is allowed to shrink.
 func TestHostileShimAsksWhoIsCalling(t *testing.T) {
 	s := hostileShim(t)
 	h := s.Handler()
@@ -110,8 +133,10 @@ func TestHostileShimAsksWhoIsCalling(t *testing.T) {
 		{"GET", "/sandboxes"},
 		{"POST", "/sandboxes"},
 		{"GET", "/health"},
+		{"GET", "/files"},
+		{"DELETE", "/sandboxes/abcd1234"},
 	} {
-		code, _ := drive(t, h, route.method, route.target, `{}`)
+		code, _ := driveNoCredential(t, h, route.method, route.target, `{}`)
 		if code != http.StatusUnauthorized {
 			problem = fmt.Sprintf("%s %s answered %d with no credential presented; no route asks",
 				route.method, route.target, code)
@@ -120,14 +145,9 @@ func TestHostileShimAsksWhoIsCalling(t *testing.T) {
 	hostile.Holds(t, "shim/no-authentication", problem)
 }
 
-// And when a token IS configured, every route asks for it — including the one
-// that answers before any sandbox exists.
-//
-// Unauthenticated stays the default, because the shim is a tool for a machine
-// you already trust and that is documented twice. What was missing was the
-// choice: there was no way to require a credential at all.
-func TestTheShimCanBeToldToRequireAToken(t *testing.T) {
-	t.Setenv(tokenEnv, "a-secret-the-caller-must-know")
+// Every route asks for the token — including the one that answers before any
+// sandbox exists — and a wrong token is refused exactly as an absent one is.
+func TestEveryRouteRequiresTheToken(t *testing.T) {
 	s := hostileShim(t)
 	h := s.Handler()
 
@@ -137,14 +157,14 @@ func TestTheShimCanBeToldToRequireAToken(t *testing.T) {
 		{"GET", "/health"},
 		{"GET", "/files"},
 	} {
-		if code, _ := drive(t, h, route.method, route.target, `{}`); code != http.StatusUnauthorized {
+		if code, _ := driveNoCredential(t, h, route.method, route.target, `{}`); code != http.StatusUnauthorized {
 			t.Errorf("%s %s answered %d without the token", route.method, route.target, code)
 		}
 		code, _ := driveAuth(t, h, route.method, route.target, "wrong-token")
 		if code != http.StatusUnauthorized {
 			t.Errorf("%s %s answered %d to the wrong token", route.method, route.target, code)
 		}
-		code, _ = driveAuth(t, h, route.method, route.target, "a-secret-the-caller-must-know")
+		code, _ = driveAuth(t, h, route.method, route.target, fixtureToken)
 		if code == http.StatusUnauthorized {
 			t.Errorf("%s %s refused the right token", route.method, route.target)
 		}

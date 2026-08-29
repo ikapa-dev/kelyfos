@@ -493,6 +493,20 @@ reference described in the README and re-measured per release.
   S2/P6-4 works correctly on real hardware and this was always a test bug.
 
 ### Changed
+- **`kelyfos shim` now requires a credential, and mints one if you do not.**
+  Unauthenticated was the default for three phases, with `KELYFOS_SHIM_TOKEN` as
+  an opt-in. It is now the other way round: with that variable unset the shim
+  generates 256 bits from `crypto/rand` at start, prints them once with the
+  `export` line and a `curl` line, and every route requires
+  `Authorization: Bearer <token>`, compared in constant time, answering `401`
+  without it. **Running with no credential now takes `--insecure-no-token`** —
+  an opt-out is a choice the operator can see, and an opt-in is a step nobody
+  takes. **This breaks any client that was reaching the shim without one**,
+  including the E2B Python SDK, which cannot carry a bearer token at all: its
+  control plane sends `X-API-KEY` and its file routes send
+  `Authorization: Basic base64("<user>:")` derived from the sandbox user (`e2b`
+  2.45.1). Drive it with `--insecure-no-token` on loopback;
+  `docs/cookbook.md`'s recipe does, and says why (P7-17/F2).
 - **A `kelyfos.toml` found by walking up must be owned by you, and no policy
   file may be writable by anybody else.** `kelyfos` finds a policy file the way
   `git` finds a repository, and that file names a host directory to pack into
@@ -509,6 +523,16 @@ reference described in the README and re-measured per release.
   directory owned by another account, one left mode `0666`, or one whose group
   is a shared group with other members now stops the run instead of configuring
   it. The fix is in the message (`chmod go-w`, or `--policy`).
+- **A `[[plugin]] path` outside the policy file's own directory tree is
+  refused** unless `--plugin-path` names the same directory — a new repeatable
+  flag on `kelyfos run` and `kelyfos serve-mcp`. A plugin directory is packed
+  into a read-only device and mounted inside the guest, so everything in it is
+  readable by whatever the agent runs; a `kelyfos.toml` naming
+  `plugin.path = "/home/you/.ssh"` hands the agent a key. The check lives in
+  `packPlugins`, so both doors that build the plugins device get it. **This can
+  break a working setup**: a shared plugin directory beside several projects
+  now needs the flag, and `docs/cookbook.md` §14 is a recipe for exactly that
+  arrangement (P7-17/F21).
 - **A `workspace` a policy file names outside its own directory tree is
   refused** unless `--workspace` names the same value on the command line. That
   directory is packed into the guest and written back over the host directory
