@@ -1201,7 +1201,16 @@ wrong:
    file, a directory or a symlink, and a symlink whose target is absolute or
    climbs out. A symlink is judged by where its whole **chain** lands, resolved
    through the entry set, rather than one link at a time — three links that each
-   look like they stay inside compose into one that does not.
+   look like they stay inside compose into one that does not. A chain this host
+   cannot follow to its end is refused as well, rather than assumed harmless:
+   the kernel gives up at 40 links, but `os.path.realpath`, Node's
+   `fs.realpathSync` and Go's own `filepath.EvalSymlinks` all follow much
+   further or without limit, and those are the tools that meet the link once it
+   is sitting in somebody's project. The comparison folds case, because the
+   filesystem the tree is renamed onto may fold it too — the macOS home
+   directory this project's primary platform shares into its Linux VM does —
+   and a component spelled `D1` that is really the symlink `d1` would otherwise
+   read as an ordinary directory.
 
    The enumeration also has to be **complete**, which is a separate promise and
    was separately broken. The directory names are quoted in the command that

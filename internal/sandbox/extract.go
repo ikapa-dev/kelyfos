@@ -445,32 +445,72 @@ func validLink(from, target string) error {
 // resolve the target through the entry set, which is the only lexical check
 // that is also true, and refuse the links that actually leave.
 
-// maxLinkHops bounds how far a chain is followed while it is being checked.
+// maxLinkHops bounds how far a chain is followed before the image is refused.
 //
-// **This number must stay above 40, and the inequality is the whole soundness
-// argument — do not lower it to match the kernel and do not tidy it away.**
+// **Exhausting it is a refusal. Do not turn that back into an acceptance.**
 //
-// Linux stops at 40 links in one path resolution. Sitting above that means every
-// chain anything on this host could actually follow is resolved here to its end,
-// so nothing is ever abandoned half-checked. That is what makes running out of
-// budget **not** a refusal: the refusal is for leaving the tree, that is checked
-// at every single step, and a resolution is deterministic — a walk that spent
-// its whole budget without leaving has no second path it could have taken, and a
-// chain long enough to exhaust this is ELOOP for every tool that meets it.
+// This comment previously argued the opposite, and the argument was wrong in a
+// way worth keeping written down. It said: Linux stops at 40 links in one path
+// resolution, so a chain longer than that is ELOOP for everything on the host,
+// so a walk that ran out of budget without leaving the tree could be accepted
+// because nothing could follow it anyway.
 //
-// Lower it below the kernel's limit and that inverts: a chain the kernel would
-// happily follow all the way out of the workspace would be dropped unexamined
-// and accepted.
+// The first clause is true and the conclusion does not follow. The kernel's cap
+// governs *kernel* path resolution. F18's harm model is the link left behind for
+// the next tool that follows it, and those tools resolve links themselves, in
+// userspace, with a much higher cap or none at all. Measured here, on one chain,
+// against a target outside the tree:
 //
-// A cycle is contained by the same argument. It cannot be followed, by anybody,
-// and refusing an image over one would cost somebody their session for a link
-// that reaches nothing.
+//	links   cat(2)                                 os.path.realpath / EvalSymlinks
+//	   30   OUTSIDE                                /tmp/…/secret.txt
+//	   45   Too many levels of symbolic links      /tmp/…/secret.txt
+//	   60   Too many levels of symbolic links      /tmp/…/secret.txt
+//
+// Python's realpath has cycle detection and no hop cap; Go's own
+// filepath.EvalSymlinks caps at 255. So a chain of 41 links that leaves the
+// workspace is unreadable by `cat` and perfectly readable by an IDE, by
+// `rsync -L`, and by any Go program that calls EvalSymlinks — which is the whole
+// population this check exists to protect.
+//
+// So the rule is one rule: a chain this cannot resolve to the end is refused.
+// That over-refuses the 41-to-64 band, where no kernel resolver could follow the
+// link either, and that cost is accepted deliberately — a single rule is simpler
+// to hold in the head than a split one, and a workspace containing a symlink
+// chain more than 64 links deep does not exist.
+//
+// A cycle exhausts the budget and is therefore refused too. It is contained, and
+// it is also unfollowable by anything, so the image is not losing anything real.
 const maxLinkHops = 64
 
 var (
 	errLinkEscapes = errors.New("the link leaves the workspace")
-	errLinkTooDeep = errors.New("the chain is longer than anything can follow")
+	errLinkTooDeep = errors.New("the chain is longer than this host will follow")
 )
+
+// foldPath is the key a resolved component is looked up by.
+//
+// Case-folded, and that is the second way a chain escaped (F18). walk decides
+// "is this component a symlink?" with a map lookup, and the map was keyed by the
+// name exactly as the image spells it. The destination filesystem does not have
+// to agree:
+//
+//	sub/d1   -> ..                     accepted by validLink and by the walk
+//	sub/leak -> D1/../secret.txt       "sub/D1" is not a key, so D1 is treated as
+//	                                   an ordinary directory: sub -> .. -> sub,
+//	                                   then secret.txt, which looks like it stays
+//
+// On a case-insensitive filesystem sub/D1 *is* sub/d1, so sub/leak really points
+// outside the tree. That is not a hypothetical platform: measured on this
+// project's own primary one, the macOS home directory shared into the Lima VM —
+// where the project directory lives, per PLAN.html §7 — is case-insensitive,
+// while /tmp on the same machine is not.
+//
+// Folding unconditionally rather than probing the destination, because
+// over-approximating "this component is a symlink" is the safe direction: it
+// makes the walk follow more chains and refuse more images, never fewer. Probing
+// would also be asking the wrong filesystem — the tree is extracted beside the
+// project and renamed into place, and a future caller could stage it elsewhere.
+func foldPath(p string) string { return strings.ToLower(p) }
 
 // linkResolver answers, for one image, where a name inside the tree really
 // lands once every symlink on the way has been followed.
@@ -478,11 +518,36 @@ var (
 // It holds the whole set, which is why the check that uses it runs after every
 // target has been read rather than link by link during extraction.
 type linkResolver struct {
-	links map[string]string // entry path -> target, symlinks only
+	links map[string]string // foldPath(entry path) -> target, symlinks only
+}
+
+// newLinkResolver builds the set, and refuses two symlinks whose names differ
+// only by case.
+//
+// One key can only hold one target, so a collision would silently drop one of
+// them and judge a chain through the survivor — a wrong answer in a check whose
+// whole job is to be right about where a chain lands. Two symlinks in one
+// directory differing only in case cannot both exist on the filesystem this tree
+// is renamed onto, so refusing is also the honest answer to what the image is
+// asking for.
+func newLinkResolver(targets map[string]string) (*linkResolver, error) {
+	r := &linkResolver{links: make(map[string]string, len(targets))}
+	seen := make(map[string]string, len(targets))
+	for from, target := range targets {
+		key := foldPath(from)
+		if other, ok := seen[key]; ok {
+			return nil, refuse("%s and %s are two symlinks whose names differ only in case; "+
+				"they cannot both exist where this workspace is going, and which one a chain "+
+				"resolves through is not something this host will guess", other, from)
+		}
+		seen[key] = from
+		r.links[key] = target
+	}
+	return r, nil
 }
 
 // walk resolves p starting from the directory cur — a list of components below
-// the tree root — the way the kernel would.
+// the tree root — the way a resolver that follows links would.
 func (r *linkResolver) walk(cur []string, p string, hops *int) ([]string, error) {
 	if path.IsAbs(p) {
 		// validLink refuses these before this ever runs. Answered anyway,
@@ -503,7 +568,7 @@ func (r *linkResolver) walk(cur []string, p string, hops *int) ([]string, error)
 			continue
 		}
 		next := append(append([]string(nil), cur...), seg)
-		target, isLink := r.links[strings.Join(next, "/")]
+		target, isLink := r.links[foldPath(strings.Join(next, "/"))]
 		if !isLink {
 			// A file, a directory, or a name that is not in the image at all.
 			// A dangling link is ordinary and is not this function's business.
@@ -525,11 +590,12 @@ func (r *linkResolver) walk(cur []string, p string, hops *int) ([]string, error)
 	return cur, nil
 }
 
-// validLinkChain refuses a symlink whose chain leaves the workspace.
+// validLinkChain refuses a symlink whose chain leaves the workspace, or which
+// this host cannot follow to the end.
 func validLinkChain(r *linkResolver, from, target string) error {
 	hops := 0
 	// The link's own directory is resolved first: a component of it may itself
-	// be a symlink, and the check has to start where the kernel would start.
+	// be a symlink, and the check has to start where a resolver would start.
 	cur, err := r.walk(nil, path.Dir(from), &hops)
 	if err == nil {
 		_, err = r.walk(cur, target, &hops)
@@ -539,7 +605,9 @@ func validLinkChain(r *linkResolver, from, target string) error {
 		return refuse("%s points at %s, which leaves the workspace once the links on the way are "+
 			"followed; each link on its own looks like it stays", from, target)
 	case errors.Is(err, errLinkTooDeep):
-		return nil // see maxLinkHops: contained, and unfollowable by anything
+		return refuse("%s points at %s through a chain of more than %d links, which this host "+
+			"will not follow to the end and so cannot say stays inside the workspace",
+			from, target, maxLinkHops)
 	}
 	return err
 }
@@ -599,7 +667,10 @@ func extractImage(imagePath string, entries []imageEntry, root *os.Root) error {
 		}
 		targets[e.path] = target
 	}
-	resolver := &linkResolver{links: targets}
+	resolver, err := newLinkResolver(targets)
+	if err != nil {
+		return err
+	}
 	for _, e := range sorted {
 		if e.kind != kindSymlink {
 			continue

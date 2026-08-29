@@ -3,6 +3,7 @@ package sandbox
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path"
@@ -302,15 +303,149 @@ func TestF18_ASymlinkChainCannotBeLeftInTheProject(t *testing.T) {
 		}
 	})
 
-	// A cycle cannot leave the tree — it just cannot be followed, by anybody.
-	// Accepted for that reason: the refusal is for leaving the workspace, and
-	// inventing one for a broken-but-contained link would cost an image for
-	// something every tool on the host already answers with ELOOP.
-	t.Run("two-link-cycle-stays-inside", func(t *testing.T) {
+	// The same chain, spelled in a different case. This is F18's second route
+	// and it needs no hop budget at all.
+	//
+	// walk decides "is this component a symlink?" by looking the resolved path up
+	// in the entry set, and the set was keyed by the name exactly as the image
+	// spells it. `sub/D1` is not a key, so it read as an ordinary directory and
+	// the chain looked like it stayed inside. On a case-insensitive filesystem
+	// `sub/D1` *is* `sub/d1` and the chain leaves — and the filesystem this
+	// project's own primary platform puts the project on is case-insensitive:
+	// measured, the macOS home shared into the Lima VM folds case while /tmp on
+	// the same machine does not.
+	//
+	// The refusal does not depend on where this test happens to run, because the
+	// fold is unconditional. That is deliberate: over-approximating "this is a
+	// symlink" makes the walk follow more and refuse more, never fewer.
+	t.Run("chain-climbs-out-in-a-different-case", func(t *testing.T) {
+		root := t.TempDir()
+		const secret = "a host file the guest was never given\n"
+		if err := os.WriteFile(filepath.Join(root, "secret.txt"), []byte(secret), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		src := mkdirT(t, filepath.Join(root, "src", "sub"))
+		for _, l := range []struct{ target, name string }{
+			{"..", "d1"},
+			{"D1/../secret.txt", "leak"},
+		} {
+			if err := os.Symlink(l.target, filepath.Join(src, l.name)); err != nil {
+				t.Fatal(err)
+			}
+		}
+		img := filepath.Join(root, "ws.ext4")
+		packImage(t, filepath.Join(root, "src"), img)
+
+		tree := mkdirT(t, filepath.Join(root, "tree"))
+		err := extractInto(t, img, tree)
+		if err == nil {
+			got, readErr := os.ReadFile(filepath.Join(tree, "sub", "leak"))
+			if readErr == nil {
+				t.Fatalf("the extraction accepted the chain and sub/leak reads %q — the entry set "+
+					"was keyed by the exact spelling and the destination filesystem does not "+
+					"have to agree", got)
+			}
+			t.Fatal("the extraction accepted a chain whose middle component differs only in case " +
+				"from a symlink in the same directory")
+		}
+		if !errors.Is(err, ErrHostileImage) {
+			t.Errorf("the refusal is %v, which does not wrap ErrHostileImage", err)
+		}
+	})
+
+	// A chain longer than the budget is refused rather than accepted, and the
+	// reason is measured rather than assumed.
+	//
+	// The budget used to be non-fatal on the argument that the kernel stops at 40
+	// links, so a longer chain is ELOOP for everything. That is true of *kernel*
+	// path resolution and false of the tools this finding is actually about,
+	// which walk links themselves. On one chain pointing at a file outside the
+	// tree:
+	//
+	//	links   cat(2)                              os.path.realpath / EvalSymlinks
+	//	   30   OUTSIDE                             …/secret.txt
+	//	   45   Too many levels of symbolic links   …/secret.txt
+	//	   60   Too many levels of symbolic links   …/secret.txt
+	//
+	// So a 41-link chain out of the workspace is unreadable by `cat` and
+	// perfectly readable by an IDE, by `rsync -L`, and by any Go program calling
+	// filepath.EvalSymlinks.
+	t.Run("a-chain-too-long-to-follow-is-refused", func(t *testing.T) {
 		root := t.TempDir()
 		if err := os.WriteFile(filepath.Join(root, "secret.txt"), []byte("no\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
+		src := mkdirT(t, filepath.Join(root, "src", "sub"))
+		// Every link stays inside and no single one of them is refusable on its
+		// own — l0 points at an ordinary file in the same directory. What the
+		// chain has is length: following the last one takes maxLinkHops+2
+		// resolutions, so the walk cannot reach the end and cannot report that it
+		// stays. A fixture whose first link climbs out would prove nothing here,
+		// because validLink refuses that lexically before the chain is walked at
+		// all.
+		if err := os.WriteFile(filepath.Join(src, "target.txt"), []byte("in\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink("target.txt", filepath.Join(src, "l0")); err != nil {
+			t.Fatal(err)
+		}
+		for i := 1; i <= maxLinkHops+1; i++ {
+			if err := os.Symlink(fmt.Sprintf("l%d", i-1),
+				filepath.Join(src, fmt.Sprintf("l%d", i))); err != nil {
+				t.Fatal(err)
+			}
+		}
+		img := filepath.Join(root, "ws.ext4")
+		packImage(t, filepath.Join(root, "src"), img)
+
+		tree := mkdirT(t, filepath.Join(root, "tree"))
+		if err := extractInto(t, img, tree); err == nil {
+			t.Fatal("a chain this host cannot follow to the end was accepted; it cannot have been " +
+				"shown to stay inside the workspace, and userspace resolvers follow far past the " +
+				"kernel's own limit — this one stays inside, and the point is that nothing here " +
+				"established that")
+		} else if !errors.Is(err, ErrHostileImage) {
+			t.Errorf("the refusal is %v, which does not wrap ErrHostileImage", err)
+		}
+	})
+
+	// Two symlinks whose names differ only in case, which the folded key cannot
+	// tell apart.
+	//
+	// One key holds one target, so a collision would silently drop one of them
+	// and judge every chain through the survivor — a wrong answer in the one
+	// check whose whole job is to be right about where a chain lands. They also
+	// cannot both exist where this tree is going, if that filesystem folds case.
+	t.Run("two-symlinks-differing-only-in-case-are-refused", func(t *testing.T) {
+		root := t.TempDir()
+		src := mkdirT(t, filepath.Join(root, "src", "sub"))
+		if err := os.Symlink("a.txt", filepath.Join(src, "link")); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink("b.txt", filepath.Join(src, "LINK")); err != nil {
+			t.Skipf("this filesystem will not hold both spellings: %v", err)
+		}
+		img := filepath.Join(root, "ws.ext4")
+		packImage(t, filepath.Join(root, "src"), img)
+
+		tree := mkdirT(t, filepath.Join(root, "tree"))
+		err := extractInto(t, img, tree)
+		if err == nil {
+			t.Fatal("two symlinks differing only in case were accepted; one of them decides what " +
+				"every chain through that name resolves to and the other is silently gone")
+		}
+		if !errors.Is(err, ErrHostileImage) {
+			t.Errorf("the refusal is %v, which does not wrap ErrHostileImage", err)
+		}
+	})
+
+	// A cycle exhausts the budget, so it is refused by the same one rule.
+	//
+	// It is genuinely contained — a cycle reaches nothing, inside the tree or
+	// out — so this is the cost of having one rule instead of two, taken
+	// deliberately. A link that reaches nothing is not work anybody loses.
+	t.Run("two-link-cycle-is-refused", func(t *testing.T) {
+		root := t.TempDir()
 		src := mkdirT(t, filepath.Join(root, "src", "sub"))
 		if err := os.Symlink("c2", filepath.Join(src, "c1")); err != nil {
 			t.Fatal(err)
@@ -322,15 +457,11 @@ func TestF18_ASymlinkChainCannotBeLeftInTheProject(t *testing.T) {
 		packImage(t, filepath.Join(root, "src"), img)
 
 		tree := mkdirT(t, filepath.Join(root, "tree"))
-		if err := extractInto(t, img, tree); err != nil {
-			t.Fatalf("a cycle inside the workspace was refused, which costs the whole image for a "+
-				"link that reaches nothing: %v", err)
-		}
-		if _, err := os.ReadFile(filepath.Join(tree, "sub", "c1")); err == nil {
-			t.Error("the cycle resolved to something, which it must not")
-		}
-		if got, err := os.Readlink(filepath.Join(tree, "sub", "c1")); err != nil || got != "c2" {
-			t.Errorf("sub/c1 came back as %q, %v", got, err)
+		if err := extractInto(t, img, tree); err == nil {
+			t.Fatal("a symlink cycle was accepted; it exhausts the hop budget, and exhausting the " +
+				"budget is a refusal")
+		} else if !errors.Is(err, ErrHostileImage) {
+			t.Errorf("the refusal is %v, which does not wrap ErrHostileImage", err)
 		}
 	})
 
