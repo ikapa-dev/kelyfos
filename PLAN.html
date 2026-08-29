@@ -8541,6 +8541,202 @@ after:
         <b>Unchanged:</b> P7-17 is not ticked and nothing is tagged. <code>ci.yml</code> and
         <code>security.yml</code> have still run against none of this on GitHub; Actions is still disabled
         at the account level.</td></tr>
+    <tr><td class="mono">2026-08-29</td><td class="mono">P7-17</td>
+        <td><b><code>dev/ci-act.sh</code> could not be run twice on one machine, and the fix is on
+        <code>main</code> as <code>de761f4</code>.</b> Two defects, found separately and by running the
+        thing rather than reading it. <code>act</code>&rsquo;s artifact server bound a fixed port 34567 on
+        the LAN address &mdash; this seat&rsquo;s finding, from a run that died at start &mdash; and two
+        runs of the same commit shared <code>$root/&lt;short&gt;</code> and one log path, so the
+        second&rsquo;s <code>rm -rf</code> removed the first&rsquo;s clone <i>mid-job</i>, which is the
+        script&rsquo;s own defect and the one that destroys a run rather than refusing to start one. The
+        summary then named neither. <code>de761f4</code>: a lock directory refuses a second concurrent run
+        with exit 3 and the reason, takes over a stale one, and is released on <code>INT</code>/
+        <code>TERM</code>/<code>HUP</code> as well as on a clean exit; per-run <code>mktemp</code> scratch;
+        the artifact server on <code>127.0.0.1</code> at a port free at that moment; <code>act</code>&rsquo;s
+        own fatal printed when no step ran; the log copied out to
+        <code>$root/act-&lt;job&gt;-&lt;short&gt;.log</code> so it outlives the scratch directory. The
+        header also now states what <code>8efa707</code>&rsquo;s run showed &mdash; <code>act</code> covers
+        <code>actions/checkout</code>, <code>setup-go</code> and its post-step, which
+        <code>dev/ci-local.sh</code> has never run at all, because the copy begins <i>after</i> the
+        checkout the workflow performs.
+        <br><b>The lock is the claim, so it was attacked rather than assumed.</b> A run was started and a
+        second attempted against it, twice. Both were refused instantly, by name and with the reason, and
+        <b>the first run was undamaged</b> &mdash; which is the property the pre-fix script did not have
+        and the whole point of the change. One nuance found doing it, and it is the shape this task keeps
+        meeting: the guarantee is true one layer down and not at the surface. <code>dev/ci-act.sh</code>
+        exits <b>3</b> exactly as claimed; <code>make ci-act</code> surfaces that as <b>2</b>, because
+        <code>make</code> exits 2 on any failed recipe. Anything scripted against
+        <code>make ci-act</code> testing for 3 will not see it. Reported rather than changed &mdash; the
+        exit code belongs to the script and the <code>make</code> target is a convenience over it &mdash;
+        and taken: <code>645e798</code> states all four codes and which layer returns them, so a caller is
+        told to invoke the script.
+        <br><b>One gap in the evidence offered for it, checked rather than waved through.</b> The
+        16-of-16 run cited for this change was made on <code>2374615</code>, before the rebase, and the
+        commit that is on <code>main</code> is <code>de761f4</code>.
+        <code>git diff 2374615 de761f4 -- dev/ci-act.sh</code> is <b>nine lines and all of them
+        comment</b> &mdash; the header sentence above &mdash; so that run is behaviourally valid for the
+        head. Recorded because &ldquo;the evidence is for a different commit&rdquo; and &ldquo;the
+        difference is comment-only&rdquo; are two facts and a reader is owed both, and because this is the
+        second time in this round a cited run has been for a commit other than the one under discussion.</td>
+        <td class="mono"><b>The lock, attacked:</b><br>
+        <code>$ make ci-act</code> &rarr;
+        <code>another dev/ci-act.sh (pid 52595) is running on this machine; wait for it — two at once
+        share one Docker daemon's memory and will OOM each other</code>, <code>make: *** [ci-act] Error
+        3</code>, and <code>make</code>&rsquo;s own exit <b>2</b><br>
+        <code>$ dev/ci-act.sh</code> &rarr; the same line, <b>script exit 3</b><br>
+        after both, <code>pgrep -f 'act push'</code> &rarr; <b>first run still up</b>, and it went on to
+        finish clean<br>
+        <b>The commit the cited evidence was taken on:</b>
+        <code>git diff 2374615 de761f4 -- dev/ci-act.sh</code> &rarr; one hunk, 6 insertions and 3
+        deletions, every line a comment.<br>
+        <b>The follow-up commit, held to the same standard rather than taken on its word:</b>
+        <code>645e798</code> is offered as comment-only, and the run above was made on
+        <code>de761f4</code>. Checked &mdash; <code>git diff de761f4 645e798</code> is six inserted lines
+        in one file, and filtering the diff for anything that is not a comment or a blank returns nothing.
+        So the run stands for the head, by the same reasoning applied to <code>2374615</code> one row
+        above, and by nobody&rsquo;s assurance.<br>
+        Head <code>645e798</code>, 14 ahead of <code>origin/main</code>, tree clean;
+        <code>PLAN.html</code> untouched by either fast-forward
+        (<code>git log 8efa707..HEAD -- PLAN.html</code> &rarr; empty), so this document still has one
+        writer &mdash; the row text above was written by the session that owns the script and appended
+        here rather than added by it.<br>
+        <b>Unchanged by any of this:</b> D73 and D77 stand. <code>make ci-act</code> runs one job of the
+        two workflows &sect;8 rule 8 names, in an <code>arm64</code> container as root, with neither
+        <code>build</code> nor <code>boot</code> nor <code>security.yml</code>. P7-17 is not ticked and
+        nothing is tagged.</td></tr>
+
+    <tr><td class="mono">2026-08-29</td><td class="mono">P7-17</td>
+        <td><b><code>dev/ci-act.sh</code> died at the end of a nine-minute run that had succeeded, and the
+        cause was this seat pulling while it ran.</b> The run on <code>de761f4</code> finished
+        <code>[ci/checks] 🏁 Job succeeded</code> with sixteen green steps and then printed
+        <code>dev/ci-act.sh: line 199: syntax error near unexpected token ')'</code> and no summary at all.
+        Not a defect in the script &mdash; <code>bash -n</code> is clean on it. <code>bash</code> reads a
+        script lazily by byte offset, <code>645e798</code> grew the file by six lines while it was
+        executing, and it resumed mid-token in the new text. Entirely self-inflicted, and diagnosed rather
+        than reported as a bug.
+        <br><b>It is worth fixing anyway, because the conditions are now ordinary rather than unlucky.</b>
+        A run is nine minutes; <code>CLAUDE.md</code> tells every session to push the same day; several
+        sessions work this repository at once; and the lock added the same afternoon stops a second
+        <i>run</i> while doing nothing about a <i>pull</i>. The failure mode is the nasty kind:
+        <code>Error 2</code> after a job that <i>passed</i> reads as a failed check. Reported with that
+        provenance and taken &mdash; <code>d7731ea</code> puts the body in <code>main()</code> called on
+        the last line, so bash parses the whole file before executing any of it. The residual is stated in
+        its own commit and repeated here: the wrapper protects runs started from that commit onward, and a
+        run already in flight from an older copy would still hit it once more.</td>
+        <td class="mono">Sixteen steps recovered from act&rsquo;s own log rather than from the summary the
+        crash ate: <code>Set up job &middot; checkout &middot; setup-go &middot; gofmt &middot; go vet
+        &middot; vsock modprobe &middot; unit tests 2m33.595s &middot; fuzz 5m25.796s &middot; hostile
+        28.708s &middot; plan &middot; changelog &middot; DCO &middot; generated reference &middot;
+        cookbook &middot; post-setup-go &middot; Complete job</code>, all <code>Success</code>,
+        <code>🏁 Job succeeded</code>. The format of this row&rsquo;s evidence differs from its neighbours
+        for that reason and the reason is stated rather than left for a reader to wonder at.<br>
+        <code>bash -n dev/ci-act.sh</code> &rarr; clean, before and after.
+        <code>git log de761f4..e67d80f -- dev/ci-act.sh</code> &rarr; <code>645e798</code>, which is the
+        file that changed under the running copy.<br>
+        <code>d7731ea</code> checked as shape-only: the diff moves the body into <code>main()</code> and
+        adds no logic.</td></tr>
+
+    <tr><td class="mono">2026-08-29</td><td class="mono">P7-17</td>
+        <td><b>The local-CI protocol, written into <code>CLAUDE.md</code> where every session reads it,
+        and the round pushed.</b> On the owner&rsquo;s instruction a peer session added a dated
+        <b>UNTIL GITHUB ACTIONS IS BACK</b> block (<code>b548105</code>) and pushed &mdash; this
+        round&rsquo;s work is on <code>origin</code> for the first time, and the eleven commits of it were
+        confirmed ancestors of <code>origin/main</code> rather than assumed. The block restates D73 and D77
+        and adds the operational half neither had: confirm the outage at session start, treat a head with
+        no hosted run as red, run <code>make ci-act</code> on the exact commit merged and paste its summary
+        whole, add <code>dev/ci-local.sh --boot</code> and the accept scripts for anything under
+        <code>supervisor/</code>, <code>image/</code> or <code>internal/sandbox</code>, never while
+        somebody else&rsquo;s microVM is up, write &ldquo;local evidence&rdquo; and never &ldquo;green
+        pipeline&rdquo;, do not tick P7-17, do not tag, push the same day, and delete the block in the
+        commit that records the first hosted green.
+        <br><b>Two corrections to it, raised rather than made.</b> It called <code>make ci-act</code> the
+        &ldquo;<b>pipeline of record</b>&rdquo; &mdash; the exact phrase <code>dev/ci-act.sh</code>&rsquo;s
+        own header uses for the thing act is <i>not</i>, and the drift D77 exists to prevent. The block
+        bounded it two lines later, so it was internally consistent; the objection is that a session
+        meeting the strong phrase first will remember that one, and <code>CLAUDE.md</code> is read at
+        session start while D77 is a row in a one-megabyte file. And its &ldquo;run it on the exact commit
+        you merge, not on a parent&rdquo; has one unavoidable exception &mdash; the commit that
+        <i>carries</i> the row cannot have been run against, because it does not exist yet &mdash; which,
+        left unstated, makes the rule read as impossible and invites somebody to ignore all of it. Both
+        were the owner&rsquo;s to decide and both were applied (<code>e67d80f</code>): &ldquo;local
+        evidence of record &hellip; evidence, not the pipeline; the pipeline is GitHub&rsquo;s and it is
+        down&rdquo;, and the exception stated the way this round&rsquo;s own closing rows handle it.
+        <b>This seat did not edit <code>CLAUDE.md</code></b>, on a peer&rsquo;s word or on its own
+        judgement about another session&rsquo;s protocol block.</td>
+        <td class="mono">Push: <code>fb62db8..b548105</code>, 15 commits, tree clean; verified here as
+        <code>git rev-list --count HEAD..origin/main</code> &rarr; 0 and every one of this round&rsquo;s
+        commits an ancestor of <code>origin/main</code>. No workflow ran, as expected; Actions still
+        answers 422.<br>
+        <b>The block was read in full rather than taken from its summary</b>, because it is the instruction
+        set this seat operates under. It tightens rather than loosens and contains no authority to close
+        anything.<br>
+        <b>And one thing nobody had asked about, checked because a documentation-only commit tripping a
+        documentation gate is exactly what gets waved through:</b> <code>b548105</code> and
+        <code>e67d80f</code> change <code>CLAUDE.md</code> without regenerating the docs. If
+        <code>CLAUDE.md</code> fed <code>llms-full.txt</code>, the checks job&rsquo;s <i>generated
+        reference</i> step would now fail on the head. It does not &mdash;
+        <code>grep -c 'UNTIL GITHUB ACTIONS IS BACK' llms-full.txt llms.txt</code> &rarr; 0 and 0, and
+        <code>make docs</code> leaves the tree clean.</td></tr>
+
+    <tr><td class="mono">2026-08-29</td><td class="mono">P7-17</td>
+        <td><b>The head is RED under <code>make ci-act</code>, and it is P7-14 &mdash; deferred, live, and
+        not this round&rsquo;s doing.</b> The run on <code>e67d80f</code> failed:
+        <code>fuzz, briefly</code> and, behind it, <code>keep any crashing input</code>. Fourteen steps
+        green and two red. <b>The failing target is <code>FuzzScopeCovers</code></b>, on
+        <code>covers("/repo/") approved escaped path "/repo/", but under matrix-param strip (Tomcat/Jetty)
+        it resolves to "/repo", which is not beneath "/repo//"</code> &mdash; which is <b>P7-14</b> (D67),
+        the double-trailing-slash hole in path-scoped credential matching, added to this phase on
+        2026-08-27 and deferred by the owner ever since.
+        <br><b>It is a discovery, not a poisoned corpus, and the first reading of it here was wrong.</b>
+        The nested <code>--- FAIL (0.00s)</code> looked like a failing seed; the log above it says
+        otherwise &mdash; <code>new interesting: 4</code>, then <code>fuzz: minimizing 51-byte failing
+        input file</code>. act fuzzed its way to it in about four seconds. The A2 review had attributed
+        this machine&rsquo;s other fuzz failure to a cached corpus entry, and that diagnosis is not
+        transferable to this one.
+        <br><b>What makes the difference is the environment, measured rather than guessed.</b> Under act
+        the container reports enough CPUs for <b>18 workers</b> and starts from <b>246 baseline seeds</b>
+        restored by <code>setup-go</code>&rsquo;s cache; in the Lima VM it is <b>6 workers</b>. Natively,
+        at 6 workers, this target does <i>not</i> reach the input in 10s (three attempts), nor in 120s
+        &mdash; four million executions, 287 seeds, <code>PASS</code>. Under act it reached it in four.
+        So the same defect that has been a deferred fuzz-only curiosity for two days is now reachable
+        inside the ten-second budget of the step the project has just designated its local evidence of
+        record.
+        <br><b>The consequence is the part that matters.</b> <code>make ci-act</code>&rsquo;s
+        <code>fuzz, briefly</code> step will fail <i>intermittently</i> on <code>main</code> until P7-14 is
+        fixed, and more often as the cached corpus evolves toward it. That is a change in P7-14&rsquo;s
+        priority rather than in its content: the previous round already recorded that
+        <code>dev/fuzz.sh</code> could turn it into a <code>go test ./...</code> failure &ldquo;for
+        everyone until deleted&rdquo;, and this needs no corpus file and no <code>dev/fuzz.sh</code> at
+        all. <b>Not fixed here</b> &mdash; P7-14 is the owner&rsquo;s deferred task and this brief scopes
+        it out &mdash; but a reader who runs <code>make ci-act</code> and sees red is owed the reason
+        before they go looking for it in this round&rsquo;s work, where it is not.</td>
+        <td class="mono"><code>make ci-act</code> on <code>e67d80f</code>:<br>
+        <code>&nbsp;&#9989; pass&nbsp; Set up job &middot; actions/checkout@v4 &middot; actions/setup-go@v5
+        &middot; gofmt &middot; go vet &middot; the vsock loopback transport &middot; unit tests
+        [2m35.925s]</code><br>
+        <code>&nbsp;&#10060; FAIL&nbsp; fuzz, briefly [5m23.980s]</code><br>
+        <code>&nbsp;&#10060; FAIL&nbsp; keep any crashing input [768ms]</code><br>
+        <code>&nbsp;&#9989; pass&nbsp; Complete job</code><br>
+        <code>&nbsp; job 'checks' FAILED on e67d80f under act (exit 1)</code><br>
+        the job&rsquo;s own words:
+        <code>--- FAIL: FuzzScopeCovers (4.40s) &hellip; covers("/repo/") approved escaped path
+        "/repo/"</code>. The second failure is consequential, not separate: <code>keep any crashing
+        input</code> is the <code>if: failure()</code> upload step, and it fails under act because there is
+        no artifact endpoint (<code>Failed to CreateArtifact: ECONNREFUSED</code>) &mdash; a property of
+        the container and not of the tree.<br>
+        <b>The environment difference, measured:</b><br>
+        <code>act: gathering baseline coverage: 246/246, now fuzzing with 18 workers &rarr; FAIL at 4.40s</code><br>
+        <code>lima (nproc 6): 3 &times; 10s &rarr; not found; 120s &rarr; 4053082 execs, 287 seeds, PASS</code><br>
+        <code>go test ./internal/egress/ -run FuzzScopeCovers</code> (the seed corpus, as
+        <code>make test</code> runs it) &rarr; <code>ok 0.002s</code>: the committed corpus does not carry
+        it, and no crasher is committed for that target.<br>
+        Every crasher written by these probes was removed and the tree confirmed clean after each
+        (<code>git status --porcelain</code> &rarr; 0), because a <code>testdata/fuzz</code> file left
+        behind is precisely what turns this from intermittent into permanent &mdash; which the previous
+        round recorded as a hazard and which this seat was therefore careful not to create.<br>
+        <b>Unchanged:</b> P7-17 is not ticked and nothing is tagged. This row records a red local check on
+        the head, which under &sect;8 rule 8 as amended is a fact about <code>main</code> and not a reason
+        to close anything.</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
