@@ -18,6 +18,7 @@ import (
 
 	"github.com/p4r4n0rm4l/KelyfOS/internal/config"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/denial"
+	"github.com/p4r4n0rm4l/KelyfOS/internal/exitcode"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/report"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/sandbox"
@@ -926,6 +927,13 @@ final shutdown the pause deferred.
 	case <-ctx.Done():
 		fmt.Println("\nstopping...")
 		return nil
+	case <-rec.Broken():
+		// A resumed session keeps a machine alive exactly as `kelyfos run`
+		// does, and holds a recorder open for it — so it stops for the same
+		// reason (P7-17/F13(b)). Found by widening the wiring check to every
+		// file in this package rather than the two the finding named.
+		recorderFailed(rec, os.Stderr)
+		return &exitError{exitcode.Fail}
 	case <-vmExited:
 		return errors.New("the resumed microVM exited unexpectedly")
 	}

@@ -876,38 +876,18 @@ status. This is how you hand an agent a sandbox and nothing else:
 			recorderFailed(rec, os.Stderr)
 			err = stopChild(child, childDone, command[0])
 		}
-		reason = "command_exited"
-		code := 0
+		var childCode int
 		if err != nil {
 			var ee *exec.ExitError
 			if errors.As(err, &ee) {
-				code = ee.ExitCode()
+				childCode = ee.ExitCode()
 			} else {
 				return fmt.Errorf("run %s: %w", command[0], err)
 			}
 		}
-		if timedOut != "" {
-			reason = "timeout"
-			code = exitTimedOut
-		}
-		if recorderBroke {
-			// After the timeout branch, because a run that lost its record is
-			// not describable as anything else — whatever the child's own
-			// status was, this run did not do what it says it did.
-			reason = "recorder_failed"
-			code = exitcode.Fail
-		}
-		fmt.Printf("\n%s exited %d; stopping the sandbox\n", command[0], code)
-		if code == 0 && oomKills.Load() > 0 {
-			// The command finished, but something in the sandbox was killed for
-			// running the machine out of memory. Reporting success would hide
-			// exactly the failure the user most needs to see, so `run` exits
-			// 137 — the shell's convention for death by SIGKILL, which is
-			// literally what the OOM killer sent.
-			code = exitOOMKilled
-		}
-		// After the OOM adjustment, not before: the record has to hold what
-		// kelyfos actually exited with.
+		var announced, code int
+		reason, announced, code = commandRunOutcome(childCode, timedOut, recorderBroke, oomKills.Load() > 0)
+		fmt.Printf("\n%s exited %d; stopping the sandbox\n", command[0], announced)
 		exitCode = &code
 		if code != 0 {
 			// Returned, never os.Exit: this function's deferred teardown is
@@ -1408,16 +1388,25 @@ func stopChild(child *exec.Cmd, childDone <-chan error, name string) error {
 
 // endSession writes a session's last lines and closes the record.
 //
-// One function because three doors do it — `kelyfos run`, a team, and
-// serve-mcp's per-box teardown — and because of what goes first: EndBroken,
-// unconditionally, before the ordinary session.end (P7-17/F13(b)).
+// One function because several doors do it — `kelyfos run`, a team, and
+// serve-mcp's per-box teardown — and because every one of them has to call
+// EndBroken, which is easy to leave out of a teardown written later
+// (P7-17/F13(b)).
 //
-// It is a no-op on an intact recorder and a second attempt at the "why the
-// record stops here" line on a broken one. Worth attempting again because by
-// now the machine is down: whatever was holding the disk may have let go, and
-// the difference between a chain that ends mid-session for no stated reason and
-// one whose last line names the error is the difference between an auditor
+// EndBroken is a no-op on an intact recorder and a second attempt at the "why
+// the record stops here" line on a broken one. Worth attempting again because
+// by now the machine is down: whatever was holding the disk may have let go,
+// and the difference between a chain that ends mid-session for no stated reason
+// and one whose last line names the error is the difference between an auditor
 // guessing and an auditor reading.
+//
+// The ORDER — EndBroken before the ordinary session.end — is defensive style
+// and not a consequence, and this comment used to imply otherwise. Swapping the
+// two produces a byte-identical chain in both states: on a broken recorder the
+// Append is refused and only EndBroken writes anything, and on an intact one
+// EndBroken writes nothing. It is written this way because "the epitaph goes
+// first" stays true if Append ever stops being refused, not because anything
+// today depends on it.
 func endSession(rec *recorder.Recorder, reason string, exitCode *int) {
 	_ = rec.EndBroken()
 	_ = rec.Append(recorder.Event{
@@ -1425,4 +1414,44 @@ func endSession(rec *recorder.Recorder, reason string, exitCode *int) {
 		DurationMS: rec.Since().Milliseconds(), Code: exitCode,
 	})
 	_ = rec.Close()
+}
+
+// commandRunOutcome decides how a `kelyfos run -- cmd` session is described and
+// what the CLI exits with, given everything that happened to it.
+//
+// A function rather than four ifs inline because of what it decides — the
+// session.end reason is the record's own account of the run, and the record
+// misdescribing what happened is the concern the RECORD checklist opens with.
+// The precedence is the point and is what the tests pin:
+//
+//   - a broken recorder wins over everything, because a run that lost its
+//     record did not do what it says it did whatever its child's status was;
+//   - a timeout wins over the child's own exit, because the child was stopped
+//     rather than finished;
+//   - an OOM kill only upgrades a code of zero, because a command that already
+//     failed has a status of its own worth keeping — but a run in which
+//     something was killed for memory is never a clean run.
+//
+// announced is what the "<cmd> exited N" line says and code is what the CLI
+// exits with. They differ only for an OOM kill: that line has reported the
+// run's status BEFORE the OOM upgrade since E1-4, and moving it would change
+// output nobody asked to change.
+func commandRunOutcome(childCode int, timedOut string, recorderBroke, oomKilled bool) (reason string, announced, code int) {
+	reason, code = "command_exited", childCode
+	if timedOut != "" {
+		reason, code = "timeout", exitTimedOut
+	}
+	if recorderBroke {
+		reason, code = "recorder_failed", exitcode.Fail
+	}
+	announced = code
+	if code == 0 && oomKilled {
+		// The command finished, but something in the sandbox was killed for
+		// running the machine out of memory. Reporting success would hide
+		// exactly the failure the user most needs to see, so `run` exits 137 —
+		// the shell's convention for death by SIGKILL, which is literally what
+		// the OOM killer sent.
+		code = exitOOMKilled
+	}
+	return reason, announced, code
 }

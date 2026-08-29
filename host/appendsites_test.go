@@ -38,6 +38,11 @@ import (
 // It cannot pass silently. An equality on a count fails in both directions — a
 // site removed and not accounted for fails too — which a "this pattern must not
 // appear" assertion could not do.
+//
+// The walk counts both spellings — `_ = rec.Append(...)` and a bare
+// `rec.Append(...)` whose error is dropped without even a blank. The first
+// version counted only the former, which left a way past the number that
+// changed no line of it.
 const discardedAppendSites = 75
 
 // discardedAppendPackages are the trees the finding counted.
@@ -80,16 +85,31 @@ func findDiscardedAppends(t *testing.T) []string {
 				return perr
 			}
 			ast.Inspect(f, func(n ast.Node) bool {
-				as, ok := n.(*ast.AssignStmt)
-				if !ok || len(as.Lhs) != 1 || len(as.Rhs) != 1 {
+				var call *ast.CallExpr
+				var pos token.Pos
+				switch st := n.(type) {
+				case *ast.AssignStmt:
+					// `_ = rec.Append(...)`
+					if len(st.Lhs) != 1 || len(st.Rhs) != 1 {
+						return true
+					}
+					id, ok := st.Lhs[0].(*ast.Ident)
+					if !ok || id.Name != "_" {
+						return true
+					}
+					call, _ = st.Rhs[0].(*ast.CallExpr)
+					pos = st.Pos()
+				case *ast.ExprStmt:
+					// `rec.Append(...)` with the error dropped entirely, which
+					// the first version of this walk missed: it looked only for
+					// the `_ =` spelling, so a bare call was a way past the
+					// count without changing the number.
+					call, _ = st.X.(*ast.CallExpr)
+					pos = st.Pos()
+				default:
 					return true
 				}
-				id, ok := as.Lhs[0].(*ast.Ident)
-				if !ok || id.Name != "_" {
-					return true
-				}
-				call, ok := as.Rhs[0].(*ast.CallExpr)
-				if !ok {
+				if call == nil {
 					return true
 				}
 				sel, ok := call.Fun.(*ast.SelectorExpr)
@@ -97,7 +117,7 @@ func findDiscardedAppends(t *testing.T) []string {
 					return true
 				}
 				rel, _ := filepath.Rel("..", path)
-				out = append(out, rel+":"+itoa(fset.Position(as.Pos()).Line))
+				out = append(out, rel+":"+itoa(fset.Position(pos).Line))
 				return true
 			})
 			return nil

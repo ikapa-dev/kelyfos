@@ -79,8 +79,9 @@ reference described in the README and re-measured per release.
   machine went on executing commands and making egress with nobody told, which
   is the harm the finding describes rather than a narrowing of it. Every loop
   that keeps a machine alive now watches it: `kelyfos run`'s two, `kelyfos team
-  up`'s — one recorder covers a whole rig — and, since `serve-mcp` has no such
-  loop, a per-sandbox watcher started where the machine is registered. When it
+  up`'s — one recorder covers a whole rig — `kelyfos sessions resume`'s and
+  `kelyfos snapshot restore`'s, and, since `serve-mcp` has no such loop, a
+  per-sandbox watcher started where the machine is registered. When it
   fires the machine is stopped and the operator is told which event was lost and
   why; `kelyfos run` exits `1` and the session ends `recorder_failed`, and under
   `serve-mcp` the next tool call naming that sandbox says the recorder failed

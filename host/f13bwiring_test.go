@@ -5,17 +5,27 @@ import (
 	"go/parser"
 	"go/token"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
 
 // P7-17/F13(b): every loop that keeps a machine alive watches the recorder.
 //
-// This is an AST property rather than a grep. A `select` that waits on a time
-// budget, on the VM's own exit, or on the trailing command is a loop whose only
-// job is to decide when the machine stops — and a machine nobody is recording
-// has to be one of the reasons. Deleting a `case <-rec.Broken():` from any of
-// them turns this red; so does adding a fourth such loop without one.
+// This is an AST property rather than a grep. Deleting a `case <-rec.Broken():`
+// from any of the loops below turns it red, which is what it is for.
+//
+// WHAT IT DOES NOT DO, stated because the first version of this comment claimed
+// it did: it is a REGRESSION guard over an enumerated surface, not a discovery
+// tool. It walks every non-test file in this package and recognises a
+// machine-lifetime select two ways — by the channel names the existing loops
+// use, and by being inside one of the functions named in lifetimeFuncs, where
+// EVERY multi-way select must watch the recorder whatever its channels are
+// called. A brand-new waiting loop, in a new function, on channels named
+// something else, is invisible to both and always will be: no syntactic rule
+// can tell "waits for a machine to end" from "waits for anything else". The
+// review found exactly that gap by adding one, and the honest fix is to say so
+// here rather than to keep widening a heuristic until it looks total.
 //
 // Named exemption, one, with its reason: stopChild is reached only AFTER that
 // decision has been made, so it waits on childDone to end a command that is
@@ -27,9 +37,24 @@ var wiringExempt = map[string]string{
 // waitChannels are the receives that make a select a machine-lifetime loop.
 var waitChannels = []string{"budgetFired", "vmExited", "childDone"}
 
+// lifetimeFuncs are the functions that hold a machine open. Inside these, every
+// select with more than one communication clause has to watch the recorder,
+// whatever its channels are named — which is the half that catches a rename.
+// Their existence is asserted, so a function renamed out from under this list
+// fails rather than silently emptying it.
+var lifetimeFuncs = []string{"runWithSandbox", "teamUp"}
+
 func TestF13b_EveryMachineLifetimeLoopWatchesTheRecorder(t *testing.T) {
 	checked := 0
-	for _, file := range []string{"run.go", "team.go"} {
+	seenFunc := map[string]bool{}
+	files, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, file := range files {
+		if strings.HasSuffix(file, "_test.go") {
+			continue
+		}
 		fset := token.NewFileSet()
 		f, err := parser.ParseFile(fset, file, nil, parser.ParseComments)
 		if err != nil {
@@ -44,12 +69,24 @@ func TestF13b_EveryMachineLifetimeLoopWatchesTheRecorder(t *testing.T) {
 				t.Logf("exempt: %s — %s", fn.Name.Name, why)
 				return false
 			}
+			inLifetimeFunc := false
+			for _, name := range lifetimeFuncs {
+				if fn.Name.Name == name {
+					inLifetimeFunc = true
+					seenFunc[name] = true
+				}
+			}
 			ast.Inspect(fn.Body, func(n ast.Node) bool {
 				sel, ok := n.(*ast.SelectStmt)
 				if !ok {
 					return true
 				}
-				if !isLifetimeSelect(fset, sel) {
+				// Two ways in: the channel names the existing loops use, or
+				// being a multi-way select inside a function that holds a
+				// machine open — the second is what survives a rename.
+				byName := isLifetimeSelect(fset, sel)
+				byFunc := inLifetimeFunc && len(sel.Body.List) > 1
+				if !byName && !byFunc {
 					return true
 				}
 				checked++
@@ -72,6 +109,14 @@ func TestF13b_EveryMachineLifetimeLoopWatchesTheRecorder(t *testing.T) {
 	if checked < 2 {
 		t.Errorf("only %d machine-lifetime loops were found; run.go has two. "+
 			"The AST walk is looking in the wrong place.", checked)
+	}
+	// And the by-function half is only worth anything while the functions it
+	// names exist. A rename empties it silently otherwise.
+	for _, name := range lifetimeFuncs {
+		if !seenFunc[name] {
+			t.Errorf("lifetimeFuncs names %s and no such function is declared in this package; "+
+				"the rename that moved it also emptied half of this guard", name)
+		}
 	}
 }
 

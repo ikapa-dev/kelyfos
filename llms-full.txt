@@ -4541,9 +4541,11 @@ the machine rather than leave it running unrecorded.**
 
 **That wiring is in place.** Every loop that keeps a machine alive watches the
 channel: `kelyfos run`'s two — the trailing-command form and the interactive
-one — and `kelyfos team up`'s, which covers a whole rig because a team has one
-recorder for all of it. `kelyfos serve-mcp` has no such loop, so each sandbox it
-creates gets a watcher of its own, started where the machine is registered.
+one — `kelyfos team up`'s, which covers a whole rig because a team has one
+recorder for all of it, and the ones `kelyfos sessions resume` and
+`kelyfos snapshot restore` hold their machines open with. `kelyfos serve-mcp`
+has no such loop, so each sandbox it creates gets a watcher of its own, started
+where the machine is registered.
 
 When it fires, the machine is stopped and you are told which event was lost and
 why:
@@ -4553,8 +4555,8 @@ kelyfos: the flight recorder stopped at event 41: no space left on device
 kelyfos: stopping the machine — it is not being recorded
 ```
 
-`kelyfos run` then exits `1`, and the session's `session.end` reads
-`recorder_failed`. Under `serve-mcp` the sandbox stops being served and the next
+`kelyfos run`, `sessions resume` and `snapshot restore` then exit `1`, and the
+session's `session.end` reads `recorder_failed`. Under `serve-mcp` the sandbox stops being served and the next
 tool call naming it says the recorder failed and at which event, rather than
 that no such sandbox exists. A sandbox that was asked not to record at all is
 unaffected: a disabled recorder's channel is nil, and a receive on nil never

@@ -2,10 +2,12 @@ package main
 
 import (
 	"os"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/p4r4n0rm4l/KelyfOS/internal/exitcode"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/sandbox"
 )
@@ -220,6 +222,17 @@ func TestF13b_ServeMCPStopsServingABoxWhoseRecorderFailed(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 	}
 
+	// Deregistering is not stopping. The box has to have been torn down —
+	// close() is what does that, and it clears b.rec on its way out, which is
+	// the observable this fixture has. Without this assertion, deleting
+	// b.close() from watchRecorder left the suite green while the machine kept
+	// running unrecorded: F13's own harm, surviving in the one door with no run
+	// loop.
+	if rec, _ := b.watchable(); rec != nil {
+		t.Error("the box was deregistered and never torn down: its recorder is still set, " +
+			"so close() did not run and the machine is still up, unrecorded")
+	}
+
 	// And the client is told what happened, rather than that it never existed.
 	_, err := s.box("abc1234")
 	if err == nil {
@@ -248,17 +261,32 @@ func TestF13b_TheWatcherStopsWithTheBox(t *testing.T) {
 	b := &servedBox{}
 	b.setRec(rec)
 
+	parked := make(chan struct{})
 	done := make(chan struct{})
 	s := &hostServer{boxes: map[string]*servedBox{"live": b}}
-	go func() { s.watchRecorder("live", b); close(done) }()
+	go func() {
+		close(parked)
+		s.watchRecorder("live", b)
+		close(done)
+	}()
+	<-parked
+	// The watcher has to actually reach its select before the box is closed,
+	// or this passes for the wrong reason: watchable() returns (nil, nil) on an
+	// already-closed box and the goroutine returns without ever having waited.
+	// That is how the first version of this test stayed green.
+	time.Sleep(50 * time.Millisecond)
 
-	b.stopWatching()
-	b.stopWatching() // idempotent: close() runs on more than one path
+	// Through close(), which is the path an ordinary sandbox_stop takes — NOT
+	// stopWatching() by hand, which is what this test did when it was written
+	// and is why deleting the stopWatching call from close() left it green.
+	b.close("shutdown")
+	b.close("shutdown") // idempotent: more than one path reaches it
 
 	select {
 	case <-done:
 	case <-time.After(2 * time.Second):
-		t.Fatal("the watcher outlived the box")
+		t.Fatal("the watcher outlived the box: a sandbox_stop left a goroutine parked " +
+			"in watchRecorder on a channel nobody will close")
 	}
 	s.mu.Lock()
 	_, still := s.boxes["live"]
@@ -266,7 +294,41 @@ func TestF13b_TheWatcherStopsWithTheBox(t *testing.T) {
 	if !still {
 		t.Error("a box whose recorder never broke was deregistered anyway")
 	}
-	_ = rec.Close()
+}
+
+// And the consequence, counted rather than argued: forty create/stop cycles
+// must leave no goroutine behind. This is what the reviewer measured when the
+// stopWatching call was deleted from close() — forty leaked, all parked in
+// watchRecorder — and it is a stronger statement than one box's watcher
+// returning, because a leak that only shows up under repetition is exactly the
+// leak nobody notices.
+func TestF13b_RepeatedCreateAndStopLeaksNoWatchers(t *testing.T) {
+	root := t.TempDir()
+	before := runtime.NumGoroutine()
+
+	const cycles = 40
+	for i := 0; i < cycles; i++ {
+		rec, err := recorder.Open(root, "cycle"+itoa(i))
+		if err != nil {
+			t.Fatal(err)
+		}
+		b := &servedBox{}
+		b.setRec(rec)
+		s := &hostServer{boxes: map[string]*servedBox{"b": b}}
+		go s.watchRecorder("b", b)
+		time.Sleep(time.Millisecond)
+		b.close("shutdown")
+	}
+
+	// Goroutines exit asynchronously, so give them a bounded moment to.
+	deadline := time.Now().Add(3 * time.Second)
+	for runtime.NumGoroutine() > before+2 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if grew := runtime.NumGoroutine() - before; grew > 2 {
+		t.Errorf("%d goroutines leaked across %d create/stop cycles; each sandbox_stop left "+
+			"its watcher parked in watchRecorder", grew, cycles)
+	}
 }
 
 // And the watcher is started where a machine is registered, not at the three
@@ -298,5 +360,53 @@ func TestF13b_AdoptStartsTheWatcher(t *testing.T) {
 				"two seconds after its recorder broke")
 		}
 		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// The trailing-command form sets its own session.end reason and exit code by a
+// separate literal from the interactive form's, and nothing covered it: the
+// whole `if recorderBroke { … }` could be neutralised with the suite green,
+// leaving `kelyfos run -- cmd` on a broken recorder writing reason
+// "command_exited" and the child's status — the record misdescribing the run,
+// which is the RECORD checklist's own concern and what docs/events.md now
+// promises against.
+func TestF13b_ABrokenRecorderDecidesHowTheRunIsDescribed(t *testing.T) {
+	for _, c := range []struct {
+		name            string
+		childCode       int
+		timedOut        string
+		broke, oom      bool
+		reason          string
+		announced, exit int
+	}{
+		{name: "the ordinary case", childCode: 0, reason: "command_exited", announced: 0, exit: 0},
+		{name: "the child's own failure", childCode: 3, reason: "command_exited", announced: 3, exit: 3},
+		{name: "a timeout beats the child", childCode: 0, timedOut: "max_runtime",
+			reason: "timeout", announced: exitTimedOut, exit: exitTimedOut},
+		{name: "a broken recorder beats a clean child", childCode: 0, broke: true,
+			reason: "recorder_failed", announced: exitcode.Fail, exit: exitcode.Fail},
+		{name: "a broken recorder beats the child's own failure", childCode: 3, broke: true,
+			reason: "recorder_failed", announced: exitcode.Fail, exit: exitcode.Fail},
+		{name: "a broken recorder beats a timeout", childCode: 0, timedOut: "max_runtime", broke: true,
+			reason: "recorder_failed", announced: exitcode.Fail, exit: exitcode.Fail},
+		{name: "an OOM upgrades a clean exit", childCode: 0, oom: true,
+			reason: "command_exited", announced: 0, exit: exitOOMKilled},
+		{name: "an OOM does not overwrite a failure", childCode: 3, oom: true,
+			reason: "command_exited", announced: 3, exit: 3},
+		{name: "an OOM does not overwrite a broken recorder", childCode: 0, broke: true, oom: true,
+			reason: "recorder_failed", announced: exitcode.Fail, exit: exitcode.Fail},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			reason, announced, code := commandRunOutcome(c.childCode, c.timedOut, c.broke, c.oom)
+			if reason != c.reason {
+				t.Errorf("session.end reason = %q, want %q", reason, c.reason)
+			}
+			if announced != c.announced {
+				t.Errorf("the `exited N` line says %d, want %d", announced, c.announced)
+			}
+			if code != c.exit {
+				t.Errorf("exit code = %d, want %d", code, c.exit)
+			}
+		})
 	}
 }

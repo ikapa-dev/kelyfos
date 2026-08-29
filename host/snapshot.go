@@ -16,6 +16,7 @@ import (
 	"github.com/p4r4n0rm4l/KelyfOS/internal/config"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/denial"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/egress"
+	"github.com/p4r4n0rm4l/KelyfOS/internal/exitcode"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/sandbox"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/sessionpolicy"
@@ -392,6 +393,12 @@ func snapshotRestore(argv []string) error {
 	case <-ctx.Done():
 		fmt.Println("\nstopping...")
 		reason = "interrupted"
+	case <-rec.Broken():
+		// A restored machine is a machine, and this loop is what keeps it
+		// alive. Same rule as `kelyfos run`'s (P7-17/F13(b)); found by
+		// widening the wiring check past the two files the finding named.
+		reason = recorderFailed(rec, os.Stderr)
+		return &exitError{exitcode.Fail}
 	case <-vmExited:
 		reason = "vm_exited"
 		return errors.New("the restored microVM exited unexpectedly")
