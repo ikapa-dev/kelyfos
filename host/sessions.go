@@ -122,21 +122,29 @@ the session finally ends.
 	if err := refuseEgressPause(st, *name); err != nil {
 		return err
 	}
-	// And the policy, here rather than beside the write that freezes it, for the
-	// same reason (P7-17/F21, verification round). This used to read
-	// `if cfg, err := loadPolicy(); err == nil && cfg != nil`, which is a
-	// refusal swallowed: a policy file this user is not allowed to trust made
-	// the pause silently freeze *nothing*, and `resume` then had no ceiling to
-	// check the frozen machine against. A refused policy is an error that stops
-	// the operation, never a nil that skips the check downstream of it.
-	policy, err := loadPolicy()
-	if err != nil {
-		return err
-	}
 	dir := namedDir(*name)
 	if _, err := os.Stat(namedMeta(dir)); err == nil {
 		return fmt.Errorf("a session called %q is already stored (%s). Remove it with "+
 			"`kelyfos sessions rm %s`, or choose another name", *name, dir, *name)
+	}
+	// And the policy, read here rather than beside the write that freezes it,
+	// for the same reason as the two checks above: nothing has been written and
+	// the machine has not been touched, so a refusal costs nothing.
+	//
+	// AFTER the name check and not before it, so the message a user gets for
+	// the everyday mistake — a name already in use — is still the one about the
+	// name (P7-17/A1, review round; the first version of this reordering put
+	// the policy first and silently changed which refusal wins when both apply).
+	//
+	// It used to read `if cfg, err := loadPolicy(); err == nil && cfg != nil`,
+	// which is a refusal swallowed: a policy file this user is not allowed to
+	// trust made the pause silently freeze *nothing*, and `resume` then had no
+	// ceiling to check the frozen machine against. A refused policy is an error
+	// that stops the operation, never a nil that skips the check downstream of
+	// it (P7-17/F21, verification round).
+	policy, err := loadPolicy()
+	if err != nil {
+		return err
 	}
 
 	// The marker goes down before the machine does, so the process that owns
@@ -160,9 +168,17 @@ the session finally ends.
 		return err
 	}
 
-	// The policy, frozen. Read from where this sandbox's own run was launched
-	// rather than from here, so pausing from another directory does not freeze
-	// a different project's file.
+	// The policy, frozen — read above, before anything was written.
+	//
+	// The sentence that used to sit here said it was "read from where this
+	// sandbox's own run was launched rather than from here, so pausing from
+	// another directory does not freeze a different project's file." That was
+	// never true: loadPolicy walks up from the CURRENT working directory, and
+	// nothing in this file has ever consulted the launching one. Pausing from
+	// another project's directory freezes that project's file, and the resume
+	// prints what changed. Corrected rather than deleted, because the claim is
+	// worth having somewhere as the behaviour somebody might expect and does
+	// not get (P7-17/A1, review round).
 	meta := NamedMeta{Name: *name, Sandbox: st.ID, Session: st.RecordSession(),
 		PausedAt: time.Now(), Kelyfos: Version, WorkspaceHost: st.WorkspaceHost}
 	if policy != nil {
@@ -977,7 +993,14 @@ func frozenPolicy(dir string) (*config.Config, error) {
 	}
 	cfg, err := loadPolicyAt(path)
 	if err != nil {
-		return nil, fmt.Errorf("the frozen policy beside this session: %w", err)
+		// Named rather than wrapped in one word, because the two failures a
+		// reader has to tell apart are "this file will not parse" and "this
+		// file is not one you are allowed to trust", and loadPolicyAt's own
+		// message says which. The %s is the path this function already knows,
+		// so a reader is not left with only loadPolicyAt's "--policy" prefix —
+		// a flag they never typed (P7-17/A1, review round).
+		return nil, fmt.Errorf("the policy frozen beside this session (%s) cannot be used: %w",
+			path, err)
 	}
 	return cfg, nil
 }

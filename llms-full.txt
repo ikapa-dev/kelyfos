@@ -1572,7 +1572,7 @@ ownership rule on `sudoers`, and the answer here is the same shape.
 
 **Where the check lives, and where it did not.** Every rule below is applied in
 one function, `host/run.go`'s `loadPolicyAt`, which is the only place in the
-repository that reads a policy file at all — the compiler-checked version of F7's
+repository that calls `config.Load` — the compiler-checked version of F7's
 argument that a rule enforced at some call sites is one the next call site will
 miss. That sentence was written when F21 landed and it was **not true until the
 verification round**: `kelyfos serve-mcp`'s own `--policy` handling and the frozen
@@ -3213,7 +3213,7 @@ to run that plugin or forward outside `[team]`, against a single sandbox
 | `count` | integer | Boot this many, named `<name>-1` … `<name>-N`. Default 1, max 64 — refused at the file rather than let a typo (or a hostile policy file) ask the host to allocate and boot a number that was never a real team size. |
 | `allow` | array | Egress allowlist for this agent alone. |
 | `secrets` | array | `NAME@domain`, names only, exactly as a single run. |
-| `workspace` | string | Host directory for this agent's `/work`. |
+| `workspace` | string | Host directory for this agent's `/work`. Must be inside the policy file's own directory tree. |
 | `[team.agent.resources]` | table | The `[resources]` keys of `docs/resources.md`, per agent. |
 
 Every agent's egress and every agent's caps are its own. There is no team-wide
@@ -3242,7 +3242,15 @@ silently dropped:
   file's own directory**, not the working directory, so the same file describes
   the same project whether `team up` is run from a subdirectory or `serve-mcp`
   is launched by a client from a directory nobody chose. That is the rule
-  `[sandbox] workspace` and a `[[plugin]]` directory already follow. One
+  `[sandbox] workspace` and a `[[plugin]]` directory already follow. **And it
+  has to be inside that tree**, which is the other half of the same rule and
+  reached this door a release late: the directory is written back over when the
+  team comes down, and a policy file describes its own project, so one naming
+  `/home/you` is refused at plan time — by `kelyfos team up`, by `kelyfos team
+  graph`, and by the `team_up` MCP tool. `kelyfos run` has `--workspace` as the
+  escape hatch and **`kelyfos team up` has no such flag**, so the refusal names
+  the two things that do work: move the directory inside the project, or run
+  that agent on its own with `kelyfos run --workspace`. One
   directory behind a `count` group is refused: two machines writing one
   directory back is a race whose loser's work disappears.
 - `[team.agent.resources]` applies per agent exactly as `[resources]` applies to
@@ -13825,7 +13833,7 @@ One agent, or count of them.
 | --- | --- | --- | --- |
 | `name` | string | — | the agent's name; required, and how every other agent addresses it |
 | `image` | string | the file's image, else "base" | image flavor for this agent |
-| `workspace` | string | no /work device | host directory for this agent alone, resolved against this file; refused when count is above 1, and when a second agent names the same directory |
+| `workspace` | string | no /work device | host directory for this agent alone, resolved against this file. It must be inside this file's own directory tree, and `kelyfos team up` has no --workspace flag to override that with. Refused when count is above 1, and when a second agent names the same directory |
 | `count` | integer | 1 | how many of this agent; above 1 they are named name-1 … name-N |
 | `allow` | string array | no network interface at all | this agent's own egress allowlist; there is deliberately no team-wide one |
 | `secrets` | string array | none | this agent's secrets; each domain must appear in this agent's allow |

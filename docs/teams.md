@@ -94,7 +94,7 @@ to run that plugin or forward outside `[team]`, against a single sandbox
 | `count` | integer | Boot this many, named `<name>-1` … `<name>-N`. Default 1, max 64 — refused at the file rather than let a typo (or a hostile policy file) ask the host to allocate and boot a number that was never a real team size. |
 | `allow` | array | Egress allowlist for this agent alone. |
 | `secrets` | array | `NAME@domain`, names only, exactly as a single run. |
-| `workspace` | string | Host directory for this agent's `/work`. |
+| `workspace` | string | Host directory for this agent's `/work`. Must be inside the policy file's own directory tree. |
 | `[team.agent.resources]` | table | The `[resources]` keys of `docs/resources.md`, per agent. |
 
 Every agent's egress and every agent's caps are its own. There is no team-wide
@@ -123,7 +123,15 @@ silently dropped:
   file's own directory**, not the working directory, so the same file describes
   the same project whether `team up` is run from a subdirectory or `serve-mcp`
   is launched by a client from a directory nobody chose. That is the rule
-  `[sandbox] workspace` and a `[[plugin]]` directory already follow. One
+  `[sandbox] workspace` and a `[[plugin]]` directory already follow. **And it
+  has to be inside that tree**, which is the other half of the same rule and
+  reached this door a release late: the directory is written back over when the
+  team comes down, and a policy file describes its own project, so one naming
+  `/home/you` is refused at plan time — by `kelyfos team up`, by `kelyfos team
+  graph`, and by the `team_up` MCP tool. `kelyfos run` has `--workspace` as the
+  escape hatch and **`kelyfos team up` has no such flag**, so the refusal names
+  the two things that do work: move the directory inside the project, or run
+  that agent on its own with `kelyfos run --workspace`. One
   directory behind a `count` group is refused: two machines writing one
   directory back is a race whose loser's work disappears.
 - `[team.agent.resources]` applies per agent exactly as `[resources]` applies to

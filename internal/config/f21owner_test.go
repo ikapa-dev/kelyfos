@@ -93,7 +93,21 @@ func foreignOwnedFile(t *testing.T) string {
 func TestF21_ADiscoveredPolicyOwnedByAnotherUserIsRefused(t *testing.T) {
 	path := foreignOwnedFile(t)
 
-	err := Trust(path, true)
+	// Re-checked here, immediately before the assertion, because the file was
+	// chosen by a walk over /var/log and /run and a log can rotate between the
+	// two (P7-17/A1, review round). Trust returns nil when os.Stat fails, so a
+	// file that vanished would be reported as "trusted" — a false failure with
+	// a message pointing at the wrong thing. A skip is the honest answer.
+	fi, err := os.Stat(path)
+	if err != nil {
+		t.Skipf("%s went away between being chosen and being tested (%v); nothing to measure",
+			path, err)
+	}
+	if uid, ok := fileUID(fi); !ok || uid == 0 || uid == os.Getuid() {
+		t.Skipf("%s changed owner between being chosen and being tested; nothing to measure", path)
+	}
+
+	err = Trust(path, true)
 	if err == nil {
 		t.Fatalf("a discovered policy at %s, which this user does not own, was trusted", path)
 	}

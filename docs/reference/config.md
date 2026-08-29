@@ -91,7 +91,7 @@ One agent, or count of them.
 | --- | --- | --- | --- |
 | `name` | string | — | the agent's name; required, and how every other agent addresses it |
 | `image` | string | the file's image, else "base" | image flavor for this agent |
-| `workspace` | string | no /work device | host directory for this agent alone, resolved against this file; refused when count is above 1, and when a second agent names the same directory |
+| `workspace` | string | no /work device | host directory for this agent alone, resolved against this file. It must be inside this file's own directory tree, and `kelyfos team up` has no --workspace flag to override that with. Refused when count is above 1, and when a second agent names the same directory |
 | `count` | integer | 1 | how many of this agent; above 1 they are named name-1 … name-N |
 | `allow` | string array | no network interface at all | this agent's own egress allowlist; there is deliberately no team-wide one |
 | `secrets` | string array | none | this agent's secrets; each domain must appear in this agent's allow |

@@ -496,7 +496,7 @@ ownership rule on `sudoers`, and the answer here is the same shape.
 
 **Where the check lives, and where it did not.** Every rule below is applied in
 one function, `host/run.go`'s `loadPolicyAt`, which is the only place in the
-repository that reads a policy file at all — the compiler-checked version of F7's
+repository that calls `config.Load` — the compiler-checked version of F7's
 argument that a rule enforced at some call sites is one the next call site will
 miss. That sentence was written when F21 landed and it was **not true until the
 verification round**: `kelyfos serve-mcp`'s own `--policy` handling and the frozen

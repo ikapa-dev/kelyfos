@@ -104,7 +104,7 @@ func planTeam(cfg *config.Config) (*teamPlan, error) {
 			// name /home/you as [sandbox] workspace could still name it as
 			// [[team.agent]] workspace — packed into a guest and, at `team
 			// down`, written back over. One key, one rule, both doors.
-			if err := checkAgentWorkspaceScope(cfg.Path, a.Name, ws); err != nil {
+			if err := checkAgentWorkspaceScope(cfg.Path, a.Line, a.Name, ws); err != nil {
 				return nil, err
 			}
 			if !filepath.IsAbs(ws) {
@@ -223,13 +223,13 @@ func checkTeamFileScope(cfg *config.Config) error {
 // cookbook recipe behind it, which is a feature and not this fix. So the
 // refusal names the flag that is missing rather than pointing at one that is
 // not there, and says the two things that actually work.
-func checkAgentWorkspaceScope(policyPath, agent, ws string) error {
-	root := filepath.Dir(policyPath)
+func checkAgentWorkspaceScope(policyPath string, line int, agent, ws string) error {
+	root := policyTreeRoot(policyPath)
 	abs := resolvePath(ws, root)
 	if insideTree(root, abs) {
 		return nil
 	}
-	return fmt.Errorf("%s: agent %q names workspace %s, which is outside %s.\n"+
+	return fmt.Errorf("%s:%d: agent %q names workspace %s, which is outside %s.\n"+
 		"    A policy file describes its own project. An agent's workspace is packed into its\n"+
 		"    guest and written back over that host directory when the team comes down, so a file\n"+
 		"    that names a directory outside its own tree is asking to write somewhere it does\n"+
@@ -237,7 +237,7 @@ func checkAgentWorkspaceScope(policyPath, agent, ws string) error {
 		"    `kelyfos team up` has no --workspace flag to override this with, so either move the\n"+
 		"    directory inside %s, or run that agent on its own with\n"+
 		"    `kelyfos run --workspace %s` — which is your decision rather than the file's",
-		policyPath, agent, abs, root, root, abs)
+		policyPath, line, agent, abs, root, root, abs)
 }
 
 // checkTeamBudget refuses an agent that asks for more CPU time than the team it

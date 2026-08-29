@@ -1182,7 +1182,7 @@ func ceiling(key, flagName string, cfg *config.Config, limit int, flagVal *int, 
 // gets walked around — the same lesson F18 in this review taught the workspace
 // extractor one layer down.
 func checkWorkspaceScope(policyPath, ws string) error {
-	root := filepath.Dir(policyPath)
+	root := policyTreeRoot(policyPath)
 	abs := resolvePath(ws, root)
 	if insideTree(root, abs) {
 		return nil
@@ -1193,6 +1193,30 @@ func checkWorkspaceScope(policyPath, ws string) error {
 		"    a directory outside its own tree is asking to write somewhere it does not describe.\n"+
 		"    Pass --workspace %s if that is what you meant — then it is your decision, not the\n"+
 		"    file's", policyPath, abs, root, abs)
+}
+
+// policyTreeRoot is the directory a policy file describes, absolute.
+//
+// Absolute is the whole of it, and the reason is a false refusal the A1 review
+// found by running the binary rather than reading it (P7-17/A1, review round).
+// `filepath.Dir("kelyfos.toml")` is `"."`, and insideTree then asks
+// `filepath.Rel(".", "/abs/path")`, which errors and answers "outside". So
+// `--policy kelyfos.toml` — a relative path, which is what somebody types —
+// refused an absolute workspace that was genuinely inside the project, and the
+// message rendered the project as `.`, which tells a reader nothing. A relative
+// workspace happened to work, because it was joined onto `.` and resolved
+// against the same working directory; only the absolute-inside case failed,
+// which is why nothing caught it.
+//
+// One function for both scope rules, because two answers to "which tree is
+// this file's" is how the run side and the team side end up disagreeing.
+func policyTreeRoot(policyPath string) string {
+	dir := filepath.Dir(policyPath)
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return filepath.Clean(dir)
+	}
+	return abs
 }
 
 // printPolicyReach says what a policy file is about to reach, before anything
@@ -1300,7 +1324,11 @@ func checkPluginScope(cfg *config.Config, allowed []string) error {
 	if cfg == nil || len(cfg.Plugins) == 0 {
 		return nil
 	}
-	root := filepath.Dir(cfg.Path)
+	// Absolute, for the reason policyTreeRoot gives: a relative --policy made
+	// insideTree refuse an absolute path that was genuinely inside the project.
+	// Here rather than only where the review found it, because two answers to
+	// "which tree is this file's" is how the three scope rules drift apart.
+	root := policyTreeRoot(cfg.Path)
 	named := make(map[string]bool, len(allowed))
 	for _, a := range allowed {
 		named[resolvePath(a, root)] = true

@@ -170,6 +170,57 @@ func TestF21_ATeamAgentWorkspaceOutsideThePolicysTreeIsRefused(t *testing.T) {
 	}
 }
 
+// A relative --policy is what somebody types, and it made every scope rule
+// refuse an absolute path that was genuinely inside the project.
+//
+// filepath.Dir("kelyfos.toml") is ".", and insideTree then asks
+// filepath.Rel(".", "/abs/path"), which errors and answers "outside". Found by
+// the A1 review by running the binary rather than reading it: the false
+// refusal is fail-closed, so no test noticed, and the message rendered the
+// project root as "." — which tells a reader nothing (P7-17/A1, review round).
+//
+// All three scope rules, because one answer to "which tree is this file's" is
+// the point of policyTreeRoot.
+func TestF21_ARelativePolicyPathStillKnowsItsOwnTree(t *testing.T) {
+	project := t.TempDir()
+	inside := filepath.Join(project, "ws")
+	if err := os.MkdirAll(inside, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	f21Chdir(t, project)
+
+	// The relative spelling and the absolute one have to agree, on a workspace
+	// that is inside the tree either way.
+	for _, policyPath := range []string{config.FileName, filepath.Join(project, config.FileName)} {
+		if err := checkWorkspaceScope(policyPath, inside); err != nil {
+			t.Errorf("--policy %s refused a workspace inside its own project: %v", policyPath, err)
+		}
+		if err := checkAgentWorkspaceScope(policyPath, 7, "one", inside); err != nil {
+			t.Errorf("--policy %s refused an agent workspace inside its own project: %v",
+				policyPath, err)
+		}
+	}
+
+	// And the refusal still fires for something genuinely outside, with the
+	// project named as a path rather than as ".".
+	outside := t.TempDir()
+	err := checkAgentWorkspaceScope(config.FileName, 7, "one", outside)
+	if err == nil {
+		t.Fatal("an out-of-tree agent workspace was accepted under a relative --policy")
+	}
+	if strings.Contains(err.Error(), "outside .") {
+		t.Errorf("the refusal renders the project root as \".\", which names nothing:\n%v", err)
+	}
+	if !strings.Contains(err.Error(), project) {
+		t.Errorf("the refusal does not name the project directory:\n%v", err)
+	}
+	// And it names the line it was written on, which is what every other
+	// team-plan refusal does and what docs/reference/denials.md says they do.
+	if !strings.Contains(err.Error(), ":7:") {
+		t.Errorf("the refusal does not name the line the agent was declared on:\n%v", err)
+	}
+}
+
 // ---- the structural half -------------------------------------------------
 
 // repoFiles walks every non-test Go file in the repository.
@@ -207,8 +258,45 @@ func repoFiles(t *testing.T) []string {
 	return out
 }
 
+// configLocalName is what `internal/config` is called in this file: its package
+// name, an import alias, or "." for a dot-import.
+//
+// The first version of the walk below assumed "config" and nothing else, and the
+// A1 review walked around it four ways in one file — an aliased import, the
+// function taken through a variable, a package-level `var`, and a package-level
+// func literal — with the test still green. A spelling check is not a property.
+// The alias is read from the file's own import block now, so the walk follows
+// whatever name the file chose.
+func configLocalName(f *ast.File) (string, bool) {
+	const path = `"github.com/p4r4n0rm4l/KelyfOS/internal/config"`
+	for _, imp := range f.Imports {
+		if imp.Path.Value != path {
+			continue
+		}
+		if imp.Name != nil {
+			return imp.Name.Name, true
+		}
+		return "config", true
+	}
+	return "", false
+}
+
 // config.Load is the read with no check in front of it. Exactly one function
-// may call it, and this says which.
+// may mention it, and this says which.
+//
+// MENTION, not call. The review took the function through a variable
+// (`load := cfgpkg.Load; load(p)`) and the call-shaped walk saw nothing, which
+// is right — the call site is `load(p)` and there is no selector there. So the
+// rule is now about the identifier reaching anywhere outside the gate at all,
+// which is the property the sentence claims.
+//
+// WHAT IT STILL CANNOT SEE, stated because the first version of this comment
+// implied it saw everything: a policy read through `os.ReadFile` and a TOML
+// parser somebody writes by hand, reflection, `go:linkname`, or a second copy
+// of `internal/config` under another import path. No syntactic rule reaches
+// those. What it does cover is every way of naming this function that compiles
+// — plain, aliased, dot-imported, called, assigned, or referenced at package
+// level.
 func TestF21_NothingLoadsAPolicyOutsideTheGate(t *testing.T) {
 	const gate = "loadPolicyAt"
 	seenGate := false
@@ -218,51 +306,92 @@ func TestF21_NothingLoadsAPolicyOutsideTheGate(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		ast.Inspect(f, func(n ast.Node) bool {
-			fn, ok := n.(*ast.FuncDecl)
-			if !ok || fn.Body == nil {
-				return true
+		local, imported := configLocalName(f)
+		if !imported {
+			continue
+		}
+		// The enclosing function for each position, so a mention can be
+		// attributed. Package-level declarations have none, which is itself
+		// worth reporting: a `var _, _ = config.Load(p)` runs before main.
+		type span struct {
+			name       string
+			start, end token.Pos
+		}
+		var funcs []span
+		for _, d := range f.Decls {
+			if fn, ok := d.(*ast.FuncDecl); ok && fn.Body != nil {
+				funcs = append(funcs, span{fn.Name.Name, fn.Pos(), fn.End()})
 			}
-			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				call, ok := n.(*ast.CallExpr)
-				if !ok {
+		}
+		enclosing := func(p token.Pos) string {
+			for _, fn := range funcs {
+				if p >= fn.start && p < fn.end {
+					return fn.name
+				}
+			}
+			return "package level"
+		}
+
+		report := func(pos token.Pos) {
+			where := enclosing(pos)
+			if where == gate {
+				seenGate = true
+				return
+			}
+			t.Errorf("%s:%d: %s mentions config.Load.\n"+
+				"  %s is the only function allowed to, because it is the only one that calls\n"+
+				"  config.Trust first. A second reader is how serve-mcp — the door\n"+
+				"  `kelyfos connect` writes into every client configuration — ended up with no\n"+
+				"  ownership or writability check at all (P7-17/F21).",
+				file, fset.Position(pos).Line, where, gate)
+		}
+
+		ast.Inspect(f, func(n ast.Node) bool {
+			switch v := n.(type) {
+			case *ast.SelectorExpr:
+				// pkg.Load, however pkg is spelled in this file.
+				if v.Sel.Name != "Load" {
 					return true
 				}
-				sel, ok := call.Fun.(*ast.SelectorExpr)
-				if !ok || sel.Sel.Name != "Load" {
-					return true
+				if id, ok := v.X.(*ast.Ident); ok && id.Name == local {
+					report(v.Pos())
 				}
-				pkg, ok := sel.X.(*ast.Ident)
-				if !ok || pkg.Name != "config" {
-					return true
+			case *ast.Ident:
+				// A dot-import puts Load in this file's own scope. Only then,
+				// because "Load" is an ordinary name otherwise.
+				if local == "." && v.Name == "Load" {
+					report(v.Pos())
 				}
-				if fn.Name.Name == gate {
-					seenGate = true
-					return true
-				}
-				t.Errorf("%s:%d: %s calls config.Load on a policy path.\n"+
-					"  %s is the only function allowed to, because it is the only one that calls\n"+
-					"  config.Trust first. A second reader is how serve-mcp — the door\n"+
-					"  `kelyfos connect` writes into every client configuration — ended up with no\n"+
-					"  ownership or writability check at all (P7-17/F21).",
-					file, fset.Position(call.Pos()).Line, fn.Name.Name, gate)
-				return true
-			})
-			return false
+			}
+			return true
 		})
 	}
 	// And the gate itself has to still be doing the reading. Moving the Load
 	// somewhere this walk cannot see would otherwise satisfy the rule by
 	// emptying it.
 	if !seenGate {
-		t.Errorf("no call to config.Load was found inside %s at all; either it stopped reading "+
-			"the file or this walk no longer sees it", gate)
+		t.Errorf("no mention of config.Load was found inside %s at all; either it stopped "+
+			"reading the file or this walk no longer sees it", gate)
 	}
 }
 
-// A refusal that is discarded is a refusal that did not happen. Both shapes
-// this CLI had are refused: `_` for the error, and the call as an if-statement
-// initialiser so the error becomes a condition rather than a return.
+// A refusal that is discarded is a refusal that did not happen.
+//
+// Two shapes are refused, and they are the two this CLI actually had: `_` for
+// the error, and the call as an if-statement initialiser whose condition tests
+// `err == nil`, so the refusal becomes a branch not taken rather than a return.
+//
+// The first version banned EVERY if-statement initialiser, which the A1 review
+// showed also refuses the ordinary correct idiom
+// `if cfg, err := loadPolicy(); err != nil { return err } else if cfg != nil`.
+// A guard that fails on correct code is a guard somebody deletes.
+//
+// WHAT IT CANNOT SEE, and this is the honest half: `_ = err` written later in
+// the function, `if err != nil { return nil }`, and a package-level `var`. Each
+// needs flow analysis rather than a shape rule, and a shape rule that pretends
+// otherwise is the fourteenth test on this task that could not fail. The
+// blank-identifier and `err == nil` forms are what was actually written here
+// twice, which is what a regression guard is for.
 func TestF21_NoDoorSwallowsAPolicyRefusal(t *testing.T) {
 	loaders := map[string]bool{"loadPolicy": true, "loadPolicyAt": true}
 	calls := 0
@@ -294,12 +423,12 @@ func TestF21_NoDoorSwallowsAPolicyRefusal(t *testing.T) {
 func swallowedPolicyLoads(t *testing.T, fset *token.FileSet, f *ast.File, file string, loaders map[string]bool) int {
 	t.Helper()
 	calls := 0
-	// Every assignment whose right-hand side is one of the loaders, and the
-	// if-statement initialisers among them.
-	inIfInit := map[ast.Node]bool{}
+	// The if-statements whose initialiser is an assignment, mapped to the
+	// condition, so the condition can be read rather than the shape assumed.
+	inIfInit := map[ast.Node]ast.Expr{}
 	ast.Inspect(f, func(n ast.Node) bool {
 		if ifs, ok := n.(*ast.IfStmt); ok && ifs.Init != nil {
-			inIfInit[ifs.Init] = true
+			inIfInit[ifs.Init] = ifs.Cond
 		}
 		return true
 	})
@@ -327,14 +456,33 @@ func swallowedPolicyLoads(t *testing.T, fset *token.FileSet, f *ast.File, file s
 				"  ceiling check downstream is skipped rather than enforced (P7-17/F21).",
 				file, where.Line, name.Name)
 		}
-		if inIfInit[ast.Stmt(as)] {
-			t.Errorf("%s:%d: %s is called in an if-statement initialiser, so its error is a "+
-				"condition rather than a return.\n"+
-				"  `if cfg, err := loadPolicy(); err == nil && cfg != nil` is how `kelyfos sessions "+
-				"pause`\n  silently froze nothing when the policy was refused (P7-17/F21).",
+		if cond, isInit := inIfInit[ast.Stmt(as)]; isInit && testsErrIsNil(cond) {
+			t.Errorf("%s:%d: %s is called in an if-statement initialiser whose condition tests "+
+				"that the error is nil, so a refusal is a branch not taken rather than a return.\n"+
+				"  `if cfg, err := loadPolicy(); err == nil && cfg != nil` is how `kelyfos "+
+				"sessions pause`\n  silently froze nothing when the policy was refused "+
+				"(P7-17/F21).",
 				file, where.Line, name.Name)
 		}
 		return true
 	})
 	return calls
+}
+
+// testsErrIsNil reports whether an expression contains `<something> == nil`.
+// The name of the error variable is deliberately not required to be `err`: what
+// makes the shape a swallow is that the nil case is the one the body runs for.
+func testsErrIsNil(e ast.Expr) bool {
+	found := false
+	ast.Inspect(e, func(n ast.Node) bool {
+		bin, ok := n.(*ast.BinaryExpr)
+		if !ok || bin.Op != token.EQL {
+			return true
+		}
+		if id, ok := bin.Y.(*ast.Ident); ok && id.Name == "nil" {
+			found = true
+		}
+		return true
+	})
+	return found
 }
