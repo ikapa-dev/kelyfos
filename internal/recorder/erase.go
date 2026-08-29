@@ -108,6 +108,35 @@ func Erase(root, sandboxID, reason string) (redacted int, err error) {
 	if len(events) == 0 {
 		return 0, fmt.Errorf("%s: empty chain, nothing to erase", sandboxID)
 	}
+	// Refuse a file whose last line was never finished, the same way catchUp
+	// does for a writer (recorder.go).
+	//
+	// This is the "refuses a chain that does not already verify" rule above,
+	// applied to the one kind of damage Verify cannot see. A line cut at
+	// exactly its last byte is a complete JSON object with no terminator, so
+	// Verify reports the chain intact and only the missing newline says a
+	// writer was cut short. Erase rewrites every line and terminates every
+	// one of them, so without this it is the single operation that can turn
+	// "this record was cut short" into "this record is complete" — erasing the
+	// evidence that the chain was broken, which is the one thing an erasure
+	// path must never do, and doing it while writing a session.erasure event
+	// that says only how much was redacted.
+	//
+	// Refusing rather than recording the repair, and refusing rather than
+	// silently accepting, because the remedy is one byte and destroys nothing:
+	// appending the missing newline changes no event and no digest, and can
+	// then be erased normally. That keeps a person in the loop for the one
+	// operation that removes the signal, instead of a tool removing it on
+	// their behalf. It cannot refuse a chain this product wrote — appendLocked
+	// writes the line and its newline in one Write, and this function
+	// terminates every line it emits.
+	if len(blob) > 0 && blob[len(blob)-1] != '\n' {
+		return 0, fmt.Errorf("%s: refusing to erase: the chain does not end in a newline, so its last "+
+			"line was never finished and a writer was cut short at byte %d. Erasing would rewrite the "+
+			"file with every line terminated and leave nothing to say the record had been cut short. "+
+			"Append the missing newline first if that is understood — it changes no event and no "+
+			"digest — then erase", sandboxID, len(blob))
+	}
 	// Refuse a chain from a build ahead of this one before anything is
 	// rewritten (F6). A schema version this binary has never seen means it
 	// cannot know which of that version's fields carry content, so it cannot
@@ -439,8 +468,24 @@ func jsonName(f reflect.StructField) string {
 // ones written by something else against docs/events.md. Such a chain still
 // verifies — Verify works on the raw bytes — so refusing loses no evidence,
 // and the message names the member so it can be normalised and retried.
-// strings.EqualFold is broader than the decoder's own fold, which makes this
-// check at least as strict as the behaviour it is guarding.
+// strings.EqualFold is broader than encoding/json's own fold, which makes this
+// check at least as strict as the behaviour it is guarding — and that
+// relationship is a fact about today's standard library, not a law.
+// encoding/json/v2's fold documents itself as "similar to strings.EqualFold,
+// but ignores underscore and dashes", under which `_data` and `d-a-t-a` would
+// both decode into Data while strings.EqualFold says they do not match: the
+// check would become strictly WEAKER than the decoder and this leak would
+// reopen for every redactable field. It is unreachable today, because that
+// fold serves encoding/json/v2 and not encoding/json even under
+// GOEXPERIMENT=jsonv2. If this package ever decodes the chain with v2, this
+// comparison has to be replaced by one that asks the decoder rather than
+// modelling it — decode {"<name>":sentinel} and refuse any non-canonical name
+// that lands in a field.
+//
+// TestF6_TheFoldCheckIsAtLeastAsBroadAsTheDecoders is that question asked as a
+// test rather than left to a reader: it decodes every folded spelling it can
+// build and fails if one reaches a field this function would accept. It goes
+// off on its own the day the relationship inverts.
 func checkMemberNames(obj *rawObject, t reflect.Type) error {
 	canon := make(map[string]reflect.StructField, t.NumField())
 	for i := 0; i < t.NumField(); i++ {
@@ -491,9 +536,41 @@ func checkMemberNames(obj *rawObject, t reflect.Type) error {
 					return fmt.Errorf("member %q element %d: %w", jsonName(f), j, err)
 				}
 			}
+		default:
+			// Every struct-bearing shape this walk cannot descend is refused
+			// rather than skipped. applyRedaction hard-errors on a slice kind
+			// it cannot express; a name check that quietly returned nil for a
+			// shape it could not look inside would be the fail-open half of
+			// the same pair, and the leak this whole function exists to close
+			// would reopen one level down the first time Event gained a plain
+			// struct field, an array of them, or a map of them. Event has none
+			// today, which is exactly when to write this: the cost of being
+			// wrong later is a member holding content through an erasure.
+			if structBearing(f.Type, 0) {
+				return fmt.Errorf("field %s is a %s carrying a struct, a shape this check cannot "+
+					"descend — extend checkMemberNames and applyRedaction together before Event gains one",
+					f.Name, f.Type.Kind())
+			}
 		}
 	}
 	return nil
+}
+
+// structBearing reports whether t is a struct, or a container that eventually
+// holds one. The depth cap is for a self-referential type rather than for
+// anything Event has; without it a type that contains itself would recurse
+// forever, and a guard that hangs is not a guard.
+func structBearing(t reflect.Type, depth int) bool {
+	if depth > 8 {
+		return true // too deep to be sure, so answer the fail-closed way
+	}
+	switch t.Kind() {
+	case reflect.Struct:
+		return true
+	case reflect.Ptr, reflect.Slice, reflect.Array, reflect.Map:
+		return structBearing(t.Elem(), depth+1)
+	}
+	return false
 }
 
 // applyRedaction walks a struct before and after redactEventFields ran over

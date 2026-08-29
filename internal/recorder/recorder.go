@@ -737,7 +737,8 @@ func (r *Recorder) failLocked(err error) {
 // It reuses session.end rather than introducing an event type or a field for
 // this: `reason` is already the field that says why a session ended, this is
 // why this session ended, and a schema whose answer to every new circumstance
-// is a new field is a schema no independent reader can keep up with. The
+// is a new field is a schema no independent reader can keep up with.
+//
 // When it can be written, the chain that results is a complete, verifiable
 // session whose last line says the recording was cut short and at which
 // sequence number — which is the distinction docs/events.md notes the record

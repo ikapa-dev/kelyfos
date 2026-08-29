@@ -5,9 +5,9 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -317,5 +317,211 @@ func TestF6_EraseRefusesAMemberThatDiffersOnlyInCase(t *testing.T) {
 				t.Error("a refused erasure still rewrote the file")
 			}
 		})
+	}
+}
+
+// foldVariants returns spellings of a member name that a decoder might, now or
+// later, fold onto the same field. The last group is the forward-looking one:
+// encoding/json/v2's fold documents itself as "similar to strings.EqualFold,
+// but ignores underscore and dashes", so `_data` and `d-a-t-a` would decode
+// into Data under it while strings.EqualFold says they do not match.
+func foldVariants(name string) []string {
+	out := []string{
+		strings.ToUpper(name),
+		strings.ToTitle(name[:1]) + name[1:],
+	}
+	// Unicode spellings that fold onto ASCII under simple case folding.
+	for from, to := range map[string]string{
+		"s": "ſ", // U+017F LATIN SMALL LETTER LONG S
+		"k": "K", // U+212A KELVIN SIGN
+		"i": "İ", // U+0130 LATIN CAPITAL LETTER I WITH DOT ABOVE
+		"a": "A",
+	} {
+		if strings.Contains(name, from) {
+			out = append(out, strings.Replace(name, from, to, 1))
+		}
+	}
+	// Fullwidth forms of the first character.
+	if r := rune(name[0]); r >= 'a' && r <= 'z' {
+		out = append(out, string(r-'a'+'ａ')+name[1:])
+	}
+	// The encoding/json/v2 canaries. Under encoding/json today none of these
+	// decode into anything, so the assertion below never fires for them — the
+	// day one does, it fires immediately.
+	out = append(out,
+		"_"+name,
+		name+"_",
+		"-"+name+"-",
+		strings.Join(strings.Split(name, ""), "_"),
+	)
+	return out
+}
+
+// TestF6_TheFoldCheckIsAtLeastAsBroadAsTheDecoders is the invariant
+// checkMemberNames rests on, pinned in this tree rather than left as a comment
+// about the standard library.
+//
+// The refusal is built on strings.EqualFold, which is broader than
+// encoding/json's own fold today — so the check refuses more than the decoder
+// accepts, and refusing more is safe. Nothing enforces that relationship,
+// and it is not a law: encoding/json/v2's fold additionally ignores
+// underscores and dashes, which would make strings.EqualFold strictly WEAKER
+// than the decoder and reopen the leak for every redactable field. That does
+// not happen today — the v2 fold serves encoding/json/v2, not encoding/json,
+// even under GOEXPERIMENT=jsonv2 — and this is what will say so on the day it
+// does, rather than a person having to remember.
+//
+// The property, checked against the decoder rather than assumed: if a member
+// name puts a value into a field, and that name is not the field's canonical
+// one, checkMemberNames must refuse the line. A member the decoder fills and
+// the check accepts is content that survives an erasure.
+func TestF6_TheFoldCheckIsAtLeastAsBroadAsTheDecoders(t *testing.T) {
+	const canary = "CANARY-fold"
+	et := reflect.TypeOf(Event{})
+
+	// canonical maps each field index to the member name it is written under.
+	canonical := make([]string, et.NumField())
+	for i := 0; i < et.NumField(); i++ {
+		canonical[i] = jsonName(et.Field(i))
+	}
+
+	// filledField reports which field, if any, now carries the canary.
+	filledField := func(e *Event) int {
+		v := reflect.ValueOf(e).Elem()
+		for i := 0; i < v.NumField(); i++ {
+			switch f := v.Field(i); f.Kind() {
+			case reflect.String:
+				if f.String() == canary {
+					return i
+				}
+			case reflect.Slice:
+				if f.Type().Elem().Kind() != reflect.String {
+					continue
+				}
+				for j := 0; j < f.Len(); j++ {
+					if f.Index(j).String() == canary {
+						return i
+					}
+				}
+			}
+		}
+		return -1
+	}
+
+	checked := 0
+	for i := 0; i < et.NumField(); i++ {
+		f := et.Field(i)
+		var value string
+		switch f.Type.Kind() {
+		case reflect.String:
+			value = `"` + canary + `"`
+		case reflect.Slice:
+			if f.Type.Elem().Kind() != reflect.String {
+				continue
+			}
+			value = `["` + canary + `"]`
+		default:
+			continue
+		}
+
+		for _, variant := range foldVariants(canonical[i]) {
+			nameJSON, err := json.Marshal(variant)
+			if err != nil {
+				t.Fatal(err)
+			}
+			line := []byte(`{` + string(nameJSON) + `:` + value + `}`)
+
+			var e Event
+			if json.Unmarshal(line, &e) != nil {
+				continue // the decoder refused it outright; nothing to compare
+			}
+			landed := filledField(&e)
+			if landed < 0 {
+				continue // the decoder ignored the member, so nothing survives
+			}
+			checked++
+			if variant == canonical[landed] {
+				continue // the canonical spelling, which must of course be kept
+			}
+			obj, err := parseObject(line)
+			if err != nil {
+				continue
+			}
+			if err := checkMemberNames(obj, et); err == nil {
+				t.Errorf("the decoder fills %s from member %q, but checkMemberNames accepts that line.\n"+
+					"  The fold this check uses is narrower than the one the decoder uses, so content in\n"+
+					"  that member is redacted into %q and left where it is — the F6 leak, reopened.",
+					f.Name, variant, canonical[landed])
+			}
+		}
+	}
+	if checked == 0 {
+		t.Fatal("no variant was ever folded onto a field, so this test compared nothing")
+	}
+	t.Logf("%d folded spellings reached a field; every one of them is refused", checked)
+}
+
+// TestF6_EraseRefusesAChainThatWasCutShort.
+//
+// catchUp refuses to APPEND to a file whose last line was never finished, but
+// Erase opens the chain directly and never consults it — so an erasure was the
+// one operation that could take a file a writer had been cut short in the
+// middle of, rewrite every line with a terminator, and hand back something
+// that reads as a complete record. Verify cannot see the difference: a line
+// cut at exactly its last byte is a complete JSON object, so the only trace
+// was the missing newline, and an erasure removed it while writing a
+// session.erasure event that says how much was redacted and nothing about the
+// truncation.
+//
+// It is refused rather than repaired-and-recorded because the remedy destroys
+// nothing and takes one byte, which keeps the decision with a person.
+func TestF6_EraseRefusesAChainThatWasCutShort(t *testing.T) {
+	root := t.TempDir()
+	writeRawChain(t, root, "cut", []Event{
+		{Type: TypeCommandOutput, V: Version, TS: "2026-01-01T00:00:00.000Z", Sandbox: "cut",
+			Data: "MARKER-guest-output"},
+		{Type: TypeSessionEnd, V: Version, TS: "2026-01-01T00:00:01.000Z", Sandbox: "cut", Reason: "shutdown"},
+	})
+	path := Path(root, "cut")
+	cut := bytes.TrimRight(readFile(t, path), "\n")
+	if err := os.WriteFile(path, cut, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// The premise: every reader says this chain is fine, which is why the
+	// refusal has to live here rather than in Verify.
+	if n, _, err := Verify(bytes.NewReader(cut)); err != nil || n != 2 {
+		t.Fatalf("premise failed — Verify says %d events, %v", n, err)
+	}
+
+	_, err := Erase(root, "cut", "GDPR Article 17 request")
+	if err == nil {
+		t.Fatalf("Erase rewrote a chain whose last line was never finished:\n%s", readFile(t, path))
+	}
+	if !strings.Contains(err.Error(), "never finished") {
+		t.Errorf("Erase refused for the wrong reason: %v", err)
+	}
+	if after := readFile(t, path); !bytes.Equal(cut, after) {
+		t.Error("a refused erasure still rewrote the file")
+	}
+
+	// And the remedy the message names works, changes no event, and leaves the
+	// chain verifying exactly as it did — so refusing costs an operator one
+	// byte rather than the ability to answer an Article 17 request.
+	if err := os.WriteFile(path, append(append([]byte{}, cut...), '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if n, _, verr := Verify(bytes.NewReader(readFile(t, path))); verr != nil || n != 2 {
+		t.Fatalf("appending the newline changed the chain: %d events, %v", n, verr)
+	}
+	if _, err := Erase(root, "cut", "GDPR Article 17 request"); err != nil {
+		t.Fatalf("Erase after the one-byte remedy: %v", err)
+	}
+	blob := readFile(t, path)
+	if bytes.Contains(blob, []byte("MARKER-guest-output")) {
+		t.Error("the content survived the erasure")
+	}
+	if _, _, verr := Verify(bytes.NewReader(blob)); verr != nil {
+		t.Fatalf("the erased chain does not verify: %v", verr)
 	}
 }

@@ -11318,6 +11318,21 @@ removed. Adding a *field* does not move `v` (`docs/events.md` says adding one
 is not breaking), which is why the lossless rewrite above is the part that
 carries the ordinary case; this covers the case where `v` really did move.
 
+It refuses a chain whose file does not end in a newline. A line cut at
+exactly its last byte is a complete JSON object with no terminator, so
+`kelyfos verify` reads it happily and reports the chain intact — the missing
+newline is the only trace that a writer was cut short, and the recorder itself
+refuses to append to such a file for exactly that reason. An erasure rewrites
+every line and terminates every one of them, so without this refusal it would
+be the one operation that turns "this record was cut short" into "this record
+is complete", while writing a `session.erasure` event that says how much was
+redacted and nothing about the truncation. The remedy is one byte and destroys
+nothing — appending the missing newline changes no event and no digest, and
+the chain can then be erased normally — so refusing keeps the decision with a
+person rather than having a tool make it silently. No chain KelyfOS wrote can
+be refused this way: the recorder writes each line and its newline in one
+call, and an erasure terminates every line it emits.
+
 It refuses one more shape, found by fuzzing the rewrite (`FuzzEraseRoundTrip`,
 `internal/recorder/fuzz_test.go`): a line carrying a member whose name differs
 from a field's own name only in case — `"Cmd"` where the schema says `cmd`. Go's
