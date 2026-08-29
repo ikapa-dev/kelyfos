@@ -1971,14 +1971,15 @@ from the name it is asked about and the domain kept the other, so `0..` bound
 | --- | --- | --- |
 | guest → host | Firecracker + KVM | active; the VMM is jailed and filtered since v0.9 |
 | guest → network | no NIC, or TAP + nftables + proxy | active |
-| guest → credentials | injection at the proxy | active |
-| guest → audit record | host-side, hash-chained | active, including under `kelyfos shim` |
-| guest → host filesystem, via the workspace disk | the image is enumerated and validated before it is read, every symlink chain is resolved against the whole entry set, every file is checked against the size its inode records, and the writes go through an `os.Root` | active since v1.0. **This row did not exist until an external audit found what its absence cost** — see below |
+| guest → credentials | injection at the proxy | active; and since v1.1 the proxy serves the guest's address alone — it refuses any other peer and the ruleset drops packets for the host's TAP address that did not arrive on the TAP, because binding a host address is not the same as being unreachable from the host |
+| guest → audit record | host-side, hash-chained | active, including under `kelyfos shim`; and since v1.1 it fails closed — the first failed append is final, and every loop that keeps a machine alive stops that machine rather than running it unrecorded |
+| guest → host filesystem, via the workspace disk | the image is enumerated and validated before it is read, every symlink is created in the staging tree first and every chain is then resolved by asking that tree — the filesystem the workspace is going to, which is the only thing that can say whether two spellings are one name — every file is checked against the size its inode records, twice, and the writes go through an `os.Root` | active since v1.0. **This row did not exist until an external audit found what its absence cost** — see below |
 | a report → whoever received it | the record travels in the file; `kelyfos verify`, and `--sign-key` / `--key` when the reader already holds the key | active since v1.0; covers the record, not the rendering, and a chain cut short at its end still verifies |
 | guest → guest (team) | host broker + declared edge list | active |
 | guest → host CPU/RAM/IO | KVM config, cgroup v2, rate limiters | active, and only when configured |
 | host process → host | the jailer | active (P5-1); `--no-jail` turns it off and says so on every run |
-| in-guest process → guest | Landlock + seccomp | active (P5-3) for every process the supervisor spawns; the supervisor itself is not confined, and its own file tools are held to the profile's writable lists by an in-process check. Absent on images and snapshots made before v0.9, which is warned about rather than refused |
+| a discovered `kelyfos.toml` → the host | ownership and writability checked at load; workspace and plugin paths scoped to the file's own tree unless named on the command line | active since v1.1. **This row did not exist until the 2026-08-28 review pointed out that a file found by walking up to `/` was trusted with an absolute workspace, an absolute plugin path and bound secrets.** Secrets declared by a file are still honoured on the ownership check alone — the per-user trust record is deferred, and that residual is stated in §5 rather than implied here |
+| in-guest process → guest | Landlock + seccomp | active (P5-3) for every process the supervisor spawns; the supervisor itself is not confined, and its own file tools are held to the profile's writable lists and write through an `os.Root` anchored on the matched tree, so a symlink planted between the check and the open is refused at the open rather than followed. Absent on images and snapshots made before v0.9, which is warned about rather than refused |
 
 ## 6. If you are evaluating KelyfOS
 

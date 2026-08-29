@@ -7755,6 +7755,52 @@ after:
         watcher never starts blind<br>
         the harness models the real failure: 0 epitaphs while the chain is damaged, 1 after repair &mdash; which
         is what <code>EndBroken</code> exists for and what its own comment describes</td></tr>
+    <tr><td class="mono">2026-08-29</td><td class="mono">P7-17</td>
+        <td><b>The ten &ldquo;Also noted&rdquo; items of the 2026-08-28 review, logged as candidates and
+        deliberately not fixed</b> (P7-16-shaped; the owner opens or declines them). They were confirmed by the
+        reviewing agents but not re-derived line by line by the review&rsquo;s author, and are held at Low or Info
+        for that reason as much as for impact.
+        <br>1. A bound secret attaches to every subdomain of its domain, so <code>--secret TOKEN@amazonaws.com</code>
+        reaches any tenant the guest CONNECTs to &mdash; documented as intentional, worth a parse-time warning for
+        multi-tenant apex domains (<code>internal/egress/secret.go:235</code>).
+        2. <code>clone</code>/<code>clone3</code> with <code>CLONE_NEWUSER</code> are unfiltered while
+        <code>unshare</code>/<code>setns</code> are, and the guest kernel has <code>CONFIG_USER_NS=y</code>;
+        <code>io_uring</code>, <code>userfaultfd</code>, <code>/proc/kcore</code> and <code>kexec_file</code> are
+        compiled in (<code>supervisor/profile_policy.go:44</code>).
+        3. The leaf-certificate cache is unbounded and minted before any dial
+        (<code>internal/egress/terminate.go:32</code>).
+        4. <code>forwardHTTP</code> does not enforce <code>Host</code> == dialled target the way the terminated
+        leg&rsquo;s <code>sameHost</code> does (<code>internal/egress/proxy.go:553</code>).
+        5. A guest can forge <code>(erased &mdash; sha256:&hellip;)</code> placeholders
+        (<code>internal/recorder/erase.go:460</code>).
+        6. A refused team message records its unbounded, guest-chosen <code>to</code> whole
+        (<code>internal/team/broker.go:167,429</code>).
+        7. Store ACL globs silently match runtime-spawned workers
+        (<code>internal/team/store.go:262</code>).
+        8. <code>readCapped</code>&rsquo;s size gate is void for device nodes
+        (<code>supervisor/tools.go:381</code>) &mdash; <b>and the integrity worker found the review&rsquo;s
+        companion claim about <code>internal/sandbox/diff.go:156</code> is half wrong</b>: the device-node half is
+        <b>false</b>, because <code>scanTree</code> calls <code>fileDigest</code> only under
+        <code>info.Mode().IsRegular()</code> and a device node hits <code>default:</code> returning nil, with a
+        comment saying why. What is true there is the unbounded <code>os.ReadFile</code> of <i>regular</i> files
+        at <code>:157</code>, <code>:218</code> and <code>:234,239</code>.
+        9. Egress needs unscoped passwordless sudo for <code>ip</code> and <code>nft</code> while
+        <code>doctor</code> prints only the jailer line (<code>internal/sandbox/network.go:254</code>).
+        10. Snapshot <code>meta.json</code> is trusted for absolute host paths and for the
+        <code>ip link &hellip; address</code> argument (<code>internal/sandbox/sandbox.go:1208</code>).
+        <br><b>Found by this task and also not fixed:</b> <code>dev/accept-*.sh</code>&rsquo;s
+        <code>trap cleanup EXIT</code> kills <i>every</i> firecracker on the host, which is why three of those
+        scripts could not be run for most of P7-17 (P7-16&rsquo;s own class);
+        <code>dev/fuzz.sh</code> writes a <code>FuzzScopeCovers</code> corpus file that converts P7-14 from a
+        deferred fuzz-only failure into a <code>go test ./...</code> failure for everyone until deleted;
+        <code>host/sessions.go:719</code> could print <code>redacted_fields</code>; and F19&rsquo;s third part
+        &mdash; a digest of the state file in <code>session.start</code>, compared on resume &mdash; is depth on
+        top of a closed finding and needs <code>internal/recorder</code> plus four <code>host/</code> doors.</td>
+        <td class="mono">Not fixed by design; the brief scopes them out of P7-17. Item 8&rsquo;s correction was
+        measured against source, not argued.<br>
+        <code>llms-full.txt</code> re-measured after the phase&rsquo;s documentation changes (&sect;8 rule 9):
+        <code>793813 bytes &middot; 789607 characters &middot; 14913 lines &middot; ~206164 tokens</code>
+        (was ~187k at <code>a393b2e</code>, before P7-17)</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
