@@ -130,7 +130,7 @@
      injected secrets, full audit replay, and millisecond forking.</p>
   <div class="meta">
     owner: <b>John</b> &nbsp;·&nbsp; developer: <b>Claude Code</b> &nbsp;·&nbsp;
-    status: <b class="amber" id="meta-status">ACTIVE &mdash; <b>Phase 7</b>, the declared shape of a run, opened 2026-08-27 on the owner&rsquo;s ruling (D59). v1.0 is tagged and every earlier phase is closed; this one exits at <code>v1.1</code>. P7-0 through P7-13 are done and reviewed; P7-14, P7-15 and P7-16 are deferred, non-blocking side-tasks (D67, D69, D70). P7-17 opened 2026-08-28 (D71): the twenty-one findings of the independent security review of that date, two of them High, remediated as a block ahead of the rest.</b> &nbsp;&middot;&nbsp;
+    status: <b class="amber" id="meta-status">ACTIVE &mdash; <b>Phase 7</b>. P7-0 through P7-13 done; P7-14, P7-15 and P7-16 deferred (D67, D69, D70). <b>P7-17</b>: all twenty-one findings of the 2026-08-28 security review are fixed, reviewed by an agent that wrote none of each, and on <code>main</code> &mdash; but the task stays <i>open</i>. GitHub Actions is disabled at the account level (D73), so the evidence is <code>dev/ci-local.sh</code>, a step-for-step reproduction of <code>ci.yml</code>&rsquo;s <code>checks</code> job, not a green pipeline. Nothing closes and nothing is tagged until <code>ci.yml</code> and <code>security.yml</code> are both green on the final head.</b> &nbsp;&middot;&nbsp;
     last updated: <b id="meta-updated">2026-08-29</b><br>
     repo file: <b>PLAN.html</b> (commit this document at the repository root — it is the single source of truth)<br>
     <span class="quiet">KelyfOS — from κέλυφος (kélyfos), "shell": the guest OS wrapped around the agent. Formerly working-titled "agos" (D4 → D10).</span>
@@ -185,7 +185,7 @@
     <span class="bl-name">Overall</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">P7-17 &mdash; the 2026-08-28 security review, remediated as a block (D71).</b> Twenty-one findings, in the report&rsquo;s own order of work: <b>F8</b> first &mdash; delete the guard in <code>confine()</code>, because a binary the agent names <code>kelyfos-confine</code> is spawned by PID 1 unconfined and as root &mdash; then <b>F9</b>, the peer check in <code>handle</code> and the <code>iifname != tap</code> drop, because the proxy that carries the operator&rsquo;s credentials answers any process on the host. Both contradict a written guarantee, which is why they come before P7-14/15/16. Five workstreams in isolated worktrees, exclusive file ownership, one commit per finding, and every fix proven by a test that fails on the parent commit.</div>
+  <div class="focusline">Current focus: <b id="focus">P7-17 &mdash; twenty-one findings fixed, waiting on a pipeline that cannot run.</b> Every finding of the 2026-08-28 review is on <code>main</code>, each with a test that fails on its parent commit and an adversarial review by an agent that did not write it. What remains is not code: Actions is disabled for this account, so no workflow has run against any of it. <code>dev/ci-local.sh</code> reproduces the <code>checks</code> job step for step and passes 13 of 13 on <code>6e755a4</code> &mdash; local evidence, which D73 permits for merging and explicitly refuses for closing. The next action is not in this repository.</div>
 </div>
 
 <!-- ====================================================== 1. END GOAL -->
@@ -1505,7 +1505,7 @@
               <span class="tid">F10</span><span class="tk">A confined process can <code>mknod</code> its way to the raw disks: <code>writeRights</code> grants <code>MAKE_CHAR</code>/<code>MAKE_BLOCK</code> and the merged overlay carries neither <code>MS_NODEV</code> nor <code>MS_NOSUID</code>. <code>supervisor/profile.go:130</code> &middot; <code>supervisor/mount.go:73</code>.</span></li>
           <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
               <span class="tid">F11</span><span class="tk"><code>write_file</code> re-checks for symlinks and still opens through one &mdash; a lexical <code>Lstat</code> walk followed by an ordinary <code>os.WriteFile</code>, with the swap window between them. <code>supervisor/tools.go:413</code>.</span></li>
-          <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+          <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
               <span class="tid">F13</span><span class="tk">The flight recorder fails open: 77 <code>Append</code> errors are discarded, so a full disk or one corrupt line leaves the sandbox executing while nothing is recorded. Fail closed in the recorder (<b>13a</b>) and wire <code>Broken()</code> into the run loop (<b>13b</b>). <code>internal/recorder/recorder.go:504</code> &middot; <code>host/run.go</code>.</span></li>
           <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
               <span class="tid">F12</span><span class="tk">Erase leaves guest stdout behind in <code>Error.Message</code>, which the exemption map excuses as system-generated. <code>internal/recorder/erase.go:280</code> &middot; <code>host/servemcpaudit.go:170</code>.</span></li>
@@ -1515,11 +1515,11 @@
               <span class="tid">F15</span><span class="tk">The forward transport inherits the host&rsquo;s <code>HTTP_PROXY</code> by cloning <code>http.DefaultTransport</code>, so the resolved-address hook never sees the real destination. <code>internal/egress/dial.go:148</code>.</span></li>
           <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
               <span class="tid">F16</span><span class="tk">The terminated leg has no header budget and no deadline: <code>handle</code> clears both before <code>terminate</code> parses every subsequent request itself. <code>internal/egress/terminate.go:53</code>.</span></li>
-          <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+          <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
               <span class="tid">F17</span><span class="tk">A partially dumped file is committed over the user&rsquo;s project &mdash; &ldquo;nothing staged&rdquo; is the wrong test for a <code>debugfs dump</code> that failed midway. <code>internal/sandbox/extract.go:477</code>.</span></li>
-          <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+          <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
               <span class="tid">F18</span><span class="tk">Symlink chains escape the lexical target check: each link is judged alone, as though every other name in the tree were a real directory. <code>internal/sandbox/extract.go:334</code>.</span></li>
-          <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+          <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
               <span class="tid">F19</span><span class="tk">Host-trusted state lives inside the VMM&rsquo;s chroot: <code>sandbox.json</code> and the paused marker sit in the jailed run directory at the invoking uid. <code>internal/sandbox/sandbox.go:1678</code> &middot; <code>jail.go:57</code>.</span></li>
           <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
               <span class="tid">F20</span><span class="tk">Guest strings reach the terminal without <code>SafeText</code> &mdash; the live OOM and plugin lines, <code>kelyfos log</code>, and <code>watch</code>&rsquo;s <code>absorb</code>. <code>host/run.go:517</code> &middot; <code>host/log.go:790</code> &middot; <code>host/watch.go</code>.</span></li>
@@ -1531,7 +1531,7 @@
               <span class="tid">F21</span><span class="tk">A discovered <code>kelyfos.toml</code> is trusted with host-wide powers &mdash; no ownership or writability check on the walk up to <code>/</code>, and the file may name an absolute workspace, an absolute plugin path and bound secrets. <code>internal/config/config.go:117</code>.</span></li>
           <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
               <span class="tid">F3</span><span class="tk">The guest vsock listener never checks the peer CID, and <code>CONFIG_VSOCKETS_LOOPBACK</code> is disabled against the upstream default in a config the fragment does not pin. <code>internal/vsock/vsock.go:101</code>.</span></li>
-          <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+          <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
               <span class="tid">F4</span><span class="tk">Workspace contents are lost for a directory name ending in whitespace: the <code>debugfs</code> script line is unquoted and the echo-attribution trims. <code>internal/sandbox/extract.go:155</code>.</span></li>
           <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
               <span class="tid">F5</span><span class="tk">MCP client config files are created world-readable under <code>$HOME</code>, and the client that later writes an API key keeps the mode it found. <code>host/connect.go:225</code>.</span></li>
@@ -1642,7 +1642,7 @@ make cli           <span class="c"># the kelyfos binary into bin/ — image does
     <li><b>5. Log deviations.</b> Any change of approach, library, or scope gets a Decision Log row with rationale <i>before</i> implementation. Non-goals in section 2 are hard boundaries — do not cross them; propose a decision-log entry and stop if a task seems to require it.</li>
     <li><b>6. Append, never rewrite history.</b> Log rows are immutable. Update <code>#meta-updated</code> with today's date on every edit of this file.</li>
     <li><b>7. Blocked?</b> Mark the task with <code>[BLOCKED: reason]</code> appended to its text, log it, and move to the next task. Surface all blockers at the end of the session summary.</li>
-    <li><b>8. Reconcile against CI, not only against the tree.</b> Session start-up reads the latest CI run for <code>origin/main</code> alongside <code>git status</code> and <code>git log</code>. <b>A red <code>main</code> is a blocker and is fixed before any new task is started</b> &mdash; not noted, not carried, fixed. This rule exists because <code>main</code> was red from P5-1 until P5-2 found it three tasks later: the failure was in the job after the one that had always passed, every session read the tree and none read the pipeline, and nothing in these rules required anyone to look. A clean tree is not a green build, and P3-6 asked for a green pipeline on <code>main</code>, not for one that is usually green. (The product owner&rsquo;s ruling of 2026-08-24.) <b class="promoted">[AMENDED 2026-08-24, D42.]</b> &ldquo;The latest CI run&rdquo; means the latest run of <i>every</i> workflow that gates <code>main</code>, not only <code>ci.yml</code>. P6-2 added <code>security.yml</code>, whose whole purpose is to go red when nothing in this repository has changed &mdash; an advisory published against a dependency that has not moved. A rule that reads only the build would never see it.</li>
+    <li><b>8. Reconcile against CI, not only against the tree.</b> Session start-up reads the latest CI run for <code>origin/main</code> alongside <code>git status</code> and <code>git log</code>. <b>A red <code>main</code> is a blocker and is fixed before any new task is started</b> &mdash; not noted, not carried, fixed. This rule exists because <code>main</code> was red from P5-1 until P5-2 found it three tasks later: the failure was in the job after the one that had always passed, every session read the tree and none read the pipeline, and nothing in these rules required anyone to look. A clean tree is not a green build, and P3-6 asked for a green pipeline on <code>main</code>, not for one that is usually green. (The product owner&rsquo;s ruling of 2026-08-24.) <b class="promoted">[AMENDED 2026-08-24, D42.]</b> &ldquo;The latest CI run&rdquo; means the latest run of <i>every</i> workflow that gates <code>main</code>, not only <code>ci.yml</code>. P6-2 added <code>security.yml</code>, whose whole purpose is to go red when nothing in this repository has changed &mdash; an advisory published against a dependency that has not moved. A rule that reads only the build would never see it. [AMENDED 2026-08-29, D73.] <b>A head of <code>main</code> with no run is red, not unknown.</b> &ldquo;The latest CI run&rdquo; presupposes there is one; P7-17 pushed 129 commits and triggered nothing, because Actions was disabled at the account level, and a rule that asks for the latest run&rsquo;s result reads an absence as silence rather than as a failure. Absence is the stronger signal, not the weaker one: a red run says one job broke, an absent run says nothing was checked at all. Session start-up establishes that a run exists for the current head before it reads what the run said.</li>
     <li><b>9. Documentation rides with the task that changed the surface.</b> No task is ticked until <code>make docs</code> is clean (CI enforces the generated reference &mdash; F-D4); <code>llms.txt</code> and <code>llms-full.txt</code> are regenerated and committed <i>with</i> it; every new user-facing command, flag, <code>kelyfos.toml</code> key or MCP tool has a cookbook recipe that CI executes; the <code>llms-full.txt</code> token count is re-measured and logged whenever the generated set changed; and, when a phase added commands or MCP tools, the docs-only exam is re-run against that phase&rsquo;s artifacts before its exit. This is <b>F-D9</b>, which governed <a href="PLAN-FEATURES.html">PLAN-FEATURES.html</a> through five epics and then evaporated when that file closed &mdash; this document&rsquo;s protocol never carried it, and the consequence is that Phase 5 shipped v0.9 with no token re-measurement and no exam, not because anyone decided to skip them but because nothing here required them. A rule that governed the project through its most productive stretch does not stop being true when the file it lived in is finished. (D40.)</li>
     <li><b>10. Verified by somebody who did not write it.</b> No task that touches <b>the record, the proxy,
        the broker or a renderer</b> is ticked until an agent that did not write the diff has reviewed it
@@ -7552,6 +7552,209 @@ after:
         because answering and then destroying the answer is the same as not answering<br>
         the throughput worry was <i>measured and withdrawn</i>: <code>/big</code> at 1, 8, 32 and 256 KiB/s all
         still delivering at 40s, uncut, because socket and TLS buffers absorb each write</td></tr>
+    <tr><td class="mono">2026-08-29</td><td class="mono">P7-17/F17</td>
+        <td><b>A partially dumped file was committed over the user&rsquo;s project.</b> &ldquo;Nothing
+        staged&rdquo; was the wrong test: <code>debugfs dump</code> opens its destination
+        <code>O_CREAT|O_TRUNC</code> and copies block by block, so a failure midway left a truncated file that
+        <i>exists</i>, and <code>Commit</code> renamed it over the project and printed &ldquo;workspace written
+        back&rdquo;. Now the inode size travels with the entry and is compared twice &mdash; once by
+        <code>Stat</code> before <code>O_TRUNC</code> touches the destination, once against the bytes actually
+        copied &mdash; <code>debugfs</code>&rsquo;s stderr is read instead of discarded, staging moved off tmpfs
+        to <code>sandbox.Root()</code> with a free-space check, and <code>dest</code> is quoted.
+        <br><b>Two report errors, both load-bearing.</b> &ldquo;<code>imageEntry</code> already carries the
+        inode&rsquo;s size&rdquo; &mdash; <b>it does not</b>; the field is parsed and discarded, and the whole
+        prescribed fix depends on it. And &ldquo;treat any line containing <code>dump:</code> or <code>ls:</code>
+        as fatal&rdquo; <b>would refuse most real workspaces</b>: a fast symlink has no data block, so
+        <code>dump</code> legitimately writes 0 bytes and prints exactly that line. Measured.
+        <br><b>One deviation, accepted:</b> a free-space check on the staging filesystem instead of the
+        report&rsquo;s enumerated-total-vs-image-ceiling, because <code>mke2fs -d</code> preserves hardlinks and
+        a pnpm <code>node_modules</code> is mostly them &mdash; the reviewer called the substitution
+        &ldquo;not just defensible, strictly better&rdquo;, since the prescribed rule would refuse every such
+        tree and the cost of that false positive is the person&rsquo;s session.</td>
+        <td class="mono">Parent &rarr; <code>the sync-back reported success (dest &hellip;/proj, diverted false)
+        and replaced a 1048576 byte file with a 0 byte one</code><br>
+        reproduced against real <code>debugfs</code> 1.47.0 first: an image cut short still lists
+        <code>/12/100664/501/1000/big.txt/1048576/</code> while every dump gives 0 bytes, exit 0,
+        <code>dump: Attempt to read block from filesystem resulted in short read</code><br>
+        <b>The review&rsquo;s mutation table found the headline mechanism unpinned</b> &mdash; dropping either
+        size check, or both, left the whole suite green, because the flagship test was satisfied by
+        <i>(size checks OR the com_err rule)</i> and pinned neither. Each now has the case only it can catch: the
+        <code>Stat</code> refuses before the destination is touched, and the copied count is pinned with a fifo,
+        which stats as zero and then yields what is written to it. All four cells red.<br>
+        <b>F17&rsquo;s own class survived for symlinks</b> and was closed: <code>e.size</code> was parsed for
+        links and never compared, so a slow link whose dump came back short was installed with a silently
+        truncated target. The 59/60 fast/slow boundary was measured before the constant went in, and a quoting
+        bug fell out &mdash; <code>strings.Trim</code> strips as many quotes as it finds, so a target beginning
+        or ending with one came back a character short.<br>
+        <b>The new refusal called a busy agent&rsquo;s workspace hostile</b> &mdash;
+        <code>kelyfos diff</code> reads a live image through the same path, and any file the agent appends to
+        between the two <code>debugfs</code> passes tripped it. <code>stageTwice</code> reads again; a second
+        disagreement is still a refusal naming both readings. Fixing the deletion half taught the sharper lesson:
+        com_err names the <b>path</b>, not the command &mdash; <code>/gone.txt: File not found by
+        ext2_lookup</code>, exit 0 &mdash; so no prefix rule can see it and only <code>copyThrough</code> finding
+        nothing staged catches it. Second time on this task the stderr rule was not what held a defence up.</td></tr>
+    <tr><td class="mono">2026-08-29</td><td class="mono">P7-17/F18</td>
+        <td><b>Symlink chains escaped the lexical target check, and it took three rounds to close because the
+        first two fixes each reasoned about a model instead of asking reality.</b> Each link was judged alone, so
+        a chain defeated it &mdash; extraction cannot write through such a link, but it is <i>left in the
+        user&rsquo;s directory</i> for the next tool that follows it. <b>Round 1</b> resolved the chain against
+        the entry set. <b>Round 2</b> added case folding after the review demonstrated an escape through
+        <code>D1</code> vs <code>d1</code>. <b>Round 3</b> removed the key entirely: the symlinks are created in
+        the staging tree first and the walk asks that tree with <code>os.Readlink</code>, because a canonical form
+        has to answer &ldquo;are these two spellings the same file?&rdquo;, which is a question about the
+        destination &mdash; and probing for case, then normalization, then whatever is third, is still a list.
+        <br><b>The report&rsquo;s prescribed rule was declined with a reason, and its prescribed comment fix was
+        itself wrong.</b> The <code>..</code>-segment refusal would refuse the whole image for
+        <code>node_modules/x -&gt; ../../packages/x</code>, which is what every pnpm workspace looks like; the
+        report&rsquo;s own second answer was taken instead. And its instruction to &ldquo;fix the comment:
+        <code>os.Root</code> is <code>RESOLVE_BENEATH</code>, not <code>RESOLVE_NO_SYMLINKS</code>&rdquo; names a
+        mechanism Go does not use &mdash; <code>openat2Trap</code> is declared in GOROOT and called nowhere, and
+        <code>os/root_unix.go</code> walks component by component with <code>openat(O_NOFOLLOW)</code>, resolving
+        links in <code>checkSymlink</code>. Confirmed independently by the reviewer, the author and the lead.
+        <br><b>The lead was wrong once here and it left a live hole.</b> The hop budget was endorsed on the
+        argument that anything longer than the kernel&rsquo;s 40 links is <code>ELOOP</code> for every tool. That
+        holds only for kernel path resolution; userspace resolvers are precisely F18&rsquo;s harm model.</td>
+        <td class="mono">Parent &rarr; <code>the extraction accepted the chain and sub/leak reads "a host file
+        the guest was never given" &mdash; a link the guest planted, left in the person's project, pointing at a
+        file outside it</code><br>
+        <b>Round 2&rsquo;s hole, measured:</b> <code>links 30 &rarr; cat(2): OUTSIDE</code>;
+        <code>45, 60 &rarr; cat: ELOOP, but python realpath and Go EvalSymlinks resolve to the outside
+        file</code>. At 30 links the kernel itself follows it out, so the endorsed premise was wrong twice
+        over.<br>
+        <b>Round 3&rsquo;s hole, on the platform &sect;7 makes primary:</b>
+        <code>/Users mount inside Lima: CASE-INSENSITIVE</code> &middot; <code>/tmp: case-sensitive</code>
+        (verified by the lead), then <code>NFC caf&eacute; vs NFD caf&eacute; &rarr; SAME FILE</code> while
+        <code>ToLower equal? False</code> &mdash; so <b>no fixture in <code>t.TempDir()</code> could ever have
+        caught it</b><br>
+        the fold also refused <i>legitimate</i> trees: <code>Docs/link</code> + <code>docs/link</code> from an
+        ordinary case-sensitive checkout cost the whole image, and <code>strings.ToLower</code> maps every
+        invalid UTF-8 byte to U+FFFD so any two Latin-1-named symlinks collided. Both fell out with the key.<br>
+        <b>Cycle detection replaced inference:</b> reversing the carve-out had cost two false refusals, and a
+        cycle is unfollowable by <i>everything</i> (<code>cat</code> ELOOP, <code>realpath</code> returns the
+        link, <code>EvalSymlinks</code> too many links). The walk is now iterative with its remaining work held
+        explicitly, so a repeated state is a loop with certainty. Reviewer&rsquo;s boundary table: periods 2&ndash;55
+        accepted, 56+ refused as too deep; acyclic 40 and 64 accepted, 65/66/100 refused; escaping refused at
+        every padding.<br>
+        <b>Cost: ~175 hours at the entry ceiling &rarr; 3.8s.</b> A pnpm-shaped 600-link tree costs 3,200 steps
+        of 1,048,576 (0.31%), asserted so the budget cannot be tightened past real use.<br>
+        <b>18 mutations, 16 red</b>, including the two that pin the new design: the walker pointed at a different
+        directory, and the symlinks created after the walk instead of before. The two green are not guards &mdash;
+        one is a constant&rsquo;s upper bound, one is unreachable second-layer depth.<br>
+        the author&rsquo;s first long-chain fixture <b>did not die under its own mutation</b> (its <code>l0</code>
+        climbed out, so <code>validLink</code> refused it lexically before the chain resolver ran) and was
+        replaced &mdash; caught by doing the mutation</td></tr>
+    <tr><td class="mono">2026-08-29</td><td class="mono">P7-17/F19</td>
+        <td><b>Host-trusted state lived inside the VMM&rsquo;s chroot.</b> <code>sandbox.json</code> and the
+        paused marker sat in the jailed run directory at the invoking uid, and every later <code>kelyfos</code>
+        process trusted what it read &mdash; <code>pause</code> copies <code>WorkspaceHost</code>,
+        <code>resume</code> ends in a rename of the guest&rsquo;s tree over that host directory, and
+        <code>snapshot save</code> copies any host path into the snapshot the next guest boots from. The state
+        moved one level up, out of the chroot, and is validated on read regardless. <b>D72</b> records the
+        deliberate two-way compatibility break and the owner ratified it on 2026-08-29.
+        <br><b>A cross-finding neither the report nor any worker had connected, closed here:</b> F19&rsquo;s
+        &ldquo;validate on read&rdquo; is what makes F9&rsquo;s peer check trustworthy on the restore path. A
+        compromised VMM cannot write a <i>malformed</i> address &mdash; F9&rsquo;s <code>up()</code> refuses that
+        &mdash; but it could write a valid and wrong one, and <code>127.0.0.1</code> is the one that matters. The
+        author found the half the lead had missed and wrote it into the code: <i>&ldquo;the proxy binds on HostIP
+        too, so a loopback host address makes the proxy &mdash; with the operator&rsquo;s credentials attached
+        &mdash; reachable by every process on the machine, which is the whole of F9 re-opened through a
+        file.&rdquo;</i></td>
+        <td class="mono">Parent &rarr; <code>sandbox.json is inside the chroot (&hellip;/root)</code> and all 18
+        tamper cases <code>obeyed rather than refused</code><br>
+        verified on a <b>real jailed microVM</b> under a private cache:
+        <code>run/firecracker/7e9ce070/ &rarr; drwx------ root/ (config.json, fc.sock, kernel, rootfs.ext4 &mdash;
+        no sandbox.json)</code>, <code>-rw------- sandbox.json 433 bytes, above the chroot</code>, and
+        <code>kelyfos exec --sandbox 7e9ce070 "uname -sm; id -u" &rarr; Linux aarch64 / 0</code><br>
+        <code>validateNetwork</code> checks the pair against <code>deriveAddrs</code>&rsquo; own arithmetic
+        &mdash; link-local, two halves of one /30, host at .1 and guest at .2, not the /30 holding the metadata
+        address &mdash; plus netmask, derivable TAP name, MAC class and port<br>
+        <b>The review found the <code>firecracker.pid</code> rationale false</b>, on a live jailed microVM:
+        the file is <code>root:root 644</code> but its directory is <code>&lt;invoking uid&gt; 700</code>, and
+        <code>unlink(2)</code> is governed by the directory &mdash; <code>in-place write &rarr; Permission
+        denied</code>, <code>unlink &rarr; SUCCEEDED</code>, <code>recreate &rarr; SUCCEEDED</code>. The check
+        stays and is now described as a consistency check, not a trust anchor. The author: <i>&ldquo;second time
+        on this task one of my derivations was one syscall&rsquo;s permission rule from wrong.&rdquo;</i><br>
+        <b>Six <code>dev/</code> scripts were reading the old path</b> &mdash; the review found five, the author
+        found the sixth (<code>accept-jail.sh:185</code>) &mdash; two of which turned into a silent
+        <code>check &hellip; no</code> and one of which would abort the suite. <code>statefile()</code> now lists
+        all three spellings, with a comment saying to <b>add</b> rather than replace, because the previous
+        version&rsquo;s stated intent was right and still did not survive: &ldquo;either layout&rdquo; enumerated
+        two and there are now three.<br>
+        <code>RunningSessions()</code> marks a refused record live by its <b>directory id</b>, not its
+        <code>Session</code> field &mdash; a record just refused is not one to take a chain id from &mdash; so a
+        refused member of a live team protects its own chain and not the team&rsquo;s. The honest edge, written
+        into the code; reverting it goes red</td></tr>
+    <tr><td class="mono">2026-08-29</td><td class="mono">P7-17/F4</td>
+        <td><b>Workspace contents were lost for a directory name ending in whitespace, silently.</b> The
+        <code>debugfs</code> script line was unquoted and the echo-attribution trimmed, so
+        <code>"notes "</code> produced <code>dir == "/notes "</code> and <code>current == "/notes"</code>, the
+        keys did not match, and the directory was created on the host with none of its contents and no error
+        anywhere. The directory is quoted the way <code>dumpFiles</code> already quotes file paths, the echo is
+        matched with the quotes on, and the structural cross-check the report asks for is added: every directory
+        that produced no records at all is an error, because <code>debugfs</code> echoes every command.
+        <br><b>The review never reproduced this one</b> &mdash; its Limits section says &ldquo;still to be
+        reproduced with a real image; no toolchain was available on either pass&rdquo;. It is reproduced now, and
+        there are <b>two</b> distinct failures rather than the one predicted.
+        <br><b>And the report&rsquo;s prescribed stderr rule catches neither of them</b>, because com_err prints
+        neither shape.</td>
+        <td class="mono">Parent, real image &rarr; three of five files gone with no error:
+        <code>"notes /a.txt" is in the image and the enumeration did not find it</code>,
+        <code>"my notes/b.txt" &hellip;</code>, <code>"deep/ x /d.txt" &hellip;</code>; and
+        <code>a directory debugfs said nothing about was treated as an empty directory</code><br>
+        the two failure modes measured: a trailing space is stripped during tokenising
+        (<code>/notes: File not found by ext2_lookup</code>) <i>and</i> <code>TrimSpace</code> mangles the key;
+        an interior space becomes two arguments (<code>Usage: ls [-c] [-d] [-l] [-p] [-r] file</code>) &mdash;
+        <b>neither carries an <code>ls:</code> prefix</b>, so the report&rsquo;s rule is blind to both and the
+        structural cross-check is what actually holds<br>
+        <b><code>FuzzEntryFrom</code> added</b> &mdash; the parser every guest byte arrives through had none, and
+        F17 and F4 both changed it. Corpus committed per <code>b32e342</code>&rsquo;s procedure: 185 entries,
+        replayed clean; reviewer&rsquo;s 90s run &rarr; 5,006,418 execs, 7 new interesting, 0 crashers</td></tr>
+    <tr><td class="mono">2026-08-29</td><td class="mono">P7-17/F13(b)</td>
+        <td><b>The recorder latched and nothing acted on it; now every loop that keeps a machine alive watches
+        <code>Broken()</code>.</b> F13(a) made the first failure final; until this commit the sandbox went on
+        executing commands and making egress with nobody told, which is the harm the finding describes rather
+        than a narrowing of it. <code>kelyfos run</code>&rsquo;s two loops, <code>kelyfos team up</code>&rsquo;s
+        one, and &mdash; since <code>serve-mcp</code> has no such loop &mdash; a per-sandbox watcher started at
+        <code>adopt</code>, the single registration point. The machine is stopped, the operator is told which
+        event was lost, <code>run</code> exits 1 and the session ends <code>recorder_failed</code>. Every
+        teardown makes one more attempt at the epitaph, because by then the machine is down and whatever held
+        the disk may have let go.
+        <br><b>Widening the wiring guard found two loops nobody had wired</b> &mdash;
+        <code>kelyfos sessions resume</code> (<code>sessions.go:926</code>) and <code>kelyfos snapshot
+        restore</code> (<code>snapshot.go:392</code>), both of which hold a machine open with a recorder. Five
+        loops, not three. The guard now recognises a loop two ways, by channel name and by being a multi-way
+        <code>select</code> in a function that holds a machine open, and <b>says what it still cannot see</b>: a
+        new waiting loop, in a new function, on new channel names.
+        <br><b>The 77 discarded <code>Append</code> sites were closed by a count, not by <code>Must</code></b>,
+        and the reason is the task&rsquo;s own lesson: <code>Must</code> would have to panic (which a CLI must
+        not) or return an error the caller handles &mdash; which is the 75 checks the latch exists to make
+        unnecessary &mdash; and the <i>name</i> would assert at each site that the error is acted on there, when
+        it is acted on in the select. <i>&ldquo;A function name is a comment that cannot be qualified.&rdquo;</i>
+        <br><b>Reviewed</b> (RECORD). The wiring was correct everywhere the reviewer could reach &mdash; but
+        <b>three of the four mechanisms were held by tests that stayed green when the mechanism was
+        removed</b>, and two of those would have reintroduced real harm.</td>
+        <td class="mono">Mutations, all red after the follow-up:<br>
+        <code>stopWatching out of close() &rarr; watcher outlived the box; 40 goroutines leaked across 40
+        create/stop cycles</code> (the reviewer&rsquo;s measured number, reproduced exactly)<br>
+        <code>b.close() out of watchRecorder &rarr; the box was deregistered and never torn down: its recorder
+        is still set, so the machine is still up, unrecorded</code> &mdash; F13&rsquo;s own harm surviving in the
+        one door with no run loop<br>
+        <code>the recorderBroke branch disabled &rarr; 4 of 9 precedence cases</code><br>
+        <code>Broken out of resume's select &rarr; sessions.go:926 waits and does not watch</code>;
+        <code>&hellip; restore's &rarr; snapshot.go:392</code><br>
+        <code>lifetimeFuncs renamed &rarr; the rename that moved it also emptied half of this guard</code><br>
+        <code>a bare Append added in internal/ &rarr; count 76, constant 75</code><br>
+        the author&rsquo;s <b>first rewrite of the watcher test still passed for the wrong reason</b> &mdash;
+        <code>watchable()</code> returns <code>(nil, nil)</code> on an already-closed box, so an unscheduled
+        goroutine returned without ever waiting; it parks the watcher before closing now<br>
+        count arithmetic verified by the lead and the reviewer independently: <b>77 sites before, 75 after</b>,
+        the &minus;2 being <code>endSession</code> absorbing three <code>session.end</code> Appends while itself
+        containing one<br>
+        <code>adopt</code> confirmed the single registration point &mdash; the only write to
+        <code>s.boxes</code> in the tree &mdash; and <code>setRec</code> precedes it on all three doors, so the
+        watcher never starts blind<br>
+        the harness models the real failure: 0 epitaphs while the chain is damaged, 1 after repair &mdash; which
+        is what <code>EndBroken</code> exists for and what its own comment describes</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
@@ -8951,6 +9154,40 @@ after:
         visible (one upgrade, one class of stale machine, a documented fallback for erase and prune); the
         alternative is unbounded and silent. The same reasoning the project already applied at D29 and at P5-1:
         depth is worth having, but not at the price of the boundary it sits behind.</td></tr>
+    <tr><td class="mono">D73</td><td class="mono">2026-08-29</td>
+        <td><b>GitHub Actions is disabled at the account level, so P7-17 proceeds on local evidence, bounded.</b>
+        A push of 129 commits to <code>main</code> (<code>b55103f..e1055f5</code>) triggered <b>no workflow
+        run</b>. The repository is not the cause &mdash;
+        <code>repos/&hellip;/actions/permissions</code> returns
+        <code>{"enabled":true,"allowed_actions":"all"}</code>, the repository is neither archived nor disabled,
+        all seven workflows list as <code>active</code>, and githubstatus.com reports Actions operational. A
+        manual dispatch names it: <code>HTTP 422: Actions has been disabled for this user.</code> Duration
+        unknown. On the owner&rsquo;s ruling of 2026-08-29 the remaining P7-17 work is merged on local evidence:
+        <code>dev/ci-local.sh</code>, which reproduces <code>ci.yml</code>&rsquo;s <code>checks</code> job step
+        for step &mdash; the workflow&rsquo;s own <code>run:</code> blocks, in its order, under its step names
+        &mdash; pinning a SHA-256 of the job&rsquo;s text and refusing to run when the two drift. Heads checked:
+        <code>e1055f5</code>, <code>a4a70df</code> and <code>6e755a4</code>. The <code>build</code> job
+        (Buildroot image) is not reproduced; the <code>boot</code> job is represented by an aarch64 stand-in
+        (<code>make test-integration</code> + <code>dev/accept-seccomp.sh</code>) and labelled as one, not as the
+        x86_64 run.
+        <br><b>P7-17 stays open and nothing is tagged until <code>ci.yml</code> and <code>security.yml</code> are
+        both green on the final head.</b> This sentence is in this row so it cannot be forgotten: local evidence
+        is what permits the merges, not what closes the task. A tag or a phase exit taken on this row alone would
+        be the defect this row exists to record.</td>
+        <td>Rule 8 exists because main was red from P5-1 to P5-2 while every session read the tree and none read
+        the pipeline. This is that failure with the polarity reversed: the pipeline has not been readable for the
+        whole of P7-17, the last genuine signal on <code>main</code> is from 2026-08-25 and 129 commits ago, and
+        nothing in the rule required anyone to notice that <i>no run</i> is different from <i>a green run</i>.
+        Merging on a reproduction of the job is defensible because the reproduction is the workflow&rsquo;s own
+        text under a digest pin, and because the alternative &mdash; holding twenty-one security findings,
+        including two High ones already on <code>main</code>, behind an account restriction of unknown duration
+        &mdash; is worse for the thing the findings are about. Closing on it would not be defensible, which is
+        why the previous paragraph says so. Two limits are stated rather than discovered later: the
+        <code>build</code> and <code>boot</code> jobs are not reproduced, and the local run is load-sensitive
+        &mdash; <code>go test -count=1 ./...</code> failed on <code>internal/recorder</code> and
+        <code>internal/report</code> at load average ~11 with five agents working, and both passed individually
+        and together once the machine was quiet, so a red from this script is not a defect until it is
+        reproduced on an idle machine.</td></tr>
     <!-- Claude Code: append rows above this line. -->
   </table>
 </section>
