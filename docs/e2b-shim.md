@@ -142,7 +142,7 @@ into a live sandbox. Every route therefore refuses, before the token check:
   own client send when the port is the scheme's default — so a shim bound to
   `:80` accepts `Host: 127.0.0.1` and one bound anywhere else does not.
 
-No SDK sends any of those headers, so the quickstart above is unaffected. A
+No SDK sends `Origin` or `Sec-Fetch-Site`; every browser does, which is what makes refusing them a structural bar rather than a guess. `Host` is different — every HTTP/1.1 client sends one, mandatorily — so the rule there is not that the header is absent but that it names the address this shim bound, an IP literal on that port, or `localhost`. A client that reaches a shim by DNS name is refused for that reason, which matters on the one configuration where a name is plausible: a bind off loopback. A
 refusal answers `403` and says which check it was.
 
 **And `POST /sandboxes` requires its body to be JSON.** It used to discard the

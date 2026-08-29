@@ -238,7 +238,7 @@ the machine rather than leave it running unrecorded.**
 **That wiring is in place.** Every loop that keeps a machine alive watches the
 channel: `kelyfos run`'s two — the trailing-command form and the interactive
 one — `kelyfos team up`'s, which covers a whole rig because a team has one
-recorder for all of it, and the ones `kelyfos sessions resume` and
+recorder for all of it, and the ones `kelyfos resume` and
 `kelyfos snapshot restore` hold their machines open with. `kelyfos serve-mcp`
 has no such loop, so each sandbox it creates gets a watcher of its own, started
 where the machine is registered.
@@ -251,12 +251,13 @@ kelyfos: the flight recorder stopped at event 41: no space left on device
 kelyfos: stopping the machine — it is not being recorded
 ```
 
-`kelyfos run`, `sessions resume` and `snapshot restore` then exit `1`, and the
-session's `session.end` reads `recorder_failed`. Under `serve-mcp` the sandbox stops being served and the next
-tool call naming it says the recorder failed and at which event, rather than
-that no such sandbox exists. A sandbox that was asked not to record at all is
-unaffected: a disabled recorder's channel is nil, and a receive on nil never
-fires.
+`kelyfos run`, `resume` and `snapshot restore` then exit `1`. What lands in
+the chain is the recorder's own epitaph, not that word: on a broken recorder the
+run loop's own `session.end` append is refused like every other, so the last
+line of the record is the one the recorder wrote for itself, and its `reason` is
+`recorder failed at seq N: <error>`. Match on that. `recorder_failed` is the
+value the run loop carries internally to pick the exit code and the message —
+it is never a value in the record.
 
 The recorder does write one last `session.end` of its own where it can, with
 `reason` = `recorder failed at seq N: <error>` — `N` being the sequence number

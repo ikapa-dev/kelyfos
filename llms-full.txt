@@ -1595,7 +1595,7 @@ ownership rule on `sudoers`, and the answer here is the same shape:
 - **What the file reaches is printed before anything boots**: its path, the
   workspace, every plugin directory, and every secret by name with the domain it
   is bound to. Values are never read here and never printed. `kelyfos run`,
-  `kelyfos team up`, `kelyfos sessions resume` and `kelyfos snapshot restore`
+  `kelyfos team up`, `kelyfos resume` and `kelyfos snapshot restore`
   all print it.
 
 - **A `[[plugin]] path` outside the file's tree is refused** unless
@@ -1737,7 +1737,7 @@ any address, and this document and `docs/e2b-shim.md` both said what that meant
 while the code let it happen silently. `kelyfos shim` now checks the listener's
 own address the moment it has one — after the bind, so `--addr :0` and
 `--addr localhost:3000` are resolved first — and refuses to serve a non-loopback
-address unless `KELYFOS_SHIM_TOKEN` is set, naming the address and the fix. A
+address unless authentication is actually on — a token you set in `KELYFOS_SHIM_TOKEN` or the one it minted, either satisfies it, because the check reads the credential the process resolved and not the variable. `--insecure-no-token` and a set `KELYFOS_SHIM_TOKEN` together are refused at startup as asking for opposite things, so there is no combination that binds off loopback with nothing checking the caller. A
 loopback bind is unchanged, which is the default and every documented setup.
 
 What is **not** changed is the default for a loopback bind: it still
@@ -4543,7 +4543,7 @@ the machine rather than leave it running unrecorded.**
 **That wiring is in place.** Every loop that keeps a machine alive watches the
 channel: `kelyfos run`'s two — the trailing-command form and the interactive
 one — `kelyfos team up`'s, which covers a whole rig because a team has one
-recorder for all of it, and the ones `kelyfos sessions resume` and
+recorder for all of it, and the ones `kelyfos resume` and
 `kelyfos snapshot restore` hold their machines open with. `kelyfos serve-mcp`
 has no such loop, so each sandbox it creates gets a watcher of its own, started
 where the machine is registered.
@@ -4556,12 +4556,13 @@ kelyfos: the flight recorder stopped at event 41: no space left on device
 kelyfos: stopping the machine — it is not being recorded
 ```
 
-`kelyfos run`, `sessions resume` and `snapshot restore` then exit `1`, and the
-session's `session.end` reads `recorder_failed`. Under `serve-mcp` the sandbox stops being served and the next
-tool call naming it says the recorder failed and at which event, rather than
-that no such sandbox exists. A sandbox that was asked not to record at all is
-unaffected: a disabled recorder's channel is nil, and a receive on nil never
-fires.
+`kelyfos run`, `resume` and `snapshot restore` then exit `1`. What lands in
+the chain is the recorder's own epitaph, not that word: on a broken recorder the
+run loop's own `session.end` append is refused like every other, so the last
+line of the record is the one the recorder wrote for itself, and its `reason` is
+`recorder failed at seq N: <error>`. Match on that. `recorder_failed` is the
+value the run loop carries internally to pick the exit code and the message —
+it is never a value in the record.
 
 The recorder does write one last `session.end` of its own where it can, with
 `reason` = `recorder failed at seq N: <error>` — `N` being the sequence number
@@ -7847,7 +7848,7 @@ into a live sandbox. Every route therefore refuses, before the token check:
   own client send when the port is the scheme's default — so a shim bound to
   `:80` accepts `Host: 127.0.0.1` and one bound anywhere else does not.
 
-No SDK sends any of those headers, so the quickstart above is unaffected. A
+No SDK sends `Origin` or `Sec-Fetch-Site`; every browser does, which is what makes refusing them a structural bar rather than a guess. `Host` is different — every HTTP/1.1 client sends one, mandatorily — so the rule there is not that the header is absent but that it names the address this shim bound, an IP literal on that port, or `localhost`. A client that reaches a shim by DNS name is refused for that reason, which matters on the one configuration where a name is plausible: a bind off loopback. A
 refusal answers `403` and says which check it was.
 
 **And `POST /sandboxes` requires its body to be JSON.** It used to discard the
@@ -10244,7 +10245,7 @@ They do differ in what they can express. The shim serves a fixed REST subset and
 cannot run commands at all; the bridge gives an agent one guest's full tool
 surface; `serve-mcp` gives a client the host's, including snapshots, forks and
 the declared team; the CLI gives you everything. And the shim authenticates
-nobody unless `KELYFOS_SHIM_TOKEN` is set, so by default its port is a local
+every caller — since v1.1 it mints a token when `KELYFOS_SHIM_TOKEN` is unset and requires it on every route, and running without one takes `--insecure-no-token`. Under that flag its port is a local
 privilege surface the other three do not have.
 
 The two MCP doors point in opposite directions and are easy to confuse. `mcp`
@@ -10728,11 +10729,22 @@ quiet.
 
 It is not, since F-D33: `kelyfos shim` reads the project's `kelyfos.toml`,
 `[resources]` caps every sandbox it creates, and each one writes its own flight
-recorder. What it does not do by default is authenticate its caller. Set
-`KELYFOS_SHIM_TOKEN` and every route requires that value as
-`Authorization: Bearer <token>` and answers `401` without it; leave it unset and
-the port is unauthenticated, so bind it to loopback and treat reaching it as
-equivalent to running `kelyfos` on the machine.
+recorder. Since v1.1 it also authenticates its caller by default: with
+`KELYFOS_SHIM_TOKEN` unset it mints 256 bits at start, prints them once, and
+every route requires `Authorization: Bearer <token>`, answering `401` without
+it. Running with no credential takes `--insecure-no-token`, and under that flag
+the port is unauthenticated — bind it to loopback and treat reaching it as
+equivalent to running `kelyfos` on the machine, which is what every other local
+account on a shared box can then do.
+
+The E2B SDK is the case that forces the flag: it sends `X-API-KEY` on the
+control plane and a `Basic` header derived from the sandbox user on the file
+routes, and the shim reads neither. What the flag does *not* turn off is the
+rest of what v1.1 added — the `Origin`, `Sec-Fetch-Site` and `Host` refusals,
+the JSON-body requirement on `POST /sandboxes`, and the refusal to bind off
+loopback without a credential all still apply. A web page still cannot reach
+the shim under `--insecure-no-token`; that was the half of the change nobody
+can opt out of.
 
 ### Running commands through the E2B shim
 

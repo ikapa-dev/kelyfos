@@ -85,7 +85,7 @@ They do differ in what they can express. The shim serves a fixed REST subset and
 cannot run commands at all; the bridge gives an agent one guest's full tool
 surface; `serve-mcp` gives a client the host's, including snapshots, forks and
 the declared team; the CLI gives you everything. And the shim authenticates
-nobody unless `KELYFOS_SHIM_TOKEN` is set, so by default its port is a local
+every caller — since v1.1 it mints a token when `KELYFOS_SHIM_TOKEN` is unset and requires it on every route, and running without one takes `--insecure-no-token`. Under that flag its port is a local
 privilege surface the other three do not have.
 
 The two MCP doors point in opposite directions and are easy to confuse. `mcp`
@@ -569,11 +569,22 @@ quiet.
 
 It is not, since F-D33: `kelyfos shim` reads the project's `kelyfos.toml`,
 `[resources]` caps every sandbox it creates, and each one writes its own flight
-recorder. What it does not do by default is authenticate its caller. Set
-`KELYFOS_SHIM_TOKEN` and every route requires that value as
-`Authorization: Bearer <token>` and answers `401` without it; leave it unset and
-the port is unauthenticated, so bind it to loopback and treat reaching it as
-equivalent to running `kelyfos` on the machine.
+recorder. Since v1.1 it also authenticates its caller by default: with
+`KELYFOS_SHIM_TOKEN` unset it mints 256 bits at start, prints them once, and
+every route requires `Authorization: Bearer <token>`, answering `401` without
+it. Running with no credential takes `--insecure-no-token`, and under that flag
+the port is unauthenticated — bind it to loopback and treat reaching it as
+equivalent to running `kelyfos` on the machine, which is what every other local
+account on a shared box can then do.
+
+The E2B SDK is the case that forces the flag: it sends `X-API-KEY` on the
+control plane and a `Basic` header derived from the sandbox user on the file
+routes, and the shim reads neither. What the flag does *not* turn off is the
+rest of what v1.1 added — the `Origin`, `Sec-Fetch-Site` and `Host` refusals,
+the JSON-body requirement on `POST /sandboxes`, and the refusal to bind off
+loopback without a credential all still apply. A web page still cannot reach
+the shim under `--insecure-no-token`; that was the half of the change nobody
+can opt out of.
 
 ### Running commands through the E2B shim
 

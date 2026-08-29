@@ -7801,6 +7801,140 @@ after:
         <code>llms-full.txt</code> re-measured after the phase&rsquo;s documentation changes (&sect;8 rule 9):
         <code>793813 bytes &middot; 789607 characters &middot; 14913 lines &middot; ~206164 tokens</code>
         (was ~187k at <code>a393b2e</code>, before P7-17)</td></tr>
+    <tr><td class="mono">2026-08-29</td><td class="mono">P7-17</td>
+        <td><b>The acceptance suites for every surface P7-17 changed, run as-is for the first time.</b> Three of
+        them &mdash; <code>accept-profile.sh</code>, <code>accept-seccomp.sh</code>, <code>accept-jail.sh</code>
+        &mdash; could not be run for most of this task, because each installs a <code>trap cleanup EXIT</code>
+        that kills <i>every</i> firecracker on the host and peers held live microVMs throughout (P7-16/D70). The
+        machine was finally quiet, so they ran.</td>
+        <td class="mono"><code>dev/accept-seccomp.sh</code> &rarr; <b>15 passed, 0 failed</b><br>
+        <code>dev/accept-jail.sh</code> &rarr; <b>19 passed, 0 failed</b> (F19&rsquo;s surface)<br>
+        <code>dev/accept-forward.sh</code> &rarr; <b>21 passed, 0 failed</b> &mdash; the same script that read
+        <b>16 passed / 5 failed</b> mid-task, where the five were diagnosed as <code>halt()</code> leaking nft
+        tables plus other agents&rsquo; sandboxes. On a quiet machine they are gone, which confirms that
+        diagnosis rather than leaving it asserted (F9, F14, F15, F16)<br>
+        <code>dev/accept-shim.sh</code> &rarr; <b>35 passed, 0 failed</b> (F2)<br>
+        <code>dev/accept-profile.sh</code> &rarr; <b>31 passed, 4 failed</b> &mdash; and the four are exactly the
+        F8 block, which is <b>a stale image and not a regression</b>. Established three independent ways rather
+        than assumed: the image was built <code>2026-08-27T21:50:12Z</code> and F8 landed
+        <code>2026-08-28 23:46</code>; a <code>strings</code> probe of the supervisor <i>inside</i>
+        <code>rootfs.ext4</code> finds <b>0</b> occurrences of <code>errNotConfined</code>&rsquo;s message against
+        <b>1</b> in the freshly built binary; and splicing the built supervisor into a private copy of the image
+        and re-running gives <b>35 passed, 0 failed</b>, with
+        <code>/root/kelyfos-confine: line 3: can't create /etc/should-not-work: Permission denied</code>.<br>
+        So the guest-side fixes are proven against a supervisor that has them, and the shipped image on this
+        machine predates all four guest findings. <b>A full <code>make image FLAVOR=dev</code> is the proper
+        closing step and has not been done</b> &mdash; CI&rsquo;s <code>build</code> and <code>boot</code> jobs
+        are what run it, and they are the jobs D73 says are not reproduced.<br>
+        <b>A trap avoided, worth recording:</b> the first rebuild was started as <code>make image</code>, whose
+        <code>FLAVOR ?= base</code> default builds <i>base</i> while <code>IMAGE_DIR</code> carries no flavor in
+        its path &mdash; it would have overwritten the <code>dev</code> image the cookbook, the quickstart and
+        <code>accept-profile.sh</code> all depend on. Stopped during the toolchain stage; Buildroot writes
+        <code>IMAGE_DIR</code> only at the end, and the <code>dev</code> image was verified untouched
+        afterwards.</td></tr>
+    <tr><td class="mono">2026-08-29</td><td class="mono">P7-17</td>
+        <td><b>The docs-only exam, re-run against what P7-17 changed (&sect;8 rule 9).</b> Readers were given the
+        <code>kelyfos</code> binary and <code>llms-full.txt</code> in a directory containing nothing else &mdash;
+        structurally, not on trust. The shim/CI reader answered all five questions and returned <b>ten
+        findings</b>, and the exam earned its place immediately: <b>four of them are about P7-17&rsquo;s own new
+        work</b>, and one corrects a conclusion this task had already accepted twice.
+        <br><b>Fixed now, because they are wrong about code that is on main:</b>
+        <br>&mdash; <code>docs/integrating.md</code> described the <i>pre-v1.1</i> shim default as current in two
+        places, one of them phrased as security advice telling the operator to compensate for a hole that no
+        longer exists. A CI integrator starting there &mdash; the natural entry point &mdash; would have
+        concluded the 401 was not the shim&rsquo;s doing and gone hunting in the SDK.
+        <br>&mdash; &ldquo;No SDK sends any of those headers&rdquo; is <b>false for <code>Host</code></b>, which
+        every HTTP/1.1 client sends mandatorily. The intent was &ldquo;none sends a <code>Host</code> that fails
+        the check&rdquo;, but as written it is the sentence an operator relies on to decide whether their client
+        passes &mdash; and it hides the consequence that a name-addressed client gets 403.
+        <br>&mdash; The off-loopback guard was documented as refusing &ldquo;unless
+        <code>KELYFOS_SHIM_TOKEN</code> is set&rdquo;, which is the pre-flip condition and is now wrong in
+        <i>both</i> directions. The reader could not tell from the docs whether a minted token satisfies it, or
+        whether a leftover variable plus <code>--insecure-no-token</code> would bind unauthenticated on the LAN.
+        <b>Read against source, the code is right in every case and better than either of us assumed</b>: the
+        guard takes the <i>resolved</i> credential rather than the variable, so a minted token satisfies it; and
+        the flag with the variable both set is refused at startup &mdash; <code>&ldquo;Those ask for opposite
+        things. Unset the variable, or drop the flag&rdquo;</code>. The docs now say that.
+        <br><b>The correction to this task&rsquo;s own reasoning.</b> F2 concluded, and the lead relayed twice,
+        that &ldquo;the E2B SDK cannot carry this shim&rsquo;s token&rdquo;. The reader accepted the evidence
+        &mdash; sourced to <code>e2b</code> 2.45.1 at file and line &mdash; and rejected the conclusion: the
+        evidence proves <i>neither header is a bearer token</i>, which is not the same claim. <code>X-API-KEY</code>
+        carries <code>E2B_API_KEY</code>, which the operator sets; the SDK validates only its shape
+        (<code>\Ae2b_[0-9a-f]+\Z</code>) client-side; the minted token is 64 hex characters, so
+        <code>e2b_</code>+64 hex matches. The SDK <i>can</i> carry a 256-bit secret to the control plane today
+        &mdash; the shim reads the header and discards it. The true sentence is &ldquo;the shim does not read
+        either header the SDK sends&rdquo;, which is a shim design choice and not an SDK limitation. The file
+        routes remain genuinely blocked (Basic, derived from the sandbox user, not settable). <b>Logged, not
+        fixed</b>: making the shim read <code>X-API-KEY</code> was considered and declined during F2 for a
+        different and still-correct reason &mdash; it would authenticate the control plane and leave
+        <code>/files</code> at 401, so <code>Sandbox.create()</code> would succeed and
+        <code>files.write()</code> would not.</td>
+        <td class="mono">Environment: a directory holding <code>kelyfos</code> and
+        <code>llms-full.txt</code> and nothing else. The reader declared it could not execute the binary at all
+        (<code>exec format error</code> &mdash; a Linux aarch64 ELF on a macOS host), so the exam was
+        documentation-only in fact as well as in rule, and every citation is a line number in
+        <code>llms-full.txt</code>. It also declared harness-injected repository context it had not asked for and
+        did not act on &mdash; the kind of disclosure that makes the rest of the declaration worth something.<br>
+        <b>Logged, not fixed:</b> the shim token flip is absent from <code>docs/upgrading.md</code>, whose stated
+        job is the breaks this project has shipped; <code>E2B_SANDBOX_URL</code> appears only inside a cookbook
+        code block and in no prose; the <code>401</code> has no documented body or denial identifier and its
+        symptom is documented on <code>files.write()</code> when <code>Sandbox.create()</code> fails first;
+        <code>KELYFOS_SHIM_TOKEN</code> is absent from the generated reference while
+        <code>--insecure-no-token</code> is in it; the minted token is printed to a stdout the cookbook itself
+        redirects to a file, with no warning, where <code>docs/view.md</code> discusses exactly that risk for its
+        own token; and no per-user boundary is offered or ruled out for a service that &mdash; unlike
+        <code>view</code> &mdash; has no browser client and could take a 0600 Unix socket.</td></tr>
+    <tr><td class="mono">2026-08-29</td><td class="mono">P7-17</td>
+        <td><b>The docs exam&rsquo;s second reader &mdash; the upgrade scenario &mdash; and the one question it
+        could not answer.</b> Seven findings, and the exam did the thing it exists for: <b>Q1 was not
+        answerable</b>. Asked whether a sandbox paused by the previous build can be resumed,
+        <code>docs/qol.md</code> &sect;1.1 says a machine that had egress is <i>refused outright</i> by
+        <code>resume</code>, while <code>reference/denials.md</code>&rsquo;s <code>allow.resume</code> and
+        <code>ceiling.resume</code> entries only make sense if resuming such a machine is ordinary and supported,
+        and neither mentions <code>snapshot restore</code>. The reader could not tell which is true, and the page
+        that would settle it says of itself that it may be stale.
+        <br><b>Two findings are defects in P7-17&rsquo;s own work, both verified against source and fixed
+        here.</b>
+        <br>&mdash; <b><code>docs/events.md</code> gave two values for the same field seven lines apart</b>, and
+        the code has <i>three</i> spellings across three files. Which one reaches the chain decides whether a
+        monitoring script fires at all, which is the failure this fail-closed feature exists to prevent. Read
+        against source: <code>endSession</code> calls <code>EndBroken()</code> and <i>then</i>
+        <code>Append</code>, and on a broken recorder that append is refused like every other &mdash; so the
+        record only ever carries the recorder&rsquo;s own epitaph,
+        <code>recorder failed at seq N: &lt;error&gt;</code>. The documented
+        <code>recorder_failed</code> is the value the run loop carries internally to choose an exit code and a
+        message; it is <b>never a value in the record</b>. The page said the opposite. Corrected.
+        <br>&mdash; <b><code>kelyfos sessions resume</code> does not exist.</b> The command is
+        <code>kelyfos resume</code> (<code>host/main.go:83</code>); <code>sessions</code>&rsquo; subcommands are
+        <code>rm</code>, <code>prune</code> and <code>erase</code>. The phantom appeared three times &mdash;
+        twice in <code>docs/events.md</code> from F13(b) and once in <code>docs/threat-model.md</code> &mdash;
+        and it is what made the reader doubt the ownership rule reached <code>resume</code> at all. Corrected in
+        all three.
+        <br><b>Logged, not fixed &mdash; and the first two are the shape of a real gap rather than a typo:</b>
+        <code>docs/upgrading.md</code> has <b>no v1.1 section</b>, though four v1.1 changes break working
+        automation, and the README status block still reads <code>v1.0</code> while the body says
+        &ldquo;since v1.1&rdquo; eleven times &mdash; so the one place the reader is told to look reports the
+        version <i>before</i> the changes that affect them. <code>upgrading.md</code> &sect;5 (the D72 move)
+        carries <b>no version at all</b>, does not list <code>resume</code> among what breaks although the file
+        it describes as moving is the pause marker, and its &ldquo;what to do&rdquo; covers running sandboxes
+        only &mdash; a paused session is neither running nor finishing. The <code>kelyfos.toml</code> ownership
+        and mode rules live only in the threat model, with <b>no remedy spelled out</b> for the mode case and no
+        entry in <code>reference/config.md</code> or the denials catalog. And <code>--policy</code>, the remedy
+        the threat model names, <b>does not exist on <code>resume</code>, <code>pause</code> or
+        <code>team up</code></b>.</td>
+        <td class="mono">Same isolated environment; this reader also could not execute the binary
+        (<code>exec format error</code>, Linux aarch64 ELF on macOS) and declared it, so both exams were
+        documentation-only in fact. It took one thing from the binary and flagged it for discounting: the version
+        string <code>v1.0-177-gdd147d3</code>, read with <code>strings</code> &mdash; which is itself the evidence
+        for the README finding, and does not depend on the binary, since the docs contradict themselves about the
+        release number unaided.<br>
+        <b>Answered:</b> Q3 (the shim) and Q4 (symlinks and the shared plugin directory) in full, including the
+        detail that a relative link which climbs and lands back inside &mdash;
+        <code>node_modules/x &rarr; ../../packages/x</code> &mdash; is explicitly still fine, which is F18&rsquo;s
+        own deviation from the report reaching a reader correctly. Q2 and Q5 in substance but not in the part
+        each asks for: the exact remedy, and the value to match on.<br>
+        <b>Not answered: Q1.</b> Recorded as the finding rather than smoothed over &mdash; this exam&rsquo;s
+        stated purpose is that a task a reader cannot finish is the most valuable signal it produces.</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>

@@ -519,7 +519,7 @@ ownership rule on `sudoers`, and the answer here is the same shape:
 - **What the file reaches is printed before anything boots**: its path, the
   workspace, every plugin directory, and every secret by name with the domain it
   is bound to. Values are never read here and never printed. `kelyfos run`,
-  `kelyfos team up`, `kelyfos sessions resume` and `kelyfos snapshot restore`
+  `kelyfos team up`, `kelyfos resume` and `kelyfos snapshot restore`
   all print it.
 
 - **A `[[plugin]] path` outside the file's tree is refused** unless
@@ -661,7 +661,7 @@ any address, and this document and `docs/e2b-shim.md` both said what that meant
 while the code let it happen silently. `kelyfos shim` now checks the listener's
 own address the moment it has one — after the bind, so `--addr :0` and
 `--addr localhost:3000` are resolved first — and refuses to serve a non-loopback
-address unless `KELYFOS_SHIM_TOKEN` is set, naming the address and the fix. A
+address unless authentication is actually on — a token you set in `KELYFOS_SHIM_TOKEN` or the one it minted, either satisfies it, because the check reads the credential the process resolved and not the variable. `--insecure-no-token` and a set `KELYFOS_SHIM_TOKEN` together are refused at startup as asking for opposite things, so there is no combination that binds off loopback with nothing checking the caller. A
 loopback bind is unchanged, which is the default and every documented setup.
 
 What is **not** changed is the default for a loopback bind: it still
