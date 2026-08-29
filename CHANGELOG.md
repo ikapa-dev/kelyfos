@@ -73,6 +73,21 @@ reference described in the README and re-measured per release.
   coming) or on Ctrl-C (P7-9).
 
 ### Fixed
+- **A sandbox whose flight recorder had failed kept running, unrecorded.** The
+  recorder latches on its first failed append and refuses everything after it,
+  so the record stopped — but nothing outside the recorder watched that, so the
+  machine went on executing commands and making egress with nobody told, which
+  is the harm the finding describes rather than a narrowing of it. Every loop
+  that keeps a machine alive now watches it: `kelyfos run`'s two, `kelyfos team
+  up`'s — one recorder covers a whole rig — and, since `serve-mcp` has no such
+  loop, a per-sandbox watcher started where the machine is registered. When it
+  fires the machine is stopped and the operator is told which event was lost and
+  why; `kelyfos run` exits `1` and the session ends `recorder_failed`, and under
+  `serve-mcp` the next tool call naming that sandbox says the recorder failed
+  rather than that no such sandbox exists. Every teardown also makes one more
+  attempt to get the "why the record stops here" line onto the chain, because by
+  then the machine is down and whatever was holding the disk may have let go
+  (P7-17/F13(b)).
 - **A snapshot name was checked on the MCP path and not on the CLI path.**
   `validSnapshotName` — a character allowlist, a length bound and a leading-dot
   refusal — was called by every MCP tool before it built a path and by none of

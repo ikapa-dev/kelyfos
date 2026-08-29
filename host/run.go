@@ -516,11 +516,7 @@ status. This is how you hand an agent a sandbox and nothing else:
 			return
 		}
 		took := rec.Since()
-		_ = rec.Append(recorder.Event{
-			Type: recorder.TypeSessionEnd, Reason: reason,
-			DurationMS: took.Milliseconds(), Code: exitCode,
-		})
-		_ = rec.Close()
+		endSession(rec, reason, exitCode)
 		notifier.Send("kelyfos: run finished", finishedBody(reason, exitCode, took))
 	}()
 
@@ -864,24 +860,21 @@ status. This is how you hand an agent a sandbox and nothing else:
 		go func() { childDone <- child.Wait() }()
 
 		var err error
+		recorderBroke := false
 		select {
 		case err = <-childDone:
 		case t := <-budgetFired:
 			noteTimeout(t)
-			// SIGTERM first and a grace period after it: the command is the
-			// agent, and an agent that is given a moment can finish the line it
-			// is writing. Killing outright would leave the workspace mid-edit,
-			// and the sync-back that follows would carry that state to the host
-			// as if it were a result.
-			_ = child.Process.Signal(syscall.SIGTERM)
-			select {
-			case err = <-childDone:
-			case <-time.After(childGrace):
-				fmt.Fprintf(os.Stderr, "kelyfos: %s did not stop within %s; killing it\n",
-					command[0], childGrace)
-				_ = child.Process.Kill()
-				err = <-childDone
-			}
+			err = stopChild(child, childDone, command[0])
+		case <-rec.Broken():
+			// The recorder has lost an event and refuses everything after it.
+			// Carrying on would be the harm F13 describes: a sandbox executing
+			// commands and making egress with nothing recorded and nobody told.
+			// The child is stopped the same way a budget stops it, because it
+			// is the agent and the workspace is mid-edit either way.
+			recorderBroke = true
+			recorderFailed(rec, os.Stderr)
+			err = stopChild(child, childDone, command[0])
 		}
 		reason = "command_exited"
 		code := 0
@@ -896,6 +889,13 @@ status. This is how you hand an agent a sandbox and nothing else:
 		if timedOut != "" {
 			reason = "timeout"
 			code = exitTimedOut
+		}
+		if recorderBroke {
+			// After the timeout branch, because a run that lost its record is
+			// not describable as anything else — whatever the child's own
+			// status was, this run did not do what it says it did.
+			reason = "recorder_failed"
+			code = exitcode.Fail
 		}
 		fmt.Printf("\n%s exited %d; stopping the sandbox\n", command[0], code)
 		if code == 0 && oomKills.Load() > 0 {
@@ -920,11 +920,22 @@ status. This is how you hand an agent a sandbox and nothing else:
 
 	fmt.Println("\nCtrl-C to stop.")
 
-	// Return when the user interrupts, or earlier if the VM dies on its own.
+	// recorderStopped is why this run ended, when it ended because the flight
+	// recorder did (P7-17/F13(b)).
+	recorderStopped := false
+
+	// Return when the user interrupts, or earlier if the VM dies on its own —
+	// or if the recorder stops, because a machine nobody is recording is a
+	// machine this CLI does not keep running.
 	select {
 	case <-ctx.Done():
 		fmt.Println("\nstopping...")
 		reason = "interrupted"
+	case <-rec.Broken():
+		// Same rule as the trailing-command form above: a machine whose record
+		// has stopped does not keep running (P7-17/F13(b)).
+		reason = recorderFailed(rec, os.Stderr)
+		recorderStopped = true
 	case t := <-budgetFired:
 		noteTimeout(t)
 		reason = "timeout"
@@ -940,6 +951,14 @@ status. This is how you hand an agent a sandbox and nothing else:
 		return fmt.Errorf("the microVM exited unexpectedly")
 	}
 	switch {
+	case recorderStopped:
+		// First, because it is the one outcome that says the rest of this
+		// record cannot be relied on. Returning exitError rather than a plain
+		// error because the two lines the operator needs are already on stderr
+		// and main would otherwise print a third (P7-17/F13(b)).
+		code := exitcode.Fail
+		exitCode = &code
+		return &exitError{code}
 	case timedOut != "":
 		code := exitTimedOut
 		exitCode = &code
@@ -1347,4 +1366,63 @@ func insideTree(root, p string) bool {
 		return false
 	}
 	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+// recorderFailed is what every loop in this CLI does when the flight recorder
+// stops: say which event was lost, say why, and say that the machine is coming
+// down because of it (P7-17/F13(b)).
+//
+// One function because there are four of those loops — two in this file, the
+// team's, and serve-mcp's per-box watcher — and four spellings of this line is
+// how three of them end up saying something slightly different about the same
+// event. It returns the session.end reason so the caller cannot forget to set
+// one.
+//
+// Failure reports the event that was LOST, not the last one recorded, which is
+// the number an auditor comparing a chain against a transcript needs.
+func recorderFailed(rec *recorder.Recorder, out io.Writer) string {
+	seq, err := rec.Failure()
+	fmt.Fprintf(out, "kelyfos: the flight recorder stopped at event %d: %v\n"+
+		"kelyfos: stopping the machine — it is not being recorded\n", seq, err)
+	return "recorder_failed"
+}
+
+// stopChild ends the trailing command: SIGTERM, a grace period, then SIGKILL.
+//
+// Extracted because two branches of the run loop need it — a time budget and a
+// broken recorder — and the reasoning is the same for both: the command is the
+// agent, an agent given a moment can finish the line it is writing, and killing
+// outright would leave the workspace mid-edit for the sync-back to carry to the
+// host as if it were a result.
+func stopChild(child *exec.Cmd, childDone <-chan error, name string) error {
+	_ = child.Process.Signal(syscall.SIGTERM)
+	select {
+	case err := <-childDone:
+		return err
+	case <-time.After(childGrace):
+		fmt.Fprintf(os.Stderr, "kelyfos: %s did not stop within %s; killing it\n", name, childGrace)
+		_ = child.Process.Kill()
+		return <-childDone
+	}
+}
+
+// endSession writes a session's last lines and closes the record.
+//
+// One function because three doors do it — `kelyfos run`, a team, and
+// serve-mcp's per-box teardown — and because of what goes first: EndBroken,
+// unconditionally, before the ordinary session.end (P7-17/F13(b)).
+//
+// It is a no-op on an intact recorder and a second attempt at the "why the
+// record stops here" line on a broken one. Worth attempting again because by
+// now the machine is down: whatever was holding the disk may have let go, and
+// the difference between a chain that ends mid-session for no stated reason and
+// one whose last line names the error is the difference between an auditor
+// guessing and an auditor reading.
+func endSession(rec *recorder.Recorder, reason string, exitCode *int) {
+	_ = rec.EndBroken()
+	_ = rec.Append(recorder.Event{
+		Type: recorder.TypeSessionEnd, Reason: reason,
+		DurationMS: rec.Since().Milliseconds(), Code: exitCode,
+	})
+	_ = rec.Close()
 }

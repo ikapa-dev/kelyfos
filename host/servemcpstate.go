@@ -505,6 +505,10 @@ func (s *hostServer) adopt(b *servedBox) error {
 			"limit": strconv.Itoa(s.max), "file": s.policyPath()})
 	}
 	s.boxes[b.sb.State.ID] = b
+	// Every door that builds a machine on this server arrives here, which is
+	// why the watcher starts here rather than at the three setRec calls
+	// (P7-17/F13(b)).
+	go s.watchRecorder(b.sb.State.ID, b)
 	return nil
 }
 

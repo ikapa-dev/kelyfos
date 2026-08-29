@@ -468,9 +468,9 @@ type Recorder struct {
 	//
 	// So the first failure is final. failure holds it, failedAt is the seq
 	// the event that could not be written would have had, and broken is
-	// closed so a run loop can select on it and bring the machine down — which
-	// nothing does yet, and is the other half of this change (F13(b)); until it
-	// lands, the guarantee here is that the record stops, not that the machine
+	// closed so a run loop can select on it and bring the machine down —
+	// which, since F13(b), every loop that keeps a machine alive does. The
+	// guarantee is therefore that the machine stops, not only that the record
 	// does.
 	// Nothing is ever recorded through this Recorder again — the one
 	// exception being the single session.end writeEpitaphLocked adds, which
@@ -790,10 +790,11 @@ func (r *Recorder) writeEpitaphLocked() error {
 // the machine down when it fires. Nothing else in this package closes it, and
 // it is never reopened — a recorder that has lost an event stays lost.
 //
-// It has no caller outside this package yet. Wiring it into host/run.go is
-// F13(b), and until that lands a sandbox whose recorder has broken goes on
-// running with nothing recorded — the harm the finding describes, narrowed to
-// "the record stops and says so" from "the record carries on and lies."
+// Its callers are every loop in the CLI that keeps a machine alive (F13(b)):
+// host/run.go's two run loops, host/team.go's wait — one recorder covers a
+// whole rig — and host/servemcp.go's per-box watcher, which exists because that
+// door has no loop of its own. Each stops the machine and says which event was
+// lost; host/run.go's recorderFailed writes the line they all share.
 //
 // A nil Recorder is recording disabled, not a broken one, and returns a nil
 // channel: a receive on nil blocks forever, so a caller that selects on this

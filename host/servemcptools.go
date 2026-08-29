@@ -596,8 +596,12 @@ func (s *hostServer) toolStop(raw json.RawMessage) *mcp.CallToolResult {
 	s.mu.Lock()
 	b, ok := s.boxes[a.Sandbox]
 	delete(s.boxes, a.Sandbox)
+	why := s.lostReason(a.Sandbox)
 	s.mu.Unlock()
 	if !ok {
+		if why != "" {
+			return mcp.Errorf("sandbox %q is gone: %s", a.Sandbox, why)
+		}
 		return mcp.Errorf("no sandbox %q was started by this server. sandbox_list shows the ones "+
 			"that were; a sandbox somebody else started is theirs to stop.", a.Sandbox)
 	}
@@ -642,6 +646,11 @@ func (s *hostServer) box(id string) (*servedBox, error) {
 	defer s.mu.Unlock()
 	b, ok := s.boxes[id]
 	if !ok {
+		// A sandbox this server stopped on its own says so, rather than
+		// reading as one that never existed (P7-17/F13(b)).
+		if why := s.lostReason(id); why != "" {
+			return nil, fmt.Errorf("sandbox %q is gone: %s", id, why)
+		}
 		return nil, fmt.Errorf("no sandbox %q was started by this server; sandbox_list shows the "+
 			"ones that were.%s", id, teamMemberHint(id))
 	}

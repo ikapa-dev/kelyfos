@@ -19,6 +19,7 @@ import (
 
 	"github.com/p4r4n0rm4l/KelyfOS/internal/config"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/egress"
+	"github.com/p4r4n0rm4l/KelyfOS/internal/exitcode"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/proto"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/report"
@@ -120,8 +121,25 @@ func teamUp(argv []string) error {
 	defer rig.down()
 
 	fmt.Println("\nCtrl-C to stop the team.")
-	<-ctx.Done()
-	fmt.Println("\nstopping...")
+	// A team has one recorder for the whole rig, so a failure there means what
+	// it means for a single sandbox: every machine in it is running unrecorded.
+	// The bare wait became a select for that (P7-17/F13(b)).
+	//
+	// The two per-agent goroutines — the spawn lifetime at :418 and the
+	// max_runtime at :614 — need nothing of their own. Both select on ctx.Done,
+	// both exist only to stop one agent early, and rig.down() cancels that
+	// context before it tears the rig down; whichever of them is still waiting
+	// returns on the next line rather than doing work for a machine that is
+	// already stopping. Their own rec.Append calls are no-ops on a broken
+	// recorder, by the latch's own rule.
+	select {
+	case <-ctx.Done():
+		fmt.Println("\nstopping...")
+	case <-rig.rec.Broken():
+		recorderFailed(rig.rec, os.Stderr)
+		rig.down()
+		return &exitError{exitcode.Fail}
+	}
 	return nil
 }
 
@@ -272,9 +290,11 @@ func raiseTeam(parent context.Context, opt teamOptions) (*teamRig, error) {
 	ctx, cancel := context.WithCancel(parent)
 
 	endRecord := func() {
-		_ = rec.Append(recorder.Event{Type: recorder.TypeSessionEnd, Reason: "shutdown",
-			DurationMS: rec.Since().Milliseconds()})
-		_ = rec.Close()
+		reason := "shutdown"
+		if seq, ferr := rec.Failure(); ferr != nil {
+			reason = fmt.Sprintf("recorder failed at seq %d", seq)
+		}
+		endSession(rec, reason, nil)
 	}
 	// Until this call succeeds the record is closed on the way out of any
 	// failure; afterwards it belongs to the rig, and rig.down() closes it.

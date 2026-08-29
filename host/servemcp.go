@@ -127,6 +127,15 @@ type hostServer struct {
 	team    *teamRig
 	teamLog *syncBuffer
 
+	// lost remembers the sandboxes this server stopped because their flight
+	// recorder failed, so the next tool call naming one is told what happened
+	// rather than "no such sandbox" (P7-17/F13(b)).
+	//
+	// Bounded, because it is a map keyed by something a client can create in a
+	// loop. Past the cap the generic message applies, which is the one this
+	// door gave for every case before.
+	lost map[string]string
+
 	// audit is the server's own session: every client tool call, permitted or
 	// refused, in one chain (E4-4). The recorder is safe under concurrent
 	// appends, which matters because tool calls run on their own goroutines.
@@ -145,8 +154,14 @@ type servedBox struct {
 	plugins string // the plugins image, removed with the machine that used it
 	// recMu guards rec, which arrives after the machine and leaves before it:
 	// a guest event can be reported at either edge.
-	recMu   sync.Mutex
-	rec     *recorder.Recorder
+	recMu sync.Mutex
+	rec   *recorder.Recorder
+	// stopped is closed when the box is torn down, so the recorder watcher
+	// hostServer.adopt starts for it goes away with the machine rather than
+	// outliving it (P7-17/F13(b)). Nil until a recorder is published, and nil
+	// again once the box has been closed, which is what makes stopWatching
+	// idempotent.
+	stopped chan struct{}
 	net     *sandbox.Network
 	proxy   *egress.Proxy
 	slice   *sandbox.Slice
@@ -160,7 +175,30 @@ type servedBox struct {
 func (b *servedBox) setRec(rec *recorder.Recorder) {
 	b.recMu.Lock()
 	b.rec = rec
+	if b.stopped == nil {
+		b.stopped = make(chan struct{})
+	}
 	b.recMu.Unlock()
+}
+
+// watchable is the pair a recorder watcher needs, read together under the lock
+// so it cannot see a recorder from one machine and a stop channel from another.
+func (b *servedBox) watchable() (*recorder.Recorder, chan struct{}) {
+	b.recMu.Lock()
+	defer b.recMu.Unlock()
+	return b.rec, b.stopped
+}
+
+// stopWatching ends this box's recorder watcher. Idempotent: the channel is
+// taken out of the box before it is closed, so a second call finds nothing.
+func (b *servedBox) stopWatching() {
+	b.recMu.Lock()
+	stopped := b.stopped
+	b.stopped = nil
+	b.recMu.Unlock()
+	if stopped != nil {
+		close(stopped)
+	}
 }
 
 // guestEvent records what the guest reported into this sandbox's own chain.
@@ -189,6 +227,9 @@ func (b *servedBox) guestEvent(ev proto.GuestEvent) {
 }
 
 func (b *servedBox) close(reason string) {
+	// First, so the watcher does not race the teardown it would otherwise
+	// start a second time.
+	b.stopWatching()
 	// The receipt is sampled before Shutdown, for the same reason run.go's
 	// and team.go's own teardowns sample first: every counter it reads
 	// belongs to a process that is about to stop existing (E1-7). This door
@@ -234,11 +275,7 @@ func (b *servedBox) close(reason string) {
 	b.rec = nil
 	b.recMu.Unlock()
 	if rec != nil {
-		_ = rec.Append(recorder.Event{
-			Type: recorder.TypeSessionEnd, Reason: reason,
-			DurationMS: rec.Since().Milliseconds(),
-		})
-		_ = rec.Close()
+		endSession(rec, reason, nil)
 	}
 }
 
@@ -495,3 +532,61 @@ func (s *hostServer) dispatchTool(p *mcp.CallToolParams) *mcp.CallToolResult {
 	}
 	return mcp.Errorf("unknown tool %q", p.Name)
 }
+
+// maxLostBoxes bounds the "why is this sandbox gone" map. A client can create
+// sandboxes in a loop, so the memory this door remembers about ones that no
+// longer exist has to have an end; past it the generic "no sandbox %q was
+// started by this server" applies, which is what every case got before.
+const maxLostBoxes = 32
+
+// watchRecorder stops serving a sandbox whose flight recorder has failed
+// (P7-17/F13(b)).
+//
+// serve-mcp has no run loop to put a `case <-rec.Broken()` in: a box lives from
+// sandbox_run until sandbox_stop or until the server exits, and in between
+// nothing is waiting on it. So the wait is a goroutine per box, started where
+// the box is registered, and it does what a run loop does — say which event was
+// lost, and bring the machine down.
+//
+// How the CLIENT is told is the part this door has to answer differently. MCP
+// here is request/response: this server sends nothing a client did not ask for,
+// and inventing an unsolicited notification would be a protocol change on a
+// surface docs/mcp-surface.md freezes. So the failure is reported the two ways
+// this door already reports things — on the operator's stderr, immediately, and
+// to the client on its next tool call naming that sandbox, which now says the
+// recorder failed and at which event rather than "no such sandbox". A client
+// that never asks again is a client that had stopped using the machine anyway.
+func (s *hostServer) watchRecorder(id string, b *servedBox) {
+	rec, stopped := b.watchable()
+	if rec == nil || stopped == nil {
+		return
+	}
+	select {
+	case <-stopped:
+		return
+	case <-rec.Broken():
+	}
+	seq, ferr := rec.Failure()
+	fmt.Fprintf(os.Stderr,
+		"kelyfos: the flight recorder for sandbox %s stopped at event %d: %v\n"+
+			"kelyfos: stopping it — it is not being recorded\n", id, seq, ferr)
+
+	s.mu.Lock()
+	if s.boxes[id] == b {
+		delete(s.boxes, id)
+	}
+	if len(s.lost) < maxLostBoxes {
+		if s.lost == nil {
+			s.lost = map[string]string{}
+		}
+		s.lost[id] = fmt.Sprintf("its flight recorder failed at event %d (%v), so it was stopped: "+
+			"a sandbox nobody is recording is not one this server keeps running", seq, ferr)
+	}
+	s.mu.Unlock()
+
+	b.close("recorder_failed")
+}
+
+// lostReason is what happened to a sandbox this server stopped on its own, or
+// "" if it never had one.
+func (s *hostServer) lostReason(id string) string { return s.lost[id] }

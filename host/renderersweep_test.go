@@ -145,3 +145,29 @@ func TestSweepCoversEveryRenderedType(t *testing.T) {
 		}
 	}
 }
+
+// safeEvent takes a value and must behave like it: a value copy shares its
+// slices' backing arrays, so rewriting through the copy reached into the
+// caller's own Cmd and Allow. Nothing depended on it — all three callers use
+// only the result — but a signature that says "value in, value out" has to
+// mean it (P7-17/F20, folded into F13(b)).
+func TestSafeEventDoesNotReachIntoItsCallersSlices(t *testing.T) {
+	orig := recorder.Event{
+		Type: recorder.TypeCommandStart,
+		TS:   "2026-08-29T10:00:00.000Z",
+		Cmd:  []string{sweepHostile, "plain"},
+	}
+	before := orig.Cmd[0]
+
+	got := safeEvent(orig)
+
+	if orig.Cmd[0] != before {
+		t.Errorf("safeEvent rewrote the caller's slice element:\n  was %q\n  now %q", before, orig.Cmd[0])
+	}
+	if got.Cmd[0] == before {
+		t.Errorf("safeEvent returned the hostile value unchanged: %q", got.Cmd[0])
+	}
+	if got.Cmd[1] != "plain" {
+		t.Errorf("safeEvent altered a clean element: %q", got.Cmd[1])
+	}
+}

@@ -979,6 +979,15 @@ func sessionIsServed(path string) (bool, error) {
 // control flow — Kind in a verb lookup, Outcome in a comparison — still
 // matches when it is legitimate and stops matching when it is not, which is
 // the fail-safe direction.
+//
+// Its REACH is top-level string and []string fields, and not the nested ones:
+// *EvError's Kind and Message, and the struct slices session.policy and
+// team.topology carry. That is a boundary rather than a hole today — every
+// renderer that draws a nested field routes it through proto.SafeText itself,
+// and the F20 sweep probes all of them through all three surfaces — but a line
+// added later that prints e.Error.Message directly would be caught by neither
+// this function nor that sweep, whose own field walk stops at the same depth.
+// Widening both together is the change to make if one ever appears.
 func safeEvent(e recorder.Event) recorder.Event {
 	rv := reflect.ValueOf(&e).Elem()
 	rt := rv.Type()
@@ -1012,9 +1021,17 @@ func safeEvent(e recorder.Event) recorder.Event {
 		case fv.Kind() == reflect.String:
 			fv.SetString(proto.SafeText(fv.String()))
 		case fv.Kind() == reflect.Slice && fv.Type().Elem().Kind() == reflect.String:
+			// Copied before rewriting, or the signature would be a lie: e is a
+			// value, but a value copy shares its slices' backing arrays, so
+			// writing through this one reached into the caller's Cmd and Allow.
+			// Nothing depended on that — all three callers use only the result
+			// and internal/digest retains none of these — but "takes a value,
+			// returns a value" has to mean what it says.
+			cp := reflect.MakeSlice(fv.Type(), fv.Len(), fv.Len())
 			for j := 0; j < fv.Len(); j++ {
-				fv.Index(j).SetString(proto.SafeText(fv.Index(j).String()))
+				cp.Index(j).SetString(proto.SafeText(fv.Index(j).String()))
 			}
+			fv.Set(cp)
 		}
 	}
 	return e
