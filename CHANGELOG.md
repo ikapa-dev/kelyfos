@@ -166,6 +166,32 @@ reference described in the README and re-measured per release.
   recording was visible only by reading the chain. `kelyfos log`,
   `kelyfos watch`, `kelyfos view` and the exported report now all name it, and
   `kelyfos view` prints the reason for a blocked egress as well (P7-17/F20).
+- **A workspace image could come back short, or carrying a symlink chain that
+  leaves the workspace, and be written over your project anyway.** `debugfs
+  dump` opens its destination `O_CREAT|O_TRUNC` and copies block by block, and
+  it reports a failed command on stderr while still exiting 0 — so a read error
+  or a full staging disk part way through left a file that *exists* and is
+  short, and "nothing was staged" was the whole per-file check. Every file, and
+  every symlink target, is now compared against the size its own inode records,
+  and a mismatch refuses the whole extraction. A symlink is judged by where its
+  entire chain lands, resolved through the image's own entry set and with case
+  folded, rather than one link at a time — three links that each look like they
+  stay inside can compose into one that does not, and the filesystem your
+  project lives on may not agree with the image about spelling. A directory
+  whose name carries whitespace (`notes `, `my notes`) used to come back created
+  and empty, with its contents gone and nothing saying so; the enumeration now
+  quotes the name it asks about and refuses an image that will not list a
+  directory at all. The dump also stages on the same disk as the images rather
+  than in the system temp directory, which on most Linux hosts is RAM the guest
+  can fill from inside.
+- **A refused write-back deleted the workspace image, which was the only copy of
+  what the sandbox did.** On the resume path the image was removed by a `defer`
+  registered before the sync-back, so it ran on the error return too. It is now
+  removed only after a write-back that actually happened, and a refusal names
+  the path the image is still at. `kelyfos diff`, which reads a disk the guest
+  is still writing to, reads the image a second time before reporting one of
+  these refusals, so an ordinary busy agent no longer looks like a hostile
+  image.
 - **A single oversized, guest-influenced field could make the flight recorder
   permanently unreadable from that line on.** The record is a hash chain read
   with a bufio.Scanner capped at 8 MiB, and nothing bounded what a caller could
@@ -603,6 +629,27 @@ reference described in the README and re-measured per release.
   describes. Set `KELYFOS_SHIM_TOKEN` to keep an off-loopback bind working;
   every route then requires `Authorization: Bearer <token>`, compared in
   constant time (P7-17/F2).
+- **A running sandbox is readable only by the `kelyfos` that started it.** The
+  host's own record of a machine — `sandbox.json` and the marker a pause leaves
+  — used to live in the sandbox's run directory, which *is* the chroot the
+  jailer builds for Firecracker, owned by the uid the VMM is dropped to. Every
+  later `kelyfos` process reads that file before doing anything: it names the
+  host directory a resume renames the guest's tree over, the socket `exec` and
+  `shell` dial, the image `snapshot save` copies into the next guest's
+  snapshot, and the addressing the restored egress proxy binds and accepts
+  from. Both files moved one level up, out of the chroot, and every path and
+  address in them is now checked against something the reading process can
+  derive for itself rather than believed.
+
+  The break is two-way and there is no compatible middle, because a fallback
+  that still read the copy inside the chroot would be the hole: a new binary
+  cannot see a sandbox an older one started, and an older one cannot see a
+  sandbox a new one started. Stop your running sandboxes before upgrading, or
+  leave them to finish. While both versions are installed, `kelyfos sessions
+  prune` and `sessions erase` lose the id-to-session mapping for machines
+  started by the other one — their other liveness guards still hold — so do not
+  run either until only one version is left. Nothing on disk needs migrating.
+  [`docs/upgrading.md`](docs/upgrading.md) §5 has the detail (D72).
 - **A `kelyfos.toml` combining `[team]` with `[[plugin]]` or `[[forward]]` is now refused by `kelyfos
   team up` (and `serve-mcp`'s `team_up`), at plan time, instead of silently booting a team where
   neither did anything.** Both keys are file-level and always parsed next to an ordinary `[team]`
