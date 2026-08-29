@@ -1507,7 +1507,7 @@
               <span class="tid">F11</span><span class="tk"><code>write_file</code> re-checks for symlinks and still opens through one &mdash; a lexical <code>Lstat</code> walk followed by an ordinary <code>os.WriteFile</code>, with the swap window between them. <code>supervisor/tools.go:413</code>.</span></li>
           <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
               <span class="tid">F13</span><span class="tk">The flight recorder fails open: 77 <code>Append</code> errors are discarded, so a full disk or one corrupt line leaves the sandbox executing while nothing is recorded. Fail closed in the recorder (<b>13a</b>) and wire <code>Broken()</code> into the run loop (<b>13b</b>). <code>internal/recorder/recorder.go:504</code> &middot; <code>host/run.go</code>.</span></li>
-          <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+          <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
               <span class="tid">F12</span><span class="tk">Erase leaves guest stdout behind in <code>Error.Message</code>, which the exemption map excuses as system-generated. <code>internal/recorder/erase.go:280</code> &middot; <code>host/servemcpaudit.go:170</code>.</span></li>
           <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
               <span class="tid">F14</span><span class="tk">The resolved-address check misses CGNAT and other reserved space &mdash; 100.64/10, 192.0.0/24, 198.18/15, 240/4, NAT64. <code>internal/egress/dial.go:79</code>.</span></li>
@@ -1535,7 +1535,7 @@
               <span class="tid">F4</span><span class="tk">Workspace contents are lost for a directory name ending in whitespace: the <code>debugfs</code> script line is unquoted and the echo-attribution trims. <code>internal/sandbox/extract.go:155</code>.</span></li>
           <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
               <span class="tid">F5</span><span class="tk">MCP client config files are created world-readable under <code>$HOME</code>, and the client that later writes an API key keeps the mode it found. <code>host/connect.go:225</code>.</span></li>
-          <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+          <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
               <span class="tid">F6</span><span class="tk">Erase silently drops chain fields an older build cannot parse, because it round-trips through the typed struct rather than redacting at the raw-JSON level the way <code>digestOfLine</code> reads. <code>internal/recorder/erase.go:76</code>.</span></li>
           <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
               <span class="tid">F7</span><span class="tk">Snapshot names are validated on the MCP path and not the CLI path &mdash; five unvalidated callers of <code>snapshotDir</code>, which is the finding&rsquo;s own point demonstrated. <code>host/snapshot.go:59</code> &middot; <code>host/bench.go:152</code>.</span></li>
@@ -7045,6 +7045,151 @@ after:
         PASS, and <b>the F8 <code>dev/accept-profile.sh</code> block executed for the first time &mdash; all four
         assertions PASS</b>. Re-run by the lead after rebasing onto <code>643922e</code>: 21 packages ok,
         <code>No vulnerabilities found.</code></td></tr>
+    <tr><td class="mono">2026-08-29</td><td class="mono">P7-17/F13(a)</td>
+        <td><b>The flight recorder failed open at 75 call sites; the first failure is now final.</b>
+        <code>Append</code> latches the first error, closes a <code>broken</code> channel and refuses everything
+        after; <code>Failure()</code> names the event that was <i>lost</i>; <code>EndBroken()</code> makes one
+        more attempt at an epitaph. Implemented once in the recorder rather than at 75 doors, so the
+        <code>_ = rec.Append(</code> sites need no change &mdash; the consequence now lives inside the thing that
+        failed. <b>The run-loop wiring is F13(b)</b>, on top of this, by the surface workstream.
+        <br><b>The report understates this one</b>, which is the only finding on the task where that happened. It
+        says a lost event leaves a chain that &ldquo;verifies cleanly as a shorter session that is still
+        open&rdquo;. There is no &ldquo;still open&rdquo; tell at all: <code>r.seq--</code> rolls the sequence
+        back and leaves <code>r.prev</code> untouched, so events after the hole chain onto the ones before it and
+        the session runs on to a normal <code>session.end "shutdown"</code>. A complete, consecutive,
+        digest-correct record of a session that never ran the command is a materially worse artefact than an
+        obviously truncated one, because nothing prompts anyone to look.
+        <br><b>Reviewed</b> by an agent that wrote none of it (RECORD checklist). Its <b>High</b> finding was a
+        documentation claim that was false at the time it was written &mdash; <code>docs/events.md:232</code>
+        asserted &ldquo;the run loop is told: the machine is brought down rather than left running
+        unrecorded&rdquo; while <code>Broken()</code>, <code>Failure()</code> and <code>EndBroken()</code> had
+        <i>zero callers</i>. Now states what (a) delivers, says in bold that the wiring is absent and that a
+        sandbox whose recorder failed keeps running, and F13(b)&rsquo;s commit is what flips it to the present
+        tense. A <b>Medium</b>: <code>EndBroken()</code> could turn a verifying chain into a corrupt one &mdash;
+        a write cut at exactly its last byte leaves a complete JSON object with no newline, <code>catchUp</code>
+        parsed it happily, and the epitaph was appended onto it producing <code>{&hellip;}{&hellip;}</code> on one
+        line. <code>catchUp</code> now refuses a file whose last byte is not <code>\n</code>. Eight findings
+        rejected with reasons.</td>
+        <td class="mono">Parent probe, reproduced independently by the reviewer:
+        <code>lost: write &hellip;/events.jsonl: file too large</code> then
+        <code>Verify: err=&lt;nil&gt;, events=4</code> &mdash; <code>seq 1 session.start / 2 command.start /
+        3 command.exit / 4 session.end reason="shutdown"</code>. No line anywhere says an event was lost.<br>
+        <code>TestF13_AFailedAppendStopsTheRecorder</code> on the parent &rarr;
+        <code>the recorder accepted an event after it had already failed to record one &mdash; the resulting
+        chain is a session with a silent hole in it, and it verifies clean</code>; branch &rarr; 5 tests PASS<br>
+        latch under <code>-race</code>: 64 concurrent <code>Append</code>s against a full disk &rarr;
+        <b>0 succeeded, 64 refused</b>, no double-close, <code>Failure()</code> naming seq 2<br>
+        <code>Broken()</code> nil-safe (a <code>select</code> on the nil channel does not fire);
+        <code>EndBroken()</code> nil-safe, no-op twice on an intact recorder, one epitaph on a broken one; no
+        re-entrancy or deadlock in the <code>appendLocked</code> split<br>
+        torn-write path measured: 40 bytes of partial line &rarr;
+        <code>flight recorder is corrupt: unexpected end of JSON input</code>, and the newline guard verified
+        &mdash; <code>Verify</code> and <code>Read</code> still accept what they used to, only
+        <code>Append</code> refuses and latches<br>
+        <b>Two more report corrections:</b> the third cited error path (<code>recorder.go:667</code>,
+        &ldquo;still too big after eight clips&rdquo;) needs an event over ~2&nbsp;GiB and is effectively
+        unreachable; and the <code>session.end</code> epitaph the report asks for is <b>unwritable in both
+        reachable failure modes</b> &mdash; a <code>catchUp</code> failure blocks any append and a full disk has
+        no room &mdash; which is why the implementation makes two attempts and why <code>EndBroken()</code> is
+        part of the F13(b) contract rather than optional.</td></tr>
+    <tr><td class="mono">2026-08-29</td><td class="mono">P7-17/F12</td>
+        <td><b>Guest stdout reached <code>error.message</code>, which an erasure did not touch; fixed at the
+        source and at the sink.</b> The exemption map excused the field as &ldquo;a system-generated string with
+        no established precedent for holding raw guest content&rdquo;, and the precedent was two files away.
+        Source: <code>auditCall</code> cannot distinguish a host-written refusal from guest stdout &mdash; both
+        arrive as <code>Content[0].Text</code> &mdash; so <code>resultErrorShape</code> copies neither, recording
+        the exit status from <code>StructuredContent["exit_code"]</code> or the byte count it declined to hold.
+        Sink: <code>Error.Message</code> removed from <code>eraseExempt</code> and fingerprinted like
+        <code>Args</code> and <code>Cmd</code>.
+        <br><b>A second symptom the report does not name:</b> on the parent, a chain whose only personal data was
+        in <code>error.message</code> was <b>refused outright</b> with <code>nothing to erase</code> &mdash; a
+        data-subject request failed while the guest&rsquo;s stdout sat in the chain.
+        <br><b>Reviewed.</b> Its Medium finding was F12&rsquo;s own shape one field to the left:
+        <code>Error.Kind</code> is exempt as &ldquo;a fixed enumeration&rdquo; and
+        <code>host/exec.go:147</code> copies it <i>verbatim off the wire from the guest</i> with nothing
+        validating it, so arbitrary text survived an erasure while
+        <code>docs/retention.md</code> promised operators it &ldquo;survives unchanged&rdquo;. The docs and the
+        exemption now state the condition; the validation itself landed in the surface workstream, where the
+        enumeration lives. A Low-Medium: <code>host/servemcptools.go:560</code> records
+        <code>err.Error()</code> from <code>sandbox.Exec</code>, which embeds a guest-chosen stream name via
+        <code>proto.SafeText</code> &mdash; which bounds character class, <i>not length</i>. Also fixed in the
+        surface workstream, clamped to 200 bytes on a rune boundary.</td>
+        <td class="mono">Parent &rarr;
+        <code>a failing command's stdout is in the audit chain: {&hellip;"error":{"kind":"tool","message":"CANARY-jane.doe@example.com-guest-stdout"}&hellip;}</code><br>
+        parent &rarr; <code>Erase: 0badf00d: nothing to erase &mdash; no event carries a redactable field</code><br>
+        branch &rarr; both PASS, plus
+        <code>TestF12_TheExecResultFixtureStillMatchesTheTool</code><br>
+        <b>That fixture guard was the fourth test on this task shown unable to fail:</b> it grepped
+        <code>servemcptools.go</code> for two strings that are <i>not</i> what <code>resultErrorShape</code>
+        reads, so the reviewer renamed the structured key <code>exit_code</code> &rarr; <code>exitCode</code> and
+        all three F12 tests still passed while a real failing command fell through to the wrong branch. Now one
+        <code>execExitCodeKey</code> constant shared between the tool and the reader, and the rename goes red.<br>
+        <code>structuredExitCode</code> hardened after the reviewer measured <code>+Inf</code> and
+        <code>1e300</code> both yielding <code>ok=true, 9223372036854775807</code>; now bounded to
+        <code>-1..255</code> (<code>-1</code> is <code>sandbox.ExecResult</code>&rsquo;s no-exit-code sentinel),
+        15 cases, 4 of which passed before<br>
+        <code>docs/retention.md</code> &sect;5 corrected in both places &mdash; the redacted-field list and the
+        &ldquo;deliberately out of scope&rdquo; paragraph that stated the wrong reason</td></tr>
+    <tr><td class="mono">2026-08-29</td><td class="mono">P7-17/F6</td>
+        <td><b>Erase dropped chain fields an older build cannot parse; the rewrite is now lossless and refuses a
+        newer chain outright.</b> <code>Verify</code> recomputes the digest from the raw line so an older build
+        does not report a legitimate record as modified; <code>Erase</code> did not inherit the property,
+        round-tripping through the typed struct. Now: an event with <code>v &gt; Version</code> is refused before
+        anything is rewritten, and the rewrite goes through an order-preserving <code>rawObject</code> whose
+        members keep the order and the bytes the line carried, with <code>applyRedaction</code> walking the struct
+        before and after and writing back only changed leaves, descending <code>*EvError</code> and struct slices
+        <b>by reflection rather than by name</b>. A second counter, <code>redacted_fields</code>, appended at the
+        very end of <code>Event</code>.
+        <br><b>The report&rsquo;s prescribed fix would have caused a silent regression.</b> It says to redact into
+        <code>map[string]json.RawMessage</code>. Go marshals maps with sorted keys, so every erased line&rsquo;s
+        field order would have become alphabetical &mdash; contradicting <code>docs/events.md</code> &sect;3 and
+        <code>TestTheEventFieldOrderIsFrozen</code>, which calls that order &ldquo;frozen ABI&rdquo; &mdash; and it
+        would still have <i>verified</i>, because <code>digestOfLine</code> reads raw bytes. The reviewer added
+        that a map route also destroys <i>values</i>: <code>1e400</code>, a 60-digit integer and <code>-0</code>
+        all round-trip byte-identical through <code>rawObject</code> where decode-to-<code>any</code> turns them
+        into <code>+Inf</code> and a lossy float.
+        <br><b>A fuzz target added at the lead&rsquo;s insistence found a real content leak in this very fix,</b>
+        in nine seconds. It was proposed by the author and set aside as out of scope; <code>parseObject</code> and
+        <code>applyRedaction</code> are new parsing surface on the audit chain, which is the one thing this
+        product claims, so it was pulled back in.</td>
+        <td class="mono">5 of 6 F6 tests fail on the parent, incl.
+        <code>Erase dropped a member this build's Event struct does not carry</code> and
+        <code>an explicit zero the writer chose to record was dropped by the rewrite</code><br>
+        <b>The leak:</b> <code>{"Cmd":["0000000000000000"],"000":"0"}</code> &mdash;
+        <code>encoding/json</code> matches a member to a field <i>case-insensitively when there is no exact
+        match</i>, so <code>"Cmd"</code> was decoded into <code>Cmd</code>, redacted, and the fingerprint written
+        back under the canonical <code>"cmd"</code>, leaving <code>"Cmd"</code> with its content intact beside its
+        own fingerprint. <b><code>Erase</code> reported the event redacted and the content was still in the
+        file.</b> F12&rsquo;s shape reached through the parser instead of an exemption.<br>
+        Closed by <code>checkMemberNames</code>, refusing any member that folds to a field name without matching
+        it, at every depth. Reviewer&rsquo;s <b>differential fuzz target</b> &mdash; decode
+        <code>{"&lt;name&gt;":"CANARY"}</code>, find which field the decoder actually filled, require a refusal
+        whenever the name is not canonical &mdash; <b>23,504,806 executions, no bypass</b>, across Kelvin sign,
+        long s, dotted/dotless I, ligatures and fullwidth homoglyphs<br>
+        the author then pinned that invariant <i>in-tree</i> rather than in a comment: 364 folded spellings
+        generated, <b>136 reach a field, 0 canonical, all 136 refused</b>; weakening the fold to <code>==</code>
+        produces exactly 136 failures. The <code>encoding/json/v2</code> canaries
+        (<code>_data</code>, <code>d-a-t-a</code>, <code>d_a_t_a</code>) sit <b>inert</b> &mdash; 137 generated,
+        137 inert, verified &mdash; and fire the day something decodes them, because v2&rsquo;s fold
+        &ldquo;ignores underscore and dashes&rdquo; and would make <code>strings.EqualFold</code> strictly weaker
+        than the decoder<br>
+        <code>parseObject</code> attacked with 21 hostile inputs: duplicates refused adjacent <i>and</i> far
+        apart; byte-identical round-trips for 2000-deep nesting, a 4&nbsp;MiB value, an embedded
+        <code>{"hash":&hellip;}</code>, invalid UTF-8 in a value, <code>1e400</code>, <code>-0</code><br>
+        16 canaries in every redactable leaf of one event at once &rarr; all 16 redacted,
+        <code>redacted_fields=16</code> exactly<br>
+        <b>Erase now refuses a chain cut short mid-write</b> rather than silently repairing it &mdash; the
+        existing &ldquo;refuses a chain that does not already verify&rdquo; rule applied to the one damage
+        <code>Verify</code> is blind to. The reviewer confirmed the remedy is <b>structurally</b> one byte: the
+        check sits after <code>Verify</code> and <code>Read</code>, so only a chain that already verifies reaches
+        it; every mid-object and mid-rune tear fails earlier with the pre-existing message, and appending the
+        newline leaves the file <b>byte-identical to the pre-tear original</b>, same head, same event count<br>
+        end to end on the shipped binary: <code>verify</code> green before (18 events, offline, no key) &rarr;
+        <code>sessions erase</code> &rarr; <code>verify</code> green after, <b>0</b> canary bytes, both unknown
+        members surviving byte-for-byte, <code>session.erasure.sha256</code> equal to the pre-erasure head<br>
+        3 recorder fuzz targets green; <code>FuzzAppendFieldValues</code>&rsquo;s OOM measured and attributed to
+        <b>P7-15</b>, not to this work: peak RSS under <code>-race</code> is 101&nbsp;MB / 105&nbsp;MB / <b>11.66
+        GB</b> for the three targets, and the failure reproduces two commits earlier</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
