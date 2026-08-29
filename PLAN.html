@@ -7935,6 +7935,71 @@ after:
         each asks for: the exact remedy, and the value to match on.<br>
         <b>Not answered: Q1.</b> Recorded as the finding rather than smoothed over &mdash; this exam&rsquo;s
         stated purpose is that a task a reader cannot finish is the most valuable signal it produces.</td></tr>
+    <tr><td class="mono">2026-08-29</td><td class="mono">P7-17</td>
+        <td><b>P7-17 &mdash; the 2026-08-28 security review, remediated. All twenty-one findings are fixed and on
+        <code>main</code>; the task stays open (D73).</b> Five workstreams in isolated worktrees with exclusive
+        file ownership, one commit per finding, every fix proven by a test run against the parent commit and
+        every finding reviewed adversarially by an agent that did not write it &mdash; the reviewer running the
+        tests itself rather than taking the author&rsquo;s word.
+        <br><b>The review was materially wrong thirteen times, and in six of those following it literally would
+        have caused harm.</b> Two of the six are worth restating because the diff would have looked identical to
+        the correct one: F10&rsquo;s &ldquo;remove <code>MAKE_CHAR</code> and <code>MAKE_BLOCK</code> from
+        <code>writeRights</code>&rdquo; would have opened <code>mknod</code> on <code>/etc</code> and
+        <code>/usr</code>, because <code>handledRights = writeRights</code> and Landlock restricts only what it
+        handles &mdash; measured on a real kernel; and F6&rsquo;s <code>map[string]json.RawMessage</code> would
+        have alphabetised every erased line&rsquo;s field order, contradicting the frozen ABI, <i>and still
+        verified</i>, because <code>digestOfLine</code> reads raw bytes. Two prescribed tests could not fail as
+        written (F15&rsquo;s, because Go caches the proxy environment behind a <code>sync.Once</code>;
+        F16&rsquo;s, because <code>httptest</code> answers 431 itself), one prescribed comment fix stated a
+        mechanism Go does not use (<code>os.Root</code> calls <code>openat2</code> nowhere), and one prescribed
+        snippet dereferenced a pointer before testing the <code>ok</code> that guards it. F13 is the only finding
+        the review <i>understated</i>: a lost event does not leave a chain that is &ldquo;shorter and still
+        open&rdquo; but a complete, consecutive, digest-correct record of a session that never ran the command.
+        <br><b>Fourteen tests written to prove a guarantee turned out to be unable to fail</b>, across every
+        workstream and every author, including three the authors caught in their own work and one the lead caught
+        in its own rebase tooling. The pattern is one shape: the assertion was aimed slightly off the mechanism.
+        A finding count that a sentinel could fill; <code>t.Setenv</code> after the environment was already
+        cached; a sweep over one octet so two RFC 1918 prefixes could be narrowed unnoticed; a grep for strings
+        the code under test did not read; a fuzz target that enumerated the one type whose missing interface was
+        the defect and then excused it; two constants divided instead of the accounting they described. The
+        practice that came out of it &mdash; mutate the line the test protects and watch it go red, after
+        checking the mutation compiles and actually weakens the property &mdash; is what F16&rsquo;s ten tests
+        and F18&rsquo;s eighteen mutations were held to.
+        <br><b>Three findings needed more than one round because the first fix was correct and its evidence was
+        one gap short.</b> F16 took five: the header was bounded, then the body was not; the body, then the
+        response write; the write, then nothing reached a guest that never leaves a single request; the ceiling,
+        then the inner TLS handshake sat before all of it. F18 took three, ending by removing the key entirely
+        and asking the destination filesystem instead &mdash; because &ldquo;are these two spellings the same
+        file?&rdquo; is a question about the destination, and probing for case, then normalization, then whatever
+        is third, is still a list. F9 took four, and its third round found that the test written to prove its own
+        guarantee could not fail.
+        <br><b>Work found that the review never named:</b> a sixth unvalidated <code>snapshotDir</code> caller
+        that never called <code>snapshotDir</code> at all; two loops holding a machine open with a recorder that
+        nothing watched (<code>sessions resume</code>, <code>snapshot restore</code>); a content leak in
+        F6&rsquo;s own fix, found in nine seconds by a fuzz target added at the lead&rsquo;s insistence after the
+        author had set it aside as out of scope; thirty-three raw guest-string print sites where the review named
+        two; and <code>proto.TeamRequest</code>, the one guest&rarr;host frame with no sanitiser at all, reaching
+        the hash chain.</td>
+        <td class="mono"><code>dev/ci-local.sh e1055f5</code> on <code>f5bf80a</code> &mdash;
+        <b>all 11 steps pass</b> (gofmt 1s, vet 0s, unit 84s, fuzz 318s, hostile 13s, plan 0s, changelog 0s, DCO
+        0s, generated reference 2s, cookbook 0s), and with <code>--boot</code> on <code>6e755a4</code>
+        <b>13 of 13</b>, the two extra being the aarch64 stand-in for the boot job.<br>
+        acceptance: <code>accept-seccomp</code> 15/0, <code>accept-jail</code> 19/0,
+        <code>accept-forward</code> 21/0, <code>accept-shim</code> 35/0, <code>accept-profile</code> 35/0 against
+        a supervisor carrying the fixes (31/4 against the machine&rsquo;s stale image, established three ways as
+        staleness and not regression)<br>
+        <code>make vuln</code> clean &middot; <code>make docs</code> idempotent &middot; 28 fuzz targets at 10s,
+        no failures &middot; <code>check-dco.sh e1055f5 HEAD</code> all signed<br>
+        <code>llms-full.txt</code>: <b>796723 bytes &middot; ~206917 tokens</b>, from ~187k before P7-17<br>
+        <b>What is NOT done, and gates the close:</b> <code>ci.yml</code> and <code>security.yml</code> have run
+        against none of this &mdash; Actions is disabled at the account level (D73), the last genuine signal on
+        <code>main</code> is 2026-08-25 and 130 commits ago, and the <code>build</code> and <code>boot</code>
+        jobs are not reproduced locally at all. A full <code>make image FLAVOR=dev</code> has not been done.
+        <b>P7-17 is not ticked and nothing is tagged until both workflows are green on the final head.</b><br>
+        Deferred with reasons: F21&rsquo;s secret-confirmation half (owner&rsquo;s ruling, a feature not a fix);
+        F19&rsquo;s state-file digest in <code>session.start</code> (depth on a closed finding); the ten
+        &ldquo;Also noted&rdquo; items; P7-14 and P7-15, both of which make <code>make fuzz</code> red on this
+        machine for reasons that predate this task.</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
