@@ -130,7 +130,7 @@
      injected secrets, full audit replay, and millisecond forking.</p>
   <div class="meta">
     owner: <b>John</b> &nbsp;·&nbsp; developer: <b>Claude Code</b> &nbsp;·&nbsp;
-    status: <b class="amber" id="meta-status">ACTIVE &mdash; <b>Phase 7</b>. P7-0 through P7-13 done; P7-14, P7-15 and P7-16 deferred (D67, D69, D70). <b>P7-17</b>: all twenty-one findings of the 2026-08-28 security review are fixed, reviewed by an agent that wrote none of each, and on <code>main</code> &mdash; but the task stays <i>open</i>. GitHub Actions is disabled at the account level (D73), so the evidence is <code>dev/ci-local.sh</code>, a step-for-step reproduction of <code>ci.yml</code>&rsquo;s <code>checks</code> job, not a green pipeline. Nothing closes and nothing is tagged until <code>ci.yml</code> and <code>security.yml</code> are both green on the final head.</b> &nbsp;&middot;&nbsp;
+    status: <b class="amber" id="meta-status">ACTIVE &mdash; <b>Phase 7</b>. P7-0 through P7-13 done; P7-14, P7-15 and P7-16 deferred (D67, D69, D70). <b>P7-17</b>: all twenty-one findings of the 2026-08-28 security review are fixed, and so are the seven items an independent verification pass then found in those fixes &mdash; each reviewed by an agent that wrote none of it, and all on <code>main</code>. The task still stays <i>open</i>. GitHub Actions is disabled at the account level (D73), so the evidence is local: <code>dev/ci-local.sh</code>, a step-for-step reproduction of <code>ci.yml</code>&rsquo;s <code>checks</code> job, and now also the real <code>ci.yml</code> run under <code>nektos/act</code>. Neither is a green pipeline. Nothing closes and nothing is tagged until <code>ci.yml</code> and <code>security.yml</code> are both green on the final head.</b> &nbsp;&middot;&nbsp;
     last updated: <b id="meta-updated">2026-08-29</b><br>
     repo file: <b>PLAN.html</b> (commit this document at the repository root — it is the single source of truth)<br>
     <span class="quiet">KelyfOS — from κέλυφος (kélyfos), "shell": the guest OS wrapped around the agent. Formerly working-titled "agos" (D4 → D10).</span>
@@ -185,7 +185,7 @@
     <span class="bl-name">Overall</span>
     <span class="bl-bar"><i id="total-bar"></i></span><span class="bl-pct" id="total-pct">0%</span>
   </div>
-  <div class="focusline">Current focus: <b id="focus">P7-17 &mdash; twenty-one findings fixed, waiting on a pipeline that cannot run.</b> Every finding of the 2026-08-28 review is on <code>main</code>, each with a test that fails on its parent commit and an adversarial review by an agent that did not write it. What remains is not code: Actions is disabled for this account, so no workflow has run against any of it. <code>dev/ci-local.sh</code> reproduces the <code>checks</code> job step for step and passes 13 of 13 on <code>6e755a4</code> &mdash; local evidence, which D73 permits for merging and explicitly refuses for closing. The next action is not in this repository.</div>
+  <div class="focusline">Current focus: <b id="focus">P7-17 &mdash; the review&rsquo;s findings fixed, its fixes&rsquo; findings fixed, still waiting on a pipeline that cannot run.</b> An independent verification pass re-read all twenty-one fixes in source and found seven more things: a door where <code>config.Trust</code> was not applied, two more places the flight recorder failed open, a guest image that predated four of its own fixes, two regressions the fixes introduced, and eleven items of documentation and test residue. All seven are on <code>main</code>, each with a test proven to fail on its parent commit and an adversarial review by an agent that did not write it &mdash; and those reviews found a High defect in each of the two largest items, including one where this task&rsquo;s own Decision row argued from something that was not true. What remains is still not code: Actions is disabled for this account, so no workflow has run against any of it. The next action is not in this repository.</div>
 </div>
 
 <!-- ====================================================== 1. END GOAL -->
@@ -8025,6 +8025,351 @@ after:
         go tool never compiles).<br>
         <code>go test ./internal/egress/ -run TestF9_Every -v</code> &rarr;
         <code>peer_test.go:652: 5 Proxy construction sites, all armed</code></td></tr>
+    <tr><td class="mono">2026-08-29</td><td class="mono">P7-17/A1</td>
+        <td><b>The ownership and writability rules were not on the door most users enter by.</b>
+        <code>loadPolicyAt</code>&rsquo;s own comment said &ldquo;every door in this CLI reaches a policy
+        file through here&rdquo; and <code>docs/threat-model.md</code> said the writability rule applied
+        &ldquo;discovered or named&rdquo;. Both were false. <code>host/servemcp.go</code>&rsquo;s
+        <code>resolvePolicy</code> was a near-copy of <code>loadPolicyAt</code> &mdash; the same
+        missing-file refusal in slightly different words, then a bare <code>config.Load</code> with no
+        <code>config.Trust</code> in front of it &mdash; and <code>host/sessions.go</code>&rsquo;s
+        <code>frozenPolicy</code> did the same for the copy a resume runs under. <code>kelyfos
+        connect</code> writes <code>serve-mcp --policy &lt;abs&gt;</code> into every client configuration
+        it touches, so the way most people reach KelyfOS was the way with no check on it.
+        <code>loadPolicyAt</code> is now the only function in the repository that calls
+        <code>config.Load</code>, and a test walks the whole repository and fails if a second reader
+        appears.
+        <br><b>The three companions.</b> <code>[[team.agent]] workspace</code> gets the scope check
+        <code>kelyfos run</code> has applied to <code>[sandbox] workspace</code> since F21 &mdash; it is
+        written back over the host directory at <code>team down</code> exactly as the top-level one is at
+        shutdown, and it was not checked. In <code>planTeam</code>, so <code>team up</code>, <code>team
+        graph</code> and the <code>team_up</code> MCP tool all get it. <b>The hatch is different and the
+        refusal says so</b> rather than naming a flag that does not exist: <code>kelyfos team up</code>
+        has no <code>--workspace</code>, so the two answers are to move the directory inside the project
+        or to run that agent on its own with <code>kelyfos run --workspace</code>. Adding the flag would
+        be a new user-facing surface with a reference row and a cookbook recipe behind it, which is a
+        feature and not this fix. <code>pause</code> and <code>resume</code> no longer swallow a Trust
+        refusal &mdash; <code>pause</code> read it as <code>if cfg, err := loadPolicy(); err == nil &amp;&amp;
+        cfg != nil</code>, so a refused file froze <i>nothing</i> and the resume that followed had no
+        ceiling to restore; <code>resume</code> read it as <code>current, _ :=</code>, and
+        <code>frozenFitsCurrent</code> returns at its first line when <code>current</code> is nil, so the
+        frozen ceiling was applied with nothing checking it against the project&rsquo;s own. And
+        <code>config.Trust</code>&rsquo;s uid half is pinned: the decision moved into
+        <code>ownedByCaller</code> on explicit inputs, for the reason <code>privateGroup</code> moved out
+        of <code>isPrivateGroup</code> one screen above &mdash; a test can chmod and cannot chown, so
+        every fixture in that package staged a file it owned and <code>trustOwner</code> could have been
+        <code>return nil</code> with the whole suite still green.</td>
+        <td class="mono">Parent <code>fb62db8</code>, the new test files copied onto it &rarr; six fail,
+        each on its own defect: <code>serve-mcp --policy loaded a policy every user on this machine can
+        rewrite</code>; <code>a frozen policy every user on this machine can rewrite was loaded</code>;
+        <code>the resume did not stop on the policy refusal; it got as far as: session "paused-one" was
+        paused from a sandbox with egress</code>; <code>an agent workspace outside the policy file's tree
+        was planned</code>; <code>servemcp.go:323: resolvePolicy calls config.Load on a policy path</code>
+        and <code>sessions.go:949: frozenPolicy calls config.Load</code>; <code>sessions.go:157:
+        loadPolicy is called in an if-statement initialiser</code> and <code>sessions.go:827: the error
+        from loadPolicy is discarded</code>.<br>
+        <code>internal/config</code>&rsquo;s two do not compile at the parent
+        (<code>undefined: ownedByCaller</code>), stated rather than dressed up as a behavioural failure.
+        They are held by mutation instead: <code>ownedByCaller</code> returning <code>true</code> gives
+        three rows of <code>TestF21_OwnedByCallerRefusesAThirdUid</code> plus <code>a discovered policy at
+        /var/log/auth.log, which this user does not own, was trusted</code> &mdash; the end-to-end half,
+        through the real <code>Trust</code>, against a real file on this machine a third uid owns.<br>
+        <b>Mutations, all red:</b> the <code>config.Trust</code> call out of <code>loadPolicyAt</code>
+        &rarr; four door tests; <code>config.Load</code> moved one call deep out of the gate &rarr; the
+        walk names the new reader <i>and</i> the positive assertion fires
+        (<code>no call to config.Load was found inside loadPolicyAt at all</code>).<br>
+        Three existing <code>teamplan_test.go</code> fixtures named <code>/tmp</code> workspaces for
+        agents whose policy <code>Path</code> is <code>"kelyfos.toml"</code>. They were written to prove
+        that a workspace reaches the plan and that it disqualifies an agent from forking, not that an
+        out-of-tree one is permitted, so their workspaces moved in-tree rather than the rule being
+        relaxed for them.<br>
+        <code>make test</code> every package ok &middot; <code>make vuln</code> clean &middot;
+        <code>make docs</code> no drift. Commit <code>9392ba7</code>.</td></tr>
+
+    <tr><td class="mono">2026-08-29</td><td class="mono">P7-17/A3</td>
+        <td><b>The dev guest image, rebuilt on the guest fixes &mdash; and the reason a stale one gives a
+        user none of them, written into the CHANGELOG.</b> No code. The deliverable is an artifact that
+        does not live in this repository, plus the evidence that it now carries what the CLI already
+        claims. The image on this machine was built <code>2026-08-27T21:50:12Z</code>; F8, F10, F11 and
+        F3 all landed after it and all four live in the supervisor, which ships inside
+        <code>rootfs.ext4</code>. The previous round proved the guest fixes only against a supervisor
+        spliced into a private copy of the image, which proves the code and not the artifact.
+        <br><b><code>FLAVOR=dev</code> is load-bearing</b>, which is why this is its own step:
+        <code>FLAVOR ?= base</code> and <code>IMAGE_DIR</code> carries no flavor in its path, so a bare
+        <code>make image</code> writes a <i>base</i> image over the dev one the cookbook, the quickstart
+        and <code>dev/accept-profile.sh</code> all depend on.
+        <br><b>The first attempt failed on the host, not on the tree.</b> The Lima VM&rsquo;s 58 GiB disk
+        was full and Buildroot died extracting <code>gcc-final</code> with <i>No space left on
+        device</i>. The shipped image was untouched &mdash; it is written at the end &mdash; and a backup
+        taken beforehand confirmed it byte-for-byte afterwards. The owner chose what to free; 19.6 GiB
+        came back and the build ran clean. Recorded because &ldquo;the build failed&rdquo; and &ldquo;the
+        build failed for a reason that has nothing to do with the code&rdquo; are different facts, and
+        because a dev VM that fills up will do it again.</td>
+        <td class="mono"><code>dev/accept-profile.sh</code> against the rebuilt image &rarr;
+        <b>35 passed, 0 failed, 0 skipped</b>. Against the stale one it read 31/4, and the four were
+        exactly the F8 block &mdash; staleness, not regression, now settled by running the suite as-is
+        rather than against a spliced supervisor.<br>
+        the F8 case live in a real microVM on the rebuilt image:
+        <code>/root/kelyfos-confine: line 3: can't create /etc/should-not-work: Permission denied</code>,
+        <code>PASS a program at /root/kelyfos-confine is in SECCOMP_MODE_FILTER like anything else</code>,
+        <code>PASS not-found is still not-found, not a confinement failure</code><br>
+        the shipped supervisor, mounted read-only out of each rootfs and grepped for
+        <code>errNotConfined</code>&rsquo;s own message: <b>NEW image (2026-08-29): 1 &middot; STALE image
+        (2026-08-27): 0</b><br>
+        manifest: flavor <code>dev</code>, built <code>2026-08-29T14:58:00Z</code>,
+        <code>rootfs_sha256 38b6d7a4&hellip;</code> (was <code>14c86220&hellip;</code>),
+        <code>kernel_sha256 a46b6c1d&hellip;</code> (was <code>a8056330&hellip;</code>);
+        <code>config verified: every requested symbol is present in .config</code>;
+        <code>rootfs.ext4 134217728 bytes (59M on disk, sparse) — under the 200 MB budget</code><br>
+        freed, on the owner&rsquo;s ruling: <code>~/acceptance-p1</code> 8.8G,
+        <code>~/.cache/kelyfos/snapshots</code> 6.4G, <code>templates</code> 1.4G, <code>named</code>
+        1.1G, <code>~/p7exam</code> 756M, <code>~/p7exit</code> 629M, <code>~/kelyfos-audit</code> 557M,
+        plus 1.9G of this task&rsquo;s own abandoned <code>/tmp</code> test directories<br>
+        Commit <code>efe1d38</code> (the CHANGELOG entry; the image is not in the tree).</td></tr>
+
+    <tr><td class="mono">2026-08-29</td><td class="mono">P7-17/B1</td>
+        <td><b>F5&rsquo;s own fix replaced a leaf symlink that the write it replaced had followed.</b>
+        Moving <code>kelyfos connect</code> to a temp-file-plus-rename is right for a read-modify-write
+        of a file another program may be editing. What it changed and nobody looked at:
+        <code>os.WriteFile</code> <i>follows</i> a leaf symlink and a rename <i>replaces</i> one. A
+        <code>~/.codex/config.toml</code> or <code>~/.gemini/settings.json</code> that stow, chezmoi or a
+        hand-made link points into a repository became a plain file &mdash; the copy the user
+        version-controls stopped being the copy the client reads, and the next <code>stow -R</code> would
+        put the link back over the entry <code>connect</code> had just written. The write now resolves a
+        leaf link with <code>Readlink</code> and replaces the file it names, atomically, in that
+        file&rsquo;s own directory. <code>Readlink</code> and not <code>EvalSymlinks</code> for two
+        reasons that both matter: <code>EvalSymlinks</code> refuses a <i>dangling</i> link, and a
+        dangling link into a dotfiles repository that has not been cloned yet is exactly the state
+        <code>connect</code> should write into; and it resolves every component, which would relocate a
+        write that only ever needed its last name followed.
+        <br><b>And the same link inverted F5 itself.</b> <code>underHome</code> resolved both sides, so a
+        leaf link under <code>$HOME</code> pointing <i>out</i> of it resolved outside, the file read as
+        project-local, and it was created <code>0644</code> &mdash; world-readable, under
+        <code>$HOME</code>, at the one path F5 exists to protect.
+        <br><b>One deviation from the brief, stated rather than quietly taken.</b> The brief says to
+        apply <code>underHome</code> &ldquo;to the path the user named, not to the resolved one&rdquo;.
+        Taken literally that removes F5&rsquo;s second review round, whose own test requires a
+        project-local <code>.cursor</code> symlinked <i>into</i> <code>$HOME</code> to get
+        <code>0600</code> &mdash; and the brief also says not to weaken an existing test without a
+        Decision row. Neither reading is a superset of the other, so <code>underHome</code> asks
+        <b>both</b> and the stricter answer wins. That satisfies the instruction&rsquo;s intent, keeps the
+        test, and is the same &ldquo;never widen&rdquo; rule <code>writeConfigAtomic</code> already
+        applies to a mode it finds. No Decision row: nothing is weakened, and it is strictly stronger
+        than either reading alone.</td>
+        <td class="mono">Parent <code>fb62db8</code> &rarr; four fail: <code>the leaf symlink was
+        replaced by a plain file; the dotfiles repository is no longer what this client reads, and the
+        next `stow -R` will undo the entry</code>; <code>a path the user named under $HOME was not
+        treated as being under it because it resolves elsewhere — that is F5 inverted</code>; <code>a
+        dangling leaf link was replaced by a plain file</code>; <code>a relative link was not followed
+        from its own directory</code>. The fifth passes there, correctly: it is the negative control.<br>
+        <b>Running it against the parent found a defect in one of these tests, which is why it was
+        run.</b> The inversion fixture originally never created the file the link names &mdash; and a
+        dangling link cannot be resolved, so <code>resolvePath</code> falls back to the deepest existing
+        ancestor, which is under <code>$HOME</code>, and the old <code>underHome</code> answered
+        &ldquo;yes&rdquo; for the wrong reason. It failed on the parent for the write-through reason and
+        not for the inversion it was written to catch. The target is created now, and the parent fails on
+        the <code>underHome</code> assertion.<br>
+        <b>Mutations, all red:</b> <code>resolveLeafLink</code> out of <code>writeConfigAtomic</code>
+        &rarr; the three write-through tests; the literal reading out of <code>underHome</code> &rarr; the
+        inversion test; the resolved reading out &rarr; the new control <b>and</b> F5&rsquo;s own
+        <code>TestF5_APathSymlinkedIntoHomeIsTreatedAsBeingInHome</code>.<br>
+        <code>make test</code> every package ok &middot; <code>make docs</code> no drift. Commit
+        <code>7b398cd</code>.</td></tr>
+
+    <tr><td class="mono">2026-08-29</td><td class="mono">P7-17/B2</td>
+        <td><b>The thirty-second <code>ResponseHeaderTimeout</code> F15 added, raised to the bound that
+        was already in force (D74).</b> F15 was right that the field was missing: neither
+        <code>http.DefaultTransport</code> nor a zero value supplies one, so an allowlisted origin that
+        accepts the connection, completes TLS and then says nothing held a goroutine, a socket and
+        &mdash; on the terminated leg &mdash; the operator&rsquo;s credential, indefinitely. The
+        <i>value</i> was never argued and never written down, and thirty seconds is below the time a
+        non-streaming completion from a model API legitimately takes to its first byte. That leg
+        <b>is</b> the credentialed model-API path: the failure it produced was <code>net/http: timeout
+        awaiting response headers</code> on a request that was going to succeed. Both transports now
+        carry <code>maxTerminatedIdleTotal</code> &mdash; ten minutes, the cumulative idle budget F16
+        already enforces on that leg.
+        <br><b>D74 was logged before implementation</b>, as &sect;8 rule 5 requires, and it records why
+        removal &mdash; the other option the brief offered &mdash; was rejected: on the terminated leg it
+        would be defensible, because F16&rsquo;s rolling stall bound, cumulative idle budget and
+        connection ceiling already close everything a guest can drive with it. The forward transport has
+        none of that machinery; <code>forwardHTTP</code> re-issues with <code>context.Background</code>,
+        so no context covers it, and F15&rsquo;s own row records that before it the upstream dial had no
+        timeout at all. Removing it there would reopen exactly what F15 closed, and two different numbers
+        would be a third bound nobody can hold in their head.</td>
+        <td class="mono"><b>Measured, not argued.</b> An origin that accepts, completes TLS and takes 35
+        seconds to begin its reply, through a transport built with the same fields:<br>
+        <code>F15's shipped value          (30s)  after 30s -&gt; net/http: timeout awaiting response headers</code><br>
+        <code>D74, maxTerminatedIdleTotal  (10m)  after 35s -&gt; 200 OK</code><br>
+        Parent <code>fb62db8</code> &rarr;
+        <code>forward: ResponseHeaderTimeout is 30s, want 10m0s (D74)</code> and
+        <code>&hellip; which is at or below the 30s that made a legitimate slow completion fail</code>,
+        both again for <code>terminated</code>.<br>
+        The value is stated in the test independently of the constant it was set from, for the reason
+        <code>TestF14_TheTableIsExactlyThis</code> exists: a test that asserts a field equals the
+        constant it came from cannot notice the constant moving, and this is a number an operator has to
+        be able to look up. The 35-second measurement is deliberately <i>not</i> a committed test &mdash;
+        the production transports refuse a loopback origin by construction, which is F14&rsquo;s
+        resolved-address check doing its job, so a real one cannot be driven against
+        <code>httptest</code>, and a 35-second wait does not belong in <code>make test</code>.<br>
+        <code>docs/networking.md</code>&rsquo;s bounds section gains the paragraph; CHANGELOG
+        <code>### Changed</code> carries the measurement. Commit <code>cbeab5c</code>.</td></tr>
+
+    <tr><td class="mono">2026-08-29</td><td class="mono">P7-17</td>
+        <td><b>Three adversarial reviews, one per remaining item, and the three findings that are about
+        this round&rsquo;s own work.</b> Each by an agent that wrote none of it, each in its own detached
+        worktree at the commit under review &mdash; the process fix the A1 review earned by having to build
+        its own, because this session&rsquo;s uncommitted work was in the shared tree while it ran.
+        Twenty-eight findings across the three.
+        <br><b>B2-1, High: D74&rsquo;s central justification was false, and it was in a user-facing
+        document.</b> D74, <code>docs/networking.md</code>, <code>CHANGELOG.md</code> and both source
+        comments all said the raise from 30s to ten minutes only made the transport &ldquo;agree with a
+        bound already in force&rdquo;. The review <i>measured</i> it and both halves are false: F16&rsquo;s
+        cumulative idle budget charges the gap between requests and the header read, and
+        <code>RoundTrip</code> sits between the two charged by neither; <code>notAfter</code> clamps to the
+        one-hour <i>connection</i> ceiling, and during the wait no I/O happens on the guest connection at
+        all, so no deadline fires. <code>ResponseHeaderTimeout</code> was the <b>only</b> bound on that
+        wait and the raise multiplied it twentyfold. Answered with two changes rather than a retraction:
+        <code>terminate</code> now charges the <code>RoundTrip</code> to the budget, which makes the
+        sentence true going forward, and every place that stated the old reasoning now says this value
+        <i>is</i> the bound, deliberately, with nothing else behind it on the forward leg at all. D74 is
+        amended in place with a dated marker, the way &sect;8 rule 8 was &mdash; what a decision was argued
+        from is part of what it is. Two riders came with it: <code>p.touch()</code> around the upstream
+        wait, so the call D74 exists to permit cannot be reaped by <code>--idle-timeout</code>; and
+        <code>docs/networking.md</code>&rsquo;s &ldquo;the body is the rolling stall bound&rsquo;s&rdquo;,
+        which is false for the forward transport, which has no <code>bodyClock</code>.
+        <br><b>A2-F1, High: this round&rsquo;s own design choice let the shim register a corpse.</b>
+        Starting the watcher at <code>recorder.Open</code>, which the A2 commit message argued for, lets it
+        fire before <code>createSandbox</code> has registered the box: the delete removes nothing,
+        <code>b.close</code> shuts the microVM down, <code>boot</code> returns <code>(b, nil)</code>, and
+        the caller answers <b>201 Created</b> and registers a dead box nothing will ever remove &mdash; one
+        of sixteen <code>MaxSandboxes</code> for the life of the process, listed by <code>GET
+        /sandboxes</code>, handed to <code>only()</code> for every envd file call. serve-mcp does not have
+        that window because <code>adopt</code> registers and watches under one lock; the shim does the same
+        now, and the window <i>before</i> registration is closed by a synchronous <code>Failure()</code>
+        check, which is the right shape for a box nothing else holds yet.
+        <br><b>C-1, Medium: a correction this task claimed to have made and had not.</b> The residue
+        commit&rsquo;s message says PLAN.html&rsquo;s two rows saying &ldquo;six&rdquo; get an appended
+        correcting row. <code>git show --stat 54cd807 -- PLAN.html</code> returns nothing: it was drafted
+        and never applied. Applied now &mdash; the same class of defect this task has spent two rounds
+        finding, in this task&rsquo;s own record.
+        <br><b>And the rest.</b> A2: &ldquo;refused before anything is dispatched&rdquo; had no test and
+        the reviewer moved the gate <i>after</i> the dispatch with the whole repository still green, so
+        there is now an unexported dispatch hook with the reason F16&rsquo;s two injection points give for
+        theirs; the refusal also refused <code>sandbox_stop</code>, <code>team_down</code> and
+        <code>sandbox_list</code>, which is the refusal maximising the window it exists to bound
+        (<b>D76</b>); the shim&rsquo;s operator line had no seam and nothing asserted it; the wiring guard
+        read one file and one substring and was defeated twice, including by
+        <code>go s.watchRecorder(id, &amp;box{})</code>, which keeps the substring and watches nothing; and
+        the client was handed the recorder&rsquo;s error, which on a full disk is an unbounded absolute
+        host path. B1: the mode was decided on the named path while the write landed on the resolved one,
+        so a <i>dangling</i> project-local link into <code>$HOME</code> reproduced F5&rsquo;s own hole with
+        no adversary required; a project-local path is one a repository can commit as a symlink, which
+        <b>D75</b> now refuses when it leaves both the project and <code>$HOME</code>; the dangling case
+        the commit exists for did not work in the scenario the commit described, twice over; and the hop
+        bound was off by one against its own message. C: the 502 promised a diagnostic the record did not
+        hold; <code>watch</code>&rsquo;s &ldquo;two headers&rdquo; were two of four; excluding
+        <code>foreign_peer</code> from the blocked count left three <code>BLOCKED</code> rows above
+        &ldquo;blocked: 0&rdquo;, the mirror image of the number the exclusion removed; and three sentences
+        in the retention page this round had just <i>corrected</i> were themselves false.
+        <br><b>One finding rejected, with the reason.</b> C-7 says &ldquo;until v1.1&rdquo; asserts a
+        version nothing establishes. It does not: PLAN.html&rsquo;s Phase 7 exit checkpoint is <code>tag
+        v1.1</code> and ten existing documentation sites already say &ldquo;since v1.1&rdquo;. The change
+        was made, checked and reverted.</td>
+        <td class="mono">Reviewer mutations that were <b>green when they should have been red</b>, all now
+        red: the gate moved after dispatch; the shim watcher told the operator nothing; two wiring-guard
+        defeats; <code>stopWatching</code> deferred; the two new <code>watch</code> panes.<br>
+        <b>The B2 probes, which are the finding:</b>
+        <code>PROBE1: got 200 OK after 6.00917688s on a 2s idle budget</code>;
+        <code>PROBE2: ceiling 3s, origin silent 6s &rarr; the goroutine, the socket and the slot were held
+        for the whole 6s</code>.<br>
+        <b>The A2 probe:</b> <code>BUG: a box the watcher already tore down is registered and serving;
+        len(s.boxes)=1, and nothing will ever remove it</code> &middot; <code>BUG: only() hands out the
+        torn-down box for every envd file call</code>.<br>
+        <b>The B1 probes:</b> <code>file created UNDER $HOME at &hellip;/secretish.json with mode
+        0664</code> &middot; <code>wrote OUTSIDE project and OUTSIDE home at
+        &hellip;/somebody-elses.json</code> &middot; <code>err = open
+        &hellip;/not-cloned/codex/.kelyfos-connect-&hellip;: no such file or directory</code> &middot;
+        <code>err = mkdir &hellip;/.codex: file exists</code> (stow tree folding) &middot;
+        <code>n=8 err="more than 8 links deep" &nbsp; n=8 kernel ReadFile ok=true</code>.<br>
+        <b>Reviewer rejections worth keeping</b> (each with its reason in the review): a race on
+        <code>s.audit</code> &mdash; <code>serve</code>&rsquo;s <code>defer wg.Wait()</code> precedes
+        <code>closeAll</code>, so no in-flight call can outlive it; a double close of
+        <code>auditStopped</code> &mdash; one caller, guarded and nilled; <code>Failure()</code> being the
+        wrong question &mdash; <code>failLocked</code> sets the fields and closes the channel under one
+        lock, so no observer can see them disagree; a path to a tool that skips <code>callTool</code>
+        &mdash; one caller each way, grepped; the shim watcher leaking per failed boot &mdash; measured,
+        <code>goroutines before=2 after=2 over 40 cycles</code>; <code>break</code> losing the timeline
+        entry &mdash; <code>entry</code> is built before the switch; <code>SafeText</code> quoting every
+        JSON line &mdash; it returns an all-printable string unchanged; the digest change making the report
+        and <code>watch --json</code> disagree &mdash; one counting site, all readers share it.<br>
+        <b>Verified by the reviewer rather than taken on the author&rsquo;s word:</b>
+        <code>errors.As</code> finds the <code>OpError</code> through every real path (<code>"127.0.0.1:35481"</code>,
+        <code>"127.0.0.1:36483"</code>, <code>"127.0.0.1:33035"</code>), and a real DNS failure correctly
+        yields <code>""</code>; the F11 rewrite fails 5/5 at <code>99fd574</code>
+        (<code>after 170760 uploads</code>, 150261&ndash;172099 across runs) where the shipped version
+        passes in <code>0.002s</code> doing no work; all four renderers do print
+        <code>from &lt;peer&gt;</code>; the <code>CHECKS_SHA256</code> pin recomputed independently, and
+        the parent&rsquo;s <code>ci.yml</code> hashing byte-exact to the old value.<br>
+        <b>Also taken, from a peer session that ran the REAL <code>ci.yml</code> under
+        <code>nektos/act</code> in Docker rather than a hand copy</b> &mdash; which is better evidence than
+        <code>dev/ci-local.sh</code> and is the first time this project has had it. Two tests green
+        natively and red there, both environment differences and neither a defect:
+        <code>TestF14_TheResolvedAddressReachesTheRecorder</code> asserted the literal
+        <code>127.0.0.1</code> where a container&rsquo;s <code>/etc/hosts</code> answers <code>::1</code>
+        first (it asserts loopback now), and
+        <code>TestARemovalThatUnlocksADirectoryPutsItsSetgidBack</code> forces a refused removal with a
+        0500 parent, which root ignores, so the restore path it exists to check never ran (it skips as
+        root now).<br>
+        <code>make test</code> all packages ok &middot; <code>make vuln</code> clean &middot;
+        <code>go test -race</code> ok on <code>host</code>, <code>shim</code>,
+        <code>internal/egress</code>, <code>internal/digest</code>, <code>supervisor</code> &middot;
+        <code>make docs</code> no drift. Commit <code>765368b</code>.</td></tr>
+
+    <tr><td class="mono">2026-08-29</td><td class="mono">P7-17</td>
+        <td><b>Found by this round and deliberately not fixed &mdash; candidates the owner opens or
+        declines, in the shape P7-16 was opened in.</b> The brief scopes new findings out of this task,
+        so these are logged rather than worked, alongside the ten &ldquo;Also noted&rdquo; items of the
+        2026-08-28 review that are still open above.
+        <br><b>1. The development VM fills its own disk, and it stopped a build.</b>
+        <code>make image FLAVOR=dev</code> died extracting <code>gcc-final</code> with <i>No space left
+        on device</i> on a 58 GiB disk at 100%. Two contributors, both this project&rsquo;s own tooling
+        rather than anybody&rsquo;s carelessness: <b>36 orphaned workspace <code>.ext4</code> images</b>
+        from 2026-08-27 to 29 survived their sandboxes&rsquo; teardown, so something on the
+        <code>run</code>/<code>fork</code>/<code>shim</code> path is not removing the packed workspace on
+        exit; and the <b>Go compile cache reached 15 GiB</b>, almost certainly one instrumented binary per
+        fuzz target per run, which <code>make fuzz</code> does 29 times. A <code>clean-cache</code> target
+        or a <code>GOCACHE</code> note in <code>dev/</code> would stop the second; the first is a leak
+        with a real name. Both were found by a peer session clearing the disk, and are recorded here
+        because the second time this happens it will look like a mystery.
+        <br><b>2. <code>kelyfos run</code> does not compare the supervisor&rsquo;s version against the
+        CLI&rsquo;s.</b> A3&rsquo;s whole point is that four of this release&rsquo;s security fixes live
+        in the guest image, and a user who upgrades the CLI alone boots the image they already had with
+        nothing saying so. The manifest already carries <code>rootfs_sha256</code> and the guest already
+        reports its supervisor version in <code>session.ready</code>, so the machinery to warn exists;
+        what does not exist is anyone comparing them. Written into the CHANGELOG as an instruction to
+        rebuild, which is the documentation answer to a problem that has a code answer.
+        <br><b>3. <code>dev/accept-*.sh</code>&rsquo;s <code>trap cleanup EXIT</code> still kills every
+        firecracker on the host</b>, which is why three of those scripts could not be run for most of the
+        original P7-17 and why this round had to establish the machine was quiet before running one. Same
+        entry as the last round&rsquo;s; repeated because it cost time again.
+        <br><b>4. <code>FuzzAppendFieldValues</code> makes <code>dev/ci-local.sh</code> ten of eleven on
+        this machine.</b> That is <b>P7-15</b> (D69), deferred by the owner and reproducible before this
+        task began: the target OOM-kills its own worker once its corpus grows past roughly 260 entries,
+        and it passes when run alone. Stated in every row below that cites a local run, because a reader
+        comparing this task&rsquo;s evidence against the previous round&rsquo;s eleven-of-eleven would
+        otherwise read it as a regression this work caused.</td>
+        <td class="mono">Not fixed by design. Items 1 and 2 are new; 3 and 4 are known and are repeated
+        with what they cost this round.<br>
+        <code>llms-full.txt</code> re-measured after this round&rsquo;s documentation changes (&sect;8
+        rule 9): <code>803426 bytes &middot; 799169 characters &middot; 15015 lines &middot; ~208660
+        tokens</code> (was ~206917 at <code>fb62db8</code>), by <code>make tokens</code>, which is the
+        committed command.<br>
+        <b>The docs-only exam is not re-run for this round, with the reason:</b> &sect;8 rule 9 asks for
+        it &ldquo;when a phase added commands or MCP tools&rdquo;. This round adds neither &mdash; no new
+        command, no new flag, no new <code>kelyfos.toml</code> key, no new MCP tool &mdash; so there is no
+        new surface for a reader to be tested against, and every documentation change here is a
+        correction to a page the two exams of the previous round already read. A cookbook recipe is not
+        owed for the same reason.</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
