@@ -40,6 +40,12 @@
 # Needs: docker (the daemon running, or Docker Desktop installed on macOS —
 # this starts it), and act (`brew install act`). Override the runner image
 # with KELYFOS_ACT_IMAGE, the scratch root with KELYFOS_ACT_DIR.
+#
+# Exit status: 0 when the job passed; the job's own failure otherwise; 2 for
+# a usage error; 3 when another run holds the lock. Those are this script's
+# codes — `make ci-act` reports any of them as make's own 2 ("Error N" on
+# stderr says which), so anything scripted against the code should call
+# dev/ci-act.sh directly.
 set -euo pipefail
 
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
