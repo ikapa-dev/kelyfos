@@ -17,11 +17,18 @@ import (
 // sandbox raised through `kelyfos run` and one raised through `serve-mcp` should
 // carry the same tools, and two call sites that each remembered to pack would
 // eventually be one that did and one that forgot.
-func packPlugins(cfg *config.Config, id string) (*sandbox.Plugins, error) {
+// allowedPaths is what the operator typed with --plugin-path. The scope check
+// lives here rather than at the two callers for the reason F7 gives about
+// snapshotDir in this same task: a rule enforced at some call sites is a rule
+// the next call site will miss (P7-17/F21).
+func packPlugins(cfg *config.Config, id string, allowedPaths []string) (*sandbox.Plugins, error) {
 	if cfg == nil || len(cfg.Plugins) == 0 {
 		return nil, nil
 	}
 	if err := cfg.CheckPlugins(); err != nil {
+		return nil, err
+	}
+	if err := checkPluginScope(cfg, allowedPaths); err != nil {
 		return nil, err
 	}
 	specs := make([]sandbox.PluginSpec, 0, len(cfg.Plugins))

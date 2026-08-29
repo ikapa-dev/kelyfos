@@ -180,7 +180,11 @@ func Schema() []Key {
 			Doc: "the plugin's name and the prefix of every tool it advertises; " +
 				"lowercase letters, digits and dashes, at most 24 characters"},
 		Key{Section: "plugin", Name: "path", Type: TypeString, Default: "", Sample: `"./plugins/browser"`,
-			Doc: "host directory packed into the read-only plugins device, resolved against this file"},
+			Doc: "host directory packed into the read-only plugins device, resolved against this file. " +
+				"It must be inside this file's own directory tree: the directory is mounted inside " +
+				"the guest, so everything in it is readable by whatever the agent runs. Pass " +
+				"--plugin-path with the same value to use one outside it, which makes it the " +
+				"operator's decision rather than the file's"},
 		Key{Section: "plugin", Name: "command", Type: TypeString, Default: "", Sample: `"node"`,
 			Doc: "what the supervisor launches, resolved inside that plugin's directory"},
 		Key{Section: "plugin", Name: "args", Type: TypeStrings, Default: "no arguments", Sample: `["server.js"]`,

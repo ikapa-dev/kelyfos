@@ -43,6 +43,13 @@ func serveMCPCmd(argv []string) error {
 	arch := fs.String("arch", sandbox.HostArch(), "guest architecture (aarch64|x86_64)")
 	policy := fs.String("policy", "", "path to the project's "+config.FileName+
 		" (default: search upward from the working directory)")
+	// The same escape hatch `kelyfos run` gets, because this door packs the
+	// same plugins device and a rule applied to one of two doors is the
+	// finding, not the fix (P7-17/F21).
+	var pluginPaths multiFlag
+	fs.Var(&pluginPaths, "plugin-path", "approve a [[plugin]] path outside the policy file's own "+
+		"directory tree. That directory is mounted read-only inside every sandbox this server "+
+		"creates. Repeatable.")
 	fs.Usage = func() {
 		fmt.Fprint(fs.Output(), `usage: kelyfos serve-mcp [flags]
 
@@ -69,7 +76,7 @@ silent fall back to no ceiling.
 		return err
 	}
 
-	srv, err := newHostServer(*arch, *policy, argv)
+	srv, err := newHostServer(*arch, *policy, pluginPaths, argv)
 	if err != nil {
 		return err
 	}
@@ -104,7 +111,11 @@ type hostServer struct {
 	arch   string
 	argv   []string
 	policy *config.Config
-	max    int
+	// pluginPaths is --plugin-path: the [[plugin]] paths outside the policy
+	// file's own tree that the operator who started this server approved
+	// (P7-17/F21). A client cannot add to it, which is the point.
+	pluginPaths []string
+	max         int
 
 	mu    sync.Mutex
 	boxes map[string]*servedBox
@@ -231,17 +242,18 @@ func (b *servedBox) close(reason string) {
 	}
 }
 
-func newHostServer(arch, policyPath string, argv []string) (*hostServer, error) {
+func newHostServer(arch, policyPath string, pluginPaths []string, argv []string) (*hostServer, error) {
 	cfg, err := resolvePolicy(policyPath)
 	if err != nil {
 		return nil, err
 	}
 	s := &hostServer{
-		arch:   arch,
-		argv:   append([]string{"kelyfos", "serve-mcp"}, argv...),
-		policy: cfg,
-		max:    defaultMaxSandboxes,
-		boxes:  map[string]*servedBox{},
+		arch:        arch,
+		argv:        append([]string{"kelyfos", "serve-mcp"}, argv...),
+		policy:      cfg,
+		pluginPaths: pluginPaths,
+		max:         defaultMaxSandboxes,
+		boxes:       map[string]*servedBox{},
 	}
 	if cfg != nil {
 		if cfg.Arch != "" {
