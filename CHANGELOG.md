@@ -73,6 +73,20 @@ reference described in the README and re-measured per release.
   coming) or on Ctrl-C (P7-9).
 
 ### Fixed
+- **The guest-side fixes in this release need a rebuilt image, and a stale one
+  gives you none of them.** Four of them live in the supervisor, which ships
+  inside `rootfs.ext4`: the confinement wrapper that a binary named
+  `kelyfos-confine` used to step around, the Landlock ruleset that now governs
+  device creation, the guarded `write_file`/`upload` open, and the vsock peer
+  check. Upgrading the `kelyfos` CLI alone leaves a machine booting the image it
+  already had, and nothing says so — `kelyfos run` does not compare the
+  supervisor's version against the CLI's. Rebuild with `make image FLAVOR=dev`
+  (and `FLAVOR=base` for that flavor), or fetch the release artifacts.
+  `dev/accept-profile.sh` is what tells you which one you have: against the
+  pre-fix image its F8 block fails, and against a rebuilt one the suite is 35 of
+  35. **`FLAVOR` is load-bearing** — the default is `base` and the output
+  directory carries no flavor, so a bare `make image` overwrites whichever image
+  is there with a base one.
 - **A failed upstream dial told the guest which address an allowlisted name
   resolved to.** The `403` for a name that resolves somewhere reserved stopped
   naming the address earlier in this release — a guest that is told that has
