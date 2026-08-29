@@ -56,7 +56,7 @@ if [ "$(uname -s)" != "Linux" ]; then
 fi
 
 # The digest of the `checks` job as this file last copied it. See "Drift" above.
-CHECKS_SHA256=1f5d28734a6ca545f9f7bf7ed929bec931ddcb5e55297811fcef7656d4c56b69
+CHECKS_SHA256=9f65e6a073b8c3b46f4bba6ac00c3a228f792dd90beb52bcd6d0ba2eaf1e32d4
 
 boot=0
 dco_base=""
