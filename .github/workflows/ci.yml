@@ -127,7 +127,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
+      # fetch-depth: 0 because the DCO step below needs the base commit to be in
+      # this clone to have a range to check. At the default depth of 1 it is not,
+      # and check-dco.sh takes its documented "no comparable base" exit — so the
+      # gate passed vacuously on every push this repository has ever made,
+      # including the one that carried 115 unsigned commits (P7-17, D73).
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
