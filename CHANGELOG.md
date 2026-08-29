@@ -506,6 +506,22 @@ reference described in the README and re-measured per release.
   base image with wget in place of curl and got the correct events in the correct order, confirming
   S2/P6-4 works correctly on real hardware and this was always a test bug.
 
+- **A request whose header block is larger than the egress proxy will parse is now refused with
+  `431` and recorded as `header_too_large`, instead of being buffered whole.** Inside a
+  TLS-terminated tunnel — the connections opened to a domain a `--secret` is bound to — every
+  request after the first was parsed with no header ceiling of any kind, and Go supplies none
+  either: a 16 MiB header line parses into memory without complaint. One guest, one long header
+  line, times the 128 connection slots, is an out-of-memory the sandbox can trigger at will, on
+  the one connection kind that is holding a credential while it buffers. The 1 MiB budget and the
+  10-second header deadline that the first request on a connection always had are now applied to
+  every request on that leg, reset per request and released before the body so a transfer is never
+  charged against a header's budget. **New refusal reason:** `header_too_large` appears in
+  `egress.attempt` events and in `kelyfos log`. It is deliberately not `bad_request` — that reason
+  says the proxy could not parse a request, and this one says it refused to, which is a different
+  thing for whoever reads the record. The connection's own summary still reports `allowed` with
+  `mode: terminated`, because it describes the connection, which policy did permit and which the
+  proxy did decrypt.
+
 ### Changed
 - **`kelyfos shim` now requires a credential, and mints one if you do not.**
   Unauthenticated was the default for three phases, with `KELYFOS_SHIM_TOKEN` as

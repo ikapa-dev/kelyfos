@@ -120,7 +120,7 @@ One outbound connection attempt, permitted or not. Written by the **host**.
 | `host` | string | requested host *(the request parsed)* |
 | `port` | integer | requested port *(the request parsed)* |
 | `allowed` | boolean | whether policy permitted it |
-| `reason` | string | not_in_allowlist, port_not_allowed, bad_request, upstream_unreachable, tls_pinning_rejected_our_ca, unsafe_resolved_address, foreign_peer *(it did not go through)* |
+| `reason` | string | not_in_allowlist, port_not_allowed, bad_request, upstream_unreachable, tls_pinning_rejected_our_ca, unsafe_resolved_address, foreign_peer, header_too_large *(it did not go through)* |
 | `mode` | string | how much the proxy could read: tunnelled (a CONNECT it relayed unopened), terminated (a secret-bound domain it decrypted), plain (ordinary HTTP, which it necessarily read in full), or direct_tls (an absolute-form https request reaching the proxy without a CONNECT, fetched itself over a real TLS connection) *(allowed)* |
 | `bytes_in` | integer | bytes read from upstream |
 | `bytes_out` | integer | bytes written upstream |

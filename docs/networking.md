@@ -359,6 +359,75 @@ hoped for.
   claim nothing was encrypted about a fetch that used real TLS, which is exactly
   the kind of understatement `plain` was added to prevent.
 
+- **A terminated connection is bounded, and one of those bounds is a ceiling
+  rather than a rule the guest can satisfy.** It is the expensive kind — the proxy has decrypted it,
+  it is holding a credential for it, and it occupies one of the 128 connection
+  slots — and until F16 nothing limited it once the `CONNECT` was answered. That
+  now includes the inner TLS handshake, which sits between the moment the raw
+  connection's own deadline is cleared and the moment the terminated leg's clock
+  exists, and so had no bound in either direction: five bytes of a truncated TLS
+  record header held a slot for as long as the guest cared to wait, measured at
+  forty-five seconds. It gets the same ten seconds a header block gets, applied
+  to both directions at once, since a handshake nobody is reading is stuck
+  exactly as surely as one nobody is sending. The
+  first request on a raw connection has always had a 1 MiB header budget and a
+  10-second header deadline; both were cleared before the terminated leg began,
+  which then parsed every further request itself with no ceiling of any kind.
+  Go supplies none either: a 16 MiB header line parses into memory without
+  complaint, measured. So, per request: the same 1 MiB budget, reset each time
+  and released before the body so a transfer is never charged to a header; and
+  the same 10-second deadline, started when the first byte of the request
+  actually arrives rather than when the proxy began waiting. The gap *between*
+  two requests is a different thing — a client thinking, not a client stalling —
+  so it gets two minutes, with ten minutes as the total a connection may spend
+  idle across its whole life, and 4096 as the most requests one may carry. A
+  header block over budget is answered `431`, recorded as `header_too_large`,
+  and the connection closes after a short bounded drain so the refusal is not
+  discarded by the reset that closing on unread data would otherwise cause.
+  `header_too_large` rather than `bad_request` on purpose: `bad_request` says
+  the proxy could not parse a request, and this says it refused to. The
+  connection's own summary still reads `allowed` with `mode: terminated`, which
+  is a statement about the connection — policy permitted it and the proxy
+  decrypted it — and stays true of one that carried three good requests before
+  the fourth was refused.
+
+  **The body has a clock too, and it is the one the first pass at this missed.**
+  Both header bounds were being cleared before the body and never re-armed, so a
+  guest could send a request declaring a megabyte and then dribble — the
+  finding's own words were "a byte a minute" — and hold the tunnel open,
+  decrypted, holding the credential and one of the 128 slots, indefinitely. The
+  body now carries a rolling ten-second bound, re-armed as bytes actually
+  arrive, so a stalled transfer is closed and a real one of any size is not.
+
+  Be exact about what that does and does not promise. A rolling stall bound
+  cannot bound throughput: a guest that dribbles just fast enough to keep
+  re-arming it is not stalling by this definition, and no per-read rule will
+  ever say otherwise. What bounds that guest is the last of the four, a **one
+  hour ceiling on the whole connection**, which does not care whether the time
+  was spent silent, slow or busy. It is a ceiling, not a rule — the guest cannot
+  satisfy it, only reach it. Every deadline this leg sets is clamped to it, and
+  that clamp is the only thing that reaches a guest which never leaves a single
+  request: the loop's own ceiling check runs *between* requests, so a body that
+  never ends never returns to it, and a guest dribbling faster than the stall
+  bound never stalls.
+
+  **The write side carries a rolling bound of its own**, and an earlier version
+  of this paragraph said the ceiling covered it. That was wrong, and untested:
+  every deadline in the proxy was a *read* deadline, so a guest that asked a
+  secret-bound origin for a large body and then simply stopped reading blocked
+  the proxy inside its own response write — where neither the ceiling's
+  top-of-loop check nor its clamp is ever reached, because both run between
+  requests. Measured with the ceiling shrunk to twelve seconds, the proxy was
+  still delivering twenty-seven seconds past it, and the cost is worse than one
+  held slot: the accept loop takes its semaphore *before* accepting, so enough
+  of these stop the proxy accepting at all, and teardown waits on them. The
+  response copy now carries the same rolling ten-second bound the request body
+  does. Ten minutes
+  of *cumulative* idle across the connection is the fourth, and it now charges
+  the time spent reading request headers as well as the gaps between requests:
+  charging only the gaps bounded silence rather than occupancy, which let 4096
+  requests each taking the full ten-second header deadline add up to eleven
+  hours of held slot while the idle budget barely moved.
 - **A credential can be bound to an endpoint rather than a domain.**
   `--secret NAME@host/path` binds it to that path on that host *exactly* — no
   subdomains, because naming an endpoint and then expanding to a family of hosts

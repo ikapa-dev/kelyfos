@@ -62,6 +62,14 @@ const (
 	ReasonBadRequest = "bad_request"
 	ReasonDialFailed = "upstream_unreachable"
 	ReasonPinned     = "tls_pinning_rejected_our_ca"
+	// ReasonHeaderTooLarge is a request whose header block was larger than
+	// this proxy will parse (F16). Distinct from ReasonBadRequest, and the
+	// distinction is the point: bad_request says the proxy COULD NOT parse the
+	// request, and what happened here is that it REFUSED TO. Those are
+	// different things for whoever reads the record — a broken client and a
+	// client sending four mebibytes of headers are not the same problem, and
+	// the reason field is the only place that difference can live.
+	ReasonHeaderTooLarge = "header_too_large"
 	// ReasonUnsafeResolvedAddr is a dial refused after resolution: the
 	// allowlisted host named a domain, and that domain resolved to loopback,
 	// link-local (169.254.0.0/16 — cloud instance metadata — included) or
@@ -293,6 +301,28 @@ type Proxy struct {
 	// DialTimeout bounds how long an upstream connection may take to establish.
 	DialTimeout time.Duration
 
+	// terminatedIdleBudget overrides maxTerminatedIdleTotal for this proxy;
+	// zero means the constant. Unexported, so it is not API — the same shape
+	// Upstream above already uses for the same reason.
+	//
+	// It exists because the version of the occupancy test that only divided
+	// two constants stayed green when the line charging the header read to the
+	// idle budget was deleted, which is the entire mechanism closing F16's
+	// eleven-hour arithmetic. Two divided constants cannot tell a connection
+	// that charges header time from one that does not; a connection given a
+	// five-second budget and headers dribbled over a second and a half can,
+	// because it serves three requests one way and eight the other (F16).
+	terminatedIdleBudget time.Duration
+
+	// terminatedConnCeiling overrides maxTerminatedConnTime for this proxy;
+	// zero means the constant. Unexported, like the budget above and for the
+	// same reason: nothing exercised the ceiling's clamp, and removing that
+	// clamp left the whole F16 suite green — the same "two divided constants"
+	// failure the idle budget already had, one level up, on the bound the
+	// documentation calls load-bearing. A ceiling is only testable if a test
+	// can reach it (F16).
+	terminatedConnCeiling time.Duration
+
 	ln   net.Listener
 	wg   sync.WaitGroup
 	once sync.Once
@@ -466,6 +496,13 @@ type headerLimitReader struct {
 	r       io.Reader
 	n       int64
 	limited bool
+	// hitLimit records that a read was cut short because the budget ran out,
+	// rather than because the peer stopped sending. Both look like io.EOF to
+	// http.ReadRequest and they deserve different answers: a truncated header
+	// is a 431 the client can act on, a vanished peer is nothing to answer at
+	// all. The terminated leg reads it; the first request on a raw connection
+	// does not, and keeps the behaviour it was tested with (F16).
+	hitLimit bool
 }
 
 func (h *headerLimitReader) Read(p []byte) (int, error) {
@@ -473,6 +510,7 @@ func (h *headerLimitReader) Read(p []byte) (int, error) {
 		return h.r.Read(p)
 	}
 	if h.n <= 0 {
+		h.hitLimit = true
 		return 0, io.EOF
 	}
 	if int64(len(p)) > h.n {

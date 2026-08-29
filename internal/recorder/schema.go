@@ -127,7 +127,7 @@ func Types() []EventType {
 				{Name: "host", Type: "string", Doc: "requested host", When: "the request parsed"},
 				{Name: "port", Type: "integer", Doc: "requested port", When: "the request parsed"},
 				{Name: "allowed", Type: "boolean", Doc: "whether policy permitted it"},
-				{Name: "reason", Type: "string", Doc: "not_in_allowlist, port_not_allowed, bad_request, upstream_unreachable, tls_pinning_rejected_our_ca, unsafe_resolved_address, foreign_peer", When: "it did not go through"},
+				{Name: "reason", Type: "string", Doc: "not_in_allowlist, port_not_allowed, bad_request, upstream_unreachable, tls_pinning_rejected_our_ca, unsafe_resolved_address, foreign_peer, header_too_large", When: "it did not go through"},
 				{Name: "mode", Type: "string", Doc: "how much the proxy could read: tunnelled (a CONNECT it relayed unopened), terminated (a secret-bound domain it decrypted), plain (ordinary HTTP, which it necessarily read in full), or direct_tls (an absolute-form https request reaching the proxy without a CONNECT, fetched itself over a real TLS connection)", When: "allowed"},
 				{Name: "bytes_in", Type: "integer", Doc: "bytes read from upstream"},
 				{Name: "bytes_out", Type: "integer", Doc: "bytes written upstream"},
