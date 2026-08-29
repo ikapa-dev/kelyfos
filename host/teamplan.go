@@ -97,8 +97,19 @@ func planTeam(cfg *config.Config) (*teamPlan, error) {
 		// here rather than in bootAgent because this is the choke point: the
 		// plan is what every consumer reads.
 		ws := a.Workspace
-		if ws != "" && !filepath.IsAbs(ws) {
-			ws = filepath.Join(filepath.Dir(cfg.Path), ws)
+		if ws != "" {
+			// And only inside the policy file's own tree (P7-17/F21,
+			// verification round). `kelyfos run` has had this rule since F21
+			// landed and this door did not, so the same file that could not
+			// name /home/you as [sandbox] workspace could still name it as
+			// [[team.agent]] workspace — packed into a guest and, at `team
+			// down`, written back over. One key, one rule, both doors.
+			if err := checkAgentWorkspaceScope(cfg.Path, a.Name, ws); err != nil {
+				return nil, err
+			}
+			if !filepath.IsAbs(ws) {
+				ws = filepath.Join(filepath.Dir(cfg.Path), ws)
+			}
 		}
 		for _, name := range expandCount(a.Name, a.Count) {
 			if seen[name] {
@@ -198,6 +209,35 @@ func checkTeamFileScope(cfg *config.Config) error {
 			cfg.Path, cfg.Forwards[0].Line, cfg.Forwards[0].Host, cfg.Forwards[0].Guest)
 	}
 	return nil
+}
+
+// checkAgentWorkspaceScope is checkWorkspaceScope for a [[team.agent]]
+// workspace (P7-17/F21, verification round).
+//
+// The rule is the same one and the *hatch is not*, which is why this has its own
+// wording rather than calling the run-side check and inheriting a fix line that
+// does not exist here. `kelyfos run --workspace <dir>` is what turns the
+// run-side refusal into the operator's own decision; `kelyfos team up` has no
+// such flag — checkTeamFileScope's own message says so in the [[plugin]] case —
+// and inventing one is a new user-facing surface with a reference row and a
+// cookbook recipe behind it, which is a feature and not this fix. So the
+// refusal names the flag that is missing rather than pointing at one that is
+// not there, and says the two things that actually work.
+func checkAgentWorkspaceScope(policyPath, agent, ws string) error {
+	root := filepath.Dir(policyPath)
+	abs := resolvePath(ws, root)
+	if insideTree(root, abs) {
+		return nil
+	}
+	return fmt.Errorf("%s: agent %q names workspace %s, which is outside %s.\n"+
+		"    A policy file describes its own project. An agent's workspace is packed into its\n"+
+		"    guest and written back over that host directory when the team comes down, so a file\n"+
+		"    that names a directory outside its own tree is asking to write somewhere it does\n"+
+		"    not describe.\n"+
+		"    `kelyfos team up` has no --workspace flag to override this with, so either move the\n"+
+		"    directory inside %s, or run that agent on its own with\n"+
+		"    `kelyfos run --workspace %s` — which is your decision rather than the file's",
+		policyPath, agent, abs, root, root, abs)
 }
 
 // checkTeamBudget refuses an agent that asks for more CPU time than the team it

@@ -311,17 +311,16 @@ func newHostServer(arch, policyPath string, pluginPaths []string, argv []string)
 // get no ceiling at all. Naming the file is the fix, and a named file that is
 // not there is an error — falling back to "no policy, no ceiling" because a
 // path was mistyped is the one behaviour this must never have (E4-5).
-func resolvePolicy(path string) (*config.Config, error) {
-	if path == "" {
-		return loadPolicy()
-	}
-	if _, err := os.Stat(path); err != nil {
-		return nil, fmt.Errorf("--policy %s: %w\n"+
-			"    a named policy that is not there is an error, because the alternative is a "+
-			"server running with no ceiling at all", path, err)
-	}
-	return config.Load(path)
-}
+//
+// It is loadPolicyAt and nothing of its own. It used to be a copy of it that
+// stopped one step short: the same missing-file refusal, in slightly different
+// words, and then a bare config.Load with no config.Trust in front of it. That
+// made this door — the one `kelyfos connect` writes into every client
+// configuration, as `serve-mcp --policy <abs>` — the door with no ownership or
+// writability check, while loadPolicyAt's own comment said every door reached a
+// policy file through it. Two spellings of one rule is how one of them ends up
+// missing a clause (P7-17/F21, verification round).
+func resolvePolicy(path string) (*config.Config, error) { return loadPolicyAt(path) }
 
 // instructions is the paragraph a model reads before it does anything, so it
 // says where the wall is and — the part stderr cannot deliver — whether there

@@ -220,9 +220,13 @@ func TestPerAgentPolicyReachesThePlan(t *testing.T) {
 		Name: "t",
 		Agents: []config.TeamAgent{{
 			Name: "master", Count: 1,
-			Allow:     []string{"api.github.com"},
-			Secrets:   []string{"GITHUB_TOKEN@api.github.com"},
-			Workspace: "/tmp/ws",
+			Allow:   []string{"api.github.com"},
+			Secrets: []string{"GITHUB_TOKEN@api.github.com"},
+			// Relative, so it is inside the policy file's own tree: an
+			// out-of-tree agent workspace is refused at plan time
+			// (P7-17/F21, verification round) and this fixture is about the
+			// four keys reaching the plan, not about that rule.
+			Workspace: "ws",
 		}},
 	})
 	if err != nil {
@@ -235,7 +239,7 @@ func TestPerAgentPolicyReachesThePlan(t *testing.T) {
 	if len(a.secrets) != 1 {
 		t.Errorf("secrets did not reach the plan: %v", a.secrets)
 	}
-	if a.workspace != "/tmp/ws" {
+	if a.workspace != "ws" {
 		t.Errorf("workspace did not reach the plan: %q", a.workspace)
 	}
 }
@@ -444,8 +448,8 @@ func TestOnlyAgentsWithNothingBakedInAreForkable(t *testing.T) {
 	}{
 		"no egress, no workspace": {config.TeamAgent{Name: "w", Count: 1}, true},
 		"granted egress":          {config.TeamAgent{Name: "w", Count: 1, Allow: []string{"example.com"}}, false},
-		"given a host directory":  {config.TeamAgent{Name: "w", Count: 1, Workspace: "/tmp/x"}, false},
-		"egress and a workspace":  {config.TeamAgent{Name: "w", Count: 1, Allow: []string{"a.com"}, Workspace: "/tmp/x"}, false},
+		"given a host directory":  {config.TeamAgent{Name: "w", Count: 1, Workspace: "x"}, false},
+		"egress and a workspace":  {config.TeamAgent{Name: "w", Count: 1, Allow: []string{"a.com"}, Workspace: "x"}, false},
 	}
 	for what, c := range cases {
 		plan, err := planFrom(t, &config.Team{Name: "t", Agents: []config.TeamAgent{c.a}})
@@ -543,7 +547,7 @@ func TestForkPlanIsStableAndComplete(t *testing.T) {
 		{Name: "master", Count: 1, Allow: []string{"a.com"}},
 		{Name: "alpha", Count: 3, Resources: config.AgentResources{MemMiB: 256}},
 		{Name: "beta", Count: 2, Resources: config.AgentResources{MemMiB: 512}},
-		{Name: "keeper", Count: 1, Workspace: "/tmp/k"},
+		{Name: "keeper", Count: 1, Workspace: "k"},
 	}})
 	if err != nil {
 		t.Fatal(err)

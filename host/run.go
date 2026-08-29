@@ -1079,32 +1079,41 @@ func loadPolicy() (*config.Config, error) { return loadPolicyAt("") }
 // A named file that is not there is an error rather than a silent fall back to
 // "no policy, no ceiling" — the same rule serve-mcp follows (E4-1), and for the
 // same reason: somebody who named a file is relying on it.
+//
+// **This is the only function in the repository that calls config.Load on a
+// policy path, and TestF21_NothingLoadsAPolicyOutsideTheGate pins that at
+// zero other callers.** It was not, and the comment below used to say it was:
+// serve-mcp's resolvePolicy and sessions.go's frozenPolicy each called
+// config.Load themselves, so `kelyfos connect` — which writes
+// `serve-mcp --policy <abs>` into every client configuration it touches — sent
+// most users through a door with no ownership or writability check at all. F7's
+// own argument, one file over: a rule enforced at some call sites is a rule the
+// next call site will miss, and the way to stop missing it is to make the
+// compiler ask.
 func loadPolicyAt(named string) (*config.Config, error) {
-	if named != "" {
-		if _, err := os.Stat(named); err != nil {
-			return nil, fmt.Errorf("--policy %s: %w\n"+
-				"    a named policy that is not there is an error, never a run with no ceiling",
-				named, err)
+	path, discovered := named, false
+	if named == "" {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return nil, nil
 		}
-		// discovered=false: naming a file is the decision the ownership rule
-		// exists to ask for. The writability half still applies (P7-17/F21).
-		if err := config.Trust(named, false); err != nil {
-			return nil, err
+		found, ok := config.Find(cwd)
+		if !ok {
+			return nil, nil
 		}
-		return config.Load(named)
-	}
-	cwd, err := os.Getwd()
-	if err != nil {
-		return nil, nil
-	}
-	path, found := config.Find(cwd)
-	if !found {
-		return nil, nil
+		path, discovered = found, true
+	} else if _, err := os.Stat(named); err != nil {
+		return nil, fmt.Errorf("--policy %s: %w\n"+
+			"    a named policy that is not there is an error, never a run with no ceiling",
+			named, err)
 	}
 	// Every door in this CLI reaches a policy file through here, which is why
-	// the check is here and not at the eight callers — the same argument F7
-	// makes about snapshotDir (P7-17/F21).
-	if err := config.Trust(path, true); err != nil {
+	// the check is here and not at the callers — the same argument F7 makes
+	// about snapshotDir (P7-17/F21).
+	//
+	// discovered=false for a named file: naming a file is the decision the
+	// ownership rule exists to ask for. The writability half still applies.
+	if err := config.Trust(path, discovered); err != nil {
 		return nil, err
 	}
 	return config.Load(path)

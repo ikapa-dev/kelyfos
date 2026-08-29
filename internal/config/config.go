@@ -720,7 +720,7 @@ func trustOwner(path string, fi os.FileInfo, discovered bool, what string) error
 			"    Name it explicitly with --policy if it is yours", path)
 	}
 	me := os.Getuid()
-	if uid == me || uid == 0 {
+	if ownedByCaller(uid, me) {
 		return nil
 	}
 	prefix := "the policy file"
@@ -733,3 +733,18 @@ func trustOwner(path string, fi os.FileInfo, discovered bool, what string) error
 		"    or your environment variables.\n"+
 		"    Name it explicitly with --policy if you meant to use it", prefix, path, uid, me)
 }
+
+// ownedByCaller is the ownership decision, on explicit inputs.
+//
+// Separated from trustOwner for the reason privateGroup was separated from
+// isPrivateGroup one screen above: the interesting cases are the ones an
+// ordinary machine cannot stage. A test can chown nothing without root, so
+// until this was pulled out the whole uid half of Trust rested on code no test
+// could reach — trustOwner could have been `return nil` and every existing test
+// would still have passed (P7-17/F21, verification round).
+//
+// root is trusted deliberately. A policy file in a root-owned directory of a
+// shared machine is administration, not somebody leaving a file where you will
+// walk over it, and refusing it would refuse /etc-style installations while
+// closing nothing: a uid that can write as root does not need a kelyfos.toml.
+func ownedByCaller(uid, me int) bool { return uid == me || uid == 0 }

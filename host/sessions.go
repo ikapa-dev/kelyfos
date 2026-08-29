@@ -122,6 +122,17 @@ the session finally ends.
 	if err := refuseEgressPause(st, *name); err != nil {
 		return err
 	}
+	// And the policy, here rather than beside the write that freezes it, for the
+	// same reason (P7-17/F21, verification round). This used to read
+	// `if cfg, err := loadPolicy(); err == nil && cfg != nil`, which is a
+	// refusal swallowed: a policy file this user is not allowed to trust made
+	// the pause silently freeze *nothing*, and `resume` then had no ceiling to
+	// check the frozen machine against. A refused policy is an error that stops
+	// the operation, never a nil that skips the check downstream of it.
+	policy, err := loadPolicy()
+	if err != nil {
+		return err
+	}
 	dir := namedDir(*name)
 	if _, err := os.Stat(namedMeta(dir)); err == nil {
 		return fmt.Errorf("a session called %q is already stored (%s). Remove it with "+
@@ -154,15 +165,15 @@ the session finally ends.
 	// a different project's file.
 	meta := NamedMeta{Name: *name, Sandbox: st.ID, Session: st.RecordSession(),
 		PausedAt: time.Now(), Kelyfos: Version, WorkspaceHost: st.WorkspaceHost}
-	if cfg, err := loadPolicy(); err == nil && cfg != nil {
-		blob, err := os.ReadFile(cfg.Path)
+	if policy != nil {
+		blob, err := os.ReadFile(policy.Path)
 		if err != nil {
 			return fmt.Errorf("freeze the policy: %w", err)
 		}
 		if err := os.WriteFile(namedPolicy(dir), blob, 0o600); err != nil {
 			return err
 		}
-		meta.PolicyPath = cfg.Path
+		meta.PolicyPath = policy.Path
 	}
 	blob, err := json.MarshalIndent(meta, "", "  ")
 	if err != nil {
@@ -824,7 +835,18 @@ final shutdown the pause deferred.
 	if err != nil {
 		return err
 	}
-	current, _ := loadPolicy()
+	// Not `current, _ :=` (P7-17/F21, verification round). A discarded error
+	// here is the finding reopened through the resume door: a policy file this
+	// user is not allowed to trust left `current` nil, frozenFitsCurrent
+	// returns at its first line when current is nil, and the frozen ceiling —
+	// which is whatever the machine was paused under — was then applied with
+	// nothing checking it against the project's own. The refusal has to stop
+	// the resume, because skipping it is the thing the refusal exists to
+	// prevent.
+	current, err := loadPolicy()
+	if err != nil {
+		return err
+	}
 	var differences []string
 	if frozen != nil {
 		differences = policyDifference(frozen, current)
@@ -941,14 +963,21 @@ final shutdown the pause deferred.
 
 // frozenPolicy parses the policy stored beside a paused session, or returns nil
 // when the pause found none to freeze.
+//
+// Through loadPolicyAt like every other door, rather than through a config.Load
+// of its own (P7-17/F21, verification round). This copy is written 0600 by
+// `kelyfos sessions pause` and lives under the cache root, so the ownership half
+// is not what it is here for — the writability half is. This file decides the
+// ceiling the resumed machine runs under, and a frozen policy somebody else can
+// rewrite is a ceiling somebody else chose.
 func frozenPolicy(dir string) (*config.Config, error) {
 	path := namedPolicy(dir)
 	if _, err := os.Stat(path); err != nil {
 		return nil, nil
 	}
-	cfg, err := config.Load(path)
+	cfg, err := loadPolicyAt(path)
 	if err != nil {
-		return nil, fmt.Errorf("the frozen policy does not parse: %w", err)
+		return nil, fmt.Errorf("the frozen policy beside this session: %w", err)
 	}
 	return cfg, nil
 }

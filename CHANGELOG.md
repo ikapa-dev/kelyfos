@@ -73,6 +73,31 @@ reference described in the README and re-measured per release.
   coming) or on Ctrl-C (P7-9).
 
 ### Fixed
+- **`kelyfos serve-mcp --policy` did not check the policy file it was given, and
+  it is the file every MCP client is pointed at.** The ownership and writability
+  rules a discovered `kelyfos.toml` gets were applied in one function that
+  `kelyfos run`, `team up`, `fork`, `snapshot restore` and the rest go through —
+  and `serve-mcp` had a near-copy of that function which did the missing-file
+  refusal and then read the file with nothing in front of it. `kelyfos connect`
+  writes `serve-mcp --policy <path>` into every client configuration it touches,
+  so the door most people enter by was the door with no check on it. The frozen
+  policy a `kelyfos resume` runs under had the same gap. Both now go through the
+  one function, and nothing else in the repository reads a policy file.
+- **A policy refusal could be silently ignored by `pause` and `resume`.**
+  `kelyfos sessions pause` froze *no* policy at all when the file was refused —
+  so the resume that followed had no ceiling to restore — and `kelyfos resume`
+  read the refusal as "this project has no policy", which skipped the check that
+  a paused machine's frozen ceiling still fits the project's current one. A
+  refused policy is now an error that stops the operation.
+- **A `[[team.agent]] workspace` outside the policy file's own tree was
+  accepted.** `kelyfos run` has refused an out-of-tree `[sandbox] workspace`
+  since v1.1, because that directory is written back over when the run ends; an
+  agent's workspace is written back the same way at `kelyfos team down` and was
+  not checked. It is now refused at plan time, so `kelyfos team up`, `kelyfos
+  team graph` and the `team_up` MCP tool all get it. `kelyfos team up` has no
+  `--workspace` flag to override it with, and the refusal says so — move the
+  directory inside the project, or run that agent on its own with
+  `kelyfos run --workspace`.
 - **A sandbox whose flight recorder had failed kept running, unrecorded.** The
   recorder latches on its first failed append and refuses everything after it,
   so the record stopped — but nothing outside the recorder watched that, so the

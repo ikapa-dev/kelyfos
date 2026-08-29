@@ -492,7 +492,26 @@ file another local user left at `/tmp/kelyfos.toml` for anyone who runs
 `kelyfos run` beneath it, got all of it on a plain invocation.
 
 This is the shape `git` fixed with `safe.directory` and `sudo` fixed with the
-ownership rule on `sudoers`, and the answer here is the same shape:
+ownership rule on `sudoers`, and the answer here is the same shape.
+
+**Where the check lives, and where it did not.** Every rule below is applied in
+one function, `host/run.go`'s `loadPolicyAt`, which is the only place in the
+repository that reads a policy file at all — the compiler-checked version of F7's
+argument that a rule enforced at some call sites is one the next call site will
+miss. That sentence was written when F21 landed and it was **not true until the
+verification round**: `kelyfos serve-mcp`'s own `--policy` handling and the frozen
+copy a `kelyfos resume` runs under each read the file themselves, with no check in
+front of either. serve-mcp is not a minor door — `kelyfos connect` writes
+`serve-mcp --policy <path>` into every client configuration it touches, so the
+way most people reach KelyfOS was the way with no ownership or writability rule
+on it. Both now go through the one function, and a test walks the repository and
+fails if a second reader ever appears.
+
+A refusal also **stops the operation** rather than reading as "no policy". Two
+doors used to discard it: `kelyfos sessions pause` froze nothing at all when the
+policy was refused, and `kelyfos resume` treated the refusal as an absent
+policy — which skipped the check that the frozen machine's ceiling still fits the
+project's current one, because there was nothing left to compare against.
 
 - **A discovered policy file must be owned by you, or by root.** A file
   somebody else left in a parent directory is refused by name, with `--policy`
@@ -516,6 +535,17 @@ ownership rule on `sudoers`, and the answer here is the same shape:
   sides before the comparison — a lexical check is walked around by a link
   inside the project, which is the same lesson F18 taught the extractor one
   layer down.
+- **A `[[team.agent]] workspace` outside that tree is refused too**, and it was
+  not until the verification round. `kelyfos run` had the rule and `kelyfos team
+  up` did not, so the same file that could not name `/home/you` as `[sandbox]
+  workspace` could still name it as an agent's — packed into that agent's guest
+  and written back over the host directory when the team comes down. The rule is
+  now in `planTeam`, which every door that resolves a team reads (`team up`,
+  `team graph`, and `team_up` over MCP). The **hatch is different**, and the
+  refusal says so rather than pointing at a flag that does not exist: `kelyfos
+  team up` has no `--workspace`, so the two answers are to move the directory
+  inside the project or to run that agent on its own with
+  `kelyfos run --workspace`.
 - **What the file reaches is printed before anything boots**: its path, the
   workspace, every plugin directory, and every secret by name with the domain it
   is bound to. Values are never read here and never printed. `kelyfos run`,
