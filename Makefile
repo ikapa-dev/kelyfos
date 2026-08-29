@@ -382,6 +382,12 @@ test: ## Run the test suite (unit tests; integration tests skip without an image
 	go vet ./...
 	go test ./...
 
+# The committed ci.yml, run here. A clean clone of $(REF) (default HEAD) is
+# made, act executes the job in Docker, the clone is removed. Uncommitted
+# edits are never part of the evidence. See dev/ci-act.sh.
+ci-act: ## Run ci.yml's checks job in Docker via act, on a clean clone of REF (default HEAD)
+	@dev/ci-act.sh $(REF)
+
 test-integration: linux-only cli ## Boot a real microVM and exercise the guest
 	go test -count=1 -v -timeout 15m -run 'TestConcurrent|TestOrphans|TestExec|TestMCP' ./internal/sandbox/
 

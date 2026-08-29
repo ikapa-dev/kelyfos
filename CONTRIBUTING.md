@@ -127,6 +127,17 @@ FUZZTIME=10s`, the hostile-input corpus with `KELYFOS_HOSTILE=required`,
 `tools/check-plan.py` over `PLAN.html`, `make docs` compared against the
 committed reference, and every cookbook recipe extracted and parsed.
 
+To run that job itself rather than a description of it, `make ci-act` executes
+`ci.yml`'s `checks` job in Docker with [act](https://github.com/nektos/act),
+against a clean clone of `HEAD` (or `make ci-act REF=<commit>`), so an
+uncommitted edit in your checkout cannot leak into the result. It needs Docker
+and `act` (`brew install act`). Its summary is what a Progress Log row cites
+when no hosted run exists for the commit. Two differences from the hosted
+runner, stated so nobody rediscovers them: the container runs as root, and on
+Apple silicon it is `linux/arm64`. The `build` and `boot` jobs need a machine
+Docker on macOS is not; `limactl shell kelyfos-dev -- dev/ci-local.sh --boot`
+in the Lima VM is their stand-in.
+
 The guest toolchain — Buildroot, the kernel, Firecracker and Go — is pinned in
 [`versions.mk`](versions.mk), and Go modules in `go.mod`. Bumping one means
 changing the version and its checksum in the same commit, with the reason in the
