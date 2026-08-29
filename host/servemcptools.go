@@ -8,11 +8,13 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/p4r4n0rm4l/KelyfOS/internal/config"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/denial"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/egress"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/mcp"
+	"github.com/p4r4n0rm4l/KelyfOS/internal/proto"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/sandbox"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/sessionpolicy"
@@ -380,7 +382,7 @@ func (s *hostServer) boot(opts sandbox.Options, traceparent string) (*servedBox,
 
 	// A sandbox raised through this door carries the project's plugins, exactly
 	// as one raised by `kelyfos run` does (E4-6).
-	if opts.Plugins, err = packPlugins(s.policy, id); err != nil {
+	if opts.Plugins, err = packPlugins(s.policy, id, s.pluginPaths); err != nil {
 		return nil, err
 	}
 	if opts.Plugins != nil {
@@ -557,7 +559,7 @@ func (s *hostServer) toolExec(raw json.RawMessage) *mcp.CallToolResult {
 	if err != nil {
 		_ = b.rec.Append(recorder.Event{
 			Type: recorder.TypeCommandExit, Call: call, DurationMS: time.Since(started).Milliseconds(),
-			Error: &recorder.EvError{Kind: "internal", Message: err.Error()},
+			Error: &recorder.EvError{Kind: "internal", Message: recordedErrorMessage(err)},
 		})
 		return mcp.Errorf("sandbox_exec: %v", err)
 	}
@@ -656,4 +658,50 @@ func (b *servedBox) wireAudit() {
 	// nil for the printer: this door has no terminal of the user's to print a
 	// refusal to, so it is recorded and not narrated (docs/networking.md §5).
 	wireProxyAudit(b.proxy, b.rec, "", nil)
+}
+
+// maxRecordedErrorMessage bounds what a host-side error may write into the
+// flight recorder.
+//
+// Routed here by the record workstream's review. sandbox.Exec's error text went
+// into EvError.Message verbatim, and one of that function's paths is
+// `fmt.Errorf("guest sent an unknown stream %q", proto.SafeText(resp.Stream))`
+// (internal/sandbox/exec.go:135) — resp.Stream is a guest-chosen string, and
+// proto.SafeText bounds its character class, NOT its length. A guest answering
+// with a stream name of several megabytes therefore wrote several megabytes of
+// its own choosing into the chain. That is F12's shape on a field nobody had
+// looked at, and the erase sink fingerprinting it fixes an erased chain while
+// leaving an un-erased one exactly as it was.
+//
+// 200 bytes because the thing being described is a protocol failure: a stream
+// name is "stdout", "stderr" or "exit", a dial error is a sentence, and
+// anything longer is the guest talking rather than the host.
+const maxRecordedErrorMessage = 200
+
+// recordedErrorMessage is that bound, applied with SafeText and with a marker
+// when it truncates.
+//
+// SafeText as well as the clamp, because only one of sandbox.Exec's error paths
+// calls it today and "the next one will remember" is what this whole review is
+// about. Saying how much was dropped is the RENDER checklist's own rule —
+// output bounded, and saying so when it truncates — applied to the record.
+func recordedErrorMessage(err error) string {
+	if err == nil {
+		return ""
+	}
+	msg := proto.SafeText(err.Error())
+	if len(msg) <= maxRecordedErrorMessage {
+		return msg
+	}
+	const marker = "… (%d bytes elided)"
+	head := maxRecordedErrorMessage - len(fmt.Sprintf(marker, len(msg)))
+	if head < 0 {
+		head = 0
+	}
+	// Cut on a rune boundary: a clamp that splits a multi-byte character
+	// produces the invalid UTF-8 the sanitiser above just finished removing.
+	for head > 0 && !utf8.RuneStart(msg[head]) {
+		head--
+	}
+	return msg[:head] + fmt.Sprintf(marker, len(msg)-head)
 }
