@@ -332,7 +332,33 @@ func (p *Proxy) terminate(client net.Conn, host string, port int, bound []*Secre
 			p.OnWithheld(bound[0].Name, host, why)
 		}
 
+		// Waiting for the ORIGIN is idle time too, and until this it was the
+		// one kind that went uncharged (P7-17/B2, review round). The budget
+		// above charges the gap between requests and the reading of the header
+		// block; RoundTrip sits between the two and was counted by neither, so
+		// "ten minutes of cumulative idle across the connection" was true of
+		// everything except the wait that can last the longest. D74 raised
+		// ResponseHeaderTimeout to ten minutes on the stated ground that the
+		// idle budget already bounded this — and it did not, which made
+		// ResponseHeaderTimeout the only bound on it and D74's own reasoning
+		// false. Charging it is what makes the sentence true.
+		//
+		// Charged after the fact rather than clamped: a wait already under way
+		// cannot be shortened without cutting a legitimate slow completion in
+		// half, and a cumulative budget's job is to stop the connection doing
+		// it AGAIN. So one request may spend up to ResponseHeaderTimeout on a
+		// silent origin, and the connection is then out of budget and does not
+		// get a second.
+		//
+		// touch() for the same reason it is called on every other kind of
+		// progress: a proxy waiting on an origin is a sandbox doing something,
+		// and `--idle-timeout` reaps on Proxy.LastActive(). Without it the very
+		// call D74 exists to permit — a model API taking minutes to its first
+		// byte — can have the sandbox reaped out from under it.
+		upstreamStart := time.Now()
 		resp, err := p.upstream().RoundTrip(req)
+		idleSpent += time.Since(upstreamStart)
+		p.touch()
 		// The event is owed to the credential having left, not to an answer
 		// coming back. Reporting it only on success made the record miss every
 		// credential the peer took and then reset on — a failure ordinary
@@ -476,18 +502,26 @@ const (
 // credential, and an origin that accepts, completes TLS and then says nothing
 // would otherwise hold the slot and the credential indefinitely.
 //
-// Its VALUE is maxTerminatedIdleTotal rather than the thirty seconds F15 first
-// wrote (D74). This is the credentialed model-API path, and a non-streaming
-// completion that takes longer than thirty seconds to its first byte is
-// ordinary rather than hostile — that request failed with "timeout awaiting
-// response headers" and nothing in the tree said why the number was thirty.
-// Removing the field instead would have been defensible here, where the rolling
-// stall bound, the cumulative idle budget and the connection ceiling already
-// close everything a guest can drive with it, and indefensible on the forward
-// transport, which has none of that machinery. So both carry the same number,
-// and it is the one the idle budget already enforces: a connection that has
-// waited ten minutes for a first byte has spent that budget and notAfter closes
-// it regardless.
+// **It is the only bound on that wait**, and saying otherwise was this
+// change's own mistake (D74 as amended, P7-17/B2 review round). The first
+// version of this comment said the raise to ten minutes only made the
+// transport "agree with a bound already in force" — the cumulative idle budget
+// and the connection ceiling. Measured, neither reached it: the budget charged
+// the gap between requests and the header read and not the RoundTrip between
+// them, and notAfter clamps to the one-hour ceiling and never fires during a
+// wait in which no I/O happens on the guest connection at all. A probe on a
+// two-second idle budget was answered after six seconds.
+//
+// terminate now charges the RoundTrip to the budget, which makes the sentence
+// true going forward: one request may spend up to this long on a silent origin,
+// and the connection is then out of budget and does not get a second. This
+// value is what bounds the FIRST such wait, and it is a deliberate choice about
+// how long an allowlisted origin may hold a goroutine, a socket, a slot and —
+// here — a credential. Ten minutes rather than thirty seconds because this is
+// the credentialed model-API path and a non-streaming completion that takes
+// longer than thirty seconds to its first byte is ordinary rather than hostile.
+// The forward transport carries the same number and has none of the machinery
+// above, which is why removing the field was rejected there.
 var terminatedTransport = &http.Transport{
 	DisableCompression:  true,
 	ForceAttemptHTTP2:   false,

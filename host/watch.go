@@ -679,10 +679,11 @@ func (m *watchModel) render() string {
 		proto.SafeText(m.d.Image)+" · "+proto.SafeText(m.d.Arch), state)
 
 	status := barStyle.Render(fmt.Sprintf(
-		"uptime %s · boot %d ms · %d commands (%d failed) · %d files · egress %d ok / %d blocked · %d secret uses",
+		"uptime %s · boot %d ms · %d commands (%d failed) · %d files · egress %d ok / %d blocked%s · %d secret uses",
 		time.Since(m.started).Truncate(time.Second), m.d.BootMS,
 		m.d.Session.Commands, m.d.Session.Failed, m.d.Session.Files,
-		m.d.Session.EgressOK, m.d.Session.EgressBlocked, m.d.Session.Secrets))
+		m.d.Session.EgressOK, m.d.Session.EgressBlocked, foreignKnocks(m.d.ForeignKnocks),
+		m.d.Session.Secrets))
 
 	resources := m.resourceLane()
 
@@ -733,10 +734,10 @@ func (m *watchModel) teamView(width, height int) string {
 		titleStyle.Render("KelyfOS"), proto.SafeText(m.session), n, state)
 	agentTot := m.d.AgentTotals()
 	status := barStyle.Render(fmt.Sprintf(
-		"uptime %s · %d messages · %d refused · %d commands (%d failed) · egress %d ok / %d blocked",
+		"uptime %s · %d messages · %d refused · %d commands (%d failed) · egress %d ok / %d blocked%s",
 		time.Since(m.started).Truncate(time.Second),
 		m.d.Messages, m.d.AllRefusals(), agentTot.Commands, agentTot.Failed,
-		agentTot.EgressOK, agentTot.EgressBlocked))
+		agentTot.EgressOK, agentTot.EgressBlocked, foreignKnocks(m.d.ForeignKnocks)))
 	budget := m.teamBudgetLine()
 
 	// Chrome: header, status, budget, rule, lane headers (2), rule, ticker
@@ -898,8 +899,14 @@ func fitToBudget(lines []string, budget int, note string) []string {
 // terminal, the refusals section — the whole point of "now what" — was the
 // first thing cut, along with the edge table and the pane-switching hint.
 func (m *watchModel) mapPane(width, height int) string {
+	// Sanitised like the other three headers. This pane and the sheet were
+	// missed when the first two were fixed, which is the same "one renderer
+	// cleaned and the next one not" shape the fix was about — found by the
+	// review counting the headers (P7-17/C, review round). m.session is either
+	// what the user typed or a Session field read out of a state file on disk,
+	// which is a chain from anywhere.
 	header := fmt.Sprintf("%s  map — declared topology  session %s",
-		titleStyle.Render("KelyfOS"), m.session)
+		titleStyle.Render("KelyfOS"), proto.SafeText(m.session))
 
 	var graphBody string
 	var notes []string
@@ -1001,7 +1008,7 @@ func (m *watchModel) mapPane(width, height int) string {
 // itself.
 func (m *watchModel) sheetPane(width, height int) string {
 	header := fmt.Sprintf("%s  agent sheet  session %s",
-		titleStyle.Render("KelyfOS"), m.session)
+		titleStyle.Render("KelyfOS"), proto.SafeText(m.session))
 
 	names := m.order
 	if len(names) == 0 {
@@ -1130,4 +1137,20 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// foreignKnocks renders the "and something else on this machine knocked" tail
+// of a status line, or nothing when nothing did (P7-17/C, review round).
+//
+// Its own clause rather than part of the blocked count, because it is not the
+// sandbox's traffic — internal/digest keeps it out of Counters for the same
+// reason internal/sandbox keeps the F9 nftables rule out of blocked_packets.
+// It is shown at all because those refusals DO render in the timeline as
+// BLOCKED rows, and a summary that counts none of them leaves a reader with
+// three rows above a zero and nothing to reconcile them with.
+func foreignKnocks(n int) string {
+	if n == 0 {
+		return ""
+	}
+	return fmt.Sprintf(" · %d refused from elsewhere on this host", n)
 }

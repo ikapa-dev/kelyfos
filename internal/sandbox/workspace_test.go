@@ -412,6 +412,16 @@ func TestARemovalThatUnlocksADirectoryPutsItsSetgidBack(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chmod(root, 0o700) })
 
+	// Root ignores directory permissions, so the removal this test forces to
+	// FAIL succeeds instead and the restore path it exists to check never runs
+	// (P7-17/C, found by running the real ci.yml under nektos/act, which runs
+	// its steps as root where a GitHub runner does not). A skip is the honest
+	// answer: the fixture cannot be staged here.
+	if os.Geteuid() == 0 {
+		t.Skip("running as root, which ignores the directory mode this fixture uses to force " +
+			"a refused removal; there is nothing to measure")
+	}
+
 	_ = removeUnlocking(dir)
 
 	info, err := os.Lstat(dir)

@@ -20,6 +20,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"github.com/p4r4n0rm4l/KelyfOS/internal/denial"
 )
@@ -145,10 +146,48 @@ type Attempt struct {
 	// guest's own blocked-domain records. recorder.Event already has a peer
 	// field, which is where this lands.
 	Peer string
-	// ResolvedAddr is where an allowlisted name actually resolved to, on a
-	// ReasonUnsafeResolvedAddr refusal and nothing else. It goes to the
-	// recorder and never into the body the guest reads (F14).
+	// ResolvedAddr is where an allowlisted name actually resolved to. Set on a
+	// ReasonUnsafeResolvedAddr refusal, and — since P7-17/C — on a
+	// ReasonDialFailed one too, where Go's error carried the address and the
+	// guest used to be handed it. It goes to the recorder and never into the
+	// body the guest reads (F14).
 	ResolvedAddr string
+	// Detail is what went wrong, for the operator, on a refusal whose Reason is
+	// a category rather than an explanation (P7-17/C, review round).
+	//
+	// ReasonDialFailed is `upstream_unreachable` for a refused connection, a
+	// timed-out one, a name that resolved to nothing, a TLS failure and a
+	// response-header timeout alike, and the 502 the guest reads deliberately
+	// names none of them. Withholding the address from the GUEST was the
+	// finding; withholding the reason from everybody was this fix's own
+	// overshoot — the message says "the reason is in the flight recorder" and
+	// until this there was no reason in it. It lands in the event's error
+	// field, which is redacted by an erasure like every other free-text field
+	// and is bounded here rather than trusted to be short.
+	Detail string
+}
+
+// maxAttemptDetail bounds Attempt.Detail. A Go network error is a sentence; an
+// error that is not is not made more useful by being longer, and this reaches
+// the flight recorder, which pays for every byte forever.
+const maxAttemptDetail = 200
+
+// detailOf renders an error for Attempt.Detail: bounded, and through the same
+// sanitiser every other host-side string on this path goes through.
+func detailOf(err error) string {
+	if err == nil {
+		return ""
+	}
+	d := err.Error()
+	if len(d) > maxAttemptDetail {
+		// On a rune boundary, so the record never carries half of one.
+		d = d[:maxAttemptDetail]
+		for len(d) > 0 && !utf8.ValidString(d) {
+			d = d[:len(d)-1]
+		}
+		d += "…"
+	}
+	return d
 }
 
 // DefaultPorts is what every sandbox in this product gets: the two ports the

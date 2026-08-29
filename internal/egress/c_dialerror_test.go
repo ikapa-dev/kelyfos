@@ -5,6 +5,7 @@ import (
 	"net"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 // P7-17/C — the 502 handed the guest the address an allowlisted name resolved
@@ -50,6 +51,14 @@ func TestC_TheDialFailureBodyNamesNoAddress(t *testing.T) {
 	if !strings.Contains(body, "example.com") {
 		t.Errorf("the 502 does not name the host the guest asked for:\n%s", body)
 	}
+	// And it must not promise the guest a diagnostic that is not there. The
+	// first version said "the reason is in the flight recorder" when the
+	// recorder held one reason code — upstream_unreachable — for a refused
+	// connection, a timeout, a name that resolved to nothing, a TLS failure and
+	// a response-header timeout alike (P7-17/C, review round).
+	if strings.Contains(body, "The reason is in the flight recorder") {
+		t.Error("the 502 promises a diagnostic; check the record actually carries one")
+	}
 	if !strings.Contains(body, "502") {
 		t.Errorf("the answer is not a 502:\n%s", body)
 	}
@@ -65,6 +74,34 @@ func TestC_TheDialFailureBodyNamesNoAddress(t *testing.T) {
 	}
 	if got[0].Reason != ReasonDialFailed {
 		t.Errorf("reason = %q, want %q", got[0].Reason, ReasonDialFailed)
+	}
+	// The reason the message points at. ReasonDialFailed is a category, and
+	// without this the operator has the category and nobody has the reason —
+	// which is what withholding err.Error() from the guest cost until the
+	// review found it (P7-17/C, review round).
+	if !strings.Contains(got[0].Detail, "connection refused") {
+		t.Errorf("the chain carries no detail for a refused dial: Detail = %q", got[0].Detail)
+	}
+}
+
+// Detail is bounded, because it reaches the flight recorder, which pays for
+// every byte forever — and it is cut on a rune boundary, so a record never
+// carries half of one.
+func TestC_TheDialFailureDetailIsBounded(t *testing.T) {
+	long := errors.New(strings.Repeat("é", 400))
+	got := detailOf(long)
+	if len(got) > maxAttemptDetail+4 {
+		t.Errorf("detail is %d bytes, over the %d-byte bound", len(got), maxAttemptDetail)
+	}
+	if !utf8.ValidString(got) {
+		t.Errorf("detail was cut mid-rune: %q", got)
+	}
+	if detailOf(nil) != "" {
+		t.Errorf("a nil error produced a detail: %q", detailOf(nil))
+	}
+	// A short one is untouched.
+	if got := detailOf(errors.New("connection refused")); got != "connection refused" {
+		t.Errorf("an ordinary error was altered: %q", got)
 	}
 }
 

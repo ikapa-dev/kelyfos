@@ -150,6 +150,19 @@ type hostServer struct {
 	// stderr is a line no assertion can reach, and "it prints something" is the
 	// half of this that a reader of the record cannot check for themselves.
 	errw io.Writer
+	// dispatched is called with a tool's name if and only if dispatchTool ran
+	// for it. Nil in every real run.
+	//
+	// A test seam, with the reason F16's two injection points give for theirs:
+	// the property is not otherwise observable. "The refusal happens BEFORE
+	// anything is dispatched" is the whole of A2's guarantee, and moving the
+	// check to AFTER the dispatch returns a byte-identical result to the
+	// client — so a test that reads only the answer cannot tell a server that
+	// refused from one that booted a machine, ran a command, spent a
+	// credential and then apologised. The review moved it and the entire suite
+	// stayed green (P7-17/A2, review round). Every tool whose dispatch has a
+	// visible side effect needs KVM to have one.
+	dispatched func(tool string)
 
 	wmu sync.Mutex // one writer, because tool calls may be concurrent
 	out *json.Encoder
@@ -516,7 +529,16 @@ func (s *hostServer) callTool(p *mcp.CallToolParams) *mcp.CallToolResult {
 	// has its own chain and its own watcher, and those chains are intact; what
 	// is lost is the record of the CALLS, and refusing every further call is
 	// what makes that loss bounded rather than ongoing.
-	if res := s.refuseIfUnrecorded(); res != nil {
+	//
+	// Three tools are exempt, and D76 has the argument: the sentence above is
+	// exactly why sandbox_stop, team_down and sandbox_list should still be
+	// allowed. A stop IS recorded — in the sandbox's own chain, the one this
+	// comment calls intact — and refusing it leaves an agent that has just been
+	// told its calls are unrecorded unable to stop, retire or even enumerate
+	// the machines it started. The refusal maximised the window it exists to
+	// bound. The test is whether a call makes the unrecorded window larger or
+	// smaller.
+	if res := s.refuseIfUnrecorded(p.Name); res != nil {
 		return res
 	}
 	// One place, so no tool can be added that skips the record — the same
@@ -529,6 +551,9 @@ func (s *hostServer) callTool(p *mcp.CallToolParams) *mcp.CallToolResult {
 }
 
 func (s *hostServer) dispatchTool(p *mcp.CallToolParams) *mcp.CallToolResult {
+	if s.dispatched != nil {
+		s.dispatched(p.Name)
+	}
 	args := p.Arguments
 	if len(args) == 0 {
 		args = json.RawMessage("{}")

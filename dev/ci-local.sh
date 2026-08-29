@@ -16,16 +16,27 @@
 # worth trusting in the meantime.
 #
 # What is verbatim and what is not. Every `run:` block of the `checks` job is
-# copied as written. Three things cannot be: the runner's `apt-get install
+# copied as written. FOUR things cannot be: the runner's `apt-get install
 # e2fsprogs` becomes a check that mke2fs and debugfs are already here (the
 # hostile-corpus job treats their absence as a failure, and so does this); the
 # DCO range, which the workflow takes from the push event, is taken from
 # `origin/main..HEAD` — the commits a push would add — or from the first
-# argument; and the `keep any crashing input` upload becomes a listing, because
-# a crasher written to testdata/fuzz/ on this machine is already kept. Unlike
-# the runner, which stops at the first failing step, this runs every step and
-# reports all of them, so one run says everything that is wrong rather than the
-# first thing.
+# argument; the `keep any crashing input` upload becomes a listing, because a
+# crasher written to testdata/fuzz/ on this machine is already kept; and the
+# vsock modprobe is `sudo -n` behind a `/sys/module` check rather than the
+# workflow's bare `sudo modprobe`, because a runner has passwordless sudo and a
+# developer's box may not — so a box that would prompt SKIPS the module where CI
+# loads it, and the two runs then give the F3 fixtures different coverage. The
+# step says so when it happens. Unlike the runner, which stops at the first
+# failing step, this runs every step and reports all of them, so one run says
+# everything that is wrong rather than the first thing.
+#
+# What the pin does NOT cover, stated because the header above is about drift
+# and this is the half it cannot see: the digest is over `ci.yml`'s text alone.
+# Gutting a step HERE leaves it unchanged and every step green, and bumping the
+# constant without re-aligning the steps silences a real drift. The pin catches
+# the workflow moving out from under this file; nothing catches this file moving
+# out from under itself.
 #
 # What it does not reproduce. The `build` job (the Buildroot image) and the
 # `boot` job (a real x86_64 microVM under KVM, the host seccomp filter read
@@ -118,8 +129,11 @@ step_gofmt() {
 step_vet() { go vet ./...; }
 
 # internal/vsock's two end-to-end F3 fixtures need a vsock transport. The
-# workflow modprobes it; here it is loaded the same way, and a machine that
-# cannot is left to the fixtures' own skip (P7-17/C).
+# workflow modprobes it; here it is loaded with `sudo -n`, which is NOT the same
+# way — a box that would prompt for a password skips the module silently where
+# CI loads it, and the F3 end-to-end fixtures then skip here and run there. Said
+# out loud in the step's own output rather than left for somebody to discover
+# from a differing skip count (P7-17/C).
 step_vsock() {
   if [ -d /sys/module/vsock_loopback ]; then
     echo "vsock_loopback already loaded"

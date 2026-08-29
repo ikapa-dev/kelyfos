@@ -163,9 +163,9 @@ one can find none and run with no ceiling at all.
 	path := c.Path(root, home)
 
 	if *remove {
-		return removeFrom(c, path, home)
+		return removeFrom(c, path, root, home)
 	}
-	if err := writeTo(c, path, home, cmd); err != nil {
+	if err := writeTo(c, path, root, home, cmd); err != nil {
 		return err
 	}
 	if *check {
@@ -248,7 +248,16 @@ func underHome(path, home string) bool {
 	// Neither reading is a superset of the other, so the file is home-scoped if
 	// either says so. That is the same "never widen" rule writeConfigAtomic
 	// already applies to a mode it finds.
-	if insideTree(home, litAbs(path, home)) {
+	//
+	// The literal reading is answered LEXICALLY, on both sides (P7-17/B1,
+	// review round). insideTree resolves its root and not its path, which is
+	// right for a path that has already been resolved and wrong for one that
+	// deliberately has not: with $HOME itself behind a symlink — /home on a
+	// mounted volume, or a KELYFOS_CONNECT_HOME pointed through one — it
+	// compared a resolved root against an unresolved path and answered false,
+	// so the whole literal half quietly stopped working on exactly the layouts
+	// where it is hardest to notice.
+	if lexicallyInside(home, litAbs(path, home)) {
 		return true
 	}
 	return insideTree(home, resolvePath(path, home))
@@ -263,11 +272,32 @@ func litAbs(p, root string) string {
 	return filepath.Clean(p)
 }
 
-// maxConfigLinkHops bounds resolveLeafLink. Real dotfiles managers make one hop
-// and occasionally two; anything past this is a loop or an attempt at one, and
-// a refusal is the right answer either way. The number is the same order as the
-// kernel's own 40 and deliberately smaller: this walk exists to find a file a
-// person meant to edit, not to survive an adversary.
+// lexicallyInside is insideTree with neither side resolved: purely about the
+// names. It exists so that "the path the user wrote" can be judged as the
+// string the user wrote, which is the whole point of asking that question
+// separately from where it resolves to.
+func lexicallyInside(root, p string) bool {
+	rel, err := filepath.Rel(filepath.Clean(root), p)
+	if err != nil {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+// maxConfigLinkHops is how many links resolveLeafLink will follow. Real
+// dotfiles managers make one and occasionally two; past this it is a loop or an
+// attempt at one, and a refusal is the right answer either way. The number is
+// the same order as the kernel's own 40 and deliberately smaller: this walk
+// exists to find a file a person meant to edit, not to survive an adversary.
+//
+// It is a count of LINKS FOLLOWED and the loop is written so that it is
+// (P7-17/B1, review round). The first version was `hop < maxConfigLinkHops`
+// around a body that follows one link and then fell through to the error, so N
+// permitted N−1: a chain of exactly eight was refused by a message that said
+// "more than eight", and both docs/integrating.md and the commit message
+// repeated the wrong boundary. It also refused chains the kernel resolves
+// happily, which is a capability regression against the os.WriteFile behaviour
+// this is restoring.
 const maxConfigLinkHops = 8
 
 // resolveLeafLink is the file a write has to land on: what a leaf symlink
@@ -281,7 +311,9 @@ const maxConfigLinkHops = 8
 // write that only ever needed its last name followed.
 func resolveLeafLink(path string) (string, error) {
 	seen := path
-	for hop := 0; hop < maxConfigLinkHops; hop++ {
+	// <= so that maxConfigLinkHops links are followed and the (N+1)th is what
+	// is refused, which is what the constant and the message both say.
+	for hop := 0; hop <= maxConfigLinkHops; hop++ {
 		fi, err := os.Lstat(path)
 		if err != nil || fi.Mode()&os.ModeSymlink == 0 {
 			// Not there, or not a link. Either way this is where the write goes;
@@ -306,15 +338,39 @@ func resolveLeafLink(path string) (string, error) {
 
 // configModes is the file and directory mode for a path, before the existing
 // file is consulted.
-func configModes(path, home string) (file, dir os.FileMode) {
-	if underHome(path, home) {
+//
+// THREE readings, not two (P7-17/B1, review round): the name as written, the
+// name resolved, and the destination the write actually lands on. The strictest
+// wins. The third is the one the review found missing, and it is F5's own hole
+// reached through the write-through B1 adds: a project-local path that is a
+// DANGLING link into $HOME cannot be resolved, so resolvePath falls back to the
+// deepest existing ancestor — the project — and both of the first two readings
+// answer "project-local" while the file is created under $HOME at 0644. A
+// dangling link is not an edge case here; it is the state B1 deliberately added
+// support for.
+func configModes(path, dest, home string) (file, dir os.FileMode) {
+	if underHome(path, home) || underHome(dest, home) {
 		return 0o600, 0o700
 	}
 	return createMode() & 0o666, 0o777 &^ processUmask()
 }
 
-func writeTo(c client, path, home string, cmd command) error {
-	existing, err := os.ReadFile(path)
+func writeTo(c client, path, project, home string, cmd command) error {
+	// The destination first, before anything is read or created (P7-17/B1,
+	// review round). Three things depend on knowing it this early: the scope
+	// rule below refuses on it, configModes reads it, and the loop refusal in
+	// resolveLeafLink is only reachable at all if it runs before the
+	// os.ReadFile — a genuine cycle returns ELOOP from the kernel, and the
+	// carefully written message never got a chance to say anything.
+	dest, err := resolveLeafLink(path)
+	if err != nil {
+		return err
+	}
+	if err := checkConfigScope(path, dest, project, home); err != nil {
+		return err
+	}
+
+	existing, err := os.ReadFile(dest)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
@@ -325,11 +381,24 @@ func writeTo(c client, path, home string, cmd command) error {
 	if err != nil {
 		return fmt.Errorf("%s: %w", path, err)
 	}
-	mode, dirMode := configModes(path, home)
-	if err := os.MkdirAll(filepath.Dir(path), dirMode); err != nil {
+	mode, dirMode := configModes(path, dest, home)
+	// The DESTINATION's directory, and it is resolved too. Making the named
+	// path's parent is what the ordinary case needs and it is not enough for
+	// the case B1 exists for: `~/.codex` may itself be a dangling link into a
+	// dotfiles repository that has not been cloned — stow's default is to fold
+	// the tree and link the directory rather than the file — and MkdirAll on a
+	// dangling symlink fails with "file exists" while MkdirAll on a target
+	// nobody created fails with "no such file or directory". Both were
+	// reachable, and both were the scenario the commit message described as
+	// working.
+	destDir, err := resolveLeafLink(filepath.Dir(dest))
+	if err != nil {
 		return err
 	}
-	if err := writeConfigAtomic(path, updated, mode); err != nil {
+	if err := os.MkdirAll(destDir, dirMode); err != nil {
+		return err
+	}
+	if err := writeConfigAtomic(dest, destDir, updated, mode); err != nil {
 		return err
 	}
 	verb := "wrote"
@@ -339,6 +408,47 @@ func writeTo(c client, path, home string, cmd command) error {
 	fmt.Printf("%s %s\n", verb, path)
 	fmt.Printf("  %s %s\n", cmd.Bin, strings.Join(cmd.Args, " "))
 	return nil
+}
+
+// checkConfigScope refuses a project-local configuration path whose leaf
+// symlink lands outside both the project and the user's home (D75, P7-17/B1,
+// review round).
+//
+// B1 makes `kelyfos connect` follow a leaf symlink again, which is right for a
+// dotfiles-managed file and wrong for a file a REPOSITORY chose. Four of the
+// six clients write a project-local path — .mcp.json, .cursor/mcp.json,
+// .vscode/mcp.json, .junie/mcp/mcp.json — and any of those can be committed as
+// a symlink. Following it then puts the write wherever the repository pointed,
+// which is the property docs/threat-model.md states as "reading a stranger's
+// project should not be able to break the tool that is supposed to contain it".
+// It is the same shape F21 already refuses for a [[plugin]] path, whose own
+// test is named TestF21_ASymlinkOutOfTheTreeDoesNotGetAPluginIn.
+//
+// Narrow on purpose, and D75 has the argument. A path the operator named under
+// their OWN home may resolve anywhere: $HOME is theirs, a dotfiles repository
+// at /srv/dotfiles is an ordinary layout, and nobody else planted that link.
+// Only the project-local half is bounded, and it is bounded to the two places
+// the operator is answering for.
+//
+// No escape hatch, and none is needed: the two answers that work take no flag.
+func checkConfigScope(path, dest, project, home string) error {
+	if path == dest {
+		return nil // not a link; there is nothing to have been redirected
+	}
+	if underHome(path, home) {
+		return nil // the operator's own home, and their own link
+	}
+	if underHome(dest, home) || lexicallyInside(project, dest) ||
+		insideTree(project, resolvePath(dest, project)) {
+		return nil
+	}
+	return fmt.Errorf("%s is a symlink to %s, which is outside both this project (%s) and your "+
+		"home directory.\n"+
+		"    kelyfos connect follows a symlink so that a dotfiles-managed configuration keeps\n"+
+		"    working, and a project-local file is one a repository can choose. Writing through\n"+
+		"    this one would put the entry somewhere neither you nor this project describes.\n"+
+		"    Point the link inside the project or inside your home directory, or remove it and\n"+
+		"    let kelyfos write the file itself", path, dest, project)
 }
 
 // writeConfigAtomic replaces path with body, through a sibling temp file, an
@@ -354,29 +464,40 @@ func writeTo(c client, path, home string, cmd command) error {
 // created it 0600 itself, must not have that undone by `kelyfos connect` —
 // this command is a guest in that file, which is the same rule the JSON writers
 // already follow for its contents.
-func writeConfigAtomic(path string, body []byte, mode os.FileMode) error {
-	// Through a leaf symlink rather than over it (P7-17/B1). The os.WriteFile
-	// this replaced followed one; a rename does not, so moving to a rename
-	// silently changed the answer for every dotfiles-managed configuration — a
-	// ~/.codex/config.toml that stow or chezmoi links into a repository was
-	// replaced by a plain file, the repository copy stopped being what the
-	// client reads, and the next `stow -R` would put the link back over the
-	// entry `kelyfos connect` had just written.
-	//
-	// The atomic replacement then happens in the TARGET's directory, because a
-	// rename cannot cross a filesystem and a dotfiles repository often is one.
-	dest, err := resolveLeafLink(path)
-	if err != nil {
-		return err
-	}
-	path = dest
+//
+// One limit on that phrase, stated rather than left to be discovered: a rename
+// needs write permission on the DIRECTORY, not on the file, so a target the
+// operator deliberately made read-only is replaced anyway and comes back at the
+// mode it had. os.WriteFile refused that; the atomic replacement F5 introduced
+// does not, for plain paths since F5 and now across a symlink too. Kept, because
+// the alternative — refusing to update a configuration whose file bit says
+// read-only while its directory says otherwise — is a refusal nobody would be
+// able to act on, and the mode the file comes back with is its own.
+// path is the DESTINATION — already resolved through any leaf symlink by the
+// caller — and dir is the directory the temp file is made in, which is that
+// destination's own directory and is likewise already resolved.
+//
+// Through a leaf symlink rather than over it (P7-17/B1). The os.WriteFile this
+// replaced followed one; a rename does not, so moving to a rename silently
+// changed the answer for every dotfiles-managed configuration — a
+// ~/.codex/config.toml that stow or chezmoi links into a repository was
+// replaced by a plain file, the repository copy stopped being what the client
+// reads, and the next `stow -R` would put the link back over the entry
+// `kelyfos connect` had just written.
+//
+// The resolution moved OUT of this function to writeTo in the review round, so
+// that one destination is computed once and the mode rule, the scope rule and
+// the write all agree about it. Two places resolving the same path separately
+// is how they end up disagreeing, which is what the review found: the mode was
+// decided on the name and the write landed on the target.
+func writeConfigAtomic(path, dir string, body []byte, mode os.FileMode) error {
 	if fi, err := os.Stat(path); err == nil {
 		mode &= fi.Mode().Perm()
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
 
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".kelyfos-connect-*")
+	tmp, err := os.CreateTemp(dir, ".kelyfos-connect-*")
 	if err != nil {
 		return err
 	}
@@ -411,15 +532,24 @@ func writeConfigAtomic(path string, body []byte, mode os.FileMode) error {
 	// but a comment that overstates is how the next reader stops checking.
 	// Best-effort: some filesystems refuse to sync a directory, and failing a
 	// write that has already landed would be the worse answer.
-	if dir, err := os.Open(filepath.Dir(path)); err == nil {
-		_ = dir.Sync()
-		_ = dir.Close()
+	if d, err := os.Open(dir); err == nil {
+		_ = d.Sync()
+		_ = d.Close()
 	}
 	return nil
 }
 
-func removeFrom(c client, path, home string) error {
-	existing, err := os.ReadFile(path)
+func removeFrom(c client, path, project, home string) error {
+	// The same resolution and the same scope rule the write takes, because
+	// --remove is a write: it rewrites the file without the kelyfos entry.
+	dest, err := resolveLeafLink(path)
+	if err != nil {
+		return err
+	}
+	if err := checkConfigScope(path, dest, project, home); err != nil {
+		return err
+	}
+	existing, err := os.ReadFile(dest)
 	if errors.Is(err, os.ErrNotExist) {
 		fmt.Printf("%s does not exist; nothing to remove\n", path)
 		return nil
@@ -435,8 +565,8 @@ func removeFrom(c client, path, home string) error {
 		fmt.Printf("%s does not mention kelyfos; nothing to remove\n", path)
 		return nil
 	}
-	mode, _ := configModes(path, home)
-	if err := writeConfigAtomic(path, updated, mode); err != nil {
+	mode, _ := configModes(path, dest, home)
+	if err := writeConfigAtomic(dest, filepath.Dir(dest), updated, mode); err != nil {
 		return err
 	}
 	fmt.Printf("removed kelyfos from %s\n", path)

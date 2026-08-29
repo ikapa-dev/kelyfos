@@ -271,9 +271,11 @@ func (p *Proxy) reportDialFailure(w io.Writer, host string, port int, err error)
 	// no such host. The address itself stays in the chain, in ResolvedAddr, for
 	// the operator.
 	p.report(Attempt{Host: host, Port: port, Reason: ReasonDialFailed,
-		ResolvedAddr: dialFailureAddr(err)})
+		ResolvedAddr: dialFailureAddr(err), Detail: detailOf(err)})
 	writeStatus(w, http.StatusBadGateway,
-		"kelyfos: this proxy could not reach "+host+". The reason is in the flight recorder")
+		"kelyfos: this proxy could not reach "+host+". Why is in the flight recorder and on "+
+			"the operator's terminal; it is deliberately not here, because a failure message "+
+			"names the address a name resolved to")
 }
 
 // dialFailureAddr digs the address out of a failed dial, for the recorder.
@@ -366,15 +368,26 @@ func newForwardTransport() *http.Transport {
 		// first wrote (D74). Thirty seconds was never argued and never
 		// documented, and it is below the time a non-streaming completion from
 		// a model API legitimately takes to its first byte — which is the
-		// traffic this proxy exists to broker. Ten minutes is the bound already
-		// in force on the terminated leg: a connection that has waited that
-		// long for a first byte has spent F16's whole cumulative idle budget
-		// and would be closed by notAfter regardless, so this makes the
-		// transport agree with the leg it runs on rather than fail earlier for
-		// a different reason. It still bounds only the wait for the first byte
-		// of the response head, never the body behind it. Both transports carry
-		// the same number, deliberately: a third bound nobody can hold in their
-		// head is the shape this project has refused since the `jailed` bug.
+		// traffic this proxy exists to broker.
+		//
+		// **On THIS transport it is the only bound on that wait**, and D74's
+		// first version said otherwise (amended, P7-17/B2 review round). The
+		// terminated leg has F16's machinery and this one has none: forwardHTTP
+		// re-issues with context.Background, writes the response straight at
+		// the client with no bodyClock, and handle has already cleared the read
+		// deadline. So ten minutes here is a deliberate choice about how long an
+		// allowlisted origin may hold a goroutine, two sockets and one of the
+		// 128 connection slots — not a number some other bound was going to
+		// enforce anyway.
+		//
+		// It still bounds only the wait for the first byte of the response
+		// head. The body behind it is bounded on the terminated leg by the
+		// rolling stall clock and, on this one, by nothing — which is stated
+		// rather than implied, because the first version of this comment
+		// borrowed the terminated leg's guarantee for both. Both transports
+		// carry the same number, deliberately: a third bound nobody can hold in
+		// their head is the shape this project has refused since the `jailed`
+		// bug.
 		ResponseHeaderTimeout: maxTerminatedIdleTotal,
 	}
 }

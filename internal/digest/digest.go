@@ -228,6 +228,15 @@ type Digest struct {
 	TimedOut   string
 	OOMKills   int
 	Terminated int // egress.attempt allowed with mode "terminated"
+	// ForeignKnocks is how many times something on the HOST that is not this
+	// guest connected to the proxy's port and was refused (P7-17/C).
+	//
+	// Its own number and not part of Counters, because Counters is the
+	// sandbox's receipt and this is not the sandbox's traffic. It exists so
+	// that the timeline and the summary agree: those refusals render as BLOCKED
+	// rows, and leaving them out of every count made three rows sit above
+	// "egress blocked: 0" with nothing to reconcile them.
+	ForeignKnocks int
 
 	// Session is every agentless event's contribution. Totals is Session
 	// plus every agent's — the number report has always shown, because its
@@ -433,9 +442,10 @@ type Snapshot struct {
 	Ended      string `json:"ended,omitempty"`
 	EndReason  string `json:"end_reason,omitempty"`
 
-	TimedOut   string `json:"timed_out,omitempty"`
-	OOMKills   int    `json:"oom_kills,omitempty"`
-	Terminated int    `json:"terminated,omitempty"`
+	TimedOut      string `json:"timed_out,omitempty"`
+	OOMKills      int    `json:"oom_kills,omitempty"`
+	Terminated    int    `json:"terminated,omitempty"`
+	ForeignKnocks int    `json:"foreign_knocks,omitempty"`
 
 	// Session is every agentless event's contribution; Totals adds every
 	// agent's on top — see Digest.Totals.
@@ -505,7 +515,8 @@ func (d *Digest) Snapshot() Snapshot {
 		Image: d.Image, Arch: d.Arch, Kelyfos: d.Kelyfos, Kernel: d.Kernel, Supervisor: d.Supervisor,
 		BootMS: d.BootMS, Started: d.Started, Ended: d.Ended, EndReason: d.EndReason,
 		TimedOut: d.TimedOut, OOMKills: d.OOMKills, Terminated: d.Terminated,
-		Session: d.Session, Totals: d.Totals(),
+		ForeignKnocks: d.ForeignKnocks,
+		Session:       d.Session, Totals: d.Totals(),
 		Receipt: d.Receipt, Policy: d.Policy, Topology: d.Topology,
 		Secrets: d.Secrets, SecretsTruncated: d.SecretsTruncated,
 		PeerOnly: d.PeerOnly, PeerOnlyTruncated: d.PeerOnlyTruncated,
@@ -751,6 +762,14 @@ func (d *Digest) Absorb(e recorder.Event) *Entry {
 		// The Domains exclusion below happens by construction, because such an
 		// event carries no host; this one has to be written down.
 		if e.Reason == reasonForeignPeer {
+			// Counted, on its own line, rather than counted as the guest's or
+			// not counted at all (P7-17/C, review round). Excluding it from
+			// EgressBlocked left the timeline and the summary disagreeing about
+			// the same events — three rows reading BLOCKED above "egress
+			// blocked: 0" — which is the mirror image of the number this
+			// exclusion was written to remove. A reader who can see both has to
+			// be able to reconcile them.
+			d.ForeignKnocks++
 			break
 		}
 		count(agent, &d.Session, func(c *Counters) {

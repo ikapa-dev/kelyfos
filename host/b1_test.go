@@ -65,7 +65,7 @@ func TestB1_ALeafSymlinkIsWrittenThroughRatherThanReplaced(t *testing.T) {
 	path := c.Path(project, home)
 	b1Link(t, real, path)
 
-	if err := writeTo(c, path, home, f5Cmd()); err != nil {
+	if err := writeTo(c, path, project, home, f5Cmd()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -111,7 +111,7 @@ func TestB1_ALinkOutOfHomeStillGetsTheHomeMode(t *testing.T) {
 		t.Fatal("a path the user named under $HOME was not treated as being under it because " +
 			"it resolves elsewhere — that is F5 inverted")
 	}
-	if err := writeTo(c, path, home, f5Cmd()); err != nil {
+	if err := writeTo(c, path, project, home, f5Cmd()); err != nil {
 		t.Fatal(err)
 	}
 	fi, err := os.Stat(real)
@@ -169,7 +169,7 @@ func TestB1_ADanglingLeafLinkIsCreatedThroughRatherThanReplaced(t *testing.T) {
 	path := c.Path(project, home)
 	b1Link(t, real, path)
 
-	if err := writeTo(c, path, home, f5Cmd()); err != nil {
+	if err := writeTo(c, path, project, home, f5Cmd()); err != nil {
 		t.Fatal(err)
 	}
 	if !isLink(t, path) {
@@ -202,7 +202,7 @@ func TestB1_ARelativeLeafLinkIsFollowedFromItsOwnDirectory(t *testing.T) {
 	path := c.Path(project, home)
 	b1Link(t, "real.toml", path)
 
-	if err := writeTo(c, path, home, f5Cmd()); err != nil {
+	if err := writeTo(c, path, project, home, f5Cmd()); err != nil {
 		t.Fatal(err)
 	}
 	got, err := os.ReadFile(real)

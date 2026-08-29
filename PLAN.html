@@ -8000,6 +8000,31 @@ after:
         F19&rsquo;s state-file digest in <code>session.start</code> (depth on a closed finding); the ten
         &ldquo;Also noted&rdquo; items; P7-14 and P7-15, both of which make <code>make fuzz</code> red on this
         machine for reasons that predate this task.</td></tr>
+    <tr><td class="mono">2026-08-29</td><td class="mono">P7-17</td>
+        <td><b>Correction to two rows of this log: five proxy construction sites, not six.</b> The F9 row
+        of 2026-08-29 says <code>Proxy.Peer</code> is &ldquo;set from <code>Network.GuestAddr()</code> at
+        all six construction sites&rdquo;, and its evidence block says the review&rsquo;s instruction
+        &ldquo;implies the wiring lives near <code>Network</code>&hellip; all six sites are in
+        <code>host/</code> and <code>shim/</code>&rdquo;. There are <b>five</b>:
+        <code>host/run.go:382</code>, <code>host/team.go:939</code>,
+        <code>host/servemcptools.go:426</code>, <code>host/snapshot.go:546</code> and
+        <code>shim/shim.go:551</code>. Appended rather than edited, per &sect;8 rule 6.
+        <br>The code and the test have said five all along &mdash;
+        <code>internal/egress/proxy.go:252</code>&rsquo;s comment enumerates the five by file, and
+        <code>TestF9_EveryProxyConstructionArmsThePeerCheck</code> asserts <code>sites &lt; 5</code> and
+        logs the number it found. Only the prose disagreed, in this log and in one comment above that
+        test, which called <code>shim/shim.go</code> the &ldquo;sixth&rdquo;. That comment is corrected
+        in <code>54cd807</code>; these rows are not, because they are the record of what was written on
+        the day.
+        <br>Worth stating rather than fixing silently: the number was never load-bearing. The test counts
+        what it finds and fails if it finds fewer than five, so a miscount in prose could not have made
+        the guarantee weaker &mdash; it could only have made a reader trust a list instead of the walk,
+        which is what that test exists to stop.</td>
+        <td class="mono"><code>grep -rn 'egress.Proxy{' --include='*.go' .</code> in non-test code &rarr;
+        exactly the five above (plus eight <code>testdata/f9evasion/</code> fixtures, which are text the
+        go tool never compiles).<br>
+        <code>go test ./internal/egress/ -run TestF9_Every -v</code> &rarr;
+        <code>peer_test.go:652: 5 Proxy construction sites, all armed</code></td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
@@ -9465,7 +9490,112 @@ after:
         and would be closed by <code>notAfter</code> regardless, so this makes the transport agree with the leg it
         runs on rather than fail earlier for a different reason. The number is written into
         <code>docs/networking.md</code> and <code>CHANGELOG.md</code> rather than living only in a struct
-        literal, which is the half of F15 that was missing.</td></tr>
+        literal, which is the half of F15 that was missing.
+        <br><b class="blocked">[AMENDED 2026-08-29, the same day, by this row&rsquo;s own adversarial review.
+        The paragraph above is wrong about the fact it rests on, and the ruling is kept for a different
+        reason.]</b> &ldquo;A connection that spends ten minutes waiting for a first byte has spent the whole
+        idle budget and would be closed by <code>notAfter</code> regardless&rdquo; was <b>false in both
+        halves</b>, and the review measured it rather than argued it. The budget charged the gap between
+        requests (<code>terminate.go</code>&rsquo;s <code>idleSpent += time.Since(waitStart)</code>) and the
+        reading of the header block, and <code>RoundTrip</code> sits between the two and was charged by neither;
+        <code>notAfter</code> clamps to the one-hour <i>connection</i> ceiling, not to the idle budget, and
+        during the wait no I/O happens on the guest connection at all, so no deadline can fire. A probe on a
+        two-second idle budget was answered <b>after six seconds</b>, and a three-second connection ceiling did
+        not release the goroutine, the socket or the slot while the proxy waited six.
+        <br>So <code>ResponseHeaderTimeout</code> was the <b>only</b> bound on that wait, and raising it 30s
+        &rarr; 10 min multiplied the hold twentyfold rather than aligning it with anything. Two changes rather
+        than a retraction: <code>terminate</code> now <b>charges the <code>RoundTrip</code> to the idle
+        budget</b>, which makes the sentence true going forward &mdash; one request may spend up to this long on
+        a silent origin and the connection is then out of budget and does not get a second &mdash; and every
+        place that stated the old reasoning says instead that this value <i>is</i> the bound, chosen
+        deliberately, on the forward leg with nothing else behind it at all. The ruling stands: thirty seconds
+        breaks a legitimate non-streaming completion on the one leg that carries a credential, and that is a
+        real product defect, which the false justification did not need to be true for.
+        <br>Recorded here rather than by rewriting the paragraph, because what a decision was argued from is
+        part of what it is, and this one was argued from something that was not so.</td></tr>
+    <tr><td class="mono">D75</td><td class="mono">2026-08-29</td>
+        <td><b><code>kelyfos connect</code> follows a leaf symlink again (P7-17/B1) &mdash; and a
+        project-local configuration path that resolves outside both the project and <code>$HOME</code>
+        is now refused by name.</b> Logged before implementation (&sect;8 rule 5) and because B1&rsquo;s
+        own adversarial review found that the fix as the brief specifies it re-opens a property
+        <code>docs/threat-model.md</code> states: &ldquo;reading a stranger&rsquo;s project should not be
+        able to break the tool that is supposed to contain it&rdquo;. Four of the six clients write a
+        <b>project-local</b> file &mdash; <code>.mcp.json</code>, <code>.cursor/mcp.json</code>,
+        <code>.vscode/mcp.json</code>, <code>.junie/mcp/mcp.json</code> &mdash; and a repository may
+        commit any of those as a symlink. Following it, which is exactly what B1 restores, then puts the
+        write wherever the repository chose.
+        <br><b>The rule, and it is narrow on purpose.</b> A path the operator named under their own
+        <code>$HOME</code> may resolve anywhere: <code>$HOME</code> is theirs, a dotfiles repository at
+        <code>/srv/dotfiles</code> or <code>/opt/dotfiles</code> is an ordinary layout, and nobody else
+        planted that link. A path that is <b>project-local</b> may resolve inside the project or inside
+        <code>$HOME</code> &mdash; the two places the operator is answering for &mdash; and anywhere else
+        is refused with the file, the destination and the two things that work. That is the same shape
+        F21 already gives a <code>[[plugin]] path</code>, whose own test is named
+        <code>TestF21_ASymlinkOutOfTheTreeDoesNotGetAPluginIn</code>: a symlink inside the project
+        pointing out of it is how a lexical check is walked around.
+        <br><b>And the mode is decided on the destination as well as on the name.</b> The same review
+        found the inversion B1 was written to close reappearing through the write it adds: a
+        <i>dangling</i> project-local link into <code>$HOME</code> cannot be resolved, so both readings
+        of <code>underHome</code> answer &ldquo;project-local&rdquo; while the file is created under
+        <code>$HOME</code> at <code>0644</code>. Three readings now, not two &mdash; the name as written,
+        the name resolved, and the destination &mdash; and the strictest wins.</td>
+        <td>Refusing rather than following is the smaller change and it is what the rest of this product
+        already does with a path a file chose: F21 refuses an out-of-tree workspace and an out-of-tree
+        plugin directory, each with a named escape hatch. There is no hatch here and none is added,
+        because the two answers that work need no flag &mdash; point the link inside, or write the file
+        directly &mdash; and a <code>--i-mean-it</code> on a command whose whole job is to write four
+        lines of JSON would be more surface than the case is worth.
+        <br>Scoped to the project-local half deliberately. The wider rule &mdash; refuse any destination
+        outside the project and <code>$HOME</code> &mdash; would refuse a dotfiles repository that does
+        not live under <code>$HOME</code>, which is a real layout and an operator&rsquo;s own decision,
+        and this project has spent two rounds learning that a false refusal costs a person their session
+        (F17&rsquo;s <code>node_modules</code> case, F18&rsquo;s case-folding round). The narrow rule
+        closes the case an adversary can reach and leaves the case only the operator can.
+        <br>Not a breaking change under <code>docs/compatibility.md</code> &sect;1: the behaviour being
+        removed shipped for the first time in this same unreleased cycle, in
+        <code>7b398cd</code>, and no release has ever followed a symlink out of a project on this
+        path &mdash; before F5 the write followed the link, but F5 itself stopped following it, and B1
+        is what proposes to start again. Nothing a user has depended on is changing. A
+        <code>### Fixed</code> entry says what is refused all the same, because a refusal somebody meets
+        without warning is the defect this row exists to avoid.</td></tr>
+    <tr><td class="mono">D76</td><td class="mono">2026-08-29</td>
+        <td><b>A <code>serve-mcp</code> whose own audit chain has failed refuses every tool call except
+        the three that only make the situation smaller</b> &mdash; <code>sandbox_stop</code>,
+        <code>team_down</code> and <code>sandbox_list</code>. Logged because it narrows a refusal
+        introduced two commits earlier in this same unreleased cycle (P7-17/A2), on its own adversarial
+        review&rsquo;s argument, and &sect;8 rule 5 asks for the reasoning before the change rather than
+        inside it.
+        <br>A2 made the server refuse every tool call once its own chain latches, because a call nobody
+        records is one the server does not make. The review agreed with the rule and showed the
+        implementation cutting against its own justification. The comment says &ldquo;each machine has
+        its own chain and its own watcher, and those chains are intact; what is lost is the record of the
+        CALLS&rdquo; &mdash; and on three tools that is exactly why they should be allowed. A
+        <code>sandbox_stop</code> <i>is</i> recorded: the sandbox&rsquo;s own chain gets its
+        <code>session.end</code>, in the chain the comment calls intact. Refusing it leaves an agent that
+        has just been told its calls are unrecorded unable to stop, retire or even enumerate the machines
+        it started, which burn memory until a person kills the process. <b>The refusal maximised the
+        window it exists to bound.</b>
+        <br>So: the three tools that can only reduce what is running stay open, and the nine that create,
+        execute, read, write, snapshot, restore, fork or raise a team stay refused. The operator&rsquo;s
+        line also says how many sandboxes are still up and names them, which
+        <code>len(s.boxes)</code> was always able to answer.</td>
+        <td>The test is whether a call, run unrecorded on this lane, makes the unrecorded window
+        <i>larger</i> or <i>smaller</i>. Everything that starts work makes it larger and stays refused.
+        <code>sandbox_stop</code> and <code>team_down</code> end work and are recorded where it matters
+        &mdash; in the machine&rsquo;s own chain, which is what an auditor reads to learn what a sandbox
+        did. <code>sandbox_list</code> starts nothing at all and is how an operator or an agent finds out
+        what is still running; refusing a read that changes nothing buys nothing and costs the one
+        question worth asking at that moment.
+        <br>The cost is stated rather than hidden: those three calls are absent from the outward
+        <code>mcp.host.*</code> lane, so a reader of a serve-mcp session whose chain broke sees the
+        machines stop in their own chains and does not see the calls that stopped them. That is a
+        smaller and more legible hole than a set of machines nobody can stop, and the chain&rsquo;s last
+        line &mdash; the recorder&rsquo;s own epitaph, naming the event that was lost &mdash; already
+        tells a reader that everything after it is missing. An auditor who reaches that line knows to
+        stop trusting the lane; an operator whose agent cannot shut anything down has no equivalent
+        signal and no way out.
+        <br>Not a compatibility question: the refusal being narrowed shipped for the first time in
+        <code>d1fee33</code>, in this cycle, and no release has ever had it.</td></tr>
     <!-- Claude Code: append rows above this line. -->
   </table>
 </section>

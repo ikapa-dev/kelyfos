@@ -477,21 +477,31 @@ remember. Either fix alone would have drifted: an exemption is what tells
 the next writer of a field that it is a safe place to put a string.
 `error.kind` — the fixed enumeration an auditor reads — is still exempt.
 
-**`error.kind` is exempt on a fact, and until v1.1 it was exempt on a
-condition.** It is a fixed enumeration — `internal`, `tool`, `timeout` and the
-rest — and an auditor reads it as one, which is why an erasure keeps it: it says
-*what kind of thing went wrong* without saying what was in it. For one release
-the host did not enforce that. `host/exec.go` copied the guest supervisor's
-`kind` verbatim off the wire, nothing checked it against the protocol's own set,
-and guest-chosen text in that field survived an erasure. The page said so rather
-than promising the property.
+**`error.kind` is exempt on a fact now, and it used to be exempt on a
+condition.** It is meant to be a fixed enumeration — `bad_request`, `not_found`,
+`denied`, `timeout`, `killed`, `io`, `internal` — and an auditor reads it as one,
+which is why an erasure keeps it: it says *what kind of thing went wrong*
+without saying what was in it. For one release the host did not enforce that.
+`host/exec.go` copied the guest supervisor's `kind` verbatim off the wire,
+nothing checked it against the protocol's own set, and guest-chosen text in that
+field survived an erasure. The page said so rather than promising the property.
 
-It is enforced now, at the place the note named as the right one: the edge. Every
-frame the host decodes from a guest goes through `Sanitize`, and an error whose
-`kind` is not one of the seven is clamped to `internal` with the guest's own
-string moved into `message` — which *is* redacted. Nothing diagnostic is lost;
-it is moved to the field that is allowed to hold it. So `error.kind` survives an
-erasure unchanged, and what survives is one of seven values the host chose.
+It is enforced at the edge now, which is where the note said the fix belonged.
+Every frame the host decodes from a guest goes through `Sanitize`, and an error
+whose `kind` is not one of the seven is clamped to `internal`, with the guest's
+own string moved into `message` — which *is* redacted.
+
+**Three limits on that, because the sentence is easy to write one step too
+strong.** First, the moved string does not always reach the record: on the
+`kelyfos exec` path the chain's `command.exit` carries the kind and not the
+message, so what the guest sent is dropped rather than relocated. It is still
+printed on the operator's terminal. Second, `kind` is a *guest*-supplied field
+only on the guest paths; the host writes it too — a `mcp.host.result` carries
+`tool`, which is the host's own word and is not one of the seven. Read
+`error.kind` as "a short host-controlled category", not as "one of exactly seven
+strings". Third, an erasure rewrites a chain *off disk* and does not re-sanitise
+it, so a chain written by a build from before this was enforced keeps whatever
+kind it recorded, through the erasure, exactly as this page used to warn.
 
 A second route deserves the same honesty. `error.message` is redacted now, so
 an **erased** chain is clean whatever writes it — but an un-erased one can

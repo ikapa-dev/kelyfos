@@ -409,8 +409,20 @@ func TestF14_TheResolvedAddressReachesTheRecorder(t *testing.T) {
 			t.Fatal("the refusal recorded no resolved address, so nothing anywhere now says " +
 				"where the name actually pointed")
 		}
-		if a.ResolvedAddr != "127.0.0.1" {
-			t.Errorf("resolved_addr = %q, want 127.0.0.1", a.ResolvedAddr)
+		// Loopback, not the literal 127.0.0.1 (P7-17/C, found by running the
+		// real ci.yml under nektos/act). What "localhost" resolves to first is
+		// the machine's /etc/hosts and resolver order: a container answers ::1
+		// before 127.0.0.1, so the refusal was correct and the assertion was
+		// about the wrong fact. The property this test is for is that the
+		// address the name actually resolved to reached the record — which
+		// either literal satisfies.
+		got, err := netip.ParseAddr(a.ResolvedAddr)
+		if err != nil {
+			t.Errorf("resolved_addr = %q, which is not an address literal: %v",
+				a.ResolvedAddr, err)
+		} else if !got.IsLoopback() {
+			t.Errorf("resolved_addr = %q, want the loopback address localhost resolved to",
+				a.ResolvedAddr)
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("no egress.attempt was recorded")

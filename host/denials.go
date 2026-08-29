@@ -25,6 +25,7 @@ import (
 	"github.com/p4r4n0rm4l/KelyfOS/internal/denial"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/egress"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/notify"
+	"github.com/p4r4n0rm4l/KelyfOS/internal/proto"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
 )
 
@@ -190,6 +191,10 @@ func wireProxyAudit(proxy *egress.Proxy, rec *recorder.Recorder, agent string, b
 			Type: recorder.TypeEgressAttempt, Agent: agent,
 			Host: a.Host, Port: a.Port, Allowed: &allowed,
 			Reason: a.Reason, Mode: a.Mode,
+			// What went wrong, for the operator, when Reason is a category
+			// rather than an explanation (P7-17/C, review round). Redacted by
+			// an erasure like every other free-text field.
+			Error:   attemptError(a),
 			BytesIn: a.BytesIn, BytesOut: a.BytesOut,
 			// Who connected, on a foreign_peer refusal and nothing else. It
 			// goes in peer rather than host because host is read as a
@@ -202,4 +207,24 @@ func wireProxyAudit(proxy *egress.Proxy, rec *recorder.Recorder, agent string, b
 			ResolvedAddr: a.ResolvedAddr,
 		})
 	}
+}
+
+// attemptError carries an egress refusal's detail into the event's error field
+// (P7-17/C, review round).
+//
+// nil for everything that has nothing to add, which is every refusal whose
+// Reason is already the whole explanation — not_in_allowlist, port_not_allowed,
+// foreign_peer. It exists for upstream_unreachable, which is one reason code
+// for a refused connection, a timeout, a name that resolved to nothing, a TLS
+// failure and a response-header timeout alike: the 502 the guest reads names
+// none of them deliberately, and until this the operator had none either.
+//
+// `io` because that is proto's kind for a transport failure, and error.message
+// because that is the field an erasure redacts — a diagnostic is exactly the
+// kind of free text that has to be removable.
+func attemptError(a egress.Attempt) *recorder.EvError {
+	if a.Detail == "" {
+		return nil
+	}
+	return &recorder.EvError{Kind: "io", Message: proto.SafeText(a.Detail)}
 }

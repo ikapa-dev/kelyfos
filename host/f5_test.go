@@ -52,7 +52,7 @@ func TestF5_AConfigUnderHomeIsOwnerOnly(t *testing.T) {
 			if !strings.HasPrefix(path, home) {
 				t.Fatalf("%s does not write under home; this fixture is checking the wrong thing", name)
 			}
-			if err := writeTo(c, path, home, f5Cmd()); err != nil {
+			if err := writeTo(c, path, project, home, f5Cmd()); err != nil {
 				t.Fatal(err)
 			}
 			if got := f5Mode(t, path); got != 0o600 {
@@ -83,7 +83,7 @@ func TestF5_AProjectLocalConfigStaysReadable(t *testing.T) {
 			if strings.HasPrefix(path, home) {
 				t.Fatalf("%s writes under home; this fixture is checking the wrong thing", name)
 			}
-			if err := writeTo(c, path, home, f5Cmd()); err != nil {
+			if err := writeTo(c, path, project, home, f5Cmd()); err != nil {
 				t.Fatal(err)
 			}
 			want := createMode() & 0o666
@@ -109,7 +109,7 @@ func TestF5_AnExistingStricterModeIsKept(t *testing.T) {
 	if err := os.WriteFile(path, []byte("{}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeTo(c, path, home, f5Cmd()); err != nil {
+	if err := writeTo(c, path, project, home, f5Cmd()); err != nil {
 		t.Fatal(err)
 	}
 	if got := f5Mode(t, path); got != 0o600 {
@@ -117,7 +117,7 @@ func TestF5_AnExistingStricterModeIsKept(t *testing.T) {
 	}
 
 	// And removal keeps it too — the same write, the other direction.
-	if err := removeFrom(c, path, home); err != nil {
+	if err := removeFrom(c, path, project, home); err != nil {
 		t.Fatal(err)
 	}
 	if got := f5Mode(t, path); got != 0o600 {
@@ -141,7 +141,7 @@ func TestF5_AnExistingHomeConfigIsTightened(t *testing.T) {
 	if err := os.WriteFile(path, []byte("{}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeTo(c, path, home, f5Cmd()); err != nil {
+	if err := writeTo(c, path, project, home, f5Cmd()); err != nil {
 		t.Fatal(err)
 	}
 	if got := f5Mode(t, path); got != 0o600 {
@@ -159,7 +159,7 @@ func TestF5_TheWriteIsAtomicAndLeavesNoDebris(t *testing.T) {
 	c, _ := findClient("cursor")
 	path := c.Path(project, home)
 
-	if err := writeTo(c, path, home, f5Cmd()); err != nil {
+	if err := writeTo(c, path, project, home, f5Cmd()); err != nil {
 		t.Fatal(err)
 	}
 	entries, err := os.ReadDir(filepath.Dir(path))
@@ -178,7 +178,7 @@ func TestF5_TheWriteIsAtomicAndLeavesNoDebris(t *testing.T) {
 	if err := os.WriteFile(path, before, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeTo(c, path, home, f5Cmd()); err == nil {
+	if err := writeTo(c, path, project, home, f5Cmd()); err == nil {
 		t.Fatal("a file that is not JSON was rewritten anyway")
 	}
 	after, err := os.ReadFile(path)
@@ -206,7 +206,7 @@ func TestF5_EveryHomeScopedClientInTheCatalogIsOwnerOnly(t *testing.T) {
 	sawHome, sawProject := 0, 0
 	for _, c := range clients() {
 		path := c.Path(project, home)
-		if err := writeTo(c, path, home, f5Cmd()); err != nil {
+		if err := writeTo(c, path, project, home, f5Cmd()); err != nil {
 			t.Fatalf("%s: %v", c.Name, err)
 		}
 		got := f5Mode(t, path)
@@ -263,7 +263,7 @@ func TestF5_APathSymlinkedIntoHomeIsTreatedAsBeingInHome(t *testing.T) {
 	}
 
 	c, _ := findClient("cursor")
-	if err := writeTo(c, path, home, f5Cmd()); err != nil {
+	if err := writeTo(c, path, project, home, f5Cmd()); err != nil {
 		t.Fatal(err)
 	}
 	if got := f5Mode(t, path); got != 0o600 {

@@ -252,12 +252,27 @@ Two chains are held by a process rather than by a machine, and they are covered
 too. `kelyfos serve-mcp` keeps **its own** session — the one carrying every
 `mcp.host.call` and `mcp.host.result` — and it is not a machine, so there is
 nothing to bring down when it breaks. What happens instead is that the server
-**refuses every tool call** from that moment, with the recorder's own error and
-the sequence number of the event that was lost, because a call nobody records is
-one the server does not make. The sandboxes it already created keep their own
-chains and their own watchers; what stopped is the record of the calls, and
-refusing further calls is what makes that loss bounded. Every teardown on both
-doors also makes the second attempt at the epitaph described below.
+**refuses tool calls** from that moment, naming the sequence number of the event
+that was lost, because a call nobody records is one the server does not make.
+The sandboxes it already created keep their own chains and their own watchers;
+what stopped is the record of the calls, and refusing further calls is what
+makes that loss bounded.
+
+Two exact things about that, because both are easy to state one step wrong.
+**One call gets through**: the append that latches the recorder is the call's own
+`mcp.host.call`, so the call that filled the disk is dispatched and unrecorded,
+and refusal begins with the next one. That is the smallest window a synchronous
+check can have. And **three tools are still answered** — `sandbox_list`,
+`sandbox_stop` and `team_down` (**D76**). A stop *is* recorded, in the sandbox's
+own chain, which is the chain that says what the sandbox did; refusing it would
+leave an agent that has just been told its calls are unrecorded unable to stop or
+even find the machines it started. The test is whether a call makes the
+unrecorded window larger or smaller. The operator's terminal names how many
+sandboxes are still running and which, because the client buries stderr and that
+line is the only one they get.
+
+Every teardown on both doors also makes the second attempt at the epitaph
+described below.
 
 When it fires, the machine is stopped and you are told which event was lost and
 why:

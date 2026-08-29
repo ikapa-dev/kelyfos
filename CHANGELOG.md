@@ -73,6 +73,17 @@ reference described in the README and re-measured per release.
   coming) or on Ctrl-C (P7-9).
 
 ### Fixed
+- **`kelyfos connect` refuses a project-local configuration path whose symlink
+  leaves both the project and your home directory.** Following a leaf symlink is
+  what keeps a dotfiles-managed configuration working, and four of the six
+  clients write a **project-local** file — `.mcp.json`, `.cursor/mcp.json`,
+  `.vscode/mcp.json`, `.junie/mcp/mcp.json` — any of which a repository can
+  commit as a symlink. Following that one would put the entry wherever the
+  repository pointed. A path you named under your own home may still resolve
+  anywhere, because your home is yours and a dotfiles repository at
+  `/srv/dotfiles` is an ordinary layout; only the project-local half is bounded,
+  and it is bounded to the two places you are answering for. The refusal names
+  the file, the destination and the two things that work (**D75**).
 - **The guest-side fixes in this release need a rebuilt image, and a stale one
   gives you none of them.** Four of them live in the supervisor, which ships
   inside `rootfs.ext4`: the confinement wrapper that a binary named
@@ -178,8 +189,14 @@ reference described in the README and re-measured per release.
   per-sandbox watcher started where the machine is registered. When it
   fires the machine is stopped and the operator is told which event was lost and
   why; `kelyfos run` exits `1` and the session ends `recorder_failed`, and under
-  `serve-mcp` the next tool call naming that sandbox says the recorder failed
-  rather than that no such sandbox exists. Every teardown also makes one more
+  `serve-mcp` and the shim the next call naming that sandbox says the recorder
+  failed rather than that no such sandbox exists. **A `serve-mcp` whose own
+  chain has failed still answers `sandbox_list`, `sandbox_stop` and `team_down`**
+  (**D76**): a stop *is* recorded, in the sandbox's own chain, and refusing it
+  would leave an agent that has just been told its calls are unrecorded unable
+  to stop or even find the machines it started. Everything that starts work is
+  refused. The operator's terminal names how many sandboxes are still running
+  and which. Every teardown also makes one more
   attempt to get the "why the record stops here" line onto the chain, because by
   then the machine is down and whatever was holding the disk may have let go
   (P7-17/F13(b)).

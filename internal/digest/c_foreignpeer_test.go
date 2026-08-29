@@ -42,6 +42,16 @@ func TestC_AForeignPeerRefusalIsNotTheGuestsBlockedEgress(t *testing.T) {
 	if got := d.Session.EgressOK; got != 0 {
 		t.Errorf("egress ok = %d, want 0", got)
 	}
+	// Counted on their own line, though. Excluding them from EgressBlocked and
+	// counting them nowhere left the timeline and the summary disagreeing about
+	// the same events — three rows reading BLOCKED above "egress blocked: 0",
+	// which is the mirror image of the number the exclusion removed
+	// (P7-17/C, review round).
+	if got := d.ForeignKnocks; got != 3 {
+		t.Errorf("foreign knocks = %d, want 3: the refusals render as BLOCKED rows and a "+
+			"summary that counts none of them leaves a reader nothing to reconcile them with",
+			got)
+	}
 	// And an ordinary allowed attempt still counts, so the exclusion is a
 	// clause and not a switch.
 	d = Walk(append(events, attempt("", "example.com", true)))

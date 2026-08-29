@@ -127,17 +127,29 @@ func TestC_WatchsHeadersSanitiseWhatTheyReadOffTheChain(t *testing.T) {
 				m.order = []string{"one"}
 				m.lanes = map[string]*lane{"one": {name: "one"}}
 			}
-			// render() is the entry point both headers are reached through,
-			// so the fixture exercises the dispatch as well as the header.
-			out := m.render()
-			for _, bad := range []struct{ name, s string }{
-				{"a bidi override", "‮"},
-				{"an ESC introducing something other than SGR", "\x1b]"},
-				{"a bare carriage return", "\r"},
-				{"a BEL", "\a"},
-			} {
-				if strings.Contains(out, bad.s) {
-					t.Errorf("%s reached the header:\n%q", bad.name, out)
+			// ALL FOUR panes, not the one render() happens to dispatch to
+			// (P7-17/C, review round). The first version called render() alone,
+			// which reaches the activity pane and never the map or the sheet —
+			// and those two were still printing the session id raw, which is
+			// the same "one renderer cleaned and the next one not" shape this
+			// whole item is about. A test that walks one of four is how the
+			// other three stay unfixed.
+			panes := map[string]string{"activity": m.render()}
+			for name, p := range map[string]pane{"map": paneMap, "sheet": paneSheet} {
+				m.pane = p
+				panes[name] = m.render()
+			}
+			m.pane = paneActivity
+			for pane, out := range panes {
+				for _, bad := range []struct{ name, s string }{
+					{"a bidi override", "‮"},
+					{"an ESC introducing something other than SGR", "\x1b]"},
+					{"a bare carriage return", "\r"},
+					{"a BEL", "\a"},
+				} {
+					if strings.Contains(out, bad.s) {
+						t.Errorf("%s reached the %s pane's header:\n%q", bad.name, pane, out)
+					}
 				}
 			}
 		})

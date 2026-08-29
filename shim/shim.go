@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/egress"
+	"github.com/p4r4n0rm4l/KelyfOS/internal/proto"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/sandbox"
 	"github.com/p4r4n0rm4l/KelyfOS/internal/sessionpolicy"
@@ -150,7 +151,7 @@ func (s *Server) watchRecorder(id string, b *box) {
 	case <-rec.Broken():
 	}
 	seq, ferr := rec.Failure()
-	fmt.Fprintf(os.Stderr,
+	fmt.Fprintf(s.stderr(),
 		"kelyfos: the flight recorder for shim sandbox %s stopped at event %d: %v\n"+
 			"kelyfos: stopping it — a sandbox nobody is recording is not one this shim keeps "+
 			"running\n", id, seq, ferr)
@@ -158,6 +159,13 @@ func (s *Server) watchRecorder(id string, b *box) {
 	s.mu.Lock()
 	if s.boxes[id] == b {
 		delete(s.boxes, id)
+	}
+	if len(s.lost) < maxLostBoxes {
+		if s.lost == nil {
+			s.lost = map[string]string{}
+		}
+		s.lost[id] = fmt.Sprintf("its flight recorder failed at event %d, so it was stopped: "+
+			"a sandbox nobody is recording is not one this shim keeps running", seq)
 	}
 	s.mu.Unlock()
 
@@ -208,11 +216,45 @@ type Server struct {
 
 	mu    sync.Mutex
 	boxes map[string]*box
+	// lost remembers the sandboxes this shim stopped by itself, so the next
+	// call naming one is told what happened rather than that it never existed
+	// (P7-17/A2, review round). serve-mcp has had this since F13(b), with the
+	// stated reason; the shim's watcher deleted the box and kept no reason, so
+	// `DELETE /sandboxes/{id}` answered a bare 404 — indistinguishable from a
+	// sandbox that was never created — and the envd routes answered 400 "no
+	// sandbox has been created through this shim", which is worse.
+	//
+	// Bounded, because it is a map keyed by something a client can create in a
+	// loop. Past the cap the generic message applies, which is what every case
+	// got before.
+	lost map[string]string
+
+	// errw is where this server's own lines to the operator go. Nil means
+	// os.Stderr, which is every real run; a test sets it, because "nobody was
+	// told" is half of the harm F13 describes and a line printed to the
+	// process's stderr is a line no assertion can reach.
+	errw io.Writer
 }
+
+// maxLostBoxes bounds the "why is this sandbox gone" map, as serve-mcp's own
+// constant of the same name does.
+const maxLostBoxes = 32
 
 func New(p Policy) *Server {
 	return &Server{Policy: p, boxes: map[string]*box{}}
 }
+
+// stderr is where this server's own lines to the operator go.
+func (s *Server) stderr() io.Writer {
+	if s.errw != nil {
+		return s.errw
+	}
+	return os.Stderr
+}
+
+// lostReason is what happened to a sandbox this shim stopped on its own, or ""
+// when it never had one. Callers hold s.mu.
+func (s *Server) lostReason(id string) string { return s.lost[id] }
 
 // MaxSandboxes is how many machines one shim will hold at once.
 //
@@ -474,6 +516,12 @@ func (s *Server) createSandbox(w http.ResponseWriter, r *http.Request) {
 
 	s.mu.Lock()
 	s.boxes[b.sb.State.ID] = b
+	// Where the box is registered, and not where its recorder was opened: the
+	// watcher and the map entry come into existence together, so the watcher
+	// can never fire on a box the map does not hold (P7-17/A2, review round).
+	// The same single registration point serve-mcp's adopt uses.
+	b.stopped = make(chan struct{})
+	go s.watchRecorder(b.sb.State.ID, b)
 	s.mu.Unlock()
 
 	template := req.TemplateID
@@ -569,12 +617,6 @@ func (s *Server) boot(parent context.Context) (*box, error) {
 	if b.rec, err = recorder.Open(sandbox.Root(), id); err != nil {
 		return nil, err
 	}
-	// The watcher starts here rather than at registration, so it covers the
-	// recorder's whole life: the machine is started below, and a recorder that
-	// broke between here and the client's first call would otherwise be watched
-	// by nothing (P7-17/A2).
-	b.stopped = make(chan struct{})
-	go s.watchRecorder(id, b)
 	_ = b.rec.Append(recorder.Event{
 		Type: recorder.TypeSessionStart, Image: s.Policy.Flavor, Arch: s.Policy.Arch,
 		Kelyfos: s.Policy.Version, Argv: s.Policy.Argv,
@@ -620,6 +662,33 @@ func (s *Server) boot(parent context.Context) (*box, error) {
 		RootfsSHA256: rootfsSHA,
 		KernelSHA256: kernelSHA,
 	}))
+
+	// Synchronously, before this box is handed back to be registered
+	// (P7-17/A2, review round). The three appends above discard their errors
+	// like every other Append in this product, so any of them — and every
+	// wireEgressAudit callback the machine has already made — can latch the
+	// recorder while the boot is still running.
+	//
+	// The first version of this started the watcher HERE, at recorder.Open,
+	// reasoning that it should cover the recorder's whole life. The review
+	// found what that costs: the watcher fires before createSandbox has put the
+	// box in s.boxes, so `delete` removes nothing, `b.close` shuts the microVM
+	// down, and boot then returns (b, nil) to a caller that answers 201 and
+	// registers a corpse — occupying one of MaxSandboxes for the life of the
+	// process, listed by GET /sandboxes, and handed out by only() to every
+	// envd file call. It could also run b.close CONCURRENTLY with Start and
+	// WaitReady, which share no lock.
+	//
+	// A check is the right shape for the window before registration and a
+	// watcher is the right shape for after it: this one cannot race anything,
+	// because nothing else holds this box yet. The watcher now starts where the
+	// box is registered, which is the single point serve-mcp's adopt uses for
+	// exactly this reason.
+	if seq, ferr := b.rec.Failure(); ferr != nil {
+		return nil, fmt.Errorf("the flight recorder for this sandbox stopped at event %d "+
+			"before it finished booting (%v), so it was not started: a sandbox nobody is "+
+			"recording is not one this shim runs", seq, ferr)
+	}
 	ok = true
 	return b, nil
 }
@@ -649,6 +718,10 @@ func (s *Server) wireEgressAudit(b *box) {
 		_ = b.rec.Append(recorder.Event{
 			Type: recorder.TypeEgressAttempt, Host: a.Host, Port: a.Port,
 			Allowed: &allowed, Reason: a.Reason, Mode: a.Mode,
+			// What went wrong, for the operator, when Reason is a category
+			// rather than an explanation (P7-17/C, review round). Redacted by
+			// an erasure like every other free-text field.
+			Error:   shimAttemptError(a),
 			BytesIn: a.BytesIn, BytesOut: a.BytesOut,
 			// This is wireProxyAudit's twin, and it has to carry every field
 			// wireProxyAudit carries. It did not carry Peer, so a foreign-peer
@@ -679,8 +752,13 @@ func (s *Server) killSandbox(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	sb, ok := s.boxes[id]
 	delete(s.boxes, id)
+	why := s.lostReason(id)
 	s.mu.Unlock()
 	if !ok {
+		if why != "" {
+			writeErr(w, http.StatusNotFound, "sandbox "+id+" is gone: "+why)
+			return
+		}
 		writeErr(w, http.StatusNotFound, "no sandbox "+id+" created by this shim")
 		return
 	}
@@ -698,6 +776,12 @@ func (s *Server) only() (*box, error) {
 	defer s.mu.Unlock()
 	switch len(s.boxes) {
 	case 0:
+		if len(s.lost) > 0 {
+			for id, why := range s.lost {
+				return nil, fmt.Errorf("the sandbox this shim was serving (%s) is gone: %s",
+					id, why)
+			}
+		}
 		return nil, fmt.Errorf("no sandbox has been created through this shim")
 	case 1:
 		for _, b := range s.boxes {
@@ -852,4 +936,19 @@ func encodeBase64(b []byte) string { return base64.StdEncoding.EncodeToString(b)
 func decodeBase64Lines(out []byte) ([]byte, error) {
 	joined := strings.Join(strings.Fields(string(out)), "")
 	return base64.StdEncoding.DecodeString(joined)
+}
+
+// shimAttemptError is host/denials.go's attemptError, in this package.
+//
+// Duplicated rather than exported, deliberately and in the shape this
+// repository already uses for the twin of wireProxyAudit that lives here: the
+// two audit wirings are the same six lines in two packages, and the review that
+// found this one missing found it by looking for exactly that pair (F9's second
+// round). A shared helper would be one import from internal/egress to a host
+// concern; the duplication is four lines and is pinned by the mapping test.
+func shimAttemptError(a egress.Attempt) *recorder.EvError {
+	if a.Detail == "" {
+		return nil
+	}
+	return &recorder.EvError{Kind: "io", Message: proto.SafeText(a.Detail)}
 }

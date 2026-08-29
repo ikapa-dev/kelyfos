@@ -6,6 +6,7 @@ import (
 	"io"
 	"math"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -121,10 +122,24 @@ func (s *hostServer) openAudit() error {
 	s.auditID, s.audit = id, rec
 	s.auditStopped = make(chan struct{})
 	go s.watchAudit(rec, s.auditStopped)
-	return rec.Append(recorder.Event{
+	if err := rec.Append(recorder.Event{
 		Type: recorder.TypeSessionStart, Arch: s.arch, Kelyfos: Version,
 		Argv: s.argv, Reason: recorder.ReasonServeMCP,
-	})
+	}); err != nil {
+		// Unwound here, because this error is returned before serveMCPCmd has
+		// registered `defer srv.closeAll()` — so closeAudit never runs, and
+		// without this the watcher goroutine and the liveness marker both
+		// outlive the failure (P7-17/A2, review round). The marker half was
+		// there before this commit; the goroutine is new, which is what makes
+		// it this commit's to close.
+		close(s.auditStopped)
+		s.auditStopped = nil
+		_ = rec.Close()
+		_ = os.Remove(auditMarkerPath(id))
+		s.audit, s.auditID = nil, ""
+		return err
+	}
+	return nil
 }
 
 // stderr is where this server's own lines to the operator go.
@@ -159,12 +174,34 @@ func (s *hostServer) watchAudit(rec *recorder.Recorder, stopped <-chan struct{})
 func (s *hostServer) sayAuditBroke(rec *recorder.Recorder) {
 	s.auditSaid.Do(func() {
 		seq, err := rec.Failure()
+		s.mu.Lock()
+		running := make([]string, 0, len(s.boxes))
+		for id := range s.boxes {
+			running = append(running, id)
+		}
+		s.mu.Unlock()
+		sort.Strings(running)
+
 		fmt.Fprintf(s.stderr(),
 			"kelyfos: this server's own flight recorder stopped at event %d: %v\n"+
-				"kelyfos: refusing every tool call — a call nobody records is one this server "+
-				"does not make.\n"+
-				"kelyfos: the sandboxes already running keep their own chains; restart "+
-				"serve-mcp once there is room to write.\n", seq, err)
+				"kelyfos: refusing tool calls — a call nobody records is one this server does "+
+				"not make.\n", seq, err)
+		// How much is still up, and named. len(s.boxes) was always able to
+		// answer this and the first version did not ask (P7-17/A2, review
+		// round): "restart serve-mcp once there is room to write" reads like
+		// housekeeping when there are four microVMs holding memory behind it,
+		// and a client buries stderr, so this line is the operator's only one.
+		switch len(running) {
+		case 0:
+			fmt.Fprintf(s.stderr(), "kelyfos: no sandbox is running.\n")
+		default:
+			fmt.Fprintf(s.stderr(),
+				"kelyfos: %d sandbox(es) are still running and keeping their own chains: %s\n"+
+					"kelyfos: sandbox_list, sandbox_stop and team_down are still answered, so "+
+					"they can be stopped.\n", len(running), strings.Join(running, ", "))
+		}
+		fmt.Fprintf(s.stderr(),
+			"kelyfos: free space where the record is written, then restart serve-mcp.\n")
 	})
 }
 
@@ -175,7 +212,7 @@ func (s *hostServer) sayAuditBroke(rec *recorder.Recorder) {
 // here is not "has it broken by now" but "is it broken at the moment this call
 // would be recorded" — and the answer has to be the same for the check and for
 // the append that follows it.
-func (s *hostServer) refuseIfUnrecorded() *mcp.CallToolResult {
+func (s *hostServer) refuseIfUnrecorded(tool string) *mcp.CallToolResult {
 	rec := s.audit
 	if rec == nil {
 		return nil
@@ -185,10 +222,36 @@ func (s *hostServer) refuseIfUnrecorded() *mcp.CallToolResult {
 		return nil
 	}
 	s.sayAuditBroke(rec)
-	return mcp.Errorf("this KelyfOS server's flight recorder stopped at event %d (%v), so it "+
-		"is refusing every tool call: a call nobody records is one this server does not make. "+
-		"Sandboxes already running keep their own records. Free space where the record is "+
-		"written, then restart the server.", seq, err)
+	if unrecordedButAllowed[tool] {
+		return nil
+	}
+	// The error is deliberately NOT in what the client is told (P7-17/A2,
+	// review round). On the failure this whole path exists for — a full disk —
+	// it is os.File.Write's *os.PathError, which carries the absolute path of
+	// the recorder file, unbounded; internal/recorder clamps that to 160 bytes
+	// for the on-chain reason field and nothing clamped it here. The client
+	// needs one fact and gets it: stop asking. The operator gets the error, on
+	// stderr, where the path is useful and the audience is the person who can
+	// act on it.
+	return mcp.Errorf("this KelyfOS server's flight recorder stopped at event %d, so it is "+
+		"refusing tool calls: a call nobody records is one this server does not make. "+
+		"sandbox_list, sandbox_stop and team_down still work, so machines already running can "+
+		"be found and stopped. The operator's terminal says why.", seq)
+}
+
+// unrecordedButAllowed is the three tools a server whose own chain has failed
+// still answers (D76).
+//
+// The test is whether a call, run unrecorded on this lane, makes the unrecorded
+// window LARGER or SMALLER. Everything that starts work — a machine, a command,
+// a snapshot, a fork, a team — makes it larger and stays refused. These three
+// only ever make it smaller, and the first two are recorded anyway, in the
+// machine's own chain, which is the chain an auditor reads to learn what a
+// sandbox did.
+var unrecordedButAllowed = map[string]bool{
+	"sandbox_stop": true,
+	"sandbox_list": true,
+	"team_down":    true,
 }
 
 func (s *hostServer) closeAudit() {

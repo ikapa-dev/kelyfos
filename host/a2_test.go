@@ -31,7 +31,7 @@ func TestA2_TheOperatorIsToldOnceHoweverManyCallsAreRefused(t *testing.T) {
 	s := &hostServer{boxes: map[string]*servedBox{}, audit: rec, errw: &said}
 
 	for i := 0; i < 5; i++ {
-		if res := s.callTool(&mcp.CallToolParams{Name: "sandbox_list"}); !res.IsError {
+		if res := s.callTool(&mcp.CallToolParams{Name: "sandbox_exec"}); !res.IsError {
 			t.Fatal("a tool call was answered while nothing was being recorded")
 		}
 	}
