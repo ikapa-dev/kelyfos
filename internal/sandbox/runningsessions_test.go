@@ -101,3 +101,56 @@ func TestRunningSessionsIgnoresADeadPID(t *testing.T) {
 		t.Errorf("live = %v, want a dead PID's own sandbox absent", live)
 	}
 }
+
+// A record that exists and does not pass its checks must not read as "nothing
+// is running here" (F19).
+//
+// RunningSessions collapsed every readState failure into `continue`, so a
+// rewritten or unreadable record made a live sandbox invisible. That answer
+// feeds `kelyfos sessions erase` and `sessions prune`, which use it to decide a
+// chain is safe to rewrite or delete — and host/sessions.go's own comment says
+// this is the *only* layer that can see a live team member at all. Silence is
+// the unsafe answer there, so a refusal is treated as live.
+func TestF19_ARecordThisHostRefusedReadsAsLiveRatherThanAbsent(t *testing.T) {
+	t.Setenv("KELYFOS_CACHE", t.TempDir())
+
+	// Alive, and its record says its run directory is somewhere else — one of
+	// the values validate() refuses.
+	const rewritten = "0901977d"
+	dir := RunDirOf(rewritten)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	blob, err := json.Marshal(State{ID: rewritten, PID: os.Getpid(), RunDir: "/somewhere/else"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stateDir(dir), stateFile), blob, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// A directory with no record in it at all: genuinely nothing here.
+	if err := os.MkdirAll(RunDirOf("aabbccdd"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	// And an ordinary live one, to show the refusal path did not swallow the
+	// normal answer.
+	writeRunningState(t, State{ID: "11223344", PID: os.Getpid(), Session: "team-chain"})
+
+	live, err := RunningSessions()
+	if err != nil {
+		t.Fatalf("RunningSessions: %v", err)
+	}
+	if !live[rewritten] {
+		t.Errorf("a record this host refused read as no sandbox at all; erase and prune use this "+
+			"answer to decide a chain is safe to touch, and the empty one is the unsafe answer "+
+			"(got %v)", live)
+	}
+	if live["aabbccdd"] {
+		t.Error("a run directory with no record in it read as live")
+	}
+	if !live["team-chain"] {
+		t.Errorf("the ordinary mapping stopped working: %v", live)
+	}
+}

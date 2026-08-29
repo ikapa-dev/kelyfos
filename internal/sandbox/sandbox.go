@@ -18,6 +18,7 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -1772,7 +1773,27 @@ func RunningSessions() (map[string]bool, error) {
 			continue
 		}
 		st, err := readState(RunDirOf(e.Name()))
-		if err != nil || !alive(st.PID) {
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue // nothing has ever written a record here
+			}
+			// A record that exists and does not pass its checks is the one case
+			// where "I cannot read this" must not collapse into "nothing is
+			// running here". This answer is what `sessions erase` and `sessions
+			// prune` use to decide a chain is safe to rewrite or delete, and the
+			// empty answer is the unsafe one — a refused record is a reason to
+			// leave a session alone, not a reason to treat it as gone.
+			//
+			// The id is what gets marked, because the id is the directory's own
+			// name and does not come out of the file. A team member's Session
+			// field does, and a record this host has just refused is not one to
+			// take a chain id from — so a refused member of a live team protects
+			// its own chain and not the team's, which is the honest limit of
+			// what can be known here and is stated rather than papered over.
+			live[e.Name()] = true
+			continue
+		}
+		if !alive(st.PID) {
 			continue
 		}
 		live[st.RecordSession()] = true
@@ -1892,6 +1913,27 @@ func (st *State) validate(runDir string) error {
 	}
 	if st.CGroupPath != "" && !withinDir(st.CGroupPath, "/sys/fs/cgroup") {
 		return bad("its cgroup is %q, which is not under /sys/fs/cgroup", st.CGroupPath)
+	}
+	// The pid, for the same reason the interface name is checked: alive() sends
+	// it a signal and Sample() reads /proc/<pid>/io from it, so a rewritten one
+	// makes a dead sandbox look alive — which is what `sessions erase` asks
+	// before deciding a chain is safe to rewrite — or files another process's
+	// counters under this machine's name.
+	//
+	// It is also derivable, on the machines that matter. The jailer writes
+	// firecracker.pid inside the chroot as **root**, mode 0644, so the VMM —
+	// which is dropped to the invoking uid — can read it and cannot rewrite it.
+	// That makes it the one thing inside the jail this host can still believe.
+	// Absent or unreadable is not an error: --no-jail writes none, and a
+	// half-torn-down directory may have lost it.
+	if st.PID < 0 {
+		return bad("its pid is %d", st.PID)
+	}
+	if blob, err := os.ReadFile(filepath.Join(runDir, "firecracker.pid")); err == nil {
+		if jailed, convErr := strconv.Atoi(strings.TrimSpace(string(blob))); convErr == nil &&
+			jailed > 0 && st.PID != 0 && st.PID != jailed {
+			return bad("it names pid %d and the jailer recorded %d for this machine", st.PID, jailed)
+		}
 	}
 	// WorkspaceHost is the one path here that is genuinely the person's own and
 	// so cannot be derived. What can be said about it is said: a resume renames

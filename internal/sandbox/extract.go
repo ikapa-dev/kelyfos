@@ -57,6 +57,19 @@ import (
 //     refused with "path escapes from parent". Asserted rather than believed, in
 //     TestF18_ASymlinkChainCannotBeLeftInTheProject.
 //
+//     Two bounds on that, both from os/root.go and neither of them a hole,
+//     because nothing here can leave the root either way. In-tree following
+//     stops at rootMaxSymlinks, which is **8** — well under this package's own
+//     budget — so a file whose path runs through nine in-tree links is refused
+//     with ELOOP rather than extracted. And Root.Chmod, Root.Chown and
+//     Root.Chtimes are documented as racy on Unix: if the target changes from a
+//     regular file to a symlink while the call is in progress, the call may land
+//     on the link instead of its target. extractImage calls root.Chmod on every
+//     entry, so the window is real; what it reaches is still inside the root,
+//     and the tree is a fresh directory this package just made. It is written
+//     down because the point of rewriting this comment was to stop describing
+//     os.Root by properties it does not have.
+//
 //     So it covers where the extraction *writes* and says nothing about what it
 //     *leaves behind* for the next tool to follow — which is F18, and is why
 //     validLinkChain exists.
@@ -620,12 +633,13 @@ func validLinkChain(r *linkResolver, from, target string) error {
 //
 // This comment used to say the root was "openat2 with RESOLVE_BENEATH and
 // RESOLVE_NO_SYMLINKS". It is neither — see the package comment for what os.Root
-// actually does — and the two halves of that sentence contradicted each other,
-// which is how a reader came away believing a planted symlink could not matter.
-// What it does give: a link that stays inside the tree is **followed**, and one
-// that leaves is refused at the open. That is the whole of F18 — the root stops
-// the extraction writing *through* a chain, and says nothing about the chain
-// being left behind for the next tool to follow.
+// actually does, and for the two bounds it comes with — and the two halves of
+// that sentence contradicted each other, which is how a reader came away
+// believing a planted symlink could not matter. What it does give: a link that
+// stays inside the tree is **followed**, and one that leaves is refused at the
+// open. That is the whole of F18 — the root stops the extraction writing
+// *through* a chain, and says nothing about the chain being left behind for the
+// next tool to follow.
 func extractImage(imagePath string, entries []imageEntry, root *os.Root) error {
 	// Shallowest first, so a parent exists before anything inside it.
 	sorted := append([]imageEntry(nil), entries...)

@@ -5,6 +5,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -330,6 +331,13 @@ func TestF19_ARewrittenStateFileIsRefusedRatherThanObeyed(t *testing.T) {
 		}
 	}
 
+	// What the jailer leaves in the chroot, as root and mode 0644 — readable by
+	// the VMM, not writable by it.
+	if err := os.WriteFile(filepath.Join(runDir, "firecracker.pid"),
+		[]byte(strconv.Itoa(os.Getpid())+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
 	write(t, sound())
 	if _, err := readState(runDir); err != nil {
 		t.Fatalf("a state file a real machine wrote was refused: %v", err)
@@ -342,7 +350,14 @@ func TestF19_ARewrittenStateFileIsRefusedRatherThanObeyed(t *testing.T) {
 	}{
 		{"run-dir-elsewhere", func(st *State) { st.RunDir = "/home/somebody" },
 			"RunDir is derivable from the id; a rewritten one aims every path built from it"},
-		{"id-not-its-own-directory", func(st *State) { st.ID = "deadbeef" },
+		{"id-not-its-own-directory", func(st *State) {
+			// The network fields go too, or validateNetwork's TAP check refuses
+			// this first — the TAP is derived from the id — and the id check
+			// itself is never reached. That is how this case passed while
+			// validate()'s own first line did nothing.
+			st.ID = "deadbeef"
+			st.TAP, st.HostIP, st.GuestIP, st.Netmask, st.HostMAC, st.ProxyPort = "", "", "", "", "", 0
+		},
 			"the file at <id>/sandbox.json claiming to be another sandbox is one machine answering for another"},
 		{"uds-outside-the-run-dir", func(st *State) { st.UDSPath = "/tmp/anywhere.sock" },
 			"exec and shell dial this"},
@@ -383,6 +398,9 @@ func TestF19_ARewrittenStateFileIsRefusedRatherThanObeyed(t *testing.T) {
 			"a multicast MAC on a TAP is not something this package mints"},
 		{"proxy-port-out-of-range", func(st *State) { st.ProxyPort = 70000 },
 			"this goes into the nftables rule as the one reachable port"},
+		{"pid-is-not-the-one-the-jailer-recorded", func(st *State) { st.PID = 999999 },
+			"the jailer writes firecracker.pid as root inside the chroot, so the VMM can read it " +
+				"and cannot rewrite it — it is the one thing in there this host can still believe"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			st := sound()
@@ -393,6 +411,32 @@ func TestF19_ARewrittenStateFileIsRefusedRatherThanObeyed(t *testing.T) {
 			}
 		})
 	}
+
+	// The bound on the pid, on its own. It has to be tested where there is no
+	// jailer pid file to cross-check against — which is what --no-jail leaves —
+	// or the cross-check refuses this first and the bound is never reached.
+	t.Run("pid-negative-with-no-jailer-file", func(t *testing.T) {
+		const unjailed = "aabbccdd"
+		dir := RunDirOf(unjailed)
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		st := sound()
+		st.ID, st.RunDir, st.PID, st.Jailed = unjailed, dir, -1, false
+		st.UDSPath, st.APIPath = filepath.Join(dir, "v.sock"), filepath.Join(dir, "fc.sock")
+		st.TAP, st.HostIP, st.GuestIP, st.Netmask, st.HostMAC, st.ProxyPort = "", "", "", "", "", 0
+		blob, err := json.Marshal(st)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(jailDir(unjailed), stateFile), blob, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := readState(dir); err == nil {
+			t.Error("a negative pid was accepted — alive() signals this and Sample() reads " +
+				"/proc/<pid>/io from it")
+		}
+	})
 
 	// A state file written before a field existed still loads. The check is
 	// about values a VMM could have chosen, not about being new.

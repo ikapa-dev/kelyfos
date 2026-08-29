@@ -514,6 +514,36 @@ func TestF18_ASymlinkChainCannotBeLeftInTheProject(t *testing.T) {
 				t.Errorf("os.Root wrote through %s", name)
 			}
 		}
+
+		// And the bound on how many it will follow, which is os/root.go's
+		// rootMaxSymlinks = 8 — far below this package's own budget of 64, so an
+		// in-tree chain this package accepts can still be refused here. Not a
+		// hole (nothing escapes either way) and worth pinning, because "os.Root
+		// follows an in-tree link" without a number is the same kind of
+		// half-true the original comment was.
+		if err := os.Symlink("real", filepath.Join(tree, "n0")); err != nil {
+			t.Fatal(err)
+		}
+		for i := 1; i <= 12; i++ {
+			if err := os.Symlink(fmt.Sprintf("n%d", i-1),
+				filepath.Join(tree, fmt.Sprintf("n%d", i))); err != nil {
+				t.Fatal(err)
+			}
+		}
+		deepest := 0
+		for i := 0; i <= 12; i++ {
+			if _, err := r.OpenFile(fmt.Sprintf("n%d/probe%d.txt", i, i),
+				os.O_CREATE|os.O_WRONLY, 0o644); err == nil {
+				deepest = i
+			} else {
+				break
+			}
+		}
+		if deepest >= 12 {
+			t.Errorf("os.Root followed a chain of %d in-tree links; it is documented to stop at "+
+				"rootMaxSymlinks", deepest+1)
+		}
+		t.Logf("os.Root followed %d in-tree links and refused the next", deepest+1)
 	})
 }
 
