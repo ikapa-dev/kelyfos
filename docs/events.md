@@ -241,7 +241,23 @@ one — `kelyfos team up`'s, which covers a whole rig because a team has one
 recorder for all of it, and the ones `kelyfos resume` and
 `kelyfos snapshot restore` hold their machines open with. `kelyfos serve-mcp`
 has no such loop, so each sandbox it creates gets a watcher of its own, started
-where the machine is registered.
+where the machine is registered. **`kelyfos shim` has no such loop either**, and
+until v1.1's verification round it had no watcher: a sandbox created through the
+E2B-compatible API whose recorder failed went on executing commands and making
+egress with nobody told. Each shim sandbox now gets the same per-box watcher,
+started where its recorder is opened, and a machine it stops answers the next
+SDK call that names it with a `404`.
+
+Two chains are held by a process rather than by a machine, and they are covered
+too. `kelyfos serve-mcp` keeps **its own** session — the one carrying every
+`mcp.host.call` and `mcp.host.result` — and it is not a machine, so there is
+nothing to bring down when it breaks. What happens instead is that the server
+**refuses every tool call** from that moment, with the recorder's own error and
+the sequence number of the event that was lost, because a call nobody records is
+one the server does not make. The sandboxes it already created keep their own
+chains and their own watchers; what stopped is the record of the calls, and
+refusing further calls is what makes that loss bounded. Every teardown on both
+doors also makes the second attempt at the epitaph described below.
 
 When it fires, the machine is stopped and you are told which event was lost and
 why:

@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"strings"
@@ -118,16 +119,94 @@ func (s *hostServer) openAudit() error {
 		return fmt.Errorf("marking this session live: %w", err)
 	}
 	s.auditID, s.audit = id, rec
+	s.auditStopped = make(chan struct{})
+	go s.watchAudit(rec, s.auditStopped)
 	return rec.Append(recorder.Event{
 		Type: recorder.TypeSessionStart, Arch: s.arch, Kelyfos: Version,
 		Argv: s.argv, Reason: recorder.ReasonServeMCP,
 	})
 }
 
+// stderr is where this server's own lines to the operator go.
+func (s *hostServer) stderr() io.Writer {
+	if s.errw != nil {
+		return s.errw
+	}
+	return os.Stderr
+}
+
+// watchAudit says, as soon as it happens, that this server's own chain has
+// stopped (P7-17/A2).
+//
+// The refusal in callTool is the guarantee — it is synchronous and cannot be
+// raced — and this is only about WHEN the operator hears. serve-mcp is idle
+// between calls, sometimes for hours, so without this the first sign that the
+// disk filled would be a refused tool call much later. The same shape
+// watchRecorder uses for a box, minus the teardown: there is no machine here to
+// bring down, and the sandboxes this server owns have chains and watchers of
+// their own.
+func (s *hostServer) watchAudit(rec *recorder.Recorder, stopped <-chan struct{}) {
+	select {
+	case <-stopped:
+		return
+	case <-rec.Broken():
+	}
+	s.sayAuditBroke(rec)
+}
+
+// sayAuditBroke prints the epitaph once, however many times it is reached: the
+// watcher and every refused tool call both arrive here.
+func (s *hostServer) sayAuditBroke(rec *recorder.Recorder) {
+	s.auditSaid.Do(func() {
+		seq, err := rec.Failure()
+		fmt.Fprintf(s.stderr(),
+			"kelyfos: this server's own flight recorder stopped at event %d: %v\n"+
+				"kelyfos: refusing every tool call — a call nobody records is one this server "+
+				"does not make.\n"+
+				"kelyfos: the sandboxes already running keep their own chains; restart "+
+				"serve-mcp once there is room to write.\n", seq, err)
+	})
+}
+
+// refuseIfUnrecorded is the gate callTool runs before it dispatches anything,
+// and nil is the ordinary answer (P7-17/A2).
+//
+// It reads Failure() rather than selecting on Broken(), because the question
+// here is not "has it broken by now" but "is it broken at the moment this call
+// would be recorded" — and the answer has to be the same for the check and for
+// the append that follows it.
+func (s *hostServer) refuseIfUnrecorded() *mcp.CallToolResult {
+	rec := s.audit
+	if rec == nil {
+		return nil
+	}
+	seq, err := rec.Failure()
+	if err == nil {
+		return nil
+	}
+	s.sayAuditBroke(rec)
+	return mcp.Errorf("this KelyfOS server's flight recorder stopped at event %d (%v), so it "+
+		"is refusing every tool call: a call nobody records is one this server does not make. "+
+		"Sandboxes already running keep their own records. Free space where the record is "+
+		"written, then restart the server.", seq, err)
+}
+
 func (s *hostServer) closeAudit() {
 	if s.audit == nil {
 		return
 	}
+	if s.auditStopped != nil {
+		close(s.auditStopped)
+		s.auditStopped = nil
+	}
+	// EndBroken first, and it is a no-op on an intact recorder (P7-17/A2). It
+	// was missing here while every other teardown in the CLI had it through
+	// endSession: on a broken recorder the ordinary session.end below is
+	// refused like every other append, so without this the chain simply stopped
+	// mid-session with nothing saying why. By now the process is on its way out
+	// and whatever was holding the disk may have let go, which is the whole
+	// reason the recorder offers a second attempt.
+	_ = s.audit.EndBroken()
 	_ = s.audit.Append(recorder.Event{
 		Type: recorder.TypeSessionEnd, Reason: "shutdown",
 		DurationMS: s.audit.Since().Milliseconds(),

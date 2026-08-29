@@ -98,6 +98,22 @@ reference described in the README and re-measured per release.
   `--workspace` flag to override it with, and the refusal says so — move the
   directory inside the project, or run that agent on its own with
   `kelyfos run --workspace`.
+- **Two more doors that failed open when the flight recorder did.** The wiring
+  that stops a machine nobody is recording reached every loop that holds one
+  open and left two places that have no such loop. `kelyfos serve-mcp` keeps a
+  chain of its **own** — every `mcp.host.call` and `mcp.host.result` — and
+  nothing watched it, so a full disk left the server answering tool calls with
+  the whole outward lane silently refused: an agent creating machines, running
+  commands and spending credentials, and a record saying none of it happened. It
+  now refuses every tool call once its chain has stopped, naming the event that
+  was lost, and says so on stderr the moment it happens rather than at the next
+  call. The sandboxes it already created keep their own chains and their own
+  watchers. And `kelyfos shim` had no watcher at all, so an E2B-shim sandbox
+  whose recorder failed kept running exactly as the finding describes; each shim
+  sandbox now gets the same per-box watcher, and a machine it stops answers the
+  next SDK call naming it with a `404`. Both teardowns also make the second
+  attempt at the "why the record stops here" line that every other door in the
+  CLI already made (P7-17/A2, F13).
 - **A sandbox whose flight recorder had failed kept running, unrecorded.** The
   recorder latches on its first failed append and refuses everything after it,
   so the record stopped — but nothing outside the recorder watched that, so the

@@ -28,6 +28,7 @@ import (
 	"mime"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -100,9 +101,73 @@ type box struct {
 	net   *sandbox.Network
 	proxy *egress.Proxy
 	slice *sandbox.Slice
+
+	// stopped ends this box's recorder watcher, so it goes away with the
+	// machine rather than outliving it (P7-17/A2). The mutex is what makes
+	// stopWatching idempotent: close() is reached from the boot unwind, from
+	// DELETE /sandboxes/{id}, and from the watcher itself.
+	wmu     sync.Mutex
+	stopped chan struct{}
+}
+
+// stopWatching ends this box's recorder watcher. The channel is taken out of
+// the box before it is closed, so a second call finds nothing — the same shape
+// serve-mcp's servedBox.stopWatching has, and for the same reason.
+func (b *box) stopWatching() {
+	b.wmu.Lock()
+	stopped := b.stopped
+	b.stopped = nil
+	b.wmu.Unlock()
+	if stopped != nil {
+		close(stopped)
+	}
+}
+
+// watchRecorder stops a sandbox whose flight recorder has failed (P7-17/A2).
+//
+// This package had zero references to Broken(). F13(b) wired every loop that
+// holds a machine open — `kelyfos run`'s two, `team up`'s, `resume`'s,
+// `snapshot restore`'s — and gave serve-mcp a per-box watcher because it has no
+// such loop. The shim has no such loop either and got neither, so an E2B-shim
+// sandbox whose recorder failed went on executing commands and making egress
+// with nothing recorded and nobody told: exactly the harm F13 describes, on the
+// one door in this product that answers to a network socket.
+//
+// A goroutine per box, started where the recorder is opened and stopped where
+// the box comes down. The SDK is told the way this door tells it anything —
+// the machine is gone, so the next call that names it gets a 404 — and the
+// operator is told on stderr, immediately, which event was lost.
+func (s *Server) watchRecorder(id string, b *box) {
+	b.wmu.Lock()
+	rec, stopped := b.rec, b.stopped
+	b.wmu.Unlock()
+	if rec == nil || stopped == nil {
+		return
+	}
+	select {
+	case <-stopped:
+		return
+	case <-rec.Broken():
+	}
+	seq, ferr := rec.Failure()
+	fmt.Fprintf(os.Stderr,
+		"kelyfos: the flight recorder for shim sandbox %s stopped at event %d: %v\n"+
+			"kelyfos: stopping it — a sandbox nobody is recording is not one this shim keeps "+
+			"running\n", id, seq, ferr)
+
+	s.mu.Lock()
+	if s.boxes[id] == b {
+		delete(s.boxes, id)
+	}
+	s.mu.Unlock()
+
+	b.close("recorder_failed")
 }
 
 func (b *box) close(reason string) {
+	// First, so the watcher does not race the teardown it would otherwise start
+	// a second time.
+	b.stopWatching()
 	// A box can be half-built: boot unwinds through here when it fails, and it
 	// can fail before there is a machine to stop — nil-guarded for the same
 	// reason serve-mcp's servedBox.close is.
@@ -119,6 +184,13 @@ func (b *box) close(reason string) {
 		b.slice.Close()
 	}
 	if b.rec != nil {
+		// EndBroken before the ordinary session.end, and a no-op on an intact
+		// recorder (P7-17/A2). On a broken one the append below is refused like
+		// every other, so without this the chain stopped mid-session with
+		// nothing saying why; by now the machine is down and whatever was
+		// holding the disk may have let go, which is what the second attempt is
+		// for. The same order endSession uses on every other door.
+		_ = b.rec.EndBroken()
 		_ = b.rec.Append(recorder.Event{
 			Type: recorder.TypeSessionEnd, Reason: reason,
 			DurationMS: b.rec.Since().Milliseconds(),
@@ -497,6 +569,12 @@ func (s *Server) boot(parent context.Context) (*box, error) {
 	if b.rec, err = recorder.Open(sandbox.Root(), id); err != nil {
 		return nil, err
 	}
+	// The watcher starts here rather than at registration, so it covers the
+	// recorder's whole life: the machine is started below, and a recorder that
+	// broke between here and the client's first call would otherwise be watched
+	// by nothing (P7-17/A2).
+	b.stopped = make(chan struct{})
+	go s.watchRecorder(id, b)
 	_ = b.rec.Append(recorder.Event{
 		Type: recorder.TypeSessionStart, Image: s.Policy.Flavor, Arch: s.Policy.Arch,
 		Kelyfos: s.Policy.Version, Argv: s.Policy.Argv,

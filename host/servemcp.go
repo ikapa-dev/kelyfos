@@ -141,6 +141,15 @@ type hostServer struct {
 	// appends, which matters because tool calls run on their own goroutines.
 	auditID string
 	audit   *recorder.Recorder
+	// auditStopped ends the watcher on the audit chain, and auditSaid keeps the
+	// operator from being told the same thing once per tool call (P7-17/A2).
+	auditStopped chan struct{}
+	auditSaid    sync.Once
+	// errw is where the operator's own lines go. Nil means os.Stderr, which is
+	// every real run; a test sets it because a line printed to the process's
+	// stderr is a line no assertion can reach, and "it prints something" is the
+	// half of this that a reader of the record cannot check for themselves.
+	errw io.Writer
 
 	wmu sync.Mutex // one writer, because tool calls may be concurrent
 	out *json.Encoder
@@ -489,6 +498,27 @@ func (s *hostServer) dispatch(req *mcp.Request) *mcp.Response {
 // argument come back the same way, for the same reason. Only an unparseable
 // `params` object is a protocol error, because there is no call to answer.
 func (s *hostServer) callTool(p *mcp.CallToolParams) *mcp.CallToolResult {
+	// Before anything is dispatched: if this server's own chain has stopped,
+	// every call is refused (P7-17/A2).
+	//
+	// F13(b) wired Broken() into every loop that holds a MACHINE open and gave
+	// serve-mcp a per-sandbox watcher, because it has no such loop. It left the
+	// server's own audit chain — the one carrying mcp.host.call and
+	// mcp.host.result — watched by nothing at all. A full disk or one damaged
+	// line latched that recorder and the server kept answering tool calls with
+	// every mcp.host.* event silently refused: an agent creating machines,
+	// running commands and spending credentials, and an outward lane that says
+	// none of it happened. That is the same failure F13 exists to close, on the
+	// door where the calls that matter most are the ones that belong to no
+	// sandbox yet.
+	//
+	// Refusing rather than stopping the sandboxes is deliberate. Each machine
+	// has its own chain and its own watcher, and those chains are intact; what
+	// is lost is the record of the CALLS, and refusing every further call is
+	// what makes that loss bounded rather than ongoing.
+	if res := s.refuseIfUnrecorded(); res != nil {
+		return res
+	}
 	// One place, so no tool can be added that skips the record — the same
 	// reason the guest's events are written by the host and not by the guest
 	// (F-D33, docs/mcp-surface.md §2.5).
@@ -566,7 +596,7 @@ func (s *hostServer) watchRecorder(id string, b *servedBox) {
 	case <-rec.Broken():
 	}
 	seq, ferr := rec.Failure()
-	fmt.Fprintf(os.Stderr,
+	fmt.Fprintf(s.stderr(),
 		"kelyfos: the flight recorder for sandbox %s stopped at event %d: %v\n"+
 			"kelyfos: stopping it — it is not being recorded\n", id, seq, ferr)
 
