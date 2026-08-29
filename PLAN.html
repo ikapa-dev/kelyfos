@@ -1521,23 +1521,23 @@
               <span class="tid">F18</span><span class="tk">Symlink chains escape the lexical target check: each link is judged alone, as though every other name in the tree were a real directory. <code>internal/sandbox/extract.go:334</code>.</span></li>
           <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
               <span class="tid">F19</span><span class="tk">Host-trusted state lives inside the VMM&rsquo;s chroot: <code>sandbox.json</code> and the paused marker sit in the jailed run directory at the invoking uid. <code>internal/sandbox/sandbox.go:1678</code> &middot; <code>jail.go:57</code>.</span></li>
-          <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+          <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
               <span class="tid">F20</span><span class="tk">Guest strings reach the terminal without <code>SafeText</code> &mdash; the live OOM and plugin lines, <code>kelyfos log</code>, and <code>watch</code>&rsquo;s <code>absorb</code>. <code>host/run.go:517</code> &middot; <code>host/log.go:790</code> &middot; <code>host/watch.go</code>.</span></li>
-          <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+          <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
               <span class="tid">F1</span><span class="tk">The guest text sanitiser misses Unicode format characters: <code>SafeText</code> and <code>isDangerousControl</code> test ASCII only, so the Trojan Source class passes. <code>internal/proto/proto.go:632</code> &middot; <code>internal/report/safe.go:59</code>.</span></li>
-          <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+          <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
               <span class="tid">F2</span><span class="tk">The E2B shim HTTP API has no cross-site request defence, and its token is opt-in: a web page can <code>POST /files</code> and <code>POST /sandboxes</code> without a preflight. <code>shim/shim.go:148</code>.</span></li>
-          <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+          <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
               <span class="tid">F21</span><span class="tk">A discovered <code>kelyfos.toml</code> is trusted with host-wide powers &mdash; no ownership or writability check on the walk up to <code>/</code>, and the file may name an absolute workspace, an absolute plugin path and bound secrets. <code>internal/config/config.go:117</code>.</span></li>
           <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
               <span class="tid">F3</span><span class="tk">The guest vsock listener never checks the peer CID, and <code>CONFIG_VSOCKETS_LOOPBACK</code> is disabled against the upstream default in a config the fragment does not pin. <code>internal/vsock/vsock.go:101</code>.</span></li>
           <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
               <span class="tid">F4</span><span class="tk">Workspace contents are lost for a directory name ending in whitespace: the <code>debugfs</code> script line is unquoted and the echo-attribution trims. <code>internal/sandbox/extract.go:155</code>.</span></li>
-          <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+          <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
               <span class="tid">F5</span><span class="tk">MCP client config files are created world-readable under <code>$HOME</code>, and the client that later writes an API key keeps the mode it found. <code>host/connect.go:225</code>.</span></li>
           <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
               <span class="tid">F6</span><span class="tk">Erase silently drops chain fields an older build cannot parse, because it round-trips through the typed struct rather than redacting at the raw-JSON level the way <code>digestOfLine</code> reads. <code>internal/recorder/erase.go:76</code>.</span></li>
-          <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+          <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
               <span class="tid">F7</span><span class="tk">Snapshot names are validated on the MCP path and not the CLI path &mdash; five unvalidated callers of <code>snapshotDir</code>, which is the finding&rsquo;s own point demonstrated. <code>host/snapshot.go:59</code> &middot; <code>host/bench.go:152</code>.</span></li>
         </ul></div></li>
   </ul>
@@ -7190,6 +7190,224 @@ after:
         3 recorder fuzz targets green; <code>FuzzAppendFieldValues</code>&rsquo;s OOM measured and attributed to
         <b>P7-15</b>, not to this work: peak RSS under <code>-race</code> is 101&nbsp;MB / 105&nbsp;MB / <b>11.66
         GB</b> for the three targets, and the failure reproduces two commits earlier</td></tr>
+    <tr><td class="mono">2026-08-29</td><td class="mono">P7-17/F20</td>
+        <td><b>Guest strings reached the terminal and the chain without <code>SafeText</code>; they are now
+        cleaned at the edge, before they are either recorded or shown.</b> <code>proto.Reader.Read</code> calls
+        <code>Sanitize()</code> on the decoded value through a new <code>proto.Sanitizer</code>, which reaches
+        <code>internal/sandbox</code>&rsquo;s readers untouched because Go promotes the embedded
+        <code>Ready</code>&rsquo;s method through the anonymous struct they decode into &mdash; verified at
+        runtime, not by inspection. Replay is defended separately, since a chain on disk may predate this:
+        <code>proto.SafeBody</code> keeps <code>\n</code>, <code>\t</code> and SGR colour and U+FFFDs every
+        other C0 byte, <code>ESC</code> followed by anything else, and a bare <code>\r</code> &mdash; never
+        <code>ESC ]</code> (OSC, title and hyperlink injection) or <code>ESC [ &hellip; J/H</code>.
+        <br><b>The review named two print sites. A reflective sweep found thirty-three.</b> Every event type
+        &times; every string field &times; three renderers: <code>Agent</code> above all &mdash; the
+        <code>[who]</code> prefix on nearly every line &mdash; plus <code>Via</code>, <code>SHA256</code>,
+        <code>Budget</code>, <code>Outcome</code>, <code>Signal</code>, <code>Kind</code>. So the fix stopped
+        being a list of fields: all three renderers call <code>safeEvent</code> <b>once per event</b>, reflective
+        and exclusive, with each of five exclusions named and reasoned. A field added to <code>Event</code> later
+        is covered without anyone adding a line.
+        <br><b>Reviewed twice.</b> The first round&rsquo;s two <b>High</b> findings were both real and both were
+        holes this fix had left: <code>ExecResponse.ID</code> and <code>ControlResponse.ID</code> were not in
+        their own <code>Sanitize</code>, and <b><code>proto.TeamRequest</code> had no <code>Sanitize</code> at
+        all</b> &mdash; the only guest&rarr;host frame without one, and the one carrying identity-like fields. The
+        fuzz target that should have caught it <i>enumerated the type and then excused it</i>
+        (<code>if _, ok := v.(Sanitizer); ok</code>), which is the ninth test on this task shown unable to fail.
+        The guard is now a positive assertion failing on seed #0. Second round: clean, two Low observations
+        recorded, neither blocking.</td>
+        <td class="mono">Parent &rarr;
+        <code>GuestEvent.Comm came back with a raw control byte: "\x1b[2J\x1b[3Jpwned\rlooking"</code> across
+        7 fields, plus <code>an embedded Ready was not sanitised</code> and
+        <code>ExecResponse.Error reached the host raw</code><br>
+        <b>The route the review missed, traced end to end:</b>
+        <code>{"op":"store_put","key":"findings/&#x202e;&hellip;"}</code> on the team vsock channel &rarr;
+        <code>sandbox.go:427</code> (no sanitiser) &rarr; <code>broker.StorePut</code> &rarr;
+        <code>record.go:16 Peer: e.To</code> &rarr; <code>host/team.go:294 rec.Append</code> &rarr;
+        <b>raw bytes in the hash chain</b><br>
+        <b>Chasing it found two more the reviewer had not named</b>, via a completeness test that parses the
+        package&rsquo;s own source for declared struct types: <code>ShellExit.Signal</code> was raw and reaches
+        the chain one line below an <code>Error</code> that was cleaned, and <code>ForwardReply.Error</code> uses
+        its own handshake framing so <code>Reader.Read</code> never touched it &mdash; it lands in the
+        recorder&rsquo;s <code>Reason</code> at <code>host/forward.go:181</code><br>
+        <code>FuzzReaderRead</code>, added by this work, <b>failed in 16s under review</b>:
+        <code>*proto.ExecResponse.ID survived Read carrying "{\"id\":\"\x7f\"}"</code>. After the fix,
+        180s &rarr; <b>12,723,651 execs PASS</b>, and the reviewer&rsquo;s own 180s run &rarr;
+        <b>19,093,315 execs PASS</b><br>
+        <b>The committed seed earns its keep:</b> with the <code>ID</code> fix reverted, a <i>plain</i>
+        <code>go test ./internal/proto/</code> &mdash; no <code>-fuzz</code> &mdash; fails on
+        <code>c0c1b757322feccf</code>, on <code>seed#9</code>, and on
+        <code>TestNoGuestFrameLetsAHostileStringThrough</code>. Three independent catches, none needing a fuzzer
+        to find an input.<br>
+        reviewer mutations: <code>type ProbeFrame</code> with no <code>Sanitize</code> &rarr;
+        <code>is declared in this package and is in neither list</code>; adding a
+        <code>case</code> to <code>printEvent</code> &rarr; <code>the sweep does not cover it</code>;
+        <code>safeEvent</code> made a no-op &rarr; 33 failures<br>
+        the <code>Data</code> exclusion driven with real base64 of <code>\x1b[2J&hellip;\rlooking</code> through
+        all three renderers across all 28 event types &mdash; nothing raw<br>
+        <b>Two riders closed with it:</b> <code>Event.Peer</code> and the reason are now rendered on all four
+        <code>egress.attempt</code> branches (F9 recorded who knocked and nothing showed it), and
+        <code>internal/sandbox/exec.go:135</code>&rsquo;s guest-chosen stream name &mdash; where
+        <code>proto.SafeText</code> bounds character class, <i>not length</i> &mdash; is clamped to 200 bytes on a
+        rune boundary</td></tr>
+    <tr><td class="mono">2026-08-29</td><td class="mono">P7-17/F1</td>
+        <td><b>The guest text sanitiser tested ASCII only, so the Trojan Source class passed.</b>
+        <code>SafeText</code>, <code>internal/report</code>&rsquo;s <code>isDangerousControl</code> and the new
+        <code>proto.SafeBody</code> all gained <code>|| !unicode.IsPrint(r)</code>, which also rejects zero-width
+        joiners, soft hyphens and every space other than U+0020 &mdash; all invisible, all usable to make two
+        different strings read identically, which is the right side to err on for an identity-like field. Done
+        <i>after</i> F20 deliberately, as the report&rsquo;s own order of work says: sanitising at the edge first
+        means the predicate change lands everywhere at once.</td>
+        <td class="mono">Parent &rarr; 11/11 cases in
+        <code>TestF1_SafeTextQuotesEveryNonPrintableRune</code>, both <code>SafeBody</code> cases and all three
+        report-side tests fail<br>
+        corpus: <code>"&#x202e;elbatpecca"</code> as a store key, a command, a body, a domain and a message
+        payload in <code>internal/report/hostile_test.go</code>, plus two seeds in <code>FuzzReaderRead</code><br>
+        <code>TestHostileValuesReachTextContentOnly</code> and
+        <code>FuzzRunSectionRendersHostileStringsSafely</code> gained a <b>rune-level</b> loop beside their
+        byte-level one &mdash; a byte loop structurally cannot see U+202E<br>
+        stated cost, pinned by <code>TestF1_SafeTextStillLeavesOrdinaryTextAlone</code>: a non-U+0020 space in a
+        body becomes U+FFFD, while Greek, CJK, an astral emoji, a combining mark and the <code>&rarr;</code> and
+        <code>&middot;</code> this product draws every line all survive untouched<br>
+        reviewer verified the astral case does not arise in Go at all &mdash; a UTF-8 string has no surrogate
+        pairs, and <code>unicode.IsPrint</code> is true for U+1F600 and U+20000</td></tr>
+    <tr><td class="mono">2026-08-29</td><td class="mono">P7-17/F2</td>
+        <td><b>The E2B shim had no cross-site defence and its token was opt-in; a browser is now structurally
+        unable to reach it and a token is minted by default.</b> <code>Sec-Fetch-Site</code>, <code>Origin</code>
+        and <code>Host</code> refusals in <code>authenticated</code>, <b>before</b> the token check &mdash;
+        refusing the presence of <code>Origin</code> outright rather than allowlisting one, because the shim has
+        no legitimate browser client. <code>POST /sandboxes</code> answers 400 to a body that is not JSON rather
+        than booting a microVM. A non-loopback bind is refused unless a token is set.
+        <br><b>The default flip was the owner&rsquo;s call (2026-08-29)</b>, and the CI question it raised was
+        answered by reading the SDK rather than guessing: <code>e2b</code> 2.45.1 sends
+        <code>X-API-KEY</code> with no prefix on the control plane
+        (<code>api/__init__.py:243</code>) and <code>Authorization: Basic base64("&lt;user&gt;:")</code> derived
+        from the <i>sandbox user</i> on the file routes (<code>envd/utils.py:44</code>). Neither is a bearer
+        token, so the CI-executed cookbook recipe takes <code>--insecure-no-token</code> and says why.
+        <b><code>X-API-KEY</code> support was deliberately not added</b>: it would authenticate the control plane
+        and leave <code>/files</code> at 401, so <code>Sandbox.create()</code> would succeed and
+        <code>files.write()</code> would not &mdash; a worse failure than an honest flag.
+        <br>The <code>Host</code> check is <b>not</b> the report&rsquo;s plain equality, with a stated reason:
+        <code>view.go</code> can use equality because it binds <code>127.0.0.1:0</code> itself and prints the only
+        URL, while the shim is reached through an address the operator chose, so equality would refuse
+        <code>http://localhost:3000</code> &mdash; what people type. The rule is: port must match, host part must
+        be an IP literal or exactly <code>localhost</code>.</td>
+        <td class="mono">Parent &rarr; 20 cross-site cases, 6 rebindable-<code>Host</code> cases, the ordering
+        case, the no-bound-address case and 4 malformed-body cases all fail<br>
+        <code>dev/accept-shim.sh</code> gained 8 assertions over the real socket and drives everything with a
+        token, proving 401 without one and to a wrong one, and starting a second shim to prove the mint &mdash;
+        <b>35 passed, 0 failed</b> against real microVMs<br>
+        <code>testdata/hostile/known-broken.txt</code> lost <code>shim/no-authentication</code> <i>in the commit
+        that makes the case hold</i>, which is the file&rsquo;s own rule<br>
+        cookbook <code>e2b-shim</code> recipe green end to end with the real SDK against real microVMs:
+        <code>booted a real Firecracker microVM: 7a02fe01 / read it back: hello from the E2B SDK / rc=0</code><br>
+        <b>The reviewer attacked the <code>Host</code> rule twenty ways across two bind ports and could not
+        defeat it:</b> <code>kelyfos.localhost</code>, <code>127.0.0.1.nip.io</code>, <code>localhost.</code>,
+        <code>0177.0.0.1</code>, <code>2130706433</code>, absolute-form request targets, a missing
+        <code>Host</code>, and duplicate <code>Host</code> headers (Go&rsquo;s <code>ReadRequest</code> rejects
+        those before the handler) &mdash; all refused; <code>[::1]</code> allowed, correctly, since an IP literal
+        cannot be rebound<br>
+        ordering driven end to end: unset <code>Policy.Addr</code> with a <i>correct</i> token &rarr;
+        <b>403, not 401</b>, so the browser checks genuinely run first<br>
+        a portless <code>Host</code> now defaults to port 80 &mdash; and the reviewer confirmed the loosening is
+        exactly scoped: against a <code>:3000</code> bind every portless form is still <b>refused</b>, and against
+        a <code>:80</code> bind <code>evil.com</code> portless is still refused, so the rebinding defence is
+        untouched</td></tr>
+    <tr><td class="mono">2026-08-29</td><td class="mono">P7-17/F5</td>
+        <td><b>MCP client config files were created world-readable under <code>$HOME</code>, and the client that
+        later writes an API key keeps the mode it found.</b> Decided by <b>path prefix, not client name</b>, so a
+        client added later inherits the rule: <code>0600</code>/<code>0700</code> under the user&rsquo;s home,
+        project-local files keep <code>0644</code> because they are meant to be committed. The mode is ANDed with
+        <code>Stat</code>&rsquo;s so an existing file&rsquo;s permissions are never widened. The write is
+        <code>os.CreateTemp</code> in the same directory &rarr; <code>Sync</code> &rarr; <code>Chmod</code>
+        &rarr; <code>Rename</code>, because this is a read-modify-write of a file another program may be editing
+        and a rename is the only atomic replacement available.
+        <br><b>The review found that <code>underHome</code> was a textual prefix</b>, so a project-local
+        <code>.cursor</code> symlinked into <code>$HOME</code> got the project mode. It now resolves both sides
+        through the same helpers F21&rsquo;s path scoping uses &mdash; which the author noted was <i>the third
+        instance of F18&rsquo;s lesson in their own code</i>.</td>
+        <td class="mono">Parent &rarr; both home-scoped clients (0644 file, 0755 dir), all four project-local
+        cases, the existing-world-readable-under-home case and the catalog walk all fail<br>
+        the catalog walk reads <code>clients()</code> and asserts it exercised <b>both</b> sides of the rule, so a
+        client added later cannot quietly land on one branch only<br>
+        reviewer verified both directions with a real symlink tree: a project-local <code>.cursor</code> pointing
+        into <code>$HOME</code> resolves inside and gets <b>0600</b>; <code>/home/alice-backup/x.json</code>
+        against home <code>/home/alice</code> stays outside and gets <b>0664</b><br>
+        directory <code>Sync</code> after the rename is best-effort and deliberately so &mdash; failing a write
+        that has already landed would be worse &mdash; and the comment no longer claims more than the code
+        does</td></tr>
+    <tr><td class="mono">2026-08-29</td><td class="mono">P7-17/F7</td>
+        <td><b>Snapshot names were validated on the MCP path and not the CLI path; <code>snapshotDir</code> is now
+        the gate.</b> It returns <code>(string, error)</code> and validates inside, so the compiler finds every
+        caller &mdash; which is the finding&rsquo;s own argument, that a rule enforced at some call sites is one
+        the next call site will miss. A <code>filepath.Rel</code> assertion after joining is belt and braces.
+        <br><b>The review under-counted twice.</b> The original pass said four unvalidated callers; the
+        verification pass corrected it to five and called that &ldquo;the finding&rsquo;s own point,
+        demonstrated&rdquo;. There were <b>six</b>. The sixth is <code>host/team.go:1026</code>, which nobody
+        counted because it <i>never called <code>snapshotDir</code> at all</i> &mdash;
+        <code>bootTemplate</code> joined <code>filepath.Join(sandbox.Root(), "snapshots", &hellip;)</code> by
+        hand. Found by <code>TestF7_NothingJoinsTheSnapshotsDirectoryByHand</code>, not by reading. All its
+        components are host-minted so it could not fail today; routed through the gate anyway.</td>
+        <td class="mono">Parent &rarr; all 12 hostile names, the gate assertion and the by-hand join fail<br>
+        <b>Replacing a source-grep assertion with a behavioural one immediately found a hole the grep could
+        not:</b> a snapshot name of <code>.</code> satisfied every clause of <code>validSnapshotName</code> and
+        resolved to the snapshots root itself. Fixed, case added &mdash; the argument for driving
+        <code>snapshotPathUnder</code> directly rather than grepping for its call<br>
+        reviewer confirmed there is no seventh: exactly one place joins the directory,
+        <code>host/snapshot.go:60</code> inside <code>snapshotDir</code>, and every caller in
+        <code>host/</code>, <code>internal/</code>, <code>shim/</code> and <code>dev/</code> goes through
+        it</td></tr>
+    <tr><td class="mono">2026-08-29</td><td class="mono">P7-17/F21</td>
+        <td><b>A discovered <code>kelyfos.toml</code> was trusted with host-wide powers; it now has to be owned by
+        the invoking user, and it says what it reaches before any machine boots.</b> <code>config.Trust</code>
+        checks ownership on a discovered file and writability on every file including one passed with
+        <code>--policy</code>, with symlinks checked on both ends, called from <code>loadPolicyAt</code> &mdash;
+        the one function every door goes through. <code>checkWorkspaceScope</code> refuses a workspace outside the
+        policy file&rsquo;s own tree unless the same value is typed on the command line.
+        <code>printPolicyReach</code> prints the file&rsquo;s path, the workspace, every plugin directory and
+        every secret by name and bound domain on the first line of a run &mdash; splitting secret specs
+        <b>textually</b>, never through <code>egress.ParseSecret</code>, so the block never reads a credential and
+        still prints when the variable is unset.
+        <br><b>Two owner rulings (2026-08-29).</b> <code>--plugin-path</code> was added as the escape hatch and
+        the plugin path then scoped, exactly as <code>--workspace</code> already is, with the check inside
+        <code>packPlugins</code> so it is one gate rather than two call sites &mdash; F7&rsquo;s argument applied
+        before someone had to make it again. <b>Secret confirmation was deferred</b> to its own task: the
+        per-user trust record is a new command, a new state file, docs and a CI recipe &mdash; a feature rather
+        than a fix &mdash; and the ownership and writability checks already close the
+        <code>/tmp/kelyfos.toml</code> and cloned-repository cases the finding opens with. The residual is written
+        into <code>docs/threat-model.md</code> so it is not rediscovered as a new finding.
+        <br><b>The group-bit rule deviates from the report, with a stated reason:</b> the prescribed &ldquo;not
+        group- or world-writable&rdquo; would have turned <code>main</code> red, because this dev VM runs
+        <code>umask 0002</code> and every <code>cat &gt; kelyfos.toml</code> in every cookbook recipe is
+        <code>0664</code>. World-writable is refused unconditionally; group-writable is refused unless the
+        file&rsquo;s group is the invoking user&rsquo;s own user-private group.</td>
+        <td class="mono">Parent &rarr; 5 writable modes, the named-file case, the symlink case, the walk-up
+        refusal, 3 out-of-tree workspaces and all 4 things the origin block must name all fail<br>
+        <b>The review found the private-group test compared two different groups</b> &mdash; the gid tested was
+        the <i>file&rsquo;s</i>, compared against the <i>process&rsquo;s</i> primary gid, while the name checked
+        belonged to the <i>passwd entry&rsquo;s</i> gid; those coincide only while
+        <code>os.Getgid() == u.Gid</code>, and diverge under <code>newgrp</code>/<code>sg</code> or in a setgid
+        directory, so a file grouped <code>staff</code> was validated against the name of the user&rsquo;s private
+        group and accepted<br>
+        the decision was extracted into a pure function taking all three sources explicitly, <b>because no test on
+        an ordinary machine could show the bug</b> &mdash; on this dev VM <code>os.Getgid() == u.Gid</code>, which
+        is exactly why the buggy version passed here.
+        <code>TestF21_TheSkewNewgrpProducesIsRefused</code> constructs it (alice, primary gid 1000 named
+        <code>alice</code>, file group 50 named <code>staff</code>, process egid 50) and fails on the old
+        pairing<br>
+        reviewer drove the pure function on synthetic inputs: the newgrp skew &rarr; false, a primary group not
+        named after the user &rarr; false, an unresolvable gid &rarr; false, another user&rsquo;s private group
+        &rarr; false; and confirmed no call-site drift &mdash; <code>os.Getgid()</code> is gone from the file
+        entirely<br>
+        <code>--plugin-path</code> verified as one gate: <code>packPlugins</code> is called from exactly two
+        places and on the MCP path the list lives on the server struct set at startup, so a client cannot add to
+        it; <code>resolvePath</code> walks to the longest existing prefix applying
+        <code>filepath.EvalSymlinks</code> and <code>insideTree</code> resolves the root too, so neither a symlink
+        nor a <code>..</code> separates the approved directory from the named one<br>
+        <code>docs/cookbook.md</code> &sect;14 is the recipe CI executes (refused without the flag, boots with
+        it), verified against real microVMs, <code>rc=0</code><br>
+        reviewer confirmed no secret value can reach <code>printPolicyReach</code>: it splits with
+        <code>strings.Cut</code>, never calls <code>egress.ParseSecret</code> or <code>os.Getenv</code>, and the
+        one branch printing a whole spec wraps it in <code>proto.SafeText</code></td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
