@@ -8444,6 +8444,103 @@ after:
         <code>build</code> job is not reproduced at all, and the <code>boot</code> job is represented by an
         aarch64 stand-in and not the x86_64 run. <b>P7-17 is not ticked and nothing is tagged until both
         workflows are green on the final head.</b></td></tr>
+    <tr><td class="mono">2026-08-29</td><td class="mono">P7-17</td>
+        <td><b>The committed <code>ci.yml</code> runs here now, and running it found a defect in the thing
+        that runs it (D77).</b> <code>make ci-act</code> arrived on <code>main</code> after this
+        round&rsquo;s closing row, built by a peer session on the owner&rsquo;s instruction as relayed to
+        this seat &mdash; <code>a93384f</code>, a clean fast-forward that touched
+        <code>dev/ci-act.sh</code>, the <code>Makefile</code>, <code>CONTRIBUTING.md</code> and
+        <code>CLAUDE.md</code> and left <code>PLAN.html</code> alone, so this document kept its one writer.
+        It runs a job of the workflow file itself under <code>nektos/act</code>, on a fresh clone of a named
+        commit, rather than <code>dev/ci-local.sh</code>&rsquo;s digest-pinned copy of the job&rsquo;s
+        commands. <b>D77 records what it covers and, at more length, what it does not</b>: one job of the
+        two workflows &sect;8 rule 8 names, in an <code>arm64</code> container running as <b>root</b>, with
+        neither <code>build</code> nor <code>boot</code> nor <code>security.yml</code> in it at all. It
+        changes what a row may cite. It does not change what closes this task, and D73&rsquo;s sentence is
+        repeated in D77 rather than cross-referenced so that it cannot be read past.
+        <br><b>The first thing this seat did with it was run it, and it failed.</b> Not a test: <code>act</code>
+        binds its artifact server on a fixed port and the script passed <code>--artifact-server-path</code>
+        without an address or a port, so a second run on one machine dies with <code>listen tcp
+        192.168.1.93:34567: bind: address already in use</code> before a single step &mdash; and the script
+        then printed an empty step list while <code>make</code> reported a bare <code>Error 1</code>, so
+        the failure named neither a cause nor a step. Reported to the session that owns the file rather
+        than fixed here, while their own run was live. <b>Their answer made it worse and better:</b> two
+        runs of the same commit also shared the scratch directory and the log path, so the second&rsquo;s
+        <code>rm -rf</code> removed the first&rsquo;s clone <i>mid-job</i> &mdash; which means this
+        seat&rsquo;s failed run may have damaged theirs rather than only the other way round. Fixed on
+        their branch, not on <code>main</code> at the time of this row: a pid lock that refuses a second
+        run with the reason, a private scratch directory per run, an artifact server on
+        <code>127.0.0.1</code> at a port chosen free, and act&rsquo;s own fatal line printed when no step
+        ran. <b>The third instance of P7-16&rsquo;s class</b> &mdash; host-level singleton state on a
+        machine this project now routinely runs several agents on &mdash; after
+        <code>run/team.json</code> and <code>accept-*.sh</code>&rsquo;s trap.
+        <br><b>And it explains the one thing the closing row left unexplained.</b> That row says the
+        <code>fuzz, briefly</code> step passed on <code>e05b7e3</code> while failing for all three
+        reviewers earlier the same day on <code>FuzzAppendFieldValues</code>, and that <i>why</i> was not
+        established &mdash; the A2 reviewer had attributed it to an entry in this host&rsquo;s cached fuzz
+        corpus. Measured here rather than reasoned about: that target&rsquo;s seed corpus alone peaks at
+        <b>4335256 kB (~4.13 GiB)</b>, and <code>internal/report</code>&rsquo;s 200 MB session fixture at
+        <b>4894636 kB (~4.67 GiB)</b>. The A2 reviewer&rsquo;s own <code>dmesg</code> line was
+        <code>recorder.test anon-rss:4219776kB</code>, which is the first of those two. The reviewers&rsquo;
+        failures were on an 11 GiB VM with several agents running tests at once; the pass was on a quiet
+        one. <b>It is memory pressure and not a corrupt corpus</b>, which is what D69 said about this
+        target when it opened P7-15, and the closing row&rsquo;s &ldquo;not established&rdquo; is
+        superseded here rather than edited (&sect;8 rule 6).</td>
+        <td class="mono"><b>This seat&rsquo;s own run of it, on the head, pasted whole:</b><br>
+        <code>---- summary: ci.yml job 'checks', act, commit a93384f ----</code><br>
+        <code>&nbsp;&#9989;&nbsp; pass&nbsp; Set up job</code><br>
+        <code>&nbsp;&#9989;&nbsp; pass&nbsp; actions/checkout@v4 [572ms]</code><br>
+        <code>&nbsp;&#9989;&nbsp; pass&nbsp; actions/setup-go@v5 [1.29s]</code><br>
+        <code>&nbsp;&#9989;&nbsp; pass&nbsp; gofmt [119ms]</code><br>
+        <code>&nbsp;&#9989;&nbsp; pass&nbsp; go vet [229ms]</code><br>
+        <code>&nbsp;&#9989;&nbsp; pass&nbsp; the vsock loopback transport, so the F3 fixtures run [56ms]</code><br>
+        <code>&nbsp;&#9989;&nbsp; pass&nbsp; unit tests [2m34.310s]</code><br>
+        <code>&nbsp;&#9989;&nbsp; pass&nbsp; fuzz, briefly [5m26.089s]</code><br>
+        <code>&nbsp;&#9989;&nbsp; pass&nbsp; The boundary holds against what the guest can write [18.266s]</code><br>
+        <code>&nbsp;&#9989;&nbsp; pass&nbsp; the plan is still coherent [132ms]</code><br>
+        <code>&nbsp;&#9989;&nbsp; pass&nbsp; every released tag has its notes [74ms]</code><br>
+        <code>&nbsp;&#9989;&nbsp; pass&nbsp; new commits carry a DCO sign-off [83ms]</code><br>
+        <code>&nbsp;&#9989;&nbsp; pass&nbsp; The generated reference still matches the source [535ms]</code><br>
+        <code>&nbsp;&#9989;&nbsp; pass&nbsp; Every cookbook recipe extracts and parses [106ms]</code><br>
+        <code>&nbsp;&#9989;&nbsp; pass&nbsp; Post actions/setup-go@v5 [1.13s]</code><br>
+        <code>&nbsp;&#9989;&nbsp; pass&nbsp; Complete job</code><br>
+        <code>&nbsp; ----&nbsp;&nbsp; not run here: build job (Buildroot image), boot job (x86_64 microVM under KVM)</code><br>
+        <code>&nbsp; job 'checks' passed on a93384f under act &mdash; the committed workflow, run in a container; not a hosted run</code><br>
+        <b>Sixteen steps including <code>actions/checkout</code>, <code>setup-go</code> and their
+        post-step</b>, which <code>dev/ci-local.sh</code> has never run at all: the copy starts after the
+        checkout the workflow performs. The <code>fuzz, briefly</code> step passes here too, at
+        <code>-p=1</code>, which is the same machine-quiet condition the lima run had and is consistent
+        with the memory reading above rather than with a corrupt corpus.<br>
+        Head <code>a93384f</code>, 11 ahead of <code>origin/main</code>; this
+        round&rsquo;s ten commits intact underneath it and <code>PLAN.html</code> untouched by the
+        fast-forward (<code>git log 80999f7..HEAD -- PLAN.html</code> &rarr; empty).<br>
+        <b>The collision, established rather than inferred:</b>
+        <code>level=fatal msg="listen tcp 192.168.1.93:34567: bind: address already in use"</code> at the
+        top of this seat&rsquo;s act log with no job output under it, and
+        <code>lsof -nP -iTCP:34567</code> &rarr; <code>act 43313 &hellip; (LISTEN)</code> — the peer&rsquo;s
+        run, live at that moment. The server was also bound to the LAN address rather than to loopback.<br>
+        <b>The clone-at-commit property, proved by accident:</b> this seat&rsquo;s second run printed
+        <code>note your checkout has 1 uncommitted change(s); they are NOT part of this run — act runs the
+        commit, from a clean clone</code> against an in-flight <code>PLAN.html</code> edit. That is the
+        property <code>dev/ci-local.sh</code> does not have: it runs the working directory and says so in a
+        note nobody has to act on.<br>
+        <b>The RSS figures, measured in lima with <code>/usr/bin/time -v</code>, one binary at a time:</b><br>
+        <code>internal/report TestTwoHundredMegabyteSessionRendersSafely &rarr; 4894636 kB, 4.68s</code><br>
+        <code>internal/recorder FuzzAppendFieldValues (seed corpus) &rarr; 4335256 kB, 12.31s</code><br>
+        The second was measured on the compiled test binary, and one test in that package
+        (<code>TestSchemaDescribesNothingExtra</code>) fails when the binary is run that way because it
+        reads source relative to the package directory &mdash; an artefact of the method, not a defect:
+        <code>go test -count=1 ./internal/recorder/</code> &rarr; <code>ok &hellip; 17.073s</code>. Said
+        because a figure taken by an unusual route has to say what the route cost.<br>
+        <b>Candidates for the owner, added to the list this round already opened:</b> a rendering path that
+        needs roughly 24&times; a session&rsquo;s size in memory, so two of these binaries do not fit
+        beside each other in a 7.7 GiB Docker daemon and barely fit in an 11 GiB VM; and
+        <code>dev/ci-act.sh</code>&rsquo;s singleton state, if the owner does not take the peer&rsquo;s
+        branch. Neither is fixed here &mdash; the brief scopes new findings out, and the second belongs to
+        the session that owns the file.<br>
+        <b>Unchanged:</b> P7-17 is not ticked and nothing is tagged. <code>ci.yml</code> and
+        <code>security.yml</code> have still run against none of this on GitHub; Actions is still disabled
+        at the account level.</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
@@ -10015,6 +10112,54 @@ after:
         signal and no way out.
         <br>Not a compatibility question: the refusal being narrowed shipped for the first time in
         <code>d1fee33</code>, in this cycle, and no release has ever had it.</td></tr>
+    <tr><td class="mono">D77</td><td class="mono">2026-08-29</td>
+        <td><b>The committed <code>ci.yml</code> now runs here, in a container, and it is the local
+        evidence of record from this point &mdash; and it does not change what closes P7-17.</b>
+        <code>make ci-act</code> (<code>dev/ci-act.sh</code>, on <code>main</code> at
+        <code>a93384f</code>) runs a job of the workflow file itself under <code>nektos/act</code>, on a
+        fresh clone of a named commit, rather than the copy of its commands <code>dev/ci-local.sh</code>
+        keeps under a digest pin. A copy is evidence; the original is better evidence, and a Progress Log
+        row should cite the better one. Built by a peer session on the owner&rsquo;s instruction as relayed
+        to this seat, which is recorded that way rather than as something this seat verified with the
+        owner.
+        <br><b>What it covers, and the list is the point of this row.</b> The <code>checks</code> job:
+        gofmt, vet, the vsock modprobe, the unit tests, the short fuzz pass, the hostile corpus, the plan
+        checker, the changelog gate, the DCO range, the generated reference and the cookbook. <b>What it
+        does not:</b> the <code>build</code> job (Buildroot, hours) and the <code>boot</code> job (a real
+        microVM under KVM) do not run in Docker on macOS at all, and <code>security.yml</code> &mdash; the
+        second workflow &sect;8 rule 8 was amended in 2026-08-24 to include, whose whole purpose is to go
+        red when nothing in this repository has changed &mdash; is not run by this at all. The container
+        is <code>linux/arm64</code> and runs as <b>root</b>; GitHub&rsquo;s <code>ubuntu-latest</code> is
+        <code>amd64</code> and does not, and the container&rsquo;s resolver answers
+        <code>::1</code> for <code>localhost</code> where this VM answers <code>127.0.0.1</code>. Two
+        tests were green natively and red under it, one for each of those two reasons rather than both for
+        the same one, and both were hardened rather than excused
+        (<code>TestARemovalThatUnlocksADirectoryPutsItsSetgidBack</code> forces a refused removal with a
+        0500 parent, which root ignores; <code>TestF14_TheResolvedAddressReachesTheRecorder</code>
+        asserted the literal <code>127.0.0.1</code>).
+        <br><b>It does not close anything, and the sentence D73 put in its own row for this exact purpose
+        is repeated here rather than cross-referenced.</b> <code>ci.yml</code> and
+        <code>security.yml</code> green on the final head is the bar. Running the committed
+        <code>ci.yml</code> is nearer to that than running a transcription of one of its jobs, and it is
+        still a reproduction: a different architecture, a different user, one job of three, and one
+        workflow of two. <b>A tag or a phase exit taken on this row would be the defect this row exists to
+        prevent</b>, which is what D73 said about the weaker version of the same thing.</td>
+        <td>The reason to prefer it is the reason the digest pin exists at all. <code>dev/ci-local.sh</code>
+        is a hand copy that refuses to run when the job&rsquo;s text moves, which catches the workflow
+        drifting away from the script and cannot catch the script drifting away from itself &mdash; gutting
+        a step there leaves the digest unchanged and every step green, which the B2/C review pointed out
+        and which is written into that file&rsquo;s own header now. Running the workflow file removes the
+        copy, and with it that whole class.
+        <br>The differences are kept in front of a reader rather than in a footnote, because the two that
+        bit already are the two nobody predicts. Root is not a smaller user than the runner&rsquo;s, it is
+        a <i>different</i> one: a test that forces a permission to be refused does not fail under it, it
+        silently stops testing anything, which is the same shape as a skipped fixture reading like a
+        passing one. And arm64 is the architecture this project boots natively and <i>not</i> the one
+        <code>ci.yml</code>&rsquo;s <code>boot</code> job exists to cover, so a green
+        <code>make ci-act</code> says nothing at all about the x86_64 path.
+        <br>The scope of this row is evidence, not policy: it names what a Progress Log row should cite and
+        what a reader may conclude from it. It amends neither &sect;8 rule 8 nor D73, both of which stand
+        exactly as written.</td></tr>
     <!-- Claude Code: append rows above this line. -->
   </table>
 </section>
