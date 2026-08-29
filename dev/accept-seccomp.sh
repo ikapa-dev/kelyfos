@@ -106,7 +106,7 @@ say "and the run says so, in the terminal and in its own state"
 grep -E 'seccomp' run.log | sed 's/^/  /'
 check "$(grep -q 'seccomp     filter mode' run.log && echo yes || echo no)" \
       "the run printed the mode it observed"
-state="$(ls -t ~/.cache/kelyfos/run/firecracker/*/root/sandbox.json 2>/dev/null | sed -n '1,1p')"
+state="$(ls -t ~/.cache/kelyfos/run/firecracker/*/sandbox.json ~/.cache/kelyfos/run/firecracker/*/root/sandbox.json 2>/dev/null | sed -n '1,1p')"
 echo "  $(grep -o '"seccomp[^,]*' "$state" 2>/dev/null | tr '\n' ' ')"
 check "$(grep -qE '"seccomp": ?"filter"' "$state" 2>/dev/null && echo yes || echo no)" \
       "and wrote it into the sandbox's own state rather than only to a terminal"

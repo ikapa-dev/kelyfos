@@ -20,11 +20,18 @@ ARCH="${ARCH:-$(uname -m | sed -e 's/^arm64$/aarch64/' -e 's/^amd64$/x86_64/')}"
 KELYFOS="${KELYFOS:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/kelyfos}"
 RUN_ROOT="${HOME}/.cache/kelyfos/run"
 
-# The run directory moved when the jailer landed (P5-1): a sandbox's state now
-# lives at <run>/firecracker/<id>/root/sandbox.json rather than <run>/<id>/.
-# Resolve it instead of spelling either layout, so a script that reads it keeps
-# working across the change rather than quietly measuring nothing (P5-6).
-statefile() { ls -t "$RUN_ROOT"/*/"$1"/root/sandbox.json "$RUN_ROOT/$1/sandbox.json" 2>/dev/null | sed -n '1,1p'; }
+# The run directory has moved twice. The jailer put a sandbox's state at
+# <run>/firecracker/<id>/root/sandbox.json rather than <run>/<id>/ (P5-1), and
+# F19 moved it up one more level, to <run>/firecracker/<id>/sandbox.json, so
+# that the chroot the VMM is dropped into cannot reach the host's own record of
+# the machine.
+#
+# Resolve it instead of spelling any one layout, so a script that reads it keeps
+# working across the change rather than quietly measuring nothing (P5-6). That
+# was the stated intent last time and it still did not survive the next move,
+# because only two of the three spellings were listed — which is the failure
+# this comment exists to prevent, so: newest first, and add rather than replace.
+statefile() { ls -t "$RUN_ROOT"/*/"$1"/sandbox.json "$RUN_ROOT"/*/"$1"/root/sandbox.json "$RUN_ROOT/$1/sandbox.json" 2>/dev/null | sed -n '1,1p'; }
 
 WORK="$(mktemp -d)"
 PASSES=0 FAILURES=0 SKIPS=0

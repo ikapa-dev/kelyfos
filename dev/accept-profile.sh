@@ -66,7 +66,7 @@ check "$(grep -qE '^  profile .*landlock abi [0-9]' run.log && echo yes || echo 
       "the run names the Landlock ABI it got, not the one it hoped for"
 check "$(grep -qE "^  profile .*· $FLAVOR ·" run.log && echo yes || echo no)" \
       "and the profile is this flavor's"
-state="$(ls -t ~/.cache/kelyfos/run/firecracker/*/root/sandbox.json 2>/dev/null | sed -n '1,1p')"
+state="$(ls -t ~/.cache/kelyfos/run/firecracker/*/sandbox.json ~/.cache/kelyfos/run/firecracker/*/root/sandbox.json 2>/dev/null | sed -n '1,1p')"
 check "$(grep -q '"profile"' "$state" 2>/dev/null && echo yes || echo no)" \
       "and it is in the sandbox's own state, not only on a terminal"
 

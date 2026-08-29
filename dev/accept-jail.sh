@@ -182,7 +182,7 @@ boot --cpu-quota 150%
 vmm3="$(pgrep -n firecracker)"
 grep -E '^  cpu |^  cgroup ' run.log | sed 's/^/  /'
 sits="$(awk -F: '$1=="0"{print $3}' "/proc/$vmm3/cgroup" 2>/dev/null)"
-state3="$(ls -t ~/.cache/kelyfos/run/firecracker/*/root/sandbox.json 2>/dev/null | sed -n '1,1p')"
+state3="$(ls -t ~/.cache/kelyfos/run/firecracker/*/sandbox.json ~/.cache/kelyfos/run/firecracker/*/root/sandbox.json 2>/dev/null | sed -n '1,1p')"
 asked="$(python3 -c "import json;print(json.load(open('$state3')).get('cgroup_path',''))" 2>/dev/null)"
 echo "  asked for: ${asked:-<none>}"
 echo "  sits in:   ${sits:-<none>}"
