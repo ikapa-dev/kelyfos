@@ -1920,12 +1920,25 @@ func (st *State) validate(runDir string) error {
 	// before deciding a chain is safe to rewrite — or files another process's
 	// counters under this machine's name.
 	//
-	// It is also derivable, on the machines that matter. The jailer writes
-	// firecracker.pid inside the chroot as **root**, mode 0644, so the VMM —
-	// which is dropped to the invoking uid — can read it and cannot rewrite it.
-	// That makes it the one thing inside the jail this host can still believe.
-	// Absent or unreadable is not an error: --no-jail writes none, and a
-	// half-torn-down directory may have lost it.
+	// The jailer's own firecracker.pid is compared against where it exists.
+	// **It is a consistency check and not a trust anchor**, and the difference
+	// is worth stating because the first version of this comment got it wrong.
+	// It said the file is written by root at mode 0644, so the VMM — dropped to
+	// the invoking uid — can read it and cannot rewrite it. The first half is
+	// observed and true; the conclusion is false, because unlink(2) is governed
+	// by write permission on the *directory*, and the directory is the chroot
+	// the VMM owns. Measured:
+	//
+	//	dir   <invoking uid> 700      file  root:root 644
+	//	in-place write -> Permission denied
+	//	unlink         -> SUCCEEDED
+	//	recreate       -> SUCCEEDED, content=99
+	//
+	// So anyone who can rewrite sandbox.json can rewrite this too, and after
+	// F19 neither is reachable from inside the chroot anyway. What the check is
+	// worth is catching a stale or truncated record — a real failure mode — at
+	// no cost. Absent or unreadable is not an error: --no-jail writes none, and
+	// a half-torn-down directory may have lost it.
 	if st.PID < 0 {
 		return bad("its pid is %d", st.PID)
 	}

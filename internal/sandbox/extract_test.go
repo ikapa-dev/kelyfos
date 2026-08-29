@@ -1345,11 +1345,19 @@ func TestF17_DebugfsErrorsPicksOutComErrLinesOnly(t *testing.T) {
 			"dump: Attempt to read block from filesystem resulted in short read while reading ext2 file\n", 1},
 		{"an ls failure", "ls: File not found by ext2_lookup\n", 1},
 		{"two of them", "dump: one\nstat: two\n", 2},
-		// A workspace is allowed to contain a file called `dump:notes`, and
+		// A workspace is allowed to contain a file called `dump: notes`, and
 		// refusing on the substring would cost somebody their whole image. The
 		// review asked for "any line containing"; com_err always writes the
-		// command name first, so the prefix is both narrower and correct.
-		{"a name that merely contains one", "reading /work/dump:notes went fine\n", 0},
+		// failing command's name first, so the prefix is both narrower and
+		// correct.
+		//
+		// The name carries the space, which is what makes this input separate
+		// the two rules — an earlier fixture used `dump:notes` and scored zero
+		// under both, so mutating HasPrefix to Contains left the suite green.
+		// This is the shape debugfs really prints, with the path as the name:
+		// `/nope: File not found by ext2_lookup`.
+		{"a name that merely contains one",
+			"/work/dump: notes: File not found by ext2_lookup\n", 0},
 		{"a usage line, which com_err does not write", "Usage: ls [-c] [-d] [-l] [-p] [-r] file\n", 0},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -1505,5 +1513,92 @@ func TestF18_TheLinkWalkBoundsItsOwnWork(t *testing.T) {
 		t.Errorf("600 links cost %d steps, which is %d%% of the whole image's allowance — the "+
 			"budget does not leave room for an ordinary workspace",
 			used, used*100/maxLinkSteps)
+	}
+}
+
+// What the free-space check is asked about has to be what is going to be
+// written, and symlinks were left out of it.
+//
+// A slow link — one whose target is too long to live inside the inode — has a
+// data block that `dump` writes out like any other. This is the one part of the
+// size work that no end-to-end test could pin, because checkFreeSpace says
+// nothing when it cannot tell and there is no way to make a temp filesystem
+// small on demand; so the sum is a function, and the function is checked.
+func TestF17_StagingBytesCountsEverythingThatGetsWritten(t *testing.T) {
+	entries := []imageEntry{
+		{path: "dir", kind: kindDir, size: 0},
+		{path: "dir/a.txt", kind: kindFile, size: 1000},
+		{path: "short", kind: kindSymlink, size: 5},
+		{path: "long", kind: kindSymlink, size: 200},
+	}
+	if got, want := stagingBytes(entries), int64(1205); got != want {
+		t.Errorf("stagingBytes = %d, want %d — a symlink's target is bytes the dump writes", got, want)
+	}
+	// And a directory contributes nothing, which is what makes the sum right
+	// rather than merely bigger.
+	if got := stagingBytes([]imageEntry{{path: "d", kind: kindDir, size: 4096}}); got != 0 {
+		t.Errorf("stagingBytes counted %d bytes for a directory", got)
+	}
+}
+
+// An entry the image listed and then could not produce is a refusal, not an
+// error of some other kind — and the message is about the entry, not about this
+// package's scratch directory.
+//
+// This is the ordinary shape of a *live* read: `kelyfos diff` runs against a
+// running sandbox, and an agent running a compiler or `npm ci` deletes files
+// constantly, so a file enumerated by the first debugfs pass is gone by the
+// second. It used to come back as a plain fmt.Errorf, which stageTwice does not
+// retry — so diff still failed on a busy guest, now with an internal staging
+// path in the message.
+//
+// It also shows why the structural check is the one that holds. com_err names
+// the *path* rather than the command for this failure — measured,
+// `/gone.txt: File not found by ext2_lookup` — so debugfsErrors' prefix rule
+// cannot see it, dumpFiles returns success, and only copyThrough finding
+// nothing staged catches it at all.
+func TestF17_AnEntryThatVanishedBetweenThePassesIsARefusal(t *testing.T) {
+	needsImageTools(t)
+
+	root := t.TempDir()
+	src := mkdirT(t, filepath.Join(root, "src"))
+	for _, name := range []string{"keep.txt", "gone.txt"} {
+		if err := os.WriteFile(filepath.Join(src, name), []byte("x\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	img := filepath.Join(root, "ws.ext4")
+	packImage(t, src, img)
+
+	entries, err := listImage(img)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The agent deletes it, and the image is what the second pass reads.
+	if err := os.Remove(filepath.Join(src, "gone.txt")); err != nil {
+		t.Fatal(err)
+	}
+	packImage(t, src, img)
+
+	tree := mkdirT(t, filepath.Join(root, "tree"))
+	r, err := os.OpenRoot(tree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	err = extractImage(img, entries, r)
+	if err == nil {
+		t.Fatal("an entry the image listed and then could not produce was skipped silently")
+	}
+	if !errors.Is(err, ErrHostileImage) {
+		t.Errorf("the refusal is %v, which does not wrap ErrHostileImage — so `kelyfos diff` "+
+			"does not read again and a busy agent looks like a broken image", err)
+	}
+	if !strings.Contains(err.Error(), "gone.txt") {
+		t.Errorf("the refusal does not name the entry: %v", err)
+	}
+	if strings.Contains(err.Error(), "kelyfos-extract-") {
+		t.Errorf("the refusal shows this package's own staging directory: %v", err)
 	}
 }

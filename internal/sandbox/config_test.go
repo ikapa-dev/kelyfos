@@ -399,8 +399,8 @@ func TestF19_ARewrittenStateFileIsRefusedRatherThanObeyed(t *testing.T) {
 		{"proxy-port-out-of-range", func(st *State) { st.ProxyPort = 70000 },
 			"this goes into the nftables rule as the one reachable port"},
 		{"pid-is-not-the-one-the-jailer-recorded", func(st *State) { st.PID = 999999 },
-			"the jailer writes firecracker.pid as root inside the chroot, so the VMM can read it " +
-				"and cannot rewrite it — it is the one thing in there this host can still believe"},
+			"the jailer's own record of the pid disagrees; a consistency check rather than a " +
+				"trust anchor, since unlink(2) is governed by the directory and the VMM owns it"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			st := sound()

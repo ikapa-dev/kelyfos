@@ -929,6 +929,23 @@ func runDebugfs(imagePath, script string) (stdout, stderr string, err error) {
 	return outBuf.String(), errBuf.String(), err
 }
 
+// stagingBytes is what a dump of these entries will write, which is what the
+// free-space check needs to be about.
+//
+// Symlinks count. A *slow* link — one whose target is too long to live inside
+// the inode — has a data block that `dump` writes out like any other, and
+// leaving them out meant the check was answering about a smaller extraction than
+// the one that was going to run. Directories write nothing.
+func stagingBytes(entries []imageEntry) int64 {
+	var total int64
+	for _, e := range entries {
+		if e.kind != kindDir {
+			total += e.size
+		}
+	}
+	return total
+}
+
 // dumpFiles pulls every file's contents out of the image.
 //
 // The destinations are numbered by this package. That is the point of the whole
@@ -962,7 +979,6 @@ func dumpFiles(imagePath string, entries []imageEntry) (map[string]string, func(
 
 	staged := map[string]string{}
 	var files, links strings.Builder
-	var total int64
 	for i, e := range entries {
 		if e.kind == kindDir {
 			continue
@@ -983,17 +999,13 @@ func dumpFiles(imagePath string, entries []imageEntry) (map[string]string, func(
 		// space produced `dump: Usage: dump_inode [-p] <file> <output_file>`
 		// and no dump at all, for every file in the image.
 		line := fmt.Sprintf("dump -p \"/%s\" \"%s\"\n", e.path, dest)
-		// Symlink bytes count towards the staging total as well. A slow link's
-		// target is a data block that `dump` writes out like any other, and
-		// leaving them out meant the free-space check was answering a question
-		// about a smaller extraction than the one about to run.
-		total += e.size
 		if e.kind == kindSymlink {
 			links.WriteString(line)
 			continue
 		}
 		files.WriteString(line)
 	}
+	total := stagingBytes(entries)
 
 	// Before a byte is written rather than after the disk is full. checkFreeSpace
 	// says nothing when it cannot tell, which is the right silence: an
@@ -1033,7 +1045,7 @@ func dumpFiles(imagePath string, entries []imageEntry) (map[string]string, func(
 
 func copyThrough(root *os.Root, e imageEntry, from string) error {
 	if from == "" {
-		return fmt.Errorf("%s was not extracted from the image", e.path)
+		return refuse("%s was not extracted from the image", e.path)
 	}
 	// The size the record carries, against the size that came out. This is the
 	// check that makes a partial dump structural rather than a matter of
@@ -1053,7 +1065,17 @@ func copyThrough(root *os.Root, e imageEntry, from string) error {
 		// A file debugfs could not read is a hole in the record of what came
 		// back, and a workspace missing a file without saying so is worse than
 		// one that refuses.
-		return fmt.Errorf("read %s out of the workspace image: %w", e.path, err)
+		//
+		// A refusal rather than a plain error, and the entry rather than the
+		// staging path. An image that enumerated an entry and then could not
+		// produce it is an image that does not agree with itself, which is what
+		// ErrHostileImage means everywhere else here — and it is the ordinary
+		// shape of a *live* read, where the agent deleted the file between the
+		// two debugfs passes. `kelyfos diff` reads again on this class and only
+		// reports it if it happens twice, which it could not do while this was
+		// an error of a different kind. The staging path is this package's own
+		// business and was the whole of the message somebody got.
+		return refuse("%s was enumerated in the image and then could not be read out of it", e.path)
 	}
 	if info.Size() != e.size {
 		return refuse("%s came out of the image as %d bytes and its record says it holds %d; "+
@@ -1062,7 +1084,7 @@ func copyThrough(root *os.Root, e imageEntry, from string) error {
 	}
 	src, err := os.Open(from)
 	if err != nil {
-		return fmt.Errorf("read %s out of the workspace image: %w", e.path, err)
+		return refuse("%s was enumerated in the image and then could not be read out of it", e.path)
 	}
 	defer src.Close()
 
