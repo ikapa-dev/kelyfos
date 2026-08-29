@@ -226,6 +226,13 @@ func FuzzScopeCovers(f *testing.F) {
 	f.Add("/repos/", "/admin")
 	f.Add("/user", "/user")
 	f.Add("/user", "/user/emails")
+	// P7-14: a prefix that is not in normal form. Found by this target under
+	// act in four seconds and deferred for two days; covers now withholds on
+	// any such prefix, so these hold by construction.
+	f.Add("/repo//", "/repo/")
+	f.Add("/repos//", "/repos/")
+	f.Add("/repos/.", "/repos/")
+	f.Add("/repos/../admin/", "/admin/x")
 
 	f.Fuzz(func(t *testing.T, prefix, target string) {
 		// An empty Scope.Path is "no restriction at all" (TestAnEmptyScopeCoversEverything)

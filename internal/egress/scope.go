@@ -1,6 +1,7 @@
 package egress
 
 import (
+	"fmt"
 	"net/http"
 	"path"
 	"strings"
@@ -53,6 +54,14 @@ const (
 func (s Scope) covers(req *http.Request) (bool, string) {
 	if s.Path == "" {
 		return true, ""
+	}
+	// A scope that is not in normal form covers nothing (P7-14). ParseSecretSpec
+	// refuses one before it can exist, so this is the second lock on the same
+	// door: a Scope built by hand, or by a parser added later that forgets the
+	// rule, withholds the credential rather than approving a request the bound
+	// prefix does not literally cover.
+	if canonicalScopePath(s.Path) != nil {
+		return false, WithheldPath
 	}
 	if !literalAndNormal(req.URL.EscapedPath(), req.URL.Path) {
 		return false, WithheldNotPlain
@@ -125,8 +134,42 @@ func literalAndNormal(escaped, decoded string) bool {
 	return c == decoded || c+"/" == decoded
 }
 
+// canonicalScopePath reports why a bound path is not in the form requests are
+// compared in, or nil if it is (P7-14).
+//
+// covered trims exactly one trailing slash off a prefix before comparing, so a
+// scope written "/repos//" — a plausible typo, not a contrived input — approved
+// "/repos/", which an origin that strips matrix parameters or collapses
+// separators resolves to "/repos": not beneath the literal bound prefix. The
+// fix is not a second trim; it is that a scope which is not already in normal
+// form has no meaning here, and the honest answer to a typo in a credential
+// scope is a refusal that says what to write, not a guess at what was meant.
+//
+// Normal form is path.Clean's, with the trailing slash that names a collection
+// allowed back — the same rule literalAndNormal applies to a request. Which
+// characters a scope may carry is the grammar's business (D44: ":" and "+" are
+// ordinary path characters), not this check's.
+func canonicalScopePath(p string) error {
+	if p == "" || p[0] != '/' {
+		return fmt.Errorf("a scope path must start with \"/\"")
+	}
+	c := path.Clean(p)
+	// "/" is its own collection form: "//" is the doubled-slash typo, not
+	// "/" plus the slash that names a collection.
+	if c == p || (c != "/" && c+"/" == p) {
+		return nil
+	}
+	want := c
+	if strings.HasSuffix(p, "/") && c != "/" {
+		want += "/"
+	}
+	return fmt.Errorf("scope path %q is not in normal form (a doubled slash, or a \".\" or \"..\" segment); write it as %q", p, want)
+}
+
 // covered reports whether a normalised path is beneath a bound prefix, on a
-// segment boundary.
+// segment boundary. The prefix is canonical by the time it gets here — covers
+// checks, and ParseSecretSpec refuses one that is not — which is what makes
+// the one-slash trim below exact rather than a guess (P7-14).
 //
 // The boundary matters: a bare strings.HasPrefix of "/repos" also covers
 // "/repos-private", which is the mistake that makes endpoint locking look like

@@ -73,6 +73,17 @@ reference described in the README and re-measured per release.
   coming) or on Ctrl-C (P7-9).
 
 ### Fixed
+- **A path-scoped credential could attach one segment wider than its bound
+  prefix when the scope carried a doubled trailing slash.** `covered()` trims
+  exactly one `/` before comparing, so `--secret TOKEN@host/repos//` — a typo,
+  not a contrived input — approved `/repos/`, which an origin that strips
+  matrix parameters (Tomcat, Jetty) resolves to `/repos`. A scope path is now
+  refused where it is typed unless it is already in normal form (no `.`/`..`
+  segments, no doubled slashes), with the form to write instead; and `covers` withholds the credential on any scope
+  that is not, so a scope built past the parser cannot approve what the prefix
+  does not literally cover. Found by `FuzzScopeCovers` on 2026-08-27 and
+  deferred (D67); fixed when `make ci-act` started finding it in four seconds
+  (P7-14).
 - **`kelyfos connect` refuses a project-local configuration path whose symlink
   leaves both the project and your home directory.** Following a leaf symlink is
   what keeps a dotfiles-managed configuration working, and four of the six

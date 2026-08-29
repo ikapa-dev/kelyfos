@@ -3044,6 +3044,13 @@ hoped for.
   where egress is decided, and putting a second egress policy inside the
   credential grammar would make one typo a hard outage.
 
+  The path must already be in normal form — no `.` or `..` segments, no
+  doubled slashes; a trailing slash names a collection. A scope written
+  `/repos//` used to approve `/repos/`, which an origin that strips matrix
+  parameters resolves to `/repos` — one segment wider than the bound prefix
+  (P7-14). It is now refused where it is typed, with the form to write
+  instead; a scope that somehow exists in another form covers nothing.
+
   Two things it deliberately does **not** narrow, because a reader will assume
   otherwise. It does not narrow what the proxy *decrypts*: termination is still
   decided by the host, so binding `T@api.example.com/v1` still terminates every

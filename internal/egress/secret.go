@@ -128,6 +128,13 @@ func ParseSecretSpec(spec string) (SecretSpec, error) {
 			return out, fmt.Errorf("--secret %q: a path binds one host exactly, so %q cannot also be a wildcard", spec, hostpart)
 		}
 		out.Path = "/" + rest
+		// Refused here, at the only door a scope enters by, with the form to
+		// write instead (P7-14). covers withholds on the same rule, but a
+		// refusal at parse time reaches the person who typed it, and a
+		// withheld credential reaches them as a 401 from somewhere else.
+		if err := canonicalScopePath(out.Path); err != nil {
+			return out, fmt.Errorf("--secret %q: %w", spec, err)
+		}
 	}
 
 	// The host is normalised; the path never is. Hosts are case-insensitive and
