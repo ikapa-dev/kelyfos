@@ -874,12 +874,16 @@ func dumpFiles(imagePath string, entries []imageEntry) (map[string]string, func(
 		// space produced `dump: Usage: dump_inode [-p] <file> <output_file>`
 		// and no dump at all, for every file in the image.
 		line := fmt.Sprintf("dump -p \"/%s\" \"%s\"\n", e.path, dest)
+		// Symlink bytes count towards the staging total as well. A slow link's
+		// target is a data block that `dump` writes out like any other, and
+		// leaving them out meant the free-space check was answering a question
+		// about a smaller extraction than the one about to run.
+		total += e.size
 		if e.kind == kindSymlink {
 			links.WriteString(line)
 			continue
 		}
 		files.WriteString(line)
-		total += e.size
 	}
 
 	// Before a byte is written rather than after the disk is full. checkFreeSpace
@@ -987,7 +991,7 @@ func copyThrough(root *os.Root, e imageEntry, from string) error {
 func readLink(imagePath string, e imageEntry, staged string) (string, error) {
 	if staged != "" {
 		if b, err := os.ReadFile(staged); err == nil && len(b) > 0 {
-			return string(b), nil
+			return checkedTarget(e, string(b))
 		}
 	}
 	out, err := exec.Command("debugfs", "-R", "stat \"/"+e.path+"\"", imagePath).Output()
@@ -996,8 +1000,41 @@ func readLink(imagePath string, e imageEntry, staged string) (string, error) {
 	}
 	for _, line := range strings.Split(string(out), "\n") {
 		if rest, ok := strings.CutPrefix(strings.TrimSpace(line), "Fast link dest: "); ok {
-			return strings.Trim(strings.TrimSpace(rest), `"`), nil
+			// One quote off each end rather than strings.Trim, which strips as
+			// many as it finds: validLink refuses a quote in a *name* but not in
+			// a target, so a target that legitimately begins or ends with one
+			// would otherwise come back a character short — and now that the
+			// length is checked, silently wrong turns into a refusal instead.
+			rest = strings.TrimSuffix(strings.TrimPrefix(rest, `"`), `"`)
+			return checkedTarget(e, rest)
 		}
 	}
 	return "", refuse("%s is a symlink whose target this host could not read", e.path)
+}
+
+// checkedTarget is F17's rule applied to the other kind of entry that has
+// contents: what came out of the image has to be as long as the inode says.
+//
+// copyThrough compares sizes for a regular file and never runs for a symlink,
+// and the symlink pass is deliberately not fatal on stderr — a *fast* link has
+// no data block, so `dump` on it legitimately writes nothing and legitimately
+// reports a short read. Between those two, a *slow* link — one whose target is
+// long enough to need a data block — whose dump came back short was recreated
+// with a silently truncated target, which does not point where the guest wrote
+// it and does not point nowhere either. Same triggers as F17, same class, and
+// the record already carries the answer:
+//
+//	/13/120777/501/1000/s200/200/    <- the target is 200 bytes
+//
+// Measured against the real tool, both readers agree with that number exactly:
+// a fast link's `Fast link dest:` is the target verbatim (5 bytes for `f.txt`,
+// 5 for `a b c`, 59 for a 59-byte target), and ext4 switches to a slow link at
+// 60 bytes, from where `dump` is the only reader.
+func checkedTarget(e imageEntry, target string) (string, error) {
+	if int64(len(target)) != e.size {
+		return "", refuse("the target of the symlink %s came out of the image as %d bytes and "+
+			"its record says it holds %d; a truncated target points somewhere else entirely",
+			e.path, len(target), e.size)
+	}
+	return target, nil
 }

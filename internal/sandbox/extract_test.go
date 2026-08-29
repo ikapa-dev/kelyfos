@@ -9,6 +9,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -955,6 +956,324 @@ func FuzzEntryFrom(f *testing.F) {
 			if e.mode&^os.FileMode(0o7777) != 0 {
 				t.Fatalf("accepted %q with mode %v", record, e.mode)
 			}
+		}
+	})
+}
+
+// F17's headline mechanism, pinned on its own.
+//
+// The first F17 test was satisfied by *either* the size comparison or the
+// com_err rule and pinned neither: both size checks could be deleted with the
+// suite green. They are not interchangeable — the comment above copyThrough
+// says the size check exists so the defence is "structural rather than a matter
+// of noticing a message" — and this is the case where only the size check can
+// fire.
+//
+// A file that grows between the two debugfs passes. Enumeration and dumping are
+// separate processes, so a workspace still being written to is read at two
+// different moments; the dump then succeeds, says nothing on stderr, and hands
+// back more bytes than the record accounted for.
+func TestF17_TheSizeCheckCatchesAFileThatChangedBetweenThePasses(t *testing.T) {
+	needsImageTools(t)
+
+	root := t.TempDir()
+	src := mkdirT(t, filepath.Join(root, "src"))
+	if err := os.WriteFile(filepath.Join(src, "work.txt"), []byte("first\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	img := filepath.Join(root, "ws.ext4")
+	packImage(t, src, img)
+
+	entries, err := listImage(img)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The guest keeps working. The image at the same path now holds a longer
+	// file under the same name, which is what dumpFiles will read.
+	if err := os.WriteFile(filepath.Join(src, "work.txt"),
+		[]byte("first\nand a good deal more that was not there a moment ago\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	packImage(t, src, img)
+
+	tree := mkdirT(t, filepath.Join(root, "tree"))
+	r, err := os.OpenRoot(tree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	err = extractImage(img, entries, r)
+	if err == nil {
+		t.Fatal("a file whose contents did not match what was enumerated was written into the " +
+			"tree; debugfs said nothing on stderr, so the size comparison is the only thing " +
+			"that can catch this")
+	}
+	if !errors.Is(err, ErrHostileImage) {
+		t.Errorf("the refusal is %v, which does not wrap ErrHostileImage", err)
+	}
+	// The message identifies which check fired. If this ever reads like a
+	// debugfs complaint, the size comparison has stopped being what catches it.
+	if !strings.Contains(err.Error(), "its record says it holds") {
+		t.Errorf("this was not refused by the size comparison: %v", err)
+	}
+}
+
+// The same rule for a symlink, which copyThrough never sees.
+//
+// The links pass is deliberately not fatal on stderr — a fast link has no data
+// block, so `dump` on it legitimately writes nothing and reports a short read —
+// and copyThrough only runs for kindFile. So a *slow* link whose dump came back
+// short was recreated pointing at a truncated version of wherever the guest
+// meant, which is somewhere else entirely.
+func TestF17_ASymlinkTargetIsCheckedAgainstItsRecordedLength(t *testing.T) {
+	needsImageTools(t)
+
+	root := t.TempDir()
+	src := mkdirT(t, filepath.Join(root, "src"))
+	// 200 bytes, well past the 59 at which ext4 stops storing a target inside
+	// the inode, so this one has a data block and `dump` is its only reader.
+	if err := os.Symlink(strings.Repeat("a", 200), filepath.Join(src, "link")); err != nil {
+		t.Fatal(err)
+	}
+	img := filepath.Join(root, "ws.ext4")
+	packImage(t, src, img)
+
+	entries, err := listImage(img)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var size int64
+	for _, e := range entries {
+		if e.path == "link" {
+			if e.kind != kindSymlink {
+				t.Fatalf("link came back as kind %d", e.kind)
+			}
+			size = e.size
+		}
+	}
+	if size != 200 {
+		t.Fatalf("the record says the target is %d bytes, want 200 — the fixture is wrong", size)
+	}
+
+	// The image now holds a shorter target at the same name, which is what the
+	// dump will read against the record above.
+	if err := os.Remove(filepath.Join(src, "link")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(strings.Repeat("a", 100), filepath.Join(src, "link")); err != nil {
+		t.Fatal(err)
+	}
+	packImage(t, src, img)
+
+	tree := mkdirT(t, filepath.Join(root, "tree"))
+	r, err := os.OpenRoot(tree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	if err := extractImage(img, entries, r); err == nil {
+		got, readErr := os.Readlink(filepath.Join(tree, "link"))
+		t.Fatalf("a truncated symlink target was recreated as %q (%d bytes, %v); the record says "+
+			"200 and a short target points somewhere else entirely", got, len(got), readErr)
+	} else if !strings.Contains(err.Error(), "its record says it holds") {
+		t.Errorf("this was not refused by the length comparison: %v", err)
+	}
+
+	// And an ordinary workspace full of symlinks of both kinds still goes
+	// through — the check must not cost a project its links.
+	ok := mkdirT(t, filepath.Join(root, "ok"))
+	if err := os.WriteFile(filepath.Join(ok, "f.txt"), []byte("hi\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for name, target := range map[string]string{
+		"fast":     "f.txt",
+		"fast-max": strings.Repeat("b", 59),
+		"slow-min": strings.Repeat("c", 60),
+		"slow-big": strings.Repeat("d", 200),
+		"spaces":   "a b c",
+	} {
+		if err := os.Symlink(target, filepath.Join(ok, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	okImg := filepath.Join(root, "ok.ext4")
+	packImage(t, ok, okImg)
+	okTree := mkdirT(t, filepath.Join(root, "ok-tree"))
+	if err := extractInto(t, okImg, okTree); err != nil {
+		t.Fatalf("an ordinary set of symlinks was refused: %v", err)
+	}
+	for name, want := range map[string]string{
+		"fast":     "f.txt",
+		"fast-max": strings.Repeat("b", 59),
+		"slow-min": strings.Repeat("c", 60),
+		"slow-big": strings.Repeat("d", 200),
+		"spaces":   "a b c",
+	} {
+		got, err := os.Readlink(filepath.Join(okTree, name))
+		if err != nil || got != want {
+			t.Errorf("%s came back as %q (%v), want %q", name, got, err, want)
+		}
+	}
+}
+
+// The com_err rule, pinned where it is used rather than only where it is
+// defined.
+//
+// dumpFiles refuses when debugfs reports a per-command failure on stderr for a
+// regular file. Every such failure this could construct is *also* a size
+// mismatch, so the end-to-end tests above cannot tell the two defences apart —
+// which is what let both size checks be deleted with the suite green. Handing
+// dumpFiles an entry whose recorded size is what a failed dump actually
+// produces separates them: the size comparison lives in copyThrough and does
+// not run here, so only the stderr rule can refuse this.
+func TestF17_DebugfsComErrOnAFileDumpIsFatal(t *testing.T) {
+	needsImageTools(t)
+
+	root := t.TempDir()
+	src := mkdirT(t, filepath.Join(root, "src"))
+	if err := os.WriteFile(filepath.Join(src, "big.txt"),
+		bytes.Repeat([]byte("A"), 1<<20), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	img := filepath.Join(root, "ws.ext4")
+	packImage(t, src, img)
+	if err := os.Truncate(img, 2000<<10); err != nil {
+		t.Fatal(err)
+	}
+
+	// size 0, which is exactly what the failed dump leaves staged.
+	_, cleanup, err := dumpFiles(img, []imageEntry{{path: "big.txt", kind: kindFile, size: 0}})
+	defer cleanup()
+	if err == nil {
+		t.Fatal("debugfs reported `dump: Attempt to read block from filesystem resulted in short " +
+			"read` and exited 0, and dumpFiles treated that as a successful dump")
+	}
+	if !errors.Is(err, ErrHostileImage) {
+		t.Errorf("the refusal is %v, which does not wrap ErrHostileImage", err)
+	}
+
+	// A symlink pass must NOT be fatal on the same stream, because a fast link
+	// has no data block and reports that same short read every single time.
+	linkSrc := mkdirT(t, filepath.Join(root, "links"))
+	if err := os.WriteFile(filepath.Join(linkSrc, "f.txt"), []byte("hi\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("f.txt", filepath.Join(linkSrc, "s")); err != nil {
+		t.Fatal(err)
+	}
+	linkImg := filepath.Join(root, "links.ext4")
+	packImage(t, linkSrc, linkImg)
+	_, cleanup2, err := dumpFiles(linkImg, []imageEntry{{path: "s", kind: kindSymlink, size: 5}})
+	defer cleanup2()
+	if err != nil {
+		t.Errorf("a fast symlink made the dump fatal, which would refuse most real workspaces: %v", err)
+	}
+}
+
+// debugfsErrors on its own: what counts as the tool reporting a failure.
+func TestF17_DebugfsErrorsPicksOutComErrLinesOnly(t *testing.T) {
+	for _, c := range []struct {
+		name, stderr string
+		want         int
+	}{
+		{"just the banner", "debugfs 1.47.0 (5-Feb-2023)\n", 0},
+		{"nothing at all", "", 0},
+		{"a dump failure", "debugfs 1.47.0 (5-Feb-2023)\n" +
+			"dump: Attempt to read block from filesystem resulted in short read while reading ext2 file\n", 1},
+		{"an ls failure", "ls: File not found by ext2_lookup\n", 1},
+		{"two of them", "dump: one\nstat: two\n", 2},
+		// A workspace is allowed to contain a file called `dump:notes`, and
+		// refusing on the substring would cost somebody their whole image. The
+		// review asked for "any line containing"; com_err always writes the
+		// command name first, so the prefix is both narrower and correct.
+		{"a name that merely contains one", "reading /work/dump:notes went fine\n", 0},
+		{"a usage line, which com_err does not write", "Usage: ls [-c] [-d] [-l] [-p] [-r] file\n", 0},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if got := debugfsErrors(c.stderr); len(got) != c.want {
+				t.Errorf("debugfsErrors(%q) = %v, want %d line(s)", c.stderr, got, c.want)
+			}
+		})
+	}
+}
+
+// The two size comparisons are not one check written twice, and each is pinned
+// on the thing only it can do.
+//
+// The Stat is about the staged copy and refuses *before* the destination is
+// opened; the io.Copy count is about the bytes that actually reached the tree
+// and covers the window between the two. Dropping either alone left the suite
+// green, because for an ordinary file they see the same mismatch at two moments.
+func TestF17_BothSizeComparisonsEarnTheirPlace(t *testing.T) {
+	// The Stat: a mismatch must change nothing, not truncate the destination and
+	// then complain. copyThrough opens with O_TRUNC, so without it the file in
+	// the tree is already gone by the time the count is compared.
+	t.Run("refused-before-the-destination-is-touched", func(t *testing.T) {
+		tree := t.TempDir()
+		const had = "what the tree already held\n"
+		if err := os.WriteFile(filepath.Join(tree, "f.txt"), []byte(had), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		staged := filepath.Join(t.TempDir(), "0")
+		if err := os.WriteFile(staged, []byte("short"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		r, err := os.OpenRoot(tree)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer r.Close()
+
+		err = copyThrough(r, imageEntry{path: "f.txt", kind: kindFile, size: 100}, staged)
+		if err == nil {
+			t.Fatal("a staged file 95 bytes short of its record was installed")
+		}
+		if got, readErr := os.ReadFile(filepath.Join(tree, "f.txt")); readErr != nil ||
+			string(got) != had {
+			t.Errorf("the destination was opened O_TRUNC before the mismatch was noticed: "+
+				"%q, %v", got, readErr)
+		}
+	})
+
+	// The count: the staged file can disagree with its own Stat. A fifo is the
+	// deterministic way to open that window — it stats as zero bytes and then
+	// yields whatever is written to it — and it stands in for the general case,
+	// a staged file whose length changes between the two calls.
+	t.Run("the-copied-count-is-checked-too", func(t *testing.T) {
+		dir := t.TempDir()
+		fifo := filepath.Join(dir, "0")
+		if err := syscall.Mkfifo(fifo, 0o600); err != nil {
+			t.Skipf("this filesystem will not hold a fifo: %v", err)
+		}
+		info, err := os.Lstat(fifo)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Size() != 0 {
+			t.Skipf("a fifo stats as %d bytes here, so it does not open the window", info.Size())
+		}
+		go func() {
+			w, err := os.OpenFile(fifo, os.O_WRONLY, 0)
+			if err != nil {
+				return
+			}
+			_, _ = w.Write([]byte("five!"))
+			_ = w.Close()
+		}()
+
+		tree := t.TempDir()
+		r, err := os.OpenRoot(tree)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer r.Close()
+		// The record says zero bytes, and Stat agrees, so only the count of what
+		// was actually copied can catch this.
+		if err := copyThrough(r, imageEntry{path: "f.txt", kind: kindFile, size: 0}, fifo); err == nil {
+			got, _ := os.ReadFile(filepath.Join(tree, "f.txt"))
+			t.Fatalf("%d bytes reached the workspace for an entry whose record says 0, and it "+
+				"was accepted: %q", len(got), got)
 		}
 	})
 }
