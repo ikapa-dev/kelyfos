@@ -9,9 +9,12 @@
 # the original is better evidence. `act` (github.com/nektos/act) executes a
 # workflow file in a container the way the hosted runner would, with the same
 # actions/checkout, setup-go and upload-artifact steps, so what runs here is
-# the committed ci.yml and not anyone's transcription of it. When a hosted run
-# exists for the same commit the two can be compared line by line; when none
-# exists, this is what a Progress Log row cites.
+# the committed ci.yml and not anyone's transcription of it — including the
+# steps a transcription cannot have: actions/checkout, setup-go and its
+# post-step run here, where dev/ci-local.sh begins after the checkout the
+# workflow performs and has never run them at all. When a hosted run exists
+# for the same commit the two can be compared line by line; when none exists,
+# this is what a Progress Log row cites.
 #
 # What is different from GitHub, stated rather than discovered. The container
 # runs as root, where the hosted runner is a non-root user — a test that needs
@@ -88,36 +91,65 @@ esac
 image="${KELYFOS_ACT_IMAGE:-catthehacker/ubuntu:act-latest}"
 
 root="${KELYFOS_ACT_DIR:-${TMPDIR:-/tmp}/kelyfos-act}"
-dir="$root/$short"
 mkdir -p "$root"
-rm -rf "$dir"
+
+# One run per machine at a time. act binds an artifact server on a fixed port
+# by default and two runs of the same commit would share a scratch directory,
+# so the second run of this script used to kill the first — silently, with an
+# empty summary (P7-16 shape: host-level singleton state). The port and the
+# directory are now per run (below); the lock is for memory, because two
+# `go test ./...` on one Docker daemon is the OOM this script already avoids
+# within a single run. A stale lock from a dead run is taken over.
+lock="$root/lock"
+if mkdir "$lock" 2>/dev/null; then
+  echo $$ > "$lock/pid"
+else
+  other="$(cat "$lock/pid" 2>/dev/null || echo '?')"
+  if [ "$other" != "?" ] && kill -0 "$other" 2>/dev/null; then
+    echo "another dev/ci-act.sh (pid $other) is running on this machine; wait for it — two at once share one Docker daemon's memory and will OOM each other" >&2
+    exit 3
+  fi
+  echo "note    taking over a stale lock left by pid $other"
+  echo $$ > "$lock/pid"
+fi
+
+dir="$(mktemp -d "$root/$short.XXXXXX")"
+cleanup() {
+  if [ "$keep" -eq 0 ]; then
+    rm -rf "$dir"
+  fi
+  rm -rf "$lock"
+}
+trap cleanup EXIT
+# A signal must still reach the EXIT trap, or the lock outlives an interrupted
+# run and the takeover path becomes the usual one (the lead's point).
+trap 'exit 130' INT TERM HUP
+
 # A clone, not a worktree. A worktree's .git is a one-line pointer to a
 # directory under the main repository, which is a host path the container
 # never sees — `git tag` inside it fails, and tools/changelog.py --check
 # fails with it. A local clone carries a real .git, every tag, and every
 # commit reachable from a ref; the fetch below covers a commit that is on no
 # ref yet. Local clones hardlink objects, so this costs seconds, not space.
-git clone -q --no-checkout "$repo" "$dir"
-git -C "$dir" fetch -q "$repo" "$sha" 2>/dev/null || true
-git -C "$dir" checkout -q --detach "$sha"
-cleanup() {
-  if [ "$keep" -eq 0 ]; then
-    rm -rf "$dir"
-  fi
-}
-trap cleanup EXIT
+git clone -q --no-checkout "$repo" "$dir/src"
+git -C "$dir/src" fetch -q "$repo" "$sha" 2>/dev/null || true
+git -C "$dir/src" checkout -q --detach "$sha"
+
+# The artifact server: loopback only (act's default is the machine's LAN
+# address) and on a port that is free right now, so two runs never contend.
+port="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])')"
 
 dirty="$(git status --porcelain | wc -l | tr -d ' ')"
 if [ "$dirty" -ne 0 ]; then
   echo "note    your checkout has $dirty uncommitted change(s); they are NOT part of this run — act runs the commit, from a clean clone"
 fi
 
-event="$dir/.act-event.json"
+event="$dir/event.json"
 printf '{"ref":"refs/heads/main","before":"%s","after":"%s","repository":{"name":"KelyfOS","full_name":"p4r4n0rm4l/KelyfOS","default_branch":"main"}}\n' \
   "$base" "$sha" > "$event"
-artifacts="$dir/.act-artifacts"
+artifacts="$dir/artifacts"
 mkdir -p "$artifacts"
-log="$root/act-$job-$short.log"
+log="$dir/act-$job.log"
 
 # How many packages `go test ./...` may run at once is decided by memory, not
 # cores. GitHub's ubuntu-latest has 4 cores and 16 GiB, so the hosted job runs
@@ -143,22 +175,27 @@ echo "commit  $sha"
 echo "base    $base (DCO range base..commit)"
 echo "image   $image ($arch; GitHub's ubuntu-latest is linux/amd64 and runs as a non-root user)"
 echo "goflags $goflags (package parallelism from the daemon's ${mem_gib:-?} GiB; two test binaries peak near 5 GiB each)"
-echo "log     $log"
 echo
 
 rc=0
 (
-  cd "$dir"
+  cd "$dir/src"
   act push -W .github/workflows/ci.yml -j "$job" \
     --eventpath "$event" \
     -P "ubuntu-latest=$image" \
     --container-architecture "$arch" \
     --artifact-server-path "$artifacts" \
+    --artifact-server-addr 127.0.0.1 --artifact-server-port "$port" \
     --env "GOFLAGS=$goflags"
 ) > "$log" 2>&1 || rc=$?
 
 # The step verdicts, in order, as the workflow named them.
 echo "---- summary: ci.yml job '$job', act, commit $short ----"
+if ! grep -qE "^\[ci/$job\] +(✅|❌)" "$log"; then
+  echo "  act ran no step at all. Its own words:"
+  grep -E 'level=(fatal|error)|Error:' "$log" | sed -E 's/^.*msg=//' | head -5 | sed 's/^/    /' | cut -c1-200
+  [ -s "$log" ] || echo "    (empty log)"
+fi
 grep -E "^\[ci/$job\] +(✅|❌)" "$log" \
   | sed -E "s/^\[ci\/$job\] +//; s/  Success - /  pass  /; s/  Failure - /  FAIL  /; s/^Main //; s/ Main / /" \
   | sed 's/^/  /'
@@ -172,10 +209,13 @@ if grep -qE "^\[ci/$job\] +❌" "$log"; then
   fi
 fi
 echo "  ----   not run here: build job (Buildroot image), boot job (x86_64 microVM under KVM) — limactl shell kelyfos-dev -- dev/ci-local.sh --boot is the stand-in"
+kept_log="$root/act-$job-$short.log"
+cp "$log" "$kept_log"
 if [ "$rc" -eq 0 ]; then
   echo "  job '$job' passed on $short under act — the committed workflow, run in a container; not a hosted run"
 else
-  echo "  job '$job' FAILED on $short under act (exit $rc); full log: $log"
+  echo "  job '$job' FAILED on $short under act (exit $rc)"
 fi
-[ "$keep" -eq 1 ] && echo "  clone kept at $dir"
+echo "  log     $kept_log"
+[ "$keep" -eq 1 ] && echo "  clone kept at $dir/src"
 exit "$rc"
