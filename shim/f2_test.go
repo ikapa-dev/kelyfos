@@ -191,3 +191,37 @@ func TestF2_ABodyThatIsNotJSONIsRefusedRatherThanBooted(t *testing.T) {
 		t.Errorf("an empty body was refused as malformed: %s", got)
 	}
 }
+
+// P7-17/F2, second review round: a shim bound to a default port refused
+// everything.
+//
+// hostAllowed needed net.SplitHostPort(r.Host) to succeed, and both browsers
+// and Go's own http.Client omit the port from Host when it is the scheme's
+// default. So `--addr 127.0.0.1:80` answered 403 to every request, including
+// its own health check. Fail-closed, so never a hole — but a shim that refuses
+// its only client is not a defence, it is an outage.
+func TestF2_AHostHeaderWithNoPortIsTheSchemesDefault(t *testing.T) {
+	t.Setenv("KELYFOS_CACHE", t.TempDir())
+	s := New(Policy{Arch: "aarch64", Flavor: "dev", Vcpus: 2, MemMiB: 512, Addr: "127.0.0.1:80"})
+	h := s.Handler()
+
+	for _, host := range []string{"127.0.0.1", "127.0.0.1:80", "localhost", "localhost:80"} {
+		if code, body := driveHeaders(t, h, "GET", "/health", "", host, nil); code == http.StatusForbidden {
+			t.Errorf("Host %q was refused by a shim bound to 127.0.0.1:80: %s", host, body)
+		}
+	}
+	// The rule is still the rule: a name is refused whether or not it carries
+	// a port, and so is the wrong port.
+	for _, host := range []string{"evil.example", "evil.example:80", "127.0.0.1:8080"} {
+		if code, _ := driveHeaders(t, h, "GET", "/health", "", host, nil); code != http.StatusForbidden {
+			t.Errorf("Host %q was accepted by a shim bound to 127.0.0.1:80 (got %d)", host, code)
+		}
+	}
+
+	// And on a non-default port an absent port is still wrong: a bare host
+	// means 80, and this shim is not on 80.
+	other := New(Policy{Arch: "aarch64", Flavor: "dev", Vcpus: 2, MemMiB: 512, Addr: bound}).Handler()
+	if code, _ := driveHeaders(t, other, "GET", "/health", "", "127.0.0.1", nil); code != http.StatusForbidden {
+		t.Errorf("a portless Host reached a shim bound to %s (got %d)", bound, code)
+	}
+}

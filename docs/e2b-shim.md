@@ -138,6 +138,9 @@ into a live sandbox. Every route therefore refuses, before the token check:
   see: a page whose name has been rebound to `127.0.0.1` is same-origin with
   itself. The bound address, any IP literal on the bound port, and `localhost`
   are accepted; a name is what rebinding needs, and a name is what this refuses.
+  A `Host` carrying **no port** means port 80 — which is what browsers and Go's
+  own client send when the port is the scheme's default — so a shim bound to
+  `:80` accepts `Host: 127.0.0.1` and one bound anywhere else does not.
 
 No SDK sends any of those headers, so the quickstart above is unaffected. A
 refusal answers `403` and says which check it was.

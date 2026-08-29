@@ -276,6 +276,38 @@ func (s *Server) refuseBrowser(r *http.Request) string {
 // An empty Policy.Addr refuses everything. A Server that was never told what it
 // bound to cannot answer this question, and a check that switches itself off
 // when a field is unset is the shape of half the findings in this review.
+// splitHostMaybePort splits a Host header that may carry no port at all.
+//
+// Both browsers and Go's own http.Client omit the port when it is the scheme's
+// default, so `--addr 127.0.0.1:80` used to answer 403 to every request —
+// net.SplitHostPort simply failed and the check refused. Fail-closed, so never
+// a hole, but a shim that refuses its only client is an outage rather than a
+// defence (P7-17/F2, second review round). This shim serves plain HTTP, so an
+// absent port means 80 and nothing else.
+//
+// An empty host means the header could not be read at all, and the caller
+// refuses.
+func splitHostMaybePort(h string) (host, port string) {
+	if h == "" {
+		return "", ""
+	}
+	if host, port, err := net.SplitHostPort(h); err == nil {
+		return host, port
+	}
+	// No colon at all, or a bare IPv6 literal in brackets with no port. Only
+	// the first is a legal portless Host; a bracketed form without a port is
+	// unbracketed here so ParseIP can still judge it.
+	if strings.HasPrefix(h, "[") && strings.HasSuffix(h, "]") {
+		return h[1 : len(h)-1], "80"
+	}
+	if strings.Contains(h, ":") {
+		// A colon that SplitHostPort refused: a bare IPv6 literal without
+		// brackets, or a malformed header. Neither is something to guess at.
+		return "", ""
+	}
+	return h, "80"
+}
+
 func (s *Server) hostAllowed(h string) bool {
 	if s.Policy.Addr == "" {
 		return false
@@ -283,8 +315,8 @@ func (s *Server) hostAllowed(h string) bool {
 	if h == s.Policy.Addr {
 		return true
 	}
-	host, port, err := net.SplitHostPort(h)
-	if err != nil {
+	host, port := splitHostMaybePort(h)
+	if host == "" {
 		return false
 	}
 	_, boundPort, err := net.SplitHostPort(s.Policy.Addr)
