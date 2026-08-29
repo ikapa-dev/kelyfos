@@ -8370,6 +8370,80 @@ after:
         new surface for a reader to be tested against, and every documentation change here is a
         correction to a page the two exams of the previous round already read. A cookbook recipe is not
         owed for the same reason.</td></tr>
+    <tr><td class="mono">2026-08-29</td><td class="mono">P7-17</td>
+        <td><b>The follow-up round closed &mdash; seven items, four Decision rows, and the task still
+        deliberately open.</b> An independent verification pass re-read all twenty-one of the 2026-08-28
+        review&rsquo;s fixes in source and found seven things: a door where <code>config.Trust</code> was
+        never applied, two more places the flight recorder failed open, a guest image that predated four of
+        its own fixes, two regressions the fixes had introduced, and eleven items of documentation and test
+        residue. All seven are on <code>main</code>, one commit per item, each with a test proven to fail on
+        its parent commit and an adversarial review by an agent that wrote none of it.
+        <br><b>The reviews found more in this round&rsquo;s work than the round found in the review&rsquo;s.</b>
+        Three of the four items that were reviewed came back with a High, and two of those were the
+        author&rsquo;s own reasoning rather than an oversight: <b>D74&rsquo;s central justification was
+        measurably false</b> &mdash; the cumulative idle budget did not charge the <code>RoundTrip</code>
+        and <code>notAfter</code> clamps to the connection ceiling, so the field being raised was the only
+        bound on that wait and it was raised twentyfold under a sentence saying it changed nothing &mdash;
+        and <b>A2&rsquo;s own design choice let the shim register a corpse</b>, because starting the watcher
+        at <code>recorder.Open</code> lets it tear a box down before <code>createSandbox</code> registers
+        it, answering 201 and holding one of sixteen slots for the life of the process. A third was a
+        correction the residue commit <i>claimed to have made and had not</i>: the PLAN row about the
+        &ldquo;six&rdquo; proxy sites was drafted and never applied. Every one of the three is the class of
+        defect this task exists to find, in this task&rsquo;s own output, which is the argument for &sect;8
+        rule 10 stated better than the rule states it.
+        <br><b>Four Decision rows.</b> <b>D74</b> before B2, as rule 5 asks, and then amended in place with
+        a dated marker rather than rewritten, because what a decision was argued from is part of what it is.
+        <b>D75</b> when B1&rsquo;s review showed the fix as the brief specified it re-opening a documented
+        threat-model property &mdash; a project-local configuration path is one a repository can commit as a
+        symlink. <b>D76</b> when A2&rsquo;s review showed its refusal refusing the three calls that only
+        make the situation smaller. The fourth is not new: <b>D73</b> still governs, and its sentence is why
+        this row is not a closing one.
+        <br><b>P7-17 is not ticked and nothing is tagged.</b> The rule that closes it has not changed and no
+        local evidence substitutes for it &mdash; not <code>dev/ci-local.sh</code>, and not the real
+        <code>ci.yml</code> under <code>nektos/act</code>, which a peer session stood up during this round
+        and which is better evidence than this project has ever had. Both are still reproductions.
+        <code>ci.yml</code> and <code>security.yml</code> green on the final head is the bar, and the next
+        action is not in this repository.</td>
+        <td class="mono"><code>limactl shell kelyfos-dev -- dev/ci-local.sh fb62db8 --boot</code> on
+        <code>e05b7e3</code>, pasted whole:<br>
+        <code>---- summary: ci.yml checks job, local, head e05b7e3 ----</code><br>
+        <code>&nbsp; pass&nbsp;&nbsp;&nbsp;&nbsp; 1s&nbsp; gofmt</code><br>
+        <code>&nbsp; pass&nbsp;&nbsp;&nbsp;&nbsp; 0s&nbsp; go vet</code><br>
+        <code>&nbsp; pass&nbsp;&nbsp;&nbsp;&nbsp; 0s&nbsp; the vsock loopback transport, so the F3 fixtures run</code><br>
+        <code>&nbsp; pass&nbsp;&nbsp;&nbsp;83s&nbsp; unit tests</code><br>
+        <code>&nbsp; pass&nbsp;&nbsp; 326s&nbsp; fuzz, briefly</code><br>
+        <code>&nbsp; pass&nbsp;&nbsp;&nbsp;&nbsp; 1s&nbsp; keep any crashing input</code><br>
+        <code>&nbsp; pass&nbsp;&nbsp;&nbsp;13s&nbsp; The boundary holds against what the guest can write</code><br>
+        <code>&nbsp; pass&nbsp;&nbsp;&nbsp;&nbsp; 1s&nbsp; the plan is still coherent</code><br>
+        <code>&nbsp; pass&nbsp;&nbsp;&nbsp;&nbsp; 0s&nbsp; every released tag has its notes</code><br>
+        <code>&nbsp; pass&nbsp;&nbsp;&nbsp;&nbsp; 0s&nbsp; new commits carry a DCO sign-off</code><br>
+        <code>&nbsp; pass&nbsp;&nbsp;&nbsp;&nbsp; 2s&nbsp; The generated reference still matches the source</code><br>
+        <code>&nbsp; pass&nbsp;&nbsp;&nbsp;&nbsp; 0s&nbsp; Every cookbook recipe extracts and parses</code><br>
+        <code>&nbsp; pass&nbsp;&nbsp;&nbsp;18s&nbsp; [boot stand-in] make test-integration on aarch64</code><br>
+        <code>&nbsp; pass&nbsp;&nbsp;&nbsp;10s&nbsp; [boot stand-in] dev/accept-seccomp.sh on aarch64</code><br>
+        <code>&nbsp; ----&nbsp;&nbsp; build job not reproduced (Buildroot image); boot job represented by its aarch64 stand-in, not the x86_64 run</code><br>
+        <code>&nbsp; all 14 steps passed on e05b7e3 &mdash; local evidence, not a green pipeline (PLAN.html &sect;8 rule 8)</code><br>
+        <b>local evidence</b>, in D73&rsquo;s words, which permits the merges and explicitly refuses to close
+        the task.<br>
+        <b>One discrepancy stated rather than smoothed.</b> The <code>fuzz, briefly</code> step passes here
+        and <b>failed for all three reviewers earlier the same day</b>, on
+        <code>FuzzAppendFieldValues</code> &mdash; that is P7-15/D69, and the A2 reviewer traced it to an
+        entry in this host&rsquo;s <i>cached</i> corpus under <code>$GOCACHE/fuzz</code> rather than to
+        anything in <code>testdata/</code>, with <code>dmesg</code> showing
+        <code>Out of memory: Killed process &hellip; (recorder.test) anon-rss:4219776kB</code>. A peer
+        session cleared the Go build cache between those runs and this one. <b>Why it passes now is not
+        established</b>, so it is recorded as two observations rather than one conclusion, and P7-15 stays
+        open.<br>
+        <code>make test</code> every package ok &middot; <code>make vuln</code> clean &middot;
+        <code>go test -race</code> ok on <code>host</code>, <code>shim</code>,
+        <code>internal/egress</code>, <code>internal/digest</code>, <code>supervisor</code> &middot;
+        <code>make docs</code> idempotent &middot; <code>dev/accept-profile.sh</code> 35/0 against the
+        rebuilt image &middot; <code>check-plan.py</code> &rarr; 124 tasks, 113 checked, 75 decisions.<br>
+        <b>What is NOT done, and gates the close:</b> <code>ci.yml</code> and <code>security.yml</code> have
+        run against none of this. Actions is still disabled at the account level (D73). The
+        <code>build</code> job is not reproduced at all, and the <code>boot</code> job is represented by an
+        aarch64 stand-in and not the x86_64 run. <b>P7-17 is not ticked and nothing is tagged until both
+        workflows are green on the final head.</b></td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
