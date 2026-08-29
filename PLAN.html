@@ -1509,11 +1509,11 @@
               <span class="tid">F13</span><span class="tk">The flight recorder fails open: 77 <code>Append</code> errors are discarded, so a full disk or one corrupt line leaves the sandbox executing while nothing is recorded. Fail closed in the recorder (<b>13a</b>) and wire <code>Broken()</code> into the run loop (<b>13b</b>). <code>internal/recorder/recorder.go:504</code> &middot; <code>host/run.go</code>.</span></li>
           <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
               <span class="tid">F12</span><span class="tk">Erase leaves guest stdout behind in <code>Error.Message</code>, which the exemption map excuses as system-generated. <code>internal/recorder/erase.go:280</code> &middot; <code>host/servemcpaudit.go:170</code>.</span></li>
-          <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+          <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
               <span class="tid">F14</span><span class="tk">The resolved-address check misses CGNAT and other reserved space &mdash; 100.64/10, 192.0.0/24, 198.18/15, 240/4, NAT64. <code>internal/egress/dial.go:79</code>.</span></li>
-          <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+          <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
               <span class="tid">F15</span><span class="tk">The forward transport inherits the host&rsquo;s <code>HTTP_PROXY</code> by cloning <code>http.DefaultTransport</code>, so the resolved-address hook never sees the real destination. <code>internal/egress/dial.go:148</code>.</span></li>
-          <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
+          <li><input checked type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
               <span class="tid">F16</span><span class="tk">The terminated leg has no header budget and no deadline: <code>handle</code> clears both before <code>terminate</code> parses every subsequent request itself. <code>internal/egress/terminate.go:53</code>.</span></li>
           <li><input type="checkbox" onclick="return false" title="Source of truth is this file — add the checked attribute in the markup.">
               <span class="tid">F17</span><span class="tk">A partially dumped file is committed over the user&rsquo;s project &mdash; &ldquo;nothing staged&rdquo; is the wrong test for a <code>debugfs dump</code> that failed midway. <code>internal/sandbox/extract.go:477</code>.</span></li>
@@ -7408,6 +7408,150 @@ after:
         reviewer confirmed no secret value can reach <code>printPolicyReach</code>: it splits with
         <code>strings.Cut</code>, never calls <code>egress.ParseSecret</code> or <code>os.Getenv</code>, and the
         one branch printing a whole spec wraps it in <code>proto.SafeText</code></td></tr>
+    <tr><td class="mono">2026-08-29</td><td class="mono">P7-17/F14</td>
+        <td><b>The resolved-address check refused four private ranges and dialled twenty other reserved
+        addresses.</b> The mechanism was right &mdash; per address, after resolution, on all three dial paths
+        &mdash; and only the list was short. Replaced by an explicit <code>netip.Prefix</code> table with a
+        comment per entry, because predicates hide what they cover and a table can be reviewed. The 403 the guest
+        reads now names no address; the address goes to the recorder as a new <code>resolved_addr</code> field,
+        which was in neither place before.
+        <br><b>Three additions beyond the report, each with a reason.</b> 6to4 <code>2002::/16</code> and
+        IPv4-compatible <code>::/96</code> get the same recursion as NAT64, because a host with 6to4 configured
+        really does put IPv4 packets on the wire to the embedded address &mdash; not blanket-refused, so
+        <code>64:ff9b::8.8.8.8</code> and <code>2002:5db8:d822::1</code> still dial. Two entries instead of the
+        report&rsquo;s merged <code>224.0.0.0/3</code>, since multicast and reserved-plus-broadcast are different
+        things and merging them defeats the point of a table. And <b>the zone is stripped before the table is
+        walked</b> &mdash; <code>netip.Prefix.Contains</code> returns <b>false</b> for any address carrying a
+        zone, and <code>fe80::1%eth0</code> is exactly the shape a link-local resolution takes, so a table walked
+        without stripping it <i>fails open on the one range this check was first written for</i>. That is not in
+        the review; it was found while writing the test, and the report&rsquo;s own snippet does
+        <code>Unmap()</code> and never strips the zone.</td>
+        <td class="mono">Parent, real <code>Control</code> hook, 39 addresses &rarr; <b>20 dialled</b>, incl.
+        <code>100.100.100.200</code> (Alibaba metadata), <code>168.63.129.16</code> (Azure wireserver &mdash;
+        public space no range rule catches), <code>100.101.5.5</code> (an ordinary Tailscale peer),
+        <code>198.18.0.1</code>, <code>240.0.0.1</code>, and <code>64:ff9b::a9fe:a9fe</code> &mdash; the cloud
+        metadata address in NAT64 clothing<br>
+        parent also &rarr; <code>kelyfos: localhost resolved to 127.0.0.1, which this proxy will not dial</code>,
+        the reconnaissance the 403 now withholds<br>
+        zone negative control, with <code>.WithZone("")</code> removed &rarr;
+        <code>fe80::1%eth0 carries a zone and was dialled</code> (3 cases)<br>
+        <b>The review found the differential test could not catch the regression it exists for.</b> It swept 2058
+        addresses but varied only the <i>first</i> v4 octet, so narrowing
+        <code>172.16.0.0/12</code>&rarr;<code>/13</code> and
+        <code>192.168.0.0/16</code>&rarr;<code>/17</code> &mdash; <i>the two RFC 1918 ranges</i> &mdash; left every
+        F14 test passing, and the boundary test computed <code>first</code>/<code>last</code> <b>from the prefix
+        under test</b>, so it was circular about width. Now both edges of every /16 (139,803 addresses) plus
+        <code>TestF14_TheTableIsExactlyThis</code>, which states the table independently &mdash; the only thing
+        that can speak for F14&rsquo;s <i>own</i> additions, since no frozen predicate refuses
+        <code>198.18.0.0/15</code> or the documentation ranges<br>
+        reviewer ran <b>ten table edits across five kinds</b>: nine caught, and the one that evades (reordering)
+        correctly is not a gap &mdash; <code>unsafePrefixes</code> is a linear scan in which every entry is a
+        refusal, so order carries no meaning<br>
+        RECORD: <code>resolved_addr</code> appended at the very end;
+        <code>TestTheEventFieldOrderIsFrozen</code> caught it immediately and its fixture was tightened, not
+        loosened &mdash; the fixture-completeness guard <code>t.Fatalf</code>s on any zero value, so it
+        <i>had</i> to gain the field; moving it one slot earlier gives
+        <code>the record's field order changed at position 87</code>. Clippable by reflection, no list entry
+        needed. Normalised with <code>Unmap().WithZone("")</code> before recording, after the reviewer showed
+        <code>netip.ParseAddr("fe80::1%&lt;script&gt;alert(1)&lt;/script&gt;")</code> succeeds and round-trips
+        verbatim &mdash; latent, not live, since <code>allowsHost</code> requires an exact or dot-boundary
+        match</td></tr>
+    <tr><td class="mono">2026-08-29</td><td class="mono">P7-17/F15</td>
+        <td><b>The forward transport cloned <code>http.DefaultTransport</code> and inherited its
+        <code>ProxyFromEnvironment</code>, so on any host with <code>HTTPS_PROXY</code> set it dialled the
+        corporate proxy instead of the allowlisted origin &mdash; and the resolved-address hook never saw the real
+        destination.</b> F15 is what makes F14 true on the plain-HTTP and direct-TLS paths; fixing either alone
+        leaves a believable-looking check that a corporate laptop routes around. Both transports are now built
+        from a zero value with every field named explicitly, so the next field Go adds to the default does not
+        arrive uninvited either.
+        <br><b>The report&rsquo;s prescribed test cannot fail.</b> Go caches the proxy environment behind a
+        <code>sync.Once</code> (<code>transport.go:1032</code>, with <code>resetProxyConfig</code> unexported and
+        marked &ldquo;used by tests&rdquo;), so <code>t.Setenv("HTTPS_PROXY", &hellip;)</code> inside a package
+        where any earlier test touched a transport has no effect &mdash; <b>the review&rsquo;s test would have
+        gone green on the unfixed code</b>. The environment is exercised in a fresh child process that asserts
+        <code>HTTPS_PROXY</code> is really in force before concluding anything.
+        <br><b>And building from a zero value without naming the fields would have traded one hole for another.</b>
+        Read off the real <code>go1.27.0</code> default: <code>MaxIdleConns 100</code>,
+        <code>IdleConnTimeout 1m30s</code>, <code>TLSHandshakeTimeout 10s</code>,
+        <code>ExpectContinueTimeout 1s</code>, <code>ForceAttemptHTTP2 true</code> &mdash; and <b>zero means
+        unbounded for three of those</b>, so a zero-value transport would have swapped a proxy leak for unbounded
+        idle connections and a TLS handshake that can hang forever.</td>
+        <td class="mono">Go proxy-env cache probe: <code>warm-up: proxy=&lt;nil&gt;</code>, then
+        <code>after t.Setenv: proxy=&lt;nil&gt;</code> &rarr;
+        <code>the env is cached; t.Setenv has no effect after a first call</code><br>
+        parent &rarr; <code>child: with HTTPS_PROXY set, the forward transport would send this request to
+        http://127.0.0.1:1 instead of to the origin &mdash; and the resolved-address check would be asked about
+        127.0.0.1:1 rather than about where api.example.com resolves</code><br>
+        parent &rarr; <code>forward: Proxy must be nil &middot; TLSClientConfig.MinVersion must be TLS 1.2
+        &middot; ForceAttemptHTTP2 must be false</code>; <code>terminated: MaxIdleConns is 0 &middot;
+        IdleConnTimeout is 0 &middot; TLSHandshakeTimeout is 0 &middot; ExpectContinueTimeout is 0</code><br>
+        the upstream dial had <b>no timeout at all</b> &mdash; <code>dialerFor(host, 0)</code>, neither transport
+        supplying one, and <code>forwardHTTP</code> re-issuing with <code>context.Background</code>, so an origin
+        that accepted nothing held a goroutine and a socket until the kernel gave up. Now 15s, matching
+        <code>Proxy.DialTimeout</code>&rsquo;s default, so all three dial paths agree<br>
+        <code>ResponseHeaderTimeout</code> added at 30s on both after the review pointed out it never made the
+        &ldquo;everything the clone supplied&rdquo; list <i>precisely because</i>
+        <code>DefaultTransport</code> does not supply it either &mdash; an allowlisted origin that accepts,
+        completes TLS and then says nothing was holding a goroutine, a socket and the credential
+        indefinitely<br>
+        the <code>ExpectContinueTimeout</code> rationale corrected in four places: Go&rsquo;s zero means the body
+        is sent <i>immediately without waiting</i>, the absence of a wait rather than an unbounded one<br>
+        the F15 child&rsquo;s output is now read with a sentinel, so a child that fails for another reason reports
+        &ldquo;this test proves nothing&rdquo; rather than reporting the finding</td></tr>
+    <tr><td class="mono">2026-08-29</td><td class="mono">P7-17/F16</td>
+        <td><b>The terminated leg had no header budget and no deadline; it now has six bounds, and every one of
+        them is measured.</b> <code>handle</code> cleared both before calling <code>terminate</code>, which parsed
+        every subsequent request itself with <code>http.ReadRequest</code> on a plain <code>bufio.Reader</code>
+        &mdash; and <code>textproto</code> has no header cap of its own, verified directly: a <b>16 MiB</b> header
+        parses. Now, per request: the 1 MiB budget and the 10s header deadline reused as they stand, a two-minute
+        gap bound before the first byte, a rolling 10s stall bound on the body <b>and on the response write</b>,
+        a ten-minute cumulative idle budget that charges header-read time, 4096 requests per connection, and a
+        one-hour connection ceiling that clamps every deadline the leg sets.
+        <br><b>This finding took five review rounds, and each one found the bound one gap short.</b> The header
+        was bounded, then the body was not; the body was bounded, then the response write was not; the write was
+        bounded, then nothing reached a guest that never leaves a single request; and the ceiling was reached,
+        then the inner TLS handshake sat before any of it. Each fix was correct and each round&rsquo;s
+        <i>evidence</i> was incomplete, which is the whole lesson of this task in one finding.
+        <br><b>The report&rsquo;s prescribed test cannot fail, and its prescribed design is wrong in one place.</b>
+        An ordinary <code>httptest</code> server caps request headers at 1 MiB and answers <b>431 itself</b>
+        (<code>server.go:939</code>, <code>:2073</code>), so &ldquo;expect a 431&rdquo; &mdash; which never says
+        from which end &mdash; passes on unfixed code. And the snippet arms the header deadline before every
+        <code>ReadRequest</code>, which would disconnect any keep-alive client that thinks for more than ten
+        seconds between requests: waiting for a request to begin and reading one are different things. Three of
+        the five names it cites do not exist.</td>
+        <td class="mono">Parent &rarr; <code>status = 200, want 431: a 4194304-byte header line was accepted and
+        buffered inside the terminated tunnel</code> (origin run at <code>MaxHeaderBytes = 64&lt;&lt;20</code> so
+        the 431 is the proxy&rsquo;s, and the origin asserted never reached)<br>
+        parent &rarr; <code>after 30.03s the proxy was still holding a half-sent request open inside a terminated
+        tunnel; the header deadline is 10s</code><br>
+        <b>body:</b> <code>after 50s the proxy was still streaming a dribbled body</code> &rarr;
+        <code>the tunnel closed after 25s, against a 10s stall bound</code><br>
+        <b>write side:</b> <code>the whole 67108864-byte body arrived after the guest ignored it for 15s</code>
+        &rarr; <code>the proxy gave up after delivering 4179036 of 67108864 bytes</code> &mdash; asserted on how
+        much arrived rather than how long it took, because reading earlier unblocks the proxy, which is what the
+        attack does not do<br>
+        <b>ceiling:</b> <code>after 25s the proxy was still reading a body dribbled every 500ms &mdash; faster
+        than the 10s stall bound, so the rolling clock never fires &mdash; past the 5s ceiling</code> &rarr;
+        closed at 5s<br>
+        <b>handshake:</b> five bytes of a truncated TLS record header &rarr;
+        <code>after 30.03s the proxy was still inside the inner TLS handshake</code> &rarr; PASS at 10s<br>
+        <b>occupancy measured rather than asserted:</b> with the charging, <b>4 of 8</b> requests served on a 5s
+        idle budget; without it, all 8 &mdash; where the previous test compared two divided constants and could
+        not distinguish them<br>
+        <b>Ten tests, every one shown to fail under a mutation of the line it protects.</b> Two injection points
+        exist in the tree, both unexported, both because a bound measured in minutes or hours is only testable if
+        a test can reach it.<br>
+        <code>notAfter</code> proven behaviourally identical to the method it replaced by a differential over
+        <b>42 orderings</b>, including a ceiling already past<br>
+        <code>header_too_large</code> added as its own reason after the author argued
+        <code>bad_request</code> says the proxy <i>could not parse</i> the request when what happened is that it
+        <i>refused to</i>; the connection summary deliberately still reads <code>allowed, mode=terminated</code>,
+        with a test asserting it so the two-event shape cannot be quietly reversed<br>
+        answering a 431 and closing sends a reset that <b>discards the answer</b> &mdash; found when the fix made
+        the test fail with <code>connection reset by peer</code> &mdash; so a bounded drain (1 MiB, 2s) was added,
+        because answering and then destroying the answer is the same as not answering<br>
+        the throughput worry was <i>measured and withdrawn</i>: <code>/big</code> at 1, 8, 32 and 256 KiB/s all
+        still delivering at 40s, uncut, because socket and TLS buffers absorb each write</td></tr>
     <!-- Claude Code: append rows above this line, newest last. Never edit existing rows. -->
   </table>
 </section>
