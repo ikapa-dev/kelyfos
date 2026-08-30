@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -104,9 +105,10 @@ func TestACrashedTeamDoesNotMakeALiveOneAmbiguous(t *testing.T) {
 		t.Errorf("the crashed team could not be named: %v, %v", st, err)
 	}
 	// And it is still listed, said to be gone rather than quietly dropped.
-	teams, err := liveTeams()
-	if err != nil || len(teams) != 2 {
-		t.Fatalf("liveTeams() = %d teams, %v; want both", len(teams), err)
+	teams, bad, err := liveTeams()
+	if err != nil || len(teams) != 2 || len(bad) != 0 {
+		t.Fatalf("liveTeams() = %d teams, %d unreadable, %v; want both and none",
+			len(teams), len(bad), err)
 	}
 	if !strings.Contains(teamRoster(teams), "its process is gone") {
 		t.Errorf("the roster does not say which team nobody is holding:\n%s", teamRoster(teams))
@@ -174,9 +176,9 @@ loop:
 		// Every team on the host, which is the path `team ps` and `team down`
 		// take: a temporary file left in this directory would be a second team
 		// as far as either of them is concerned.
-		teams, err := liveTeams()
-		if err != nil {
-			t.Fatalf("liveTeams: %v", err)
+		teams, bad, err := liveTeams()
+		if err != nil || len(bad) != 0 {
+			t.Fatalf("liveTeams: %d unreadable, %v", len(bad), err)
 		}
 		if len(teams) != 1 {
 			t.Fatalf("a rewrite made this host hold %d teams", len(teams))
@@ -202,5 +204,57 @@ loop:
 			names = append(names, e.Name())
 		}
 		t.Fatalf("the state directory holds %v, want one file named for the session", names)
+	}
+}
+
+// A directory shared between teams is where this fix could have re-created the
+// defect it exists to close. A file that will not parse is somebody's problem,
+// and the question is whose.
+//
+// Refusing every answer because a stranger's file is damaged would mean one
+// broken team stops the others from being stopped, which is the collision one
+// layer out. Skipping it silently is the other wrong answer: if the damaged
+// file is your own team's, an unqualified `team ps` would then confidently
+// describe somebody else's team as yours. So an unqualified question is refused
+// while any file is unreadable, and a named one is answered.
+func TestAnUnreadableTeamFileNeitherHidesNorBlocksTheOthers(t *testing.T) {
+	t.Setenv("KELYFOS_CACHE", t.TempDir())
+	writeTeamState(t, teamState{Name: "held", Session: "3f9a1c22", PID: os.Getpid(), Owner: ownerCLI})
+	if err := os.WriteFile(filepath.Join(teamStateDir(), "0901977d.json"),
+		[]byte("{not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	teams, bad, err := liveTeams()
+	if err != nil {
+		t.Fatalf("one damaged file made the whole directory unreadable: %v", err)
+	}
+	if len(teams) != 1 || len(bad) != 1 {
+		t.Fatalf("liveTeams() = %d teams, %d unreadable; want 1 and 1", len(teams), len(bad))
+	}
+
+	// Unqualified: refused, and it says what it could not read.
+	_, err = selectTeam("")
+	if err == nil {
+		t.Fatal("an unqualified `team ps` answered while a state file was unreadable")
+	}
+	for _, want := range []string{"cannot be read", "--team", "0901977d.json", "held"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not mention %q:\n%v", want, err)
+		}
+	}
+
+	// Named: answered. A damaged file belonging to somebody else must not stop
+	// this team being read or stopped.
+	st, err := selectTeam("held")
+	if err != nil || st.Session != "3f9a1c22" {
+		t.Fatalf("a named team could not be selected past a damaged file: %v, %v", st, err)
+	}
+
+	// And a name that matches nothing says both things: what is running, and
+	// what could not be read.
+	_, err = selectTeam("nobody")
+	if err == nil || !strings.Contains(err.Error(), "0901977d.json") {
+		t.Errorf("a miss does not name the unreadable file:\n%v", err)
 	}
 }

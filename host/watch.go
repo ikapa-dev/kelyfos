@@ -251,12 +251,19 @@ type agentUsage struct {
 	usage usageMsg
 }
 
-// sampleTeam reads the host's counters for every agent in the running team,
-// and the parent slice's own accounting. A team that has stopped has no state
-// file, and every lane falls back to the receipt in the chain.
-func sampleTeam() tea.Cmd {
+// sampleTeam reads the host's counters for every agent in THIS team, and the
+// parent slice's own accounting. A team that has stopped has no state file, and
+// every lane falls back to the receipt in the chain.
+//
+// The session is the team's own — the chain this view is tailing — rather than
+// "the running team". Several teams may be up at once (P7-16, D79), and a view
+// that asked the host which one was running would have sampled a stranger's
+// counters into this team's lanes the moment a second one appeared. It is also
+// the identifier the state file is named for, so this is a read rather than a
+// search.
+func sampleTeam(session string) tea.Cmd {
 	return func() tea.Msg {
-		st, err := readTeamState()
+		st, err := teamStateOf(session)
 		if err != nil {
 			return nil
 		}
@@ -358,7 +365,7 @@ func (m *watchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// A team samples every agent; a single sandbox samples itself. Which
 		// one this is was decided by the chain, not by a flag.
 		if len(m.order) > 0 {
-			return m, tea.Batch(tick(), sampleTeam())
+			return m, tea.Batch(tick(), sampleTeam(m.session))
 		}
 		return m, tea.Batch(tick(), sampleUsage(m.session))
 	case teamUsageMsg:

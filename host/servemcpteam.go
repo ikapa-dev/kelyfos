@@ -175,7 +175,7 @@ func (s *hostServer) toolTeamDown() *mcp.CallToolResult {
 	if s.team == nil {
 		// A team somebody else raised is theirs to stop, exactly as a sandbox
 		// somebody else started is (E4-1). Say which case this is.
-		others, lerr := liveTeams()
+		others, _, lerr := liveTeams()
 		if lerr == nil && len(others) > 0 {
 			return mcp.Errorf("this server raised no team. %d %s running and %s somebody else's to "+
 				"stop, with `kelyfos team down`:\n%s", len(others),
@@ -222,7 +222,7 @@ func teamMemberHint(id string) string {
 	// "the running team": the id in front of us belongs to whichever team owns
 	// it, and answering "no such machine" because a stranger's team owns it is
 	// the refusal this function exists to replace (P7-16).
-	teams, err := liveTeams()
+	teams, _, err := liveTeams()
 	if err != nil {
 		return ""
 	}

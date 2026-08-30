@@ -1604,7 +1604,8 @@ func teamDown(argv []string) error {
 	return fmt.Errorf("team %s did not stop within a minute", st.Name)
 }
 
-// liveTeams is every team state file on this host, oldest first.
+// liveTeams is every team state file on this host, oldest first, and the paths
+// of any it could not read.
 //
 // "Live" is the directory's own claim, not a verdict: a file is here because a
 // `team up` wrote it and has not removed it, and a process that was SIGKILLed
@@ -1614,42 +1615,47 @@ func teamDown(argv []string) error {
 // used for is one step down, in selectTeam: telling two teams apart, so one
 // crashed team's leftovers cannot make a live team ambiguous.
 //
-// An unreadable file is reported rather than skipped. A file this host cannot
-// parse is a reason to say so at the door, not a reason to answer a question
-// about the teams around it as though it did not exist — the same rule
-// RunningSessions applies to a sandbox record it has just refused.
-func liveTeams() ([]*teamState, error) {
+// An unreadable file is skipped and named rather than made fatal, and this is
+// the one place where a directory shared between teams could have re-created
+// the defect this task is about: refusing every answer because a stranger's
+// file will not parse would mean one damaged team stops the others from being
+// stopped. Skipping silently is the other wrong answer — if the damaged file is
+// your own team's, an unqualified `team ps` would then confidently describe
+// somebody else's. So they are carried out of here, and selectTeam refuses to
+// answer an unqualified question while any exist.
+func liveTeams() (teams []*teamState, unreadable []string, err error) {
 	entries, err := os.ReadDir(teamStateDir())
 	if errors.Is(err, os.ErrNotExist) {
-		return nil, nil
+		return nil, nil, nil
 	}
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	var out []*teamState
 	for _, e := range entries {
-		// The dot prefix is roster.write's own half-written temporary file,
-		// which exists for as long as one rename takes and is not a team.
+		// The dot prefix is roster.write's own temporary file, which exists for
+		// as long as one rename takes and is not a team.
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") ||
 			strings.HasPrefix(e.Name(), ".") {
 			continue
 		}
 		path := filepath.Join(teamStateDir(), e.Name())
-		blob, err := os.ReadFile(path)
-		if errors.Is(err, os.ErrNotExist) {
+		blob, rerr := os.ReadFile(path)
+		if errors.Is(rerr, os.ErrNotExist) {
 			continue // removed by its own team between the listing and here
 		}
-		if err != nil {
-			return nil, err
+		if rerr != nil {
+			unreadable = append(unreadable, path)
+			continue
 		}
 		var st teamState
-		if err := json.Unmarshal(blob, &st); err != nil {
-			return nil, fmt.Errorf("the team state file %s is unreadable: %w", path, err)
+		if json.Unmarshal(blob, &st) != nil || st.Session == "" {
+			unreadable = append(unreadable, path)
+			continue
 		}
-		out = append(out, &st)
+		teams = append(teams, &st)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].StartedAt.Before(out[j].StartedAt) })
-	return out, nil
+	sort.Slice(teams, func(i, j int) bool { return teams[i].StartedAt.Before(teams[j].StartedAt) })
+	return teams, unreadable, nil
 }
 
 // teamProcessAlive reports whether the process that raised this team is still
@@ -1673,9 +1679,14 @@ func teamProcessAlive(st *teamState) bool {
 // rather than being told nothing is running. It is when several files are here
 // that a dead one must not be able to make a live one ambiguous.
 func selectTeam(want string) (*teamState, error) {
-	teams, err := liveTeams()
+	teams, unreadable, err := liveTeams()
 	if err != nil {
 		return nil, err
+	}
+	if want == "" && len(unreadable) > 0 {
+		return nil, fmt.Errorf("%s, so which team you mean cannot be answered from what is "+
+			"here — name one with --team:\n%s%s",
+			unreadableNote(unreadable), teamRoster(teams), unreadableList(unreadable))
 	}
 	if want != "" {
 		var hit []*teamState
@@ -1685,11 +1696,11 @@ func selectTeam(want string) (*teamState, error) {
 			}
 		}
 		if len(hit) == 0 {
-			if len(teams) == 0 {
+			if len(teams) == 0 && len(unreadable) == 0 {
 				return nil, fmt.Errorf("no team is running")
 			}
-			return nil, fmt.Errorf("no running team is called %q; these are:\n%s",
-				want, teamRoster(teams))
+			return nil, fmt.Errorf("no running team is called %q; these are:\n%s%s",
+				want, teamRoster(teams), unreadableList(unreadable))
 		}
 		teams = hit
 	}
@@ -1728,6 +1739,27 @@ func teamRoster(teams []*teamState) string {
 		fmt.Fprintf(&b, "    %-16s session %s  pid %d  %s\n", st.Name, st.Session, st.PID, held)
 	}
 	return strings.TrimRight(b.String(), "\n")
+}
+
+func unreadableNote(paths []string) string {
+	if len(paths) == 1 {
+		return "a team state file under " + teamStateDir() + " cannot be read"
+	}
+	return fmt.Sprintf("%d team state files under %s cannot be read", len(paths), teamStateDir())
+}
+
+func unreadableList(paths []string) string {
+	if len(paths) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "\n  and %s:\n", unreadableNote(paths))
+	for _, p := range paths {
+		fmt.Fprintf(&b, "    %s\n", p)
+	}
+	b.WriteString("    a team whose file this is cannot be named; remove it once you are sure " +
+		"no team is behind it")
+	return b.String()
 }
 
 // readTeamState is selectTeam with nothing named, for the callers that have no
