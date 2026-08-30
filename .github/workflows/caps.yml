@@ -30,7 +30,7 @@ jobs:
     env:
       ARCH: ${{ github.event.inputs.arch || 'x86_64' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Grant access to /dev/kvm
         run: |
@@ -55,7 +55,7 @@ jobs:
 
       - name: Cache Buildroot downloads
         id: dl
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: ~/.cache/kelyfos/dl
           key: kelyfos-dl-${{ hashFiles('versions.mk') }}
@@ -63,7 +63,7 @@ jobs:
 
       - name: Cache the Buildroot tree
         id: tree
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: ~/.cache/kelyfos/build/${{ env.ARCH }}-dev
           key: kelyfos-tree-${{ env.ARCH }}-dev-${{ hashFiles('versions.mk', 'image/buildroot/configs/*', 'image/buildroot/kernel/*', 'image/flavors/dev/*') }}
@@ -71,7 +71,7 @@ jobs:
 
       - name: Cache the compiler cache
         id: ccache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: ~/.cache/kelyfos/ccache
           key: kelyfos-ccache-${{ env.ARCH }}-${{ hashFiles('versions.mk') }}
@@ -174,7 +174,7 @@ jobs:
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: caps-${{ env.ARCH }}
@@ -193,21 +193,21 @@ jobs:
       # on are exactly the ones that fail.
       - name: Save the Buildroot tree
         if: always() && steps.tree.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: ~/.cache/kelyfos/build/${{ env.ARCH }}-dev
           key: ${{ steps.tree.outputs.cache-primary-key }}
 
       - name: Save the downloads
         if: always() && steps.dl.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: ~/.cache/kelyfos/dl
           key: ${{ steps.dl.outputs.cache-primary-key }}
 
       - name: Save the compiler cache
         if: always() && steps.ccache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: ~/.cache/kelyfos/ccache
           key: ${{ steps.ccache.outputs.cache-primary-key }}

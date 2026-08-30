@@ -62,11 +62,11 @@ jobs:
         # for about forty minutes.
         flavor: [dev]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.ref || github.ref }}
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: true
@@ -76,7 +76,7 @@ jobs:
 
       - name: Cache the Buildroot tree
         id: tree
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: ~/.cache/kelyfos/build/${{ matrix.arch }}-${{ matrix.flavor }}
           key: kelyfos-tree-${{ matrix.arch }}-${{ matrix.flavor }}-${{ hashFiles('versions.mk', 'image/buildroot/configs/*', 'image/buildroot/kernel/*') }}
@@ -107,12 +107,12 @@ jobs:
 
       - name: Save the Buildroot tree
         if: always() && steps.tree.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: ~/.cache/kelyfos/build/${{ matrix.arch }}-${{ matrix.flavor }}
           key: ${{ steps.tree.outputs.cache-primary-key }}
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: image-${{ matrix.arch }}
           path: dist/
@@ -125,17 +125,17 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.ref || github.ref }}
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: true
 
       # Both architectures' images, from the two jobs above, into one dist/.
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: image-*
           path: dist/

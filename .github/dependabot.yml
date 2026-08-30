@@ -27,6 +27,18 @@
 # runner that starts VMs, and a Dependabot PR is not a reason to widen it. The
 # per-commit checks a bot PR does run are the cheap ones: gofmt, vet, the unit
 # tests, the drift gate.
+# **One pull request per ecosystem, not one per dependency** (2026-08-30). The
+# first time Actions was enabled on this repository, Dependabot opened three
+# action bumps at once and each one fired both `ci` and `security` — six runs,
+# and it had two more bumps queued behind an open-PR limit of three. An action
+# bump edits `.github/workflows/*.yml`, which the `changes` job correctly counts
+# as code, so every one of those PRs was a full from-source Buildroot build.
+#
+# Grouping is the fix rather than a lower limit: five separate bumps are five
+# builds of the same thing, and the question a reviewer actually has — "do the
+# workflows still work after these bumps" — is answered once, by one run, on one
+# branch. `open-pull-requests-limit: 1` then means what it says, because a group
+# is one PR however many dependencies moved inside it.
 version: 2
 updates:
   - package-ecosystem: gomod
@@ -34,7 +46,10 @@ updates:
     schedule:
       interval: weekly
       day: tuesday
-    open-pull-requests-limit: 3
+    groups:
+      go-dependencies:
+        patterns: ["*"]
+    open-pull-requests-limit: 1
     commit-message:
       prefix: "deps"
     labels: ["dependencies"]
@@ -44,7 +59,10 @@ updates:
     schedule:
       interval: weekly
       day: tuesday
-    open-pull-requests-limit: 3
+    groups:
+      github-actions:
+        patterns: ["*"]
+    open-pull-requests-limit: 1
     commit-message:
       prefix: "deps(actions)"
     labels: ["dependencies"]

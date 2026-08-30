@@ -74,7 +74,7 @@ jobs:
     outputs:
       code: ${{ steps.filter.outputs.code }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -132,10 +132,10 @@ jobs:
       # and check-dco.sh takes its documented "no comparable base" exit — so the
       # gate passed vacuously on every push this repository has ever made,
       # including the one that carried 115 unsigned commits (P7-17, D73).
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: true
@@ -185,7 +185,7 @@ jobs:
       # leaves, so it leaves.
       - name: keep any crashing input
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: fuzz-crashers-${{ github.run_id }}
           path: '**/testdata/fuzz/**'
@@ -291,7 +291,7 @@ jobs:
       matrix:
         arch: [x86_64, aarch64]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Restore and save are separate steps on purpose. A post step is skipped
       # once any step in the job has failed, so a build that dies half way
@@ -300,7 +300,7 @@ jobs:
       - name: Cache Buildroot downloads
         id: dl
         if: github.event_name != 'schedule'
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: ~/.cache/kelyfos/dl
           key: kelyfos-dl-${{ hashFiles('versions.mk') }}
@@ -311,7 +311,7 @@ jobs:
       - name: Cache the Buildroot tree
         id: tree
         if: github.event_name != 'schedule'
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: ~/.cache/kelyfos/build/${{ matrix.arch }}-${{ matrix.flavor || 'base' }}
           key: kelyfos-tree-${{ matrix.arch }}-${{ matrix.flavor || 'base' }}-${{ hashFiles('versions.mk', 'image/buildroot/configs/*', 'image/buildroot/kernel/*') }}
@@ -324,7 +324,7 @@ jobs:
       - name: Cache the compiler cache
         id: ccache
         if: github.event_name != 'schedule'
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: ~/.cache/kelyfos/ccache
           key: kelyfos-ccache-${{ matrix.arch }}-${{ hashFiles('versions.mk') }}
@@ -352,26 +352,26 @@ jobs:
       # it would make the next week's run a little less honest.
       - name: Save the Buildroot tree
         if: always() && github.event_name != 'schedule' && steps.tree.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: ~/.cache/kelyfos/build/${{ matrix.arch }}-${{ matrix.flavor || 'base' }}
           key: ${{ steps.tree.outputs.cache-primary-key }}
 
       - name: Save the downloads
         if: always() && github.event_name != 'schedule' && steps.dl.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: ~/.cache/kelyfos/dl
           key: ${{ steps.dl.outputs.cache-primary-key }}
 
       - name: Save the compiler cache
         if: always() && github.event_name != 'schedule' && steps.ccache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: ~/.cache/kelyfos/ccache
           key: ${{ steps.ccache.outputs.cache-primary-key }}
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: image-${{ matrix.arch }}
           path: |
@@ -387,8 +387,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: true
@@ -408,7 +408,7 @@ jobs:
       - name: Install Firecracker
         run: bash dev/install-firecracker.sh
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: image-x86_64
           path: ~/.cache/kelyfos/out/x86_64
@@ -484,7 +484,7 @@ jobs:
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: host-seccomp-x86_64
