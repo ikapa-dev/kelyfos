@@ -185,7 +185,7 @@ jobs:
       # leaves, so it leaves.
       - name: keep any crashing input
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: fuzz-crashers-${{ github.run_id }}
           path: '**/testdata/fuzz/**'
@@ -371,7 +371,7 @@ jobs:
           path: ~/.cache/kelyfos/ccache
           key: ${{ steps.ccache.outputs.cache-primary-key }}
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: image-${{ matrix.arch }}
           path: |
@@ -484,7 +484,7 @@ jobs:
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: host-seccomp-x86_64

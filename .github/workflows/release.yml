@@ -112,7 +112,7 @@ jobs:
           path: ~/.cache/kelyfos/build/${{ matrix.arch }}-${{ matrix.flavor }}
           key: ${{ steps.tree.outputs.cache-primary-key }}
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: image-${{ matrix.arch }}
           path: dist/
