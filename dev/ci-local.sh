@@ -67,7 +67,21 @@ if [ "$(uname -s)" != "Linux" ]; then
 fi
 
 # The digest of the `checks` job as this file last copied it. See "Drift" above.
-CHECKS_SHA256=d9e975448d9ae2c75c390a4ca9a6f4a64d8d9fd6ddc5a58d2337d84a29c80c68
+#
+# Re-pinned at P7-16 after `63c0429` (CI: bring every action to its current
+# major) moved the job's text and left this file refusing to run — so `dev/
+# ci-local.sh --boot`, which is the only local stand-in for the boot job, could
+# not be run at all on any commit after it, which is exactly the shape §8 rule 8
+# exists to catch: a gate that refuses reads the same as a gate nobody ran.
+#
+# What actually drifted, established rather than assumed: `git diff 47d9e93 HEAD
+# -- .github/workflows/ci.yml` is three `uses:` bumps in the checks job
+# (actions/checkout v4 -> v7, actions/setup-go v5 -> v7,
+# actions/upload-artifact v4 -> v7) and nothing else. Not one `run:` block
+# changed, and the `run:` blocks are the whole of what this file copies — it
+# starts after the checkout the workflow performs and never runs an action. So
+# the steps below are already aligned and only the digest was stale.
+CHECKS_SHA256=4330cd6ad47ae43cc7c903030337730698e573ae102c950a545ec036081e49f2
 
 boot=0
 dco_base=""
