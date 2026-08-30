@@ -99,7 +99,7 @@ name = "worker"
 			t.Errorf("the refusal does not mention %q:\n%s", want, res.Content[0].Text)
 		}
 	}
-	if _, err := readTeamState(); err == nil {
+	if _, err := selectTeam(""); err == nil {
 		t.Error("a refused team left a team.json behind, so something was raised after all")
 	}
 }

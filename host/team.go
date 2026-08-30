@@ -1816,10 +1816,6 @@ func unusableList(paths []string) string {
 	return b.String()
 }
 
-// readTeamState is selectTeam with nothing named, for the callers that have no
-// selector to offer — `kelyfos watch`'s team lane and serve-mcp's own hints.
-func readTeamState() (*teamState, error) { return selectTeam("") }
-
 // teamStateOf reads one named team's own file, for a caller that already knows
 // which team it means because it raised it. No liveness check and no search: the
 // caller is holding the process, so "the file is not there" is the answer that a
