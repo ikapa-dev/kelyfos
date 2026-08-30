@@ -84,7 +84,11 @@ jobs:
   # Separate job so a crasher and an advisory are never the same red X.
   fuzz:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    # 120, not 90. The budget below is per target and the targets are run one
+    # after another — `go test -fuzz` takes exactly one at a time — so the job
+    # costs targets x FUZZTIME plus a build per package. At 90 that left no
+    # margin: see the comment on the budget itself.
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
@@ -93,10 +97,27 @@ jobs:
           cache: true
 
       # Targets are discovered, not listed (dev/fuzz.sh), so this line does not
-      # change when one is added. Three minutes each against fourteen targets is
-      # comfortably inside the timeout with room for the set to grow.
+      # change when one is added — but the COST does, and that is what went
+      # wrong here. This said "three minutes each against fourteen targets is
+      # comfortably inside the timeout with room for the set to grow". The set
+      # grew: twenty-nine targets, 29 x 3m = 87 minutes of fuzzing against a
+      # 90-minute timeout, before the per-package builds that precede it. The
+      # margin was gone and the next target would have turned a slow job into a
+      # red one — a timeout, on the workflow whose whole purpose is to be
+      # believed when it goes red.
+      #
+      # So the budget follows the event, which is what this repository already
+      # says it believes: ci.yml calls its own ten-second pass "not a search --
+      # the real one is the scheduled run in security.yml". The scheduled run is
+      # therefore the search, and a push or a pull request gets the smoke test.
+      # This job runs on a push at all only when go.mod, go.sum or this file
+      # change, so the short budget applies to a dependency bump proving itself,
+      # not to ordinary work.
       - name: fuzz
-        run: make fuzz FUZZTIME=3m
+        env:
+          # 3m x 29 = 87 min weekly; 30s x 29 = 15 min on a dependency change.
+          FUZZTIME: ${{ github.event_name == 'schedule' && '3m' || '30s' }}
+        run: make fuzz FUZZTIME=$FUZZTIME
 
       - name: keep any crashing input
         if: failure()
