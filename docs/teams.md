@@ -1054,3 +1054,4 @@ $ kelyfos watch --json | jq '.session, .totals, .domains'
 | The team's export carries the team's record; `kelyfos verify` re-runs it | P6-6 |
 | Multi-lane `kelyfos watch` | E2-8 |
 | The committed demo, including a refused edge | E2-9 |
+| Several teams on one host, each with its own state, cgroup and record | P7-16 |
