@@ -8442,7 +8442,7 @@ team=""; SESSION=""
 # `kelyfos team down` means whichever team is running, and `pkill -f "kelyfos
 # team up"` means every one of them (P7-16).
 trap 'kelyfos team down ${SESSION:+--team "$SESSION"} >/dev/null 2>&1 || true;
-      [ -n "$team" ] && kill "$team" 2>/dev/null; rm -rf "$work"' EXIT
+      { [ -n "$team" ] && kill "$team" 2>/dev/null; } || true; rm -rf "$work"' EXIT
 
 # A team is declared, not orchestrated. You write down who exists and who may
 # talk to whom; `kelyfos team up` boots that graph. No guest ever has a network
@@ -9755,7 +9755,7 @@ cd "$work"
 team=""; SESSION=""
 # This recipe's own team only — see recipe 5 for why (P7-16).
 trap 'kelyfos team down ${SESSION:+--team "$SESSION"} >/dev/null 2>&1 || true;
-      [ -n "$team" ] && kill "$team" 2>/dev/null; rm -rf "$work"' EXIT
+      { [ -n "$team" ] && kill "$team" 2>/dev/null; } || true; rm -rf "$work"' EXIT
 
 cat > kelyfos.toml <<'TOML'
 [team]
@@ -9928,7 +9928,7 @@ cd "$work"
 team=""; SESSION=""
 # This recipe's own team only — see recipe 5 for why (P7-16).
 trap 'kelyfos team down ${SESSION:+--team "$SESSION"} >/dev/null 2>&1 || true;
-      [ -n "$team" ] && kill "$team" 2>/dev/null; rm -rf "$work"' EXIT
+      { [ -n "$team" ] && kill "$team" 2>/dev/null; } || true; rm -rf "$work"' EXIT
 
 cat > kelyfos.toml <<'TOML'
 [team]
@@ -10140,9 +10140,9 @@ work="$(mktemp -d)"
 cd "$work"
 REFRESH_PID=""; team=""; SESSION=""
 # This recipe's own team only — see recipe 5 for why (P7-16).
-trap '[ -n "$REFRESH_PID" ] && kill "$REFRESH_PID" 2>/dev/null;
+trap '{ [ -n "$REFRESH_PID" ] && kill "$REFRESH_PID" 2>/dev/null; } || true;
       kelyfos team down ${SESSION:+--team "$SESSION"} >/dev/null 2>&1 || true;
-      [ -n "$team" ] && kill "$team" 2>/dev/null; rm -rf "$work"' EXIT
+      { [ -n "$team" ] && kill "$team" 2>/dev/null; } || true; rm -rf "$work"' EXIT
 
 cat > kelyfos.toml <<'TOML'
 [team]
@@ -10402,8 +10402,8 @@ A_SESSION=""; B_SESSION=""
 A_UP=""; B_UP=""
 trap 'kelyfos team down --team "${A_SESSION:-alpha}" >/dev/null 2>&1 || true;
       kelyfos team down --team "${B_SESSION:-beta}"  >/dev/null 2>&1 || true;
-      [ -n "$A_UP" ] && kill "$A_UP" 2>/dev/null;
-      [ -n "$B_UP" ] && kill "$B_UP" 2>/dev/null; rm -rf "$work"' EXIT
+      { [ -n "$A_UP" ] && kill "$A_UP" 2>/dev/null; } || true;
+      { [ -n "$B_UP" ] && kill "$B_UP" 2>/dev/null; } || true; rm -rf "$work"' EXIT
 
 # Two projects, side by side. Same shape, different names — a name is only a
 # label, and two teams may share one.

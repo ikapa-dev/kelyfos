@@ -54,7 +54,7 @@ cleanup() {
   # This run's own `team up`, by the pid this script started, not every
   # `team up` running from this binary: two runs of this script on one machine
   # would otherwise stop each other (P7-16).
-  [ -n "${UPPID:-}" ] && kill "$UPPID" 2>/dev/null
+  { [ -n "${UPPID:-}" ] && kill "$UPPID" 2>/dev/null; } || true
   sleep 1
   # This run's own Firecrackers, not every Firecracker on the machine. A
   # host-wide kill here is the defect P7-16 is about, one layer out: it stops
