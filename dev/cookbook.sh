@@ -109,8 +109,10 @@ for script in "$WORK"/recipes/*.sh; do
   # directory already is" — but it is not inert.
   #
   # It remains the better trade: deleting other people's run directories is
-  # worse than leaving your own, and a full 23-recipe run on a quiet host left
-  # nothing at all behind. Removing only the ones whose pid is dead would be
+  # worse than leaving your own, and a full 23-recipe run left nothing at all
+  # behind — even the one that was sharing this host with a `go test` whose
+  # microVMs the kills above cut down, which is the paragraph above happening
+  # while the paragraph below was being measured. Removing only the ones whose pid is dead would be
   # closer, and is still a decision about somebody else's crashed sandbox, so
   # it goes with the rest of the deferral in D79 rather than being guessed at
   # in a trap.
