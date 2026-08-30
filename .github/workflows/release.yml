@@ -76,7 +76,7 @@ jobs:
 
       - name: Cache the Buildroot tree
         id: tree
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: ~/.cache/kelyfos/build/${{ matrix.arch }}-${{ matrix.flavor }}
           key: kelyfos-tree-${{ matrix.arch }}-${{ matrix.flavor }}-${{ hashFiles('versions.mk', 'image/buildroot/configs/*', 'image/buildroot/kernel/*') }}
@@ -107,7 +107,7 @@ jobs:
 
       - name: Save the Buildroot tree
         if: always() && steps.tree.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: ~/.cache/kelyfos/build/${{ matrix.arch }}-${{ matrix.flavor }}
           key: ${{ steps.tree.outputs.cache-primary-key }}

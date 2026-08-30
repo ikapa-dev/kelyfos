@@ -300,7 +300,7 @@ jobs:
       - name: Cache Buildroot downloads
         id: dl
         if: github.event_name != 'schedule'
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: ~/.cache/kelyfos/dl
           key: kelyfos-dl-${{ hashFiles('versions.mk') }}
@@ -311,7 +311,7 @@ jobs:
       - name: Cache the Buildroot tree
         id: tree
         if: github.event_name != 'schedule'
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: ~/.cache/kelyfos/build/${{ matrix.arch }}-${{ matrix.flavor || 'base' }}
           key: kelyfos-tree-${{ matrix.arch }}-${{ matrix.flavor || 'base' }}-${{ hashFiles('versions.mk', 'image/buildroot/configs/*', 'image/buildroot/kernel/*') }}
@@ -324,7 +324,7 @@ jobs:
       - name: Cache the compiler cache
         id: ccache
         if: github.event_name != 'schedule'
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: ~/.cache/kelyfos/ccache
           key: kelyfos-ccache-${{ matrix.arch }}-${{ hashFiles('versions.mk') }}
@@ -352,21 +352,21 @@ jobs:
       # it would make the next week's run a little less honest.
       - name: Save the Buildroot tree
         if: always() && github.event_name != 'schedule' && steps.tree.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: ~/.cache/kelyfos/build/${{ matrix.arch }}-${{ matrix.flavor || 'base' }}
           key: ${{ steps.tree.outputs.cache-primary-key }}
 
       - name: Save the downloads
         if: always() && github.event_name != 'schedule' && steps.dl.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: ~/.cache/kelyfos/dl
           key: ${{ steps.dl.outputs.cache-primary-key }}
 
       - name: Save the compiler cache
         if: always() && github.event_name != 'schedule' && steps.ccache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: ~/.cache/kelyfos/ccache
           key: ${{ steps.ccache.outputs.cache-primary-key }}

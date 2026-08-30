@@ -67,7 +67,7 @@ jobs:
       # benchmark that built from a cache nobody checked is a benchmark of the
       # cache. ci.yml caches the tree, because it runs on every commit.
       - name: Cache Buildroot downloads
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/kelyfos/dl
           key: kelyfos-dl-${{ hashFiles('versions.mk') }}
