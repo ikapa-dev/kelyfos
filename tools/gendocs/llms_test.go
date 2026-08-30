@@ -124,9 +124,21 @@ func TestLLMsIndexLinksResolve(t *testing.T) {
 func TestEveryDocumentUnderDocsIsInTheLLMsSet(t *testing.T) {
 	const root = "../.."
 
-	// Deliberate omissions go here with a reason. Empty on purpose: every page
-	// under docs/ is currently in the set, which is what llms-full.txt claims.
-	omitted := map[string]string{}
+	// Deliberate omissions go here with a reason.
+	//
+	// The three below are the engineering record rather than product
+	// documentation: what was built, and every decision with the reasoning
+	// that produced it. The source cites them constantly and a reader who
+	// wants them should have them, so llms.txt links all three by name — but
+	// concatenating 277 KB of decision prose into llms-full.txt would add
+	// about a third again to what a client spends to read the product's
+	// documentation, for pages that answer "why was this built this way"
+	// rather than "how do I use it".
+	omitted := map[string]string{
+		"docs/decisions.md":          "engineering record, not product documentation; linked from llms.txt",
+		"docs/decisions-features.md": "engineering record, not product documentation; linked from llms.txt",
+		"docs/roadmap.md":            "engineering record, not product documentation; linked from llms.txt",
+	}
 
 	listed := map[string]bool{}
 	for _, d := range append(docSet(), referenceSet()...) {
