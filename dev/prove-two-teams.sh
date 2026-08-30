@@ -38,7 +38,7 @@ SUMMARY=()
 # This run's own two teams, and this run's own Firecrackers. Nothing below asks
 # the host a question it could answer about somebody else's team: that is the
 # defect, one layer out, and dev/demo-team.sh already paid for it once (S20).
-A_SESSION=""; B_SESSION=""
+A_SESSION=""; B_SESSION=""; B_STOPPED=""
 A_PIDS=(); B_PIDS=()
 A_UP=""; B_UP=""
 
@@ -206,6 +206,9 @@ if [ "${#STILL[@]}" -eq 0 ]; then
 else
   fail "${#STILL[@]} machine(s) of the stopped team survived: ${STILL[*]}"
 fi
+# Kept for the verify step below; B_SESSION is cleared so cleanup does not try
+# to stop a team that is already down.
+B_STOPPED="$B_SESSION"
 B_SESSION=""; B_PIDS=()
 
 # The line this whole script exists for.
@@ -245,7 +248,7 @@ else
 fi
 
 say "5. each team's own record verifies on its own"
-for s in "$A_SESSION" ${B_SESSION:+$B_SESSION}; do
+for s in "$A_SESSION" "$B_STOPPED"; do
   if "$KELYFOS" log --session "$s" --verify 2>&1 | grep -q 'chain intact'; then
     pass "session $s verifies"
   else
