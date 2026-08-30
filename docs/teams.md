@@ -571,9 +571,9 @@ kelyfos team ps   --team build  # by name
 kelyfos team down --team 3f9a1c22   # or by session id
 ```
 
-With one team up, nothing is different and no flag is needed. With several,
-`team ps` and `team down` refuse to guess and print what is running, with each
-team's name, session and pid — the same rule `kelyfos run`'s `--sandbox` has
+With one team up, nothing is different and no flag is needed. With several and
+no `--team`, both commands print what is running — each team's name, session and
+pid — rather than picking one, the same rule `kelyfos run`'s `--sandbox` has
 always had, one level up. Two teams may share a name, which is what two
 checkouts of one project do; the session id is what separates them.
 
@@ -581,6 +581,16 @@ A team whose process was killed leaves its state file behind, and its machines
 may well still be running. It is listed as *"its process is gone"* rather than
 deleted, and `kelyfos team down --team <it>` is what clears it — nothing sweeps
 another process's state away underneath an operator.
+
+**One asymmetry, and it is deliberate.** When the only thing making the answer
+ambiguous is a leftover file like that — one team held by a live process, the
+rest not — `kelyfos team ps` takes the live one, because a crashed team's
+litter should not make a running team unreadable. `kelyfos team down` does
+**not**: it refuses whenever more than one team is here and none is named. The
+difference is that a read can be wrong and re-run, and a stop cannot. The
+failure the shortcut would buy is real: your own `team up` killed, its file
+still on disk with its machines up, a colleague's team running, and a bare
+`kelyfos team down` stopping theirs.
 
 The MCP surface has no selector and needs none: `team_up`, `team_ps` and
 `team_down` are about the team *that server* raised, and a team raised elsewhere
