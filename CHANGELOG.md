@@ -93,9 +93,11 @@ verification pass then found inside those fixes. Every one is below under
   print what is running rather than guess, which is the rule `--sandbox` has
   always had for `kelyfos exec` one level up. Two teams may share a name, which
   is what two checkouts of one project do, so the selector takes a session id as
-  well. `kelyfos watch`'s team lane and the `team_*` MCP tools need no selector:
-  the tools are about the team that server raised, and a team raised elsewhere
-  is named in the refusal rather than acted on. See
+  well, and `kelyfos team up` now prints its own session on the line after
+  `team up in N ms` so you have one to give. `kelyfos watch`'s team lane and the
+  `team_*` MCP tools need no selector: the lane reads the session it is already
+  tailing, the tools are about the team that server raised, and a team raised
+  elsewhere is named in the refusal rather than acted on. See
   [`docs/teams.md`](docs/teams.md) §5.1 and cookbook recipe 22 (P7-16, D79).
 
 ### Fixed

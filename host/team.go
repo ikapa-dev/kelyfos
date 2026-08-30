@@ -1668,6 +1668,14 @@ func liveTeams() (teams []*teamState, unreadable []string, err error) {
 // teamProcessAlive reports whether the process that raised this team is still
 // there. A team whose process is gone is not stopped — its machines may well
 // still be up — it is a team nobody is holding.
+//
+// Signal 0 exactly as internal/sandbox's own `alive` does, including its one
+// inaccuracy: a process this user may not signal answers EPERM and is read here
+// as gone. That needs a team raised by another user against this user's cache,
+// which the cache does not support — Root() is under $HOME, so `sudo kelyfos
+// team up` writes root's cache and is not in this directory at all. Two
+// spellings of "is this process there" that disagree would be worse than the
+// case they disagree about, so this is the same spelling.
 func teamProcessAlive(st *teamState) bool {
 	return st.PID > 0 && syscall.Kill(st.PID, 0) == nil
 }
