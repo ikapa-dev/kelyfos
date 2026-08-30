@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/p4r4n0rm4l/KelyfOS/internal/exitcode"
-	"github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
-	"github.com/p4r4n0rm4l/KelyfOS/internal/sandbox"
+	"github.com/ikapa-dev/kelyfos/internal/exitcode"
+	"github.com/ikapa-dev/kelyfos/internal/recorder"
+	"github.com/ikapa-dev/kelyfos/internal/sandbox"
 )
 
 // P7-17/F13(b) — the run loop stops a machine whose recorder has failed.

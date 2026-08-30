@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/p4r4n0rm4l/KelyfOS/internal/config"
-	"github.com/p4r4n0rm4l/KelyfOS/internal/denial"
-	"github.com/p4r4n0rm4l/KelyfOS/internal/mcp"
+	"github.com/ikapa-dev/kelyfos/internal/config"
+	"github.com/ikapa-dev/kelyfos/internal/denial"
+	"github.com/ikapa-dev/kelyfos/internal/mcp"
 )
 
 // The policy ceiling is the whole of serve-mcp's security story, and it is the

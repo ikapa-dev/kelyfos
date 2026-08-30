@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
+	"github.com/ikapa-dev/kelyfos/internal/recorder"
 )
 
 // renderEvent runs one event through the replay renderer and gives back the

@@ -6,7 +6,7 @@
 # `make cli`, which needs dev/install-build-deps.sh first.
 set -euo pipefail
 
-REPO="${KELYFOS_REPO:-p4r4n0rm4l/KelyfOS}"
+REPO="${KELYFOS_REPO:-ikapa-dev/kelyfos}"
 TAG="${1:-latest}"
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DEST="${KELYFOS_BIN_DIR:-$here/bin}"

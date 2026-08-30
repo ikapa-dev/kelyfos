@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/p4r4n0rm4l/KelyfOS/internal/proto"
+	"github.com/ikapa-dev/kelyfos/internal/proto"
 )
 
 // The events channel has to be listening before the VM starts, so this tests it

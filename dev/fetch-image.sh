@@ -10,7 +10,7 @@
 #
 # SHA256SUMS gives you integrity. Provenance is a separate statement: on a
 # release the release workflow builds, `gh attestation verify <file> --repo
-# p4r4n0rm4l/KelyfOS` names the workflow and the commit that built those bytes.
+# ikapa-dev/kelyfos` names the workflow and the commit that built those bytes.
 # Releases from v1.0-rc2 onward carry one; the hand-assembled tags before it do
 # not. This script checks the sums and not the attestation either way,
 # deliberately — it has to work on a machine with no `gh`, and a download tool
@@ -19,7 +19,7 @@
 # Usage: dev/fetch-image.sh [ARCH] [TAG]
 set -euo pipefail
 
-REPO="${KELYFOS_REPO:-p4r4n0rm4l/KelyfOS}"
+REPO="${KELYFOS_REPO:-ikapa-dev/kelyfos}"
 ARCH="${1:-$(uname -m)}"
 TAG="${2:-latest}"
 

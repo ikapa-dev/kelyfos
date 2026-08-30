@@ -14,8 +14,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/p4r4n0rm4l/KelyfOS/internal/mcp"
-	"github.com/p4r4n0rm4l/KelyfOS/internal/proto"
+	"github.com/ikapa-dev/kelyfos/internal/mcp"
+	"github.com/ikapa-dev/kelyfos/internal/proto"
 )
 
 var digits = regexp.MustCompile(`\d+`)

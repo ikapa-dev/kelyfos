@@ -9,7 +9,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/p4r4n0rm4l/KelyfOS/internal/sandbox"
+	"github.com/ikapa-dev/kelyfos/internal/sandbox"
 )
 
 // benchResult is the machine-readable form, so CI can publish a number without

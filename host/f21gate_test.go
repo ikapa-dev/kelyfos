@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/p4r4n0rm4l/KelyfOS/internal/config"
+	"github.com/ikapa-dev/kelyfos/internal/config"
 )
 
 // P7-17/F21, the verification round: the gate was not on every door.
@@ -268,7 +268,7 @@ func repoFiles(t *testing.T) []string {
 // The alias is read from the file's own import block now, so the walk follows
 // whatever name the file chose.
 func configLocalName(f *ast.File) (string, bool) {
-	const path = `"github.com/p4r4n0rm4l/KelyfOS/internal/config"`
+	const path = `"github.com/ikapa-dev/kelyfos/internal/config"`
 	for _, imp := range f.Imports {
 		if imp.Path.Value != path {
 			continue

@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/p4r4n0rm4l/KelyfOS/internal/proto"
+	"github.com/ikapa-dev/kelyfos/internal/proto"
 )
 
 // Inbound port forwarding, from inside the guest (E5-5, docs/qol.md §4).

@@ -1,6 +1,6 @@
 package vardecl
 
-import "github.com/p4r4n0rm4l/KelyfOS/internal/egress"
+import "github.com/ikapa-dev/kelyfos/internal/egress"
 
 // The zero value, whose Peer is unset.
 func build() *egress.Proxy {

@@ -8,7 +8,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/p4r4n0rm4l/KelyfOS/internal/docsize"
+	"github.com/ikapa-dev/kelyfos/internal/docsize"
 )
 
 // llms.txt and llms-full.txt (E3-2).
@@ -41,7 +41,7 @@ import (
 // rawBase is where a fetching client is sent. Raw URLs rather than the rendered
 // GitHub page, because the consumer here is a program: it wants the Markdown,
 // not a page of HTML with the Markdown inside it.
-const rawBase = "https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/"
+const rawBase = "https://raw.githubusercontent.com/ikapa-dev/kelyfos/main/"
 
 // doc is one file, with the one-line summary that goes beside its link.
 type doc struct {

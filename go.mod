@@ -1,4 +1,4 @@
-module github.com/p4r4n0rm4l/KelyfOS
+module github.com/ikapa-dev/kelyfos
 
 go 1.27
 

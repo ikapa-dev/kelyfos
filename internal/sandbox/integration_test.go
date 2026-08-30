@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/p4r4n0rm4l/KelyfOS/internal/proto"
-	"github.com/p4r4n0rm4l/KelyfOS/internal/sandbox"
+	"github.com/ikapa-dev/kelyfos/internal/proto"
+	"github.com/ikapa-dev/kelyfos/internal/sandbox"
 )
 
 // These tests boot a real microVM, so they need KVM, Firecracker and a built

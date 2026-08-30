@@ -4,7 +4,7 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/p4r4n0rm4l/KelyfOS/internal/proto"
+	"github.com/ikapa-dev/kelyfos/internal/proto"
 )
 
 // safe and safeBody are the two template functions every guest-influenced

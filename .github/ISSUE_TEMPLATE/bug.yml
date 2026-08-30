@@ -10,7 +10,7 @@ body:
         again**. Everything below is in service of those two.
 
         If it is a security finding, close this and read
-        [SECURITY.md](https://github.com/p4r4n0rm4l/KelyfOS/blob/main/SECURITY.md)
+        [SECURITY.md](https://github.com/ikapa-dev/kelyfos/blob/main/SECURITY.md)
         instead.
 
   - type: textarea

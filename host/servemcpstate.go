@@ -9,12 +9,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/p4r4n0rm4l/KelyfOS/internal/denial"
-	"github.com/p4r4n0rm4l/KelyfOS/internal/egress"
-	"github.com/p4r4n0rm4l/KelyfOS/internal/mcp"
-	"github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
-	"github.com/p4r4n0rm4l/KelyfOS/internal/sandbox"
-	"github.com/p4r4n0rm4l/KelyfOS/internal/sessionpolicy"
+	"github.com/ikapa-dev/kelyfos/internal/denial"
+	"github.com/ikapa-dev/kelyfos/internal/egress"
+	"github.com/ikapa-dev/kelyfos/internal/mcp"
+	"github.com/ikapa-dev/kelyfos/internal/recorder"
+	"github.com/ikapa-dev/kelyfos/internal/sandbox"
+	"github.com/ikapa-dev/kelyfos/internal/sessionpolicy"
 )
 
 // sandbox_snapshot, sandbox_restore and sandbox_fork (E4-2).

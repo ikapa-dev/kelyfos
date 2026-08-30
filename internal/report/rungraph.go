@@ -6,9 +6,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/p4r4n0rm4l/KelyfOS/internal/digest"
-	"github.com/p4r4n0rm4l/KelyfOS/internal/graph"
-	"github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
+	"github.com/ikapa-dev/kelyfos/internal/digest"
+	"github.com/ikapa-dev/kelyfos/internal/graph"
+	"github.com/ikapa-dev/kelyfos/internal/recorder"
 )
 
 // This file is P7-8's own reading of P7-2/P7-3's declaration

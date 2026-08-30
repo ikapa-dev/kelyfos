@@ -1,6 +1,6 @@
 package team
 
-import "github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
+import "github.com/ikapa-dev/kelyfos/internal/recorder"
 
 // Record translates one broker event into a flight-recorder event.
 //

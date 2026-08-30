@@ -13,9 +13,9 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
-	"github.com/p4r4n0rm4l/KelyfOS/internal/digest"
-	"github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
-	"github.com/p4r4n0rm4l/KelyfOS/internal/sandbox"
+	"github.com/ikapa-dev/kelyfos/internal/digest"
+	"github.com/ikapa-dev/kelyfos/internal/recorder"
+	"github.com/ikapa-dev/kelyfos/internal/sandbox"
 )
 
 // The resources lane is the one part of `kelyfos watch` that does not come from

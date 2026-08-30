@@ -13,12 +13,12 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/p4r4n0rm4l/KelyfOS/internal/config"
-	"github.com/p4r4n0rm4l/KelyfOS/internal/egress"
-	"github.com/p4r4n0rm4l/KelyfOS/internal/mcp"
-	"github.com/p4r4n0rm4l/KelyfOS/internal/proto"
-	"github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
-	"github.com/p4r4n0rm4l/KelyfOS/internal/sandbox"
+	"github.com/ikapa-dev/kelyfos/internal/config"
+	"github.com/ikapa-dev/kelyfos/internal/egress"
+	"github.com/ikapa-dev/kelyfos/internal/mcp"
+	"github.com/ikapa-dev/kelyfos/internal/proto"
+	"github.com/ikapa-dev/kelyfos/internal/recorder"
+	"github.com/ikapa-dev/kelyfos/internal/sandbox"
 )
 
 // kelyfos serve-mcp — KelyfOS as a tool for any MCP client (E4-1).

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/p4r4n0rm4l/KelyfOS/internal/mcp"
+	"github.com/ikapa-dev/kelyfos/internal/mcp"
 )
 
 // A client is entitled to prefer structuredContent over the text block, and one

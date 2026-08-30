@@ -12,7 +12,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/p4r4n0rm4l/KelyfOS/internal/denial"
+	"github.com/ikapa-dev/kelyfos/internal/denial"
 )
 
 // Running Firecracker under its own jailer (P5-1, docs/hardening.md §2).

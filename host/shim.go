@@ -13,10 +13,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/p4r4n0rm4l/KelyfOS/internal/denial"
-	"github.com/p4r4n0rm4l/KelyfOS/internal/egress"
-	"github.com/p4r4n0rm4l/KelyfOS/internal/sandbox"
-	"github.com/p4r4n0rm4l/KelyfOS/shim"
+	"github.com/ikapa-dev/kelyfos/internal/denial"
+	"github.com/ikapa-dev/kelyfos/internal/egress"
+	"github.com/ikapa-dev/kelyfos/internal/sandbox"
+	"github.com/ikapa-dev/kelyfos/shim"
 )
 
 func shimCmd(argv []string) error {

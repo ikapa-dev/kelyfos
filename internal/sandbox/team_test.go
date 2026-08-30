@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/p4r4n0rm4l/KelyfOS/internal/proto"
-	"github.com/p4r4n0rm4l/KelyfOS/internal/team"
+	"github.com/ikapa-dev/kelyfos/internal/proto"
+	"github.com/ikapa-dev/kelyfos/internal/team"
 )
 
 // teamChannel binds a team channel and dials it the way a guest does, so these

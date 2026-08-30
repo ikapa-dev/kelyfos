@@ -14,11 +14,11 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
-	"github.com/p4r4n0rm4l/KelyfOS/internal/digest"
-	"github.com/p4r4n0rm4l/KelyfOS/internal/proto"
-	"github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
-	"github.com/p4r4n0rm4l/KelyfOS/internal/report"
-	"github.com/p4r4n0rm4l/KelyfOS/internal/sandbox"
+	"github.com/ikapa-dev/kelyfos/internal/digest"
+	"github.com/ikapa-dev/kelyfos/internal/proto"
+	"github.com/ikapa-dev/kelyfos/internal/recorder"
+	"github.com/ikapa-dev/kelyfos/internal/report"
+	"github.com/ikapa-dev/kelyfos/internal/sandbox"
 )
 
 // watchCmd is a live view of a sandbox, or of a whole team.

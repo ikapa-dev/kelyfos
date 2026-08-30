@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/p4r4n0rm4l/KelyfOS/internal/hostile"
-	"github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
+	"github.com/ikapa-dev/kelyfos/internal/hostile"
+	"github.com/ikapa-dev/kelyfos/internal/recorder"
 )
 
 // The hostile corpus for the MCP exec-output bridge (S1, door B).

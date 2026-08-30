@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
+	"github.com/ikapa-dev/kelyfos/internal/recorder"
 )
 
 // chainOf writes these events through the real, hash-chained recorder and

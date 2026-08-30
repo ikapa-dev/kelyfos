@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/p4r4n0rm4l/KelyfOS/internal/hostile"
-	"github.com/p4r4n0rm4l/KelyfOS/internal/mcp"
+	"github.com/ikapa-dev/kelyfos/internal/hostile"
+	"github.com/ikapa-dev/kelyfos/internal/mcp"
 )
 
 // The hostile corpus for the guest's own file tools (P6-22, finding H-1).

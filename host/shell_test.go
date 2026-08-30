@@ -7,7 +7,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/p4r4n0rm4l/KelyfOS/internal/proto"
+	"github.com/ikapa-dev/kelyfos/internal/proto"
 )
 
 // shellConn is a shell channel whose guest side is a canned script of frames

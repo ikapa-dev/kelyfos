@@ -12,7 +12,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/p4r4n0rm4l/KelyfOS/internal/proto"
+	"github.com/ikapa-dev/kelyfos/internal/proto"
 )
 
 // defaultEnv is the environment a command gets when the request does not carry

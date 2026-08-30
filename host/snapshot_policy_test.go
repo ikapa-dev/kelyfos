@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/p4r4n0rm4l/KelyfOS/internal/config"
-	"github.com/p4r4n0rm4l/KelyfOS/internal/sandbox"
+	"github.com/ikapa-dev/kelyfos/internal/config"
+	"github.com/ikapa-dev/kelyfos/internal/sandbox"
 )
 
 // F9: `kelyfos snapshot restore` reads no policy file, unlike run, fork and

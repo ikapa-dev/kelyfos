@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/p4r4n0rm4l/KelyfOS/shim"
+	"github.com/ikapa-dev/kelyfos/shim"
 )
 
 // P7-17/F2, the flipped default (owner's ruling of 2026-08-29).

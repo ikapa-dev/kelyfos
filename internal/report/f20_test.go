@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
+	"github.com/ikapa-dev/kelyfos/internal/recorder"
 )
 
 // P7-17/F20, the F9 rider: an `egress.attempt` refused for reason=foreign_peer

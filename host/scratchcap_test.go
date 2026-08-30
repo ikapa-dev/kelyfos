@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/p4r4n0rm4l/KelyfOS/internal/config"
+	"github.com/ikapa-dev/kelyfos/internal/config"
 )
 
 // A scratch cap larger than the machine's RAM is not a generous limit, it is no

@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
-	"github.com/p4r4n0rm4l/KelyfOS/internal/report"
+	"github.com/ikapa-dev/kelyfos/internal/recorder"
+	"github.com/ikapa-dev/kelyfos/internal/report"
 )
 
 // verifyCmd checks a file somebody sent you.

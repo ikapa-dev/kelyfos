@@ -16,7 +16,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
+	"github.com/ikapa-dev/kelyfos/internal/recorder"
 )
 
 // These tests exercise host/view.go (P7-12) against the binding conditions

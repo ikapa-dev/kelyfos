@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/p4r4n0rm4l/KelyfOS/internal/hostile"
+	"github.com/ikapa-dev/kelyfos/internal/hostile"
 )
 
 // The hostile corpus for the E2B-compatible surface (P6-22, finding H-6).

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/p4r4n0rm4l/KelyfOS/internal/denial"
+	"github.com/ikapa-dev/kelyfos/internal/denial"
 )
 
 // Store is a team's shared state: a host-side key/blob store with per-key

@@ -30,11 +30,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/p4r4n0rm4l/KelyfOS/internal/digest"
-	"github.com/p4r4n0rm4l/KelyfOS/internal/proto"
-	"github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
-	"github.com/p4r4n0rm4l/KelyfOS/internal/report"
-	"github.com/p4r4n0rm4l/KelyfOS/internal/sandbox"
+	"github.com/ikapa-dev/kelyfos/internal/digest"
+	"github.com/ikapa-dev/kelyfos/internal/proto"
+	"github.com/ikapa-dev/kelyfos/internal/recorder"
+	"github.com/ikapa-dev/kelyfos/internal/report"
+	"github.com/ikapa-dev/kelyfos/internal/sandbox"
 )
 
 // defaultViewIdleTimeout is the one adjustable knob P7-12 permits (a flag,

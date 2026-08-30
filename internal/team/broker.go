@@ -10,8 +10,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/p4r4n0rm4l/KelyfOS/internal/denial"
-	"github.com/p4r4n0rm4l/KelyfOS/internal/proto"
+	"github.com/ikapa-dev/kelyfos/internal/denial"
+	"github.com/ikapa-dev/kelyfos/internal/proto"
 )
 
 // Message is one delivery, as the receiving agent sees it.

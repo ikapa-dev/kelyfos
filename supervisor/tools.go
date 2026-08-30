@@ -14,8 +14,8 @@ import (
 	"syscall"
 	"unicode/utf8"
 
-	"github.com/p4r4n0rm4l/KelyfOS/internal/mcp"
-	"github.com/p4r4n0rm4l/KelyfOS/internal/proto"
+	"github.com/ikapa-dev/kelyfos/internal/mcp"
+	"github.com/ikapa-dev/kelyfos/internal/proto"
 )
 
 // maxToolBytes bounds what a single file tool will move in one call. It is not

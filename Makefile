@@ -167,7 +167,7 @@ supervisor: ## Cross-compile the guest supervisor into the rootfs overlay
 	@# false from v0.1 onwards: a machine that reports a version nobody shipped
 	@# is a machine whose transcript names the wrong thing. Generated from the
 	@# same KELYFOS_VERSION the binaries carry, so the two cannot disagree.
-	@printf 'NAME="KelyfOS"\nID=kelyfos\nPRETTY_NAME="KelyfOS (%s)"\nVERSION="%s"\nVERSION_ID=%s\nHOME_URL="https://github.com/p4r4n0rm4l/KelyfOS"\n' \
+	@printf 'NAME="KelyfOS"\nID=kelyfos\nPRETTY_NAME="KelyfOS (%s)"\nVERSION="%s"\nVERSION_ID=%s\nHOME_URL="https://github.com/ikapa-dev/kelyfos"\n' \
 	  "$(FLAVOR)" "$(KELYFOS_VERSION)" "$(KELYFOS_VERSION)" > $(GUEST_OVERLAY)/etc/os-release
 	CGO_ENABLED=0 GOOS=linux GOARCH=$(GOARCH) \
 	  go build -trimpath -ldflags="-s -w -X main.Version=$(KELYFOS_VERSION)" \
@@ -189,7 +189,7 @@ image: linux-only supervisor fetch-kernel $(BUILD_DIR)/.config ## Build the gues
 # rather than claimed — the repro-check workflow builds one commit twice and
 # diffs the result per artifact (P6-9). Provenance is a separate statement, and
 # on a release the release workflow builds there is one: it attests the checksums
-# file, so `gh attestation verify <file> --repo p4r4n0rm4l/KelyfOS` names the
+# file, so `gh attestation verify <file> --repo ikapa-dev/kelyfos` names the
 # workflow and the commit that built those bytes (P6-11). No published release
 # carries one from v1.0-rc2 onward, which is the first release that workflow
 # built. Older tags were assembled by hand and have none, so on what this target

@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/p4r4n0rm4l/KelyfOS/internal/egress"
+	"github.com/ikapa-dev/kelyfos/internal/egress"
 )
 
 // The host prints a refusal the guest's client may never show, and prints it

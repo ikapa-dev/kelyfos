@@ -10,10 +10,10 @@ import (
 	"os"
 	"time"
 
-	"github.com/p4r4n0rm4l/KelyfOS/internal/mcp"
-	"github.com/p4r4n0rm4l/KelyfOS/internal/proto"
-	"github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
-	"github.com/p4r4n0rm4l/KelyfOS/internal/sandbox"
+	"github.com/ikapa-dev/kelyfos/internal/mcp"
+	"github.com/ikapa-dev/kelyfos/internal/proto"
+	"github.com/ikapa-dev/kelyfos/internal/recorder"
+	"github.com/ikapa-dev/kelyfos/internal/sandbox"
 )
 
 // mcpCmd bridges an MCP client's standard streams to the sandbox's MCP channel.

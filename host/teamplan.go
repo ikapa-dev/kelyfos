@@ -5,9 +5,9 @@ import (
 	"path/filepath"
 	"sort"
 
-	"github.com/p4r4n0rm4l/KelyfOS/internal/config"
-	"github.com/p4r4n0rm4l/KelyfOS/internal/egress"
-	"github.com/p4r4n0rm4l/KelyfOS/internal/team"
+	"github.com/ikapa-dev/kelyfos/internal/config"
+	"github.com/ikapa-dev/kelyfos/internal/egress"
+	"github.com/ikapa-dev/kelyfos/internal/team"
 )
 
 // teamPlan is a [team] section turned into the things that boot it: the agents

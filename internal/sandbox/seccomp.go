@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/p4r4n0rm4l/KelyfOS/internal/denial"
+	"github.com/ikapa-dev/kelyfos/internal/denial"
 )
 
 // The host-side syscall filter (P5-2, docs/hardening.md §3).

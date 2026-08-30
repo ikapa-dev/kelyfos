@@ -543,7 +543,7 @@ include a *published* one: the workflow drafts, and publishing is a person's
 decision. `v1.0-rc2` is the first release it built, and it carries them.
 `actions/attest` has GitHub sign a statement naming the workflow and the commit
 that produced the checksums file — one attestation covering every asset — and a
-second and third over each architecture's SBOM. `gh attestation verify <file> --repo p4r4n0rm4l/KelyfOS`
+second and third over each architecture's SBOM. `gh attestation verify <file> --repo ikapa-dev/kelyfos`
 checks it, offline, against a root fetched once. That is SLSA v1.0 Build
 Level 2, and it means what it says and no more: a hosted builder attesting to
 its own output. It is **not** the immutable-release setting, which asserts that

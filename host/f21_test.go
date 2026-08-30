@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/p4r4n0rm4l/KelyfOS/internal/config"
+	"github.com/ikapa-dev/kelyfos/internal/config"
 )
 
 // P7-17/F21, the host half: the trust check has to be on the path every door

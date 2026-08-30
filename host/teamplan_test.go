@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/p4r4n0rm4l/KelyfOS/internal/config"
+	"github.com/ikapa-dev/kelyfos/internal/config"
 )
 
 func planFrom(t *testing.T, tm *config.Team) (*teamPlan, error) {

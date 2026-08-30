@@ -3,7 +3,7 @@ package main
 import (
 	"os"
 
-	"github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
+	"github.com/ikapa-dev/kelyfos/internal/recorder"
 )
 
 func sweepSource(name string) (string, error) {

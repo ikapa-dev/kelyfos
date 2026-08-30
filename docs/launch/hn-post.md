@@ -21,7 +21,7 @@ printed rather than what it says.
 
     Show HN: KelyfOS – a Firecracker guest OS that only speaks MCP to the agent
 
-**URL:** https://github.com/p4r4n0rm4l/KelyfOS
+**URL:** https://github.com/ikapa-dev/kelyfos
 
 **First comment** (post immediately after submitting):
 

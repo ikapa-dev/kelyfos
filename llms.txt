@@ -10,42 +10,42 @@ Apache-2.0. Single-host developer tool, not a multi-tenant sandbox for hostile c
 
 ## Docs
 
-- [KelyfOS](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/README.md): what it is, the quickstart, and the shape of a policy file
-- [The compatibility promise](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/compatibility.md): what v1.0 promises will not move, what is explicitly allowed to, and how anything is deprecated before it is removed
-- [Upgrading](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/upgrading.md): what breaks between versions and what to do about it — the pre-v0.9 snapshot, the writable trees, and what has never broken
-- [Threat model](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/threat-model.md): what is defended and what is not — read before trusting it with anything
-- [Resource limits](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/resources.md): how much machine an agent gets: units, precedence, and what enforces each cap
-- [Egress](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/networking.md): why a sandbox has no NIC by default, what --allow builds, and why there is no DNS
-- [Agent teams](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/teams.md): several agents on one host: the schema, the broker, the store, the budget
-- [Refusals](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/denials.md): why every refusal names its own fix, and what the ID in brackets is for
-- [Flight recorder](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/events.md): the audit record: why the host writes it, and what the hash chain proves
-- [Host/guest protocol](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/protocol.md): the vsock transport, the port map, and every channel's messages
-- [The MCP surface](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/mcp-surface.md): MCP in both directions: kelyfos as a tool for any client, and plugins inside the guest
-- [Hardening](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/hardening.md): what a compromised agent can reach, what each layer takes away, and — the longer half — what remains
-- [The host syscall filter](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/host-seccomp.md): which filter is around the VMM process, how that is proved from the kernel's own copy, and every syscall it permits
-- [E2B-compatible shim](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/e2b-shim.md): the REST subset for existing E2B SDK code, and what it deliberately omits
-- [Cookbook](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/cookbook.md): complete recipes, each one a script CI runs on a real machine
-- [Building on KelyfOS](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/integrating.md): for putting KelyfOS inside something else: the four ways in, orchestrator patterns, and the mistakes people actually make
-- [Daily-driver quality of life](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/qol.md): the shell, the diff, pause and resume, port forwarding and notifications — written before the code, with the places the built thing differed marked
-- [The policy record](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/policy-record.md): session.policy and team.topology, written before the code: every field, its position in the frozen hash order, which door writes it, and what it omits
-- [Retention and erasure](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/retention.md): the [sessions] retention_days floor, kelyfos sessions prune, the size warning, and kelyfos sessions erase's replacement-record pattern
-- [Mapping the chain to a standard, without adopting it](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/otlp.md): how kelyfos log --export-otlp maps a session's chain to OTLP-JSON spans, why the mapping is versioned apart from the flight recorder and never an input to kelyfos verify, and what is deliberately not mapped
-- [kelyfos view — the localhost read-only viewer](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/view.md): the one place KelyfOS opens a listening socket (D60): loopback-only, per-process token, Host-header check, GET/HEAD only, hash-pinned CSP, and the residual risk stated plainly
-- [Documentation map](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/README.md): what every document is, and — deliberately — where each is still thin
+- [KelyfOS](https://raw.githubusercontent.com/ikapa-dev/kelyfos/main/README.md): what it is, the quickstart, and the shape of a policy file
+- [The compatibility promise](https://raw.githubusercontent.com/ikapa-dev/kelyfos/main/docs/compatibility.md): what v1.0 promises will not move, what is explicitly allowed to, and how anything is deprecated before it is removed
+- [Upgrading](https://raw.githubusercontent.com/ikapa-dev/kelyfos/main/docs/upgrading.md): what breaks between versions and what to do about it — the pre-v0.9 snapshot, the writable trees, and what has never broken
+- [Threat model](https://raw.githubusercontent.com/ikapa-dev/kelyfos/main/docs/threat-model.md): what is defended and what is not — read before trusting it with anything
+- [Resource limits](https://raw.githubusercontent.com/ikapa-dev/kelyfos/main/docs/resources.md): how much machine an agent gets: units, precedence, and what enforces each cap
+- [Egress](https://raw.githubusercontent.com/ikapa-dev/kelyfos/main/docs/networking.md): why a sandbox has no NIC by default, what --allow builds, and why there is no DNS
+- [Agent teams](https://raw.githubusercontent.com/ikapa-dev/kelyfos/main/docs/teams.md): several agents on one host: the schema, the broker, the store, the budget
+- [Refusals](https://raw.githubusercontent.com/ikapa-dev/kelyfos/main/docs/denials.md): why every refusal names its own fix, and what the ID in brackets is for
+- [Flight recorder](https://raw.githubusercontent.com/ikapa-dev/kelyfos/main/docs/events.md): the audit record: why the host writes it, and what the hash chain proves
+- [Host/guest protocol](https://raw.githubusercontent.com/ikapa-dev/kelyfos/main/docs/protocol.md): the vsock transport, the port map, and every channel's messages
+- [The MCP surface](https://raw.githubusercontent.com/ikapa-dev/kelyfos/main/docs/mcp-surface.md): MCP in both directions: kelyfos as a tool for any client, and plugins inside the guest
+- [Hardening](https://raw.githubusercontent.com/ikapa-dev/kelyfos/main/docs/hardening.md): what a compromised agent can reach, what each layer takes away, and — the longer half — what remains
+- [The host syscall filter](https://raw.githubusercontent.com/ikapa-dev/kelyfos/main/docs/host-seccomp.md): which filter is around the VMM process, how that is proved from the kernel's own copy, and every syscall it permits
+- [E2B-compatible shim](https://raw.githubusercontent.com/ikapa-dev/kelyfos/main/docs/e2b-shim.md): the REST subset for existing E2B SDK code, and what it deliberately omits
+- [Cookbook](https://raw.githubusercontent.com/ikapa-dev/kelyfos/main/docs/cookbook.md): complete recipes, each one a script CI runs on a real machine
+- [Building on KelyfOS](https://raw.githubusercontent.com/ikapa-dev/kelyfos/main/docs/integrating.md): for putting KelyfOS inside something else: the four ways in, orchestrator patterns, and the mistakes people actually make
+- [Daily-driver quality of life](https://raw.githubusercontent.com/ikapa-dev/kelyfos/main/docs/qol.md): the shell, the diff, pause and resume, port forwarding and notifications — written before the code, with the places the built thing differed marked
+- [The policy record](https://raw.githubusercontent.com/ikapa-dev/kelyfos/main/docs/policy-record.md): session.policy and team.topology, written before the code: every field, its position in the frozen hash order, which door writes it, and what it omits
+- [Retention and erasure](https://raw.githubusercontent.com/ikapa-dev/kelyfos/main/docs/retention.md): the [sessions] retention_days floor, kelyfos sessions prune, the size warning, and kelyfos sessions erase's replacement-record pattern
+- [Mapping the chain to a standard, without adopting it](https://raw.githubusercontent.com/ikapa-dev/kelyfos/main/docs/otlp.md): how kelyfos log --export-otlp maps a session's chain to OTLP-JSON spans, why the mapping is versioned apart from the flight recorder and never an input to kelyfos verify, and what is deliberately not mapped
+- [kelyfos view — the localhost read-only viewer](https://raw.githubusercontent.com/ikapa-dev/kelyfos/main/docs/view.md): the one place KelyfOS opens a listening socket (D60): loopback-only, per-process token, Host-header check, GET/HEAD only, hash-pinned CSP, and the residual risk stated plainly
+- [Documentation map](https://raw.githubusercontent.com/ikapa-dev/kelyfos/main/docs/README.md): what every document is, and — deliberately — where each is still thin
 
 ## Reference
 
-- [CLI reference](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/reference/cli.md): every command and flag, with types and defaults
-- [kelyfos.toml reference](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/reference/config.md): every key the policy file takes, and every key it refuses
-- [MCP tools](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/reference/tools.md): every tool a guest exposes, with its input schema
-- [Event types](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/reference/events.md): every flight-recorder event, with its payload fields
-- [Exit codes](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/reference/exit-codes.md): what each status the CLI returns means
-- [Denials](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/reference/denials.md): every refusal KelyfOS makes, with the fix line each one carries
-- [Guest confinement profiles](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/reference/profiles.md): per flavor, the trees a spawned process may write and the syscalls it is refused
+- [CLI reference](https://raw.githubusercontent.com/ikapa-dev/kelyfos/main/docs/reference/cli.md): every command and flag, with types and defaults
+- [kelyfos.toml reference](https://raw.githubusercontent.com/ikapa-dev/kelyfos/main/docs/reference/config.md): every key the policy file takes, and every key it refuses
+- [MCP tools](https://raw.githubusercontent.com/ikapa-dev/kelyfos/main/docs/reference/tools.md): every tool a guest exposes, with its input schema
+- [Event types](https://raw.githubusercontent.com/ikapa-dev/kelyfos/main/docs/reference/events.md): every flight-recorder event, with its payload fields
+- [Exit codes](https://raw.githubusercontent.com/ikapa-dev/kelyfos/main/docs/reference/exit-codes.md): what each status the CLI returns means
+- [Denials](https://raw.githubusercontent.com/ikapa-dev/kelyfos/main/docs/reference/denials.md): every refusal KelyfOS makes, with the fix line each one carries
+- [Guest confinement profiles](https://raw.githubusercontent.com/ikapa-dev/kelyfos/main/docs/reference/profiles.md): per flavor, the trees a spawned process may write and the syscalls it is refused
 
 ## Optional
 
-- [Everything in one file](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/llms-full.txt): every page above concatenated, roughly 209k tokens, for a client that would rather spend context than fetch
-- [Roadmap](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/roadmap.md): what was built, phase by phase and epic by epic, and the task identifiers the source comments cite
-- [Decision log](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/decisions.md): every irreversible choice with the reasoning that produced it; the source cites these by number
-- [Decision log, feature epics](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/decisions-features.md): the same for E1-E5, cited from comments as F-D<n>
+- [Everything in one file](https://raw.githubusercontent.com/ikapa-dev/kelyfos/main/llms-full.txt): every page above concatenated, roughly 209k tokens, for a client that would rather spend context than fetch
+- [Roadmap](https://raw.githubusercontent.com/ikapa-dev/kelyfos/main/docs/roadmap.md): what was built, phase by phase and epic by epic, and the task identifiers the source comments cite
+- [Decision log](https://raw.githubusercontent.com/ikapa-dev/kelyfos/main/docs/decisions.md): every irreversible choice with the reasoning that produced it; the source cites these by number
+- [Decision log, feature epics](https://raw.githubusercontent.com/ikapa-dev/kelyfos/main/docs/decisions-features.md): the same for E1-E5, cited from comments as F-D<n>

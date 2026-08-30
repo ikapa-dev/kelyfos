@@ -9,8 +9,8 @@ import (
 	"testing"
 	"unicode"
 
-	"github.com/p4r4n0rm4l/KelyfOS/internal/digest"
-	"github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
+	"github.com/ikapa-dev/kelyfos/internal/digest"
+	"github.com/ikapa-dev/kelyfos/internal/recorder"
 )
 
 // isRawControlByte is every byte-checking loop's own copy of safe.go's

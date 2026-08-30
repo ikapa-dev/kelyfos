@@ -162,7 +162,7 @@ main() {
   fi
 
   event="$dir/event.json"
-  printf '{"ref":"refs/heads/main","before":"%s","after":"%s","repository":{"name":"KelyfOS","full_name":"p4r4n0rm4l/KelyfOS","default_branch":"main"}}\n' \
+  printf '{"ref":"refs/heads/main","before":"%s","after":"%s","repository":{"name":"KelyfOS","full_name":"ikapa-dev/kelyfos","default_branch":"main"}}\n' \
     "$base" "$sha" > "$event"
   artifacts="$dir/artifacts"
   mkdir -p "$artifacts"

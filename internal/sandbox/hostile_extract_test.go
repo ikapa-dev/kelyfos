@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/p4r4n0rm4l/KelyfOS/internal/hostile"
+	"github.com/ikapa-dev/kelyfos/internal/hostile"
 )
 
 // The hostile corpus for validName's own claim about what debugfs receives

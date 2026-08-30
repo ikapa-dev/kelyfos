@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/p4r4n0rm4l/KelyfOS/internal/hostile"
-	"github.com/p4r4n0rm4l/KelyfOS/internal/proto"
+	"github.com/ikapa-dev/kelyfos/internal/hostile"
+	"github.com/ikapa-dev/kelyfos/internal/proto"
 )
 
 // The hostile corpus for the exec channel (P6-22, finding M-9 as D46 corrected

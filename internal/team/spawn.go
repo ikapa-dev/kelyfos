@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/p4r4n0rm4l/KelyfOS/internal/denial"
+	"github.com/ikapa-dev/kelyfos/internal/denial"
 )
 
 // Budget is what an agent with team.spawn may ask for at runtime. It is the

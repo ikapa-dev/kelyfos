@@ -35,7 +35,7 @@ package digest
 import (
 	"encoding/base64"
 
-	"github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
+	"github.com/ikapa-dev/kelyfos/internal/recorder"
 )
 
 // reasonForeignPeer is internal/egress's ReasonForeignPeer, spelled here rather

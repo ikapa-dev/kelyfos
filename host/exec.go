@@ -9,10 +9,10 @@ import (
 	"os"
 	"time"
 
-	"github.com/p4r4n0rm4l/KelyfOS/internal/exitcode"
-	"github.com/p4r4n0rm4l/KelyfOS/internal/proto"
-	"github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
-	"github.com/p4r4n0rm4l/KelyfOS/internal/sandbox"
+	"github.com/ikapa-dev/kelyfos/internal/exitcode"
+	"github.com/ikapa-dev/kelyfos/internal/proto"
+	"github.com/ikapa-dev/kelyfos/internal/recorder"
+	"github.com/ikapa-dev/kelyfos/internal/sandbox"
 )
 
 // exitError carries a guest exit status out to main so the CLI can exit with it.

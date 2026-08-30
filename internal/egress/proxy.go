@@ -22,7 +22,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/p4r4n0rm4l/KelyfOS/internal/denial"
+	"github.com/ikapa-dev/kelyfos/internal/denial"
 )
 
 // Modes recorded per allowed connection (decision D6).

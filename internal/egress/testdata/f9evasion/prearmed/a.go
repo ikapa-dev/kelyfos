@@ -1,8 +1,8 @@
 package prearmed
 
 import (
-	"github.com/p4r4n0rm4l/KelyfOS/internal/egress"
-	"github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
+	"github.com/ikapa-dev/kelyfos/internal/egress"
+	"github.com/ikapa-dev/kelyfos/internal/recorder"
 )
 
 // The live one. recorder.Event has a Peer field, so a per-file audit saw

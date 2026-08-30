@@ -16,16 +16,16 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/p4r4n0rm4l/KelyfOS/internal/config"
-	"github.com/p4r4n0rm4l/KelyfOS/internal/denial"
-	"github.com/p4r4n0rm4l/KelyfOS/internal/egress"
-	"github.com/p4r4n0rm4l/KelyfOS/internal/exitcode"
-	"github.com/p4r4n0rm4l/KelyfOS/internal/notify"
-	"github.com/p4r4n0rm4l/KelyfOS/internal/proto"
-	"github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
-	"github.com/p4r4n0rm4l/KelyfOS/internal/report"
-	"github.com/p4r4n0rm4l/KelyfOS/internal/sandbox"
-	"github.com/p4r4n0rm4l/KelyfOS/internal/sessionpolicy"
+	"github.com/ikapa-dev/kelyfos/internal/config"
+	"github.com/ikapa-dev/kelyfos/internal/denial"
+	"github.com/ikapa-dev/kelyfos/internal/egress"
+	"github.com/ikapa-dev/kelyfos/internal/exitcode"
+	"github.com/ikapa-dev/kelyfos/internal/notify"
+	"github.com/ikapa-dev/kelyfos/internal/proto"
+	"github.com/ikapa-dev/kelyfos/internal/recorder"
+	"github.com/ikapa-dev/kelyfos/internal/report"
+	"github.com/ikapa-dev/kelyfos/internal/sandbox"
+	"github.com/ikapa-dev/kelyfos/internal/sessionpolicy"
 )
 
 func runCmd(argv []string) error {

@@ -1,5 +1,5 @@
 package arrayelided
 
-import "github.com/p4r4n0rm4l/KelyfOS/internal/egress"
+import "github.com/ikapa-dev/kelyfos/internal/egress"
 
 var one = [1]egress.Proxy{{Policy: egress.Policy{}}}

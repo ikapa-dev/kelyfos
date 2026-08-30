@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"io"
 
-	"github.com/p4r4n0rm4l/KelyfOS/internal/mcp"
+	"github.com/ikapa-dev/kelyfos/internal/mcp"
 )
 
 // dumpTools prints the guest's whole tool surface for `make docs`.

@@ -4,13 +4,13 @@
 blank_issues_enabled: false
 contact_links:
   - name: A security vulnerability
-    url: https://github.com/p4r4n0rm4l/KelyfOS/security/policy
+    url: https://github.com/ikapa-dev/kelyfos/security/policy
     about: >-
       Do not open a public issue. SECURITY.md has the channel, what to include,
       and which findings are documented design decisions this project already
       publishes rather than defects.
   - name: Something the documentation got wrong
-    url: https://github.com/p4r4n0rm4l/KelyfOS/issues/new?template=bug.yml
+    url: https://github.com/ikapa-dev/kelyfos/issues/new?template=bug.yml
     about: >-
       A document that disagrees with the code is a defect and is wanted. Quote
       the sentence and name the file that contradicts it.

@@ -11,8 +11,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/p4r4n0rm4l/KelyfOS/internal/proto"
-	"github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
+	"github.com/ikapa-dev/kelyfos/internal/proto"
+	"github.com/ikapa-dev/kelyfos/internal/recorder"
 )
 
 // observed puts one exchange past the observer — the client's lines, then the

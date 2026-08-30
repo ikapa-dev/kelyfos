@@ -102,7 +102,7 @@ does not cross it, so a Ctrl-C would orphan a microVM and silently discard the
 workspace it was syncing back.
 
 ```sh
-git clone https://github.com/p4r4n0rm4l/KelyfOS && cd KelyfOS
+git clone https://github.com/ikapa-dev/kelyfos && cd KelyfOS
 ```
 
 On macOS, clone it somewhere under your home directory — that is what the Lima
@@ -168,7 +168,7 @@ Each of those verifies what it downloaded against a published checksum before
 installing it, and shows you doing so — a mismatch aborts with nothing written:
 
 ```
-Fetching KelyfOS latest image for x86_64 from p4r4n0rm4l/KelyfOS
+Fetching KelyfOS latest image for x86_64 from ikapa-dev/kelyfos
   SHA256SUMS
   vmlinux-x86_64.gz
   rootfs-x86_64.ext4.gz
@@ -261,7 +261,7 @@ the last step before anybody downloads anything is somebody looking at it. One
 command checks the attestation, and it needs nothing from this project:
 
 ```sh
-gh attestation verify kelyfos-linux-x86_64 --repo p4r4n0rm4l/KelyfOS
+gh attestation verify kelyfos-linux-x86_64 --repo ikapa-dev/kelyfos
 ```
 
 That is SLSA v1.0 Build Level 2 — a hosted builder attesting to its own output —

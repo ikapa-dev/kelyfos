@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/p4r4n0rm4l/KelyfOS/internal/mcp"
+	"github.com/ikapa-dev/kelyfos/internal/mcp"
 )
 
 // team_up, team_ps and team_down (E4-3).

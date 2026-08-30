@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/p4r4n0rm4l/KelyfOS/internal/egress"
+	"github.com/ikapa-dev/kelyfos/internal/egress"
 )
 
 // Policy.Secrets holds *egress.Secret, matching every other container that

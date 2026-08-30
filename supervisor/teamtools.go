@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/p4r4n0rm4l/KelyfOS/internal/mcp"
+	"github.com/ikapa-dev/kelyfos/internal/mcp"
 )
 
 // defaultAskTimeout is how long team_ask waits when the caller does not say.

@@ -16,7 +16,7 @@ list of what remains reachable after v0.9's hardening.
 button under this repository's **Security** tab, which opens a private advisory
 only the maintainer can see:
 
-<https://github.com/p4r4n0rm4l/KelyfOS/security/advisories/new>
+<https://github.com/ikapa-dev/kelyfos/security/advisories/new>
 
 The channel is **on**. It was not when this file was first written, and the
 paragraph that stood here said so — that if the button was missing the setting

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/p4r4n0rm4l/KelyfOS/internal/config"
+	"github.com/ikapa-dev/kelyfos/internal/config"
 )
 
 // P7-17/F21, the second half (owner's ruling of 2026-08-29): a `[[plugin]]`

@@ -5,7 +5,7 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/p4r4n0rm4l/KelyfOS/internal/proto"
+	"github.com/ikapa-dev/kelyfos/internal/proto"
 )
 
 // FirecrackerConfig is the machine configuration KelyfOS writes for

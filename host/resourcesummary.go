@@ -1,6 +1,6 @@
 package main
 
-import "github.com/p4r4n0rm4l/KelyfOS/internal/sandbox"
+import "github.com/ikapa-dev/kelyfos/internal/sandbox"
 
 // blockedPackets reads a sandbox's egress drop counter for the resource.summary
 // event that reports it, or zero for a sandbox with no network interface at

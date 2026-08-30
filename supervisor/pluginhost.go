@@ -19,9 +19,9 @@ import (
 
 	"golang.org/x/sys/unix"
 
-	"github.com/p4r4n0rm4l/KelyfOS/internal/argsummary"
-	"github.com/p4r4n0rm4l/KelyfOS/internal/mcp"
-	"github.com/p4r4n0rm4l/KelyfOS/internal/proto"
+	"github.com/ikapa-dev/kelyfos/internal/argsummary"
+	"github.com/ikapa-dev/kelyfos/internal/mcp"
+	"github.com/ikapa-dev/kelyfos/internal/proto"
 )
 
 // The plugin runtime (E4-7).

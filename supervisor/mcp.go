@@ -8,8 +8,8 @@ import (
 	"net"
 	"sync"
 
-	"github.com/p4r4n0rm4l/KelyfOS/internal/mcp"
-	"github.com/p4r4n0rm4l/KelyfOS/internal/proto"
+	"github.com/ikapa-dev/kelyfos/internal/mcp"
+	"github.com/ikapa-dev/kelyfos/internal/proto"
 )
 
 // serveMCP answers the MCP channel. Unlike exec, a session is long-lived: one

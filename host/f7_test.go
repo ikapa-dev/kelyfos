@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/p4r4n0rm4l/KelyfOS/internal/sandbox"
+	"github.com/ikapa-dev/kelyfos/internal/sandbox"
 )
 
 // P7-17/F7 — snapshot names were validated on the MCP path and not on the CLI

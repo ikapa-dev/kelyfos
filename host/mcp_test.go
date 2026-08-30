@@ -6,7 +6,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
+	"github.com/ikapa-dev/kelyfos/internal/recorder"
 )
 
 // A bridge that closes with a tool call still outstanding used to exit 0

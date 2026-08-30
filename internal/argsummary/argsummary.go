@@ -21,7 +21,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/p4r4n0rm4l/KelyfOS/internal/proto"
+	"github.com/ikapa-dev/kelyfos/internal/proto"
 )
 
 // ContentKeys are the arguments a record must never hold, because they carry

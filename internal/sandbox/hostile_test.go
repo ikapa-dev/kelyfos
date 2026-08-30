@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/p4r4n0rm4l/KelyfOS/internal/hostile"
+	"github.com/ikapa-dev/kelyfos/internal/hostile"
 )
 
 // The hostile corpus for the workspace block device (P6-22).

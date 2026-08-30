@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/p4r4n0rm4l/KelyfOS/internal/proto"
-	"github.com/p4r4n0rm4l/KelyfOS/internal/vsock"
+	"github.com/ikapa-dev/kelyfos/internal/proto"
+	"github.com/ikapa-dev/kelyfos/internal/vsock"
 )
 
 // teamClient is the guest end of the team channel (docs/protocol.md §5.6).

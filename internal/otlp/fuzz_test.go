@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
+	"github.com/ikapa-dev/kelyfos/internal/recorder"
 )
 
 // FuzzBuild drives Build with bounded-random chains assembled from raw fuzz

@@ -10,8 +10,8 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/p4r4n0rm4l/KelyfOS/internal/recorder"
-	"github.com/p4r4n0rm4l/KelyfOS/internal/sandbox"
+	"github.com/ikapa-dev/kelyfos/internal/recorder"
+	"github.com/ikapa-dev/kelyfos/internal/sandbox"
 	"golang.org/x/sys/unix"
 )
 

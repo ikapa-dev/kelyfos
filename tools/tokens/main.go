@@ -32,7 +32,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/p4r4n0rm4l/KelyfOS/internal/docsize"
+	"github.com/ikapa-dev/kelyfos/internal/docsize"
 )
 
 // charsPerToken is the divisor, named rather than hidden.

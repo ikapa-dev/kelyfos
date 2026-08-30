@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/p4r4n0rm4l/KelyfOS/internal/hostile"
-	"github.com/p4r4n0rm4l/KelyfOS/internal/proto"
+	"github.com/ikapa-dev/kelyfos/internal/hostile"
+	"github.com/ikapa-dev/kelyfos/internal/proto"
 )
 
 // The hostile corpus for the control channel (P6-22).

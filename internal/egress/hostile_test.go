@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/p4r4n0rm4l/KelyfOS/internal/hostile"
+	"github.com/ikapa-dev/kelyfos/internal/hostile"
 )
 
 // The hostile corpus for the egress proxy's CONNECT parsing (S1, door A).
