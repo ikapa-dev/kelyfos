@@ -34,14 +34,20 @@ const teamUsage = `usage: kelyfos team up | ps | down | graph
   ps     show the running team: agents, edges, and what each is consuming
          --graph draws the topology instead (see graph, below)
          --json emits structured data instead of a table (P7-10)
+         --team names one, when more than one is running (P7-16)
   down   stop a running team, syncing every workspace on the way out
+         --team names one, when more than one is running (P7-16)
   graph  draw the topology declared in kelyfos.toml, with nothing booted —
          a pre-flight lint, not a monitor (P7-7); --json emits it structured
 
 A team is several sandboxes on one host with the paths between them written
 down. No guest has a network path to any other guest: every message travels the
 host, is checked against the edge list, and lands in one audit record.
-See docs/teams.md.
+
+Several teams may run on one host at once, each with its own state, its own
+cgroup and its own record. ps and down mean the only one running unless --team
+says which; with more than one up and no --team they list what is there rather
+than guess. See docs/teams.md.
 `
 
 func teamCmd(argv []string) error {
@@ -91,7 +97,25 @@ type teamState struct {
 	Owner string `json:"owner,omitempty"`
 }
 
-func teamStatePath() string { return filepath.Join(sandbox.Root(), "run", "team.json") }
+// teamStateDir holds one file per live team, named for that team's own recorder
+// session id (P7-16, D79).
+//
+// It was one file, <root>/run/team.json, and that made a team a slot rather than
+// a thing: `up` refused to start when the path existed, `ps` and `down` read
+// whatever was in it, and the refusal was a Stat taken tens of seconds before
+// the matching write — so two `team up` invocations that both passed it went on
+// to boot, and the second's write replaced the first's state. Two teams on one
+// host is the pattern this project made routine, so the slot is what goes.
+//
+// The session id and not the team's name: the reproduction is two worktrees of
+// one project, where both teams are called the same thing. The id is minted per
+// `team up` by sandbox.NewID(), is already in the file, and is what every other
+// durable thing about that team is filed under.
+func teamStateDir() string { return filepath.Join(sandbox.RunRoot(), "teams") }
+
+func teamStatePathFor(session string) string {
+	return filepath.Join(teamStateDir(), session+".json")
+}
 
 func teamUp(argv []string) error {
 	fs := flag.NewFlagSet("kelyfos team up", flag.ExitOnError)
@@ -260,9 +284,12 @@ func raiseTeam(parent context.Context, opt teamOptions) (*teamRig, error) {
 	if cfg == nil || cfg.Team == nil {
 		return nil, fmt.Errorf("no [team] section in this project's %s — see docs/teams.md", config.FileName)
 	}
-	if _, err := os.Stat(teamStatePath()); err == nil {
-		return nil, fmt.Errorf("a team is already running; stop it with `kelyfos team down`")
-	}
+	// No "a team is already running" refusal any more. It was a Stat against a
+	// single host-wide file, taken tens of seconds before the matching write,
+	// so it did not reliably stop a second team — and stopping one was the
+	// wrong goal: several agent-driven teams on one machine is how this project
+	// is worked on (P7-16, D79). Each team now writes its own state file and
+	// each command says which team it means.
 
 	plan, err := planTeam(cfg)
 	if err != nil {
@@ -332,7 +359,11 @@ func raiseTeam(parent context.Context, opt teamOptions) (*teamRig, error) {
 	// cgroup to run (E2-6).
 	var teamSlice *sandbox.TeamSlice
 	if plan.needsSlice() {
-		teamSlice, err = sandbox.NewTeamSlice(plan.name, plan.budget.CPUQuota)
+		// The team's own session id is what makes this parent this team's: two
+		// checkouts of one project raise two teams of one name, and before this
+		// they shared one cgroup — where the second team's teardown stopped the
+		// first team's machines (P7-16, D79).
+		teamSlice, err = sandbox.NewTeamSlice(plan.name, sessionID, plan.budget.CPUQuota)
 		if err != nil {
 			return nil, err
 		}
@@ -368,7 +399,7 @@ func raiseTeam(parent context.Context, opt teamOptions) (*teamRig, error) {
 		if err := teamSlice.Close(); err != nil {
 			fmt.Fprintf(os.Stderr, "kelyfos: %v\n", err)
 		}
-		_ = os.Remove(teamStatePath())
+		_ = os.Remove(teamStatePathFor(sessionID))
 	}
 	defer func() {
 		if !raised {
@@ -1296,10 +1327,35 @@ func (r *roster) write() error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(teamStatePath()), 0o700); err != nil {
+	if err := os.MkdirAll(teamStateDir(), 0o700); err != nil {
 		return err
 	}
-	return os.WriteFile(teamStatePath(), blob, 0o600)
+	// Renamed into place rather than written in place. This file is rewritten
+	// every time an agent joins or leaves, and now that concurrent teams are
+	// ordinary a `team ps` in another terminal is a reader that can land in the
+	// middle of one of those rewrites — which os.WriteFile's truncate-then-write
+	// makes into a parse error on a file that is perfectly good a millisecond
+	// later. The same reasoning storeTemplate already applies to a template:
+	// within one filesystem the rename is the only atomic step, so it is the
+	// step that publishes.
+	final := teamStatePathFor(st.Session)
+	tmp, err := os.CreateTemp(teamStateDir(), ".team-*.json")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name())
+	if err := tmp.Chmod(0o600); err != nil {
+		tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(blob); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), final)
 }
 
 // teamMember is one row of `team ps`, as data.
@@ -1404,10 +1460,12 @@ func teamPS(argv []string) error {
 		"draw the topology this team was declared with at boot (P7-7) instead of the table below")
 	asJSON := fs.Bool("json", false,
 		"emit structured data instead of a table — the same shape the team_ps MCP tool already returns (P7-10)")
+	which := fs.String("team", "",
+		"which team, by name or session id (default: the only one running; needed when several are)")
 	if err := fs.Parse(argv); err != nil {
 		return err
 	}
-	st, err := readTeamState()
+	st, err := selectTeam(*which)
 	if err != nil {
 		return err
 	}
@@ -1503,10 +1561,12 @@ func reaches(st *teamState, agent string) []string {
 
 func teamDown(argv []string) error {
 	fs := flag.NewFlagSet("kelyfos team down", flag.ExitOnError)
+	which := fs.String("team", "",
+		"which team, by name or session id (default: the only one running; needed when several are)")
 	if err := fs.Parse(argv); err != nil {
 		return err
 	}
-	st, err := readTeamState()
+	st, err := selectTeam(*which)
 	if err != nil {
 		return err
 	}
@@ -1527,12 +1587,15 @@ func teamDown(argv []string) error {
 			"the team down with it.", st.Name, st.PID)
 	}
 	if err := syscall.Kill(st.PID, syscall.SIGTERM); err != nil {
-		_ = os.Remove(teamStatePath())
+		_ = os.Remove(teamStatePathFor(st.Session))
 		return fmt.Errorf("the team's process (%d) is gone; cleared its state", st.PID)
 	}
-	fmt.Printf("stopping team %s (pid %d)\n", st.Name, st.PID)
+	fmt.Printf("stopping team %s (pid %d, session %s)\n", st.Name, st.PID, st.Session)
+	// This team's own file, not "a team.json somewhere": another team coming up
+	// or going down beside this one must not be able to answer this question
+	// (P7-16, D79).
 	for i := 0; i < 120; i++ {
-		if _, err := os.Stat(teamStatePath()); os.IsNotExist(err) {
+		if _, err := os.Stat(teamStatePathFor(st.Session)); os.IsNotExist(err) {
 			fmt.Println("team down")
 			return nil
 		}
@@ -1541,17 +1604,151 @@ func teamDown(argv []string) error {
 	return fmt.Errorf("team %s did not stop within a minute", st.Name)
 }
 
-func readTeamState() (*teamState, error) {
-	blob, err := os.ReadFile(teamStatePath())
+// liveTeams is every team state file on this host, oldest first.
+//
+// "Live" is the directory's own claim, not a verdict: a file is here because a
+// `team up` wrote it and has not removed it, and a process that was SIGKILLed
+// leaves one behind with its machines possibly still running. Nothing is
+// deleted here — `kelyfos team down` is the door that clears a team whose
+// process is gone, and it has always said so in as many words. What liveness is
+// used for is one step down, in selectTeam: telling two teams apart, so one
+// crashed team's leftovers cannot make a live team ambiguous.
+//
+// An unreadable file is reported rather than skipped. A file this host cannot
+// parse is a reason to say so at the door, not a reason to answer a question
+// about the teams around it as though it did not exist — the same rule
+// RunningSessions applies to a sandbox record it has just refused.
+func liveTeams() ([]*teamState, error) {
+	entries, err := os.ReadDir(teamStateDir())
 	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var out []*teamState
+	for _, e := range entries {
+		// The dot prefix is roster.write's own half-written temporary file,
+		// which exists for as long as one rename takes and is not a team.
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") ||
+			strings.HasPrefix(e.Name(), ".") {
+			continue
+		}
+		path := filepath.Join(teamStateDir(), e.Name())
+		blob, err := os.ReadFile(path)
+		if errors.Is(err, os.ErrNotExist) {
+			continue // removed by its own team between the listing and here
+		}
+		if err != nil {
+			return nil, err
+		}
+		var st teamState
+		if err := json.Unmarshal(blob, &st); err != nil {
+			return nil, fmt.Errorf("the team state file %s is unreadable: %w", path, err)
+		}
+		out = append(out, &st)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].StartedAt.Before(out[j].StartedAt) })
+	return out, nil
+}
+
+// teamProcessAlive reports whether the process that raised this team is still
+// there. A team whose process is gone is not stopped — its machines may well
+// still be up — it is a team nobody is holding.
+func teamProcessAlive(st *teamState) bool {
+	return st.PID > 0 && syscall.Kill(st.PID, 0) == nil
+}
+
+// selectTeam answers "which team does this command mean".
+//
+// With nothing named it is the only team, and it refuses to guess when there is
+// more than one — the shape sandbox.Load has always had for the same question
+// about sandboxes. `want` matches a team's name or its session id, so two teams
+// that share a name (two worktrees of one project, which is the reproduction
+// P7-16 was opened on) are still separable.
+//
+// Liveness only ever narrows, and only when it has to. One team, whether or not
+// its process is still there, is the team meant — which keeps `team down` on a
+// crashed team reaching its own "the team's process is gone; cleared its state"
+// rather than being told nothing is running. It is when several files are here
+// that a dead one must not be able to make a live one ambiguous.
+func selectTeam(want string) (*teamState, error) {
+	teams, err := liveTeams()
+	if err != nil {
+		return nil, err
+	}
+	if want != "" {
+		var hit []*teamState
+		for _, st := range teams {
+			if st.Name == want || st.Session == want {
+				hit = append(hit, st)
+			}
+		}
+		if len(hit) == 0 {
+			if len(teams) == 0 {
+				return nil, fmt.Errorf("no team is running")
+			}
+			return nil, fmt.Errorf("no running team is called %q; these are:\n%s",
+				want, teamRoster(teams))
+		}
+		teams = hit
+	}
+	switch len(teams) {
+	case 0:
 		return nil, fmt.Errorf("no team is running")
+	case 1:
+		return teams[0], nil
+	}
+	var alive []*teamState
+	for _, st := range teams {
+		if teamProcessAlive(st) {
+			alive = append(alive, st)
+		}
+	}
+	if len(alive) == 1 {
+		return alive[0], nil
+	}
+	if want == "" {
+		return nil, fmt.Errorf("%d teams are on this host; name one with --team:\n%s",
+			len(teams), teamRoster(teams))
+	}
+	return nil, fmt.Errorf("%d teams are called %q; name one by its session id:\n%s",
+		len(teams), want, teamRoster(teams))
+}
+
+// teamRoster is the list a refusal prints: enough to type the next command with,
+// and which of them nobody is holding any more.
+func teamRoster(teams []*teamState) string {
+	var b strings.Builder
+	for _, st := range teams {
+		held := fmt.Sprintf("up %s", time.Since(st.StartedAt).Truncate(time.Second))
+		if !teamProcessAlive(st) {
+			held = "its process is gone"
+		}
+		fmt.Fprintf(&b, "    %-16s session %s  pid %d  %s\n", st.Name, st.Session, st.PID, held)
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+// readTeamState is selectTeam with nothing named, for the callers that have no
+// selector to offer — `kelyfos watch`'s team lane and serve-mcp's own hints.
+func readTeamState() (*teamState, error) { return selectTeam("") }
+
+// teamStateOf reads one named team's own file, for a caller that already knows
+// which team it means because it raised it. No liveness check and no search: the
+// caller is holding the process, so "the file is not there" is the answer that a
+// team has stopped rather than a reason to go looking for another one.
+func teamStateOf(session string) (*teamState, error) {
+	blob, err := os.ReadFile(teamStatePathFor(session))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("team session %s is not running", session)
 	}
 	if err != nil {
 		return nil, err
 	}
 	var st teamState
 	if err := json.Unmarshal(blob, &st); err != nil {
-		return nil, fmt.Errorf("the team state file is unreadable: %w", err)
+		return nil, fmt.Errorf("the team state file for session %s is unreadable: %w", session, err)
 	}
 	return &st, nil
 }

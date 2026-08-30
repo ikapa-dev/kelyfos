@@ -126,11 +126,16 @@ func TestTeamMembersMarkAMissingSandbox(t *testing.T) {
 func writeTeamState(t *testing.T, st teamState) {
 	t.Helper()
 	st.StartedAt = time.Now()
+	if st.Session == "" {
+		// Every team has one and it is what its state file is named for
+		// (P7-16); a fixture that does not care which still needs one.
+		st.Session = fmt.Sprintf("%08x", time.Now().UnixNano()&0xffffffff)
+	}
 	blob, err := json.Marshal(st)
 	if err != nil {
 		t.Fatal(err)
 	}
-	path := teamStatePath()
+	path := teamStatePathFor(st.Session)
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
 	}

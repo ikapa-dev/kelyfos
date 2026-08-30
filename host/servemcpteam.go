@@ -35,15 +35,18 @@ func teamToolDefinitions() []mcp.Tool {
 			Description: "Boot the team this project's kelyfos.toml declares — every agent, the " +
 				"edges between them, and the collective CPU budget — and return the roster. There " +
 				"are no parameters: the topology is the file's, and no tool here can add an agent " +
-				"or an edge. One team at a time.",
+				"or an edge. This server holds one team at a time; other teams may be running " +
+				"beside it, raised by somebody else.",
 			InputSchema: mcp.Schema{Type: "object"},
 		},
 		{
 			Name:  "team_ps",
 			Title: "The team roster",
-			Description: "Who is in the running team, what each agent has consumed against its cap, " +
-				"what each may reach on the network, and who it can message. Returns structured " +
-				"data as well as a table.",
+			Description: "Who is in the team this server raised — what each agent has consumed " +
+				"against its cap, what each may reach on the network, and who it can message. " +
+				"With no team of its own it answers about the only team running on the host, and " +
+				"names them all rather than guessing when several are. Returns structured data as " +
+				"well as a table.",
 			InputSchema: mcp.Schema{Type: "object"},
 		},
 		{
@@ -87,7 +90,7 @@ func (s *hostServer) toolTeamUp() *mcp.CallToolResult {
 	defer s.tmu.Unlock()
 	if s.team != nil {
 		return mcp.Errorf("this server already has team %q up. Retire it with team_down before "+
-			"raising another; a machine runs one team at a time.", s.team.plan.name)
+			"raising another; this server holds one team at a time.", s.team.plan.name)
 	}
 	if s.policy == nil || s.policy.Team == nil {
 		return mcp.Errorf("this project declares no team. A team is a [team] section in %s with an "+
@@ -111,7 +114,9 @@ func (s *hostServer) toolTeamUp() *mcp.CallToolResult {
 	}
 	s.team = rig
 
-	st, stErr := readTeamState()
+	// This team's own state and not "the running team": another team may have
+	// come up on this host between raiseTeam returning and this line (P7-16).
+	st, stErr := teamStateOf(rig.session)
 	res := &mcp.CallToolResult{Content: []mcp.Content{mcp.Text(s.teamLog.take())}}
 	if stErr == nil {
 		res.StructuredContent = map[string]any{
@@ -123,7 +128,12 @@ func (s *hostServer) toolTeamUp() *mcp.CallToolResult {
 }
 
 func (s *hostServer) toolTeamPS() *mcp.CallToolResult {
-	st, err := readTeamState()
+	// The team this server raised, when it has one. Falling through to "the
+	// running team" would report a stranger's team as this server's the moment
+	// two are up, which is now an ordinary state rather than a refused one
+	// (P7-16). With no team of its own the old behaviour stands, and selectTeam
+	// names them all rather than guessing when several are running.
+	st, err := s.ownTeamState()
 	if err != nil {
 		return mcp.Errorf("%v; raise one with team_up", err)
 	}
@@ -165,9 +175,13 @@ func (s *hostServer) toolTeamDown() *mcp.CallToolResult {
 	if s.team == nil {
 		// A team somebody else raised is theirs to stop, exactly as a sandbox
 		// somebody else started is (E4-1). Say which case this is.
-		if st, err := readTeamState(); err == nil {
-			return mcp.Errorf("team %q is running but this server did not raise it (pid %d owns it). "+
-				"Stop it with `kelyfos team down`.", st.Name, st.PID)
+		others, lerr := liveTeams()
+		if lerr == nil && len(others) > 0 {
+			return mcp.Errorf("this server raised no team. %d %s running and %s somebody else's to "+
+				"stop, with `kelyfos team down`:\n%s", len(others),
+				map[bool]string{true: "is", false: "are"}[len(others) == 1],
+				map[bool]string{true: "it is", false: "they are"}[len(others) == 1],
+				teamRoster(others))
 		}
 		return mcp.Errorf("no team is running")
 	}
@@ -204,17 +218,32 @@ func (s *hostServer) toolTeamDown() *mcp.CallToolResult {
 // §2.2). That is a boundary rather than an omission, so the refusal says which
 // it is instead of insisting the machine does not exist.
 func teamMemberHint(id string) string {
-	st, err := readTeamState()
+	// Every team on the host, not just the one this server raised and not just
+	// "the running team": the id in front of us belongs to whichever team owns
+	// it, and answering "no such machine" because a stranger's team owns it is
+	// the refusal this function exists to replace (P7-16).
+	teams, err := liveTeams()
 	if err != nil {
 		return ""
 	}
-	for _, a := range st.Agents {
-		if a.Sandbox != id {
-			continue
+	for _, st := range teams {
+		for _, a := range st.Agents {
+			if a.Sandbox != id {
+				continue
+			}
+			return fmt.Sprintf("\n    %s is %s in team %s, which these tools do not reach into: a "+
+				"team runs the work its own kelyfos.toml declares. team_ps shows what it is doing.",
+				id, a.Name, st.Name)
 		}
-		return fmt.Sprintf("\n    %s is %s in team %s, which these tools do not reach into: a team "+
-			"runs the work its own kelyfos.toml declares. team_ps shows what it is doing.",
-			id, a.Name, st.Name)
 	}
 	return ""
+}
+
+// ownTeamState is the state file of the team this server raised, or the only
+// team on the host when it raised none.
+func (s *hostServer) ownTeamState() (*teamState, error) {
+	if s.team != nil {
+		return teamStateOf(s.team.session)
+	}
+	return selectTeam("")
 }
