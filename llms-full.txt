@@ -8360,7 +8360,14 @@ two of them collide.
 set -euo pipefail
 work="$(mktemp -d)"
 cd "$work"
-trap 'pkill -f "kelyfos run" 2>/dev/null || true; rm -rf "$work"' EXIT
+forks=""
+# This recipe's own machines only. `pkill -f "kelyfos run"` is a host-wide
+# question answered with a kill: on a machine somebody else is also using it
+# stops their sandboxes too (P7-16). The `run` below is the trailing-command
+# form, which tears its own machine down and exits, so the only thing to hold
+# is the backgrounded `fork`.
+trap '{ [ -n "$forks" ] && kill -INT "$forks" 2>/dev/null; } || true;
+      wait "$forks" 2>/dev/null || true; rm -rf "$work"' EXIT
 
 # Prepare a machine once: install what you need, clone the repository, warm the
 # caches. This stands in for whatever your expensive setup is.
@@ -8793,7 +8800,11 @@ cd "$work"
 # regardless.
 kelyfos shim --addr 127.0.0.1:3000 --image dev --insecure-no-token >shim.log 2>&1 &
 shim=$!
-trap 'kill $shim 2>/dev/null; wait $shim 2>/dev/null; rm -rf "$work"' EXIT
+# `kill` on a shim that has already exited fails, and a plain failing command
+# in an EXIT trap under `set -e` aborts the rest of it — so without `|| true`
+# the working directory outlives the recipe on exactly the path that already
+# failed.
+trap 'kill $shim 2>/dev/null || true; wait $shim 2>/dev/null || true; rm -rf "$work"' EXIT
 for _ in $(seq 1 100); do
   curl -sf -o /dev/null http://127.0.0.1:3000/health && break
   sleep 0.1
@@ -10272,11 +10283,16 @@ cd "$work"
 RUN_PID=""
 VIEW_PID=""
 SSE_PID=""
+# Every line braced and defaulted. `[ -n "$X" ] && kill "$X"` is exempt from
+# `set -e` when X is empty — the failure is then a non-final element of the &&
+# list — but not when X is set and its process has already gone, which is the
+# state this recipe's own failure branch leaves. The trap would abort there and
+# the working directory would stay.
 trap '
-  [ -n "$SSE_PID" ] && kill "$SSE_PID" 2>/dev/null
-  [ -n "$VIEW_PID" ] && kill "$VIEW_PID" 2>/dev/null
-  [ -n "$RUN_PID" ] && kill "$RUN_PID" 2>/dev/null
-  [ -n "$RUN_PID" ] && wait "$RUN_PID" 2>/dev/null
+  { [ -n "$SSE_PID" ] && kill "$SSE_PID" 2>/dev/null; } || true
+  { [ -n "$VIEW_PID" ] && kill "$VIEW_PID" 2>/dev/null; } || true
+  { [ -n "$RUN_PID" ] && kill "$RUN_PID" 2>/dev/null; } || true
+  { [ -n "$RUN_PID" ] && wait "$RUN_PID" 2>/dev/null; } || true
   rm -rf "$work"
 ' EXIT
 

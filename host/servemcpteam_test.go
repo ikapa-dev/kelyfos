@@ -157,20 +157,42 @@ func writeBlobAt(t *testing.T, name string, blob []byte) {
 	t.Helper()
 	// No test writes into the real ~/.cache/kelyfos. P7-18 spent two days on
 	// litter left there by a test that cleaned up nine-tenths of itself, and
-	// this helper is the one place in this package that creates files under
-	// run/teams — so it is the one place that can make forgetting
-	// t.Setenv("KELYFOS_CACHE", t.TempDir()) a failure rather than a mess in
-	// somebody's home directory. An empty state file did appear in the real
-	// cache once during this task's own work and its creator was never named;
-	// after this it cannot come from here.
-	cache := os.Getenv("KELYFOS_CACHE")
-	if cache == "" {
+	// this is the one place in this package where a *test* creates a file under
+	// run/teams — so it is where forgetting t.Setenv("KELYFOS_CACHE",
+	// t.TempDir()) becomes a failure rather than a mess in somebody's home
+	// directory.
+	//
+	// This closes one route and not the class, which is stated because the
+	// first version of this comment said otherwise. A team state file did
+	// appear in the real cache during P7-16's own work, and it did not come
+	// from here: TestATeamStateIsPublishedWhole runs the *product's*
+	// roster.write on a goroutine, and a t.Fatalf in the reader calls
+	// runtime.Goexit, which restores KELYFOS_CACHE through t.Setenv's own
+	// cleanup while that goroutine is still writing — so sandbox.Root() starts
+	// answering $HOME/.cache/kelyfos. Named by the adversarial review of this
+	// change and fixed where it is, by joining the writer in a t.Cleanup
+	// registered after the Setenv. The general rule, for the next one: a test
+	// that starts a goroutine touching sandbox.Root() must join it before it
+	// can return, not at the end of its body.
+	cache := filepath.Clean(os.Getenv("KELYFOS_CACHE"))
+	if cache == "" || cache == "." {
 		t.Fatal("this test writes team state and has not set KELYFOS_CACHE; " +
 			"add t.Setenv(\"KELYFOS_CACHE\", t.TempDir()) at the top")
 	}
-	if home, err := os.UserHomeDir(); err == nil &&
-		(cache == filepath.Join(home, ".cache", "kelyfos") || cache == home) {
-		t.Fatalf("this test would write team state into the real cache at %s", cache)
+	// Cleaned on both sides, and resolved where it can be: a trailing slash, a
+	// relative spelling or a symlink to the same directory is the same cache.
+	real := func(p string) string {
+		if r, err := filepath.EvalSymlinks(p); err == nil {
+			return filepath.Clean(r)
+		}
+		return filepath.Clean(p)
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		for _, forbidden := range []string{filepath.Join(home, ".cache", "kelyfos"), home} {
+			if cache == filepath.Clean(forbidden) || real(cache) == real(forbidden) {
+				t.Fatalf("this test would write team state into the real cache at %s", cache)
+			}
+		}
 	}
 	path := teamStatePathFor(name)
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {

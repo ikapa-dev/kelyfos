@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -152,19 +153,47 @@ func TestTeamDownRefusesToGuessBetweenTeams(t *testing.T) {
 // dot-prefixed, liveTeams skips it, and nothing is left behind.
 func TestATeamStateIsPublishedWhole(t *testing.T) {
 	t.Setenv("KELYFOS_CACHE", t.TempDir())
+
 	r := &roster{plan: &teamPlan{name: "busy"}, session: "0901977d", owner: ownerCLI}
 	if err := r.write(); err != nil {
 		t.Fatal(err)
 	}
 
+	// The writer is stopped and joined by a t.Cleanup registered AFTER
+	// t.Setenv, and that ordering is the whole point rather than a style
+	// choice. Cleanups run last-registered-first, so this one finishes before
+	// Setenv's restore of KELYFOS_CACHE — and joining at the end of the
+	// function body is not enough, because every t.Fatalf below calls
+	// runtime.Goexit, which runs the deferred cleanups and never reaches the
+	// join. A writer left running past that point calls the *product's*
+	// roster.write with KELYFOS_CACHE unset, so sandbox.Root() answers
+	// $HOME/.cache/kelyfos and this test writes a team state file into the
+	// developer's own cache — on its failure path, which is when nobody is
+	// looking. That happened during this task's own work, was found in the real
+	// cache, and was named by the adversarial review of the fix rather than by
+	// the author who could not reproduce it: a passing run joins before the
+	// restore and leaves nothing, so only a failing run litters (P7-16, D79).
+	stop := make(chan struct{})
 	done := make(chan struct{})
+	var once sync.Once
+	halt := func() {
+		once.Do(func() { close(stop) })
+		<-done
+	}
+	t.Cleanup(halt)
 	go func() {
 		defer close(done)
 		for i := 0; i < 300; i++ {
+			select {
+			case <-stop:
+				return
+			default:
+			}
 			r.add(&agentRig{name: "w", sb: &sandbox.Sandbox{}}, "busy -> w")
 			_ = r.write()
 		}
 	}()
+
 	deadline := time.Now().Add(2 * time.Second)
 	reads := 0
 loop:
@@ -178,7 +207,7 @@ loop:
 		// as far as either of them is concerned.
 		teams, bad, err := liveTeams()
 		if err != nil || len(bad) != 0 {
-			t.Fatalf("liveTeams: %d unreadable, %v", len(bad), err)
+			t.Fatalf("liveTeams: %d unusable, %v", len(bad), err)
 		}
 		if len(teams) != 1 {
 			t.Fatalf("a rewrite made this host hold %d teams", len(teams))
@@ -189,10 +218,14 @@ loop:
 		default:
 		}
 	}
-	<-done
 	if reads == 0 {
 		t.Fatal("the reader never ran")
 	}
+
+	// Stopped and joined here as well, so the directory listing below is taken
+	// with nothing still writing into it. Calling halt twice is safe: the close
+	// is behind a sync.Once and a second receive on a closed channel returns.
+	halt()
 
 	entries, err := os.ReadDir(teamStateDir())
 	if err != nil {

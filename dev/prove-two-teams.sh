@@ -22,7 +22,8 @@
 # it does show there is the first half of the defect — both teams boot, past a
 # refusal that was supposed to stop the second — and that is the assertion at
 # step 1. The other half, one `team down` killing four machines across two
-# teams, was measured by hand on that commit and is written up in D79.
+# teams, was measured by hand on that commit; the pids and the shared
+# `cpu.max` are recorded in D79.
 #
 # Both teams are called "review", deliberately. That is what two worktrees of
 # one project produce, which is the reproduction the reviewers hit, and it is
