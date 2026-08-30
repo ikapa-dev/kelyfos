@@ -80,21 +80,40 @@ for script in "$WORK"/recipes/*.sh; do
   # run/firecracker/<id> for every live sandbox, twenty-three times in a full
   # run. Killing a peer's machines is bad; deleting the state that names them
   # takes away the recovery too, because `team down --team <session>` then has
-  # no file to find. Nothing needs it: every recipe now stops the team and the
-  # machines it started (P7-16), a run directory whose process is gone is
-  # skipped by `sandbox.Load` and `RunningSessions` on the `alive(PID)` check,
-  # so a stale one cannot make the next recipe ambiguous, and the kills above
-  # already end anything still holding one. Found by the adversarial review of
-  # P7-16, in the harness that runs the recipes that round had just scoped.
+  # no file to find. Nothing needs it for the NEXT recipe: every recipe now
+  # stops the team and the machines it started (P7-16), a run directory whose
+  # process is gone is skipped by `sandbox.Load` and by `RunningSessions` on
+  # the `alive(PID)` check, so a stale one cannot make the next recipe
+  # ambiguous, and the kills above already end anything still holding one.
+  # Found by the adversarial review of P7-16, in the harness that runs the
+  # recipes that round had just scoped.
   #
-  # The trade, stated rather than discovered: a run directory left by a recipe
-  # the kills above cut down mid-flight is no longer removed here, so it stays
-  # until somebody clears it. That is litter and not a live conflict — the
-  # P7-18 class, bounded by the recipes that fail to tear themselves down — and
-  # it is the price of not deleting a directory this harness cannot prove is
-  # its own. Removing only the ones whose pid is dead would be closer, and is
-  # still a decision about somebody else's crashed sandbox, so it goes with the
-  # rest of the deferral in D79 rather than being guessed at here.
+  # The trade, stated rather than discovered — and stated wider than the first
+  # version of this comment had it. What is left behind is NOT only this run's
+  # failures. The kills above ask `pgrep firecracker`, which is every
+  # Firecracker on the host, so a PEER's sandbox cut down by them leaves a run
+  # directory too; and a recipe that SUCCEEDS can leave one, when its own trap
+  # has SIGTERMed a backgrounded `kelyfos run` that is still tearing down as
+  # the next recipe's kills fire. The honest bound is every sandbox on this
+  # host that the kills cut down, whoever it belonged to.
+  #
+  # And "litter, not a live conflict" is too kind, because a third reader has
+  # no `alive(PID)` check at all: `hasLiveRunDir` in host/sessions.go is a bare
+  # `os.Stat` of the run directory, and it feeds `sessionIsLive` — so `kelyfos
+  # sessions prune` SKIPS that session and `kelyfos sessions erase` REFUSES it
+  # outright ("has a live run directory and may still be running"), for as long
+  # as the directory exists. A leftover here pins its session against an
+  # erasure indefinitely. `rm -rf` on the directory frees it, so this is still
+  # litter-class rather than data loss, and sessions.go's own P7-13 comment
+  # already calls it "the accepted false positive hasLiveRunDir's own leftover
+  # directory already is" — but it is not inert.
+  #
+  # It remains the better trade: deleting other people's run directories is
+  # worse than leaving your own, and a full 23-recipe run on a quiet host left
+  # nothing at all behind. Removing only the ones whose pid is dead would be
+  # closer, and is still a decision about somebody else's crashed sandbox, so
+  # it goes with the rest of the deferral in D79 rather than being guessed at
+  # in a trap.
 
   start=$(date +%s)
   # Into a file rather than through a pipe, and that is the whole fix (P6-18).
