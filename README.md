@@ -460,7 +460,8 @@ And the parts that make it a thing you reach for rather than tolerate (v0.8):
 | [`docs/README.md`](docs/README.md) | the entry map: what each document is, and where it is thin |
 | [`llms.txt`](llms.txt) · [`llms-full.txt`](llms-full.txt) | for machine readers: an index per the llmstxt.org spec, and the whole set in one file, whose current size `llms.txt` states |
 | [`docs/reference/`](docs/reference/) | every command, flag, toml key, MCP tool, event and exit code — generated from the source |
-| [`PLAN.html`](PLAN.html) · [`PLAN-FEATURES.html`](PLAN-FEATURES.html) | the living plan — every decision and the full progress log, phases then epics |
+| [`docs/roadmap.md`](docs/roadmap.md) | what was built, phase by phase and epic by epic, with the task IDs the source comments cite |
+| [`docs/decisions.md`](docs/decisions.md) · [`docs/decisions-features.md`](docs/decisions-features.md) | every irreversible choice and the reasoning behind it; comments cite these as `D<n>` and `F-D<n>` |
 | [`docs/cookbook.md`](docs/cookbook.md) | twenty-one recipes that work: run one, allowlist a domain, fork, build a team, point a client at it, write a plugin, verify the log, pause and resume, review a diff, forward a port, draw a team's topology, pipe it as JSON, export it as OTLP, follow a running team through a live-refreshed export, watch one live from a browser with `kelyfos view` |
 | [`docs/integrating.md`](docs/integrating.md) | building on it: the four ways in, orchestrator patterns, common mistakes |
 | [`docs/mcp-surface.md`](docs/mcp-surface.md) | MCP in both directions: `serve-mcp` as a tool for any client, `[[plugin]]` servers inside the guest |
@@ -574,9 +575,8 @@ The guest toolchain — Buildroot, the kernel, Firecracker and Go — is pinned 
 [`versions.mk`](versions.mk), and Go modules in `go.mod`. The host build packages
 are not pinned. Reproducibility is no longer open but measured, per artifact and
 with its scope stated — the table under "Building it yourself" is what it says.
-Contributions need a DCO `Signed-off-by` line. The non-goals in `PLAN.html`
-section 2 are hard boundaries — no orchestrator, no control plane, no hosted
-service.
+Contributions need a DCO `Signed-off-by` line. The non-goals above are hard
+boundaries — no orchestrator, no control plane, no hosted service.
 
 ## License
 

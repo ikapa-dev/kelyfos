@@ -874,7 +874,7 @@ what changed between them is documentation.
 ### Documentation
 - **Every hand-written document re-read against the code that implements it.**
   174 confirmed findings across 21 documents, 157 corrected. The record is
-  [`dev/docs-audit-2026-08-25.md`](dev/docs-audit-2026-08-25.md). It also found
+  a documentation audit of 2026-08-25. It also found
   eighteen defects in the code.
 
 ---

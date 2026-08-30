@@ -3,7 +3,7 @@
 Submission is the maintainer's action, not the build's. This file is the text,
 ready to paste. It tracks the repo: the numbers below are the ones the CI
 benchmark last published, and they get re-checked before the post goes out. The
-run ids are recorded beside each figure below and in PLAN.html's progress log,
+run ids are recorded beside each figure below and in the project's own records,
 which is where to look if a number is challenged.
 
 Current as of **v1.0** (the promise: a compatibility document that says what
@@ -159,7 +159,7 @@ printed rather than what it says.
 > beside the enforced one, and docs/threat-model.md is the long version.
 >
 > The whole thing was built in the open against a plan file that doubles as the
-> status tracker; PLAN.html in the repo has every decision and a progress log
+> status tracker; docs/decisions.md in the repo has every decision
 > with the actual command output behind each claim, including the mistakes.
 > Happy to go into any of it.
 
@@ -191,7 +191,7 @@ printed rather than what it says.
      the VMM; this is measured to guest-ready over vsock, which includes init,
      mounts, the overlay and the MCP listener binding. The harness is in the repo.
   4. *"Isn't multi-agent just orchestration you said you wouldn't build?"* →
-     the non-goal was renegotiated in writing before any code (PLAN-FEATURES.html
+     the non-goal was renegotiated in writing before any code (docs/decisions-features.md
      F-D3) and narrowed rather than dropped: single-host, user-declared
      topologies with host-enforced edges are in; multi-host scheduling, hosted
      control planes and autoscaling stay permanently out. KelyfOS enforces a
@@ -208,6 +208,6 @@ printed rather than what it says.
   never see. Cite it as convergent evidence that the environment is the right
   place to put the policy, not as an endorsement of KelyfOS; they have never
   heard of it. Two things they do that KelyfOS does not are parked in
-  PLAN-FEATURES.html §4 (per-call credential handles, output-side secret
+  the feature decision log (per-call credential handles, output-side secret
   scrubbing) — mention them as known gaps if someone asks, rather than being
   caught not knowing.

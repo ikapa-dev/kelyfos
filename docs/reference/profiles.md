@@ -59,4 +59,4 @@ on purpose. One command also cannot read another's `/proc/<pid>/exe`.
 **Launching a program under a debugger works**, on `dev`: a child inherits its
 parent's domain, so it is not a sibling. That is the whole of what `dev` buys here and
 what `base` refuses. Neither image ships a debugger, so this is about what you install
-into a `dev` sandbox. Why it is not a per-flavor knob is D33 in `PLAN.html`.
+into a `dev` sandbox. Why it is not a per-flavor knob is D33 in `docs/decisions.md`.

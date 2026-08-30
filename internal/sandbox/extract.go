@@ -544,7 +544,7 @@ var (
 //	                                  not equate the two, and the filesystem does
 //
 // Measured on the macOS home shared into the Lima VM, which is where this
-// project's own workspaces live (PLAN.html §7): `caf\xc3\xa9` and
+// project's own workspaces live: `caf\xc3\xa9` and
 // `cafe\xcc\x81` are the same file there, and `/tmp` on the same machine
 // treats them as two. Case folding was the first equivalence, normalization the
 // second, and enumerating them one review round at a time is not a fix — it is a

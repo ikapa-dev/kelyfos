@@ -419,7 +419,7 @@ func TestF18_ASymlinkChainCannotBeLeftInTheProject(t *testing.T) {
 	// The second equivalence, which is why this stopped enumerating them.
 	//
 	// The macOS home directory shared into the Lima VM — where this project's
-	// own workspaces live, per PLAN.html §7 — treats NFC `caf\xc3\xa9` and NFD
+	// own workspaces live — treats NFC `caf\xc3\xa9` and NFD
 	// `cafe\xcc\x81` as one file, and strings.ToLower does not equate them. So
 	// the fold that closed the case route left this one open, with the identical
 	// two-link chain. Measured on that mount and on /tmp beside it:

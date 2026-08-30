@@ -3,7 +3,7 @@
 #
 #   bash dev/accept-e1.sh
 #
-# The seven steps below are PLAN-FEATURES.html's E1 acceptance list, in its
+# The seven steps below are E1's acceptance list (docs/roadmap.md), in its
 # order and with its numbers. They are here as a script rather than as a
 # transcript so the next person can re-run them rather than believe them.
 #

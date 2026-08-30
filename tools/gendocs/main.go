@@ -778,7 +778,7 @@ func profilesPage(sup string) (string, error) {
 	b.WriteString("**Launching a program under a debugger works**, on `dev`: a child inherits its\n" +
 		"parent's domain, so it is not a sibling. That is the whole of what `dev` buys here and\n" +
 		"what `base` refuses. Neither image ships a debugger, so this is about what you install\n" +
-		"into a `dev` sandbox. Why it is not a per-flavor knob is D33 in `PLAN.html`.\n")
+		"into a `dev` sandbox. Why it is not a per-flavor knob is D33 in `docs/decisions.md`.\n")
 	return b.String(), nil
 }
 

@@ -3,7 +3,7 @@
 #
 #   bash dev/accept-e4.sh
 #
-# Every check here is one line of the E4 acceptance list in PLAN-FEATURES.html,
+# Every check here is one line of E4's acceptance list (docs/roadmap.md),
 # in its order, and each one either prints what it found or says why it failed.
 # Nothing is asserted that is not read back out of the product.
 #

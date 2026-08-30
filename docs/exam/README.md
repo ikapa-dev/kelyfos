@@ -29,7 +29,7 @@ It worked on the first run and took about 35 minutes, of which roughly ten were
 reading, five writing, three running — and seventeen deliberately breaking
 things, because the happy path had cost so little. Ten defects came out of it.
 Nine were documentation and are fixed; the rest are product work and are
-recorded in `PLAN-FEATURES.html` (F-D32) rather than quietly fixed inside a
+recorded as F-D32 in `docs/decisions-features.md` rather than quietly fixed inside a
 documentation epic.
 
 The most valuable one is worth stating here, because it is the failure this

@@ -38,7 +38,7 @@ func isDangerousRune(r rune) bool {
 	return r < 0x20 || r == 0x7f || !unicode.IsPrint(r)
 }
 
-// The RENDER checklist (PLAN.html §8 rule 10) and P7-8's own task text both
+// The RENDER checklist (CONTRIBUTING.md, "How a change is verified") and P7-8 both
 // say the same thing: adversary strings must reach element text content
 // only. This file is the hostile corpus that makes the claim checkable —
 // every value a guest, a teammate, or a misbehaving upstream component

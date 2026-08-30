@@ -10,7 +10,7 @@
 # Two things temper the cost of (2), because a from-source Buildroot run is
 # measured in tens of minutes:
 #   - a docs-only change skips build and boot entirely. `checks` still runs, so
-#     an edit to PLAN.html is still audited by tools/check-plan.py.
+#     the generated reference and the cookbook are still verified.
 #   - Buildroot's download directory, its per-arch output tree and the compiler
 #     cache are all restored between runs. The first two were already here; the
 #     ccache half arrives with BR2_CCACHE in the shared Buildroot fragment.
@@ -53,7 +53,7 @@ concurrency:
   # *pending* run when a newer one queues behind the same in-progress run, so
   # with one shared group a rapid three-push sequence still loses the middle
   # commit — which is exactly the sequence this project's protocol produces:
-  # the work, then STATUS.md. A per-sha group means main's runs never queue
+  # the work, then its record. A per-sha group means main's runs never queue
   # behind each other and none of them can be superseded. Every commit on main
   # is one someone may bisect to, so every one of them gets built.
   #
@@ -113,7 +113,7 @@ jobs:
           # extension, and without them a regenerated index would start an hour
           # of Buildroot for nothing.
           rest="$(printf '%s\n' "$changed" \
-                  | grep -vE '^docs/|\.md$|^llms\.txt$|^llms-full\.txt$|^PLAN\.html$|^PLAN-FEATURES\.html$|^LICENSE$' \
+                  | grep -vE '^docs/|\.md$|^llms\.txt$|^llms-full\.txt$|^LICENSE$' \
                   | grep -v '^$' || true)"
 
           if [ -z "$rest" ]; then
@@ -213,9 +213,6 @@ jobs:
           sudo apt-get update -qq && sudo apt-get install -y -qq e2fsprogs
           go test -count=1 -run 'TestHostile|TestGuestChosen|TestTheWorkspaceRoot' ./...
 
-      - name: the plan is still coherent
-        run: python3 tools/check-plan.py
-
       # Every published tag has a section in CHANGELOG.md. That file is the
       # source the release notes are cut from (D50), and this is what stops a tag
       # being pushed without one — the release workflow would fail at publish
@@ -229,7 +226,7 @@ jobs:
       # since v0.1 and no commit before v1.0 carries one, so a check over
       # `git log` would fail on every branch forever and be switched off within
       # a day. Rewriting that history would invalidate every clone and every
-      # commit hash PLAN.html cites. Enforcement therefore starts where it can be
+      # commit hash this project's own records cite. Enforcement therefore starts where it can be
       # true, and CONTRIBUTING.md says that in as many words.
       - name: new commits carry a DCO sign-off
         run: |

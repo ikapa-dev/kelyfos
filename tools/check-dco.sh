@@ -8,7 +8,7 @@
 # `Signed-off-by` line since v0.1 and not one commit before v1.0 carries one, so
 # a check over `git log` would fail on every branch forever and be switched off
 # within a day. History cannot be rewritten either: it would invalidate every
-# clone and every commit hash PLAN.html cites. So enforcement starts where it can
+# clone and every commit hash this project's own records cite. So enforcement starts where it can
 # be true — at the commits a push or a pull request actually adds — and
 # CONTRIBUTING.md says so in as many words rather than implying the rule was
 # always kept.

@@ -99,7 +99,7 @@ Neither image ships a debugger, so this is about what you install into a `dev`
 sandbox rather than about `strace` and `gdb` by name.
 
 The reasoning, the alternative that was rejected, and why this is not a knob is
-D33 in `PLAN.html`; the profiles themselves are
+D33 in [`decisions.md`](decisions.md); the profiles themselves are
 [`reference/profiles.md`](reference/profiles.md).
 
 ## When nobody is watching

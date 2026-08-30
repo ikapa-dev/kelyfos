@@ -5,8 +5,10 @@ and every contribution needs a Developer Certificate of Origin sign-off.
 
 ## Before you write code
 
-[`PLAN.html`](PLAN.html) is the single source of truth: scope, non-goals,
-architecture, the numbered task list, and the decision log. Read it first.
+The [README](README.md) has the scope and the non-goals;
+[`docs/roadmap.md`](docs/roadmap.md) has what was built and the task IDs the
+source cites; [`docs/decisions.md`](docs/decisions.md) has why. Read the
+non-goals first — they are boundaries, not preferences.
 
 Two things it will save you from:
 
@@ -32,7 +34,7 @@ For a whole branch: `git rebase --signoff main`.
 **This was required before it was enforced, and no commit before v1.0 carries
 one.** That is stated here rather than quietly repaired, because the two honest
 alternatives are worse: rewriting the history would invalidate every existing
-clone and every commit hash `PLAN.html` cites, and dropping the requirement
+clone and every commit hash the project's own records cite, and dropping the requirement
 would abandon the mechanism that keeps provenance auditable without asking
 anybody to sign a CLA (D5). So enforcement starts where it can be true — CI
 checks the commits a push or a pull request *adds*, from v1.0 onward, and the
@@ -124,7 +126,7 @@ which takes about thirty-five minutes; after that it is minutes.
 more, and `gofmt` is the first of them: a tree that is not gofmt-clean fails
 before anything is vetted. After it come the unit tests, `make fuzz
 FUZZTIME=10s`, the hostile-input corpus with `KELYFOS_HOSTILE=required`,
-`tools/check-plan.py` over `PLAN.html`, `make docs` compared against the
+`make docs` compared against the
 committed reference, and every cookbook recipe extracted and parsed.
 
 To run that job itself rather than a description of it, `make ci-act` executes
@@ -163,6 +165,60 @@ there. A change that breaks something also needs a section in
 [`docs/upgrading.md`](docs/upgrading.md) saying what to do about it — a break
 recorded only in a changelog line is a break somebody discovers at the wrong
 time.
+
+## How a change is verified
+
+These rules governed the project through its first eight phases. They are here
+rather than in a planning document because they are what a reviewer applies, not
+what a schedule says.
+
+**A decision is recorded before it is implemented.** Any change of approach,
+library or scope gets a row in [`docs/decisions.md`](docs/decisions.md) with the
+reasoning, written before the code. The source cites these by number — a `D44`
+in a comment is a row in that file — which is what makes a comment answerable
+years later. Non-goals are hard boundaries: if a task seems to require crossing
+one, propose a decision and stop.
+
+**CI is the gate, and an absent run is a red one.** A clean tree is not a green
+build. Session start-up establishes that a run exists for the current head of
+`main` before reading what it said, and reads every workflow that gates `main`,
+not only `ci.yml` — `security.yml` exists precisely to go red when nothing in
+this repository has changed. Absence is the stronger signal, not the weaker one:
+a red run says one job broke; no run says nothing was checked at all. A red
+`main` is fixed before any new work starts — not noted, not carried, fixed.
+
+**Documentation rides with the change that moved the surface.** Nothing is done
+until `make docs` is clean; `llms.txt` and `llms-full.txt` are regenerated and
+committed with it; and every new command, flag, `kelyfos.toml` key or MCP tool
+has a cookbook recipe that CI executes.
+
+**Verified by somebody who did not write it.** No change touching the flight
+recorder, the egress proxy, the team broker or a renderer lands until someone
+who did not write the diff has reviewed it *adversarially* — trying to make it
+wrong rather than confirming it is right — and **against the source rather than
+against the description**. The reviewer reports; the author fixes; the reviewer
+does not push, because authorship and verification stop being separate the
+moment the same hand does both. Findings are recorded including the ones
+rejected and why: a review that records only what it changed is indistinguishable
+from one that found nothing. `make test`, `make vuln` and every fuzz target the
+change touched are part of the review, run by the reviewer rather than taken on
+the author's word.
+
+**The four checklists.** Which one applies depends on what the change touches.
+
+- **RECORD** — a field appended and never inserted; every new field clippable,
+  slices included; a `schema.go` row and a generated reference; the
+  door-enumerating test; no secret value reachable by any path; and a real
+  session's chain still verifying end to end.
+- **PROXY** — no new plaintext path; the value never inside the guest; the CA
+  never persisted; every decision recorded with its reason.
+- **BROKER** — no path that reaches a peer without an edge; every refusal
+  recorded; ACLs evaluated before the effect and not after it; caps enforced
+  rather than reported.
+- **RENDER** — contextual escaping on every value; `template.HTML` nowhere but
+  the chain blob; every SVG attribute a number computed in Go;
+  `proto.SafeText` on every terminal path; output bounded, and saying so when it
+  truncates.
 
 ## Reporting a security issue
 

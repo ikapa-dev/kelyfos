@@ -189,7 +189,7 @@ func checkPolicyWiring(t *testing.T, file string, f *ast.File) int {
 // no session.policy to match.
 //
 // Kept alongside TestEveryWithPostureCallHasAMatchingSessionPolicy rather
-// than replacing it — see D68 in PLAN.html's decision log for why running
+// than replacing it — see D68 in docs/decisions.md for why running
 // both, instead of §9.3's literal "one test," is the deliberate choice here.
 func TestEverySessionStartSiteHasAMatchingSessionPolicy(t *testing.T) {
 	fset := token.NewFileSet()

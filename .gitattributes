@@ -28,9 +28,9 @@ llms.txt          linguist-generated=true
 llms-full.txt     linguist-generated=true
 docs/reference/** linguist-generated=true
 
-# The project's own planning and audit documents. They are HTML because they
-# are read in a browser, not because this is an HTML project: without this they
-# are 30% of the reported language breakdown for a repository that is Go.
-PLAN.html                linguist-documentation=true
-PLAN-FEATURES.html       linguist-documentation=true
-SECURITY-REVIEW-*.html   linguist-documentation=true
+# The decision logs are long-form engineering record rather than product
+# documentation; marking them keeps 277 KB of prose out of the language
+# statistics and collapses them in review.
+docs/decisions.md          linguist-documentation=true
+docs/decisions-features.md linguist-documentation=true
+docs/roadmap.md            linguist-documentation=true

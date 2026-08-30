@@ -181,10 +181,12 @@ func llmsIndex(fullTokens int) string {
 	fmt.Fprintf(&b, "- [Everything in one file](%sllms-full.txt): every page above concatenated, "+
 		"roughly %dk tokens, for a client that would rather spend context than fetch\n",
 		rawBase, (fullTokens+500)/1000)
-	fmt.Fprintf(&b, "- [Build plan and decision log](%sPLAN.html): HTML. Every phase and "+
-		"every decision with its rationale, and the command output behind each claim\n", rawBase)
-	fmt.Fprintf(&b, "- [Feature plan and decision log](%sPLAN-FEATURES.html): HTML. The epics "+
-		"after the build plan, same protocol\n", rawBase)
+	fmt.Fprintf(&b, "- [Roadmap](%sdocs/roadmap.md): what was built, phase by phase and epic "+
+		"by epic, and the task identifiers the source comments cite\n", rawBase)
+	fmt.Fprintf(&b, "- [Decision log](%sdocs/decisions.md): every irreversible choice with the "+
+		"reasoning that produced it; the source cites these by number\n", rawBase)
+	fmt.Fprintf(&b, "- [Decision log, feature epics](%sdocs/decisions-features.md): the same for "+
+		"E1-E5, cited from comments as F-D<n>\n", rawBase)
 	return b.String()
 }
 

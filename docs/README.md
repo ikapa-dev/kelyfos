@@ -66,12 +66,13 @@ hand-written half, and this page says where each is still thin.
 | [`../llms-full.txt`](../llms-full.txt) | **generated** | Every page above concatenated, each with its source URL. Its size is *estimated* by `make docs` and printed in `llms.txt`, rather than repeated here — because a hand-typed count is exactly the kind of number that goes stale quietly, and this one had: it said 101,000 while the generator said 108,000. |
 | [`launch/hn-post.md`](launch/hn-post.md) | not documentation | The launch post draft. Unposted, and the maintainer's to send. |
 
-The plan files at the repository root — [`PLAN.html`](../PLAN.html) for phases 0–6
-and [`PLAN-FEATURES.html`](../PLAN-FEATURES.html) for epics E1–E5 — are
-**not** documentation. They are the build record: every task, every decision with
-its rationale, and a progress log with the command output behind each claim. The
-documents above cite them constantly (`D6`, `F-D19`, `E2-1`), and those citations
-resolve there. [`STATUS.md`](../STATUS.md) is the current position in one page.
+[`roadmap.md`](roadmap.md), [`decisions.md`](decisions.md) and
+[`decisions-features.md`](decisions-features.md) are **not** documentation
+either. They are the build record: what was built, and every decision with the
+reasoning that produced it. The documents above and the source itself cite them
+constantly (`D6`, `F-D19`, `E2-1`), and those citations resolve there. The
+working tracker they were distilled from is a process document and is not part
+of this repository.
 
 ## What the kinds mean
 

@@ -3,7 +3,7 @@
 #
 #   bash dev/accept-e2.sh
 #
-# The eight steps below are PLAN-FEATURES.html's E2 acceptance list, in its
+# The eight steps below are E2's acceptance list (docs/roadmap.md), in its
 # order and with its numbers. They are here as a script rather than as a
 # transcript so the next person can re-run them rather than believe them.
 #

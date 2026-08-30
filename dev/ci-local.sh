@@ -5,7 +5,7 @@
 # Why this exists. On 2026-08-29 GitHub Actions stopped running for this
 # repository at the account level — every workflow active, the repository's own
 # Actions setting enabled, and a dispatch answered "Actions has been disabled
-# for this user". PLAN.html §8 rule 8 says a clean tree is not a green build,
+# for this user". CONTRIBUTING.md says a clean tree is not a green build,
 # and it is right; but with no pipeline at all the choice is between evidence
 # that is weaker than CI and no evidence, and "I ran the checks by hand once"
 # is the weakest shape that evidence can take. This script is the other shape:
@@ -67,7 +67,7 @@ if [ "$(uname -s)" != "Linux" ]; then
 fi
 
 # The digest of the `checks` job as this file last copied it. See "Drift" above.
-CHECKS_SHA256=82823c06a81f3533519af950c8077f0cbe141a103408313cf42d964fee31a5ce
+CHECKS_SHA256=d9e975448d9ae2c75c390a4ca9a6f4a64d8d9fd6ddc5a58d2337d84a29c80c68
 
 boot=0
 dco_base=""
@@ -171,8 +171,6 @@ step_hostile() {
   KELYFOS_HOSTILE=required go test -count=1 -run 'TestHostile|TestGuestChosen|TestTheWorkspaceRoot' ./...
 }
 
-step_plan() { python3 tools/check-plan.py; }
-
 step_changelog() { python3 tools/changelog.py --check; }
 
 step_dco() {
@@ -236,7 +234,6 @@ step "unit tests"                                              step_unit
 step "fuzz, briefly"                                           step_fuzz
 step "keep any crashing input"                                 step_crashers
 step "The boundary holds against what the guest can write"    step_hostile
-step "the plan is still coherent"                              step_plan
 step "every released tag has its notes"                        step_changelog
 step "new commits carry a DCO sign-off"                        step_dco
 step "The generated reference still matches the source"       step_docs
@@ -262,7 +259,7 @@ else
   echo "  ----   build job not reproduced (Buildroot image); boot job represented by its $(uname -m) stand-in, not the x86_64 run"
 fi
 if [ "$failed" -eq 0 ]; then
-  echo "  all ${#names[@]} steps passed on $head_short — local evidence, not a green pipeline (PLAN.html §8 rule 8)"
+  echo "  all ${#names[@]} steps passed on $head_short — local evidence, not a green pipeline"
   exit 0
 fi
 echo "  $failed of ${#names[@]} steps FAILED on $head_short"

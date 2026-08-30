@@ -86,7 +86,7 @@ func demoTeamEvents() []recorder.Event {
 	return evs
 }
 
-// The acceptance test's own arithmetic (PLAN.html §7, P7-8's acceptance
+// The acceptance test's own arithmetic (P7-8's acceptance
 // line 3): six agents, five edges, the store with its one declared ACL
 // (demoTeamEvents keeps this deliberately down to one rule rather than the
 // demo script's own two, since the second is redundant coverage for this

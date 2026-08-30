@@ -513,7 +513,8 @@ And the parts that make it a thing you reach for rather than tolerate (v0.8):
 | [`docs/README.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/README.md) | the entry map: what each document is, and where it is thin |
 | [`llms.txt`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/llms.txt) · [`llms-full.txt`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/llms-full.txt) | for machine readers: an index per the llmstxt.org spec, and the whole set in one file, whose current size `llms.txt` states |
 | [`docs/reference/`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/reference/README.md) | every command, flag, toml key, MCP tool, event and exit code — generated from the source |
-| [`PLAN.html`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/PLAN.html) · [`PLAN-FEATURES.html`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/PLAN-FEATURES.html) | the living plan — every decision and the full progress log, phases then epics |
+| [`docs/roadmap.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/roadmap.md) | what was built, phase by phase and epic by epic, with the task IDs the source comments cite |
+| [`docs/decisions.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/decisions.md) · [`docs/decisions-features.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/decisions-features.md) | every irreversible choice and the reasoning behind it; comments cite these as `D<n>` and `F-D<n>` |
 | [`docs/cookbook.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/cookbook.md) | twenty-one recipes that work: run one, allowlist a domain, fork, build a team, point a client at it, write a plugin, verify the log, pause and resume, review a diff, forward a port, draw a team's topology, pipe it as JSON, export it as OTLP, follow a running team through a live-refreshed export, watch one live from a browser with `kelyfos view` |
 | [`docs/integrating.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/integrating.md) | building on it: the four ways in, orchestrator patterns, common mistakes |
 | [`docs/mcp-surface.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/mcp-surface.md) | MCP in both directions: `serve-mcp` as a tool for any client, `[[plugin]]` servers inside the guest |
@@ -627,9 +628,8 @@ The guest toolchain — Buildroot, the kernel, Firecracker and Go — is pinned 
 [`versions.mk`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/versions.mk), and Go modules in `go.mod`. The host build packages
 are not pinned. Reproducibility is no longer open but measured, per artifact and
 with its scope stated — the table under "Building it yourself" is what it says.
-Contributions need a DCO `Signed-off-by` line. The non-goals in `PLAN.html`
-section 2 are hard boundaries — no orchestrator, no control plane, no hosted
-service.
+Contributions need a DCO `Signed-off-by` line. The non-goals above are hard
+boundaries — no orchestrator, no control plane, no hosted service.
 
 ## License
 
@@ -4261,7 +4261,7 @@ Neither image ships a debugger, so this is about what you install into a `dev`
 sandbox rather than about `strace` and `gdb` by name.
 
 The reasoning, the alternative that was rejected, and why this is not a knob is
-D33 in `PLAN.html`; the profiles themselves are
+D33 in [`decisions.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/decisions.md); the profiles themselves are
 [`reference/profiles.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/reference/profiles.md).
 
 ## When nobody is watching
@@ -12906,12 +12906,13 @@ hand-written half, and this page says where each is still thin.
 | [`../llms-full.txt`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/llms-full.txt) | **generated** | Every page above concatenated, each with its source URL. Its size is *estimated* by `make docs` and printed in `llms.txt`, rather than repeated here — because a hand-typed count is exactly the kind of number that goes stale quietly, and this one had: it said 101,000 while the generator said 108,000. |
 | [`launch/hn-post.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/launch/hn-post.md) | not documentation | The launch post draft. Unposted, and the maintainer's to send. |
 
-The plan files at the repository root — [`PLAN.html`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/PLAN.html) for phases 0–6
-and [`PLAN-FEATURES.html`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/PLAN-FEATURES.html) for epics E1–E5 — are
-**not** documentation. They are the build record: every task, every decision with
-its rationale, and a progress log with the command output behind each claim. The
-documents above cite them constantly (`D6`, `F-D19`, `E2-1`), and those citations
-resolve there. [`STATUS.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/STATUS.md) is the current position in one page.
+[`roadmap.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/roadmap.md), [`decisions.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/decisions.md) and
+[`decisions-features.md`](https://raw.githubusercontent.com/p4r4n0rm4l/KelyfOS/main/docs/decisions-features.md) are **not** documentation
+either. They are the build record: what was built, and every decision with the
+reasoning that produced it. The documents above and the source itself cite them
+constantly (`D6`, `F-D19`, `E2-1`), and those citations resolve there. The
+working tracker they were distilled from is a process document and is not part
+of this repository.
 
 ## What the kinds mean
 
@@ -15044,4 +15045,4 @@ on purpose. One command also cannot read another's `/proc/<pid>/exe`.
 **Launching a program under a debugger works**, on `dev`: a child inherits its
 parent's domain, so it is not a sibling. That is the whole of what `dev` buys here and
 what `base` refuses. Neither image ships a debugger, so this is about what you install
-into a `dev` sandbox. Why it is not a per-flavor knob is D33 in `PLAN.html`.
+into a `dev` sandbox. Why it is not a per-flavor knob is D33 in `docs/decisions.md`.

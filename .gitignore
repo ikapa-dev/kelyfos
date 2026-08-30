@@ -41,10 +41,23 @@
 # architecture is committed yet; the record itself is tracked.
 /dev/expect/*.observed
 
-# Point-in-time security review reports. These are working documents for
-# whoever is fixing findings, not project documentation — what actually
-# changed and why lives in CHANGELOG.md, in the commit that fixed it. Keep
-# the review itself outside the repo once its findings are closed.
+# Process documents, kept beside the repository rather than in it. The working
+# tracker, its closed predecessor and the one-page status are how the work is
+# run; what the work decided lives in docs/decisions.md, what it built in
+# docs/roadmap.md, and what changed in CHANGELOG.md — all of which are here and
+# all of which the source cites. A reader of this project needs those; nobody
+# needs a progress log of who ran which command on which afternoon.
+/PLAN.html
+/PLAN-FEATURES.html
+/STATUS.md
+/tools/check-plan.py
+
+# Point-in-time security review reports and audits. These are working documents
+# for whoever is fixing findings, not project documentation — what actually
+# changed and why lives in CHANGELOG.md, in the commit that fixed it. Keep the
+# review itself outside the repo once its findings are closed.
 /SECURITY-REVIEW.html
+/SECURITY-REVIEW-*.html
 /SECURITY_AUDIT.md
 /PEN_TEST_REPORT.md
+/dev/docs-audit-*.md

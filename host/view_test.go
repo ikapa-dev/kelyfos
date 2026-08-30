@@ -20,7 +20,7 @@ import (
 )
 
 // These tests exercise host/view.go (P7-12) against the binding conditions
-// in PLAN.html's P7-12 task text and D60: loopback-only, token required in
+// in P7-12 (docs/roadmap.md) and D60: loopback-only, token required in
 // constant time on every route including the SSE stream, a Host check that
 // defeats DNS rebinding, GET/HEAD only structurally, a hash-pinned CSP, and
 // an SSE payload that reaches the client as inert data even when the

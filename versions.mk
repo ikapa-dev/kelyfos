@@ -7,7 +7,7 @@
 # environment for a one-off experiment without editing this file.
 #
 # Bumping anything here is a deliberate act: change the version AND its checksum
-# in the same commit, and record the reason in the PLAN.html progress log.
+# in the same commit, and record the reason in docs/decisions.md.
 
 # --- Buildroot -------------------------------------------------------------
 # The LTS line, and "LTS" here is buildroot.org's own word rather than an

@@ -9,7 +9,7 @@
 #
 # govulncheck was already part of this project's discipline before it was part
 # of its CI: it has been run by hand at ten or more gates and once caught a real
-# advisory in a transitive dependency (GO-2026-5024, recorded in PLAN.html). The
+# advisory in a transitive dependency (GO-2026-5024, recorded in docs/decisions.md). The
 # problem with a discipline is that it only runs when somebody remembers, and
 # the failure mode it is guarding against does not need anybody to do anything:
 # an advisory is published against a dependency that has not moved, and a
@@ -27,7 +27,7 @@
 # product is fail-closed, and an issue-opening step needs write permissions plus
 # a moving part that can itself break quietly. A red run on a repository whose
 # main is otherwise green is the loudest available signal and needs no
-# machinery — and PLAN.html §8 rule 8 already makes a red main a blocker that is
+# machinery — and CONTRIBUTING.md's "CI is the gate" already makes a red main a blocker that is
 # fixed before any new task, which is the correct response to a live advisory in
 # a dependency this project ships.
 #
