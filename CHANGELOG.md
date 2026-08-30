@@ -742,11 +742,15 @@ verification pass then found inside those fixes. Every one is below under
   (`docs/compatibility.md` §2), and `kelyfos team ps --json` — added earlier in
   this same release — returns the same roster in the shape `team_ps` already
   guaranteed. [`docs/integrating.md`](docs/integrating.md) and cookbook recipes
-  5 and 20 read the file directly and now ask the command line instead. The
-  systemd slice a capped team lands in is likewise renamed, from
-  `kelyfos-team-<name>.slice` to `kelyfos-team-<name>_<session>.slice`;
-  `kelyfos team ps` prints the resolved path, so nothing needs to reconstruct
-  the name (P7-16, D79).
+  5 and 20 read the file directly and now ask the command line instead, and
+  every team recipe's own teardown names the team it raised rather than saying
+  "the team". A capped team's cgroup parent is likewise renamed on both paths —
+  the systemd slice from `kelyfos-team-<name>.slice` to
+  `kelyfos-team-<name>_<session>.slice`, and the direct one (under
+  `KELYFOS_CGROUP_ROOT`, or as root) from `<root>/kelyfos-team-<name>` to
+  `<root>/kelyfos-team-<name>_<session>`; `kelyfos team ps` prints the resolved
+  path, so nothing needs to reconstruct the name. What to do about either is in
+  [`docs/upgrading.md`](docs/upgrading.md) §7 (P7-16, D79).
 - **The proxy waits ten minutes for an origin's first byte, not thirty
   seconds.** Both egress transports set `ResponseHeaderTimeout`, which neither
   Go's default nor a zero value supplies — without it an allowlisted origin that
