@@ -15,7 +15,19 @@ reference described in the README and re-measured per release.
 
 ---
 
-## Unreleased
+## v1.1 — 2026-08-30
+
+The declared shape of a run. v1.0 could say what a sandbox did; this one says
+what it was *allowed* to do, in the same record and under the same hash chain —
+the policy in force at every door that opens a chain, a team's resolved topology
+written at boot, and both readable back with `kelyfos log`, `kelyfos watch`,
+`kelyfos team graph` and `--json` on all of them.
+
+It also carries the remediation of an independent security review of
+2026-08-28: twenty-one findings, and the seven more that an adversarial
+verification pass then found inside those fixes. Every one is below under
+**Fixed**, and every one was reviewed by somebody who did not write it.
+
 
 ### Added
 - **`kelyfos team graph`**: renders a team's topology straight from
