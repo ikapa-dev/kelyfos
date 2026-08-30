@@ -58,6 +58,13 @@ for script in "$WORK"/recipes/*.sh; do
   # Each recipe starts from a clean machine. A sandbox left behind by the
   # previous one makes the next one fail for a reason that has nothing to do
   # with it — `kelyfos exec` with several sandboxes running asks which one.
+  #
+  # These two lines are host-wide questions answered with a kill, and they are
+  # the P7-16 class this harness runs the recipes for (D79). They are left, and
+  # named there rather than here, because narrowing them properly means giving
+  # this run its own KELYFOS_CACHE and four recipes read
+  # $HOME/.cache/kelyfos/sessions by hand — a task rather than a step, and one
+  # that has to re-earn twenty-three live recipes.
   pkill -f "$BIN/kelyfos run"  2>/dev/null
   pkill -f "$BIN/kelyfos fork" 2>/dev/null
   pkill -f "$BIN/kelyfos team" 2>/dev/null
@@ -65,7 +72,20 @@ for script in "$WORK"/recipes/*.sh; do
   pkill -f "$BIN/kelyfos serve-mcp" 2>/dev/null
   sleep 1
   for p in $(pgrep firecracker 2>/dev/null); do kill "$p" 2>/dev/null; done
-  rm -rf "${HOME:?}/.cache/kelyfos/run"/*
+  # What is NOT left is the line that used to follow:
+  #
+  #     rm -rf "${HOME:?}/.cache/kelyfos/run"/*
+  #
+  # It deleted run/teams — every other team's state file on the host — and
+  # run/firecracker/<id> for every live sandbox, twenty-three times in a full
+  # run. Killing a peer's machines is bad; deleting the state that names them
+  # takes away the recovery too, because `team down --team <session>` then has
+  # no file to find. Nothing needs it: every recipe now stops the team and the
+  # machines it started (P7-16), a run directory whose process is gone is
+  # skipped by `sandbox.Load` and `RunningSessions` on the `alive(PID)` check,
+  # so a stale one cannot make the next recipe ambiguous, and the kills above
+  # already end anything still holding one. Found by the adversarial review of
+  # P7-16, in the harness that runs the recipes that round had just scoped.
 
   start=$(date +%s)
   # Into a file rather than through a pipe, and that is the whole fix (P6-18).

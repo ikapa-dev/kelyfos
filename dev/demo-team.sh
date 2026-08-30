@@ -170,6 +170,14 @@ say "1. kelyfos team up — the cold path, then the warm one"
 # and that is the path the acceptance bar binds on. The template is built in the
 # background afterwards, so the *second* team-up of the same shape forks. Both
 # numbers are measured here, and neither stands in for the other.
+# The whole shared template cache, not this run's own entries: the key is a
+# content hash of the image digests and the agent's resources, and no caller
+# can enumerate the ones it would produce. Emptying it is what makes the
+# measurement below the cold path rather than a race with a warm one. It is a
+# host-wide action on a directory other teams use, recorded in D79 beside the
+# templates row rather than pretended away — it cannot corrupt a template
+# (a miss is handled cleanly and publication is an atomic rename) but it can
+# pull one out from under another team's concurrent fork (P7-16).
 rm -rf "${HOME}/.cache/kelyfos/templates"
 echo "        template cache cleared — this run is the cold path"
 if ! up team-cold.log; then
