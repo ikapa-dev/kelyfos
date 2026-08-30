@@ -86,6 +86,15 @@ for script in "$WORK"/recipes/*.sh; do
   # so a stale one cannot make the next recipe ambiguous, and the kills above
   # already end anything still holding one. Found by the adversarial review of
   # P7-16, in the harness that runs the recipes that round had just scoped.
+  #
+  # The trade, stated rather than discovered: a run directory left by a recipe
+  # the kills above cut down mid-flight is no longer removed here, so it stays
+  # until somebody clears it. That is litter and not a live conflict — the
+  # P7-18 class, bounded by the recipes that fail to tear themselves down — and
+  # it is the price of not deleting a directory this harness cannot prove is
+  # its own. Removing only the ones whose pid is dead would be closer, and is
+  # still a decision about somebody else's crashed sandbox, so it goes with the
+  # rest of the deferral in D79 rather than being guessed at here.
 
   start=$(date +%s)
   # Into a file rather than through a pipe, and that is the whole fix (P6-18).
