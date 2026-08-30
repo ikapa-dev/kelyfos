@@ -155,6 +155,23 @@ func writeTeamStateAt(t *testing.T, name string, st teamState) {
 
 func writeBlobAt(t *testing.T, name string, blob []byte) {
 	t.Helper()
+	// No test writes into the real ~/.cache/kelyfos. P7-18 spent two days on
+	// litter left there by a test that cleaned up nine-tenths of itself, and
+	// this helper is the one place in this package that creates files under
+	// run/teams — so it is the one place that can make forgetting
+	// t.Setenv("KELYFOS_CACHE", t.TempDir()) a failure rather than a mess in
+	// somebody's home directory. An empty state file did appear in the real
+	// cache once during this task's own work and its creator was never named;
+	// after this it cannot come from here.
+	cache := os.Getenv("KELYFOS_CACHE")
+	if cache == "" {
+		t.Fatal("this test writes team state and has not set KELYFOS_CACHE; " +
+			"add t.Setenv(\"KELYFOS_CACHE\", t.TempDir()) at the top")
+	}
+	if home, err := os.UserHomeDir(); err == nil &&
+		(cache == filepath.Join(home, ".cache", "kelyfos") || cache == home) {
+		t.Fatalf("this test would write team state into the real cache at %s", cache)
+	}
 	path := teamStatePathFor(name)
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
