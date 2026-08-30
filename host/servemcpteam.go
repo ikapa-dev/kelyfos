@@ -176,14 +176,17 @@ func (s *hostServer) toolTeamDown() *mcp.CallToolResult {
 		// A team somebody else raised is theirs to stop, exactly as a sandbox
 		// somebody else started is (E4-1). Say which case this is.
 		others, _, lerr := liveTeams()
-		if lerr == nil && len(others) > 0 {
-			return mcp.Errorf("this server raised no team. %d %s running and %s somebody else's to "+
-				"stop, with `kelyfos team down`:\n%s", len(others),
-				map[bool]string{true: "is", false: "are"}[len(others) == 1],
-				map[bool]string{true: "it is", false: "they are"}[len(others) == 1],
-				teamRoster(others))
+		switch {
+		case lerr != nil || len(others) == 0:
+			return mcp.Errorf("no team is running")
+		case len(others) == 1:
+			return mcp.Errorf("team %q is running but this server did not raise it (pid %d owns "+
+				"it). Stop it with `kelyfos team down`.", others[0].Name, others[0].PID)
+		default:
+			return mcp.Errorf("this server raised no team, and %d are running on this host. Each "+
+				"is somebody else's to stop, with `kelyfos team down --team <name|session>`:\n%s",
+				len(others), teamRoster(others))
 		}
-		return mcp.Errorf("no team is running")
 	}
 	name := s.team.plan.name
 	started := time.Now()
