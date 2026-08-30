@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -43,15 +44,27 @@ type TeamSlice struct {
 // the team gets a shared home but no cap of its own, which is what a team with
 // per-agent quotas and no [team.resources] asks for.
 //
+// instance is what makes this team's parent *this* team's — the caller passes
+// its recorder session id (P7-16, D79). Before it, the parent was named for the
+// team's name alone, and a name is what a person wrote in kelyfos.toml: two
+// checkouts of one project running at once shared one cgroup. The systemd path
+// made that a way to lose machines rather than only bookkeeping — the second
+// team's set-property overwrote the first team's cap, and the second team's
+// Close ran `systemctl --user stop` on the slice, which stops every scope in it,
+// including the first team's Firecrackers. On the direct path the same name
+// meant one directory: cpu.max rewritten under a running team, and a Close that
+// either failed on a populated cgroup or removed the parent a live team was
+// still accounted in.
+//
 // pickMode runs once here, for the whole team. That matters: five agents each
 // deciding for themselves could disagree about the mode, and five agents in
 // different places are not a hierarchy.
-func NewTeamSlice(team string, percent int) (*TeamSlice, error) {
+func NewTeamSlice(team, instance string, percent int) (*TeamSlice, error) {
 	m, root, err := pickMode()
 	if err != nil {
 		return nil, err
 	}
-	name := teamSliceName(team)
+	name := teamSliceName(team, instance)
 	t := &TeamSlice{Percent: percent, name: name, unit: name + ".slice", mode: m, root: root}
 
 	if m == modeSystemd {
@@ -261,8 +274,8 @@ func (t *TeamSlice) Unit() string {
 	return t.unit
 }
 
-// teamSliceName turns a team's name into exactly one systemd hierarchy
-// component.
+// teamSliceName turns a team's name and this run of it into exactly one systemd
+// hierarchy component.
 //
 // The dash is systemd's separator: a-b-c.slice lives at a.slice/a-b.slice/
 // a-b-c.slice. So "kelyfos-team-<name>" is a deliberate three-level tree with
@@ -271,26 +284,50 @@ func (t *TeamSlice) Unit() string {
 // everything outside [A-Za-z0-9_] to _ keeps the team's own name one component,
 // whatever the user called it. Same string names the directory on the direct
 // path, because one spelling in one place cannot disagree with itself.
-func teamSliceName(team string) string {
-	var b strings.Builder
-	for _, r := range team {
-		switch {
-		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '_':
-			b.WriteRune(r)
-		default:
-			b.WriteByte('_')
+//
+// The instance is appended with "_", which is the one joiner that survives the
+// mapping above and is not systemd's separator, so two teams of one name get
+// two parents and neither can stop, re-cap or remove the other's (P7-16, D79).
+// It is truncated to eight characters: the whole point is to tell two
+// simultaneous teams apart, and eight hex characters of a session id is already
+// how this project names a sandbox. The team's own name is truncated first and
+// separately, so a long name can never crowd the instance out — the name is a
+// label and the instance is what makes the cgroup correct.
+func teamSliceName(team, instance string) string {
+	one := func(s string) string {
+		var b strings.Builder
+		for _, r := range s {
+			switch {
+			case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '_':
+				b.WriteRune(r)
+			default:
+				b.WriteByte('_')
+			}
 		}
+		return b.String()
 	}
-	s := b.String()
-	if s == "" {
-		s = "unnamed"
+	name := one(team)
+	if name == "" {
+		name = "unnamed"
 	}
 	// systemd unit names are bounded; a long team name is truncated rather than
 	// refused, because the name is the user's label and the cgroup is ours.
-	if len(s) > 64 {
-		s = s[:64]
+	if len(name) > 64 {
+		name = name[:64]
 	}
-	return "kelyfos-team-" + s
+	key := one(instance)
+	if len(key) > 8 {
+		key = key[:8]
+	}
+	if key == "" {
+		// Nothing to tell this team apart by. Keeping the old, shared name here
+		// would put a caller that passed nothing back in the collision this
+		// exists to close, so it gets a parent of its own that no other team
+		// will pick: a cgroup is per-process machinery and the pid is the one
+		// thing every caller has.
+		key = strconv.Itoa(os.Getpid())
+	}
+	return "kelyfos-team-" + name + "_" + key
 }
 
 // cpuMaxLineDenominator is the period half of a cpu.max line, so "no cap" can

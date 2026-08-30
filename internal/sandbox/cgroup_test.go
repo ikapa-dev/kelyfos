@@ -127,19 +127,58 @@ func TestWrapArgvPlacesTheScopeInTheTeamSlice(t *testing.T) {
 
 // The dash is systemd's hierarchy separator, so a team called "foo-bar" would
 // silently add a level and cap something other than the team. The team's own
-// name is always exactly one component.
+// name, and the instance appended to it, are always exactly one component.
 func TestATeamNameIsAlwaysOneSliceComponent(t *testing.T) {
 	for _, name := range []string{"demo", "foo-bar", "Ops Team", "a/b", "", "..", "réviseurs"} {
-		got := teamSliceName(name)
-		tail, ok := strings.CutPrefix(got, "kelyfos-team-")
-		if !ok {
-			t.Fatalf("teamSliceName(%q) = %q, which is not under the KelyfOS root", name, got)
+		for _, inst := range []string{"a1b2c3d4", "", "0901977d/../..", "x-y"} {
+			got := teamSliceName(name, inst)
+			tail, ok := strings.CutPrefix(got, "kelyfos-team-")
+			if !ok {
+				t.Fatalf("teamSliceName(%q, %q) = %q, which is not under the KelyfOS root",
+					name, inst, got)
+			}
+			if tail == "" {
+				t.Errorf("teamSliceName(%q, %q) named nothing", name, inst)
+			}
+			if strings.ContainsAny(tail, "-/. ") {
+				t.Errorf("teamSliceName(%q, %q) = %q, whose team part is more than one component",
+					name, inst, got)
+			}
 		}
-		if tail == "" {
-			t.Errorf("teamSliceName(%q) named nothing", name)
+	}
+}
+
+// P7-16 (D79): the parent cgroup was named for the team's NAME alone, so two
+// checkouts of one project running at once shared one slice — where the second
+// team's Close ran `systemctl --user stop` on it and took the first team's
+// Firecrackers with it, and where the direct path's Close removed a parent a
+// live team was still accounted in. Two teams of one name must get two parents.
+//
+// The long-name case is the one that would survive a careless fix: truncating
+// name+instance together at 64 characters puts two teams of one 64-character
+// name back in one slice, which is why the two halves are bounded separately.
+func TestTwoTeamsOfOneNameDoNotShareOneSlice(t *testing.T) {
+	cases := []struct{ what, team, a, b string }{
+		{"an ordinary name", "demo", "0901977d", "3f9a1c22"},
+		{"a name needing sanitising", "Ops Team", "0901977d", "3f9a1c22"},
+		{"a name at the length bound", strings.Repeat("n", 200), "0901977d", "3f9a1c22"},
+		{"ids differing only past the eighth character", "demo", "aaaaaaaa1", "aaaaaaaa2"},
+	}
+	for _, c := range cases {
+		x, y := teamSliceName(c.team, c.a), teamSliceName(c.team, c.b)
+		if c.what == "ids differing only past the eighth character" {
+			// Eight characters is the bound this deliberately keeps, so this
+			// pair is the documented limit rather than a defect: sandbox ids
+			// are eight hex characters and never collide in a prefix this way.
+			if x != y {
+				t.Errorf("%s: %q and %q differ, which the eight-character bound says they should not",
+					c.what, x, y)
+			}
+			continue
 		}
-		if strings.ContainsAny(tail, "-/. ") {
-			t.Errorf("teamSliceName(%q) = %q, whose team part is more than one component", name, got)
+		if x == y {
+			t.Errorf("%s: two teams called %q both got %q — one team's teardown stops the other's",
+				c.what, c.team, x)
 		}
 	}
 }
