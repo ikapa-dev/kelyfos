@@ -293,6 +293,7 @@ kelyfos team ps
 | --- | --- | --- | --- |
 | `--graph` | boolean | — | draw the topology this team was declared with at boot (P7-7) instead of the table below |
 | `--json` | boolean | — | emit structured data instead of a table — the same shape the team_ps MCP tool already returns (P7-10) |
+| `--team` | string | the only one running; needed when several are | which team, by name or session id |
 
 ## kelyfos team down
 
@@ -302,7 +303,9 @@ Run several agents with the paths between them written down and enforced, and in
 kelyfos team down
 ```
 
-No flags.
+| Flag | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `--team` | string | the only one running; needed when several are | which team, by name or session id |
 
 ## kelyfos team graph
 

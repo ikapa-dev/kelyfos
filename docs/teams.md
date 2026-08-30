@@ -548,6 +548,45 @@ team you can see is the team that exists.
 
 ---
 
+## 5.1 Several teams on one host
+
+More than one team may be up at once, and none of them can reach any of the
+others. Each `kelyfos team up` mints its own session, writes its own state at
+`~/.cache/kelyfos/run/teams/<session>.json`, gets its own cgroup parent, and
+holds its own machines, workspaces, proxies and record. There is no shared slot
+and no ordering between them.
+
+That is a change: before v1.1, `kelyfos team up` refused with *"a team is already
+running"* when a state file existed. The refusal is gone, and so is the file it
+was about — the check was a `stat` taken tens of seconds before the matching
+write, so two teams that both passed it went on to boot anyway and the second's
+write replaced the first's state (P7-16, D79).
+
+The only thing that changes for you is which team a command means:
+
+```sh
+kelyfos team ps                 # the only team running
+kelyfos team ps   --team build  # by name
+kelyfos team down --team 3f9a1c22   # or by session id
+```
+
+With one team up, nothing is different and no flag is needed. With several,
+`team ps` and `team down` refuse to guess and print what is running, with each
+team's name, session and pid — the same rule `kelyfos run`'s `--sandbox` has
+always had, one level up. Two teams may share a name, which is what two
+checkouts of one project do; the session id is what separates them.
+
+A team whose process was killed leaves its state file behind, and its machines
+may well still be running. It is listed as *"its process is gone"* rather than
+deleted, and `kelyfos team down --team <it>` is what clears it — nothing sweeps
+another process's state away underneath an operator.
+
+The MCP surface has no selector and needs none: `team_up`, `team_ps` and
+`team_down` are about the team *that server* raised. Teams raised elsewhere on
+the host are named in the refusal rather than acted on.
+
+---
+
 ## 6. The team budget
 
 `[team.resources]` is the collective cap: what the team as a whole may consume,
@@ -620,7 +659,7 @@ The host applies it the same two ways E1-2 applies a single sandbox's quota
   and each agent's Firecracker is placed inside at clone time. The cap is in
   place before any agent exists.
 - **Through the user manager**, under a systemd user session: the parent is a
-  slice, `kelyfos-team-<name>.slice`, and its cap is set with
+  slice, `kelyfos-team-<name>_<session>.slice`, and its cap is set with
   `systemctl --user set-property --runtime` **before the first agent starts** —
   which creates the slice and every level above it, so there is likewise no
   window in which the team runs uncapped. Each agent is then started into it
@@ -631,7 +670,13 @@ The host applies it the same two ways E1-2 applies a single sandbox's quota
 
 The team's name becomes exactly one component of that slice path, whatever it
 contains: `-` is systemd's hierarchy separator, so a team called `foo-bar` would
-otherwise silently add a level and cap something other than the team.
+otherwise silently add a level and cap something other than the team. The first
+eight characters of the team's own session id follow it, after a `_`, because
+the parent belongs to *this* team and not to its name: two checkouts of one
+project raise two teams called the same thing, and before this they shared one
+slice — where the second team's teardown stopped it, and every machine in it,
+including the first team's (P7-16, D79). `kelyfos team ps` prints the resolved
+path, so nothing has to reconstruct the name.
 
 `kelyfos team ps` prints the parent's own accounting — CPU used and CPU
 throttled — read from the cgroup the cap is written on, so the number and the
@@ -892,8 +937,8 @@ edges — read from the authoritative table, not the picture above
 `kelyfos team ps --graph` draws the same declared picture against a running
 team, sourced from that team's own recorded `team.topology` and
 `session.policy` events rather than from `kelyfos.toml` (which somebody can
-edit after the team came up) or `run/team.json` (which does not outlive the
-run) — D59's own reasoning for putting the declaration in the chain applies
+edit after the team came up) or a team's own `run/teams/<session>.json` (which
+does not outlive the run) — D59's own reasoning for putting the declaration in the chain applies
 here too. A declared graph and a running one are never two independent
 readings of one file: both go through the same conversion
 (`host/teamgraph.go`'s `buildGraphInput`), so `kelyfos team graph` in a

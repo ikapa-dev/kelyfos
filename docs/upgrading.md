@@ -191,7 +191,50 @@ written back`.
 
 ---
 
-## 7. What has never broken
+## 7. `run/team.json` is gone, and a team is no longer one per host (v1.1)
+
+Every team used to write `~/.cache/kelyfos/run/team.json`, and
+[`docs/integrating.md`](integrating.md) told you to read it to map an agent's
+name to its sandbox id. **That path no longer exists.** Each team now writes
+`~/.cache/kelyfos/run/teams/<session>.json`, because a single file made a team a
+slot: `kelyfos team up` refused to start when the file was there, unreliably,
+and two teams that both got past the check overwrote each other's state (P7-16,
+D79).
+
+**The fix is `kelyfos team ps --json`**, which has been in this same release
+since P7-10 and returns the roster in the shape the `team_ps` MCP tool already
+guaranteed:
+
+```sh
+kelyfos team ps --json |
+  python3 -c 'import json,sys
+a = json.load(sys.stdin)["agents"]
+print([x["sandbox"] for x in a if x["agent"] == "master"][0])'
+```
+
+Note the field is `agent`, not `name`, which is what `team_ps` has always called
+it. The new directory is internal layout and is not something to read instead:
+[`docs/compatibility.md`](compatibility.md) §2 does not pin it, and this is the
+second time it has moved.
+
+**Two other things move with it, neither of which needs anything from you.**
+`kelyfos team up` no longer refuses when another team is running — it boots. And
+a capped team's systemd slice is renamed from `kelyfos-team-<name>.slice` to
+`kelyfos-team-<name>_<session>.slice`, so two teams of one name stop sharing a
+cgroup; if you had a `systemctl --user` unit file, a drop-in or a monitoring
+rule matching the old name, match `kelyfos-team-*.slice` instead. `kelyfos team
+ps` prints the resolved path.
+
+**What you may now have to type.** With more than one team running, `kelyfos
+team ps` and `kelyfos team down` refuse to guess and list what is up; add
+`--team <name|session>`. With one team running — the ordinary case — nothing
+changes and no flag is needed. A script that raises exactly one team and tears
+it down needs no edit; a script that raises one and reads `team.json` needs the
+one above.
+
+---
+
+## 8. What has never broken
 
 Stated because "nothing changed" is only useful if somebody checked:
 

@@ -341,18 +341,25 @@ array carrying `agent`, `sandbox`, `via` (`cold` or `fork`), what each has
 consumed against its cap, its allowlist, and who it may message. That is the
 mapping an orchestrator needs, and it is a tool rather than a file.
 
-**From a shell**, it is on disk while the team is up:
+**From a shell**, ask the command line for it:
 
-```
-~/.cache/kelyfos/run/team.json
+```sh
+kelyfos team ps --json
 ```
 
-It holds an `agents` array whose entries carry at least `name`, `sandbox` and
-`via`. That is what `kelyfos mcp --sandbox <id>` wants. The file exists for the
-lifetime of the team and `team down` removes it, so read it after the team is up
-and do not cache it across runs. It also records which door raised the team,
-which is why `kelyfos team down` refuses to signal a team a `serve-mcp` server is
-holding.
+It returns the same shape `team_ps` does — an `agents` array whose entries carry
+`agent`, `sandbox` and `via` — which is what `kelyfos mcp --sandbox <id>` wants.
+It also names the team, its session and which door raised it, which is why
+`kelyfos team down` refuses to signal a team a `serve-mcp` server is holding.
+
+Several teams may be up at once, each with its own state and its own record. With
+more than one running, `--team <name|session>` says which; with one, nothing
+changes. Earlier versions of this page told you to read
+`~/.cache/kelyfos/run/team.json` instead. Do not: that path no longer exists —
+each team now writes `~/.cache/kelyfos/run/teams/<session>.json`, and it is
+internal layout rather than a surface this project promises to keep still
+(`docs/compatibility.md` §2). `kelyfos team ps --json` is the answer that is
+promised.
 
 ### Read the record rather than the output
 

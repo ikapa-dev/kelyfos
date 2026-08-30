@@ -37,13 +37,23 @@ WORK="$(mktemp -d)"
 PASSES=0 FAILURES=0 SKIPS=0
 SUMMARY=()
 TEAM_CAP=200
+# The team this run raised. Every command that means "the team" names it, so a
+# peer's team on the same development box is neither read nor stopped by this
+# script (P7-16, D79).
+TEAM_NAME="proof"
+SESSION=""
+OWN_FC_PIDS=()
+
+fc_pid() { local f="$RUN_ROOT/firecracker/$1/root/firecracker.pid"; [ -f "$f" ] && cat "$f" 2>/dev/null; }
 
 cleanup() {
-  "$KELYFOS" team down >/dev/null 2>&1
+  [ -n "$SESSION" ] && "$KELYFOS" team down --team "$SESSION" >/dev/null 2>&1
   sleep 1
   pkill -f "$KELYFOS team up" 2>/dev/null
   sleep 1
-  for p in $(pgrep firecracker 2>/dev/null); do kill "$p" 2>/dev/null; done
+  # This run's own machines only. `pgrep firecracker` is a host-wide question
+  # and answering it with a kill is how a peer worktree loses its microVMs.
+  for p in ${OWN_FC_PIDS[@]+"${OWN_FC_PIDS[@]}"}; do kill "$p" 2>/dev/null; done
   rm -rf "$WORK"
 }
 trap cleanup EXIT
@@ -86,18 +96,31 @@ up() {
     echo "      the team never came up:"; sed 's/^/      /' "$dir/team.log"
     return 1
   fi
-  TEAM_CGROUP="$(python3 -c "import json;print(json.load(open('$RUN_ROOT/team.json')).get('cgroup',''))" 2>/dev/null)"
-  SBS="$(python3 -c "import json;print(' '.join(a['sandbox'] for a in json.load(open('$RUN_ROOT/team.json'))['agents']))" 2>/dev/null)"
+  SESSION="$("$KELYFOS" team ps --team "$TEAM_NAME" --json 2>/dev/null |
+             python3 -c 'import json,sys;print(json.load(sys.stdin)["session"])' 2>/dev/null)"
+  if [ -z "$SESSION" ]; then
+    echo "      the team came up but did not report a session"; return 1
+  fi
+  local roster; roster="$("$KELYFOS" team ps --team "$SESSION" --json 2>/dev/null)"
+  TEAM_CGROUP="$(printf '%s' "$roster" | python3 -c 'import json,sys;print((json.load(sys.stdin).get("budget") or {}).get("cgroup",""))' 2>/dev/null)"
+  SBS="$(printf '%s' "$roster" | python3 -c 'import json,sys;print(" ".join(a["sandbox"] for a in json.load(sys.stdin)["agents"]))' 2>/dev/null)"
+  local sb; for sb in $SBS; do
+    local p; p="$(fc_pid "$sb")"; [ -n "$p" ] && OWN_FC_PIDS+=("$p")
+  done
   echo "      $(grep -c 'ready in' "$dir/team.log") agents, $(grep 'team up in' "$dir/team.log")"
 }
 
 down() {
-  "$KELYFOS" team down >/dev/null 2>&1
+  [ -n "$SESSION" ] || return 0
+  "$KELYFOS" team down --team "$SESSION" >/dev/null 2>&1
+  # Asked of the product rather than of the layout: `team ps` on a team that has
+  # stopped fails, and that is the same answer wherever its state lives.
   for _ in $(seq 1 120); do
-    [ -f "$RUN_ROOT/team.json" ] || break
+    "$KELYFOS" team ps --team "$SESSION" >/dev/null 2>&1 || break
     sleep 0.5
   done
   wait "$UPPID" 2>/dev/null
+  SESSION=""
 }
 
 # usage_usec <cgroup dir> — cumulative CPU microseconds the cgroup accounted.
@@ -183,7 +206,7 @@ if ! up "$dir"; then
   fail "the capped team never came up"
 else
   if [ -z "${TEAM_CGROUP:-}" ]; then
-    fail "the team reported no cgroup path in team.json, so there is nothing to measure"
+    fail "the team reported no cgroup path, so there is nothing to measure"
   else
     echo "        parent  $TEAM_CGROUP"
     echo "        cpu.max $(cat "$TEAM_CGROUP/cpu.max" 2>&1)"

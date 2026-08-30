@@ -22,18 +22,43 @@
 set -uo pipefail
 
 ARCH="${ARCH:-$(uname -m | sed -e 's/^arm64$/aarch64/' -e 's/^amd64$/x86_64/')}"
+# The name the committed demo policy gives this team; `team ps --team` takes it.
+TEAM_NAME="${TEAM_NAME:-suppliers}"
 KELYFOS="${KELYFOS:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/kelyfos}"
 RUN_ROOT="${HOME}/.cache/kelyfos/run"
 WORK="$(mktemp -d)"
 PASSES=0 FAILURES=0 SKIPS=0
 SUMMARY=()
+# This run's own team, learned at boot. Every command that means "the team"
+# names this one: several teams may be up on a shared development box, and
+# asking a host-wide question is how a peer's team gets torn down by somebody
+# else's script (P7-16, D79 — the same reason step 6's teardown check was
+# scoped in S20).
+SESSION=""
+OWN_FC_PIDS=()
+
+# remember_own_pids <sandbox id>... — the jailer writes one pid file per
+# sandbox at $RUN_ROOT/firecracker/<id>/root/firecracker.pid. Collected while
+# the machines exist, because teardown removes the directory holding it.
+fc_pid() { local f="$RUN_ROOT/firecracker/$1/root/firecracker.pid"; [ -f "$f" ] && cat "$f" 2>/dev/null; }
+remember_own_pids() {
+  local s p
+  for s in "$@"; do
+    [ -n "$s" ] || continue
+    p="$(fc_pid "$s")"
+    [ -n "$p" ] && OWN_FC_PIDS+=("$p")
+  done
+}
 
 cleanup() {
-  "$KELYFOS" team down >/dev/null 2>&1
+  [ -n "$SESSION" ] && "$KELYFOS" team down --team "$SESSION" >/dev/null 2>&1
   sleep 1
   pkill -f "$KELYFOS team up" 2>/dev/null
   sleep 1
-  for p in $(pgrep firecracker 2>/dev/null); do kill "$p" 2>/dev/null; done
+  # This run's own Firecrackers, not every Firecracker on the machine. A
+  # host-wide kill here is the defect P7-16 is about, one layer out: it stops
+  # a peer worktree's microVMs while they are being used.
+  for p in ${OWN_FC_PIDS[@]+"${OWN_FC_PIDS[@]}"}; do kill "$p" 2>/dev/null; done
   rm -rf "$WORK"
 }
 trap cleanup EXIT
@@ -68,8 +93,12 @@ c = r.get("content", [])
 print(c[0].get("text","") if c else "")' 2>/dev/null
 }
 field() { python3 -c "import json,sys; print(json.load(sys.stdin).get('result',{}).get('structuredContent',{}).get('$1',''))" 2>/dev/null; }
-sb() { python3 -c "import json;print([a['sandbox'] for a in json.load(open('$RUN_ROOT/team.json'))['agents'] if a['name']=='$1'][0])" 2>/dev/null; }
-via() { python3 -c "import json;print([a.get('via','') for a in json.load(open('$RUN_ROOT/team.json'))['agents'] if a['name']=='$1'][0])" 2>/dev/null; }
+# The roster comes from `team ps --json` and not from a file this script parses
+# itself: it is the shape the product promises, it names one team rather than
+# whichever one is up, and it is what the cookbook now tells a reader to use.
+roster() { "$KELYFOS" team ps --team "$SESSION" --json 2>/dev/null; }
+sb() { roster | python3 -c "import json,sys;a=json.load(sys.stdin)['agents'];print([x['sandbox'] for x in a if x['agent']=='$1'][0])" 2>/dev/null; }
+via() { roster | python3 -c "import json,sys;a=json.load(sys.stdin)['agents'];print([x.get('via','') for x in a if x['agent']=='$1'][0])" 2>/dev/null; }
 
 say "KelyfOS agent teams — Epic E2 proof demo (E2-9)"
 echo "  arch        $ARCH"
@@ -105,19 +134,32 @@ grep -v '^ *#' "$PROJ/kelyfos.toml" | grep -v '^ *$' | sed 's/^/        /'
 # `kelyfos team up` process running in the background as UPPID.
 up() {
   local log="$1"
-  rm -f "$RUN_ROOT/team.json"
+  SESSION=""
   ( cd "$PROJ" && "$KELYFOS" team up --arch "$ARCH" > "$log" 2>&1 ) &
   UPPID=$!
   for _ in $(seq 1 600); do
     grep -q "team up in" "$PROJ/$log" 2>/dev/null && break
     sleep 0.25
   done
-  grep -q "team up in" "$PROJ/$log" 2>/dev/null
+  grep -q "team up in" "$PROJ/$log" 2>/dev/null || return 1
+  # Which team this run raised, by name and then by session id, so nothing
+  # after this line can be answered about somebody else's team.
+  SESSION="$("$KELYFOS" team ps --team "$TEAM_NAME" --json 2>/dev/null |
+             python3 -c 'import json,sys;print(json.load(sys.stdin)["session"])' 2>/dev/null)"
+  [ -n "$SESSION" ] || return 1
+  return 0
 }
 down() {
-  "$KELYFOS" team down >/dev/null 2>&1
-  for _ in $(seq 1 120); do [ -f "$RUN_ROOT/team.json" ] || break; sleep 0.5; done
+  [ -n "$SESSION" ] || return 0
+  "$KELYFOS" team down --team "$SESSION" >/dev/null 2>&1
+  # Asked of the product rather than of the layout: `team ps` on a team that has
+  # stopped fails, and that is the same answer wherever its state lives.
+  for _ in $(seq 1 120); do
+    "$KELYFOS" team ps --team "$SESSION" >/dev/null 2>&1 || break
+    sleep 0.5
+  done
   wait "$UPPID" 2>/dev/null
+  SESSION=""
 }
 ms() { sed -n 's/^team up in \([0-9]*\) ms.*/\1/p' "$PROJ/$1" | sed -n '1,1p'; }
 
@@ -161,14 +203,15 @@ fi
 sed 's/^/        /' "$PROJ/team.log"
 WARM_MS="$(ms team.log)"
 
-SESS="$(python3 -c "import json;print(json.load(open('$RUN_ROOT/team.json'))['session'])")"
+SESS="$SESSION"
 M="$(sb master)"
 W1="$(sb worker-1)"; W2="$(sb worker-2)"; W3="$(sb worker-3)"; W4="$(sb worker-4)"
+remember_own_pids "$M" "$W1" "$W2" "$W3" "$W4"
 
 if [ -n "$M" ] && [ -n "$W1" ] && [ -n "$W2" ] && [ -n "$W3" ] && [ -n "$W4" ]; then
   pass "five agents are running: master + four workers"
 else
-  fail "the team is not five agents: $(python3 -c "import json;print(json.load(open('$RUN_ROOT/team.json'))['agents'])" 2>&1)"
+  fail "the team is not five agents: $(roster 2>&1 | sed -n '1,20p')"
 fi
 
 # The two boot paths must be visible rather than inferred (F-D19).
@@ -364,16 +407,19 @@ echo "        before: $(ls "$PROJ/ws" | tr '\n' ' ')"
 # the sandbox IDs the script already tracked ($M/$W1-4, plus the step-5 spawn)
 # instead of introducing new tracking. Read before "team down" runs, since
 # teardown is what removes the jail directory the pid file lives in.
-fc_pid() { local f="$RUN_ROOT/firecracker/$1/root/firecracker.pid"; [ -f "$f" ] && cat "$f" 2>/dev/null; }
 TEAM_PIDS=()
 for s in "$M" "$W1" "$W2" "$W3" "$W4" "${NEW:-}"; do
   [ -n "$s" ] || continue
   p="$(fc_pid "$s")"
   [ -n "$p" ] && TEAM_PIDS+=("$p")
 done
-"$KELYFOS" team down 2>&1 | sed 's/^/        /'
-for _ in $(seq 1 120); do [ -f "$RUN_ROOT/team.json" ] || break; sleep 0.5; done
+"$KELYFOS" team down --team "$SESSION" 2>&1 | sed 's/^/        /'
+for _ in $(seq 1 120); do
+  "$KELYFOS" team ps --team "$SESSION" >/dev/null 2>&1 || break
+  sleep 0.5
+done
 wait "$UPPID" 2>/dev/null
+SESSION=""
 sed -n '/stopping/,$p' "$PROJ/team.log" | sed 's/^/        /'
 echo "        after:  $(ls "$PROJ/ws" | tr '\n' ' ')"
 # Scoped to this run's own sandboxes (the PIDs collected above), not every

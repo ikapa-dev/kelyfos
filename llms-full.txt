@@ -1055,7 +1055,50 @@ written back`.
 
 ---
 
-## 7. What has never broken
+## 7. `run/team.json` is gone, and a team is no longer one per host (v1.1)
+
+Every team used to write `~/.cache/kelyfos/run/team.json`, and
+[`docs/integrating.md`](https://raw.githubusercontent.com/ikapa-dev/kelyfos/main/docs/integrating.md) told you to read it to map an agent's
+name to its sandbox id. **That path no longer exists.** Each team now writes
+`~/.cache/kelyfos/run/teams/<session>.json`, because a single file made a team a
+slot: `kelyfos team up` refused to start when the file was there, unreliably,
+and two teams that both got past the check overwrote each other's state (P7-16,
+D79).
+
+**The fix is `kelyfos team ps --json`**, which has been in this same release
+since P7-10 and returns the roster in the shape the `team_ps` MCP tool already
+guaranteed:
+
+```sh
+kelyfos team ps --json |
+  python3 -c 'import json,sys
+a = json.load(sys.stdin)["agents"]
+print([x["sandbox"] for x in a if x["agent"] == "master"][0])'
+```
+
+Note the field is `agent`, not `name`, which is what `team_ps` has always called
+it. The new directory is internal layout and is not something to read instead:
+[`docs/compatibility.md`](https://raw.githubusercontent.com/ikapa-dev/kelyfos/main/docs/compatibility.md) §2 does not pin it, and this is the
+second time it has moved.
+
+**Two other things move with it, neither of which needs anything from you.**
+`kelyfos team up` no longer refuses when another team is running — it boots. And
+a capped team's systemd slice is renamed from `kelyfos-team-<name>.slice` to
+`kelyfos-team-<name>_<session>.slice`, so two teams of one name stop sharing a
+cgroup; if you had a `systemctl --user` unit file, a drop-in or a monitoring
+rule matching the old name, match `kelyfos-team-*.slice` instead. `kelyfos team
+ps` prints the resolved path.
+
+**What you may now have to type.** With more than one team running, `kelyfos
+team ps` and `kelyfos team down` refuse to guess and list what is up; add
+`--team <name|session>`. With one team running — the ordinary case — nothing
+changes and no flag is needed. A script that raises exactly one team and tears
+it down needs no edit; a script that raises one and reads `team.json` needs the
+one above.
+
+---
+
+## 8. What has never broken
 
 Stated because "nothing changed" is only useful if somebody checked:
 
@@ -3692,6 +3735,45 @@ team you can see is the team that exists.
 
 ---
 
+## 5.1 Several teams on one host
+
+More than one team may be up at once, and none of them can reach any of the
+others. Each `kelyfos team up` mints its own session, writes its own state at
+`~/.cache/kelyfos/run/teams/<session>.json`, gets its own cgroup parent, and
+holds its own machines, workspaces, proxies and record. There is no shared slot
+and no ordering between them.
+
+That is a change: before v1.1, `kelyfos team up` refused with *"a team is already
+running"* when a state file existed. The refusal is gone, and so is the file it
+was about — the check was a `stat` taken tens of seconds before the matching
+write, so two teams that both passed it went on to boot anyway and the second's
+write replaced the first's state (P7-16, D79).
+
+The only thing that changes for you is which team a command means:
+
+```sh
+kelyfos team ps                 # the only team running
+kelyfos team ps   --team build  # by name
+kelyfos team down --team 3f9a1c22   # or by session id
+```
+
+With one team up, nothing is different and no flag is needed. With several,
+`team ps` and `team down` refuse to guess and print what is running, with each
+team's name, session and pid — the same rule `kelyfos run`'s `--sandbox` has
+always had, one level up. Two teams may share a name, which is what two
+checkouts of one project do; the session id is what separates them.
+
+A team whose process was killed leaves its state file behind, and its machines
+may well still be running. It is listed as *"its process is gone"* rather than
+deleted, and `kelyfos team down --team <it>` is what clears it — nothing sweeps
+another process's state away underneath an operator.
+
+The MCP surface has no selector and needs none: `team_up`, `team_ps` and
+`team_down` are about the team *that server* raised. Teams raised elsewhere on
+the host are named in the refusal rather than acted on.
+
+---
+
 ## 6. The team budget
 
 `[team.resources]` is the collective cap: what the team as a whole may consume,
@@ -3764,7 +3846,7 @@ The host applies it the same two ways E1-2 applies a single sandbox's quota
   and each agent's Firecracker is placed inside at clone time. The cap is in
   place before any agent exists.
 - **Through the user manager**, under a systemd user session: the parent is a
-  slice, `kelyfos-team-<name>.slice`, and its cap is set with
+  slice, `kelyfos-team-<name>_<session>.slice`, and its cap is set with
   `systemctl --user set-property --runtime` **before the first agent starts** —
   which creates the slice and every level above it, so there is likewise no
   window in which the team runs uncapped. Each agent is then started into it
@@ -3775,7 +3857,13 @@ The host applies it the same two ways E1-2 applies a single sandbox's quota
 
 The team's name becomes exactly one component of that slice path, whatever it
 contains: `-` is systemd's hierarchy separator, so a team called `foo-bar` would
-otherwise silently add a level and cap something other than the team.
+otherwise silently add a level and cap something other than the team. The first
+eight characters of the team's own session id follow it, after a `_`, because
+the parent belongs to *this* team and not to its name: two checkouts of one
+project raise two teams called the same thing, and before this they shared one
+slice — where the second team's teardown stopped it, and every machine in it,
+including the first team's (P7-16, D79). `kelyfos team ps` prints the resolved
+path, so nothing has to reconstruct the name.
 
 `kelyfos team ps` prints the parent's own accounting — CPU used and CPU
 throttled — read from the cgroup the cap is written on, so the number and the
@@ -4036,8 +4124,8 @@ edges — read from the authoritative table, not the picture above
 `kelyfos team ps --graph` draws the same declared picture against a running
 team, sourced from that team's own recorded `team.topology` and
 `session.policy` events rather than from `kelyfos.toml` (which somebody can
-edit after the team came up) or `run/team.json` (which does not outlive the
-run) — D59's own reasoning for putting the declaration in the chain applies
+edit after the team came up) or a team's own `run/teams/<session>.json` (which
+does not outlive the run) — D59's own reasoning for putting the declaration in the chain applies
 here too. A declared graph and a running one are never two independent
 readings of one file: both go through the same conversion
 (`host/teamgraph.go`'s `buildGraphInput`), so `kelyfos team graph` in a
@@ -6481,7 +6569,7 @@ Three consequences worth saying out loud:
 - **One team at a time**, because a machine runs one: the state file that says
   what is up has one name in it. A second `team_up` is refused, naming the team
   already running.
-- **A team belongs to whoever raised it.** `team.json` records which door it came
+- **A team belongs to whoever raised it.** Its state file records which door it came
   through. A team raised here is retired here; `kelyfos team down` in a shell
   refuses to signal the server, because that process is also holding every
   sandbox it created and stopping it would take all of that down too. The
@@ -8019,7 +8107,7 @@ description: complete recipes, each one a script CI runs on a real machine
 
 # KelyfOS cookbook
 
-Twenty-two recipes, each one complete, each one runnable as it stands.
+Twenty-three recipes, each one complete, each one runnable as it stands.
 
 These are not illustrations. `bash dev/cookbook.sh` extracts every script below
 and runs it on a real machine. Every commit checks that each recipe still
@@ -8364,10 +8452,10 @@ kelyfos team ps
 # An agent framework calls the team tools for you. Driving them by hand needs
 # one helper, because MCP over stdio is newline-delimited JSON-RPC and a
 # blocking tool answers when the other side acts, not when the request is sent.
-sandbox() { python3 -c "
+sandbox() { kelyfos team ps --json | python3 -c "
 import json,sys
-a=json.load(open('$HOME/.cache/kelyfos/run/team.json'))['agents']
-print([x['sandbox'] for x in a if x['name']=='$1'][0])"; }
+a=json.load(sys.stdin)['agents']
+print([x['sandbox'] for x in a if x['agent']=='$1'][0])"; }
 
 call() {  # call <agent> <tool> <args-json> [seconds to hold the channel open]
   { printf '%s\n' \
@@ -10043,10 +10131,10 @@ echo "open socket fds held by the --refresh process: $sockets"
 echo "zero, as D60/D63 require of everything outside kelyfos view (P7-12)"
 
 # Driving the team by hand needs one helper — see recipe 5 for why.
-sandbox() { python3 -c "
-import json
-a=json.load(open('$HOME/.cache/kelyfos/run/team.json'))['agents']
-print([x['sandbox'] for x in a if x['name']=='$1'][0])"; }
+sandbox() { kelyfos team ps --json | python3 -c "
+import json,sys
+a=json.load(sys.stdin)['agents']
+print([x['sandbox'] for x in a if x['agent']=='$1'][0])"; }
 call() {  # call <agent> <tool> <args-json> [seconds to hold the channel open]
   { printf '%s\n' \
     '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"cookbook","version":"1"}}}' \
@@ -10213,6 +10301,113 @@ fi
 VIEW_PID=""
 grep -q 'stopping (the session ended)' view.log
 echo "the viewer process exited on its own — nothing left listening on that port"
+```
+
+---
+
+## 22. Run two teams on one host, and stop one of them
+
+Two teams at once is an ordinary state, not a contended one. Each has its own
+machines, its own record, its own cgroup and its own state; nothing is shared
+and nothing is queued. Two checkouts of one project raise two teams with the
+same name, which is why the session id is what tells them apart.
+
+The one thing that changes is that `team ps` and `team down` will not guess.
+With one team up they mean it, exactly as before. With two, they print what is
+running and wait to be told which — the same rule `--sandbox` has always had for
+`kelyfos exec`, one level up.
+
+Before v1.1 the second `team up` here refused outright with *"a team is already
+running"* — and the check was unreliable enough that two teams started within a
+few seconds of each other passed it anyway and then overwrote each other's state
+(P7-16, D79).
+
+<!-- recipe: two-teams -->
+
+```bash
+set -euo pipefail
+work="$(mktemp -d)"
+cd "$work"
+# Declared before the trap so it can name each team by its own session id once
+# they exist, and fall back to the name until then. Naming a team is the whole
+# point of this recipe: a teardown that says "the team" is a teardown that can
+# stop somebody else's.
+A_SESSION=""; B_SESSION=""
+trap 'kelyfos team down --team "${A_SESSION:-alpha}" >/dev/null 2>&1 || true;
+      kelyfos team down --team "${B_SESSION:-beta}"  >/dev/null 2>&1 || true;
+      pkill -f "kelyfos team up" 2>/dev/null || true; rm -rf "$work"' EXIT
+
+# Two projects, side by side. Same shape, different names — a name is only a
+# label, and two teams may share one.
+for name in alpha beta; do
+  mkdir -p "$work/$name"
+  cat > "$work/$name/kelyfos.toml" <<TOML
+[team]
+name = "$name"
+
+[[team.agent]]
+name  = "lead"
+image = "dev"
+
+[[team.agent]]
+name  = "hand"
+image = "dev"
+
+[[team.edge]]
+from = "lead"
+to   = "hand"
+TOML
+done
+
+# Both up, at the same time, from their own directories.
+( cd "$work/alpha" && kelyfos team up ) >alpha.log 2>&1 &
+( cd "$work/beta"  && kelyfos team up ) >beta.log  2>&1 &
+for f in alpha.log beta.log; do
+  for _ in $(seq 1 600); do grep -q 'team up in' "$f" && break; sleep 0.25; done
+  grep -q 'team up in' "$f" || { echo "== $f =="; cat "$f"; exit 1; }
+done
+echo "== both teams are up =="
+
+# With two running, an unqualified `team ps` refuses and says what is there
+# rather than picking one.
+if kelyfos team ps >ps.log 2>&1; then
+  echo "team ps picked a team with two running:"; cat ps.log; exit 1
+fi
+sed -n '1,6p' ps.log
+grep -q -- '--team' ps.log
+
+# Named, each answers about itself — including its own session and its own
+# cgroup parent, which are what make them separate rather than interleaved.
+A_SESSION="$(kelyfos team ps --team alpha --json | python3 -c 'import json,sys;print(json.load(sys.stdin)["session"])')"
+B_SESSION="$(kelyfos team ps --team beta  --json | python3 -c 'import json,sys;print(json.load(sys.stdin)["session"])')"
+
+echo "alpha session $A_SESSION"
+echo "beta  session $B_SESSION"
+[ "$A_SESSION" != "$B_SESSION" ]
+
+# Stop one. The other must not notice.
+kelyfos team down --team alpha
+echo "== alpha is down; beta is untouched =="
+kelyfos team ps --team beta
+kelyfos team ps --team beta --json |
+  python3 -c 'import json,sys
+d=json.load(sys.stdin)
+assert d["session"]!="", d
+assert all(a["alive"] for a in d["agents"]), d["agents"]
+print("beta:", d["team"], len(d["agents"]), "agents, all alive")'
+
+# And alpha really is gone rather than merely unnamed.
+if kelyfos team ps --team alpha >after.log 2>&1; then
+  echo "alpha is still running after team down:"; cat after.log; exit 1
+fi
+sed -n '1,3p' after.log
+
+# Each team's record is its own, and both verify.
+kelyfos log --session "$B_SESSION" --verify | sed -n '1,3p'
+kelyfos log --session "$A_SESSION" --verify | sed -n '1,3p'
+
+kelyfos team down --team beta
+echo "both teams retired"
 ```
 
 ---
@@ -10595,18 +10790,25 @@ array carrying `agent`, `sandbox`, `via` (`cold` or `fork`), what each has
 consumed against its cap, its allowlist, and who it may message. That is the
 mapping an orchestrator needs, and it is a tool rather than a file.
 
-**From a shell**, it is on disk while the team is up:
+**From a shell**, ask the command line for it:
 
-```
-~/.cache/kelyfos/run/team.json
+```sh
+kelyfos team ps --json
 ```
 
-It holds an `agents` array whose entries carry at least `name`, `sandbox` and
-`via`. That is what `kelyfos mcp --sandbox <id>` wants. The file exists for the
-lifetime of the team and `team down` removes it, so read it after the team is up
-and do not cache it across runs. It also records which door raised the team,
-which is why `kelyfos team down` refuses to signal a team a `serve-mcp` server is
-holding.
+It returns the same shape `team_ps` does — an `agents` array whose entries carry
+`agent`, `sandbox` and `via` — which is what `kelyfos mcp --sandbox <id>` wants.
+It also names the team, its session and which door raised it, which is why
+`kelyfos team down` refuses to signal a team a `serve-mcp` server is holding.
+
+Several teams may be up at once, each with its own state and its own record. With
+more than one running, `--team <name|session>` says which; with one, nothing
+changes. Earlier versions of this page told you to read
+`~/.cache/kelyfos/run/team.json` instead. Do not: that path no longer exists —
+each team now writes `~/.cache/kelyfos/run/teams/<session>.json`, and it is
+internal layout rather than a surface this project promises to keep still
+(`docs/compatibility.md` §2). `kelyfos team ps --json` is the answer that is
+promised.
 
 ### Read the record rather than the output
 
@@ -11318,7 +11520,8 @@ question a reviewer asks first — *what was this allowed to reach?* — has no
 answer in the file that answers everything else. D59 puts the declaration in
 the chain so that question is answered by the same JSONL every other question
 about a run is answered by, rather than by `kelyfos.toml`, which the user can
-edit afterwards, or `run/team.json`, which does not outlive the run.
+edit afterwards, or a team's own `run/teams/<session>.json`, which does not
+outlive the run.
 
 Two additive event types carry it: `session.policy`, once per machine, and
 `team.topology`, once per team. Both are new types, not new fields bolted onto
@@ -13600,6 +13803,7 @@ kelyfos team ps
 | --- | --- | --- | --- |
 | `--graph` | boolean | — | draw the topology this team was declared with at boot (P7-7) instead of the table below |
 | `--json` | boolean | — | emit structured data instead of a table — the same shape the team_ps MCP tool already returns (P7-10) |
+| `--team` | string | the only one running; needed when several are | which team, by name or session id |
 
 ## kelyfos team down
 
@@ -13609,7 +13813,9 @@ Run several agents with the paths between them written down and enforced, and in
 kelyfos team down
 ```
 
-No flags.
+| Flag | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `--team` | string | the only one running; needed when several are | which team, by name or session id |
 
 ## kelyfos team graph
 
@@ -14242,13 +14448,13 @@ Restore one snapshot into several sandboxes at once. Each fork resumes from the 
 
 ### `team_up`
 
-Boot the team this project's kelyfos.toml declares — every agent, the edges between them, and the collective CPU budget — and return the roster. There are no parameters: the topology is the file's, and no tool here can add an agent or an edge. One team at a time.
+Boot the team this project's kelyfos.toml declares — every agent, the edges between them, and the collective CPU budget — and return the roster. There are no parameters: the topology is the file's, and no tool here can add an agent or an edge. This server holds one team at a time; other teams may be running beside it, raised by somebody else.
 
 No parameters.
 
 ### `team_ps`
 
-Who is in the running team, what each agent has consumed against its cap, what each may reach on the network, and who it can message. Returns structured data as well as a table.
+Who is in the team this server raised — what each agent has consumed against its cap, what each may reach on the network, and who it can message. With no team of its own it answers about the only team running on the host, and names them all rather than guessing when several are. Returns structured data as well as a table.
 
 No parameters.
 

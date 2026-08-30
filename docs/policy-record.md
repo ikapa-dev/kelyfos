@@ -27,7 +27,8 @@ question a reviewer asks first — *what was this allowed to reach?* — has no
 answer in the file that answers everything else. D59 puts the declaration in
 the chain so that question is answered by the same JSONL every other question
 about a run is answered by, rather than by `kelyfos.toml`, which the user can
-edit afterwards, or `run/team.json`, which does not outlive the run.
+edit afterwards, or a team's own `run/teams/<session>.json`, which does not
+outlive the run.
 
 Two additive event types carry it: `session.policy`, once per machine, and
 `team.topology`, once per team. Both are new types, not new fields bolted onto

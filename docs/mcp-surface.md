@@ -290,7 +290,7 @@ Three consequences worth saying out loud:
 - **One team at a time**, because a machine runs one: the state file that says
   what is up has one name in it. A second `team_up` is refused, naming the team
   already running.
-- **A team belongs to whoever raised it.** `team.json` records which door it came
+- **A team belongs to whoever raised it.** Its state file records which door it came
   through. A team raised here is retired here; `kelyfos team down` in a shell
   refuses to signal the server, because that process is also holding every
   sandbox it created and stopping it would take all of that down too. The

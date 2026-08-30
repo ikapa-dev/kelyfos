@@ -1,6 +1,6 @@
 # KelyfOS cookbook
 
-Twenty-two recipes, each one complete, each one runnable as it stands.
+Twenty-three recipes, each one complete, each one runnable as it stands.
 
 These are not illustrations. `bash dev/cookbook.sh` extracts every script below
 and runs it on a real machine. Every commit checks that each recipe still
@@ -345,10 +345,10 @@ kelyfos team ps
 # An agent framework calls the team tools for you. Driving them by hand needs
 # one helper, because MCP over stdio is newline-delimited JSON-RPC and a
 # blocking tool answers when the other side acts, not when the request is sent.
-sandbox() { python3 -c "
+sandbox() { kelyfos team ps --json | python3 -c "
 import json,sys
-a=json.load(open('$HOME/.cache/kelyfos/run/team.json'))['agents']
-print([x['sandbox'] for x in a if x['name']=='$1'][0])"; }
+a=json.load(sys.stdin)['agents']
+print([x['sandbox'] for x in a if x['agent']=='$1'][0])"; }
 
 call() {  # call <agent> <tool> <args-json> [seconds to hold the channel open]
   { printf '%s\n' \
@@ -2024,10 +2024,10 @@ echo "open socket fds held by the --refresh process: $sockets"
 echo "zero, as D60/D63 require of everything outside kelyfos view (P7-12)"
 
 # Driving the team by hand needs one helper — see recipe 5 for why.
-sandbox() { python3 -c "
-import json
-a=json.load(open('$HOME/.cache/kelyfos/run/team.json'))['agents']
-print([x['sandbox'] for x in a if x['name']=='$1'][0])"; }
+sandbox() { kelyfos team ps --json | python3 -c "
+import json,sys
+a=json.load(sys.stdin)['agents']
+print([x['sandbox'] for x in a if x['agent']=='$1'][0])"; }
 call() {  # call <agent> <tool> <args-json> [seconds to hold the channel open]
   { printf '%s\n' \
     '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"cookbook","version":"1"}}}' \
@@ -2194,6 +2194,113 @@ fi
 VIEW_PID=""
 grep -q 'stopping (the session ended)' view.log
 echo "the viewer process exited on its own — nothing left listening on that port"
+```
+
+---
+
+## 22. Run two teams on one host, and stop one of them
+
+Two teams at once is an ordinary state, not a contended one. Each has its own
+machines, its own record, its own cgroup and its own state; nothing is shared
+and nothing is queued. Two checkouts of one project raise two teams with the
+same name, which is why the session id is what tells them apart.
+
+The one thing that changes is that `team ps` and `team down` will not guess.
+With one team up they mean it, exactly as before. With two, they print what is
+running and wait to be told which — the same rule `--sandbox` has always had for
+`kelyfos exec`, one level up.
+
+Before v1.1 the second `team up` here refused outright with *"a team is already
+running"* — and the check was unreliable enough that two teams started within a
+few seconds of each other passed it anyway and then overwrote each other's state
+(P7-16, D79).
+
+<!-- recipe: two-teams -->
+
+```bash
+set -euo pipefail
+work="$(mktemp -d)"
+cd "$work"
+# Declared before the trap so it can name each team by its own session id once
+# they exist, and fall back to the name until then. Naming a team is the whole
+# point of this recipe: a teardown that says "the team" is a teardown that can
+# stop somebody else's.
+A_SESSION=""; B_SESSION=""
+trap 'kelyfos team down --team "${A_SESSION:-alpha}" >/dev/null 2>&1 || true;
+      kelyfos team down --team "${B_SESSION:-beta}"  >/dev/null 2>&1 || true;
+      pkill -f "kelyfos team up" 2>/dev/null || true; rm -rf "$work"' EXIT
+
+# Two projects, side by side. Same shape, different names — a name is only a
+# label, and two teams may share one.
+for name in alpha beta; do
+  mkdir -p "$work/$name"
+  cat > "$work/$name/kelyfos.toml" <<TOML
+[team]
+name = "$name"
+
+[[team.agent]]
+name  = "lead"
+image = "dev"
+
+[[team.agent]]
+name  = "hand"
+image = "dev"
+
+[[team.edge]]
+from = "lead"
+to   = "hand"
+TOML
+done
+
+# Both up, at the same time, from their own directories.
+( cd "$work/alpha" && kelyfos team up ) >alpha.log 2>&1 &
+( cd "$work/beta"  && kelyfos team up ) >beta.log  2>&1 &
+for f in alpha.log beta.log; do
+  for _ in $(seq 1 600); do grep -q 'team up in' "$f" && break; sleep 0.25; done
+  grep -q 'team up in' "$f" || { echo "== $f =="; cat "$f"; exit 1; }
+done
+echo "== both teams are up =="
+
+# With two running, an unqualified `team ps` refuses and says what is there
+# rather than picking one.
+if kelyfos team ps >ps.log 2>&1; then
+  echo "team ps picked a team with two running:"; cat ps.log; exit 1
+fi
+sed -n '1,6p' ps.log
+grep -q -- '--team' ps.log
+
+# Named, each answers about itself — including its own session and its own
+# cgroup parent, which are what make them separate rather than interleaved.
+A_SESSION="$(kelyfos team ps --team alpha --json | python3 -c 'import json,sys;print(json.load(sys.stdin)["session"])')"
+B_SESSION="$(kelyfos team ps --team beta  --json | python3 -c 'import json,sys;print(json.load(sys.stdin)["session"])')"
+
+echo "alpha session $A_SESSION"
+echo "beta  session $B_SESSION"
+[ "$A_SESSION" != "$B_SESSION" ]
+
+# Stop one. The other must not notice.
+kelyfos team down --team alpha
+echo "== alpha is down; beta is untouched =="
+kelyfos team ps --team beta
+kelyfos team ps --team beta --json |
+  python3 -c 'import json,sys
+d=json.load(sys.stdin)
+assert d["session"]!="", d
+assert all(a["alive"] for a in d["agents"]), d["agents"]
+print("beta:", d["team"], len(d["agents"]), "agents, all alive")'
+
+# And alpha really is gone rather than merely unnamed.
+if kelyfos team ps --team alpha >after.log 2>&1; then
+  echo "alpha is still running after team down:"; cat after.log; exit 1
+fi
+sed -n '1,3p' after.log
+
+# Each team's record is its own, and both verify.
+kelyfos log --session "$B_SESSION" --verify | sed -n '1,3p'
+kelyfos log --session "$A_SESSION" --verify | sed -n '1,3p'
+
+kelyfos team down --team beta
+echo "both teams retired"
 ```
 
 ---

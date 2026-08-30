@@ -83,8 +83,42 @@ verification pass then found inside those fixes. Every one is below under
   (P7-12) does. The loop stops on its own once `session.end` appears in the
   chain (that final write drops the refresh tag, since nothing more is
   coming) or on Ctrl-C (P7-9).
+- **Several teams may run on one host at once, and `--team` says which one a
+  command means.** `kelyfos team up` used to refuse with *"a team is already
+  running"*; it no longer does. Each team mints its own session, writes its own
+  state, gets its own cgroup parent, and holds its own machines, workspaces,
+  proxies and record — nothing is shared and nothing is queued. `kelyfos team
+  ps` and `kelyfos team down` take `--team <name|session>`; with one team up
+  neither needs it and nothing about them has changed, and with several they
+  print what is running rather than guess, which is the rule `--sandbox` has
+  always had for `kelyfos exec` one level up. Two teams may share a name, which
+  is what two checkouts of one project do, so the selector takes a session id as
+  well. `kelyfos watch`'s team lane and the `team_*` MCP tools need no selector:
+  the tools are about the team that server raised, and a team raised elsewhere
+  is named in the refusal rather than acted on. See
+  [`docs/teams.md`](docs/teams.md) §5.1 and cookbook recipe 22 (P7-16, D79).
 
 ### Fixed
+- **Two teams on one host collided over host-level state, and one team's
+  teardown could stop the other team's machines.** Every team wrote the same
+  `~/.cache/kelyfos/run/team.json`, and `kelyfos team up` guarded it with a
+  `stat` taken tens of seconds before the matching write — so two teams started
+  within that window both passed the guard, booted, and the second's write
+  replaced the first's state. After that `kelyfos team ps` described the wrong
+  team, `kelyfos team down` signalled the wrong process, and the first team's
+  own teardown deleted the second team's file. Worse and separately: a team's
+  parent cgroup was named for the team's *name*, so two checkouts of one project
+  shared `kelyfos-team-<name>.slice` — the second team's cap overwrote the
+  first's, and the second team's teardown ran `systemctl --user stop` on the
+  slice, which stops every scope in it, including the first team's Firecrackers.
+  On the direct cgroup path the same name meant one directory: `cpu.max`
+  rewritten under a running team, and a removal aimed at a parent a live team
+  was still accounted in. Both are now keyed to the team's own session — one
+  state file per team at `run/teams/<session>.json`, published by rename so a
+  concurrent `team ps` can never read one half-written, and a cgroup parent of
+  `kelyfos-team-<name>_<session>`. Found by two independent adversarial reviews
+  hitting it unprompted in separate worktrees on one development machine
+  (P7-16, D70, D79).
 - **A path-scoped credential could attach one segment wider than its bound
   prefix when the scope carried a doubled trailing slash.** `covered()` trims
   exactly one `/` before comparing, so `--secret TOKEN@host/repos//` — a typo,
@@ -699,6 +733,18 @@ verification pass then found inside those fixes. Every one is below under
   proxy did decrypt.
 
 ### Changed
+- **A team's state file moved, and the documentation that told you to read it
+  now points at `kelyfos team ps --json`.** `~/.cache/kelyfos/run/team.json` is
+  gone; each team writes `~/.cache/kelyfos/run/teams/<session>.json`. That path
+  is internal layout rather than a surface this project promises to keep still
+  (`docs/compatibility.md` §2), and `kelyfos team ps --json` — added earlier in
+  this same release — returns the same roster in the shape `team_ps` already
+  guaranteed. [`docs/integrating.md`](docs/integrating.md) and cookbook recipes
+  5 and 20 read the file directly and now ask the command line instead. The
+  systemd slice a capped team lands in is likewise renamed, from
+  `kelyfos-team-<name>.slice` to `kelyfos-team-<name>_<session>.slice`;
+  `kelyfos team ps` prints the resolved path, so nothing needs to reconstruct
+  the name (P7-16, D79).
 - **The proxy waits ten minutes for an origin's first byte, not thirty
   seconds.** Both egress transports set `ResponseHeaderTimeout`, which neither
   Go's default nor a zero value supplies — without it an allowlisted origin that
