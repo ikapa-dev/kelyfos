@@ -615,6 +615,13 @@ func raiseTeam(parent context.Context, opt teamOptions) (*teamRig, error) {
 			total.Milliseconds(), forked, len(groups), len(cold))
 	}
 	fmt.Fprintln(out, summary)
+	// Which team this is. With several teams on one host (P7-16, D79) the name
+	// may not be unique — two checkouts of one project raise two teams called
+	// the same thing — so the line that says a team is up is also the line that
+	// hands you what `team ps --team` and `team down --team` want. It is on its
+	// own line rather than appended to the summary above, because the summary
+	// is a measurement two scripts already parse.
+	fmt.Fprintf(out, "session %s\n", sessionID)
 
 	// On the systemd path the parent's directory is systemd's to choose, so it
 	// is learned from where a child actually landed rather than predicted; then

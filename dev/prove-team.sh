@@ -40,7 +40,6 @@ TEAM_CAP=200
 # The team this run raised. Every command that means "the team" names it, so a
 # peer's team on the same development box is neither read nor stopped by this
 # script (P7-16, D79).
-TEAM_NAME="proof"
 SESSION=""
 OWN_FC_PIDS=()
 
@@ -96,8 +95,10 @@ up() {
     echo "      the team never came up:"; sed 's/^/      /' "$dir/team.log"
     return 1
   fi
-  SESSION="$("$KELYFOS" team ps --team "$TEAM_NAME" --json 2>/dev/null |
-             python3 -c 'import json,sys;print(json.load(sys.stdin)["session"])' 2>/dev/null)"
+  # From this run's own output, not from the host: two runs of this script on
+  # one machine raise two teams called "proof", so a by-name lookup would be
+  # ambiguous exactly when it matters (P7-16, D79).
+  SESSION="$(sed -n 's/^session \([0-9a-f][0-9a-f]*\)$/\1/p' "$dir/team.log" | sed -n '1,1p')"
   if [ -z "$SESSION" ]; then
     echo "      the team came up but did not report a session"; return 1
   fi

@@ -2269,20 +2269,26 @@ fi
 sed -n '1,6p' ps.log
 grep -q -- '--team' ps.log
 
-# Named, each answers about itself — including its own session and its own
-# cgroup parent, which are what make them separate rather than interleaved.
-A_SESSION="$(kelyfos team ps --team alpha --json | python3 -c 'import json,sys;print(json.load(sys.stdin)["session"])')"
-B_SESSION="$(kelyfos team ps --team beta  --json | python3 -c 'import json,sys;print(json.load(sys.stdin)["session"])')"
-
+# Each `team up` prints its own session, which is what to name it by when the
+# name is not unique. Two checkouts of one project would give both teams one
+# name; these two have different ones, so both spellings work here.
+A_SESSION="$(sed -n 's/^session \([0-9a-f][0-9a-f]*\)$/\1/p' alpha.log | sed -n '1,1p')"
+B_SESSION="$(sed -n 's/^session \([0-9a-f][0-9a-f]*\)$/\1/p' beta.log  | sed -n '1,1p')"
 echo "alpha session $A_SESSION"
 echo "beta  session $B_SESSION"
-[ "$A_SESSION" != "$B_SESSION" ]
+[ -n "$A_SESSION" ] && [ -n "$B_SESSION" ] && [ "$A_SESSION" != "$B_SESSION" ]
 
-# Stop one. The other must not notice.
-kelyfos team down --team alpha
+# Named, each answers about itself — by name here, by session id below.
+kelyfos team ps --team alpha --json |
+  python3 -c 'import json,sys;d=json.load(sys.stdin);print("alpha:", d["team"], d["session"])'
+kelyfos team ps --team "$B_SESSION" --json |
+  python3 -c 'import json,sys;d=json.load(sys.stdin);print("beta: ", d["team"], d["session"])' 
+
+# Stop one, by its session id. The other must not notice.
+kelyfos team down --team "$A_SESSION"
 echo "== alpha is down; beta is untouched =="
-kelyfos team ps --team beta
-kelyfos team ps --team beta --json |
+kelyfos team ps --team "$B_SESSION"
+kelyfos team ps --team "$B_SESSION" --json |
   python3 -c 'import json,sys
 d=json.load(sys.stdin)
 assert d["session"]!="", d
@@ -2290,7 +2296,7 @@ assert all(a["alive"] for a in d["agents"]), d["agents"]
 print("beta:", d["team"], len(d["agents"]), "agents, all alive")'
 
 # And alpha really is gone rather than merely unnamed.
-if kelyfos team ps --team alpha >after.log 2>&1; then
+if kelyfos team ps --team "$A_SESSION" >after.log 2>&1; then
   echo "alpha is still running after team down:"; cat after.log; exit 1
 fi
 sed -n '1,3p' after.log
@@ -2299,7 +2305,7 @@ sed -n '1,3p' after.log
 kelyfos log --session "$B_SESSION" --verify | sed -n '1,3p'
 kelyfos log --session "$A_SESSION" --verify | sed -n '1,3p'
 
-kelyfos team down --team beta
+kelyfos team down --team "$B_SESSION"
 echo "both teams retired"
 ```
 

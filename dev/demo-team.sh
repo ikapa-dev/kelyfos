@@ -22,8 +22,6 @@
 set -uo pipefail
 
 ARCH="${ARCH:-$(uname -m | sed -e 's/^arm64$/aarch64/' -e 's/^amd64$/x86_64/')}"
-# The name the committed demo policy gives this team; `team ps --team` takes it.
-TEAM_NAME="${TEAM_NAME:-suppliers}"
 KELYFOS="${KELYFOS:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/kelyfos}"
 RUN_ROOT="${HOME}/.cache/kelyfos/run"
 WORK="$(mktemp -d)"
@@ -142,11 +140,12 @@ up() {
     sleep 0.25
   done
   grep -q "team up in" "$PROJ/$log" 2>/dev/null || return 1
-  # Which team this run raised, by name and then by session id, so nothing
-  # after this line can be answered about somebody else's team.
-  SESSION="$("$KELYFOS" team ps --team "$TEAM_NAME" --json 2>/dev/null |
-             python3 -c 'import json,sys;print(json.load(sys.stdin)["session"])' 2>/dev/null)"
-  [ -n "$SESSION" ] || return 1
+  # Which team this run raised, taken from its own `team up` output rather than
+  # asked of the host. Two runs of this script on one machine raise two teams
+  # with one name -- the toml's -- so a by-name lookup would be ambiguous
+  # exactly when it matters (P7-16, D79).
+  SESSION="$(sed -n 's/^session \([0-9a-f][0-9a-f]*\)$/\1/p' "$PROJ/$log" | sed -n '1,1p')"
+  [ -n "$SESSION" ] || { echo "      the team came up but printed no session"; return 1; }
   return 0
 }
 down() {
