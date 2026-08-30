@@ -9,9 +9,12 @@ the code is a bug in this file.
 A team is several KelyfOS sandboxes on one host, declared in a file, with the
 paths between them enumerated and enforced. Think *docker-compose for agent
 teams*: you write down who exists and who may talk to whom, and `kelyfos team
-up` boots that graph. One team runs on a host at a time: while a team is up,
-another `team up` is refused before it plans anything and tells you to stop the
-running one with `kelyfos team down`.
+up` boots that graph. Several teams may be up at once, each with its own state,
+its own cgroup and its own record; `kelyfos team ps` and `kelyfos team down`
+take `--team <name|session>` when more than one is running, and need nothing
+when one is. §5.1 has the detail. Before v1.1 a second `team up` was refused
+outright, which is where the *one team at a time* this document used to state
+came from (P7-16, D79).
 
 What KelyfOS supplies is the substrate — isolation, enforced edges, a
 permissioned shared store, and one audit record covering the whole team. What it
@@ -546,9 +549,7 @@ worker is shut down, a `despawn` is recorded, and its place in the budget comes
 back. `kelyfos team ps` lists spawned workers alongside declared ones, so the
 team you can see is the team that exists.
 
----
-
-## 5.1 Several teams on one host
+### 5.1 Several teams on one host
 
 More than one team may be up at once, and none of them can reach any of the
 others. Each `kelyfos team up` mints its own session, writes its own state at

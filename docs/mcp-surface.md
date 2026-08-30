@@ -287,9 +287,13 @@ all**, and that is the feature rather than an omission.
 
 Three consequences worth saying out loud:
 
-- **One team at a time**, because a machine runs one: the state file that says
-  what is up has one name in it. A second `team_up` is refused, naming the team
-  already running.
+- **One team at a time per server**, and that is a property of this server
+  rather than of the machine: a second `team_up` is refused, naming the team
+  this server already holds. Other teams may be up beside it — a machine runs as
+  many as somebody raises (P7-16, D79) — and `team_ps` answers about *this*
+  server's team, while `team_down` names the others rather than acting on them.
+  The tools still take no parameters: a selector here would be a way to reach a
+  team this server did not raise, which is exactly what the next bullet refuses.
 - **A team belongs to whoever raised it.** Its state file records which door it came
   through. A team raised here is retired here; `kelyfos team down` in a shell
   refuses to signal the server, because that process is also holding every
