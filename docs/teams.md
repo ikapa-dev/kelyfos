@@ -586,6 +586,11 @@ The MCP surface has no selector and needs none: `team_up`, `team_ps` and
 `team_down` are about the team *that server* raised. Teams raised elsewhere on
 the host are named in the refusal rather than acted on.
 
+`make prove-two-teams` (`dev/prove-two-teams.sh`) is this, on real microVMs:
+two teams of one name up at once, one torn down, and the other's machines,
+state, cgroup parent and record all checked to be untouched. Cookbook recipe 22
+is the same thing written to be copied.
+
 ---
 
 ## 6. The team budget

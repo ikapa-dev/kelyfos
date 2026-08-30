@@ -86,7 +86,7 @@ KERNEL_ARTIFACT := vmlinux
 endif
 
 .DEFAULT_GOAL := help
-.PHONY: help versions toolchain kernel supervisor cli image run bench docs cookbook vuln fuzz release-sums release-sbom tokens prove-caps prove-team demo-team accept-e2 clean test test-integration linux-only fetch-kernel
+.PHONY: help versions toolchain kernel supervisor cli image run bench docs cookbook vuln fuzz release-sums release-sbom tokens prove-caps prove-team prove-two-teams demo-team accept-e2 clean test test-integration linux-only fetch-kernel
 
 help: ## Show this target list
 	@echo "KelyfOS — targets (ARCH=$(ARCH), FLAVOR=$(FLAVOR))"
@@ -318,6 +318,11 @@ prove-caps: linux-only cli ## Drive every resource cap past its limit and check 
 prove-team: linux-only cli ## Drive a five-agent team past its collective CPU cap and check it held
 	@echo "note: binding numbers come from the bare-KVM CI runner (D15); this run is informational"
 	ARCH=$(ARCH) bash $(CURDIR)/dev/prove-team.sh
+
+# Two teams at once, which is a behaviour rather than a number, so unlike the
+# two above it means the same on a nested host as on bare KVM (P7-16).
+prove-two-teams: linux-only cli ## Boot two teams at once and stop one; the other must not notice
+	ARCH=$(ARCH) bash $(CURDIR)/dev/prove-two-teams.sh
 
 # Epic E2's proof: a real five-agent team doing real work, driven through the
 # real MCP tools on five real microVMs (E2-9).
