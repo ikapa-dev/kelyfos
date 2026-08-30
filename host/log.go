@@ -887,6 +887,51 @@ func printEvent(line []byte, asJSON bool) {
 	case recorder.TypeResourceOOM:
 		fmt.Printf("%s  OOM-killed      %s%s (pid %d) holding %s of a %d MiB machine\n",
 			ts, who, proto.SafeText(e.Comm), e.PID, report.HumanKiB(e.RSSKiB), e.MemMiB)
+	case recorder.TypeSessionPolicy:
+		// The ceiling this session ran under, as one greppable line. The full
+		// record is in the chain and `kelyfos log --json` prints it; this is
+		// the shape a reader scanning a transcript wants — what it was allowed
+		// to be, beside what it did.
+		parts := []string{}
+		if e.VcpuCount > 0 || e.MemMiB > 0 {
+			parts = append(parts, fmt.Sprintf("%d vcpu · %d MiB", e.VcpuCount, e.MemMiB))
+		}
+		if len(e.Allow) > 0 {
+			parts = append(parts, "allow "+proto.SafeText(strings.Join(e.Allow, ",")))
+		} else {
+			parts = append(parts, "no egress")
+		}
+		if n := len(e.Secrets); n > 0 {
+			parts = append(parts, fmt.Sprintf("%d secret(s)", n))
+		}
+		if e.Workspace != "" {
+			parts = append(parts, "workspace "+proto.SafeText(e.Workspace))
+		}
+		fmt.Printf("%s  policy          %s%s\n", ts, who, strings.Join(parts, " · "))
+	case recorder.TypeTeamTopology:
+		// Written once at boot, after every agent's own ready/policy pair. The
+		// counts are the question a reader has here; the names are one
+		// `--json` away.
+		parts := []string{fmt.Sprintf("%d agents · %d edges", len(e.Agents), len(e.Edges))}
+		if n := len(e.StoreKeys); n > 0 {
+			parts = append(parts, fmt.Sprintf("store %d rule(s)", n))
+		}
+		if e.RecordPayloads != nil && *e.RecordPayloads {
+			parts = append(parts, "payloads recorded")
+		}
+		fmt.Printf("%s  topology        %s\n", ts, strings.Join(parts, " · "))
+	case recorder.TypeSessionErasure:
+		// Modified counts events touched and RedactedFields counts fields
+		// replaced; they are different numbers and an auditor wants both.
+		// SHA256 anchors the erased chain to the one it replaced.
+		fmt.Printf("%s  erasure         %d event(s), %d field(s) redacted%s  was %s\n",
+			ts, e.Modified, e.RedactedFields, reasonSuffix(e.Reason), shortHash(e.SHA256))
+	case recorder.TypeSecretWithheld:
+		fmt.Printf("%s  secret withheld %s%s -> %s%s\n", ts, who,
+			proto.SafeText(e.Name), proto.SafeText(e.Host), reasonSuffix(e.Reason))
+	case recorder.TypeSecretScrubbed:
+		fmt.Printf("%s  secret scrubbed %s%s out of a response from %s\n", ts, who,
+			proto.SafeText(e.Name), proto.SafeText(e.Host))
 	default:
 		// The raw line, through the sanitiser (P7-17/C). This arm is what an
 		// event type this build has no case for prints as — a chain written by
@@ -1047,4 +1092,13 @@ func safeEvent(e recorder.Event) recorder.Event {
 		}
 	}
 	return e
+}
+
+// reasonSuffix renders an optional reason the way every other arm does, or
+// nothing when there is none.
+func reasonSuffix(r string) string {
+	if r == "" {
+		return ""
+	}
+	return "  (" + proto.SafeText(r) + ")"
 }

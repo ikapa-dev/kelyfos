@@ -38,6 +38,11 @@ func everyEventType() []string {
 		recorder.TypePluginCall, recorder.TypePluginCrash,
 		recorder.TypeSessionPause, recorder.TypeSessionResume, recorder.TypeRunReview,
 		recorder.TypeShellStart, recorder.TypeShellEnd, recorder.TypeForwardAccept,
+		// The five that had no renderer until the arms were added: they were
+		// printed as a raw JSON line, so the sweep had nothing to sweep and
+		// this list had nothing to name. secret.withheld and secret.scrubbed
+		// were already here, which is why only three arrive now.
+		recorder.TypeSessionPolicy, recorder.TypeTeamTopology, recorder.TypeSessionErasure,
 	}
 }
 
