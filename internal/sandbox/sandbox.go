@@ -203,8 +203,11 @@ type Sandbox struct {
 	// directly over vsock by any process inside the guest, not only through the
 	// supervisor's own well-behaved client, so an accept loop with nothing
 	// upstream of it is a guest-controlled goroutine-per-connection budget (F5).
-	// Created lazily, the same way Proxy.sem is, so a Sandbox built without going
-	// through listenTeam/listenEvents still zero-values cleanly.
+	// Created by listenTeam/listenEvents, before the goroutine that serves them
+	// exists — making them inside that goroutine was a write racing every other
+	// reader of the field (P7-16, D79). A Sandbox built without going through
+	// either still zero-values cleanly, and the serve loops keep a nil check for
+	// the fixtures that drive them directly.
 	teamSem   chan struct{}
 	eventsSem chan struct{}
 	// profileError is why the guest could not confine what it spawns, when it
@@ -368,6 +371,15 @@ func (s *Sandbox) listenTeam() error {
 		return fmt.Errorf("bind team channel: %w", err)
 	}
 	s.teamLn = ln
+	// Created here rather than inside serveTeam. It used to be lazily made by
+	// the serving goroutine itself, which is a write to a field of a struct the
+	// starting goroutine keeps a pointer to — a data race the -race detector
+	// reports on internal/sandbox's own concurrency fixtures, and one whose
+	// losing outcome is two semaphores where the bound needs one (P7-16, D79).
+	// The zero-value comment below stays true: a Sandbox that never goes
+	// through here still has a nil channel, and serveTeam is never started for
+	// it.
+	s.teamSem = make(chan struct{}, maxConcurrentGuestConnections)
 	go s.serveTeam()
 	return nil
 }
@@ -401,6 +413,10 @@ const guestFirstFrameTimeout = 10 * time.Second
 // rather than on the way out.
 func (s *Sandbox) serveTeam() {
 	if s.teamSem == nil {
+		// A Sandbox assembled without listenTeam — a test fixture driving this
+		// loop directly. listenTeam makes it before this goroutine exists, so
+		// on every real path this is already non-nil and nothing is written
+		// here (P7-16, D79).
 		s.teamSem = make(chan struct{}, maxConcurrentGuestConnections)
 	}
 	for {
@@ -566,6 +582,9 @@ func (s *Sandbox) listenEvents() error {
 		return fmt.Errorf("bind events channel: %w", err)
 	}
 	s.eventsLn = ln
+	// Same as listenTeam's: made by the goroutine that starts the server, not
+	// by the one that serves it (P7-16, D79).
+	s.eventsSem = make(chan struct{}, maxConcurrentGuestConnections)
 	go s.serveEvents()
 	return nil
 }
@@ -576,6 +595,8 @@ func (s *Sandbox) listenEvents() error {
 // is a report, not a record.
 func (s *Sandbox) serveEvents() {
 	if s.eventsSem == nil {
+		// Same as serveTeam's: only a fixture that assembled a Sandbox without
+		// listenEvents reaches this (P7-16, D79).
 		s.eventsSem = make(chan struct{}, maxConcurrentGuestConnections)
 	}
 	for {
