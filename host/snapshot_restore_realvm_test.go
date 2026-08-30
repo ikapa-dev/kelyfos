@@ -136,7 +136,14 @@ func TestSnapshotRestoreRealVMWiresAuditBeforeResume(t *testing.T) {
 		t.Cleanup(proxy.Close)
 
 		recPath := recorder.Path(sandbox.Root(), opts.ID)
-		t.Cleanup(func() { _ = os.Remove(recPath) })
+		// The directory, not just the chain inside it. Removing the file alone
+		// left `sessions/<id>/` behind empty, twice per run of this package,
+		// and 989 of them had piled up in the development cache by the end of
+		// Phase 7. `kelyfos runs` is right to list no row for a session with no
+		// chain, so the litter is invisible until dev/accept-runs.sh checks its
+		// strong claim — one row per session directory, nothing else to keep in
+		// step — and fails on the NEXT run because of what this one left.
+		t.Cleanup(func() { _ = os.RemoveAll(filepath.Dir(recPath)) })
 		rec, err := recorder.Open(sandbox.Root(), opts.ID)
 		if err != nil {
 			t.Fatalf("open recorder: %v", err)
@@ -248,7 +255,14 @@ func TestSnapshotRestoreRealVMWiresAuditBeforeResume(t *testing.T) {
 		}
 
 		recPath := recorder.Path(sandbox.Root(), opts.ID)
-		t.Cleanup(func() { _ = os.Remove(recPath) })
+		// The directory, not just the chain inside it. Removing the file alone
+		// left `sessions/<id>/` behind empty, twice per run of this package,
+		// and 989 of them had piled up in the development cache by the end of
+		// Phase 7. `kelyfos runs` is right to list no row for a session with no
+		// chain, so the litter is invisible until dev/accept-runs.sh checks its
+		// strong claim — one row per session directory, nothing else to keep in
+		// step — and fails on the NEXT run because of what this one left.
+		t.Cleanup(func() { _ = os.RemoveAll(filepath.Dir(recPath)) })
 		rec, err := recorder.Open(sandbox.Root(), opts.ID)
 		if err != nil {
 			t.Fatalf("open recorder: %v", err)
