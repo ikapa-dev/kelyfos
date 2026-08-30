@@ -1312,7 +1312,15 @@ func (r *roster) snapshot() []*agentRig {
 }
 
 func (r *roster) write() error {
+	// The lock is held across the publish, not only across the snapshot it is
+	// taken from. Two goroutines can be in here at once — `crew.add` runs on
+	// whichever goroutine the broker granted a spawn on, outside the broker's
+	// own lock — and with the lock released before the rename the two renames
+	// can land in the other order, leaving the file describing the older
+	// roster for the rest of the team's life. Nothing here blocks: it is a
+	// marshal and one small write to the filesystem the images already live on.
 	r.mu.Lock()
+	defer r.mu.Unlock()
 	if r.started.IsZero() {
 		r.started = time.Now()
 	}
@@ -1328,7 +1336,6 @@ func (r *roster) write() error {
 			Via     string `json:"via,omitempty"`
 		}{rig.name, rig.sb.State.ID, rig.via})
 	}
-	r.mu.Unlock()
 
 	blob, err := json.MarshalIndent(st, "", "  ")
 	if err != nil {
@@ -1573,7 +1580,7 @@ func teamDown(argv []string) error {
 	if err := fs.Parse(argv); err != nil {
 		return err
 	}
-	st, err := selectTeam(*which)
+	st, err := selectTeamToStop(*which)
 	if err != nil {
 		return err
 	}
@@ -1612,17 +1619,25 @@ func teamDown(argv []string) error {
 }
 
 // liveTeams is every team state file on this host, oldest first, and the paths
-// of any it could not read.
+// of any it could not use.
 //
 // "Live" is the directory's own claim, not a verdict: a file is here because a
 // `team up` wrote it and has not removed it, and a process that was SIGKILLed
 // leaves one behind with its machines possibly still running. Nothing is
 // deleted here — `kelyfos team down` is the door that clears a team whose
-// process is gone, and it has always said so in as many words. What liveness is
-// used for is one step down, in selectTeam: telling two teams apart, so one
-// crashed team's leftovers cannot make a live team ambiguous.
+// process is gone, and it has always said so in as many words.
 //
-// An unreadable file is skipped and named rather than made fatal, and this is
+// A file is used only when its name and its contents agree: <session>.json must
+// hold that session. The state file's own `session` field is what `team down`
+// removes and polls by name, so a file whose two halves disagree is one that
+// would clear or wait on some other team's path — and a hand-made or copied
+// file is not exotic here, since D70's own report has a reviewer restoring one
+// by hand. Reconciling the two also closes a path traversal through a crafted
+// `session` and stops a copied file from making a session permanently
+// ambiguous. It costs a string comparison and it means every entry that
+// survives is one this product wrote.
+//
+// What cannot be used is skipped and named rather than made fatal, and this is
 // the one place where a directory shared between teams could have re-created
 // the defect this task is about: refusing every answer because a stranger's
 // file will not parse would mean one damaged team stops the others from being
@@ -1630,7 +1645,7 @@ func teamDown(argv []string) error {
 // your own team's, an unqualified `team ps` would then confidently describe
 // somebody else's. So they are carried out of here, and selectTeam refuses to
 // answer an unqualified question while any exist.
-func liveTeams() (teams []*teamState, unreadable []string, err error) {
+func liveTeams() (teams []*teamState, unusable []string, err error) {
 	entries, err := os.ReadDir(teamStateDir())
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil, nil
@@ -1651,36 +1666,43 @@ func liveTeams() (teams []*teamState, unreadable []string, err error) {
 			continue // removed by its own team between the listing and here
 		}
 		if rerr != nil {
-			unreadable = append(unreadable, path)
+			unusable = append(unusable, path)
 			continue
 		}
 		var st teamState
-		if json.Unmarshal(blob, &st) != nil || st.Session == "" {
-			unreadable = append(unreadable, path)
+		if json.Unmarshal(blob, &st) != nil || st.Session == "" ||
+			e.Name() != st.Session+".json" {
+			unusable = append(unusable, path)
 			continue
 		}
 		teams = append(teams, &st)
 	}
 	sort.Slice(teams, func(i, j int) bool { return teams[i].StartedAt.Before(teams[j].StartedAt) })
-	return teams, unreadable, nil
+	return teams, unusable, nil
 }
 
 // teamProcessAlive reports whether the process that raised this team is still
 // there. A team whose process is gone is not stopped — its machines may well
 // still be up — it is a team nobody is holding.
 //
-// Signal 0 exactly as internal/sandbox's own `alive` does, including its one
-// inaccuracy: a process this user may not signal answers EPERM and is read here
-// as gone. That needs a team raised by another user against this user's cache,
-// which the cache does not support — Root() is under $HOME, so `sudo kelyfos
-// team up` writes root's cache and is not in this directory at all. Two
-// spellings of "is this process there" that disagree would be worse than the
-// case they disagree about, so this is the same spelling.
+// Signal 0 exactly as internal/sandbox's own `alive` does, including its two
+// inaccuracies: a process this user may not signal answers EPERM and is read
+// here as gone, and a recycled pid is read as the team that recorded it. The
+// first needs a team raised by another user against this user's cache, which
+// the cache does not support — Root() is under $HOME, so `sudo kelyfos team up`
+// writes root's cache and is not in this directory at all. The second is why
+// nothing with an irreversible effect narrows by this: selectTeamToStop below
+// refuses rather than choosing, so a recycled pid can make a roster line read
+// "up" and cannot make `team down` pick a team for you. Two spellings of "is
+// this process there" that disagree would be worse than the cases they disagree
+// about, so this is the same spelling.
 func teamProcessAlive(st *teamState) bool {
 	return st.PID > 0 && syscall.Kill(st.PID, 0) == nil
 }
 
-// selectTeam answers "which team does this command mean".
+// selectTeam answers "which team does this command mean" for a command that
+// only reads: `team ps`, and serve-mcp's fallbacks when it raised no team of
+// its own.
 //
 // With nothing named it is the only team, and it refuses to guess when there is
 // more than one — the shape sandbox.Load has always had for the same question
@@ -1688,20 +1710,35 @@ func teamProcessAlive(st *teamState) bool {
 // that share a name (two worktrees of one project, which is the reproduction
 // P7-16 was opened on) are still separable.
 //
-// Liveness only ever narrows, and only when it has to. One team, whether or not
-// its process is still there, is the team meant — which keeps `team down` on a
-// crashed team reaching its own "the team's process is gone; cleared its state"
-// rather than being told nothing is running. It is when several files are here
-// that a dead one must not be able to make a live one ambiguous.
-func selectTeam(want string) (*teamState, error) {
-	teams, unreadable, err := liveTeams()
+// A read may narrow by liveness and a stop may not; selectTeamToStop is that
+// second rule, and the difference between them is the whole reason there are
+// two functions.
+func selectTeam(want string) (*teamState, error) { return pickTeam(want, true) }
+
+// selectTeamToStop is the same question for `kelyfos team down`, which cannot
+// be undone.
+//
+// It never narrows. selectTeam prefers the one team whose process is still
+// there when several files are present, so that a crashed team's leftovers do
+// not make a live team unreadable — which is right for a read and wrong here.
+// The failure it would buy: my own `team up` was SIGKILLed and its file is
+// still on disk with its machines still running; a colleague's team is up; I
+// type `kelyfos team down` with no argument; narrowing picks the one live
+// process, which is theirs, and stops five machines that were not mine. There
+// is no undo and the only warning is a line naming a team I did not raise. So
+// with more than one team on this host and nothing named, this refuses and
+// prints the roster — which carries the session ids the next command needs.
+func selectTeamToStop(want string) (*teamState, error) { return pickTeam(want, false) }
+
+func pickTeam(want string, narrowByLiveness bool) (*teamState, error) {
+	teams, unusable, err := liveTeams()
 	if err != nil {
 		return nil, err
 	}
-	if want == "" && len(unreadable) > 0 {
+	if want == "" && len(unusable) > 0 {
 		return nil, fmt.Errorf("%s, so which team you mean cannot be answered from what is "+
 			"here — name one with --team:\n%s%s",
-			unreadableNote(unreadable), teamRoster(teams), unreadableList(unreadable))
+			unusableNote(unusable), teamRoster(teams), unusableList(unusable))
 	}
 	if want != "" {
 		var hit []*teamState
@@ -1711,11 +1748,11 @@ func selectTeam(want string) (*teamState, error) {
 			}
 		}
 		if len(hit) == 0 {
-			if len(teams) == 0 && len(unreadable) == 0 {
+			if len(teams) == 0 && len(unusable) == 0 {
 				return nil, fmt.Errorf("no team is running")
 			}
 			return nil, fmt.Errorf("no running team is called %q; these are:\n%s%s",
-				want, teamRoster(teams), unreadableList(unreadable))
+				want, teamRoster(teams), unusableList(unusable))
 		}
 		teams = hit
 	}
@@ -1725,14 +1762,16 @@ func selectTeam(want string) (*teamState, error) {
 	case 1:
 		return teams[0], nil
 	}
-	var alive []*teamState
-	for _, st := range teams {
-		if teamProcessAlive(st) {
-			alive = append(alive, st)
+	if narrowByLiveness {
+		var alive []*teamState
+		for _, st := range teams {
+			if teamProcessAlive(st) {
+				alive = append(alive, st)
+			}
 		}
-	}
-	if len(alive) == 1 {
-		return alive[0], nil
+		if len(alive) == 1 {
+			return alive[0], nil
+		}
 	}
 	if want == "" {
 		return nil, fmt.Errorf("%d teams are on this host; name one with --team:\n%s",
@@ -1756,24 +1795,24 @@ func teamRoster(teams []*teamState) string {
 	return strings.TrimRight(b.String(), "\n")
 }
 
-func unreadableNote(paths []string) string {
+func unusableNote(paths []string) string {
 	if len(paths) == 1 {
-		return "a team state file under " + teamStateDir() + " cannot be read"
+		return "a file under " + teamStateDir() + " cannot be attributed to a team"
 	}
-	return fmt.Sprintf("%d team state files under %s cannot be read", len(paths), teamStateDir())
+	return fmt.Sprintf("%d files under %s cannot be attributed to a team", len(paths), teamStateDir())
 }
 
-func unreadableList(paths []string) string {
+func unusableList(paths []string) string {
 	if len(paths) == 0 {
 		return ""
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "\n  and %s:\n", unreadableNote(paths))
+	fmt.Fprintf(&b, "\n  and %s:\n", unusableNote(paths))
 	for _, p := range paths {
 		fmt.Fprintf(&b, "    %s\n", p)
 	}
-	b.WriteString("    a team whose file this is cannot be named; remove it once you are sure " +
-		"no team is behind it")
+	b.WriteString("    each is unreadable, or names a session other than its own file name; " +
+		"remove it once you are sure no team is behind it")
 	return b.String()
 }
 

@@ -217,13 +217,24 @@ it. The new directory is internal layout and is not something to read instead:
 [`docs/compatibility.md`](compatibility.md) §2 does not pin it, and this is the
 second time it has moved.
 
-**Two other things move with it, neither of which needs anything from you.**
-`kelyfos team up` no longer refuses when another team is running — it boots. And
-a capped team's systemd slice is renamed from `kelyfos-team-<name>.slice` to
-`kelyfos-team-<name>_<session>.slice`, so two teams of one name stop sharing a
-cgroup; if you had a `systemctl --user` unit file, a drop-in or a monitoring
-rule matching the old name, match `kelyfos-team-*.slice` instead. `kelyfos team
-ps` prints the resolved path.
+**Three other things move with it, and only one may need anything from you.**
+
+`kelyfos team up` no longer refuses when another team is running — it boots.
+
+A capped team's cgroup parent is renamed, on **both** paths: the systemd slice
+from `kelyfos-team-<name>.slice` to `kelyfos-team-<name>_<session>.slice`, and
+the direct one (under `KELYFOS_CGROUP_ROOT`, or as root) from
+`<root>/kelyfos-team-<name>` to `<root>/kelyfos-team-<name>_<session>`. Two
+teams of one name stop sharing a cgroup, which is the point. If you had a
+`systemctl --user` unit file, a drop-in, or a monitoring rule matching the old
+name, match `kelyfos-team-*` instead. `kelyfos team ps` prints the resolved
+path, so nothing needs to reconstruct it.
+
+`kelyfos team up` prints one more line — `session <id>`, after `team up in N
+ms` — because with two teams up the name may not be unique and that is what
+`--team` wants. It is on its own line and nothing else moved, so a script
+grepping for `team up in` is unaffected; one comparing the whole of stdout is
+not.
 
 **What you may now have to type.** With more than one team running, `kelyfos
 team ps` and `kelyfos team down` refuse to guess and list what is up; add

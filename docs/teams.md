@@ -583,8 +583,15 @@ deleted, and `kelyfos team down --team <it>` is what clears it — nothing sweep
 another process's state away underneath an operator.
 
 The MCP surface has no selector and needs none: `team_up`, `team_ps` and
-`team_down` are about the team *that server* raised. Teams raised elsewhere on
-the host are named in the refusal rather than acted on.
+`team_down` are about the team *that server* raised, and a team raised elsewhere
+on the host is named in the refusal rather than acted on. One exception, stated
+rather than left to be discovered: a server that has raised **no** team of its
+own answers `team_ps` about the only team running on the host, which is what it
+did before any of this and what
+[`mcp-surface.md`](mcp-surface.md) documents — so an MCP client can read a
+roster its own server did not raise, exactly as it always could through the
+single host-wide file. With several teams up it names them instead of picking
+one.
 
 `make prove-two-teams` (`dev/prove-two-teams.sh`) is this, on real microVMs:
 two teams of one name up at once, one torn down, and the other's machines,

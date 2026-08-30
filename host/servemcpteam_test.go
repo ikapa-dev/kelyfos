@@ -135,7 +135,27 @@ func writeTeamState(t *testing.T, st teamState) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	path := teamStatePathFor(st.Session)
+	writeBlobAt(t, st.Session, blob)
+}
+
+// writeTeamStateAt writes a state file under a name of the caller's choosing,
+// so a test can produce the one thing liveTeams refuses: a file whose name and
+// whose own `session` field disagree.
+func writeTeamStateAt(t *testing.T, name string, st teamState) {
+	t.Helper()
+	if st.StartedAt.IsZero() {
+		st.StartedAt = time.Now()
+	}
+	blob, err := json.Marshal(st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeBlobAt(t, name, blob)
+}
+
+func writeBlobAt(t *testing.T, name string, blob []byte) {
+	t.Helper()
+	path := teamStatePathFor(name)
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
 	}

@@ -216,7 +216,10 @@ loop:
 // layer out. Skipping it silently is the other wrong answer: if the damaged
 // file is your own team's, an unqualified `team ps` would then confidently
 // describe somebody else's team as yours. So an unqualified question is refused
-// while any file is unreadable, and a named one is answered.
+// while any file cannot be attributed, and a named one is answered.
+//
+// The other way a file fails to be attributable — its name and its own session
+// field disagreeing — is TestAStateFileMustAgreeWithItsOwnName's.
 func TestAnUnreadableTeamFileNeitherHidesNorBlocksTheOthers(t *testing.T) {
 	t.Setenv("KELYFOS_CACHE", t.TempDir())
 	writeTeamState(t, teamState{Name: "held", Session: "3f9a1c22", PID: os.Getpid(), Owner: ownerCLI})
@@ -238,7 +241,7 @@ func TestAnUnreadableTeamFileNeitherHidesNorBlocksTheOthers(t *testing.T) {
 	if err == nil {
 		t.Fatal("an unqualified `team ps` answered while a state file was unreadable")
 	}
-	for _, want := range []string{"cannot be read", "--team", "0901977d.json", "held"} {
+	for _, want := range []string{"cannot be attributed", "--team", "0901977d.json", "held"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal does not mention %q:\n%v", want, err)
 		}

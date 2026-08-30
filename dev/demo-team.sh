@@ -51,7 +51,10 @@ remember_own_pids() {
 cleanup() {
   [ -n "$SESSION" ] && "$KELYFOS" team down --team "$SESSION" >/dev/null 2>&1
   sleep 1
-  pkill -f "$KELYFOS team up" 2>/dev/null
+  # This run's own `team up`, by the pid this script started, not every
+  # `team up` running from this binary: two runs of this script on one machine
+  # would otherwise stop each other (P7-16).
+  [ -n "${UPPID:-}" ] && kill "$UPPID" 2>/dev/null
   sleep 1
   # This run's own Firecrackers, not every Firecracker on the machine. A
   # host-wide kill here is the defect P7-16 is about, one layer out: it stops

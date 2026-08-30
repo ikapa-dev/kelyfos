@@ -301,7 +301,12 @@ version negotiation working, not a mismatch.
 set -euo pipefail
 work="$(mktemp -d)"
 cd "$work"
-trap 'kelyfos team down >/dev/null 2>&1 || true; pkill -f "kelyfos team up" 2>/dev/null || true; rm -rf "$work"' EXIT
+team=""; SESSION=""
+# Only this recipe's own team, and only this recipe's own `team up`. A bare
+# `kelyfos team down` means whichever team is running, and `pkill -f "kelyfos
+# team up"` means every one of them (P7-16).
+trap 'kelyfos team down ${SESSION:+--team "$SESSION"} >/dev/null 2>&1 || true;
+      [ -n "$team" ] && kill "$team" 2>/dev/null; rm -rf "$work"' EXIT
 
 # A team is declared, not orchestrated. You write down who exists and who may
 # talk to whom; `kelyfos team up` boots that graph. No guest ever has a network
@@ -339,13 +344,18 @@ team=$!
 for _ in $(seq 1 600); do grep -q 'team up in' up.log && break; sleep 0.25; done
 grep -q 'team up in' up.log || { cat up.log; exit 1; }
 cat up.log
+# Which team this is. Every command below names it, because several teams may be
+# up on one host and a teardown that says "the team" is a teardown that can stop
+# somebody else's (P7-16).
+SESSION="$(sed -n 's/^session \([0-9a-f][0-9a-f]*\)$/\1/p' up.log | sed -n '1,1p')"
+[ -n "$SESSION" ] || { cat up.log; exit 1; }
 echo
-kelyfos team ps
+kelyfos team ps --team "$SESSION"
 
 # An agent framework calls the team tools for you. Driving them by hand needs
 # one helper, because MCP over stdio is newline-delimited JSON-RPC and a
 # blocking tool answers when the other side acts, not when the request is sent.
-sandbox() { kelyfos team ps --json | python3 -c "
+sandbox() { kelyfos team ps --team "$SESSION" --json | python3 -c "
 import json,sys
 a=json.load(sys.stdin)['agents']
 print([x['sandbox'] for x in a if x['agent']=='$1'][0])"; }
@@ -394,7 +404,7 @@ call worker-1 team_send '{"to":"worker-2","body":"psst"}' 3 | text
 
 echo
 echo "== one team, one transcript =="
-kelyfos team down
+kelyfos team down --team "$SESSION"
 sleep 1
 
 # A team is deliberately one session, so one chain covers every agent: the
@@ -1606,7 +1616,10 @@ two are never independent readings of one topology.
 set -euo pipefail
 work="$(mktemp -d)"
 cd "$work"
-trap 'kelyfos team down >/dev/null 2>&1 || true; pkill -f "kelyfos team up" 2>/dev/null || true; rm -rf "$work"' EXIT
+team=""; SESSION=""
+# This recipe's own team only — see recipe 5 for why (P7-16).
+trap 'kelyfos team down ${SESSION:+--team "$SESSION"} >/dev/null 2>&1 || true;
+      [ -n "$team" ] && kill "$team" 2>/dev/null; rm -rf "$work"' EXIT
 
 cat > kelyfos.toml <<'TOML'
 [team]
@@ -1661,10 +1674,16 @@ echo "$refusal" | grep -q '\[\[plugin\]\] has no effect inside a team'
 echo
 echo "== boot it, and confirm the running team draws the same topology =="
 kelyfos team up >up.log 2>&1 &
+team=$!
 for _ in $(seq 1 600); do grep -q 'team up in' up.log && break; sleep 0.25; done
 grep -q 'team up in' up.log || { cat up.log; exit 1; }
+# Which team this is. Every command below names it, because several teams may be
+# up on one host and a teardown that says "the team" is a teardown that can stop
+# somebody else's (P7-16).
+SESSION="$(sed -n 's/^session \([0-9a-f][0-9a-f]*\)$/\1/p' up.log | sed -n '1,1p')"
+[ -n "$SESSION" ] || { cat up.log; exit 1; }
 
-running="$(kelyfos team ps --graph)"
+running="$(kelyfos team ps --team "$SESSION" --graph)"
 echo "$running"
 
 # The title line differs (one says "nothing booted", the other says how many
@@ -1675,7 +1694,7 @@ norm() { echo "$1" | tail -n +2 | sed -E 's/ \(fork group [0-9a-f]+\)//'; }
 diff <(norm "$declared") <(norm "$running")
 echo "declared and running topologies match"
 
-kelyfos team down
+kelyfos team down --team "$SESSION"
 ```
 
 ---
@@ -1770,7 +1789,10 @@ view. `docs/teams.md` §8.5 documents every field.
 set -euo pipefail
 work="$(mktemp -d)"
 cd "$work"
-trap 'kelyfos team down >/dev/null 2>&1 || true; pkill -f "kelyfos team up" 2>/dev/null || true; rm -rf "$work"' EXIT
+team=""; SESSION=""
+# This recipe's own team only — see recipe 5 for why (P7-16).
+trap 'kelyfos team down ${SESSION:+--team "$SESSION"} >/dev/null 2>&1 || true;
+      [ -n "$team" ] && kill "$team" 2>/dev/null; rm -rf "$work"' EXIT
 
 cat > kelyfos.toml <<'TOML'
 [team]
@@ -1817,12 +1839,18 @@ print('declared.json: mode=declared, %d agents, %d edges, %d resources' %
 echo
 echo "== boot it =="
 kelyfos team up >up.log 2>&1 &
+team=$!
 for _ in $(seq 1 600); do grep -q 'team up in' up.log && break; sleep 0.25; done
 grep -q 'team up in' up.log || { cat up.log; exit 1; }
+# Which team this is. Every command below names it, because several teams may be
+# up on one host and a teardown that says "the team" is a teardown that can stop
+# somebody else's (P7-16).
+SESSION="$(sed -n 's/^session \([0-9a-f][0-9a-f]*\)$/\1/p' up.log | sed -n '1,1p')"
+[ -n "$SESSION" ] || { cat up.log; exit 1; }
 
 echo
 echo "== kelyfos team ps --json — the same shape the team_ps MCP tool returns =="
-kelyfos team ps --json > ps.json
+kelyfos team ps --team "$SESSION" --json > ps.json
 python3 -c "
 import json
 d = json.load(open('ps.json'))
@@ -1835,7 +1863,7 @@ print('ps.json: %d agents, all alive' % len(d['agents']))
 
 echo
 echo "== kelyfos team ps --graph --json — the running topology, as data =="
-kelyfos team ps --graph --json > running.json
+kelyfos team ps --team "$SESSION" --graph --json > running.json
 python3 -c "
 import json
 d = json.load(open('running.json'))
@@ -1873,7 +1901,7 @@ print('digest.json: team=%s, %d events, topology present, %d agent(s) with a pol
       (d['team'], d['events'], sum(1 for a in d['agents'] if a.get('policy'))))
 "
 
-kelyfos team down
+kelyfos team down --team "$SESSION"
 ```
 
 ---
@@ -1974,8 +2002,11 @@ session ends, or on Ctrl-C.
 set -euo pipefail
 work="$(mktemp -d)"
 cd "$work"
-REFRESH_PID=""
-trap '[ -n "$REFRESH_PID" ] && kill "$REFRESH_PID" 2>/dev/null; kelyfos team down >/dev/null 2>&1 || true; pkill -f "kelyfos team up" 2>/dev/null || true; rm -rf "$work"' EXIT
+REFRESH_PID=""; team=""; SESSION=""
+# This recipe's own team only — see recipe 5 for why (P7-16).
+trap '[ -n "$REFRESH_PID" ] && kill "$REFRESH_PID" 2>/dev/null;
+      kelyfos team down ${SESSION:+--team "$SESSION"} >/dev/null 2>&1 || true;
+      [ -n "$team" ] && kill "$team" 2>/dev/null; rm -rf "$work"' EXIT
 
 cat > kelyfos.toml <<'TOML'
 [team]
@@ -1996,8 +2027,14 @@ to   = "worker-*"
 TOML
 
 kelyfos team up >up.log 2>&1 &
+team=$!
 for _ in $(seq 1 600); do grep -q 'team up in' up.log && break; sleep 0.25; done
 grep -q 'team up in' up.log || { cat up.log; exit 1; }
+# Which team this is. Every command below names it, because several teams may be
+# up on one host and a teardown that says "the team" is a teardown that can stop
+# somebody else's (P7-16).
+SESSION="$(sed -n 's/^session \([0-9a-f][0-9a-f]*\)$/\1/p' up.log | sed -n '1,1p')"
+[ -n "$SESSION" ] || { cat up.log; exit 1; }
 
 echo
 echo "== --export against the team while it is still running, not a finished one =="
@@ -2024,7 +2061,7 @@ echo "open socket fds held by the --refresh process: $sockets"
 echo "zero, as D60/D63 require of everything outside kelyfos view (P7-12)"
 
 # Driving the team by hand needs one helper — see recipe 5 for why.
-sandbox() { kelyfos team ps --json | python3 -c "
+sandbox() { kelyfos team ps --team "$SESSION" --json | python3 -c "
 import json,sys
 a=json.load(sys.stdin)['agents']
 print([x['sandbox'] for x in a if x['agent']=='$1'][0])"; }
@@ -2062,7 +2099,7 @@ REFRESH_PID=""
 grep -q '^stopped' refresh.log
 echo "the loop stopped cleanly on its own signal"
 
-kelyfos team down
+kelyfos team down --team "$SESSION"
 ```
 
 ---
@@ -2226,9 +2263,11 @@ cd "$work"
 # point of this recipe: a teardown that says "the team" is a teardown that can
 # stop somebody else's.
 A_SESSION=""; B_SESSION=""
+A_UP=""; B_UP=""
 trap 'kelyfos team down --team "${A_SESSION:-alpha}" >/dev/null 2>&1 || true;
       kelyfos team down --team "${B_SESSION:-beta}"  >/dev/null 2>&1 || true;
-      pkill -f "kelyfos team up" 2>/dev/null || true; rm -rf "$work"' EXIT
+      [ -n "$A_UP" ] && kill "$A_UP" 2>/dev/null;
+      [ -n "$B_UP" ] && kill "$B_UP" 2>/dev/null; rm -rf "$work"' EXIT
 
 # Two projects, side by side. Same shape, different names — a name is only a
 # label, and two teams may share one.
@@ -2254,7 +2293,9 @@ done
 
 # Both up, at the same time, from their own directories.
 ( cd "$work/alpha" && kelyfos team up ) >alpha.log 2>&1 &
+A_UP=$!
 ( cd "$work/beta"  && kelyfos team up ) >beta.log  2>&1 &
+B_UP=$!
 for f in alpha.log beta.log; do
   for _ in $(seq 1 600); do grep -q 'team up in' "$f" && break; sleep 0.25; done
   grep -q 'team up in' "$f" || { echo "== $f =="; cat "$f"; exit 1; }
@@ -2282,7 +2323,7 @@ echo "beta  session $B_SESSION"
 kelyfos team ps --team alpha --json |
   python3 -c 'import json,sys;d=json.load(sys.stdin);print("alpha:", d["team"], d["session"])'
 kelyfos team ps --team "$B_SESSION" --json |
-  python3 -c 'import json,sys;d=json.load(sys.stdin);print("beta: ", d["team"], d["session"])' 
+  python3 -c 'import json,sys;d=json.load(sys.stdin);print("beta: ", d["team"], d["session"])'
 
 # Stop one, by its session id. The other must not notice.
 kelyfos team down --team "$A_SESSION"

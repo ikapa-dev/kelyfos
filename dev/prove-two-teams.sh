@@ -15,9 +15,14 @@
 # `systemctl --user stop` on it, which stops every scope in it, including the
 # other team's Firecrackers.
 #
-# Against the commit before the fix this script reports, live, one `team down`
-# killing four machines belonging to two teams. Against the fix it passes every
-# line.
+# Against the fix it passes every line. Against the commit before it, it stops
+# at step 2 and cannot get further, and the header says so rather than claiming
+# a result it cannot produce: 5fb2605 prints no `session <id>` line for a
+# `team up` to be named by, and has no `--team` for the steps below to use. What
+# it does show there is the first half of the defect — both teams boot, past a
+# refusal that was supposed to stop the second — and that is the assertion at
+# step 1. The other half, one `team down` killing four machines across two
+# teams, was measured by hand on that commit and is written up in D79.
 #
 # Both teams are called "review", deliberately. That is what two worktrees of
 # one project produce, which is the reproduction the reviewers hit, and it is
@@ -121,6 +126,8 @@ else
   fail "only $UPS of 2 teams came up"
   verdict; exit 1
 fi
+# From here on this run owns machines, and the cleanup below can only stop what
+# it has recorded. Everything that boots is recorded before anything else runs.
 
 say "2. with two up, nothing is answered by guessing"
 if "$KELYFOS" team ps > "$WORK/ps.log" 2>&1; then
@@ -140,6 +147,12 @@ A_SESSION="$(sed -n 's/^session \([0-9a-f][0-9a-f]*\)$/\1/p' "$WORK/alpha.log" |
 B_SESSION="$(sed -n 's/^session \([0-9a-f][0-9a-f]*\)$/\1/p' "$WORK/beta.log"  | sed -n '1,1p')"
 if [ -z "$A_SESSION" ] || [ -z "$B_SESSION" ] || [ "$A_SESSION" = "$B_SESSION" ]; then
   fail "the two teams did not report two distinct sessions: '$A_SESSION' / '$B_SESSION'"
+  echo "        (this is what the commit before the fix does: it prints no session line)"
+  # Nothing has been recorded for cleanup to stop, so stop what this script
+  # started by the pids it holds rather than leaving four machines behind.
+  [ -n "$A_UP" ] && kill "$A_UP" 2>/dev/null
+  [ -n "$B_UP" ] && kill "$B_UP" 2>/dev/null
+  sleep 3
   verdict; exit 1
 fi
 echo "        alpha session $A_SESSION"
@@ -240,8 +253,13 @@ else
   fail "the untouched team reports $LEFT"
 fi
 
-# And the common case is unchanged: one team up, no flag.
-if "$KELYFOS" team ps > "$WORK/ps2.log" 2>&1; then
+# And the common case is unchanged: one team up, no flag. Asked only when this
+# run's own two teams are the only ones this host is holding — a third team
+# belonging to somebody else is not this script's business and must not fail it.
+OTHERS="$(ls "$RUN_ROOT/teams"/*.json 2>/dev/null | wc -l | tr -d ' ')"
+if [ "$OTHERS" != "1" ]; then
+  skip "another team is on this host, so the no-flag case cannot be asked here"
+elif "$KELYFOS" team ps > "$WORK/ps2.log" 2>&1; then
   pass "with one team left, \`team ps\` needs no --team"
 else
   fail "\`team ps\` refuses with only one team running:"; sed 's/^/        /' "$WORK/ps2.log"
@@ -268,12 +286,17 @@ if [ "${#STILL[@]}" -eq 0 ]; then
 else
   fail "${#STILL[@]} machine(s) survived: ${STILL[*]}"
 fi
+# This run's own two, not "nothing under run/teams": a third team belonging to
+# somebody else is exactly what this script exists to leave alone.
+LEFTOVER=""
+for s in "$A_SESSION" "$B_STOPPED"; do
+  [ -f "$RUN_ROOT/teams/$s.json" ] && LEFTOVER="$LEFTOVER $s"
+done
 A_SESSION=""; A_PIDS=()
-LEFTOVER="$(ls "$RUN_ROOT/teams"/*.json 2>/dev/null | wc -l | tr -d ' ')"
-if [ "$LEFTOVER" = "0" ]; then
-  pass "no team state left behind"
+if [ -z "$LEFTOVER" ]; then
+  pass "neither team left state behind"
 else
-  fail "$LEFTOVER team state file(s) left behind under $RUN_ROOT/teams"
+  fail "state left behind for:$LEFTOVER"
 fi
 
 verdict

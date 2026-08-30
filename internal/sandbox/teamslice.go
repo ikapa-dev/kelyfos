@@ -233,7 +233,10 @@ func (t *TeamSlice) Close() error {
 	if t.mode == modeSystemd {
 		// systemd removes the scopes when their processes exit; what does not go
 		// on its own is the runtime property, which would otherwise still be
-		// capping a slice the next team of the same name lands in.
+		// set on a unit name nothing will use again. Before P7-16 it would
+		// have capped the next team of the same name; the instance key means
+		// there is no such team, and the property is still taken back because
+		// a runtime property nobody reverts is state this process leaked.
 		if t.setProperty {
 			if out, err := exec.Command("systemctl", "--user", "revert", "--runtime", t.unit).CombinedOutput(); err != nil {
 				return fmt.Errorf("take back the team's cap on %s: %w: %s",
@@ -241,12 +244,16 @@ func (t *TeamSlice) Close() error {
 			}
 		}
 		// And the slice itself is stopped rather than left for systemd to
-		// collect whenever it gets to it. A lingering empty slice is not
-		// harmless: a cgroup's counters are cumulative for the life of the
-		// *directory*, so the next team of the same name would land in a parent
-		// already holding the previous team's CPU time — and a reader comparing
-		// that parent against its fresh children would find they did not add up.
-		// Measured exactly that way before this call existed.
+		// collect whenever it gets to it. The reason this call exists is now
+		// historical and is kept because the behaviour still is not free: a
+		// cgroup's counters are cumulative for the life of the *directory*, so
+		// before P7-16 the next team of the same name landed in a parent
+		// already holding the previous team's CPU time, and a reader comparing
+		// that parent against its fresh children found they did not add up —
+		// measured exactly that way before this call existed. With the instance
+		// key no second team can land here, so what stopping the slice buys now
+		// is that an empty per-run slice does not accumulate one per team-up
+		// until the user session ends.
 		if out, err := exec.Command("systemctl", "--user", "stop", t.unit).CombinedOutput(); err != nil {
 			return fmt.Errorf("stop the team's slice %s: %w: %s",
 				t.unit, err, strings.TrimSpace(string(out)))
