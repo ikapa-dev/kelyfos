@@ -951,6 +951,18 @@ func fitUnderMaxLine(e *Event) error {
 	// left between this measurement and the line Append actually writes.
 	lineBudget := MaxLine - sha256.Size*2 - clipMargin
 
+	// Append takes its Event by value, but *EvError is a pointer the caller
+	// still holds, so clipping Message through it would reach back into the
+	// caller's own struct and shorten a field it is about to use for something
+	// else. Every site that builds one today (host/exec.go, host/denials.go,
+	// host/servemcptools.go, host/servemcpaudit.go) writes a fresh literal at
+	// the call, so nothing is harmed in practice; the copy is here so that
+	// stays true for a caller that reuses one.
+	if e.Error != nil {
+		cp := *e.Error
+		e.Error = &cp
+	}
+
 	// Every pass clips from the ORIGINAL event, not from the output of the
 	// previous pass. A shallow copy is enough and costs one struct: strings and
 	// slice headers are shared, so this retains what the caller already holds
