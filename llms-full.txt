@@ -345,10 +345,12 @@ sandbox's lifetime. `kelyfos serve-mcp` is the outward one: the client has no
 sandbox yet, and the tools are for getting one. `kelyfos mcp` is the inward
 bridge to a sandbox that already exists.
 
-A client wants `serve-mcp`, and it must be told where the policy is —
-`--policy <path>`, absolutely, because the working directory a client launches
-from is the client's and not yours, and a server that finds no policy runs with
-no ceiling at all:
+A client wants `serve-mcp`, and it should be told where the policy is —
+`--policy <path>`, because the working directory a client launches from is the
+client's and not yours. A server that finds no policy does NOT refuse; it
+starts with `no kelyfos.toml found; defaults apply · at most 4 sandbox(es)` —
+a real ceiling, but not yours. `--policy` is how you make it yours, not how
+you make it start:
 
 ```json
 {
@@ -2930,6 +2932,14 @@ nothing uses it: Python's `certifi` and Node's bundled roots ship their own. The
 guest is KelyfOS's own image, so these can be set authoritatively instead of
 hoped for.
 
+One capability note this image's own build makes true (IA-I3): the guest's
+`python3.12` is built WITHOUT the `_ssl` module, so five of these six
+variables are inert for Python inside the guest — a Python client cannot
+terminate TLS against the CA no matter what the environment says. TLS-level
+work from the guest goes through `curl`, which is present and honours the
+store. Nothing security-critical rides on it: the terminated leg belongs to
+the proxy either way.
+
 ## 6. What the proxy enforces
 
 - `CONNECT host:port`, absolute-URI HTTP requests and origin-form ones — a bare
@@ -3001,6 +3011,12 @@ hoped for.
   | --- | --- |
   | `tunnelled` | Nothing. A `CONNECT` relayed without being opened. |
   | `terminated` | Everything. A secret is bound to this domain, so the session was decrypted to attach the credential. |
+
+  A credential's HOST scope is the same dot-anchored match the allowlist
+  uses: bound to `example.com`, it attaches on `www.example.com` too — pinned
+  by the security suite as IA-I1 describes, and stated here so nobody has to
+  discover it from the record. Path scopes, by contrast, are exact; a path
+  never covers a prefix.
   | `plain` | Everything. An ordinary HTTP request, which any proxy that forwards it necessarily parses, rewrites and re-issues. Nothing was decrypted because nothing was encrypted. |
   | `direct_tls` | Everything. An absolute-form request naming an `https://` target, sent straight to the proxy with no `CONNECT` — the proxy fetches it anyway, over a real, certificate-validated TLS connection it performs itself, so something genuinely was encrypted even though no `CONNECT` or termination was involved. |
 
@@ -3030,14 +3046,22 @@ hoped for.
   complaint, measured. So, per request: the same 1 MiB budget, reset each time
   and released before the body so a transfer is never charged to a header; and
   the same 10-second deadline, started when the first byte of the request
-  actually arrives rather than when the proxy began waiting. The gap *between*
+  actually arrives rather than when the proxy began waiting. That 10 seconds
+  is the ceiling the code names; the cut arrives well inside it in practice
+  — about two seconds, measured against a dribbling client — so anything
+  slower than a couple of seconds per byte-drip is already gone. The gap *between*
   two requests is a different thing — a client thinking, not a client stalling —
   so it gets two minutes, with ten minutes as the total a connection may spend
   idle across its whole life, and 4096 as the most requests one may carry. A
   header block over budget is answered `431`, recorded as `header_too_large`,
   and the connection closes after a short bounded drain so the refusal is not
   discarded by the reset that closing on unread data would otherwise cause.
-  `header_too_large` rather than `bad_request` on purpose: `bad_request` says
+  Scope that promise to the client it helps: the drain rescues one that
+  *pauses*, and a client that blasts the whole oversized block in one write
+  can still see the reset land first — a connection reset where the pausing
+  client got bytes. The refusal is recorded either way, and the connection
+  closes either way; what is not promised is which of the two the client
+  observes. `header_too_large` rather than `bad_request` on purpose: `bad_request` says
   the proxy could not parse a request, and this says it refused to. The
   connection's own summary still reads `allowed` with `mode: terminated`, which
   is a statement about the connection — policy permitted it and the proxy
@@ -3086,7 +3110,13 @@ hoped for.
   it is ten minutes.** The bounds above are about what the guest may do to the
   proxy; this one is about what an allowlisted origin may do to it — accept the
   connection, complete TLS, and then say nothing, holding a goroutine, a socket
-  and, on the terminated leg, the credential. Both transports set
+  and, on the terminated leg, the credential. One thing the plain path does
+  that needs writing down: the Host header of a plain request is REWRITTEN to
+  the target the request line names, because the proxy rebuilds the request
+  rather than forwarding it — a lying Host on an absolute-URI plain request
+  cannot reach the origin. It is why the plain leg's no-Host and evil-Host
+  shapes answer 200 where the terminated leg would refuse (the security
+  suite pins both). Both transports set
   `ResponseHeaderTimeout`, which neither Go's default nor a zero value supplies,
   and both set it to the same ten minutes the cumulative idle budget already
   enforces. It shipped at thirty seconds and was raised (**D74**): thirty is

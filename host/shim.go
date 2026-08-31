@@ -33,9 +33,12 @@ func shimCmd(argv []string) error {
 		fmt.Fprint(fs.Output(), `usage: kelyfos shim [flags]
 
 Serves an E2B-compatible REST subset so code written against the E2B SDK can
-point at a self-hosted KelyfOS box. Point the SDK at it with:
+point at a self-hosted KelyfOS box. The shim mints a token for THIS process —
+printed once below when it starts — and rejects anything else, so the SDK's
+key is the minted token and not a shared string. To pin a token of your own
+instead, set KELYFOS_SHIM_TOKEN before starting the shim:
 
-    export E2B_API_KEY=e2b_kelyfos
+    export E2B_API_KEY=<the token the shim printed at startup>
     export E2B_API_URL=http://127.0.0.1:3000
     export E2B_SANDBOX_URL=http://127.0.0.1:3000
 

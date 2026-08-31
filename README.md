@@ -292,10 +292,12 @@ sandbox's lifetime. `kelyfos serve-mcp` is the outward one: the client has no
 sandbox yet, and the tools are for getting one. `kelyfos mcp` is the inward
 bridge to a sandbox that already exists.
 
-A client wants `serve-mcp`, and it must be told where the policy is —
-`--policy <path>`, absolutely, because the working directory a client launches
-from is the client's and not yours, and a server that finds no policy runs with
-no ceiling at all:
+A client wants `serve-mcp`, and it should be told where the policy is —
+`--policy <path>`, because the working directory a client launches from is the
+client's and not yours. A server that finds no policy does NOT refuse; it
+starts with `no kelyfos.toml found; defaults apply · at most 4 sandbox(es)` —
+a real ceiling, but not yours. `--policy` is how you make it yours, not how
+you make it start:
 
 ```json
 {
@@ -531,7 +533,7 @@ quickstart downloads still extracts a workspace the old way.
 | the boundary | a Firecracker microVM: a separate kernel, a hardware boundary. This was always the case and is still the thing that matters most. |
 | around the VMM | the jailer: a chroot holding only this sandbox's files, a dropped uid, `no_new_privs`, only the device nodes it needs, and the run's cgroup when the policy set a quota. Every entry point, or none — `run`, `team up`, `fork`, `snapshot restore`, `serve-mcp` and the shim all go through one refusal. |
 | the VMM's syscalls | Firecracker's own seccomp filter, **read out of `/proc` on every one of its threads** at boot rather than assumed from the absence of a flag. A VMM without it is refused, not run. [`docs/host-seccomp.md`](docs/host-seccomp.md) lists every syscall it permits, read back out of the running kernel. |
-| inside the guest | every process the supervisor spawns — `exec`, a plugin, the shell — is confined by Landlock (writes only `/work`, `/tmp`, `/run`, `$HOME`, `/dev/pts` and `/dev/shm`, plus seven named device nodes) and a seccomp refusal list of 28 syscalls. Per flavor; [`docs/reference/profiles.md`](docs/reference/profiles.md) is generated from the code that enforces it. **The supervisor is PID 1 and the profile does not confine it**, which is where `write_file` and `upload` could once write anywhere the guest asked, including the block devices the profile withholds; those two are now held to the same three lists the profile is built from. Reads are deliberately not restricted. |
+| inside the guest | every process the supervisor spawns — `exec`, a plugin, the shell — is confined by Landlock (writes only `/work`, `/tmp`, `/run`, `$HOME`, `/dev/pts` and `/dev/shm`, plus seven named device nodes) and a seccomp refusal policy of 28 syscall names — the policy is shared, the compiled filter is per-architecture and per-flavor (26 on an aarch64 dev machine, 27 on x86_64's dev flavor, 28 on the default), which [`docs/reference/profiles.md`](docs/reference/profiles.md) states as the policy and `--dump-profile` resolves per machine. Generated from the code that enforces it. **The supervisor is PID 1 and the profile does not confine it**, which is where `write_file` and `upload` could once write anywhere the guest asked, including the block devices the profile withholds; those two are now held to the same three lists the profile is built from. Reads are deliberately not restricted. |
 | the network | no interface at all without `--allow`; then deny-all plus a hostname allowlist, with credentials attached by the host's proxy so the value never exists inside the guest. |
 | the workspace disk | the guest writes that filesystem, so the host reads it back the way it reads anything hostile: every entry validated and the image refused whole if one is a name the host cannot use, and the extraction written through an `os.Root`, which walks the path one component at a time with `openat(O_NOFOLLOW)` and resolves each link itself, so a name that got past the check still cannot leave the tree — a relative link that stays inside is followed, and one that climbs out, or any absolute link at all, is refused. Setuid, setgid, sticky and world-write do not survive onto your filesystem; the rest of the mode does, including the executable bit, because an agent that built a binary needs it. |
 | the record | hash-chained, written by the host, and it names which walls were around each machine — so a transcript cannot make an unconfined run look like a confined one. |
