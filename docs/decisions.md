@@ -1180,3 +1180,54 @@ defects above were found by running, not by reading; the `accept-e5` check was
 found to have been wrong for as long as the cache has had history; and the cost
 D79 dated — a reviewer's `make test` going red with three `internal/sandbox`
 failures while `cookbook.sh` ran beside it — is the thing this closes.
+
+**The independent review, and what it cost.** Adversarial, by an agent that did
+not write the diff, reading `dev/scope.sh` and the fifteen suites against
+`internal/sandbox` rather than against this row. It earned its keep in the way
+CONTRIBUTING says a review should: it found the failure D79 predicted this fix
+could itself become, in the two files this row cites as evidence.
+
+**Accepted and fixed.**
+
+| # | finding | what it was |
+| --- | --- | --- |
+| 1 | **`scope_pids` was blind to every `--no-jail` machine** | `firecracker.pid` is written by the *jailer*; `internal/sandbox/sandbox.go` says "Absent or unreadable is not an error: `--no-jail` writes none." So the teardown walked past unjailed machines and reported success, and two assertions became structurally unfailable: `accept-seccomp`'s count of what was "torn down rather than left running" was always 0, and `accept-jail`'s `vmm2` was empty immediately after `boot --no-jail`, so a check on that VMM's root passed without reading a process. **Both suites scored 19/0 and 15/0 either way**, which is the whole point: a vacuous check and a passing one are indistinguishable from the score. Now both sources are read — the jailer's file, and `"pid"` from the sandbox's own `sandbox.json`, which `sandbox.go` writes from `cmd.Process.Pid` for the unjailed case. |
+| 2 | **`scope_init`'s failure was unchecked** | `mktemp -d … \|\| return 1`, which no caller checked. Carrying on leaves `KELYFOS_CACHE` unset, so `Root()` falls back to the *shared* cache, every guard here short-circuits on the empty variable, and the teardown kills nothing and returns 0 — the silent failure, reached by the function that exists to prevent it. It now refuses to run. |
+| 3 | **`rm -rf` cannot remove what the jailer leaves** | `jail.go` exists to say so — "A plain RemoveAll fails half way and leaves the rest, which over a few hundred runs is a disk full of abandoned chroots" — and falls back to `sudo`. Without the same fallback this change made tidiness *worse*: one known shared cache became an anonymous per-run directory that can never be fully removed, with the `.suite` breadcrumb naming the culprit deleted first because it is the one file we own. |
+| 4 | **`scope_init` discarded an inherited `KELYFOS_CACHE`** | A relocated cache is supported — the Makefile's `KELYFOS_CACHE ?=` and `kelyfos doctor`'s own advice — so `KELYFOS_CACHE=/data/kelyfos bash dev/accept-jail.sh` worked at v1.1.2 and would have failed here with a missing image naming nothing about the cause. |
+| 5 | **`dev/cookbook.sh`'s trade comment described deleted behaviour** | It still said the kills were host-wide and bounded the litter at "every sandbox on this host … whoever it belonged to". Rewritten, including *why* its `hasLiveRunDir` consequence stopped applying. |
+| 6 | **`scope_live_pids \| head -1` is not `pgrep -n`** | `scope_pids` sorts, so with two of this run's machines live it returned an arbitrary one, and the cgroup and `cpu.max` checks then read a machine that was never given the quota under test. `scope_newest_pid` picks by run-directory mtime. |
+| 8 | **`accept-e1` killed `http.server` as root with no port in the pattern** | It matched any `python3 -m http.server` on the host — a colleague's docs preview on `:8000` included — and fired from an unconditional EXIT trap even on runs that started none. This row had rejected fixing these on the ground that "the port makes it exclusive", which is true of `prove-caps.sh` (`http.server 80`) and was false of this one. |
+| 10 | **`tools/scope` tested 2 of 8 functions** | And the one defect this row had already recorded as caught only by running lived in the untested half. Four tests added, each verified by reverting the fix it covers and confirming it goes red. |
+| 11 | **The subcommand filter used `grep -qw` over the whole command line** | So `run` matched a path component — `kelyfos fork --workspace /srv/run/x` answered to it — and the argument was a regex rather than a fixed string. It compares `argv[1]` exactly now, which is where a subcommand is, and this is the mechanism keeping `halt` from killing a `kelyfos snapshot restore`. |
+
+**And the fix for finding 1 was itself wrong, which a live run said and reading
+did not.** The jailer writes `firecracker.pid` with **no trailing newline**, so
+reading it and then the same sandbox's `sandbox.json` pid produced
+`110887110887` — one token that is not a pid. `accept-jail` fell to 10 passed
+and 9 failed, `accept-seccomp` to 9 and 3, and the runs left machines alive. It
+was latent in the *first* version of this change too: two jailed sandboxes, two
+newline-less files, one `cat` loop, and the teardown gets `111222`. It stayed
+hidden only because one machine at a time reads back correctly. Both readers now
+go through one framing helper. **That is the fourth defect in this change found
+by running rather than reading**, after the cache directory's name, the
+over-broad `halt`, and this — against one found by reading — and it is the
+strongest single argument in this row for D79's "a task rather than a step".
+
+**Rejected, with the reason.**
+
+| # | finding | why not |
+| --- | --- | --- |
+| 7 | Moving the cache to `/tmp` defeats `linkInto`'s hard-link path | **Not rejected — accepted and fixed**, and it is listed here because the review was right that nothing in this row mentioned it. `jail.go` states the invariant: "images and jails both live under the cache root", and copying a 128 MiB rootfs per sandbox "would make `fork -n 4` cost half a gigabyte". A cache under `/tmp` with `out/` under `$HOME` breaks it silently wherever `/tmp` is tmpfs, which is the systemd default on Fedora, Arch and Ubuntu 24.10+. The private cache now sits beside the shared one. Invisible on this machine, where `/tmp` and `$HOME` are one ext4 device — a defect a live run here could not have found, and reading did. |
+| 9 | A failing suite now destroys its own evidence | **Real, and left.** The cache goes at teardown, so `kelyfos log --session <id>` after a red run no longer finds anything. Keeping it on failure means every suite's trap inspecting `$?`, in fifteen files, to preserve a directory whose value is occasional; `SCOPE_TMPDIR` already lets someone put the cache where they can watch it. Recorded as a trade rather than fixed. |
+| 12 | `accept-e5`'s check asserts more than its `killall_kelyfos` kills | **Left.** `killall_kelyfos` names `run resume`; the check asks whether *any* kelyfos process of this run survives. The comment above it says "Every kelyfos process, gone. Nothing is holding this in memory anywhere", so the broader question is the one the suite means, and it passes. |
+| 13 | `tools/scope` starts processes named `firecracker`, which a peer still on v1.1.2 could kill | **Accepted as inherent.** The stand-in has to be matched by a host-wide `pgrep firecracker` or the test stops discriminating, which is the property it exists for. The exposure is a ~2 s window against a worktree that has not taken this change. |
+| 14 | An untracked corpus entry under `internal/recorder/testdata/fuzz/` | **Neither committed nor deleted here.** It is an artifact of D82's instrumented runs, it passes, and it is not evidence of anything. Deleting it was refused by this environment's permissions, so it is named for the owner to remove rather than committed to make the tree clean. |
+
+**A note on the last full run, which was better evidence than the harness.**
+Throughout the final fifteen-suite pass an unrelated `kelyfos-audit` workload
+was running its own microVMs on this host out of the shared cache — not started
+by this work, and discovered only because the harness reported "1 firecracker
+already running before we start". Every one of the fifteen suites left it alone.
+Before this change every one of them would have killed it, which is the
+reviewer's `make test` in D79's last paragraph happening to somebody else.
