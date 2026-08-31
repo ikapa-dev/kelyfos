@@ -3,6 +3,7 @@ package recorder
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"reflect"
 	"runtime"
@@ -448,6 +449,18 @@ func TestClippingKeepsWhatItCanRatherThanHalvingUntilItFits(t *testing.T) {
 			}
 			if !strings.Contains(e.Data, "clipped from") {
 				t.Fatalf("Data does not carry the clip note")
+			}
+			// The note has to name the ORIGINAL size, not the size the field
+			// had partway through the reduction. A field the loop touches more
+			// than once used to report the intermediate value.
+			if !strings.Contains(e.Data, fmt.Sprintf("clipped from %d to", len(c.data))) {
+				tail := e.Data
+				if len(tail) > 120 {
+					tail = tail[len(tail)-120:]
+				}
+				t.Fatalf("the clip note does not name the original %d bytes; it ends %q.\n"+
+					"A note derived from an already-clipped value understates what the record lost.",
+					len(c.data), tail)
 			}
 		})
 	}

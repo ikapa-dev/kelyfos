@@ -951,6 +951,22 @@ func fitUnderMaxLine(e *Event) error {
 	// left between this measurement and the line Append actually writes.
 	lineBudget := MaxLine - sha256.Size*2 - clipMargin
 
+	// Every pass clips from the ORIGINAL event, not from the output of the
+	// previous pass. A shallow copy is enough and costs one struct: strings and
+	// slice headers are shared, so this retains what the caller already holds
+	// alive and allocates nothing per field.
+	//
+	// Restoring rather than re-clipping is what keeps the in-band note true. A
+	// field clipped twice would otherwise derive "clipped from N" from the
+	// intermediate value — a 5.6 MB Cwd reported as "clipped from 2793807
+	// bytes", and a three-element Cmd reported as "across 1 argv elements" —
+	// so the record's own statement of what it lost would be wrong by the
+	// factor it had already been reduced by. Recovering the original by parsing
+	// the note back out of the string is the other way to do this and is not an
+	// option: the note sits in a field a guest can write, so a guest could
+	// supply its own.
+	snapshot := *e
+
 	// The pre-pass, and the reason nothing here allocates in proportion to what
 	// the caller handed it. budget is a budget for field CONTENT, and content
 	// is always a lower bound on the marshalled line: JSON escaping never makes
@@ -1001,6 +1017,7 @@ func fitUnderMaxLine(e *Event) error {
 			next = half
 		}
 		budget = next
+		*e = snapshot
 		if !clipToBudget(e, budget) {
 			return fmt.Errorf("event %d (%s) is %d bytes with nothing left to clip",
 				e.Seq, e.Type, len(b))
