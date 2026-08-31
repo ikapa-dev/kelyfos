@@ -109,6 +109,68 @@ else
   fail "truncation verifies (EXPECTED-CURRENT — TODO(IA-M2)): $(head -c 80 <<<"$vt" | tr -d '\n')"
 fi
 
+say "the signed export — the truncation attack detected (ST-5.4)"
+# The signature is the mechanism the unsigned TODO above is waiting for, and
+# it exists for exports the operator signs: an ed25519 key signs the head and
+# the claims, and verify checks the signature against the record. The
+# truncation that the unsigned path cannot see is MISMATCH here — twice: the
+# stale claims disagree with the record, and a recomputed claim still cannot
+# forge the signature.
+sign_pem="$SLAB_WORK/slab-sign.pem"
+if openssl genpkey -algorithm ed25519 -out "$sign_pem" 2>/dev/null; then
+  signed="$SLAB_WORK/signed.html"
+  "$BIN/kelyfos" log -session "$AUP_ID" -export "$signed" --sign-key "$sign_pem" >/dev/null 2>&1
+  vs="$("$BIN/kelyfos" verify "$signed" 2>&1)"
+  check "$(grep -qi 'chain intact' <<<"$vs" && grep -qi 'signed by' <<<"$vs" && echo yes || echo no)" \
+        "a signed export verifies and names its signer"
+
+  python3 - "$signed" "$SLAB_WORK/signed-trunc.html" <<'PY'
+import base64, re, sys
+src, dst = sys.argv[1], sys.argv[2]
+page = open(src).read()
+m = re.search(r'<pre id="kelyfos-chain">(.*?)</pre>', page, re.S)
+raw = base64.b64decode("".join(m.group(1).split()))
+lines = raw.decode("utf-8", "replace").strip().split("\n")
+kept = lines[:-1]
+new_raw = ("\n".join(kept) + "\n").encode()
+new_b64 = base64.b64encode(new_raw).decode()
+wrapped = "\n".join(new_b64[i:i+76] for i in range(0, len(new_b64), 76))
+page = page.replace(m.group(0), '<pre id="kelyfos-chain">' + wrapped + '</pre>')
+page = re.sub(r'\b\d+ events\b', str(len(kept)) + ' events', page)
+open(dst, "w").write(page)
+PY
+  vst="$("$BIN/kelyfos" verify "$SLAB_WORK/signed-trunc.html" 2>&1)"
+  check "$(grep -qi 'MISMATCH' <<<"$vst" && echo yes || echo no)" \
+        "truncating a SIGNED report is a MISMATCH, not a clean verify"
+  # With the claims recomputed too — the stronger attacker the audit
+  # described — the signature is what still refuses: it was made over the
+  # original head, and ed25519 does not renegotiate.
+  python3 - "$signed" "$SLAB_WORK/signed-recomp.html" <<'PY'
+import base64, hashlib, re, sys
+src, dst = sys.argv[1], sys.argv[2]
+page = open(src).read()
+m = re.search(r'<pre id="kelyfos-chain">(.*?)</pre>', page, re.S)
+blob = m.group(1)
+raw = base64.b64decode("".join(blob.split()))
+lines = raw.decode("utf-8", "replace").strip().split("\n")
+kept = lines[:-1]
+new_raw = ("\n".join(kept) + "\n").encode()
+new_head = hashlib.sha256(new_raw).hexdigest()
+new_b64 = base64.b64encode(new_raw).decode()
+wrapped = "\n".join(new_b64[i:i+76] for i in range(0, len(new_b64), 76))
+page = page.replace(m.group(0), '<pre id="kelyfos-chain">' + wrapped + '</pre>')
+page = re.sub(r'(<code id="kelyfos-head">)[0-9a-f]{8,}(</code>)',
+              lambda mm: mm.group(1) + new_head + mm.group(2), page)
+page = re.sub(r'\b\d+ events\b', str(len(kept)) + ' events', page)
+open(dst, "w").write(page)
+PY
+  vsr="$("$BIN/kelyfos" verify "$SLAB_WORK/signed-recomp.html" 2>&1)"
+  check "$(grep -qi 'MISMATCH' <<<"$vsr" && echo yes || echo no)" \
+        "and recomputing the claims does not forge the signature either"
+else
+  skip "the signed-export battery needs openssl (ed25519 keygen) on this machine"
+fi
+
 say "rendered output escapes"
 esc="$("$BIN/kelyfos" log -session "$AUP_ID" -export "$SLAB_WORK/render.html" >/dev/null 2>&1; cat "$SLAB_WORK/render.html")"
 assert_eq "$(grep -c '<script>alert' <<<"$esc" || true)" "0" \

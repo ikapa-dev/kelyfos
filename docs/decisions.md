@@ -1628,3 +1628,26 @@ doctor.
 reaper alone answers what already happened, PDEATHSIG answers what the
 kernel can do for free, and the watchdog bridges the gap between them. The
 machine outlives its supervisor for at most a third of a second.
+
+## D93
+
+*2026-08-31*
+
+**The truncation attack is closed for every report the operator signs, and
+the unsigned path carries its TODO honestly (ST-5.4).**
+
+The audit's IA-M2 asked for any of three mechanisms; the one the product
+already had was export-time signing — `kelyfos log --export --sign-key` —
+which the record suite now exercises as the regression test the fix owed:
+a signed export verifies and names its signer; truncating it is a MISMATCH
+(the stale claims disagree with the record); and truncating it *with the
+claims recomputed* is still a MISMATCH, because ed25519 does not renegotiate.
+What remains open is signing at SESSION end rather than export end — the P6-7
+direction — which would close the unsigned path's TODO(IA-M2); that is a
+product decision about where keys live, and it stays flagged in the suite
+rather than silently accepted.
+
+**Why:** the plan's flip — "ST-1.4's truncation expectation flips from
+'verifies' to 'fails'" — turns out to be one `--sign-key` away for every
+operator who names a key, and the suite proves it live. The unsigned path's
+verifies-clean is now the documented exception rather than the whole story.
