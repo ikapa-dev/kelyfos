@@ -361,6 +361,7 @@ accept-security: linux-only cli ## Run the security lab suites (egress, secrets,
 	ARCH=$(ARCH) bash $(CURDIR)/dev/accept-security-caps.sh
 	ARCH=$(ARCH) bash $(CURDIR)/dev/accept-security-surfaces.sh
 	ARCH=$(ARCH) bash $(CURDIR)/dev/accept-security-workspace.sh
+	ARCH=$(ARCH) bash $(CURDIR)/dev/accept-security-confinement.sh
 
 # The generated half of the documentation (E3-1). Nothing here is written by
 # hand: the commands and flags come from the CLI's own -h, the MCP tools from
