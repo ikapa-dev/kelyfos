@@ -96,6 +96,7 @@ find in a comment is `F-D48`, in [the feature decisions](decisions-features.md).
 - [D80](#d80) — P7-15 is a recording-integrity defect and not a fuzz-harness one: the clip loop is made…
 - [D81](#d81) — The release SBOM is a document about KelyfOS, and everything in it that KelyfOS did not…
 - [D82](#d82) — FuzzAppendFieldValues' seeds stay as they are, because the thing they were going to be…
+- [D83](#d83) — D79's deferred class is closed: all fifteen dev/ suites now run against a private…
 
 
 ## D1
@@ -814,7 +815,7 @@ A file counts as unusable when it cannot be parsed **or when its name and its ow
 
 `demo-team.sh`, `prove-team.sh` and `prove-two-teams.sh` are fixed by this task and kill only the pids they recorded from their own sandboxes' run directories.
 
-The fix is known — a private `KELYFOS_CACHE` per suite and a teardown that kills only what is under it, which is S20's own shape generalised — and it is left out of this diff deliberately: these scripts are the evidence base this task's own definition of done is checked against, a wrong scoping there does not fail loudly but silently stops killing anything, and re-earning fourteen suites on live microVMs is a task rather than a step. `cookbook.sh` additionally needs four recipes that read `$HOME/.cache/kelyfos/sessions` by hand to learn the variable first.
+The fix is known — a private `KELYFOS_CACHE` per suite and a teardown that kills only what is under it, which is S20's own shape generalised — and it is left out of this diff deliberately: these scripts are the evidence base this task's own definition of done is checked against, a wrong scoping there does not fail loudly but silently stops killing anything, and re-earning fourteen suites on live microVMs is a task rather than a step. `cookbook.sh` additionally needs four recipes that read `$HOME/.cache/kelyfos/sessions` by hand to learn the variable first. **Closed by D83**, which did exactly that and found three things this paragraph did not count: 36 host-wide `pkill -f "kelyfos …"` lines on the same files, seven host-wide *reads* (`pgrep -n/-c/-f`) that answer about a peer's machine rather than this run's, and 27 hardcoded cache paths across 13 of the 15 files rather than four in one. The estimate of the work was right and the inventory was short.
 
 **The fourth instance of the class happened during this task's own review, to the review.** While `dev/cookbook.sh` was running here, the reviewing agent's `make test` failed with three `internal/sandbox` integration failures — `firecracker exited before the guest was ready: signal: terminated`, and two of its consequences. `signal: terminated` is SIGTERM from outside the process, and the direction was established rather than assumed: `grep -rn "pkill\|pgrep\|killall" --include='*.go'` over the whole tree returns nothing, so the Go suite kills nothing host-wide and could not have been the source. `dev/cookbook.sh`'s `for p in $(pgrep firecracker); do kill "$p"; done` was. Neither party intended it, both were doing exactly what this repository asks of them, and the reviewer's first `make test` of the final head was red for a reason that had nothing to do with the code. That is what this deferral costs, dated and observed rather than predicted, and it is the strongest argument in this row for closing it.
 
@@ -1035,3 +1036,147 @@ the second error is larger than it looks, because the fix it implies is
 subtractive and lands on the evidence for the fix that shipped. Recorded after
 the fact, which rule 5 asks not to happen: nothing was implemented here, and the
 row is the whole change apart from a comment at the seeds pointing to it.
+
+## D83
+
+*2026-08-31*
+
+**D79's deferred class is closed: all fifteen `dev/` suites now run against a
+private `KELYFOS_CACHE` and tear down only the machines under it.** The shape is
+the one D79 named and S20 established — stop asking "is any Firecracker running
+on this host" and ask "are this run's own sandboxes gone" — implemented once in
+`dev/scope.sh` rather than fifteen times, with `tools/scope` as the cheap check
+that runs on every commit. Each suite was re-earned on live microVMs against a
+peer worktree's sandbox raised before it and inspected after.
+
+**The list, derived independently, and both of D79's traps sprung.** A naive
+`grep -l 'pgrep firecracker' dev/*.sh` returns fifteen files — the right count
+and the wrong set, exactly as D79 predicted: `prove-team.sh` matches on the
+comment that says a host-wide kill is how a peer loses its microVMs, and
+`accept-e1.sh` hides behind `pgrep -x`. Grepping for the kill idiom with its
+flags, excluding comment lines, returns D79's enumeration exactly: twelve
+`accept-*.sh` (`denials`, `e1`, `e4`, `e5`, `forward`, `jail`, `notify`,
+`profile`, `runs`, `seccomp`, `shell`, `shim`), `cookbook.sh` with its two kill
+sites, `demo-record.sh` and `prove-caps.sh`. `accept-e2.sh` and
+`accept-watch.sh` never had it; `demo-team.sh`, `prove-team.sh` and
+`prove-two-teams.sh` were fixed by P7-16. Nothing was added to or removed from
+D79's list.
+
+**Three things on those same files that D79 did not count, because it counted
+kill lines.**
+
+| what | scale | why it is the same defect |
+| --- | --- | --- |
+| host-wide `pkill -f "kelyfos …"` | 36 lines, several *mid-run* rather than in teardown | The same question one layer up. It matches a peer worktree's `kelyfos run`, and it matches the shell running the suite — `pkill -f "kelyfos run"` typed at a terminal killed this author's own session mid-task, which is the shortest possible demonstration. |
+| host-wide *reads* | `pgrep -n` ×4, `pgrep -c` ×1, `pgrep -f` ×2 | `pgrep -n firecracker` is "the host's newest Firecracker" where the suite meant "the VMM I just booted". `accept-jail` and `accept-seccomp` then read that pid's `/proc/<pid>/mountinfo` and `/proc/<pid>/cgroup` and check *its* jail. Worse, `accept-seccomp` asserts `pgrep -c firecracker` is zero to show a refused machine was torn down, so a peer's sandbox made it fail outright — F18's shape, which S20 fixed the same way. |
+| hardcoded `~/.cache/kelyfos` reads | 27, across 13 of the 15 | D79 says `cookbook.sh` "additionally needs four recipes" to learn the variable. It is 13 files, not one, and the four cookbook recipes are a fifth of it. Paths under `out/` are excluded and deliberately so — see below. |
+
+**The design, and the one thing a private cache must not have its own copy of.**
+`sandbox.Root()` reads `KELYFOS_CACHE`, so setting it puts every run directory,
+session and template under a directory this run owns, and `scope_pids` reading
+`run/firecracker/<id>/root/firecracker.pid` under it enumerates this run's
+machines and nobody else's. But `ImageDir` is `Root()/out/<arch>`, so a wholly
+private cache has no guest image and `make image` is thirty-five minutes on a
+cold machine. `out/` is therefore symlinked to the shared cache — it is
+read-only to everything but `make image`, which is the row `templates/<hash>`
+would want and does not get — and the suites' `image.json` reads are left
+pointing at the shared path, because for `out/` the shared path is the correct
+one.
+
+Processes are matched by `KELYFOS_CACHE` in `/proc/<pid>/environ` rather than by
+name. A peer has a different one; `environ` is readable only for this user's own
+processes, which is exactly the set we are entitled to signal; and it survives
+the `( kelyfos run & )` double-fork these suites use, which reparents to init
+and puts the process beyond a process-tree walk.
+
+**Two defects this change introduced, both invisible to review and caught only
+by running it.** They are recorded because they are the argument for D79's "a
+task rather than a step", and neither would have failed where a reader was
+looking.
+
+- **The cache directory's own name.** `accept-notify.sh` checks that a run
+  without `--notify` "does not mention notifications at all", with `grep -q
+  notify quiet.log`. `KELYFOS_CACHE` is printed in a run's own output as the
+  vsock and jail paths, and the cache was at `/tmp/kelyfos-accept-notify.XXXXXX`
+  — so the suite's name in the directory's name turned the suite's own assertion
+  red. The directory is now `/tmp/kelyfos-cache.XXXXXX`, using only the two
+  words the shared path `$HOME/.cache/kelyfos` already contributed, so no suite
+  can begin matching on a word it did not match before; the suite name goes in a
+  `.suite` file inside.
+- **A `halt` that killed more than the one it replaced.** `pkill -f "kelyfos
+  run"` by construction leaves a `kelyfos snapshot restore` alone, and
+  `accept-profile.sh` calls `halt` after a restore and then execs into the
+  machine that restore brought up. Mapping `halt` onto "stop every kelyfos
+  process this run owns" took that machine with it: 33 passed and 2 failed,
+  against the 35 and 0 the unmodified suite gets. So `scope_kill_kelyfos` and
+  `scope_kill_machines` take the subcommands to match, every mid-run caller
+  names the ones its `pkill` named, and only the EXIT teardown stops everything.
+
+**A suite passing is not evidence, and one of them was being propped up by the
+bug.** `accept-e5.sh` asked `pgrep -f 'kelyfos run'` to confirm "every kelyfos
+process was killed before the resume" — a host-wide read that fails on an
+unmodified v1.1.2 run and passed historically only because the teardown beside
+it had just killed every Firecracker on the machine. Removing the kill exposed
+the read. The general form: **fixing these kills can turn a green check red
+without anything getting worse, because the kill was the thing making it green.**
+That is why every suite here was re-earned *with a peer up* rather than merely
+re-run.
+
+**And a suite that had been passing on somebody else's history.** `accept-e5`'s
+"every event type this epic added was written by *this run*" scans every session
+directory in the cache for six event types. The shared cache on this machine
+holds **2996 session directories**, 67 of them carrying a `shell.start` from
+some earlier unrelated run, so the check reported "none missing" without this
+run having written any of them. Scoped, it reports `shell.start shell.end
+run.review` missing, which is true and consistent with the suite's own
+pre-existing shell/PTY failures here. It is left failing: the check now measures
+what its sentence says, and what it exposes is a separate defect. This is a
+second thing a private cache buys beyond not killing peers, and it was not
+anticipated.
+
+**What was audited and found already failing, so that nobody reads these as
+regressions.** Every failing suite was run at `v1.1.2`, alone on the machine,
+rather than assumed about.
+
+| suite | scoped | v1.1.2 alone | verdict |
+| --- | --- | --- | --- |
+| `accept-notify` | 21 passed, 1 failed | 21 passed, 1 failed | pre-existing; "the one question this product asks is notified before it is asked" |
+| `accept-e1` | 12 passed, 1 failed | 12 passed, 1 failed | pre-existing; 0.00 Mbps against a 10 Mbps cap, this nested host |
+| `prove-caps` | 6 passed, 1 failed, 1 skipped | 6 passed, 1 failed, 1 skipped | pre-existing; the same measurement, and the suite already skips its cpu-quota check on a nested host (D15) |
+| `accept-e5` | 25 passed, 8 failed | 25 passed, 8 failed | same totals, better composition — see above |
+
+The other eleven are clean: `accept-shell` 13/0, `accept-denials` 12/0,
+`accept-forward` 21/0, `accept-runs` 18/0, `accept-jail` 19/0, `accept-seccomp`
+15/0, `accept-profile` 35/0, `accept-e4` 22/0, `accept-shim` 35/0, `cookbook`
+23/0, and `demo-record` ran to completion (it is a demo and keeps no score).
+Every one of the fifteen left exactly one Firecracker running afterwards, which
+was the peer.
+
+**What was rejected.**
+
+| candidate | verdict |
+| --- | --- |
+| Fifteen self-contained copies of the teardown | **Rejected.** It matches this directory's convention, and the convention is wrong for this specifically: D79's whole warning is that a wrong scoping here is silent, and fifteen copies is fifteen chances to get it silently wrong with no single place to test. One file is testable, and `tools/scope` tests it. |
+| `HOME` instead of `KELYFOS_CACHE` | **Rejected**, though it is tempting: it would have made the four cookbook recipes correct with no edit, since `$HOME/.cache/kelyfos` would be the private cache. It also moves the Go build cache, git and ssh configuration and everything else a recipe might touch, to fix a path. |
+| Killing by process group | **Rejected.** These suites background with `( kelyfos run & )`, which double-forks and reparents to init, so the group is gone by the time the trap runs. |
+| Fixing `accept-e5`'s newly-red check | **Rejected.** It is red because it became correct. Making it green again means either restoring the shared-cache scan, which is the defect, or fixing the shell/PTY failures under it, which is a different change. |
+| `sudo pkill -f "http.server"` in `accept-e1` and `prove-caps` | **Left alone, deliberately.** It is a different program, the port makes it exclusive anyway, and it is not the class D79 is about. Named here so it is not read as an oversight. |
+
+**A methodological note worth more than it looks.** `kill -0` is not a liveness
+check for this: a Firecracker that has just been killed sits as a zombie until
+its parent reaps it, and `kill -0` reports a zombie as alive. The first
+peer-survival measurement taken for this change recorded a peer as *survived*
+when it had in fact been killed seconds earlier. Everything here reads the state
+field of `/proc/<pid>/stat` instead, and `tools/scope`'s own helper says why in
+a comment. S20's `kill -0` check and `prove-two-teams.sh` inherit the same
+inaccuracy in the other direction — they can report a killed machine as still
+alive — which is a candidate rather than a fix.
+
+**Why:** D79 left this open with the reason stated plainly — these scripts are
+the evidence base every other change is checked against, a wrong scoping does
+not fail loudly but silently stops killing anything, and re-earning fourteen
+suites on live microVMs is a task rather than a step. All three held. The two
+defects above were found by running, not by reading; the `accept-e5` check was
+found to have been wrong for as long as the cache has had history; and the cost
+D79 dated — a reviewer's `make test` going red with three `internal/sandbox`
+failures while `cookbook.sh` ran beside it — is the thing this closes.
