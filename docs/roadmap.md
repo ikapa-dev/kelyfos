@@ -137,7 +137,7 @@ dispositioned deliberately or is open work — see the decision log for which.
 
 ### Phase 7 — The declared shape of a run (v1.1 · “what it was allowed to do”)
 
-*17/18 complete*
+*18/18 complete*
 
 - [x] **P7-0** — The policy-record spec, written before the code
 - [x] **P7-1** — One fold, not three
@@ -154,7 +154,7 @@ dispositioned deliberately or is open work — see the decision log for which.
 - [x] **P7-12** — kelyfos view — the localhost read-only viewer
 - [x] **P7-13** — The phase read back against its own source
 - [x] **P7-14** — A path-scoped credential can attach across a double-trailing-slash boundary
-- [ ] **P7-15** — FuzzAppendFieldValues OOM-kills its own worker once its corpus grows past roughly 260 entries
+- [x] **P7-15** — FuzzAppendFieldValues OOM-kills its own worker once its corpus grows past roughly 260 entries
 - [x] **P7-16** — Concurrent teams on one host collide over shared, single-slot state
 - [x] **P7-17** — Security review 2026-08-28 remediation
 
