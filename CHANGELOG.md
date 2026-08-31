@@ -61,10 +61,13 @@ written by v1.1 verifies byte for byte under v1.1.1.
 
 ### Changed
 - **More of an oversized field survives being clipped, and several oversized
-  fields are now each clipped rather than one repeatedly.** A 20 MiB `data` is
-  kept at about 8 MiB where v1.1 halved it twice to 5 MiB, and an event with
+  fields are now each clipped rather than one repeatedly.** As a fraction of the
+  8 MiB line limit, for a 20 MiB `data`: ordinary output went from 62.8% kept to
+  99.9%, and output full of `<` — which JSON escaping expands six-for-one, so a
+  shell transcript reaches it constantly — from 15.6% to 74.7%. An event with
   four oversized fields comes back with four clip notes instead of one field
-  reduced to a sixteenth. This is a change to the text of a clipped value, not
+  reduced to a sixteenth, and each note now names the field's true original size
+  rather than the size it had partway through being reduced. This is a change to the text of a clipped value, not
   to the schema: the field, its position and the digest over it are unchanged,
   and `docs/compatibility.md` §2 pins those rather than the contents of a value
   this file already replaces with a note. Anything parsing the
