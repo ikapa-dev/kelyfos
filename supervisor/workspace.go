@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"strings"
 
@@ -47,4 +48,28 @@ func mountWorkspace() (mounted bool) {
 // cache would simply be lost.
 func syncWorkspace() {
 	unix.Sync()
+}
+
+// flushWorkspace makes the workspace's writes DETERMINISTICALLY durable: one
+// syncfs(2) against the /work filesystem, which blocks until every write that
+// filesystem has accepted is on the device, rather than sync(2)'s whole-machine
+// best-effort. The host's shutdown handshake now waits for this: the ack it
+// reads back over the control channel means "your files are on the disk",
+// which is the guarantee IA-H1 found missing — a teardown that raced the ext4
+// commit lost the run's last writes while reporting success.
+func flushWorkspace() error {
+	fd, err := unix.Open("/work", unix.O_RDONLY|unix.O_DIRECTORY, 0)
+	if err != nil {
+		// No /work, no flush: a sandbox without a workspace has nothing whose
+		// loss the handshake could hide.
+		return nil
+	}
+	defer unix.Close(fd)
+	if err := unix.Syncfs(fd); err != nil {
+		return fmt.Errorf("syncfs /work: %w", err)
+	}
+	// The rest of the machine's writes — the record, the logs — are not the
+	// host's to read back, but there is no reason to leave them dirty either.
+	unix.Sync()
+	return nil
 }

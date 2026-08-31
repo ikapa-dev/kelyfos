@@ -214,17 +214,25 @@ _aup_spawn() {
 # adown — stop the sandbox aup started, through the door it is meant to close.
 #
 # §8 trap 2 is the rule: with a trailing command, teardown happens when the
-# child exits, so the harness interrupts the CHILD (pkill -INT -P <run-pid> —
-# our own run's child, found by parent pid, not a host-wide pattern) and waits
-# for the run to exit. With no trailing command the run pid gets SIGTERM
-# directly, which its signal handler handles (ci.yml's boot job asserts that
-# on every push). The scope.sh teardown remains underneath as the fallback
-# that catches whatever the graceful path missed, scoped to this run's cache.
+# child exits, so the harness interrupts the CHILD and waits for the run to
+# exit. The child is found by parent pid and by NAME — the run's other child
+# is the VMM's sudo wrapper, and an INT delivered there is a power cut, the
+# one teardown no flush-before-ack can cover (ST-5.2 learned this the hard
+# way: the harness's own first version power-cut the machine and measured
+# nothing). With no trailing command the run pid gets SIGTERM directly, which
+# its signal handler handles (ci.yml's boot job asserts that on every push).
+# The scope.sh teardown remains underneath as the fallback that catches
+# whatever the graceful path missed, scoped to this run's cache.
 adown() { adown_quiet; }
 adown_quiet() {
   [ -n "${AUP_PID:-}" ] || { scope_kill_machines run; return 0; }
   if [ "${AUP_TRAILING:-1}" = "1" ] && kill -0 "$AUP_PID" 2>/dev/null; then
-    pkill -INT -P "$AUP_PID" 2>/dev/null
+    for c in $(pgrep -P "$AUP_PID" 2>/dev/null); do
+      case "$(cat "/proc/$c/comm" 2>/dev/null)" in
+        sudo|firecracker|jailer) continue ;;
+      esac
+      kill -INT "$c" 2>/dev/null
+    done
   elif kill -0 "$AUP_PID" 2>/dev/null; then
     kill -TERM "$AUP_PID" 2>/dev/null
   fi

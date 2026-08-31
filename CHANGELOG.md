@@ -1254,3 +1254,15 @@ Buildroot guest with a supervisor on vsock.
 
 Tagged at the end of phase 0; no release was published. The pinned toolchain,
 the repository layout, and an acceptance test that passed.
+### Fixed
+- **A teardown racing the guest's ext4 commit no longer loses the files an
+  agent wrote last while reporting success** (D91, the independent audit's
+  IA-H1). The supervisor now flushes the workspace filesystem — syncfs(2) —
+  before answering the shutdown handshake, so the ack means the files are on
+  the disk; a failed flush refuses the shutdown instead of hiding it. The
+  write-back cross-checks the pack manifest and refuses an image that came
+  back empty against a non-empty pack, leaving the host directory untouched
+  and saying why, instead of printing "workspace written back" over lost
+  work. The trade: a run whose agent genuinely deleted every file in the
+  workspace is now refused with that message rather than silently writing
+  back an empty tree.

@@ -1524,3 +1524,64 @@ payloads, header echo.
 **Why:** the work is a script and a suite; the blocker is a monthly invoice
 and a hostname only the owner can authorise. Everything below the invoice is
 ready to be written the moment the row is approved.
+
+## D91
+
+*2026-08-31*
+
+**The guest flushes the workspace BEFORE answering the shutdown handshake,
+and the write-back refuses an image that comes back empty against a manifest
+that says it held files — IA-H1's two halves closed together (ST-5.2).**
+
+The audit reproduced 2/2 here before any fix: a file written in the guest,
+teardown immediately after, `workspace written back to <dir>` on stdout, the
+host directory empty. The reproduction also found where the loss actually
+lives, and it was not quite where the plan sketched it. The halt path
+already flushed — `syncWorkspace()` before the TERM sweep and a final
+`unix.Sync()` after it — so the missing flush was not the whole story. What
+the flush could not cover was the teardown that never asked the guest at
+all: an INT delivered to the run's sudo child is a power cut, and a power
+cut loses whatever the ext4 commit had not reached. The audit's own harness
+and this suite's first harness both did exactly that.
+
+**The fix is two halves.**
+
+- *Deterministic flush.* On OpShutdown the supervisor now runs syncfs(2)
+  against /work — blocking until that filesystem's writes are on the device —
+  BEFORE writing the response, and refuses the shutdown if the flush fails.
+  The ack the host reads now means "your files are on the disk", which is the
+  control-channel guarantee the audit asked for. The old order — ack, then
+  halt, then flush — told the host it could read the image while the ext4
+  commit was still in flight.
+- *Honest write-back.* The extraction cross-checks the pack manifest: an
+  image that comes back with zero entries while the manifest names a
+  non-empty pack refuses with "the machine's last writes were lost, and
+  nothing was written back or removed" — syncResumedWorkspace's shape, as
+  the plan directed. The false success is what turned a data-loss bug into
+  an integrity finding.
+
+| candidate | verdict |
+| --- | --- |
+| Remount /work read-only before poweroff | **Rejected.** The supervisor's own seccomp refusal list contains mount; the machine that most needs the flush cannot perform it. |
+| fsync every file in /work from the supervisor | **Rejected.** syncfs does the whole filesystem in one syscall the kernel completes, and walking a tree the agent may still be writing invents new races. |
+| 0-entries-vs-manifest as a warning, not a refusal | **Rejected.** A warning beside "workspace written back" is the false success wearing a hat. The refusal keeps the host directory untouched and says why. |
+| Only fix the harness (INT the command, never the VMM) | **Rejected as sufficient.** The harness fix is real and landed with this row — but the product's promise cannot depend on who was polite enough to signal gently. |
+
+**The trade the cross-check makes, stated.** An agent that genuinely deletes
+everything in /work hits the refusal: the run says the writes were lost and
+leaves the host directory as it was. That is a false refusal in a rare case
+against a silent destruction in a common one — the direction the RECORD
+checklist points. The refusal names the manifest, so the evidence survives
+for whoever needs to know what the pack held.
+
+**The harness learned the same lesson.** dev/security-lab.sh's adown now
+INTs the trailing command child by name and never the sudo/firecracker
+children — §8 trap 2's `pkill -INT -P <run-pid>` recipe is imprecise in
+exactly this way, and a teardown that power-cuts the VMM measures nothing.
+
+**Why:** the audit's HIGH finding was silent data destruction with a false
+success message, in the single most common pattern there is — write results,
+exit. The fix makes the durable write a precondition of the handshake and
+makes the write-back refuse when its own precondition failed, and the
+regression test that reproduced the loss twice now asserts the survival
+twice.

@@ -45,9 +45,23 @@ func handleControl(conn net.Conn, shutdown chan<- struct{}) {
 		case proto.OpPing:
 			// Nothing to do: reaching this line is the answer.
 		case proto.OpShutdown:
-			// Answer before acting. Once the machine goes down there is no
-			// channel left to answer on, and the host would be left unable to
-			// tell an orderly shutdown from a crash.
+			// Answer only once the workspace is durably on its disk. The
+			// original order — answer, then halt, then flush inside the halt —
+			// is the race IA-H1 rode in on: the ack told the host "you may
+			// read the image" while the guest's ext4 commit was still in
+			// flight, and a teardown that won that race lost the run's last
+			// writes while both sides reported success. The flush here is
+			// syncfs against /work, which blocks until that filesystem's
+			// writes are on the device, so the response this writes now means
+			// "your files are on the disk". A flush that fails refuses the
+			// shutdown: the host sees the refusal instead of an empty image.
+			if err := flushWorkspace(); err != nil {
+				resp.OK = false
+				resp.Error = &proto.Error{Kind: proto.ErrInternal, Message: err.Error()}
+				_ = w.Write(resp)
+				logf("shutdown refused: %v", err)
+				return
+			}
 			_ = w.Write(resp)
 			select {
 			case shutdown <- struct{}{}:

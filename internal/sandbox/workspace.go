@@ -183,6 +183,25 @@ func (w *Workspace) Stage() (*Staged, error) {
 		_ = removeTree(s.tree)
 		return nil, err
 	}
+
+	// The IA-H1 cross-check: the pack recorded what went IN, and an image
+	// that comes back with nothing in it while the pack says it held files is
+	// a machine whose last writes were lost — the exact shape the audit
+	// reproduced (files gone, "workspace written back" printed). Refusing
+	// here leaves the host directory as it was and says why, in the shape
+	// syncResumedWorkspace already had: nothing was written back and nothing
+	// was removed. A run whose agent genuinely deleted everything is refused
+	// too, and that is the trade this check makes deliberately: a false
+	// success destroys work silently, a false refusal names itself and keeps
+	// the evidence.
+	if len(entries) == 0 {
+		if m, merr := ReadWorkspaceManifest(w.ImagePath); merr == nil && len(m.Entries) > 0 {
+			_ = removeTree(s.tree)
+			return nil, fmt.Errorf("the workspace image held %d packed entries and came back empty — "+
+				"the machine's last writes were lost, and nothing was written back or removed; "+
+				"the manifest at %s names what the pack held", len(m.Entries), manifestPath(w.ImagePath))
+		}
+	}
 	return s, nil
 }
 

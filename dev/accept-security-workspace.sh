@@ -126,23 +126,19 @@ assert_contains "$(stat -c '%a' "$plain/plain.txt" 2>/dev/null)" "640" \
 check "$(grep -aq 'workspace written back' "$plain_log" && echo yes || echo no)" \
       "and the run said so, because this time it is true"
 
-say "IA-H1 regression slot — silent loss with a false success"
-# REPRODUCED 2/2 on 2026-08-31 against the same tree this suite landed on:
-# a file written in the guest, teardown immediately after, "workspace written
-# back" on stdout, the host directory empty. Until ST-5.2's deterministic
-# flush lands, the honest encoding is this skip: loud, dated, named. It is
-# not a pass, it is not silent, and it flips into the assertion below the
-# moment the fix exists.
+say "IA-H1 regression — silent loss with a false success"
+# REPRODUCED 2/2 on 2026-08-31 against the pre-fix tree: a file written in
+# the guest, teardown immediately after, "workspace written back" on stdout,
+# the host directory empty. ST-5.2's flush-before-ack is what this asserts
+# now: the file written last must be on the host after teardown, without any
+# guest-side sync. This is the regression test the fix owed.
 slot_host="$SLAB_WORK/ws-iah1"
 mkdir -p "$slot_host"
 aup -workspace "$slot_host"
 if [ -z "$AUP_ID" ]; then slab_done; exit 1; fi
 ax "echo proof-of-work > /work/proof.txt"
 adown
-if [ -f "$slot_host/proof.txt" ]; then
-  pass "IA-H1 slot: the file written last survived teardown — the fix has landed; make this assertion unconditional"
-else
-  skip "IA-H1 reproduced today (files lost, false success printed; expiry: when ST-5.2 lands) — see the suite header"
-fi
+assert_eq "$(cat "$slot_host/proof.txt" 2>/dev/null)" "proof-of-work" \
+      "IA-H1: the file written last survives teardown, with no guest-side sync"
 
 slab_done
