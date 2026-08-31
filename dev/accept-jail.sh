@@ -72,7 +72,7 @@ if ! boot; then
   tail -10 run.log
   exit 1
 fi
-vmm="$(scope_live_pids | head -1)"
+vmm="$(scope_newest_pid)"
 echo "  firecracker pid $vmm"
 grep -E 'jail ' run.log | sed 's/^/  /'
 
@@ -130,7 +130,7 @@ boot --no-jail >/dev/null 2>&1
 grep -E 'no-jail|namespace' run.log | sed 's/^/  /'
 check "$(grep -q 'running as you, in your namespace' run.log && echo yes || echo no)" \
       "the terminal is told what is not enforced"
-vmm2="$(scope_live_pids | head -1)"
+vmm2="$(scope_newest_pid)"
 mroot2="$(sudo -n awk '$5=="/"{print $4; exit}' "/proc/$vmm2/mountinfo" 2>/dev/null)"
 echo "  its root, as the host sees it: ${mroot2:-<unreadable>}"
 check "$(grep -q 'run/firecracker/.*/root' <<<"$mroot2" && echo no || echo yes)" \
@@ -187,7 +187,7 @@ say "the cgroup it sits in is the one KelyfOS asked for"
 # without one there is no slice to sit in.
 halt
 boot --cpu-quota 150%
-vmm3="$(scope_live_pids | head -1)"
+vmm3="$(scope_newest_pid)"
 grep -E '^  cpu |^  cgroup ' run.log | sed 's/^/  /'
 sits="$(awk -F: '$1=="0"{print $3}' "/proc/$vmm3/cgroup" 2>/dev/null)"
 state3="$(ls -t "$KELYFOS_CACHE"/run/firecracker/*/sandbox.json "$KELYFOS_CACHE"/run/firecracker/*/root/sandbox.json 2>/dev/null | sed -n '1,1p')"

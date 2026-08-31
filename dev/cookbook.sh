@@ -84,34 +84,25 @@ for script in "$WORK"/recipes/*.sh; do
   # Found by the adversarial review of P7-16, in the harness that runs the
   # recipes that round had just scoped.
   #
-  # The trade, stated rather than discovered — and stated wider than the first
-  # version of this comment had it. What is left behind is NOT only this run's
-  # failures. The kills above ask `pgrep firecracker`, which is every
-  # Firecracker on the host, so a PEER's sandbox cut down by them leaves a run
-  # directory too; and a recipe that SUCCEEDS can leave one, when its own trap
-  # has SIGTERMed a backgrounded `kelyfos run` that is still tearing down as
-  # the next recipe's kills fire. The honest bound is every sandbox on this
-  # host that the kills cut down, whoever it belonged to.
+  # The trade, restated because D83 changed it. This paragraph used to say the
+  # leftovers were "every sandbox on this host that the kills cut down, whoever
+  # it belonged to", because the kills above asked `pgrep firecracker`. They no
+  # longer do: scope_kill_machines stops this run's kelyfos processes and this
+  # run's Firecrackers, so nothing a peer owns is cut down and nothing a peer
+  # owns is left behind. The honest bound is now this run's own machines, and a
+  # recipe that SUCCEEDS can still leave one, when its own trap has SIGTERMed a
+  # backgrounded `kelyfos run` that is still tearing down as the next recipe's
+  # kills fire.
   #
-  # And "litter, not a live conflict" is too kind, because a third reader has
-  # no `alive(PID)` check at all: `hasLiveRunDir` in host/sessions.go is a bare
-  # `os.Stat` of the run directory, and it feeds `sessionIsLive` — so `kelyfos
-  # sessions prune` SKIPS that session and `kelyfos sessions erase` REFUSES it
-  # outright ("has a live run directory and may still be running"), for as long
-  # as the directory exists. A leftover here pins its session against an
-  # erasure indefinitely. `rm -rf` on the directory frees it, so this is still
-  # litter-class rather than data loss, and sessions.go's own P7-13 comment
-  # already calls it "the accepted false positive hasLiveRunDir's own leftover
-  # directory already is" — but it is not inert.
-  #
-  # It remains the better trade: deleting other people's run directories is
-  # worse than leaving your own, and a full 23-recipe run left nothing at all
-  # behind — even the one that was sharing this host with a `go test` whose
-  # microVMs the kills above cut down, which is the paragraph above happening
-  # while the paragraph below was being measured. Removing only the ones whose pid is dead would be
-  # closer, and is still a decision about somebody else's crashed sandbox, so
-  # it goes with the rest of the deferral in D79 rather than being guessed at
-  # in a trap.
+  # The `hasLiveRunDir` consequence that used to follow is gone too, and it is
+  # worth saying why rather than deleting it. A leftover run directory used to
+  # sit in the shared cache, where `hasLiveRunDir` in host/sessions.go is a bare
+  # `os.Stat` feeding `sessionIsLive` — so `kelyfos sessions prune` SKIPPED that
+  # session and `kelyfos sessions erase` REFUSED it outright for as long as the
+  # directory existed. This run's directories are now inside its own
+  # KELYFOS_CACHE and go with it at teardown, so they cannot pin anybody's
+  # session against an erasure. That product behaviour is unchanged and still
+  # applies to a leftover in the shared cache from any other source.
 
   start=$(date +%s)
   # Into a file rather than through a pipe, and that is the whole fix (P6-18).

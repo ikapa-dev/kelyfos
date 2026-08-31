@@ -52,26 +52,71 @@
 # before. The suite name goes in a file inside instead.
 scope_init() {
   local name="${1:-suite}"
-  SCOPE_SHARED_CACHE="${SCOPE_SHARED_CACHE:-$HOME/.cache/kelyfos}"
-  SCOPE_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/kelyfos-cache.XXXXXX")" || return 1
+  # The cache to borrow the image from is whatever KELYFOS_CACHE already said,
+  # and $HOME/.cache/kelyfos only when it said nothing. A relocated cache is a
+  # supported configuration -- Makefile's `KELYFOS_CACHE ?= $(HOME)/.cache/kelyfos`
+  # means `make image KELYFOS_CACHE=/data/kelyfos` puts the image there, and
+  # `kelyfos doctor` advises pointing it at a roomier filesystem -- so reading
+  # $HOME here would discard the caller's setting and then fail to find an image
+  # for a reason that names nothing about the cause.
+  SCOPE_SHARED_CACHE="${SCOPE_SHARED_CACHE:-${KELYFOS_CACHE:-$HOME/.cache/kelyfos}}"
+  SCOPE_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/kelyfos-cache.XXXXXX")"
+  # Loudly, and not `|| return 1`. No caller checked that, and the consequence
+  # of carrying on is the exact silent failure D79 names: KELYFOS_CACHE stays
+  # unset, sandbox.Root() falls back to the SHARED cache, every guard in this
+  # file short-circuits on the empty variable, the teardown kills nothing and
+  # still returns 0, and the suite runs against everybody's cache and reports
+  # PASS.
+  if [ -z "${SCOPE_ROOT:-}" ] || [ ! -d "$SCOPE_ROOT" ]; then
+    printf 'scope: could not create a private cache under %s; refusing to run against the shared one\n' \
+      "${TMPDIR:-/tmp}" >&2
+    exit 1
+  fi
   printf '%s\n' "$name" > "$SCOPE_ROOT/.suite" 2>/dev/null
   if [ -d "$SCOPE_SHARED_CACHE/out" ]; then
     ln -s "$SCOPE_SHARED_CACHE/out" "$SCOPE_ROOT/out"
+  else
+    printf 'scope: no guest image at %s/out -- run `make image FLAVOR=dev` first\n' \
+      "$SCOPE_SHARED_CACHE" >&2
   fi
   export KELYFOS_CACHE="$SCOPE_ROOT"
 }
 
 # This run's own Firecracker pids, read from the run directories under its own
-# cache — the same jail run-directory shape internal/sandbox.jailRunDir builds,
-# and the same file S20 taught dev/demo-team.sh to read. Read them while the
-# machines still exist: teardown removes the directory that holds the pid file.
+# cache. Read them while the machines still exist: teardown removes the
+# directory that holds them.
+#
+# TWO sources, and the second is not optional. firecracker.pid is written by the
+# *jailer*, not by KelyfOS -- internal/sandbox/jail.go:210 is the only writer,
+# and sandbox.go says it outright: "Absent or unreadable is not an error:
+# --no-jail writes none." So a run started with --no-jail has no pid file, and a
+# teardown that reads only that file walks straight past the machine and reports
+# success having killed nothing. That is the silent failure D79 warns this fix
+# could itself become, and it is not hypothetical: dev/accept-jail.sh and
+# dev/accept-seccomp.sh both boot --no-jail deliberately, so those are exactly
+# the machines this has to find.
+#
+# The unjailed pid is in the sandbox's own state file: sandbox.go:701 sets
+# State.PID from cmd.Process.Pid, and it lands as "pid" in sandbox.json, which
+# sits either beside the jail directory or inside it depending on the path. Both
+# are read, and the pids are de-duplicated because a jailed sandbox has both.
 scope_pids() {
-  local f
+  local f d p
   [ -n "${KELYFOS_CACHE:-}" ] || return 0
-  for f in "$KELYFOS_CACHE"/run/firecracker/*/root/firecracker.pid; do
-    [ -f "$f" ] || continue
-    cat "$f" 2>/dev/null
-  done
+  {
+    for f in "$KELYFOS_CACHE"/run/firecracker/*/root/firecracker.pid; do
+      [ -f "$f" ] || continue
+      cat "$f" 2>/dev/null
+    done
+    for d in "$KELYFOS_CACHE"/run/firecracker/*/; do
+      [ -d "$d" ] || continue
+      for f in "$d/sandbox.json" "$d/root/sandbox.json"; do
+        [ -f "$f" ] || continue
+        p="$(sed -n 's/.*"pid"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$f" 2>/dev/null | sed -n 1p)"
+        [ -n "$p" ] && [ "$p" != "0" ] && echo "$p"
+      done
+    done
+  } | sort -u
 }
 
 # scope_live_pids — this run's Firecracker pids that are actually running.
@@ -85,6 +130,45 @@ scope_pids() {
 # shared machine is a peer's -- so the suite would go on to read a stranger's
 # /proc/<pid>/mountinfo and /proc/<pid>/cgroup and check ITS jail, passing or
 # failing on a machine it did not start.
+# scope_newest_pid — the machine this run started most recently, which is what
+# `pgrep -n firecracker` meant before it was replaced. scope_pids sorts, so
+# `scope_live_pids | head -1` is an arbitrary sandbox rather than the newest one
+# whenever two of this run's machines are live at once, and the checks that use
+# it go on to read that pid's cgroup and mountinfo.
+scope_newest_pid() {
+  local d newest="" p
+  [ -n "${KELYFOS_CACHE:-}" ] || return 0
+  # Newest by the run directory's own mtime, the same way accept-profile.sh
+  # already picks a state file with `ls -t`.
+  for d in $(ls -td "$KELYFOS_CACHE"/run/firecracker/*/ 2>/dev/null); do
+    for p in $(KELYFOS_CACHE="$KELYFOS_CACHE" scope_pids_in "$d"); do
+      if scope_is_live "$p"; then newest="$p"; break; fi
+    done
+    [ -n "$newest" ] && break
+  done
+  [ -n "$newest" ] && echo "$newest"
+}
+
+# The pids recorded under one run directory, both sources (see scope_pids).
+scope_pids_in() {
+  local d="$1" f p
+  {
+    [ -f "$d/root/firecracker.pid" ] && cat "$d/root/firecracker.pid" 2>/dev/null
+    for f in "$d/sandbox.json" "$d/root/sandbox.json"; do
+      [ -f "$f" ] || continue
+      p="$(sed -n 's/.*"pid"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$f" 2>/dev/null | sed -n 1p)"
+      [ -n "$p" ] && [ "$p" != "0" ] && echo "$p"
+    done
+  } | sort -u
+}
+
+scope_is_live() {
+  local p="$1" st
+  [ -e "/proc/$p/stat" ] || return 1
+  st="$(awk '{print $3}' "/proc/$p/stat" 2>/dev/null)"
+  [ -n "$st" ] && [ "$st" != "Z" ]
+}
+
 scope_live_pids() {
   local p st
   for p in $(scope_pids); do
@@ -213,7 +297,32 @@ scope_kill_machines() {
 # scope_teardown — the trap cleanup EXIT form: stop everything this run started
 # and take its cache with it.
 scope_teardown() {
-  scope_kill_machines
-  [ -n "${SCOPE_ROOT:-}" ] && rm -rf "$SCOPE_ROOT" 2>/dev/null
+  scope_kill_machines "$@"
+  scope_remove_cache
   return 0
+}
+
+# The jailer leaves root-owned files behind -- the pid file, and a copy of the
+# host's CPU topology under sys/ -- and internal/sandbox/jail.go says what a
+# plain removal does about it: "A plain RemoveAll fails half way and leaves the
+# rest, which over a few hundred runs is a disk full of abandoned chroots." That
+# is why removeJail falls back to sudo. Without the same fallback this change
+# would be a regression on tidiness rather than an improvement: the leftovers
+# used to pile up in one well-known shared cache, and would now be anonymous
+# part-removed chroots under a fresh /tmp directory per run, with the .suite
+# breadcrumb naming the culprit deleted first because it is the one file we own.
+scope_remove_cache() {
+  [ -n "${SCOPE_ROOT:-}" ] || return 0
+  case "$SCOPE_ROOT" in
+    "${TMPDIR:-/tmp}"/kelyfos-cache.*) ;;
+    *) return 0 ;;   # never rm -rf something this function did not create
+  esac
+  rm -rf "$SCOPE_ROOT" 2>/dev/null
+  if [ -d "$SCOPE_ROOT" ]; then
+    sudo -n rm -rf "$SCOPE_ROOT" 2>/dev/null
+  fi
+  if [ -d "$SCOPE_ROOT" ]; then
+    printf '  scope: could not remove %s (root-owned jailer leftovers; sudo -n unavailable)\n' \
+      "$SCOPE_ROOT" >&2
+  fi
 }

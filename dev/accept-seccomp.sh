@@ -78,7 +78,7 @@ if ! boot; then
   tail -10 run.log
   exit 1
 fi
-vmm="$(scope_live_pids | head -1)"
+vmm="$(scope_newest_pid)"
 echo "  firecracker pid $vmm"
 
 # --- which filter ---------------------------------------------------------

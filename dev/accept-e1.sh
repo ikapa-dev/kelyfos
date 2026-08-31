@@ -44,7 +44,7 @@ SUMMARY=()
 
 cleanup() {
   scope_teardown
-  sudo pkill -f "[h]ttp[.]server" 2>/dev/null
+  sudo pkill -f "[h]ttp[.]server 80" 2>/dev/null
   rm -rf "$WORK"
 }
 trap cleanup EXIT
@@ -92,7 +92,7 @@ if sudo -n true 2>/dev/null; then
   # enough for the opening burst to be a small share of the transfer and short
   # enough to be a step in a test rather than a coffee break.
   head -c 20000000 /dev/urandom > "$WORK/web/blob.bin"
-  sudo pkill -f "[h]ttp[.]server" 2>/dev/null
+  sudo pkill -f "[h]ttp[.]server 80" 2>/dev/null
   sleep 1
   ( cd "$WORK/web" && sudo nohup python3 -m http.server 80 --bind 127.0.0.1 >/dev/null 2>&1 & )
   sleep 2
