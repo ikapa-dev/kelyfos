@@ -20,10 +20,16 @@ export PATH="$BIN:$PATH"
 PASSES=0 FAILURES=0
 SUMMARY=()
 
+# This run gets its own KELYFOS_CACHE and tears down only the machines under
+# it. The two lines that used to be here -- `pkill -f "kelyfos run"` and
+# `for p in $(pgrep firecracker); do kill "$p"; done` -- were host-wide
+# questions answered with a kill, and on a machine running more than one
+# worktree they took a peer's microVMs down with them (D79).
+source "$REPO/dev/scope.sh"
+scope_init accept-shell
+
 cleanup() {
-  pkill -f "kelyfos run" 2>/dev/null
-  sleep 1
-  for p in $(pgrep firecracker 2>/dev/null); do kill "$p" 2>/dev/null; done
+  scope_teardown
   rm -rf "$WORK"
 }
 
@@ -113,16 +119,16 @@ grep -E 'shell' log.txt | sed 's/^/  /'
 check "$(grep -q 'shell opened' log.txt && echo yes || echo no)" "the fact of the shell is always recorded"
 check "$(grep -q 'shell closed   exit 7' log.txt && echo yes || echo no)" "and how it ended"
 
-stream="$(ls ~/.cache/kelyfos/sessions/"$session"/shell-*.stream 2>/dev/null | sed -n '1,1p')"
+stream="$(ls "$KELYFOS_CACHE"/sessions/"$session"/shell-*.stream 2>/dev/null | sed -n '1,1p')"
 check "$([ -n "$stream" ] && echo yes || echo no)" "--transcript wrote the terminal stream"
 check "$([ -n "$stream" ] && grep -q 'hello-from-the-shell' "$stream" && echo yes || echo no)" \
       "and the stream holds what was shown"
 
 say "and without --transcript, nothing of the contents is stored"
-rm -f ~/.cache/kelyfos/sessions/"$session"/shell-*.stream
+rm -f "$KELYFOS_CACHE"/sessions/"$session"/shell-*.stream
 code="$(timeout 200 python3 drive.py 2>/dev/null | tail -1)"
 check "$([ "$code" = "7" ] && echo yes || echo no)" "the plain shell works the same"
-check "$(ls ~/.cache/kelyfos/sessions/"$session"/shell-*.stream >/dev/null 2>&1 && echo no || echo yes)" \
+check "$(ls "$KELYFOS_CACHE"/sessions/"$session"/shell-*.stream >/dev/null 2>&1 && echo no || echo yes)" \
       "no stream file exists"
 kelyfos log --session "$session" > log2.txt 2>/dev/null
 check "$([ "$(grep -c 'shell opened' log2.txt)" = "2" ] && echo yes || echo no)" \
