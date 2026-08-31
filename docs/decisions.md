@@ -1351,3 +1351,53 @@ path — nothing noticed, nothing reaped, nothing asserted it. A doctor check
 with evidence lines, an opt-in reaper whose scoping is proven rather than
 pattern-matched, and a suite (ST-1.9) that creates a real orphan and asserts
 this exact behaviour close it.
+
+## D86
+
+*2026-08-31*
+
+**A signal to the `run` process itself now ends a run with a trailing command,
+because the investigation ST-0.3 asked for found the select that had no case
+for it.**
+
+§6.1 of the security testing plan was right to rescope this from "add signal
+handlers" — the handlers exist (`signal.NotifyContext` in every command) and
+CI proves they work in the no-command shape on every push. Reproduced both
+shapes side by side on the dev VM against the same binary: with no trailing
+command, `kill -TERM <run pid>` printed "stopping..." and tore the machine
+down within a second; with `-- sleep 300` the same signal left the run, the
+sleep, the VMM, its TAP and its table all alive 14 seconds later — the audit's
+observation, exactly. **Not an artifact of how the signal was sent.** The
+cause is three lines of structure, not a missing handler: the
+trailing-command path waits in a `select` on the child's exit, the budget and
+a broken recorder — and nothing else. The context `NotifyContext` cancels was
+cancelled; nothing in that select listened for it. `stopChild` existed and
+worked — the budget path uses it — it was simply unreachable from a signal.
+The audit's "SIGTERM/SIGINT are ignored" was real, and narrower than
+"handlers are missing": one select case.
+
+**The fix is that case.** `case <-ctx.Done(): interrupted = true; err =
+stopChild(…)` — the same TERM, grace, KILL escalation the budget uses, then
+the ordinary deferred teardown. The record's `session.end` says
+`interrupted`, not `command_exited`: the command did not choose to exit. The
+exit code is the command's own fate, 143 for a child killed by the TERM —
+which is also where the second defect this change found fell out: a child
+that dies by signal used to be reported as `exited -1` (Go's internal
+convention leaking into a human line); it is now 128+n, the shell's.
+
+| candidate | verdict |
+| --- | --- |
+| Kill the child from a goroutine watching the context, leave the select alone | **Rejected.** Two mechanisms racing to stop one child — the budget path and the watcher — for no gain over one more case in a select that already handles exactly these situations. |
+| Have the signal handler kill the whole process group | **Rejected.** The run may be a process group leader or not; killing a group from the run is the host-wide-kill class D83 closed, with the run's own children as collateral. |
+| Exit 0 like the no-command path does | **Rejected for this path.** The trailing-command form's promise is "exit with the command's status", and the command was stopped, not finished: 143 says what happened. Changing the no-command path's long-standing exit-0 is a different change with different blast radius, and CI's boot job depends on it today. |
+| Treat it as a timeout | **Rejected.** A timeout is a budget the operator set; an interrupt is one they sent. The record keeps them apart because they answer different questions — "why did it stop" and "who decided". |
+
+**The grace is `childGrace`'s 5 s**, the same one a budget allows its child,
+plus the VM teardown that always follows — the acceptance's "stated grace" is
+those two, and ST-1.9 asserts both shapes against them.
+
+**Why:** the audit's tooling, CI timeouts and any process manager that signals
+a run pid orphaned the machine deterministically (IA-M1's second trigger), and
+the fix is one case in the select that was already there to be extended —
+with the record now able to tell the three ways a run with a command can end
+apart: the command finished, the budget stopped it, the operator did.

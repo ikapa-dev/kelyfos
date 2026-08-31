@@ -870,6 +870,12 @@ status. This is how you hand an agent a sandbox and nothing else:
 
 		var err error
 		recorderBroke := false
+		// interrupted is set when the signal that ended the run arrived HERE,
+		// at the run process, rather than at the command: the context below
+		// cancelled, and the run — not the command — decided to stop. It is
+		// the difference between a record that says the command exited and
+		// one that says the run was interrupted (ST-0.3).
+		interrupted := false
 		select {
 		case err = <-childDone:
 		case t := <-budgetFired:
@@ -884,18 +890,36 @@ status. This is how you hand an agent a sandbox and nothing else:
 			recorderBroke = true
 			recorderFailed(rec, os.Stderr)
 			err = stopChild(child, childDone, command[0])
+		case <-ctx.Done():
+			// The operator signalled the run process itself — kill -TERM
+			// <run pid>, a CI timeout, a process manager. Until ST-0.3 this
+			// select had no case for it: the context cancelled and the wait
+			// on the child swallowed the signal, and the machine kept
+			// running with nobody able to reach it. The child is stopped the
+			// way a budget stops it — TERM, a grace, then KILL — and the
+			// deferred teardown below runs, exactly as the no-command path
+			// has always done.
+			interrupted = true
+			err = stopChild(child, childDone, command[0])
 		}
 		var childCode int
 		if err != nil {
 			var ee *exec.ExitError
 			if errors.As(err, &ee) {
 				childCode = ee.ExitCode()
+				// A child stopped by a signal did not exit -1; the shell's
+				// convention is 128+n, and the number should say which signal
+				// it was. This also fixes what the budget path announces for
+				// a killed command, which was "-1" before it was 124.
+				if ws, ok := ee.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
+					childCode = 128 + int(ws.Signal())
+				}
 			} else {
 				return fmt.Errorf("run %s: %w", command[0], err)
 			}
 		}
 		var announced, code int
-		reason, announced, code = commandRunOutcome(childCode, timedOut, recorderBroke, oomKills.Load() > 0)
+		reason, announced, code = commandRunOutcome(childCode, timedOut, recorderBroke, interrupted, oomKills.Load() > 0)
 		fmt.Printf("\n%s exited %d; stopping the sandbox\n", command[0], announced)
 		exitCode = &code
 		if code != 0 {
@@ -1478,12 +1502,20 @@ func endSession(rec *recorder.Recorder, reason string, exitCode *int) {
 //     failed has a status of its own worth keeping — but a run in which
 //     something was killed for memory is never a clean run.
 //
+// interrupted marks a run ended by a signal to the run process itself
+// (ST-0.3): the record says the run was interrupted, not that the command
+// chose to exit, and the code is the command's own — usually 143, death by
+// the TERM that stopChild sent.
+//
 // announced is what the "<cmd> exited N" line says and code is what the CLI
 // exits with. They differ only for an OOM kill: that line has reported the
 // run's status BEFORE the OOM upgrade since E1-4, and moving it would change
 // output nobody asked to change.
-func commandRunOutcome(childCode int, timedOut string, recorderBroke, oomKilled bool) (reason string, announced, code int) {
+func commandRunOutcome(childCode int, timedOut string, recorderBroke, interrupted, oomKilled bool) (reason string, announced, code int) {
 	reason, code = "command_exited", childCode
+	if interrupted {
+		reason = "interrupted"
+	}
 	if timedOut != "" {
 		reason, code = "timeout", exitTimedOut
 	}

@@ -376,6 +376,7 @@ func TestF13b_ABrokenRecorderDecidesHowTheRunIsDescribed(t *testing.T) {
 		childCode       int
 		timedOut        string
 		broke, oom      bool
+		interrupted     bool
 		reason          string
 		announced, exit int
 	}{
@@ -395,9 +396,22 @@ func TestF13b_ABrokenRecorderDecidesHowTheRunIsDescribed(t *testing.T) {
 			reason: "command_exited", announced: 3, exit: 3},
 		{name: "an OOM does not overwrite a broken recorder", childCode: 0, broke: true, oom: true,
 			reason: "recorder_failed", announced: exitcode.Fail, exit: exitcode.Fail},
+		// ST-0.3: a signal to the run process itself. The child's status is
+		// kept — it is what the `exited N` line and the exit code say — but
+		// the record must not call it the command's own choice.
+		{name: "an interrupted run says so, and keeps the signal's status", childCode: 143, interrupted: true,
+			reason: "interrupted", announced: 143, exit: 143},
+		{name: "a child that stopped gracefully keeps its own zero", childCode: 0, interrupted: true,
+			reason: "interrupted", announced: 0, exit: 0},
+		{name: "a timeout beats an interruption", childCode: 143, timedOut: "max_runtime", interrupted: true,
+			reason: "timeout", announced: exitTimedOut, exit: exitTimedOut},
+		{name: "a broken recorder beats an interruption", childCode: 143, broke: true, interrupted: true,
+			reason: "recorder_failed", announced: exitcode.Fail, exit: exitcode.Fail},
+		{name: "an OOM upgrades a graceful stop", childCode: 0, interrupted: true, oom: true,
+			reason: "interrupted", announced: 0, exit: exitOOMKilled},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			reason, announced, code := commandRunOutcome(c.childCode, c.timedOut, c.broke, c.oom)
+			reason, announced, code := commandRunOutcome(c.childCode, c.timedOut, c.broke, c.interrupted, c.oom)
 			if reason != c.reason {
 				t.Errorf("session.end reason = %q, want %q", reason, c.reason)
 			}

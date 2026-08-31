@@ -17,6 +17,17 @@ reference described in the README and re-measured per release.
 
 ## Unreleased
 
+### Changed
+- **`kelyfos run` with a trailing command now stops when the run process
+  itself is signalled** (D86). A `kill -TERM <run pid>` or `kill -INT <run
+  pid>` — a CI timeout, a process manager — used to be swallowed while the
+  command ran, leaving the sandbox and everything on the host running with
+  nobody able to reach it. The signal now stops the command the way a budget
+  expiry does (TERM, a 5 s grace, then KILL), tears the sandbox down, and the
+  record says `interrupted` rather than `command_exited`. The run exits with
+  the command's fate — 143 for a child stopped by the TERM, where a script
+  previously hung until the command exited on its own.
+
 ### Added
 - **`kelyfos run` prints a machine-readable `sandbox=<id>` line on stdout when
   the sandbox is ready** (D84), for scripts that attach to the machine they
