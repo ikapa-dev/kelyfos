@@ -1353,14 +1353,24 @@ func clipSecrets(s []EvSecret) []EvSecret {
 	return []EvSecret{{Name: fmt.Sprintf("...(clipped from %d bytes across %d secrets)", secretsBytes(s), len(s))}}
 }
 
+// agentsPerElementOverhead is EvAgent's own JSON framing, which is not
+// EvSecret's: `{"name":"","sandbox":""},` is 25 bytes where
+// `{"name":"","host":""},` is 22. Agents borrowed secretsPerElementOverhead
+// until D80 and so under-measured a zero-value slice by 12%. The remeasure
+// loop corrects an under-estimate rather than being broken by one, but an
+// estimate that is low is the direction that costs an extra pass, and a
+// constant whose comment justifies it for a different struct is the kind of
+// thing that stays wrong.
+const agentsPerElementOverhead = 25
+
 // agentsBytes is Agents' size, the same comparison secretsBytes gives
-// Secrets: every field of every entry, plus the same per-element JSON
-// framing estimate F6 gave secretsBytes (§9.1 of docs/policy-record.md
-// covers Agents as one of P7-3's three new invisible-to-reflection slices).
+// Secrets: every field of every entry, plus the per-element JSON framing F6
+// established (§9.1 of docs/policy-record.md covers Agents as one of P7-3's
+// three new invisible-to-reflection slices).
 func agentsBytes(a []EvAgent) int {
 	n := 0
 	for _, ag := range a {
-		n += len(ag.Name) + len(ag.Sandbox) + len(ag.Group) + secretsPerElementOverhead
+		n += len(ag.Name) + len(ag.Sandbox) + len(ag.Group) + agentsPerElementOverhead
 	}
 	return n
 }
