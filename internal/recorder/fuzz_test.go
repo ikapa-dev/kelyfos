@@ -101,6 +101,23 @@ func FuzzVerifyAgreesWithRead(f *testing.F) {
 // by fitUnderMaxLine's own reflection, fail identically to how F8's bug
 // behaved), and either way the round-trip checks below catch it without
 // anyone having to read clipToBudget to notice.
+// The seeds below are large on purpose and stay that way (D82). A reader
+// watching a run will see this target report `0 execs/sec` about ten seconds
+// in and stay there, and the obvious conclusion — that the multi-megabyte
+// seeds have stalled it — is measured to be wrong: with every seed under 1 KiB
+// the collapse is identical, and a counter inside this function counts 210,459
+// calls during a run the coordinator reported as 100,070 frozen execs. `execs`
+// is what workers report when an RPC returns, so it reads 0/sec while the body
+// underneath runs at roughly 5,000 a second. The body is flat at 50-73 ms for
+// every value size from 1 KiB to 16 MiB, because clipToBudget runs before the
+// first Marshal.
+//
+// They also stay because D80's reproduction depends on them: the 215-entry
+// corpus that reproduces the P7-15 OOM only means something while the seeds
+// that produced it are intact. Shrinking them is coverage-neutral —
+// setAllStringFields reaches 40 string fields, so 256 KiB already crosses
+// MaxLine and the covered-block set is identical either way — which makes it
+// a change that costs evidence and buys nothing.
 func FuzzAppendFieldValues(f *testing.F) {
 	f.Add("", "")
 	f.Add("short output", "github.com")

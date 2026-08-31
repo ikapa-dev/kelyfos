@@ -94,6 +94,8 @@ find in a comment is `F-D48`, in [the feature decisions](decisions-features.md).
 - [D78](#d78) — P7-14 is fixed by refusing a scope path that is not in normal form, not by normalising one —…
 - [D79](#d79) — P7-16: a team's host-level state is scoped to the team's own session id, and two teams on…
 - [D80](#d80) — P7-15 is a recording-integrity defect and not a fuzz-harness one: the clip loop is made…
+- [D81](#d81) — The release SBOM is a document about KelyfOS, and everything in it that KelyfOS did not…
+- [D82](#d82) — FuzzAppendFieldValues' seeds stay as they are, because the thing they were going to be…
 
 
 ## D1
@@ -943,3 +945,93 @@ It is fixed to the floor the comment always described, and the bound now carries
 **Each fix in this change now fails a test that names it when it is taken away, checked one at a time and in isolation rather than in suite.** The serial's coverage, the UTF-8 check, both halves of the subject `bom-ref` collision, the deduplication namespacing, the length prefix, and the component-type refusal — six neuterings, six named failures. The review's own instrument for that is worth recording beside them: `go test -shuffle` over eight seeds, which is what would have caught the ordering defect that the full suite, and therefore `make ci-act`, hid.
 
 **Why:** the published v1.1 and v1.1.1 artifacts, read on 2026-08-31. P6-10 for the merge, P6-11 and D39 for the attestations it feeds, P6-20 for the three fields `actions/attest` tests, P6-9 and D38 for the determinism every part of this had to fit through, D50 for the changelog section that cuts the release notes. *Revisit when* the SBOM can be produced in the same job that produces the binaries it describes, which is what would make recorded component hashes a true statement rather than a probable one.
+
+## D82
+
+*2026-08-31*
+
+**`FuzzAppendFieldValues`' seeds stay as they are, because the thing they were
+going to be shrunk to fix is not caused by them.** D80 left this open as a
+candidate — "this target still collapses to 0 execs/sec about ten seconds into
+a run and stays there ... because the fuzzer's own mutation of multi-megabyte
+seeds is what costs the time" — and named shrinking the seeds as the fix it was
+deliberately not making yet. The measurement says the second half of that
+sentence is wrong, so the fix it implies would have cost the P7-15 reproduction
+and bought nothing. The seeds do not move. What moves is the explanation.
+
+**The symptom reproduces exactly as D80 describes it.** On v1.1.2, in the Lima
+VM, six workers, a cold fuzz cache and `-fuzztime 60s`: 41,587 execs at 9
+seconds, 41,587 at 60 seconds, `0/sec` from 12 seconds onward. (D80's own run
+read 82,243; the absolute number is machine- and cache-dependent and the shape
+is not.)
+
+**Removing every multi-megabyte seed does not fix it.** With the 20 MiB, the
+10/15 MiB multibyte pair and the 9 MiB seed all deleted, so that no seed exceeds
+1 KiB, the same run reads 46,181 execs at 6 seconds and 46,181 at 61 seconds —
+`0/sec` for the last 52 seconds of a 60-second run. That single measurement
+falsifies the stated cause, and it is the one D80 did not take.
+
+**The target is not idle during the stall, which is the finding.** A counter
+incremented inside the fuzz body and dumped per worker says the body is called
+**210,459** times over a run in which the coordinator reported **100,070 execs
+and did not move for the last 28 seconds**. The workers are at 95% CPU
+throughout, not blocked. `execs` is a count of what workers report back when an
+RPC returns; a worker that keeps fuzzing inside one long call reports nothing,
+and the line goes to `0/sec` while the target underneath it runs at roughly
+5,000 executions a second. **`0 execs/sec` here is a reporting artifact of Go's
+fuzzing coordinator, not a description of the target.**
+
+**What is genuinely wasted is repetition, and it is partial.** The same
+instrumentation, hashing each `(data, host)` pair, shows most workers
+re-executing a small set: one worker reached 105,768 calls against 4,559
+distinct inputs, a 23x repetition, and two others froze their distinct count
+early while their call count kept climbing. One worker of the six kept finding
+new distinct inputs for the whole run. So the target searches, less efficiently
+than the headline suggests and considerably better than "not at all".
+
+**The body is not slow, at any size or any content.** Timed directly:
+50–73 ms for the whole `f.Fuzz` body — open, four Appends, Close, re-read,
+`Verify`, `Read` — at every value size from 1 KiB to 16 MiB, flat, because
+after P7-15 `clipToBudget` runs before the first `json.Marshal` and the
+800 MiB intermediate D80 removed is never built. Multibyte, invalid UTF-8,
+quote-heavy and control-character values at 1 MiB cost at most 224 ms. Over a
+whole 40-second run, exactly one execution exceeded 200 ms, and it was the
+10 MiB/15 MiB seed at 554 ms. And the engine is not at fault either: the same
+package, same machine, with a fuzz target whose body does nothing, sustains
+250,074 execs/sec for 30 seconds and never reads `0/sec`.
+
+**What was rejected, and why.**
+
+| candidate | verdict |
+| --- | --- |
+| Shrink the seeds | **Rejected on measurement.** It does not fix the symptom: with every seed under 1 KiB the collapse is unchanged. It is not free either — D80's reason for keeping them is that the P7-15 reproduction is only falsifiable while the seeds that produced its 215-entry corpus are intact — so this is a real cost for no measured gain. |
+| A size bound inside the fuzz function | **Rejected.** It treats the same wrong cause, and it would refuse exactly the inputs the target exists to accept: an oversized value must be clipped and kept, never skipped (D80, F8). |
+| A second target carrying the large cases | **Rejected.** It answers "the large seeds are expensive", which is false here, and it splits one property across two targets for no benefit. |
+| Correct `security.yml`'s comment | **Rejected, and this is the one worth stating.** That comment calls the Wednesday run "the one that searches", and the brief for this task assumed it had been made false. It has not: the target does search for the whole three minutes. The comment is accurate and stays. The file is therefore untouched, which also means this change does not start a `security.yml` run on push. |
+| Leave it alone and say nothing | **Rejected.** D80's paragraph is what the next reader will find, and it names a cause that is wrong and a fix that would remove evidence. A wrong explanation left standing is what this row exists to prevent. |
+
+**What was audited and left alone.** The corpus is not bloated, which D69 and
+D80 both say and which holds: 182 committed entries, largest 230 bytes.
+`setAllStringFields` reaches **40** string fields on `Event`, so a value of only
+256 KiB already puts the event over `MaxLine` and through `clipToBudget` — the
+20 MiB seed reaches no clip path a 256 KiB one misses, and the covered-block
+set is byte-identical between the seeds as they stand, the same seeds shrunk,
+and the same seeds shrunk with the 9 MiB one dropped (105 blocks, all three).
+That is recorded because it is the measurement someone will want before
+reopening this, not because it argues for a change: it says shrinking would be
+*coverage-neutral*, and the rest of this row says it would also be *pointless*.
+
+**The P7-15 reproduction is untouched and was checked rather than assumed.**
+The seeds do not move, so the 215-entry fixture at `$HOME/p715-cache` replays
+as it did. Separately, against P7-15's parent `9594d24`, the defect reproduces
+at every value from 384 KiB upward — `Append` refuses the event with "still
+12190577 bytes after 8 clips" — and does not reproduce at 256 KiB. So the
+reproduction never needed 20 MiB to work, which is worth knowing and is still
+not a reason to change the seeds.
+
+**Why:** D69 opened P7-15 as a harness problem and was wrong; D80 corrected that
+and left one harness-shaped sentence behind it that was also wrong. The cost of
+the second error is larger than it looks, because the fix it implies is
+subtractive and lands on the evidence for the fix that shipped. Recorded after
+the fact, which rule 5 asks not to happen: nothing was implemented here, and the
+row is the whole change apart from a comment at the seeds pointing to it.
