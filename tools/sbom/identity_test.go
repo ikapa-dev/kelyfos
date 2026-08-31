@@ -109,7 +109,7 @@ var (
 	fixtureErr  error
 	fixtureDir  string
 	toolPath    string
-	// Reachable only through buildrootFixture(t). It is empty until
+	// Reachable only through buildrootFixtureAt(t). It is empty until
 	// buildFixtures has run, and an empty -buildroot is not an error to this
 	// tool — it means "no Buildroot input", which is a document that quietly
 	// omits the half these tests are about. Reading the variable directly is
@@ -194,7 +194,7 @@ func buildFixtures() {
 	}
 }
 
-// buildrootFixture is the standard Buildroot input, built if it is not there.
+// buildrootFixtureAt is the standard Buildroot input, built if it is not there.
 func buildrootFixtureAt(t *testing.T) string {
 	t.Helper()
 	theTool(t)
@@ -579,6 +579,11 @@ func TestAComponentCollidingWithTheSubjectsBomRefIsRefused(t *testing.T) {
 // Each of those drops one of two genuinely different things, which is the
 // defect this whole change is about, in miniature.
 func TestDedupeKeepsThingsThatOnlyLookAlike(t *testing.T) {
+	// The colliding spelling comes from the code rather than from a copy of it.
+	// Written out by hand it was `a@1`, which stopped colliding with anything
+	// the moment the fallback key gained its length prefix — so the case went
+	// on passing while the namespacing it was written to guard could be
+	// removed entirely with nothing failing.
 	entryOf := func(ref, name, version string) entry {
 		return entry{
 			raw: []byte(`{"name":"` + name + `"}`),
@@ -595,7 +600,7 @@ func TestDedupeKeepsThingsThatOnlyLookAlike(t *testing.T) {
 		{"two bom-refs are two components, however alike the rest is",
 			[]entry{entryOf("libzlib", "libzlib", "1.3.2"), entryOf("host-libzlib", "libzlib", "1.3.2")}, 2},
 		{"a bom-ref that spells out another component's fallback key is still its own component",
-			[]entry{entryOf("", "a", "1"), entryOf("a@1", "a", "1")}, 2},
+			[]entry{entryOf("", "a", "1"), entryOf(fallbackKeyFor("a", "1"), "a", "1")}, 2},
 		{"the fallback key cannot be made ambiguous by an @ inside a name or a version",
 			[]entry{entryOf("", "a", "b@c"), entryOf("", "a@b", "c")}, 2},
 		{"two components with neither a bom-ref nor a difference are one component",
@@ -604,5 +609,43 @@ func TestDedupeKeepsThingsThatOnlyLookAlike(t *testing.T) {
 		if got := len(dedupe(c.in)); got != c.count {
 			t.Errorf("%s: dedupe kept %d of %d, want %d", c.why, got, len(c.in), c.count)
 		}
+	}
+}
+
+// A component this tool cannot read is not republished under a signature.
+//
+// CycloneDX requires a `type` of every component. Refusing one that has none —
+// or one whose `type` is not a string — used to happen by accident, because the
+// struct that read a component's identity was wider while the serial number was
+// computed from it, so a non-string failed the decode. Narrowing that struct
+// when the serial stopped needing those fields therefore made this tool quietly
+// more permissive about somebody else's bytes, and shipped a document that
+// fails CycloneDX validation with nothing objecting. The check is deliberate
+// now, so this is what says so.
+func TestAComponentWithNoUsableTypeIsRefused(t *testing.T) {
+	for _, c := range []struct{ why, spelled string }{
+		{"a type that is a number", `"type": 5,`},
+		{"a type that is an array", `"type": ["library"],`},
+		{"no type at all", ``},
+	} {
+		t.Run(c.why, func(t *testing.T) {
+			dir := t.TempDir()
+			broken := strings.Replace(buildrootFixture, `"type": "library",`, c.spelled, 1)
+			if broken == buildrootFixture {
+				t.Fatal("the fixture no longer contains what this test edits")
+			}
+			in := filepath.Join(dir, "broken.json")
+			if err := os.WriteFile(in, []byte(broken), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			out := filepath.Join(dir, "out.json")
+
+			if stderr, err := runTool(t, "aarch64", "arm64", "v1.1.2", in, out); err == nil {
+				t.Fatalf("a component with %s was republished:\n%s", c.why, stderr)
+			}
+			if _, err := os.Stat(out); err == nil {
+				t.Error("a document was written anyway")
+			}
+		})
 	}
 }

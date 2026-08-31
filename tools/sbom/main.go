@@ -33,16 +33,17 @@
 // byte for byte, because encoding/json escapes `<`, `>` and `&` inside a
 // json.RawMessage on the way out, which changes the spelling of a value and
 // never its content. Nothing is dropped, which is the property that matters and
-// the one that was missing. Modelling a component
-// with a struct and writing that struct back out is how the licence, the CPE,
-// the source-tarball hashes and the patch pedigree of all forty-nine Buildroot
-// packages were deleted from every SBOM this project ever published — 333 KB of
-// input left as 11 KB of output, and nothing said so. The struct below is for
-// *reading* identity out of a component in order to sort, deduplicate and hash
-// it — three fields of it. It is never the shape anything is written back
-// through, and the serial
-// number is a digest of the whole document rather than of that summary — a
-// correction the adversarial review of this change forced, and the reason
+// the one that was missing. Modelling a component with a struct and writing
+// that struct back out is how the licence, the CPE, the source-tarball hashes
+// and the patch pedigree of all forty-nine Buildroot packages were deleted from
+// every SBOM this project ever published — 333 KB of input left as 11 KB of
+// output, and nothing said so.
+//
+// The struct below reads four fields out of a component: three to order and
+// deduplicate it, and its type, because a component without one is not a
+// component. It is never the shape anything is written back through, and
+// nothing hashes it — the serial number is a digest of the whole document, a
+// correction the adversarial review of this change forced and the reason
 // serialFor takes bytes.
 //
 // **The document says what it describes, and the architecture in it is checked
@@ -154,11 +155,21 @@ type property struct {
 }
 
 // identity is the part of any component — authored here or passed through —
-// that this tool has to understand in order to order it and deduplicate it.
-// Three fields, and it was five until the serial number stopped being computed
-// from them: reading anything a component carries costs the component nothing,
-// because it is written from its own bytes and never from this.
+// that this tool reads. Three fields to order it and deduplicate it, and `type`
+// for a different reason: CycloneDX requires it of every component, so a
+// component without one is not a component and this tool will not republish it
+// under a signature.
+//
+// That check is here because taking it away was noticed. It used to be a side
+// effect of the struct being wider — `type` and `purl` were decoded because the
+// serial number was computed from them, so a component whose `type` was a
+// number failed to decode and was refused by accident. Narrowing the struct
+// when the serial stopped needing them therefore made this tool quietly more
+// permissive about somebody else's bytes, which is the wrong direction. The
+// check is deliberate now, and covers the field the specification actually
+// requires rather than the two that happened to be in a hash.
 type identity struct {
+	Type    string `json:"type"`
 	Name    string `json:"name"`
 	Version string `json:"version"`
 	BOMRef  string `json:"bom-ref"`
@@ -493,6 +504,11 @@ func passedThrough(raw json.RawMessage, from string) entry {
 	if id.Name == "" {
 		die("a component in %s has no name, so nothing can order or deduplicate it", from)
 	}
+	if id.Type == "" {
+		die("a component in %s has no type, or has one that is not a string. CycloneDX requires a "+
+			"type of every component, and this document is signed: it does not republish a component "+
+			"it cannot read.", from)
+	}
 	return entry{raw: raw, id: id}
 }
 
@@ -506,7 +522,7 @@ func authored(c component) entry {
 }
 
 func identityOf(c component) identity {
-	return identity{Name: c.Name, Version: c.Version, BOMRef: c.BOMRef}
+	return identity{Type: c.Type, Name: c.Name, Version: c.Version, BOMRef: c.BOMRef}
 }
 
 // dedupe keeps one entry per bom-ref.
@@ -531,11 +547,7 @@ func dedupe(in []entry) []entry {
 		// in miniature.
 		k := "ref:" + e.id.BOMRef
 		if e.id.BOMRef == "" {
-			// Length-prefixed rather than joined by a separator, because a
-			// separator is only unambiguous until a name contains one:
-			// {name: "a", version: "b@c"} and {name: "a@b", version: "c"} join
-			// to the same string and one of the two is dropped.
-			k = fmt.Sprintf("nv:%d:%s%s", len(e.id.Name), e.id.Name, e.id.Version)
+			k = "nv:" + fallbackKeyFor(e.id.Name, e.id.Version)
 		}
 		if seen[k] {
 			continue
@@ -544,6 +556,16 @@ func dedupe(in []entry) []entry {
 		out = append(out, e)
 	}
 	return out
+}
+
+// fallbackKeyFor identifies a component that carries no bom-ref.
+//
+// Length-prefixed rather than joined by a separator, because a separator is
+// only unambiguous until a name contains one: {name: "a", version: "b@c"} and
+// {name: "a@b", version: "c"} join to the same string and one of the two is
+// dropped. A byte count and a colon cannot be spelled by the name it counts.
+func fallbackKeyFor(name, version string) string {
+	return fmt.Sprintf("%d:%s%s", len(name), name, version)
 }
 
 func firstNonEmpty(vals ...string) string {
