@@ -109,7 +109,14 @@ var (
 	fixtureErr  error
 	fixtureDir  string
 	toolPath    string
-	buildrootAt string
+	// Reachable only through buildrootFixture(t). It is empty until
+	// buildFixtures has run, and an empty -buildroot is not an error to this
+	// tool — it means "no Buildroot input", which is a document that quietly
+	// omits the half these tests are about. Reading the variable directly is
+	// how that happened: Go evaluates a call's arguments before the call, so a
+	// helper that passed this to a function which then built the fixtures
+	// passed the empty string on the first call of any process.
+	buildrootPath string
 	// goarch -> the binaries built for it, in the order release-sbom reads them.
 	fixtureBins = map[string][]string{}
 )
@@ -181,10 +188,17 @@ func buildFixtures() {
 		fixtureBins[p.goarch] = append(fixtureBins[p.goarch], out)
 	}
 
-	buildrootAt = filepath.Join(dir, "sbom-buildroot.json")
-	if err := os.WriteFile(buildrootAt, []byte(buildrootFixture), 0o644); err != nil {
+	buildrootPath = filepath.Join(dir, "sbom-buildroot.json")
+	if err := os.WriteFile(buildrootPath, []byte(buildrootFixture), 0o644); err != nil {
 		fixtureErr = err
 	}
+}
+
+// buildrootFixture is the standard Buildroot input, built if it is not there.
+func buildrootFixtureAt(t *testing.T) string {
+	t.Helper()
+	theTool(t)
+	return buildrootPath
 }
 
 // runTool runs the tool the way `make release-sbom` runs it, for one
@@ -207,7 +221,7 @@ func runTool(t *testing.T, arch, goarch, version, buildroot, out string) (string
 // release is runTool over the standard fixture, for a run that has to succeed.
 func release(t *testing.T, arch, goarch, version, out string) []byte {
 	t.Helper()
-	stderr, err := runTool(t, arch, goarch, version, buildrootAt, out)
+	stderr, err := runTool(t, arch, goarch, version, buildrootFixtureAt(t), out)
 	if err != nil {
 		t.Fatalf("sbom -arch %s: %v\n%s", arch, err, stderr)
 	}
@@ -253,7 +267,26 @@ func TestTheTwoArchitecturesProduceDifferentDocumentsThatEachNameTheirOwn(t *tes
 			"other's, and two identical files make both attestations say the same thing.")
 	}
 
+	// Both sides have to carry the same Buildroot half, because that is what
+	// makes this test about the architecture and nothing else. If one of them
+	// lost it, the two documents would differ for a reason this test is not
+	// measuring, and every assertion below would pass for the wrong one.
 	armDoc, x86Doc := parse(t, arm), parse(t, x86)
+	for name, d := range map[string]map[string]any{"aarch64": armDoc, "x86_64": x86Doc} {
+		components, _ := d["components"].([]any)
+		var buildroot int
+		for _, c := range components {
+			m, _ := c.(map[string]any)
+			if _, fromBuildroot := m["cpe"]; fromBuildroot {
+				buildroot++
+			}
+		}
+		if buildroot == 0 || d["dependencies"] == nil {
+			t.Fatalf("the %s document carries no Buildroot half, so the two documents differ for a "+
+				"reason this test is not about: %d components, %d of them Buildroot's",
+				name, len(components), buildroot)
+		}
+	}
 	armSerial, _ := armDoc["serialNumber"].(string)
 	x86Serial, _ := x86Doc["serialNumber"].(string)
 	if armSerial == "" || x86Serial == "" {
@@ -409,7 +442,7 @@ func TestAnArchitectureTheBinariesDoNotAgreeWithIsRefused(t *testing.T) {
 	dir := t.TempDir()
 	out := filepath.Join(dir, "wrong.json")
 
-	args := []string{"-arch", "x86_64", "-version", "v1.1.2", "-out", out, "-buildroot", buildrootAt}
+	args := []string{"-arch", "x86_64", "-version", "v1.1.2", "-out", out, "-buildroot", buildrootFixtureAt(t)}
 	for _, b := range fixtureBins["arm64"] {
 		args = append(args, "-binary", b)
 	}
@@ -530,5 +563,46 @@ func TestAComponentCollidingWithTheSubjectsBomRefIsRefused(t *testing.T) {
 	}
 	if _, err := os.Stat(out); err == nil {
 		t.Error("a document was written anyway")
+	}
+}
+
+// dedupe decides what two components are, and nothing else in this package
+// tests it directly — the case it is guarding against is unreachable through
+// the fixture, which is exactly why it needs a test of its own rather than
+// coverage by accident.
+//
+// A bom-ref identifies a component. A component that has none falls back to its
+// name and version, and the two kinds of key are namespaced apart and
+// length-prefixed: without that, a component with no bom-ref keyed as
+// `name@version` collides with one whose bom-ref is literally that string, and
+// `{name: "a", version: "b@c"}` collides with `{name: "a@b", version: "c"}`.
+// Each of those drops one of two genuinely different things, which is the
+// defect this whole change is about, in miniature.
+func TestDedupeKeepsThingsThatOnlyLookAlike(t *testing.T) {
+	entryOf := func(ref, name, version string) entry {
+		return entry{
+			raw: []byte(`{"name":"` + name + `"}`),
+			id:  identity{Name: name, Version: version, BOMRef: ref},
+		}
+	}
+	for _, c := range []struct {
+		why   string
+		in    []entry
+		count int
+	}{
+		{"one bom-ref is one component, however it is spelled elsewhere",
+			[]entry{entryOf("go:x", "x", "v1"), entryOf("go:x", "x", "v2")}, 1},
+		{"two bom-refs are two components, however alike the rest is",
+			[]entry{entryOf("libzlib", "libzlib", "1.3.2"), entryOf("host-libzlib", "libzlib", "1.3.2")}, 2},
+		{"a bom-ref that spells out another component's fallback key is still its own component",
+			[]entry{entryOf("", "a", "1"), entryOf("a@1", "a", "1")}, 2},
+		{"the fallback key cannot be made ambiguous by an @ inside a name or a version",
+			[]entry{entryOf("", "a", "b@c"), entryOf("", "a@b", "c")}, 2},
+		{"two components with neither a bom-ref nor a difference are one component",
+			[]entry{entryOf("", "a", "1"), entryOf("", "a", "1")}, 1},
+	} {
+		if got := len(dedupe(c.in)); got != c.count {
+			t.Errorf("%s: dedupe kept %d of %d, want %d", c.why, got, len(c.in), c.count)
+		}
 	}
 }

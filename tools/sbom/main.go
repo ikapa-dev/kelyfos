@@ -39,7 +39,8 @@
 // packages were deleted from every SBOM this project ever published — 333 KB of
 // input left as 11 KB of output, and nothing said so. The struct below is for
 // *reading* identity out of a component in order to sort, deduplicate and hash
-// it. It is never the shape anything is written back through, and the serial
+// it — three fields of it. It is never the shape anything is written back
+// through, and the serial
 // number is a digest of the whole document rather than of that summary — a
 // correction the adversarial review of this change forced, and the reason
 // serialFor takes bytes.
@@ -153,15 +154,13 @@ type property struct {
 }
 
 // identity is the part of any component — authored here or passed through —
-// that this tool has to understand in order to order it, deduplicate it and
-// hash it. Reading these five fields out of a component costs nothing that the
-// component itself carries, because the component is written from its own bytes
-// and not from this.
+// that this tool has to understand in order to order it and deduplicate it.
+// Three fields, and it was five until the serial number stopped being computed
+// from them: reading anything a component carries costs the component nothing,
+// because it is written from its own bytes and never from this.
 type identity struct {
-	Type    string `json:"type"`
 	Name    string `json:"name"`
 	Version string `json:"version"`
-	PURL    string `json:"purl"`
 	BOMRef  string `json:"bom-ref"`
 }
 
@@ -507,7 +506,7 @@ func authored(c component) entry {
 }
 
 func identityOf(c component) identity {
-	return identity{Type: c.Type, Name: c.Name, Version: c.Version, PURL: c.PURL, BOMRef: c.BOMRef}
+	return identity{Name: c.Name, Version: c.Version, BOMRef: c.BOMRef}
 }
 
 // dedupe keeps one entry per bom-ref.
@@ -532,7 +531,11 @@ func dedupe(in []entry) []entry {
 		// in miniature.
 		k := "ref:" + e.id.BOMRef
 		if e.id.BOMRef == "" {
-			k = "nv:" + e.id.Name + "@" + e.id.Version
+			// Length-prefixed rather than joined by a separator, because a
+			// separator is only unambiguous until a name contains one:
+			// {name: "a", version: "b@c"} and {name: "a@b", version: "c"} join
+			// to the same string and one of the two is dropped.
+			k = fmt.Sprintf("nv:%d:%s%s", len(e.id.Name), e.id.Name, e.id.Version)
 		}
 		if seen[k] {
 			continue
