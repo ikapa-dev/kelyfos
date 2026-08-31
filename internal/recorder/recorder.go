@@ -1428,9 +1428,9 @@ func clipPorts(p []int) []int {
 // pointed-to struct such as *EvError. Addresses rather than copies, because
 // that is what lets a clip overwrite the field it found, in place.
 //
-// Named eachStringField until D80, when clipping stopped being about one
-// field: it returned the address of the single biggest string, which was the
-// right question to ask when the clip halved one field per attempt and the
+// Called largestStringField until D80, when clipping stopped being about one
+// field. That version returned the address of the single biggest string, which
+// was the right question while the clip halved one field per attempt and the
 // wrong one once every oversized field is reduced at once.
 //
 // Walking by reflection instead of a fixed field list is the fix for F8: a
@@ -1487,6 +1487,13 @@ func stringsBytes(s []string) int {
 // json.Marshal, which is not the byte sequence hashOf would then be hashing
 // against what a reader sees.
 func clipUTF8(s string, n int) string {
+	// joinLimit guards its own n and capForBudget clamps at zero, so no caller
+	// reaches here with a negative one today. The guard is here anyway because
+	// this is the function that actually indexes, and s[:n] on a negative n
+	// panics inside the flight recorder's own last line of defense.
+	if n < 0 {
+		n = 0
+	}
 	if len(s) <= n {
 		return s
 	}

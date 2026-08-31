@@ -244,15 +244,15 @@ forbids it, and nothing here does.
 
 **How that list is kept honest.** A hand-maintained list of which fields
 carry content is precisely the failure class this project has now hit
-four times in one week, on four different lists: `clipToBudget`
-naming six fields and missing `Tools`; `internal/digest` missing
+four times in one week, on four different lists: the flight recorder's
+own clip naming six fields and missing `Tools`; `internal/digest` missing
 `session.policy`; `internal/digest` missing `team.topology`; and this
 task's own first draft naming four fields (`data`, `args`, `cmd`, `argv`)
 and leaving eleven more — `cwd`, `path`, `peer`, `comm`, `workspace`,
 `host`, `name`, `allow`, and every field inside `agents`, `edges` and
 `store_keys` — fully unredacted, found by an adversarial review that put a
 marker in every string and `[]string` field `Event` has and ran a real
-erasure over each one in turn. The fix is the same one `clipToBudget`
+erasure over each one in turn. The fix is the same one `clippableFields`
 already uses for its own list: walk `Event` by reflection instead of
 trusting memory. `internal/recorder/erase.go`'s `eraseExempt` is the
 single, explicit table of every field left alone and why — a session id,

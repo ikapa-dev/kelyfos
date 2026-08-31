@@ -87,8 +87,8 @@ func FuzzVerifyAgreesWithRead(f *testing.F) {
 // large to write whole must be written clipped (D80). The errors are checked
 // now, and the count is fixed at four rather than taken from Verify.
 //
-// F8: an oversized value in a field clipToBudget could not see (it named
-// six fields by hand; EvError.Message was not one of them) made Append fail
+// F8: an oversized value in a field the clip could not see (it named six
+// fields by hand; EvError.Message was not one of them) made Append fail
 // closed instead of clipping, so the event vanished from the record rather
 // than being kept in truncated form — the same failure mode as the bug this
 // fuzz target was originally written for, just reached through a different
@@ -309,12 +309,12 @@ func TestAppendClipsOversizedEvErrorMessage(t *testing.T) {
 //
 // Tools was the field this test did not cover on P7-2's first pass — the
 // review that reopened P7-2 (F1) proved with this exact fixture shape that an
-// oversized Tools value made the whole event vanish, since clipToBudget's
-// list named the other five and stopped one short. Its subtest below is that
+// oversized Tools value made the whole event vanish, since the clip's list
+// named the other five and stopped one short. Its subtest below is that
 // proof kept as a regression test, and TestClipToBudgetCoversEverySliceField
 // further down backstops the whole list by construction so a further miss
 // cannot happen silently — which is what let P7-3's own three (Agents, Edges,
-// StoreKeys) be added directly to clipToBudget with the guard test
+// StoreKeys) be added directly to the clip's list with the guard test
 // confirming coverage, rather than needing the same F1 shape of bug to be
 // found and fixed a third time.
 func TestAppendClipsEverySessionPolicySlice(t *testing.T) {
@@ -525,7 +525,7 @@ func oversizedSliceValue(t *testing.T, sliceType reflect.Type) reflect.Value {
 // landmine closed structurally rather than by list. F8 closed it for string
 // fields with eachStringField's own reflection walk; P7-2 then had to
 // reopen the same question for slices by hand, five names at a time
-// (recorder.go's clipToBudget), and named five of its own six new slices
+// (recorder.go's clip list), and named five of its own six new slices
 // — Tools slipped through (F1, the review that reopened P7-2). A sixth
 // hand-written subtest above closes that specific miss, but a hand-maintained
 // list has now failed this exact way twice — once for strings, once for
