@@ -538,6 +538,37 @@ printed from the document that was produced rather than transcribed into a
 release note, because a total written down by hand is a total that is right
 once. It is covered by `SHA256SUMS` rather than published beside it.
 
+**The document says what it describes, and it did not until v1.1.2 (D81).** The
+SBOMs published with v1.1 and v1.1.1 are byte-identical across the two
+architectures — one document under two names — and neither names KelyfOS, the
+version or the architecture anywhere: `-arch` was validated, printed and
+discarded, and the merge copied Buildroot's metadata over the top, so the file a
+stranger downloads declared its subject to be `buildroot 2025.02.17`. That also
+emptied the attestation split below of its meaning, since both per-architecture
+attestations attached the same bytes to both sets of artifacts. From v1.1.2 the
+document carries a `metadata.component` naming the product, its version and its
+architecture; the architecture is read out of each binary's own `GOARCH` through
+`debug/buildinfo` and `-arch` is checked against all of them rather than copied
+into the output; and the serial number covers the subject, so two documents over
+one component list cannot share the identifier that exists to tell them apart.
+
+**And it carries what Buildroot computed rather than a seventh of it.** Until
+v1.1.2 the merge decoded every Buildroot component through a struct modelling
+seven fields and wrote that struct back out, which deleted every licence, every
+CPE, every source-tarball SHA-256 and every patch record on the way through —
+333 KB of Buildroot output published as 11 KB — and deduplicating on name and
+version replaced the target build of `libzlib`, `libopenssl`, `libffi` and
+`python3` with the host build of the same package at the same version. A reader
+asking the v1.1.1 SBOM which OpenSSL is in the image gets an answer about the
+build machine. Components this tool did not author now pass through as bytes,
+deduplication is on `bom-ref`, and the document declares CycloneDX 1.6 — which is
+what Buildroot's generator emits, and which the restored components require: the
+same document labelled 1.5 fails schema validation in forty-two places. What is
+still deliberately absent is Buildroot's `vulnerabilities` array, whose eighteen
+entries are all CVEs an upstream ignore-list marked resolved; republishing that
+under this project's own attestation is a security claim, and the restored CPEs
+let a reader run the match themselves instead.
+
 **Release artifacts the workflow builds are attested — which does not yet
 include a *published* one: the workflow drafts, and publishing is a person's
 decision. `v1.0-rc2` is the first release it built, and it carries them.

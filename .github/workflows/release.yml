@@ -208,6 +208,15 @@ jobs:
       # false, and it did once — the macOS CLI shipped, this glob matched it,
       # and no SBOM had ever opened it. `TestEverySBOMSubjectIsABinaryTheSBOMRead`
       # in tools/sbom is what now notices if the two drift apart again.
+      #
+      # The other half of that claim is that the two documents are actually two.
+      # They were not: through v1.1.1 both files held the same bytes, so both of
+      # these steps attached one document to both sets of artifacts — the thing
+      # the paragraph above says must not happen, happening. Nothing in this file
+      # fixed it and nothing here needed to; the merge now names the architecture
+      # it was built for and reads it out of each binary rather than off a flag
+      # (D81), and TestTheTwoArchitecturesProduceDifferentDocumentsThatEachNameTheirOwn
+      # fails if the two ever collapse back into one.
       - name: Attest the aarch64 SBOM
         if: startsWith(github.ref, 'refs/tags/v')
         uses: actions/attest@v4
