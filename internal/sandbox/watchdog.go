@@ -1,13 +1,13 @@
 package sandbox
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"golang.org/x/sys/unix"
@@ -53,7 +53,7 @@ func (s *Sandbox) spawnVMMWatchdog() {
 	}
 	cmd := exec.Command(exe)
 	cmd.Env = append(os.Environ(), vmmWatchdogEnv+"="+s.State.RunDir)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Pdeathsig: syscall.SIGTERM, Setpgid: true}
+	cmd.SysProcAttr = watchdogSpawnAttr()
 	if err := cmd.Start(); err != nil {
 		return
 	}
@@ -80,6 +80,13 @@ func RunVMMWatchdog(runDir string) {
 	pidPath := filepath.Join(runDir, "firecracker.pid")
 	parent := os.Getppid()
 
+	// Go's known Pdeathsig race: if the parent died between fork and prctl,
+	// Getppid re-parented us to init before we ever ran — cleanup now, rather
+	// than polling a parent that will never die again (review, finding 7b).
+	if os.Getppid() == 1 {
+		cleanupOrphanedMachine(id, pidPath, jailDir)
+		os.Exit(0)
+	}
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, unix.SIGTERM)
 
@@ -96,7 +103,7 @@ func RunVMMWatchdog(runDir string) {
 			cleanupOrphanedMachine(id, pidPath, jailDir)
 			os.Exit(0)
 		}
-		if vmm := readVMMpid(pidPath); vmm > 0 && !processExists(vmm) {
+		if vmm := readVMMpid(pidPath); vmm > 0 && !processAlive(vmm) {
 			// The VMM is gone and the parent lives: the teardown is running
 			// its normal course, and there is nothing to clean.
 			os.Exit(0)
@@ -108,13 +115,25 @@ func RunVMMWatchdog(runDir string) {
 // removes the jail directory — every action best-effort, because whatever
 // survives is the doctor reaper's already.
 func cleanupOrphanedMachine(id, pidPath, jailDir string) {
-	if vmm := readVMMpid(pidPath); vmm > 0 && processExists(vmm) {
-		_ = exec.Command("kill", "-9", strconv.Itoa(vmm)).Run()
+	if vmm := readVMMpid(pidPath); vmm > 0 && processAlive(vmm) {
+		// syscall.Kill, not exec'd kill: no PATH dependency, and the error
+		// comes back to be logged rather than discarded (review, finding 7c).
+		if err := unix.Kill(vmm, unix.SIGKILL); err != nil {
+			fmt.Fprintf(os.Stderr, "kelyfos watchdog: kill %d: %v\n", vmm, err)
+		}
 	}
 	if msg := RemoveNetworkResidue(id); msg != "" {
 		_ = msg
 	}
-	_ = os.RemoveAll(jailDir)
+	if err := os.RemoveAll(jailDir); err != nil {
+		// The jailer leaves root-owned files; a plain RemoveAll fails on every
+		// jailed machine. The same sudo fallback removeJail makes (review,
+		// finding 5) — and anything still left is visible to the doctor scan,
+		// which now reports run dirs with no live claim.
+		if err := exec.Command("sudo", "-n", "rm", "-rf", jailDir).Run(); err != nil {
+			fmt.Fprintf(os.Stderr, "kelyfos watchdog: jail dir %s: %v\n", jailDir, err)
+		}
+	}
 }
 
 func readVMMpid(pidPath string) int {
@@ -132,4 +151,16 @@ func readVMMpid(pidPath string) int {
 func processExists(pid int) bool {
 	_, err := os.Stat("/proc/" + strconv.Itoa(pid))
 	return err == nil
+}
+
+// processAlive is processExists with the zombie rejected: a zombie supervises
+// nothing and a kill aimed at one is a no-op that hides a mistake.
+func processAlive(pid int) bool {
+	blob, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat")
+	if err != nil {
+		return false
+	}
+	stat := string(blob)
+	state := stat[strings.LastIndexByte(stat, ')')+2:]
+	return !strings.HasPrefix(state, "Z")
 }

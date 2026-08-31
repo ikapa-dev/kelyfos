@@ -304,6 +304,15 @@ status. This is how you hand an agent a sandbox and nothing else:
 	if err != nil {
 		return err
 	}
+	// The run directory is claimed the moment the id exists, not when the
+	// machine is created (ST-5.3 review finding 1): the TAP and nft table go
+	// up below, and the workspace pack can take seconds — a doctor running in
+	// that window saw network residue with no run dir to claim it, and
+	// --reap-orphaned would have taken a peer-booting machine down from
+	// inside its own boot. The claim marker is the run directory itself.
+	if err := os.MkdirAll(sandbox.RunDirOf(sandboxID), 0o755); err != nil {
+		return fmt.Errorf("claim run dir: %w", err)
+	}
 
 	var cpuSlice *sandbox.Slice
 	var consoleOut io.Writer
@@ -418,6 +427,11 @@ status. This is how you hand an agent a sandbox and nothing else:
 		fmt.Printf("plugins    %s (read-only)\n", strings.Join(plugins.Names(), ", "))
 	}
 
+	// The shutdown handshake's verdict, captured by the shutdown defer (which
+	// runs first) and read by the write-back below it: a handshake that did
+	// not confirm the flush voids the write-back's promise (ST-5.3 review,
+	// finding 3).
+	var shutdownNote error
 	if *wsDir != "" {
 		ws, err := sandbox.PackWorkspace(*wsDir,
 			filepath.Join(sandbox.Root(), "workspaces", sandboxID+".ext4"), diskCeiling)
@@ -439,6 +453,11 @@ status. This is how you hand an agent a sandbox and nothing else:
 			}
 			if *noSync {
 				fmt.Printf("workspace not written back (--no-sync-back); image kept at %s\n", ws.ImagePath)
+				return
+			}
+			if note := shutdownNote; note != nil {
+				fmt.Fprintf(os.Stderr, "kelyfos: workspace not written back: %v; "+
+					"the image is kept at %s\n", note, ws.ImagePath)
 				return
 			}
 			staged, err := ws.Stage()
@@ -490,6 +509,7 @@ status. This is how you hand an agent a sandbox and nothing else:
 				fmt.Printf("workspace written back to %s\n", dest)
 			}
 			_ = os.Remove(ws.ImagePath)
+			sandbox.RemoveWorkspaceManifest(ws.ImagePath)
 		}()
 	}
 
@@ -591,6 +611,7 @@ status. This is how you hand an agent a sandbox and nothing else:
 		if err := sb.Shutdown(5 * time.Second); err != nil {
 			fmt.Fprintf(os.Stderr, "kelyfos: shutdown: %v\n", err)
 		}
+		shutdownNote = sb.ShutdownNote()
 	}()
 
 	// Cwd travels with argv because argv alone does not reproduce a run: a

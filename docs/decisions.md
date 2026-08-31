@@ -1439,6 +1439,38 @@ absolute-URI path the proxy rebuilds the request with the URI's host (IA-I5),
 so no-Host and a lying Host both answer 200 there, which is correct by
 construction and now pinned as a named behaviour rather than an observation.
 
+## D88
+
+*2026-08-31*
+
+**The workspace write-back's actual contract, pinned by ST-1.8's suite — and
+where the audit's summary was broader than the machine, the machine wins
+(ST-3.3/1.8).**
+
+| shape | the audit said | the machine does | the suite pins |
+| --- | --- | --- | --- |
+| fifo in /work | refused whole-image, entry named | refused whole-image: "the workspace image contains an entry this host will not use: /pipe is neither a file, a directory nor a symlink (mode 10644)" | the exact message + host dir untouched |
+| absolute / climbing symlinks | "host dir untouched" (implying refusal) | dropped SILENTLY: nothing lands, "workspace written back" still printed | nothing lands — and the honesty gap is named, not hidden |
+| setuid | "host dir untouched" | lands with the setuid bit STRIPPED (4755 → 755) — safeMode strips setuid/setgid/sticky by design, extract.go documents it | bit gone, file present |
+| world-write | "host dir untouched" | lands sanitised (666 → 664; group-write deliberately left) | no world-write bit |
+| newline filename | "host dir untouched" | dropped silently, nothing lands | nothing lands |
+| 40-deep path | "host dir untouched" | lands — the refusal threshold is 128 (listImage) | the file arrives |
+
+Two consequences worth more than the table. First, the audit's "host dir
+untouched" rows for setuid/world-write/deep-path were the IA-H1 loss
+speaking: its runs had no flush, so nothing landed at all — hostile or
+otherwise — which reads as a refusal until you run the same shapes WITH a
+guest-side sync. Second, the silent drop of escaping symlinks prevents the
+escape but keeps the false success: the run reports "written back" while an
+entry the agent created is quietly gone. That is IA-H1's honesty failure at
+lower amplitude, and it rides with ST-5.2's flush fix rather than being
+solved by it.
+
+**Why:** the plan's ST-1.8 asked the suite to transcribe the audit's
+scenario list; running it produced a more precise contract than either the
+audit's summary or the plan's paraphrase, and the difference is now the
+suite's assertions instead of a footnote.
+
 ## D89
 
 *2026-08-31*
@@ -1775,3 +1807,13 @@ written before their implementations (D84–D93), the tasks were executed under
 their own IDs, and this row is the index. The two open halves — session-end
 signing and the controlled-origin lab — are decisions awaiting the
 maintainer, not work nobody noticed.
+
+## D96
+
+*2026-08-31*
+
+**This number is intentionally unused.** D94, D95, D97 and D98 were drafted
+as one batch in a single session and the sequence skipped a number on the
+way through; renumbering published decisions to close the gap would break
+every citation to them, and an unused number documented here is honest in a
+way a silent gap is not. The next decision takes D99.

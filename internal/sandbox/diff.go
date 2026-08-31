@@ -86,6 +86,32 @@ func writeWorkspaceManifest(hostDir, imagePath, packedAt string) error {
 	return os.WriteFile(manifestPath(imagePath), append(blob, '\n'), 0o600)
 }
 
+// copyWorkspaceManifest carries the pack manifest with the image through the
+// moves pause, restore, fork and the jail lift perform. The manifest is the
+// write-back's evidence of what was packed (the IA-H1 cross-check reads it),
+// and an image that travels without it travels without its evidence — which
+// is how the cross-check silently no-op'd on the resume path (ST-5.3 review,
+// finding 4). Absent source manifest (an image packed by an older kelyfos)
+// copies nothing, which is the same answer ReadWorkspaceManifest gives.
+func copyWorkspaceManifest(fromImage, toImage string) {
+	blob, err := os.ReadFile(manifestPath(fromImage))
+	if err != nil {
+		return
+	}
+	// Best-effort, but not silent: the manifest is the IA-H1 cross-check's
+	// evidence, and a copy that fails here re-opens the review's finding 4
+	// (the cross-check no-op on pause/restore/fork) without a word.
+	if err := os.WriteFile(manifestPath(toImage), blob, 0o600); err != nil {
+		fmt.Fprintf(os.Stderr, "kelyfos: the workspace manifest could not travel with the image to %s: %v\n", toImage, err)
+	}
+}
+
+// RemoveWorkspaceManifest removes the evidence beside the image, when the
+// image itself is being removed after a completed write-back.
+func RemoveWorkspaceManifest(image string) {
+	_ = os.Remove(manifestPath(image))
+}
+
 // ReadManifest loads what a pack recorded, or reports that there is none —
 // which is the case for an image packed by an older kelyfos, and is a fact a
 // caller has to be able to tell apart from "nothing changed".

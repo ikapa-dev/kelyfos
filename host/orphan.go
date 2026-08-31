@@ -56,11 +56,16 @@ import (
 // is the run root the evidence pointed at, so the reaper can reach a jail
 // directory under a peer worktree's cache without guessing.
 type orphan struct {
-	Kind   string // "vmm", "tap", "table"
-	ID     string
-	PID    int
-	Cache  string
-	Detail string // evidence: what was read, from where, and how old it is
+	Kind  string // "vmm", "tap", "table"
+	ID    string
+	PID   int
+	Cache string
+	// StartMS pins the process this finding was made about: the reaper
+	// re-checks it before signalling, because a pid that exited and was
+	// recycled between scan and reap belongs to somebody else now (review,
+	// finding 6).
+	StartMS int64
+	Detail  string // evidence: what was read, from where, and how old it is
 }
 
 const (
@@ -311,7 +316,7 @@ func scanOrphans(self int) ([]orphan, error) {
 		}
 		if orphanedVMM(p, procs) {
 			orphans = append(orphans, orphan{
-				Kind: orphanKindVMM, ID: id, PID: pid, Cache: cache,
+				Kind: orphanKindVMM, ID: id, PID: pid, Cache: cache, StartMS: p.StartMS,
 				Detail: fmt.Sprintf("pid %d %s, parent chain reaches no live kelyfos, up %.0f s: %.160s",
 					pid, p.Comm, time.Since(time.UnixMilli(p.StartMS)).Seconds(), p.Cmdline),
 			})
@@ -425,6 +430,30 @@ func reapOrphans(orphans []orphan) []string {
 			if o.Kind != orphanKindVMM || o.PID <= 0 {
 				continue
 			}
+			// Identity corroboration before any destructive step: the scan's
+			// evidence (comm, argv, chroot path) is text a local process can
+			// forge, and the reaper acts with root. The one piece of evidence
+			// the guest cannot forge is the sandbox state file the HOST wrote
+			// beside the image — it names the pid the host itself recorded.
+			// A finding whose pid the state file does not corroborate stays
+			// report-only: listed, never signalled, never deleted (second
+			// review, finding 2).
+			if !stateFileCorroborates(o) {
+				actions = append(actions, fmt.Sprintf(
+					"sandbox %s: pid %d is listed but UNCORROBORATED by the state file — report only, nothing signalled or deleted", id, o.PID))
+				continue
+			}
+			// Re-validate the pid against the start time the scan recorded:
+			// a scan is a snapshot, and a pid that exited and was recycled in
+			// the seconds since belongs to a process this reaper has no
+			// evidence about — and no right to signal (review, finding 6).
+			if o.StartMS > 0 {
+				now, err := procStartMS(o.PID)
+				if err != nil || now != o.StartMS {
+					actions = append(actions, fmt.Sprintf("sandbox %s: pid %d is no longer the process the scan saw — skipping", id, o.PID))
+					continue
+				}
+			}
 			if stopProcess(o.PID) {
 				actions = append(actions, fmt.Sprintf("stopped orphaned VMM pid %d (sandbox %s)", o.PID, id))
 			} else {
@@ -465,6 +494,51 @@ func groupOrphans(orphans []orphan) map[string][]orphan {
 		byID[o.ID] = append(byID[o.ID], o)
 	}
 	return byID
+}
+
+// procStartMS re-reads a process's start time for reap-time revalidation.
+func procStartMS(pid int) (int64, error) {
+	stat, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+	if err != nil {
+		return 0, err
+	}
+	rest := strings.Fields(string(stat)[strings.LastIndexByte(string(stat), ')')+2:])
+	if len(rest) < 20 {
+		return 0, fmt.Errorf("short stat for %d", pid)
+	}
+	ticks, err := strconv.ParseUint(rest[19], 10, 64)
+	if err != nil {
+		return 0, err
+	}
+	return bootTimeMS() + int64(ticks)*1000/clkTCK, nil
+}
+
+// stateFileCorroborates checks the host-written sandbox state file against
+// the finding: the state file's own "pid" must name the process the scan
+// saw. Read from both shapes scope.sh knows — beside the jail directory and
+// inside its root — because the jail layout is the jailer's, not ours.
+func stateFileCorroborates(o orphan) bool {
+	if o.Cache == "" {
+		return false
+	}
+	for _, candidate := range []string{
+		filepath.Join(o.Cache, "run", "firecracker", o.ID, "sandbox.json"),
+		filepath.Join(o.Cache, "run", "firecracker", o.ID, "root", "sandbox.json"),
+	} {
+		blob, err := os.ReadFile(candidate)
+		if err != nil {
+			continue
+		}
+		for _, kv := range strings.Split(string(blob), "\n") {
+			if v, ok := strings.CutPrefix(strings.TrimSpace(kv), "\"pid\":"); ok {
+				pid := strings.Trim(strings.TrimSpace(v), `", `)
+				if pid != "" && pid != "0" && pid == strconv.Itoa(o.PID) {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 // stopProcess TERM, wait, then KILL — the same escalation teardown itself

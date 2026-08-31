@@ -192,12 +192,16 @@ type Sandbox struct {
 	opts     Options
 	cmd      *exec.Cmd
 	watchdog *os.Process
-	readyLn  net.Listener
-	eventsLn net.Listener
-	teamLn   net.Listener
-	ready    chan proto.Ready
-	done     chan struct{}
-	waitErr  error
+	// shutdownRefused is set when the shutdown handshake failed or was
+	// refused: the write-back reads it and refuses to print success over an
+	// unverified flush (ST-5.3 review, finding 3).
+	shutdownRefused error
+	readyLn         net.Listener
+	eventsLn        net.Listener
+	teamLn          net.Listener
+	ready           chan proto.Ready
+	done            chan struct{}
+	waitErr         error
 	// teamSem and eventsSem bound how many connections serveTeam and serveEvents
 	// will service at once, the same shape internal/egress/proxy.go's Proxy.sem
 	// was given for the identical problem (S5a): both listeners are reachable
@@ -678,7 +682,9 @@ func (s *Sandbox) Start(ctx context.Context) error {
 	// child down with this process — the unjailed VMM entirely, the jailed
 	// one's sudo wrapper — and the watchdog (spawned below, once the pid is
 	// known) covers the rest of that chain (ST-5.3).
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Pdeathsig: syscall.SIGKILL}
+	// See spawnattr_linux.go for the PDEATHSIG reasoning and the
+	// LockOSThread invariant this construction relies on.
+	cmd.SysProcAttr = vmmSpawnAttr(syscall.SIGKILL)
 	// On the direct path, place it in its cgroup at clone time rather than
 	// moving it once it is already running: a quota that starts a moment late
 	// is a quota with a hole in it (E1-2).
@@ -702,6 +708,7 @@ func (s *Sandbox) Start(ctx context.Context) error {
 		return fmt.Errorf("start firecracker (is it on PATH?): %w", err)
 	}
 	s.cmd = cmd
+	s.spawnVMMWatchdog()
 	s.State.PID = cmd.Process.Pid
 	if s.State.Jailed {
 		// Our own child is sudo; the VMM is its grandchild after the jailer
@@ -713,8 +720,14 @@ func (s *Sandbox) Start(ctx context.Context) error {
 			return err
 		}
 		s.State.PID = pid
+	} else {
+		// The unjailed VMM writes no pid file of its own (the jailer's is the
+		// only writer on the jailed path), and the watchdog reads this exact
+		// file — write it so --no-jail has the same protection (review,
+		// finding 8).
+		_ = os.WriteFile(filepath.Join(s.State.RunDir, "firecracker.pid"),
+			[]byte(strconv.Itoa(s.State.PID)), 0o644)
 	}
-	s.spawnVMMWatchdog()
 	go s.drainConsole(stdout)
 	go func() {
 		s.waitErr = cmd.Wait()
@@ -1033,6 +1046,7 @@ func SnapshotRunning(st *State, dir string) (statePath, memPath string, err erro
 		// the snapshot. Copying it while the VM is paused is what makes the copy
 		// consistent with the memory image.
 		if err := copyFile(st.Workspace, snapshotWorkspace(dir)); err != nil {
+			copyWorkspaceManifest(st.Workspace, snapshotWorkspace(dir))
 			_ = a.resume()
 			return "", "", fmt.Errorf("capture workspace: %w", err)
 		}
@@ -1174,7 +1188,9 @@ func Restore(snapDir string, opts Options) (*Sandbox, time.Duration, error) {
 	argv = s.opts.CPUSlice.WrapArgv(argv)
 	cmd := exec.Command(argv[0], argv[1:]...)
 	// Pdeathsig: the same reasoning Start has (ST-5.3).
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Pdeathsig: syscall.SIGKILL}
+	// See spawnattr_linux.go for the PDEATHSIG reasoning and the
+	// LockOSThread invariant this construction relies on.
+	cmd.SysProcAttr = vmmSpawnAttr(syscall.SIGKILL)
 	// The same placement a cold boot gets: at clone time on the direct path, so
 	// a quota that starts a moment late is not a quota with a hole in it (E1-2)
 	// — except through the jailer, which forks and is told the parent cgroup.
@@ -1195,6 +1211,7 @@ func Restore(snapDir string, opts Options) (*Sandbox, time.Duration, error) {
 		return nil, 0, err
 	}
 	s.cmd = cmd
+	s.spawnVMMWatchdog()
 	s.State.PID = cmd.Process.Pid
 	if s.State.Jailed {
 		pid, err := jailedPID(s.State.RunDir)
@@ -1204,7 +1221,6 @@ func Restore(snapDir string, opts Options) (*Sandbox, time.Duration, error) {
 		}
 		s.State.PID = pid
 	}
-	s.spawnVMMWatchdog()
 	go s.drainConsole(stdout)
 	go func() { s.waitErr = cmd.Wait(); close(s.done) }()
 
@@ -1249,6 +1265,7 @@ func Restore(snapDir string, opts Options) (*Sandbox, time.Duration, error) {
 	if metaErr == nil && meta.HasWorkspace && meta.WorkspacePath != "" {
 		if _, err := os.Stat(meta.WorkspacePath); os.IsNotExist(err) {
 			if err := copyFile(snapshotWorkspace(snapDir), meta.WorkspacePath); err != nil {
+				copyWorkspaceManifest(snapshotWorkspace(snapDir), meta.WorkspacePath)
 				_ = s.Shutdown(2 * time.Second)
 				return nil, 0, fmt.Errorf("stage workspace for snapshot load: %w", err)
 			}
@@ -1316,6 +1333,7 @@ func Restore(snapDir string, opts Options) (*Sandbox, time.Duration, error) {
 		if metaErr == nil && meta.HasWorkspace {
 			dest := filepath.Join(s.State.RunDir, defaultJailNames().Workspace)
 			if err := copyFile(snapshotWorkspace(snapDir), dest); err != nil {
+				copyWorkspaceManifest(snapshotWorkspace(snapDir), dest)
 				_ = s.Shutdown(2 * time.Second)
 				return nil, 0, fmt.Errorf("stage the workspace into the jail: %w", err)
 			}
@@ -1391,6 +1409,7 @@ func Restore(snapDir string, opts Options) (*Sandbox, time.Duration, error) {
 				return nil, 0, err
 			}
 			if err := copyFile(snapshotWorkspace(snapDir), mine); err != nil {
+				copyWorkspaceManifest(snapshotWorkspace(snapDir), mine)
 				_ = s.Shutdown(2 * time.Second)
 				return nil, 0, fmt.Errorf("copy workspace for this fork: %w", err)
 			}
@@ -1447,6 +1466,11 @@ func Restore(snapDir string, opts Options) (*Sandbox, time.Duration, error) {
 // Wait blocks until Firecracker exits.
 func (s *Sandbox) Wait() error { <-s.done; return s.waitErr }
 
+// ShutdownNote reports why the shutdown handshake could not confirm the
+// workspace flush, or nil when it was confirmed (ST-5.3 review, finding 3).
+// The write-back consults this before claiming success.
+func (s *Sandbox) ShutdownNote() error { return s.shutdownRefused }
+
 // Shutdown stops the microVM and removes everything it created. It is safe to
 // call more than once.
 //
@@ -1464,6 +1488,12 @@ func (s *Sandbox) Shutdown(grace time.Duration) error {
 			if err := s.requestShutdown(grace); err == nil {
 				break
 			}
+			// The handshake did not land cleanly — including the guest
+			// REFUSING shutdown because its workspace flush failed. The
+			// fallback below must still stop the machine, but the flush
+			// guarantee is void from here: record it, so the write-back can
+			// refuse to pretend (ST-5.3 review, finding 3).
+			s.shutdownRefused = fmt.Errorf("the shutdown handshake did not confirm the workspace flush")
 			// The VMM, not our child: under the jailer our child is sudo, and
 			// signalling sudo asks it to pass one on rather than ending the
 			// machine. Falls back to the child when there is no separate VMM
@@ -1518,6 +1548,7 @@ func (s *Sandbox) Shutdown(grace time.Duration) error {
 		kept := filepath.Join(Root(), "workspaces", s.State.ID+".ext4")
 		if err := os.MkdirAll(filepath.Dir(kept), 0o700); err == nil {
 			moved := os.Rename(s.State.Workspace, kept)
+			copyWorkspaceManifest(s.State.Workspace, kept)
 			if moved != nil {
 				// A rename across devices fails; the copy is the fallback, and
 				// it is the same fallback stageJail makes for the same reason.
@@ -1564,7 +1595,16 @@ func (s *Sandbox) requestShutdown(grace time.Duration) error {
 	}); err != nil {
 		return err
 	}
-	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	// The read deadline IS the grace: the guest answers only after its
+	// workspace flush (syncfs) completes, and the flush is the thing this
+	// grace exists to wait for. A fixed short deadline here would kill the
+	// VMM mid-syncfs on a slow disk — the IA-H1 race re-entering through the
+	// fix itself (ST-5.3 review, finding 2).
+	deadline := grace
+	if deadline <= 0 {
+		deadline = 2 * time.Second
+	}
+	_ = conn.SetReadDeadline(time.Now().Add(deadline))
 	var resp proto.ControlResponse
 	if err := proto.NewReader(conn).Read(&resp); err != nil {
 		return err
@@ -1629,7 +1669,11 @@ func RequestShutdown(st *State, grace time.Duration) error {
 	}); err != nil {
 		return err
 	}
-	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	readDeadline := grace
+	if readDeadline <= 0 {
+		readDeadline = 2 * time.Second
+	}
+	_ = conn.SetReadDeadline(time.Now().Add(readDeadline))
 	var resp proto.ControlResponse
 	if err := proto.NewReader(conn).Read(&resp); err != nil {
 		return err

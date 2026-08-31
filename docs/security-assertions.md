@@ -58,6 +58,7 @@ assertion's subject.
 | escaping symlinks and newline filenames never land on the host | workspace suite | CHECKED (the drop-vs-refuse honesty gap is D88's finding) |
 | setuid and world-write bits are stripped, the files survive (safeMode) | workspace suite | CHECKED |
 | a teardown racing the ext4 commit cannot lose the last writes with a false success (IA-H1) | workspace suite IA-H1 regression (post D91) | CHECKED |
+| the flush covers the crash door too: a guest crash or VMM kill mid-run loses only what the ext4 commit had not reached — the cross-check catches total emptiness, not a lost delta | — the flush runs on the shutdown handshake; the crash door is the machine dying uncleanly | PARTIALLY CHECKED — the crash door is inherent to a power cut; the false-success half is closed by the cross-check and the handshake |
 | a 40-deep path lands; the refusal threshold is 128 | workspace suite | CHECKED |
 | plain entries land with their modes | workspace suite | CHECKED |
 

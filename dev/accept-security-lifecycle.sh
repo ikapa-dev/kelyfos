@@ -74,13 +74,20 @@ sleep 1
 # ST-5.3's watchdog now fires where the audit found an immortal machine: the
 # parent's death takes the VMM down and frees the network names without
 # anybody asking. The assertion is the absence of what the audit measured.
+# Scoped to this run's own machine, the way scope.sh reads everything: a
+# host-wide pgrep is F18's/D83's exact shape — beside a peer's live machine
+# it never empties and cannot say whose VMM it saw (second review, finding 3).
+vmm_pid="$(cat "$KELYFOS_CACHE/run/firecracker/$restore_id/root/firecracker.pid" 2>/dev/null || echo 0)"
 vmm_gone=""
 for i in $(seq 1 20); do
-  [ -z "$(pgrep -x firecracker)" ] && { vmm_gone=yes; break; }
+  case "$vmm_pid" in
+    ''|0) vmm_gone=yes; break ;;
+  esac
+  kill -0 "$vmm_pid" 2>/dev/null || { vmm_gone=yes; break; }
   sleep 0.5
 done
 check "$([ "$vmm_gone" = "yes" ] && echo yes || echo no)" \
-      "the watchdog stopped the orphaned machine on its own"
+      "the watchdog stopped the orphaned machine on its own (its own pid $vmm_pid)"
 after="$("$BIN/kelyfos" doctor 2>&1 | sed -n '/orphaned instances/p')"
 case "$after" in
   *"orphaned instances     none"*) pass "doctor is clean — no orphan ever formed" ;;
