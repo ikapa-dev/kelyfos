@@ -1438,3 +1438,43 @@ sockets, where the wall's answer is actually visible; and the audit's
 absolute-URI path the proxy rebuilds the request with the URI's host (IA-I5),
 so no-Host and a lying Host both answer 200 there, which is correct by
 construction and now pinned as a named behaviour rather than an observation.
+
+## D89
+
+*2026-08-31*
+
+**The security suites' CI home, proposed under §3's constraint that this
+account has already had Actions disabled once: a fast subset inside
+`ci.yml`'s existing boot job, the heavier suites behind `workflow_dispatch`
+and one weekly slot on a day nothing else uses, the full lab run locally
+before a release — and nothing merges until the maintainer approves the
+minutes (ST-1.10).**
+
+This row is a proposal, not a landed change: no workflow on this machine's
+pushes moves until the cost below is approved. The suites themselves are
+local-first — `make accept-security` runs all of them in the dev VM — so the
+decision being deferred costs nothing but the hosted evidence.
+
+| tier | what runs | where | cost | when |
+| --- | --- | --- | --- | --- |
+| fast subset | `accept-security-record.sh` (offline, no network) + the offline battery of `accept-security-egress.sh` + `accept-security-caps.sh` | `ci.yml`'s existing boot job, beside `accept-seccomp.sh` (the precedent at `ci.yml:463`) | ≈ +4–6 runner-minutes per push (three boots at ~90 s hosted-KVM each, the boot job already pays the KVM/udev setup) | every push, if approved |
+| heavy suites | secrets, surfaces, workspace (full), team, lifecycle | a `security-lab.yml` job — `workflow_dispatch` + one weekly schedule on **Thursday**, the day nothing else uses (ci.yml Monday, cookbook.yml Tuesday, security.yml Wednesday) | ≈ 25–35 runner-minutes weekly | weekly + on demand |
+| full lab | all of the above + the controlled-origin battery (ST-2.2) if ST-2.1 is approved | locally, in the Lima VM, before each release | host time only | pre-release |
+
+| candidate | verdict |
+| --- | --- |
+| A new workflow that boots microVMs on every relevant PR | **Rejected** — revision 1's design, and the single most dangerous thing in this document (§3): sustained CI load is the likely cause of the earlier disablement. |
+| The heavy suites weekly without a dispatch door | **Rejected.** A schedule nobody can trigger is a suite nobody re-runs when it matters — the dispatch input costs nothing. |
+| Wiring the fast subset into `ci.yml` in this same commit | **Rejected pending approval.** Every push pays the minutes forever; that is exactly the decision the maintainer owns. The suites are green locally (§11) and the wiring is a three-line change when approved. |
+| One combined job for suites and advisories | **Rejected.** A suite failure (someone's machine broke) and an advisory (security.yml found something) must never share a red X — separate jobs keep the meanings apart. |
+
+**The udev note, carried from the plan.** Hosted KVM needs the grant step
+`bench.yml`/`caps.yml`/`cookbook.yml` already carry (`udevadm trigger
+--name-match=kvm`, and the `99-kvm.rules` fallback where the runner user is
+outside the `kvm` group). Any new job copies it; forgetting it produces a
+permission error that looks like a Firecracker bug and costs an afternoon.
+
+**Why:** the suites exist and are green locally; what separates a local suite
+from a gate is hosted minutes, and hosted minutes on this account are the
+maintainer's budget to set. The row prices the tiers so the choice is a
+number, not a vibe.
