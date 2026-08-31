@@ -5342,7 +5342,7 @@ unchanged).
 | `sha256` | string | The chain head — the previous last event's own `hash` — immediately before this rewrite began, so a reader already holding an earlier export of this chain (`kelyfos verify --extract`, or a report's own embedded record) can confirm the erased chain is its honest successor rather than a fabrication. Reused from `file.write`'s own `sha256`, the same cross-type reuse `modified` and `cpu_quota_percent` already have. |
 
 A redacted field reads `"(erased — sha256:<64 hex chars>)"` in place of what
-was there — the same in-band-note shape `clipLargestField` already uses for
+was there — the same in-band-note shape `clipToBudget` already uses for
 a clipped one, applied to a deliberate removal instead of an accidental
 oversize. For a `[]string` field the digest is computed over a
 length-prefixed encoding of the elements — each element's own byte length
@@ -11862,7 +11862,7 @@ type EvStoreKey struct {
 }
 ```
 
-`largestStringField` (`internal/recorder/recorder.go:542`) already walks a
+`eachStringField` (`internal/recorder/recorder.go`) already walks a
 pointed-to struct's string fields when clipping `*EvError`, so `EvSecret`
 inside a `[]EvSecret` gets the same treatment for free *once the slice itself
 is reachable* — which it is not, by reflection alone. §9.1 is why that matters
@@ -12019,14 +12019,14 @@ Not this document's job to build, but its job to make sure nothing here gets
 implemented forgetting the two traps the survey already found (Progress Log,
 2026-08-27, the entry that opened D63):
 
-### 9.1 Every new slice field needs `clipLargestField` extended, in the SAME commit
+### 9.1 Every new slice field needs `clipToBudget` extended, in the SAME commit
 
-`largestStringField` (`internal/recorder/recorder.go:542`) walks `Event` by
+`eachStringField` (`internal/recorder/recorder.go`) walks `Event` by
 reflection over **string-kinded fields only**. Every field this document adds
 that is a slice — `Allow`, `Ports`, `Secrets`, `Plugins`, `Forwards` (§5),
 `Agents`, `Edges`, `StoreKeys` (§6) — is invisible to it, the same way `Cmd`
-already was before it got a hand-written case
-(`internal/recorder/recorder.go:497`). An oversized one today would send
+already was before it got a hand-written entry in `clippableFields`. An
+oversized one today would send
 `fitUnderMaxLine`'s loop through nothing to shrink, `Append` would fail
 closed, and the event vanishes from the record with no trace — the exact
 failure S16 was written to prevent. `Ports` is bounded and small in practice
@@ -12036,6 +12036,15 @@ say so explicitly rather than leave it untested by omission. A hostile
 fixture — a 64 KiB `secrets` list, a `plugins` array with a thousand
 30-character names — proving each of the eight actually clips is part of
 P7-2/P7-3's own done criteria, not a follow-up.
+
+Two names in this section moved in v1.1.1 and the rule did not.
+`clipLargestField` became `clipToBudget` and `largestStringField` became
+`eachStringField` when P7-15 replaced "halve the largest field, up to eight
+times" with "reduce every field standing above the ceiling the budget allows"
+(D80); the slice list itself moved out to `clippableFields`, which is the
+function a new slice field is added to. The line numbers this section used to
+carry are gone rather than corrected: they had already drifted by roughly eight
+hundred lines before anybody noticed, which is what a line number in prose does.
 
 ### 9.2 Field order is normative, not a proposal
 
@@ -12288,7 +12297,7 @@ Article 12 obligation at all, because it removes *content*, not the
 **What it does.** Every field on the chain known to carry
 guest-influenced or operator-supplied content is replaced, wherever it is
 non-empty, with a fingerprint of what was there: its own sha256, in the
-same in-band-note shape `clipLargestField` already uses for a clipped
+same in-band-note shape `clipToBudget` already uses for a clipped
 field (`"(erased — sha256:…)"`). That list, as of this task's review round,
 is: `data` (command output, a team message's payload), `cmd` and `argv`
 (a command's own argv, and the host process's own — what a trailing
@@ -12343,7 +12352,7 @@ forbids it, and nothing here does.
 
 **How that list is kept honest.** A hand-maintained list of which fields
 carry content is precisely the failure class this project has now hit
-four times in one week, on four different lists: `clipLargestField`
+four times in one week, on four different lists: `clipToBudget`
 naming six fields and missing `Tools`; `internal/digest` missing
 `session.policy`; `internal/digest` missing `team.topology`; and this
 task's own first draft naming four fields (`data`, `args`, `cmd`, `argv`)
@@ -12351,7 +12360,7 @@ and leaving eleven more — `cwd`, `path`, `peer`, `comm`, `workspace`,
 `host`, `name`, `allow`, and every field inside `agents`, `edges` and
 `store_keys` — fully unredacted, found by an adversarial review that put a
 marker in every string and `[]string` field `Event` has and ran a real
-erasure over each one in turn. The fix is the same one `clipLargestField`
+erasure over each one in turn. The fix is the same one `clipToBudget`
 already uses for its own list: walk `Event` by reflection instead of
 trusting memory. `internal/recorder/erase.go`'s `eraseExempt` is the
 single, explicit table of every field left alone and why — a session id,

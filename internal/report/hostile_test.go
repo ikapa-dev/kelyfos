@@ -650,7 +650,7 @@ func Test64CharacterAgentNameRendersSafely(t *testing.T) {
 }
 
 // A session whose aggregate recorded size is around 200 MB — not a single
-// line over recorder.MaxLine (8 MiB), which clipLargestField already guards
+// line over recorder.MaxLine (8 MiB), which clipToBudget already guards
 // and internal/recorder's own hostile tests already cover, but a chain this
 // package's renderer has to walk, decode and escape in full. Built from
 // forty command.output events at 5 MiB raw each (comfortably under MaxLine

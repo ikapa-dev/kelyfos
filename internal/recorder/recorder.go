@@ -18,6 +18,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -291,7 +292,7 @@ type Event struct {
 	// one and this by three. Appended at the end, like every field since
 	// Jailed, because the field order in this struct is the order the hash is
 	// computed over. An integer, so there is nothing here for
-	// clipLargestField to clip and nothing for an erasure to redact.
+	// clipToBudget to clip and nothing for an erasure to redact.
 	RedactedFields int `json:"redacted_fields,omitempty"`
 	// egress.attempt, when reason is unsafe_resolved_address (F14). Where an
 	// allowlisted name actually resolved to. It is here and nowhere else: the
@@ -875,174 +876,398 @@ func hashOf(e Event) (string, error) {
 
 // clipMargin is slack kept below MaxLine on top of the 64 bytes a real digest
 // adds once hashOf fills Hash in (see fitUnderMaxLine). It covers the
-// "...(clipped from N to M bytes)" note clipLargestField appends and the
+// "...(clipped from N to M bytes)" note clipToBudget appends and the
 // escaping growth a clipped field can pick up when it is re-marshalled — both
 // small, but the loop re-measures after every clip precisely so a fixed margin
 // never has to be exact, only generous enough to converge quickly.
 const clipMargin = 4 << 10
 
-// maxClipAttempts bounds fitUnderMaxLine's loop. Halving the single largest
-// candidate field converges in one or two iterations for anything this
-// product's own doors could produce — a 16 MiB MCP frame's stdout, base64
-// expanded, is under 22 MiB, and two halvings already clear MaxLine — so the
-// bound exists only so a field this code does not yet know about cannot turn
-// "clip until it fits" into "loop forever." Exceeding it fails the Append
+// maxClipAttempts bounds fitUnderMaxLine's loop. Exceeding it fails the Append
 // closed rather than write a line no reader could get past.
+//
+// It bounds RE-MEASUREMENTS, not reductions. clipToBudget brings every
+// oversized field down to the ceiling the budget actually allows in a single
+// pass, so the loop exists to correct for what marshalling adds on top of the
+// field content — JSON escaping, which turns one `<` into six bytes, and the
+// framing around every key — and not to grind one field down by halves. One
+// pass is normally enough and two cover everything the sweep behind D80 could
+// build; the rest is headroom for a value escaping badly enough to need a
+// third.
+//
+// This used to bound halvings of the single largest field, and the comment
+// here used to say that "halving the single largest candidate field converges
+// in one or two iterations for anything this product's own doors could
+// produce." That was true of one oversized field and false of several: with
+// the bulk spread across n fields, eight halvings of the largest leave about
+// S/2 of S behind at n=8 and more beyond it, so the loop ran out of attempts
+// with the event still oversized and Append refused it (P7-15, D80).
+//
+// Raising this number is the repair that looks obvious and is the opposite of
+// one, so it was measured rather than argued: against one 340 MiB event at 8,
+// 16, 32 and 64 attempts, a single Append allocated 4.3, 8.0, 14.2 and 23.0
+// GiB, and the event was refused at every one of them. More attempts at nearly
+// full size is more allocation, not more convergence.
 const maxClipAttempts = 8
+
+// clipNoteBytes is what one clip costs inside the field it clips: the
+// "...(clipped from N to M bytes)" note this file writes in-band rather than
+// adding a schema field for. Sixty-four is generous for the longest of them,
+// and clipToBudget uses it twice — as the per-field reserve it holds back, so
+// that adding the notes cannot itself put the line back over the limit, and as
+// the floor below which a field is left alone, because clipping something
+// already shorter than its own note would make the line LONGER rather than
+// shorter.
+const clipNoteBytes = 64
 
 // fitUnderMaxLine is Append's own backstop: whatever door let an oversized,
 // guest-influenced field reach here, the line Append is about to write must
 // still be one every reader — Verify, Read, `kelyfos log`'s replay — can read
 // back whole. It must run before hashOf; see the comment at its call site.
+//
+// The shape is reduce first, measure second. Every field clipping can reach is
+// measured from the strings themselves, which costs nothing, and scaled down
+// to the ceiling the budget allows BEFORE the first json.Marshal; the loop
+// after that only closes the gap between field content and what marshalling
+// makes of it. P7-15 was one defect that broke both properties this buys, and
+// D80 records why they are one defect and not two:
+//
+//   - It converges. Reducing every oversized field to a common ceiling brings
+//     the event under the budget in one pass however the bulk is spread.
+//     Reducing the largest field by half brings a 16 MiB event spread over
+//     sixteen fields nowhere near 8 MiB in the eight attempts available, so
+//     Append refused it — and an event Append refuses vanishes from the record
+//     rather than being kept in truncated form, which is F8's failure mode
+//     reached by breadth instead of by an uncovered field.
+//
+//   - It allocates against MaxLine rather than against whatever the caller
+//     built. No marshal ever sees the un-clipped event. That is what
+//     internal/recorder's own fuzz target was OOM-killed by (D69): nine
+//     marshals of a 340 MiB event, several GiB of allocation and a 4.4 GiB
+//     resident set, out of one Append.
 func fitUnderMaxLine(e *Event) error {
+	// What json.Marshal is allowed to produce here. e.Hash is "" at this point
+	// — the state Append is always in when this runs — and grows to a
+	// 64-character hex digest once hashOf fills it in, which is the only change
+	// left between this measurement and the line Append actually writes.
+	lineBudget := MaxLine - sha256.Size*2 - clipMargin
+
+	// The pre-pass, and the reason nothing here allocates in proportion to what
+	// the caller handed it. budget is a budget for field CONTENT, and content
+	// is always a lower bound on the marshalled line: JSON escaping never makes
+	// a byte smaller, and the keys, quotes and commas around it are pure
+	// addition. So clipping content to lineBudget can never clip away more than
+	// it had to, and the loop below closes what is left of the gap.
+	budget := lineBudget
+	clipToBudget(e, budget)
+
 	for attempt := 0; ; attempt++ {
 		b, err := json.Marshal(e)
 		if err != nil {
 			return fmt.Errorf("measuring event %d before recording it: %w", e.Seq, err)
 		}
-		// e.Hash is "" here — the state Append is always in when this runs —
-		// and grows to a 64-character hex digest once hashOf fills it in, which
-		// is the only change left between this measurement and the line Append
-		// actually writes.
-		if len(b)+sha256.Size*2+clipMargin <= MaxLine {
+		if len(b) <= lineBudget {
 			return nil
 		}
 		if attempt >= maxClipAttempts {
 			return fmt.Errorf("event %d (%s) is still %d bytes after %d clips — refusing to write a line no reader could read back",
 				e.Seq, e.Type, len(b), attempt)
 		}
-		if !clipLargestField(e) {
+		// The measured excess is what the content budget has to give up.
+		// Removing a byte of content removes at least a byte of line, so
+		// subtracting the excess cannot undershoot. Halving is a floor under
+		// that, so the loop terminates even where a value's escaping is
+		// pathological enough that subtracting the excess barely moves it.
+		next := budget - (len(b) - lineBudget)
+		if half := budget / 2; next > half {
+			next = half
+		}
+		if next < 0 {
+			next = 0
+		}
+		budget = next
+		if !clipToBudget(e, budget) {
 			return fmt.Errorf("event %d (%s) is %d bytes with nothing left to clip",
 				e.Seq, e.Type, len(b))
 		}
 	}
 }
 
-// clipLargestField halves whichever of the event's fields is currently
-// largest, noting the original size in-band rather than adding a schema field
-// — the same pattern host/servemcpaudit.go's summariseArgs uses for the
-// outward MCP audit lane, reused here as the last line of defense for the
-// flight recorder itself. It reports false when nothing is left worth
-// clipping, which fitUnderMaxLine treats as "cannot make this fit."
+// clipToBudget brings the total content of every field clipping can reach down
+// to budget: it finds the ceiling that total allows and reduces every field
+// standing above it, noting each original size in-band rather than adding a
+// schema field — the same pattern host/servemcpaudit.go's summariseArgs uses
+// for the outward MCP audit lane, reused here as the last line of defense for
+// the flight recorder itself. It reports whether it changed anything, which
+// fitUnderMaxLine treats as "cannot make this fit."
 //
-// The candidate string fields come from largestStringField, which walks the
-// struct by reflection rather than a hand-maintained list — a hand-maintained
-// list is exactly what F8 found wrong with the previous version of this
-// function: it named six fields (Data, Args, Host, Path, Name, and Cmd) while
-// claiming to cover "whatever field made it that large," and EvError.Message,
-// Reason, Tool and every other string field on Event were invisible to it. An
-// oversized value in one of those went through fitUnderMaxLine's loop with
-// nothing to clip, so Append failed closed and the event vanished from the
-// record instead of being clipped and kept — the exact failure mode this
-// function exists to prevent. Reflection means a field added to Event next
-// month is covered the day it lands, not the day someone reads this function
-// and remembers to add it to a list.
+// It replaces clipLargestField, which halved whichever single field was
+// currently largest. That was right for the shape this file's doors were known
+// to produce — one oversized value with everything else small — and could not
+// converge for any other. Two things follow from reducing every oversized
+// field at once instead, and P7-15 (D80) was one defect that needed both:
 //
-// Cmd is measured and clipped separately because it is a []string, not a
-// string, so reflection over string-kinded fields does not see it: an
-// external review of this fix found that a caller-supplied argv
-// (host/mcpobserve.go, host/servemcptools.go, host/exec.go all build Cmd from
-// a request field with no upstream length bound) could be the single largest
-// thing on a command.start event while every string field was empty. Cmd
-// competes for "largest field" like everything else, and clips to a single
-// summarising element rather than being left unclippable.
+//   - Convergence stops depending on how the bulk is spread. Eight halvings of
+//     the largest of n equal fields leave about S/2 of S behind at n=8; the
+//     loop then ran out of attempts with the event still oversized and Append
+//     refused it, so the event vanished from the record instead of being kept
+//     in truncated form. One water-fill pass puts the total under the budget
+//     whatever n is.
 //
-// P7-2 added six more slices reflection cannot see the same way: Allow,
-// Secrets, Plugins, Forwards and Tools are all string-shaped like Cmd (Secrets
-// is []EvSecret rather than []string, but is still invisible to
-// largestStringField's field-kind switch), and Ports is not, so it gets its
-// own measurement and its own clip (below). Argv is included too, even though
-// it is bounded in practice by the OS's own argv length limit and has never
-// been observed oversized: docs/policy-record.md §9.1 already draws the same
-// conclusion about Ports ("bounded and small in practice... but it is still,
-// mechanically, a slice reflection does not see, and a fixture should say so
-// explicitly rather than leave it untested by omission"), and the same
-// argument applies here.
+//   - The loop stops re-marshalling at nearly full size. Convergence and cost
+//     are the same property here: a loop that reduces the event on its first
+//     pass never marshals the un-clipped thing at all.
 //
-// Tools was the one P7-2 actually missed — the review that reopened P7-2
-// (F1) found it: the six-item list above named five of P7-2's six new
-// slices and Tools slipped through anyway, the identical shape of mistake
-// F8 made for strings one paragraph up, just one level down the type
-// system. A hand-maintained list has now failed exactly this way twice, so
-// TestClipLargestFieldCoversEverySliceField (fuzz_test.go) backstops this
-// list itself: it walks Event by reflection for every slice-kind field —
-// present or future — and fails if this function does not have a case for
-// it, rather than depending on a fifth person remembering to add one.
-// Extending this list is still required in the same commit that adds a new
-// slice field to Event; that test is what makes forgetting loud instead of
-// silent.
+// The ceiling is a water level rather than a flat ratio, which is the
+// difference between "every field gives up 90%" and "every field standing
+// above the line comes down to it". A small field beside a huge one keeps all
+// of its content, because taking anything from it would buy the line nothing —
+// and for a record that matters: `stream`, `via` and `agent` beside a
+// multi-megabyte `data` are exactly the fields a reader needs in order to make
+// sense of what was clipped.
 //
-// P7-3 added three more: Edges is string-shaped like Cmd; Agents
-// ([]EvAgent) and StoreKeys ([]EvStoreKey) are struct slices, the same shape
-// Secrets already established, each with its own *Bytes measurement and
-// clip below.
-func clipLargestField(e *Event) bool {
-	target := largestStringField(e)
-	best := 0
-	if target != nil {
-		best = len(*target)
+// The candidate list is clippableFields below, which is where F8's guarantee
+// now lives.
+func clipToBudget(e *Event, budget int) bool {
+	fields := clippableFields(e)
+
+	// Every field this clips gains its own note, so the budget holds room for
+	// them up front. Without the reserve, clipping exactly to budget would put
+	// the line back over by the notes it just added, and the loop would need
+	// another pass to discover it.
+	if reserve := len(fields) * clipNoteBytes; budget > reserve {
+		budget -= reserve
+	} else {
+		budget = 0
 	}
 
-	type slice struct {
-		n     int // element count — the guard below keys on this, not bytes
-		bytes int
-		clip  func()
+	total := 0
+	for _, f := range fields {
+		total += f.bytes
 	}
-	slices := []slice{
-		{len(e.Argv), stringsBytes(e.Argv), func() { e.Argv = clipStrings(e.Argv, "process arguments") }},
-		{len(e.Cmd), stringsBytes(e.Cmd), func() { e.Cmd = clipStrings(e.Cmd, "argv elements") }},
-		{len(e.Allow), stringsBytes(e.Allow), func() { e.Allow = clipStrings(e.Allow, "domains") }},
-		{len(e.Plugins), stringsBytes(e.Plugins), func() { e.Plugins = clipStrings(e.Plugins, "plugin names") }},
-		{len(e.Forwards), stringsBytes(e.Forwards), func() { e.Forwards = clipStrings(e.Forwards, "forwards") }},
-		{len(e.Tools), stringsBytes(e.Tools), func() { e.Tools = clipStrings(e.Tools, "tool names") }},
-		{len(e.Secrets), secretsBytes(e.Secrets), func() { e.Secrets = clipSecrets(e.Secrets) }},
-		{len(e.Ports), portsBytes(e.Ports), func() { e.Ports = clipPorts(e.Ports) }},
-		{len(e.Agents), agentsBytes(e.Agents), func() { e.Agents = clipAgents(e.Agents) }},
-		{len(e.Edges), stringsBytes(e.Edges), func() { e.Edges = clipStrings(e.Edges, "edges") }},
-		{len(e.StoreKeys), storeKeysBytes(e.StoreKeys), func() { e.StoreKeys = clipStoreKeys(e.StoreKeys) }},
-	}
-	// Guarding on element count rather than "bytes > 0" (F6): stringsBytes and
-	// secretsBytes measure element content only, not the per-element JSON
-	// framing every entry still costs once marshalled (quotes, colons, the
-	// comma between entries) — a slice of many empty or zero-value elements
-	// used to measure near-zero bytes and lose to any nonempty string field,
-	// even though the real marshalled line from that many empty elements
-	// could itself be the reason the line is oversized. bytes now includes a
-	// per-element estimate of that framing (below) so the comparison against
-	// best is realistic, and the guard is len > 0 rather than bytes > 0 so a
-	// slice is never skipped purely because its own measurement undercounts.
-	var chosen *slice
-	for i := range slices {
-		if slices[i].n > 0 && slices[i].bytes > best {
-			best = slices[i].bytes
-			chosen = &slices[i]
-		}
-	}
-	if chosen != nil {
-		chosen.clip()
-		return true
-	}
-
-	if target == nil || len(*target) == 0 {
+	// The early return, and the reason everything below it is allowed to cost
+	// something: this runs on every Append, and all but a vanishing fraction of
+	// them are events that fit with room to spare and leave here.
+	if total <= budget {
 		return false
 	}
-	orig := len(*target)
-	kept := clipUTF8(*target, orig/2)
-	*target = fmt.Sprintf("%s...(clipped from %d to %d bytes)", kept, orig, len(kept))
-	return true
+
+	sizes := make([]int, len(fields))
+	for i, f := range fields {
+		sizes[i] = f.bytes
+	}
+	keep := capForBudget(sizes, budget)
+	clipped := false
+	for _, f := range fields {
+		// The second use of clipNoteBytes is a floor: a field already shorter
+		// than the note a clip would add to it cannot be made smaller by
+		// clipping, and clipping it anyway would make the line longer. It is
+		// also what keeps a clip aimed at a payload away from the header —
+		// `type`, `source`, `prev` — which clipLargestField could reach on an
+		// event where every payload field happened to be empty.
+		if f.bytes > keep && f.bytes > clipNoteBytes {
+			f.reduce(keep)
+			clipped = true
+		}
+	}
+	return clipped
 }
 
-// clipStrings is Cmd's original clip, generalised to any []string field
-// P7-2 added: join, keep half the joined bytes, replace the whole slice with
-// one element noting what was lost. label names the elements in that note —
-// "argv elements" for Cmd reproduces the message exactly as it read before
-// this generalisation.
-func clipStrings(s []string, label string) []string {
+// capForBudget returns the largest per-field ceiling c for which the sum of
+// min(size, c) over sizes is within budget — the water level at which the
+// sizes poking above it, cut off at the level, come to exactly the budget.
+//
+// Written out rather than approximated by a ratio because a ratio takes bytes
+// from fields that are not the problem: scaling forty fields to a fortieth,
+// when thirty-nine of them hold twenty bytes each, throws away every small
+// field to buy nothing.
+func capForBudget(sizes []int, budget int) int {
+	if budget < 0 {
+		budget = 0
+	}
+	ascending := make([]int, len(sizes))
+	copy(ascending, sizes)
+	sort.Ints(ascending)
+	used := 0
+	for i, n := range ascending {
+		// If the level lands below this field, then this field and every
+		// larger one sit at the level, and everything already counted into
+		// used kept what it had.
+		level := (budget - used) / (len(ascending) - i)
+		if level < n {
+			if level < 0 {
+				level = 0
+			}
+			return level
+		}
+		used += n
+	}
+	// Every field is under the level, so nothing needs clipping at all. The
+	// caller has already ruled this out by comparing the total against budget.
+	return budget
+}
+
+// clippable is one field clipToBudget can reduce: what it currently
+// contributes to the marshalled line, and how to bring it down to a given
+// number of content bytes.
+//
+// A string field carries its address; only a slice field carries a closure.
+// The two are equivalent and the address is the cheap one, which matters here
+// and nowhere else in this file: clippableFields runs on EVERY Append,
+// including the overwhelming majority that are nowhere near MaxLine and clip
+// nothing, and a closure per string field would put forty short-lived
+// allocations on the flight recorder's hottest path in order to describe work
+// that is almost never done. Measured on a 4 KiB command.output: 63 allocations
+// per Append with a closure each, 24 with this, against 12 before this function
+// existed. The eleven slice fields keep their closures because each needs a
+// different clip and eleven is not forty.
+type clippable struct {
+	bytes int
+	str   *string        // a string field; clip is nil
+	clip  func(keep int) // a slice field; str is nil
+}
+
+// reduce brings this field down to at most keep bytes of content, plus the note
+// saying what was lost.
+func (c clippable) reduce(keep int) {
+	if c.str == nil {
+		c.clip(keep)
+		return
+	}
+	orig := len(*c.str)
+	kept := clipUTF8(*c.str, keep)
+	*c.str = fmt.Sprintf("%s...(clipped from %d to %d bytes)", kept, orig, len(kept))
+}
+
+// clippableFields enumerates every field of an event that clipping can reach.
+// It is a function of its own, rather than a step inside the clip, because
+// "what can be clipped and what is invisible to clipping" is the question this
+// file has got wrong three times, and it should be answerable by reading one
+// list.
+//
+// String fields come from eachStringField's reflection walk over Event — its
+// own top-level fields plus the fields of any pointed-to struct such as
+// *EvError — rather than a hand-maintained list. A hand-maintained list is
+// exactly what F8 found wrong with the first version of this: it named six
+// fields (Data, Args, Host, Path, Name, and Cmd) while claiming to cover
+// "whatever field made it that large," and EvError.Message, Reason, Tool and
+// every other string field on Event were invisible to it. An oversized value
+// in one of those went through fitUnderMaxLine's loop with nothing to clip, so
+// Append failed closed and the event vanished from the record instead of being
+// clipped and kept — the exact failure mode this code exists to prevent.
+// Reflection means a field added to Event next month is covered the day it
+// lands, not the day someone reads this function and remembers to add it to a
+// list.
+//
+// Slices are the half reflection cannot do the same way, and they are a list.
+// Cmd was the first: it is a []string, so a walk over string-kinded fields
+// does not see it, and an external review of F8's fix found that a
+// caller-supplied argv (host/mcpobserve.go, host/servemcptools.go and
+// host/exec.go all build Cmd from a request field with no upstream length
+// bound) could be the largest thing on a command.start event while every
+// string field was empty. P7-2 added six more: Allow, Secrets, Plugins,
+// Forwards and Tools are string-shaped like Cmd (Secrets is []EvSecret rather
+// than []string, but is still invisible to a field-kind switch on strings),
+// and Ports is []int, so it gets its own measurement and its own clip because
+// there is no string in it to shrink. P7-3 added three: Edges is string-shaped
+// like Cmd; Agents ([]EvAgent) and StoreKeys ([]EvStoreKey) are struct slices,
+// the shape Secrets already established, each with its own *Bytes measurement
+// and clip. Argv is here too although it is bounded in practice by the OS's
+// own argv length limit and has never been observed oversized:
+// docs/policy-record.md §9.1 draws the same conclusion about Ports ("bounded
+// and small in practice... but it is still, mechanically, a slice reflection
+// does not see, and a fixture should say so explicitly rather than leave it
+// untested by omission"), and the same argument applies here.
+//
+// Tools was the one P7-2 actually missed — the review that reopened P7-2 (F1)
+// found it: the list named five of P7-2's six new slices and Tools slipped
+// through anyway, the identical shape of mistake F8 made for strings one
+// paragraph up, just one level down the type system. A hand-maintained list
+// has now failed exactly this way twice, so
+// TestClipToBudgetCoversEverySliceField (fuzz_test.go) backstops this list
+// itself: it walks Event by reflection for every slice-kind field — present or
+// future — and fails if this function does not have an entry for it, rather
+// than depending on a fifth person remembering to add one. Extending this list
+// is still required in the same commit that adds a new slice field to Event;
+// that test is what makes forgetting loud instead of silent.
+//
+// The five struct-slice and []int clips ignore the ceiling they are handed.
+// They do not shrink their field toward a size, they replace it with a single
+// summarising element (or, for Ports, its first sixteen entries), which is
+// tens of bytes and therefore under any ceiling clipToBudget could compute.
+// Taking the parameter and discarding it keeps every entry in this list one
+// shape.
+func clippableFields(e *Event) []clippable {
+	out := make([]clippable, 0, 64)
+	eachStringField(e, func(p *string) {
+		out = append(out, clippable{bytes: len(*p), str: p})
+	})
+	// The measurements below include a per-element estimate of the JSON
+	// framing every entry costs once marshalled — quotes, colons, the comma
+	// between entries (F6). Without it a slice of many empty or zero-value
+	// elements measured near zero while marshalling to megabytes, so it was
+	// never chosen for clipping even though it was the reason the line was
+	// oversized. The estimate is inside stringsBytes, secretsBytes,
+	// agentsBytes, storeKeysBytes and portsBytes rather than here, so that
+	// "how large is this field" has one answer wherever it is asked.
+	out = append(out,
+		clippable{bytes: stringsBytes(e.Argv), clip: func(keep int) { e.Argv = clipStrings(e.Argv, "process arguments", keep) }},
+		clippable{bytes: stringsBytes(e.Cmd), clip: func(keep int) { e.Cmd = clipStrings(e.Cmd, "argv elements", keep) }},
+		clippable{bytes: stringsBytes(e.Allow), clip: func(keep int) { e.Allow = clipStrings(e.Allow, "domains", keep) }},
+		clippable{bytes: stringsBytes(e.Plugins), clip: func(keep int) { e.Plugins = clipStrings(e.Plugins, "plugin names", keep) }},
+		clippable{bytes: stringsBytes(e.Forwards), clip: func(keep int) { e.Forwards = clipStrings(e.Forwards, "forwards", keep) }},
+		clippable{bytes: stringsBytes(e.Tools), clip: func(keep int) { e.Tools = clipStrings(e.Tools, "tool names", keep) }},
+		clippable{bytes: stringsBytes(e.Edges), clip: func(keep int) { e.Edges = clipStrings(e.Edges, "edges", keep) }},
+		clippable{bytes: secretsBytes(e.Secrets), clip: func(int) { e.Secrets = clipSecrets(e.Secrets) }},
+		clippable{bytes: portsBytes(e.Ports), clip: func(int) { e.Ports = clipPorts(e.Ports) }},
+		clippable{bytes: agentsBytes(e.Agents), clip: func(int) { e.Agents = clipAgents(e.Agents) }},
+		clippable{bytes: storeKeysBytes(e.StoreKeys), clip: func(int) { e.StoreKeys = clipStoreKeys(e.StoreKeys) }},
+	)
+	return out
+}
+
+// clipStrings is Cmd's original clip, generalised to any []string field P7-2
+// added: keep as much of the joined elements as the ceiling allows, replace the
+// whole slice with one element noting what was lost. label names the elements
+// in that note — "argv elements" for Cmd reproduces the message exactly as it
+// read before this generalisation.
+//
+// It joins only as far as it needs to (joinLimit) rather than joining the whole
+// slice and cutting the result down. Joining first was harmless while a clip
+// was a halving of something already measured, and is not harmless as the
+// pre-pass fitUnderMaxLine now runs before its first marshal: a 300 MiB Allow
+// would allocate 300 MiB to build a string this function then throws all but
+// 8 MiB of, which is the cost the pre-pass exists to avoid, moved one function
+// down.
+func clipStrings(s []string, label string, keep int) []string {
 	orig := len(s)
 	origBytes := stringsBytes(s)
-	joined := strings.Join(s, " ")
-	kept := clipUTF8(joined, origBytes/2)
+	kept := clipUTF8(joinLimit(s, keep), keep)
 	return []string{fmt.Sprintf("%s...(clipped from %d bytes across %d %s)", kept, origBytes, orig, label)}
+}
+
+// joinLimit is strings.Join(s, " ") stopped once it holds n bytes. It may
+// overshoot by up to utf8.UTFMax, so that the caller's clipUTF8 always has a
+// byte to trim back to a rune boundary rather than being handed a string that
+// is already exactly n bytes with a rune split across the end.
+func joinLimit(s []string, n int) string {
+	if n < 0 {
+		n = 0
+	}
+	var b strings.Builder
+	for i, v := range s {
+		if b.Len() >= n {
+			break
+		}
+		if i > 0 {
+			b.WriteByte(' ')
+		}
+		if room := n - b.Len() + utf8.UTFMax; len(v) > room {
+			b.WriteString(v[:room])
+			break
+		}
+		b.WriteString(v)
+	}
+	return b.String()
 }
 
 // secretsBytes is Secrets' size for the same comparison cmdBytes always gave
@@ -1134,12 +1359,15 @@ func clipPorts(p []int) []int {
 	return p[:keep]
 }
 
-// largestStringField walks every string-typed field reachable from an Event —
-// its own top-level fields, plus the fields of any pointed-to struct such as
-// *EvError — and returns the address of whichever currently holds the most
-// bytes, or nil when every string field is empty. Using the address, rather
-// than returning a copy, is what lets clipLargestField overwrite the field it
-// found in place.
+// eachStringField calls fn with the address of every string-typed field
+// reachable from an Event — its own top-level fields, plus the fields of any
+// pointed-to struct such as *EvError. Addresses rather than copies, because
+// that is what lets a clip overwrite the field it found, in place.
+//
+// Named eachStringField until D80, when clipping stopped being about one
+// field: it returned the address of the single biggest string, which was the
+// right question to ask when the clip halved one field per attempt and the
+// wrong one once every oversized field is reduced at once.
 //
 // Walking by reflection instead of a fixed field list is the fix for F8: a
 // list has to be remembered and kept in sync by hand, and this file's own
@@ -1149,19 +1377,13 @@ func clipPorts(p []int) []int {
 // FuzzAppendFieldValues exercises this by setting every reachable string field
 // at once so a future field that *is* reachable and gets missed here fails a
 // fuzz run rather than needing a code read to find.
-func largestStringField(e *Event) *string {
-	var target *string
-	consider := func(f *string) {
-		if target == nil || len(*f) > len(*target) {
-			target = f
-		}
-	}
+func eachStringField(e *Event, fn func(*string)) {
 	v := reflect.ValueOf(e).Elem()
 	for i := 0; i < v.NumField(); i++ {
 		fv := v.Field(i)
 		switch fv.Kind() {
 		case reflect.String:
-			consider(fv.Addr().Interface().(*string))
+			fn(fv.Addr().Interface().(*string))
 		case reflect.Ptr:
 			if fv.IsNil() || fv.Type().Elem().Kind() != reflect.Struct {
 				continue
@@ -1169,12 +1391,11 @@ func largestStringField(e *Event) *string {
 			sv := fv.Elem()
 			for j := 0; j < sv.NumField(); j++ {
 				if sfv := sv.Field(j); sfv.Kind() == reflect.String {
-					consider(sfv.Addr().Interface().(*string))
+					fn(sfv.Addr().Interface().(*string))
 				}
 			}
 		}
 	}
-	return target
 }
 
 // stringsPerElementOverhead accounts for a []string element's own JSON
@@ -1184,7 +1405,7 @@ func largestStringField(e *Event) *string {
 // unpadded, measured zero bytes.
 const stringsPerElementOverhead = 3
 
-// stringsBytes is the size clipLargestField and fitUnderMaxLine's marshalled
+// stringsBytes is the size clipToBudget and fitUnderMaxLine's marshalled
 // measurement both care about for any []string field: the bytes its elements
 // actually contribute, not len(s), which is the element count. Named cmdBytes
 // until P7-2 needed the same measurement for Allow, Plugins and Forwards too.

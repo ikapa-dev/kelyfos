@@ -42,10 +42,10 @@ import (
 // — puts a marker in each one alone, runs Erase, and fails with the
 // field's own name if the marker survives a field this map does not name.
 // That is the fix for the failure class this project has now hit four
-// times in one week: clipLargestField missing Tools, internal/digest
+// times in one week: clipToBudget missing Tools, internal/digest
 // missing session.policy, internal/digest missing team.topology, and this
 // task's own first pass missing Argv (B3) — a hand-maintained list nobody
-// remembers to extend, closed the way P6-3 closed it for clipLargestField:
+// remembers to extend, closed the way P6-3 closed it for clipToBudget:
 // reflection rather than memory, with the exemptions written down and
 // tested rather than left to a reviewer to rediscover.
 //
@@ -846,7 +846,7 @@ var eraseExempt = map[string]string{
 // P7-5 shipped first: a hand-maintained list of four fields left Cwd, Path,
 // Peer, Comm, Workspace, Host, Name, Allow, Agents, Edges and StoreKeys
 // fully intact through an erasure, the identical shape of miss this
-// project has now made three other times (clipLargestField's missing
+// project has now made three other times (clipToBudget's missing
 // Tools, internal/digest's missing session.policy and team.topology).
 // Reflection means a field added to Event next month is redacted the day
 // it lands, whether or not anyone remembers to touch this file — the
@@ -887,7 +887,7 @@ func redactEventFields(e *Event) bool {
 					touched = true
 				}
 				// Any other element kind (Ports is []int) carries no text
-				// content and is left to clipLargestField's own coverage.
+				// content and is left to clipToBudget's own coverage.
 			}
 
 		case reflect.Ptr:
@@ -955,7 +955,7 @@ func redactStructSlice(field string, fv reflect.Value) bool {
 // erasedPrefix and erasedSuffix bracket the sha256 hex digest in the
 // placeholder redactString and redactStrings write in place of erased
 // content — "(erased — sha256:<64 hex characters>)", the same in-band-note
-// shape clipLargestField already uses for a clipped field. isErasedPlaceholder
+// shape clipToBudget already uses for a clipped field. isErasedPlaceholder
 // below is what B2 needed and did not have: without it, running erase a
 // second time hashed the placeholder itself rather than recognising it as
 // already-redacted, silently replacing the real fingerprint with the hash

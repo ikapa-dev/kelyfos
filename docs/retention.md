@@ -189,7 +189,7 @@ Article 12 obligation at all, because it removes *content*, not the
 **What it does.** Every field on the chain known to carry
 guest-influenced or operator-supplied content is replaced, wherever it is
 non-empty, with a fingerprint of what was there: its own sha256, in the
-same in-band-note shape `clipLargestField` already uses for a clipped
+same in-band-note shape `clipToBudget` already uses for a clipped
 field (`"(erased — sha256:…)"`). That list, as of this task's review round,
 is: `data` (command output, a team message's payload), `cmd` and `argv`
 (a command's own argv, and the host process's own — what a trailing
@@ -244,7 +244,7 @@ forbids it, and nothing here does.
 
 **How that list is kept honest.** A hand-maintained list of which fields
 carry content is precisely the failure class this project has now hit
-four times in one week, on four different lists: `clipLargestField`
+four times in one week, on four different lists: `clipToBudget`
 naming six fields and missing `Tools`; `internal/digest` missing
 `session.policy`; `internal/digest` missing `team.topology`; and this
 task's own first draft naming four fields (`data`, `args`, `cmd`, `argv`)
@@ -252,7 +252,7 @@ and leaving eleven more — `cwd`, `path`, `peer`, `comm`, `workspace`,
 `host`, `name`, `allow`, and every field inside `agents`, `edges` and
 `store_keys` — fully unredacted, found by an adversarial review that put a
 marker in every string and `[]string` field `Event` has and ran a real
-erasure over each one in turn. The fix is the same one `clipLargestField`
+erasure over each one in turn. The fix is the same one `clipToBudget`
 already uses for its own list: walk `Event` by reflection instead of
 trusting memory. `internal/recorder/erase.go`'s `eraseExempt` is the
 single, explicit table of every field left alone and why — a session id,

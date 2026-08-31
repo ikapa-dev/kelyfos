@@ -180,7 +180,7 @@ func checkPolicyWiring(t *testing.T, file string, f *ast.File) int {
 //     wrong elsewhere in this phase, and it failed on forkCmd for exactly
 //     that reason the first time this test ran for real. Reachability
 //     through the package's actual call graph — reachesFunction below —
-//     closes that the same way reflection closed it for clipLargestField:
+//     closes that the same way reflection closed it for clipToBudget:
 //     a helper added next month, at any depth, is covered the day it lands.
 //
 // The one exemption is the literal that also sets Reason to

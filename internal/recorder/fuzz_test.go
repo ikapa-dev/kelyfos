@@ -70,12 +70,24 @@ func FuzzVerifyAgreesWithRead(f *testing.F) {
 //
 // The property: for any string a caller puts in an event's guest-influenced
 // fields, appending it must never leave a session whose Verify and Read
-// disagree, and Verify must see every event this test believes it appended —
-// "believes," because Append is allowed to refuse a field it truly cannot
-// bring under MaxLine (fitUnderMaxLine's maxClipAttempts bound), just never by
-// writing a line no reader can get past.
+// disagree, and Verify must see every one of the four events below.
 //
-// F8: an oversized value in a field clipLargestField could not see (it named
+// That last clause is stronger than it was, and the weaker version is why this
+// target could not see P7-15. It used to read "Verify must see every event
+// this test believes it appended — 'believes,' because Append is allowed to
+// refuse a field it truly cannot bring under MaxLine (fitUnderMaxLine's
+// maxClipAttempts bound), just never by writing a line no reader can get
+// past," and the four Appends discarded their errors to match. The bracketing
+// was supposed to turn a refusal into a broken chain; it does not, because F13
+// latches the first failure and refuses every later Append too, so a refused
+// middle event leaves a chain that is merely SHORT — and a short chain
+// verifies. The target therefore watched Append drop the exact event class it
+// was written to protect, on every run, and reported nothing. Append refusing
+// an event for size is not a tolerable outcome and never was: an event too
+// large to write whole must be written clipped (D80). The errors are checked
+// now, and the count is fixed at four rather than taken from Verify.
+//
+// F8: an oversized value in a field clipToBudget could not see (it named
 // six fields by hand; EvError.Message was not one of them) made Append fail
 // closed instead of clipping, so the event vanished from the record rather
 // than being kept in truncated form — the same failure mode as the bug this
@@ -84,11 +96,11 @@ func FuzzVerifyAgreesWithRead(f *testing.F) {
 // sets *every* string field this test can reach on Event — including
 // EvError.Message and .Kind — to the fuzzed value, rather than naming Data and
 // Host by hand the way this target used to. A field added to Event later that
-// clipLargestField fails to cover will make this event's Append behave
+// clipToBudget fails to cover will make this event's Append behave
 // differently from the six original fields (or, if it is not even reachable
 // by fitUnderMaxLine's own reflection, fail identically to how F8's bug
 // behaved), and either way the round-trip checks below catch it without
-// anyone having to read clipLargestField to notice.
+// anyone having to read clipToBudget to notice.
 func FuzzAppendFieldValues(f *testing.F) {
 	f.Add("", "")
 	f.Add("short output", "github.com")
@@ -107,15 +119,29 @@ func FuzzAppendFieldValues(f *testing.F) {
 		everyField := Event{Bytes: len(data)}
 		setAllStringFields(&everyField, data)
 		everyField.Type = TypeCommandOutput
-		// Bracketed by two ordinary events, so a gap left by a refused event in
-		// the middle — the bug this fuzz target is really aimed at — shows up as
-		// a broken chain rather than merely a short one.
-		_ = rec.Append(Event{Type: TypeSessionStart})
-		_ = rec.Append(everyField)
-		_ = rec.Append(Event{Type: TypeEgressAttempt, Host: host})
-		_ = rec.Append(Event{Type: TypeSessionEnd})
+		// Bracketed by two ordinary events. The bracketing is not what catches a
+		// refusal — see the comment above — the checked errors are; what it
+		// still buys is that the event after the oversized one has to survive
+		// too, which is F13's latch showing up as a second failure rather than
+		// as silence.
+		appends := []struct {
+			what string
+			err  error
+		}{
+			{"the opening session.start", rec.Append(Event{Type: TypeSessionStart})},
+			{"the event with every string field set to the fuzzed value", rec.Append(everyField)},
+			{"the egress.attempt carrying the fuzzed host", rec.Append(Event{Type: TypeEgressAttempt, Host: host})},
+			{"the closing session.end", rec.Append(Event{Type: TypeSessionEnd})},
+		}
 		if err := rec.Close(); err != nil {
 			t.Fatalf("close: %v", err)
+		}
+		for _, a := range appends {
+			if a.err != nil {
+				t.Fatalf("Append refused %s (data %d bytes, host %d bytes): %v\n"+
+					"An event too large to write whole must be written clipped, not dropped.",
+					a.what, len(data), len(host), a.err)
+			}
 		}
 
 		blob, err := os.ReadFile(Path(root, "fuzzappend"))
@@ -131,6 +157,10 @@ func FuzzAppendFieldValues(f *testing.F) {
 		n, _, verr := Verify(bytes.NewReader(blob))
 		if verr != nil {
 			t.Fatalf("append-then-verify must round-trip for any field value, but Verify failed: %v", verr)
+		}
+		if n != len(appends) {
+			t.Fatalf("Verify counted %d events and %d were appended without error — an event that "+
+				"Append accepted is missing from the chain", n, len(appends))
 		}
 		events, rerr := Read(bytes.NewReader(blob))
 		if rerr != nil {
@@ -179,11 +209,11 @@ func validChain(f *testing.F, n int) []byte {
 // top-level fields, plus the fields of any pointed-to struct such as *EvError
 // — to s, allocating the pointed-to struct first if it is nil.
 //
-// It walks the struct the same way largestStringField in recorder.go does,
+// It walks the struct the same way eachStringField in recorder.go does,
 // deliberately by a second, independent reflect.Value walk rather than by
 // calling into that function: the point of FuzzAppendFieldValues is to catch
-// a future field clipLargestField's walk fails to reach, and a test that
-// reused clipLargestField's own traversal to build its input could never
+// a future field clipToBudget's walk fails to reach, and a test that
+// reused clipToBudget's own traversal to build its input could never
 // observe that kind of gap — whatever the production walk missed, this one
 // would miss identically, for the same reason.
 func setAllStringFields(e *Event, s string) {
@@ -211,7 +241,7 @@ func setAllStringFields(e *Event, s string) {
 }
 
 // TestAppendClipsOversizedEvErrorMessage is F8's direct repro: an oversized
-// EvError.Message used to be invisible to clipLargestField, which named six
+// EvError.Message used to be invisible to clipToBudget, which named six
 // fields by hand and did not include it, so fitUnderMaxLine's clip loop found
 // nothing to clip, exhausted maxClipAttempts, and Append refused the whole
 // event — an oversized error message made the event carrying it vanish from
@@ -271,7 +301,7 @@ func TestAppendClipsOversizedEvErrorMessage(t *testing.T) {
 // and P7-3's nine new slice fields, named in docs/policy-record.md §9.1 as
 // the ones the same reflection gap misses: Allow, Secrets, Plugins, Forwards,
 // Tools, Agents and StoreKeys are []string or a struct slice, invisible to
-// largestStringField the way Cmd always was; Ports is []int and gets its own
+// eachStringField the way Cmd always was; Ports is []int and gets its own
 // dedicated clip rather than a string substitution; Edges is []string like
 // Allow. Each case is oversized on its own — nothing else on the event
 // contributes — so the event vanishing here would be this field's clip
@@ -279,12 +309,12 @@ func TestAppendClipsOversizedEvErrorMessage(t *testing.T) {
 //
 // Tools was the field this test did not cover on P7-2's first pass — the
 // review that reopened P7-2 (F1) proved with this exact fixture shape that an
-// oversized Tools value made the whole event vanish, since clipLargestField's
+// oversized Tools value made the whole event vanish, since clipToBudget's
 // list named the other five and stopped one short. Its subtest below is that
-// proof kept as a regression test, and TestClipLargestFieldCoversEverySliceField
+// proof kept as a regression test, and TestClipToBudgetCoversEverySliceField
 // further down backstops the whole list by construction so a further miss
 // cannot happen silently — which is what let P7-3's own three (Agents, Edges,
-// StoreKeys) be added directly to clipLargestField with the guard test
+// StoreKeys) be added directly to clipToBudget with the guard test
 // confirming coverage, rather than needing the same F1 shape of bug to be
 // found and fixed a third time.
 func TestAppendClipsEverySessionPolicySlice(t *testing.T) {
@@ -423,7 +453,7 @@ func TestAppendClipsEverySessionPolicySlice(t *testing.T) {
 // enough to cover every shape a slice field on Event has today, including
 // P7-3's EvAgent and EvStoreKey (both structs with string fields, the same
 // shape EvSecret already has). It is used by
-// TestClipLargestFieldCoversEverySliceField below rather than a per-field
+// TestClipToBudgetCoversEverySliceField below rather than a per-field
 // literal, so a new slice field this function does not yet know how to grow
 // fails loudly, with a message that says so, instead of silently building an
 // undersized value that would let the guard test pass for the wrong reason.
@@ -491,16 +521,16 @@ func oversizedSliceValue(t *testing.T, sliceType reflect.Type) reflect.Value {
 	return out
 }
 
-// TestClipLargestFieldCoversEverySliceField is docs/policy-record.md §9.1's
+// TestClipToBudgetCoversEverySliceField is docs/policy-record.md §9.1's
 // landmine closed structurally rather than by list. F8 closed it for string
-// fields with largestStringField's own reflection walk; P7-2 then had to
+// fields with eachStringField's own reflection walk; P7-2 then had to
 // reopen the same question for slices by hand, five names at a time
-// (recorder.go's clipLargestField), and named five of its own six new slices
+// (recorder.go's clipToBudget), and named five of its own six new slices
 // — Tools slipped through (F1, the review that reopened P7-2). A sixth
 // hand-written subtest above closes that specific miss, but a hand-maintained
 // list has now failed this exact way twice — once for strings, once for
 // slices — so this test does not add a seventh name to a list; it walks
-// Event by reflection instead, the same way largestStringField itself does,
+// Event by reflection instead, the same way eachStringField itself does,
 // and asserts the property directly: give any one slice-kind field on Event
 // an oversized value, with every other field left zero, and the event must
 // still be recorded — never zero events, because that is the exact shape F8
@@ -510,10 +540,10 @@ func oversizedSliceValue(t *testing.T, sliceType reflect.Type) reflect.Value {
 // Secrets, Plugins, Forwards, Tools) without naming any of them, and — the
 // point of writing it this way — will cover P7-3's three new slices (Agents,
 // Edges, StoreKeys) the day they are appended to Event, whether or not
-// clipLargestField is updated for them: if it is not, this test fails with
+// clipToBudget is updated for them: if it is not, this test fails with
 // the field's own name in the message, in this exact form, in CI, rather
 // than three months later against a real session that lost an event.
-func TestClipLargestFieldCoversEverySliceField(t *testing.T) {
+func TestClipToBudgetCoversEverySliceField(t *testing.T) {
 	et := reflect.TypeOf(Event{})
 	for i := 0; i < et.NumField(); i++ {
 		field := et.Field(i)
@@ -549,7 +579,7 @@ func TestClipLargestFieldCoversEverySliceField(t *testing.T) {
 				t.Fatalf("reading back the appended event: %v", rerr)
 			}
 			if len(events) != 1 {
-				t.Fatalf("want 1 event recorded, got %d — field %s's oversized value made the event vanish; clipLargestField needs a clip case for it",
+				t.Fatalf("want 1 event recorded, got %d — field %s's oversized value made the event vanish; clipToBudget needs a clip case for it",
 					len(events), field.Name)
 			}
 			if _, _, verr := Verify(bytes.NewReader(blob)); verr != nil {

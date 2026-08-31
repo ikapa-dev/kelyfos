@@ -15,6 +15,62 @@ reference described in the README and re-measured per release.
 
 ---
 
+## v1.1.1 — 2026-08-31
+
+A patch release with one fix in it. The flight recorder's own last-line-of-defense
+against an oversized event could not converge when the size was spread across
+several fields, so it dropped the event instead of clipping it — and a dropped
+event latches the recorder and takes the machine down with it. Reachable from
+`kelyfos mcp` by an ordinary tool call.
+
+Nothing about the record's format changes. `MaxLine` is the same 8 MiB, the field
+order is the same frozen order, the digest is computed the same way, and a chain
+written by v1.1 verifies byte for byte under v1.1.1.
+
+### Fixed
+- **An oversized `command.start` from the `kelyfos mcp` bridge was dropped from
+  the record rather than clipped, and took the recording and the sandbox with
+  it.** `Append`'s size guard reduced one field per attempt, by half, up to eight
+  attempts. That converges for one oversized field and cannot converge when the
+  bulk is spread across several: an event carrying 16 MiB across sixteen fields
+  is no closer to the limit after eight halvings of the largest, so the `Append`
+  failed closed — and an event `Append` refuses vanishes from the record instead
+  of being kept in truncated form, which is exactly the failure the guard exists
+  to prevent. Because `Append` failing also latches the recorder (every later
+  event refused, `Broken` closed), the run loop then brings the machine down.
+  `host/mcpobserve.go` can build such an event from a single `tools/call` for
+  `exec`: `call`, `cmd` and `cwd` all come out of that one frame with no length
+  bound on any of them, and the frame may be 16 MiB. The guard now reduces every
+  field standing above the ceiling the budget allows, in one pass, so the event
+  is recorded clipped whatever the size is spread across. (P7-15, D80)
+- **One `Append` of a very large event allocated gigabytes.** The same
+  non-convergence meant the loop re-marshalled the whole event on every attempt:
+  one `Append` of an event holding 340 MiB across its fields allocated 4.3 GiB
+  and left a 4.4 GiB resident set, which is what OOM-killed `internal/recorder`'s
+  own fuzz worker once its corpus grew (D69). The reduction now runs before the
+  first marshal, so the cost is bounded by `MaxLine` rather than by what the
+  caller built: the same `Append` allocates 80 MiB, and the 215-entry corpus that
+  reproduced the kill replays in a full 60-second fuzz run at a 392 MiB peak.
+- **`internal/recorder`'s fuzz target no longer tolerates the failure it was
+  written to catch.** `FuzzAppendFieldValues` discarded the error from every
+  `Append` and took its expected event count from `Verify`; because a latched
+  recorder leaves a chain that is *short* rather than broken, and a short chain
+  verifies, it watched `Append` drop the oversized event on every run and
+  reported nothing. It now requires every `Append` to succeed and the chain to
+  hold all four events.
+
+### Changed
+- **More of an oversized field survives being clipped, and several oversized
+  fields are now each clipped rather than one repeatedly.** A 20 MiB `data` is
+  kept at about 8 MiB where v1.1 halved it twice to 5 MiB, and an event with
+  four oversized fields comes back with four clip notes instead of one field
+  reduced to a sixteenth. This is a change to the text of a clipped value, not
+  to the schema: the field, its position and the digest over it are unchanged,
+  and `docs/compatibility.md` §2 pins those rather than the contents of a value
+  this file already replaces with a note. Anything parsing the
+  `...(clipped from N to M bytes)` note will still find it, on more fields than
+  before.
+
 ## v1.1 — 2026-08-31
 
 The declared shape of a run. v1.0 could say what a sandbox did; this one says

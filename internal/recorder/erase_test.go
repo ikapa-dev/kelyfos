@@ -647,9 +647,9 @@ func checkEraseField(t *testing.T, name string, set func(e *Event, marker string
 }
 
 // TestEraseCoversEveryContentField is B3 closed structurally rather than by
-// list, the same way TestClipLargestFieldCoversEverySliceField
+// list, the same way TestClipToBudgetCoversEverySliceField
 // (fuzz_test.go) already closes the identical failure class for
-// clipLargestField. It walks Event by reflection — every string field,
+// clipToBudget. It walks Event by reflection — every string field,
 // every []string field, *EvError's two, and the three struct slices' own
 // fields — puts eraseCoverageMarker in exactly one at a time, runs Erase,
 // and asserts the outcome against eraseExempt: exempt means the marker

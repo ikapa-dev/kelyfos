@@ -851,7 +851,7 @@ unchanged).
 | `sha256` | string | The chain head — the previous last event's own `hash` — immediately before this rewrite began, so a reader already holding an earlier export of this chain (`kelyfos verify --extract`, or a report's own embedded record) can confirm the erased chain is its honest successor rather than a fabrication. Reused from `file.write`'s own `sha256`, the same cross-type reuse `modified` and `cpu_quota_percent` already have. |
 
 A redacted field reads `"(erased — sha256:<64 hex chars>)"` in place of what
-was there — the same in-band-note shape `clipLargestField` already uses for
+was there — the same in-band-note shape `clipToBudget` already uses for
 a clipped one, applied to a deliberate removal instead of an accidental
 oversize. For a `[]string` field the digest is computed over a
 length-prefixed encoding of the elements — each element's own byte length

@@ -267,7 +267,7 @@ type EvStoreKey struct {
 }
 ```
 
-`largestStringField` (`internal/recorder/recorder.go:542`) already walks a
+`eachStringField` (`internal/recorder/recorder.go`) already walks a
 pointed-to struct's string fields when clipping `*EvError`, so `EvSecret`
 inside a `[]EvSecret` gets the same treatment for free *once the slice itself
 is reachable* — which it is not, by reflection alone. §9.1 is why that matters
@@ -424,14 +424,14 @@ Not this document's job to build, but its job to make sure nothing here gets
 implemented forgetting the two traps the survey already found (Progress Log,
 2026-08-27, the entry that opened D63):
 
-### 9.1 Every new slice field needs `clipLargestField` extended, in the SAME commit
+### 9.1 Every new slice field needs `clipToBudget` extended, in the SAME commit
 
-`largestStringField` (`internal/recorder/recorder.go:542`) walks `Event` by
+`eachStringField` (`internal/recorder/recorder.go`) walks `Event` by
 reflection over **string-kinded fields only**. Every field this document adds
 that is a slice — `Allow`, `Ports`, `Secrets`, `Plugins`, `Forwards` (§5),
 `Agents`, `Edges`, `StoreKeys` (§6) — is invisible to it, the same way `Cmd`
-already was before it got a hand-written case
-(`internal/recorder/recorder.go:497`). An oversized one today would send
+already was before it got a hand-written entry in `clippableFields`. An
+oversized one today would send
 `fitUnderMaxLine`'s loop through nothing to shrink, `Append` would fail
 closed, and the event vanishes from the record with no trace — the exact
 failure S16 was written to prevent. `Ports` is bounded and small in practice
@@ -441,6 +441,15 @@ say so explicitly rather than leave it untested by omission. A hostile
 fixture — a 64 KiB `secrets` list, a `plugins` array with a thousand
 30-character names — proving each of the eight actually clips is part of
 P7-2/P7-3's own done criteria, not a follow-up.
+
+Two names in this section moved in v1.1.1 and the rule did not.
+`clipLargestField` became `clipToBudget` and `largestStringField` became
+`eachStringField` when P7-15 replaced "halve the largest field, up to eight
+times" with "reduce every field standing above the ceiling the budget allows"
+(D80); the slice list itself moved out to `clippableFields`, which is the
+function a new slice field is added to. The line numbers this section used to
+carry are gone rather than corrected: they had already drifted by roughly eight
+hundred lines before anybody noticed, which is what a line number in prose does.
 
 ### 9.2 Field order is normative, not a proposal
 
