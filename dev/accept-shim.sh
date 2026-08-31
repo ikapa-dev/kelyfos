@@ -37,11 +37,18 @@ BASE="http://$ADDR"
 WORK="$(mktemp -d)"
 SHIM_PID=""
 MINT_PID=""
+# This run gets its own KELYFOS_CACHE and tears down only the machines under
+# it. The lines that used to be here -- a `pkill -f` on a kelyfos process name
+# and `for p in $(pgrep firecracker); do kill "$p"; done` -- were host-wide
+# questions answered with a kill, and on a machine running more than one
+# worktree they took a peer's microVMs down with them (D79).
+source "$REPO"/dev/scope.sh
+scope_init accept-shim
+
 cleanup() {
   [ -n "$SHIM_PID" ] && kill "$SHIM_PID" 2>/dev/null
   [ -n "$MINT_PID" ] && kill "$MINT_PID" 2>/dev/null
-  sleep 1
-  for p in $(pgrep firecracker 2>/dev/null); do kill "$p" 2>/dev/null; done
+  scope_teardown
   rm -rf "$WORK"
 }
 trap cleanup EXIT
@@ -99,7 +106,7 @@ created="$(curl -sS "${AUTH[@]}" -X POST "$BASE/sandboxes" -H 'content-type: app
 echo "  $created"
 sbx="$(printf '%s' "$created" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("sandboxID",""))' 2>/dev/null)"
 check "$([ -n "$sbx" ] && echo yes || echo no)" "the response carries a sandboxID ($sbx)"
-check "$(pgrep -f firecracker >/dev/null && echo yes || echo no)" "a firecracker process is running"
+check "$([ -n "$(scope_live_pids)" ] && echo yes || echo no)" "a firecracker process is running"
 
 # The E2B response shape, which is the whole point of the door being compatible.
 for field in templateID sandboxID clientID envdVersion; do
@@ -187,7 +194,7 @@ check "$(grep -qi 'not implemented\|mcp' body.txt && echo yes || echo no)" \
 # --- the record, which is the thing E2B does not give you --------------------
 
 say "8. every shim sandbox gets its own flight recorder"
-# ~/.cache/kelyfos/sessions/<sandboxID>/events.jsonl, and the sandbox id is the
+# "$KELYFOS_CACHE"/sessions/<sandboxID>/events.jsonl, and the sandbox id is the
 # one the shim handed back — so this checks the record of a named machine rather
 # than whichever file happens to be newest.
 rec="${KELYFOS_CACHE:-$HOME/.cache/kelyfos}/sessions/$sbx/events.jsonl"

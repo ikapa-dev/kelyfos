@@ -34,12 +34,20 @@ check() { if [ "$1" = "yes" ]; then pass "$2"; else fail "$2"; fi; }
 IMPOSTOR_NAME="kelyfos-confine"
 
 WORK="$(mktemp -d)"
+# This run gets its own KELYFOS_CACHE and tears down only the machines under
+# it. The lines that used to be here -- `pkill -f "kelyfos run"` and
+# `for p in $(pgrep firecracker); do kill "$p"; done` -- were host-wide
+# questions answered with a kill, and on a machine running more than one
+# worktree they took a peer's microVMs down with them (D79).
+source "$REPO/dev/scope.sh"
+scope_init accept-profile
+
 halt() {
-  pkill -f "kelyfos run" 2>/dev/null
-  for i in $(seq 1 30); do pgrep -f "kelyfos run" >/dev/null || break; sleep 1; done
+  scope_kill_kelyfos run
+  scope_wait_kelyfos_gone 30 run
   sleep 1
 }
-cleanup() { halt; for p in $(pgrep firecracker 2>/dev/null); do kill "$p" 2>/dev/null; done; rm -rf "$WORK"; }
+cleanup() { scope_teardown; rm -rf "$WORK"; }
 trap cleanup EXIT
 cd "$WORK"
 
@@ -66,7 +74,7 @@ check "$(grep -qE '^  profile .*landlock abi [0-9]' run.log && echo yes || echo 
       "the run names the Landlock ABI it got, not the one it hoped for"
 check "$(grep -qE "^  profile .*· $FLAVOR ·" run.log && echo yes || echo no)" \
       "and the profile is this flavor's"
-state="$(ls -t ~/.cache/kelyfos/run/firecracker/*/sandbox.json ~/.cache/kelyfos/run/firecracker/*/root/sandbox.json 2>/dev/null | sed -n '1,1p')"
+state="$(ls -t "$KELYFOS_CACHE"/run/firecracker/*/sandbox.json "$KELYFOS_CACHE"/run/firecracker/*/root/sandbox.json 2>/dev/null | sed -n '1,1p')"
 check "$(grep -q '"profile"' "$state" 2>/dev/null && echo yes || echo no)" \
       "and it is in the sandbox's own state, not only on a terminal"
 

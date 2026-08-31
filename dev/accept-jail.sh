@@ -36,12 +36,20 @@ droppedTo() {
 }
 
 WORK="$(mktemp -d)"
+# This run gets its own KELYFOS_CACHE and tears down only the machines under
+# it. The lines that used to be here -- `pkill -f "kelyfos run"` and
+# `for p in $(pgrep firecracker); do kill "$p"; done` -- were host-wide
+# questions answered with a kill, and on a machine running more than one
+# worktree they took a peer's microVMs down with them (D79).
+source "$REPO/dev/scope.sh"
+scope_init accept-jail
+
 halt() {
-  pkill -f "kelyfos run" 2>/dev/null
-  for i in $(seq 1 30); do pgrep -f "kelyfos run" >/dev/null || break; sleep 1; done
+  scope_kill_kelyfos run
+  scope_wait_kelyfos_gone 30 run
   sleep 1
 }
-cleanup() { halt; for p in $(pgrep firecracker 2>/dev/null); do kill "$p" 2>/dev/null; done; rm -rf "$WORK"; }
+cleanup() { scope_teardown; rm -rf "$WORK"; }
 trap cleanup EXIT
 cd "$WORK"
 
@@ -64,7 +72,7 @@ if ! boot; then
   tail -10 run.log
   exit 1
 fi
-vmm="$(pgrep -n firecracker)"
+vmm="$(scope_live_pids | head -1)"
 echo "  firecracker pid $vmm"
 grep -E 'jail ' run.log | sed 's/^/  /'
 
@@ -122,7 +130,7 @@ boot --no-jail >/dev/null 2>&1
 grep -E 'no-jail|namespace' run.log | sed 's/^/  /'
 check "$(grep -q 'running as you, in your namespace' run.log && echo yes || echo no)" \
       "the terminal is told what is not enforced"
-vmm2="$(pgrep -n firecracker)"
+vmm2="$(scope_live_pids | head -1)"
 mroot2="$(sudo -n awk '$5=="/"{print $4; exit}' "/proc/$vmm2/mountinfo" 2>/dev/null)"
 echo "  its root, as the host sees it: ${mroot2:-<unreadable>}"
 check "$(grep -q 'run/firecracker/.*/root' <<<"$mroot2" && echo no || echo yes)" \
@@ -166,7 +174,7 @@ wsmarker="$(kelyfos exec 'cat /work/marker' 2>&1 | tail -1)"
 echo "  workspace: $wsmarker"
 check "$(grep -q 'work-survived' <<<"$wsmarker" && echo yes || echo no)" \
       "and a machine that had a workspace restores with that disk too"
-pkill -f "kelyfos snapshot" 2>/dev/null; sleep 2
+scope_kill_kelyfos snapshot; sleep 2
 
 say "the cgroup it sits in is the one KelyfOS asked for"
 # The other half of this phase's second acceptance item. P5-1 proved the seccomp
@@ -179,10 +187,10 @@ say "the cgroup it sits in is the one KelyfOS asked for"
 # without one there is no slice to sit in.
 halt
 boot --cpu-quota 150%
-vmm3="$(pgrep -n firecracker)"
+vmm3="$(scope_live_pids | head -1)"
 grep -E '^  cpu |^  cgroup ' run.log | sed 's/^/  /'
 sits="$(awk -F: '$1=="0"{print $3}' "/proc/$vmm3/cgroup" 2>/dev/null)"
-state3="$(ls -t ~/.cache/kelyfos/run/firecracker/*/sandbox.json ~/.cache/kelyfos/run/firecracker/*/root/sandbox.json 2>/dev/null | sed -n '1,1p')"
+state3="$(ls -t "$KELYFOS_CACHE"/run/firecracker/*/sandbox.json "$KELYFOS_CACHE"/run/firecracker/*/root/sandbox.json 2>/dev/null | sed -n '1,1p')"
 asked="$(python3 -c "import json;print(json.load(open('$state3')).get('cgroup_path',''))" 2>/dev/null)"
 echo "  asked for: ${asked:-<none>}"
 echo "  sits in:   ${sits:-<none>}"

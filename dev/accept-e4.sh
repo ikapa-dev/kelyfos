@@ -17,11 +17,16 @@ WORK="$(mktemp -d)"
 PASSES=0 FAILURES=0
 SUMMARY=()
 
+# This run gets its own KELYFOS_CACHE and tears down only the machines under
+# it. The lines that used to be here -- a `pkill -f` on a kelyfos process name
+# and `for p in $(pgrep firecracker); do kill "$p"; done` -- were host-wide
+# questions answered with a kill, and on a machine running more than one
+# worktree they took a peer's microVMs down with them (D79).
+source "$REPO"/dev/scope.sh
+scope_init accept-e4
+
 cleanup() {
-  pkill -f "$BIN/kelyfos serve-mcp" 2>/dev/null
-  pkill -f "$BIN/kelyfos run" 2>/dev/null
-  sleep 1
-  for p in $(pgrep firecracker 2>/dev/null); do kill "$p" 2>/dev/null; done
+  scope_teardown
   rm -rf "$WORK"
 }
 trap cleanup EXIT

@@ -32,12 +32,20 @@ skip() { SKIPS=$((SKIPS+1));   SUMMARY+=("SKIP  $*"); printf '  \033[33mSKIP\033
 check() { if [ "$1" = "yes" ]; then pass "$2"; else fail "$2"; fi; }
 
 WORK="$(mktemp -d)"
+# This run gets its own KELYFOS_CACHE and tears down only the machines under
+# it. The lines that used to be here -- `pkill -f "kelyfos run"` and
+# `for p in $(pgrep firecracker); do kill "$p"; done` -- were host-wide
+# questions answered with a kill, and on a machine running more than one
+# worktree they took a peer's microVMs down with them (D79).
+source "$REPO/dev/scope.sh"
+scope_init accept-seccomp
+
 halt() {
-  pkill -f "kelyfos run" 2>/dev/null
-  for i in $(seq 1 30); do pgrep -f "kelyfos run" >/dev/null || break; sleep 1; done
+  scope_kill_kelyfos run
+  scope_wait_kelyfos_gone 30 run
   sleep 1
 }
-cleanup() { halt; for p in $(pgrep firecracker 2>/dev/null); do kill "$p" 2>/dev/null; done; rm -rf "$WORK"; }
+cleanup() { scope_teardown; rm -rf "$WORK"; }
 trap cleanup EXIT
 cd "$WORK"
 
@@ -70,7 +78,7 @@ if ! boot; then
   tail -10 run.log
   exit 1
 fi
-vmm="$(pgrep -n firecracker)"
+vmm="$(scope_live_pids | head -1)"
 echo "  firecracker pid $vmm"
 
 # --- which filter ---------------------------------------------------------
@@ -106,7 +114,7 @@ say "and the run says so, in the terminal and in its own state"
 grep -E 'seccomp' run.log | sed 's/^/  /'
 check "$(grep -q 'seccomp     filter mode' run.log && echo yes || echo no)" \
       "the run printed the mode it observed"
-state="$(ls -t ~/.cache/kelyfos/run/firecracker/*/sandbox.json ~/.cache/kelyfos/run/firecracker/*/root/sandbox.json 2>/dev/null | sed -n '1,1p')"
+state="$(ls -t "$KELYFOS_CACHE"/run/firecracker/*/sandbox.json "$KELYFOS_CACHE"/run/firecracker/*/root/sandbox.json 2>/dev/null | sed -n '1,1p')"
 echo "  $(grep -o '"seccomp[^,]*' "$state" 2>/dev/null | tr '\n' ' ')"
 check "$(grep -qE '"seccomp": ?"filter"' "$state" 2>/dev/null && echo yes || echo no)" \
       "and wrote it into the sandbox's own state rather than only to a terminal"
@@ -170,10 +178,11 @@ check "$(grep -q 'install-firecracker' <<<"$out" && echo yes || echo no)" \
 check "$(grep -qE 'Seccomp: 0' <<<"$out" && echo yes || echo no)" \
       "and it says which thread reported what, rather than only that something was wrong"
 halt
-# pgrep -c prints its count and still exits non-zero when that count is zero,
-# so an `|| echo 0` here would append a second line and the comparison would
-# fail on a clean machine.
-left="$(pgrep -c firecracker 2>/dev/null)"; left="${left:-0}"
+# This run's own machines only. `pgrep -c firecracker` counts every
+# Firecracker on the host, so a peer worktree's sandbox made this assertion
+# fail for a reason that had nothing to do with the refusal being checked --
+# F18's shape, which S20 fixed the same way in dev/demo-team.sh.
+left="$(scope_live_pids | wc -l)"
 echo "  firecracker processes left behind: $left"
 check "$([ "$left" = "0" ] && echo yes || echo no)" \
       "and the machine it refused was torn down rather than left running"

@@ -118,12 +118,35 @@ scope_own_kelyfos_pids() {
   done
 }
 
-# scope_kill_kelyfos — stop this run's kelyfos processes and nobody else's.
-# The mid-run equivalent of the `pkill -f "kelyfos run"` these suites used
-# between steps, which matched a peer's run and the suite's own shell too.
+# scope_kill_kelyfos [subcommand...] — stop this run's kelyfos processes and
+# nobody else's. The mid-run equivalent of the `pkill -f "kelyfos run"` these
+# suites used between steps, which matched a peer's run and the suite's own
+# shell too.
+#
+# The subcommands matter and are not decoration. `pkill -f "kelyfos run"` kills
+# a `kelyfos run` and leaves a `kelyfos snapshot restore` alone, and at least
+# one suite depends on exactly that: dev/accept-profile.sh's halt() is called
+# after a restore and the machine that restore brought up has to survive it,
+# because the checks below exec into it. Killing every kelyfos process this run
+# owns is right for the EXIT teardown and wrong here -- it took the restored
+# machine down and two checks then failed with "no running sandbox". So a
+# caller that used to name a subcommand names it still; with no argument every
+# kelyfos process carrying this run's cache is stopped.
 scope_kill_kelyfos() {
-  local p
-  for p in $(scope_own_kelyfos_pids); do kill "$p" 2>/dev/null; done
+  local p sub want
+  for p in $(scope_own_kelyfos_pids); do
+    if [ "$#" -gt 0 ]; then
+      want=""
+      for sub in "$@"; do
+        if tr '\0' ' ' < "/proc/$p/cmdline" 2>/dev/null | grep -qw -- "$sub"; then
+          want=yes
+          break
+        fi
+      done
+      [ -n "$want" ] || continue
+    fi
+    kill "$p" 2>/dev/null
+  done
 }
 
 # scope_wait_kelyfos_gone [seconds] — wait for this run's own kelyfos processes
@@ -132,8 +155,21 @@ scope_kill_kelyfos() {
 # nothing to do with this suite.
 scope_wait_kelyfos_gone() {
   local i limit="${1:-30}"
+  shift 2>/dev/null || true
   for i in $(seq 1 "$limit"); do
-    [ -z "$(scope_own_kelyfos_pids)" ] && return 0
+    if [ "$#" -gt 0 ]; then
+      # Wait only for the subcommands this halt actually signalled; a process
+      # it deliberately left running must not hold the loop for its full limit.
+      local p sub still=""
+      for p in $(scope_own_kelyfos_pids); do
+        for sub in "$@"; do
+          tr '\0' ' ' < "/proc/$p/cmdline" 2>/dev/null | grep -qw -- "$sub" && still=yes
+        done
+      done
+      [ -z "$still" ] && return 0
+    else
+      [ -z "$(scope_own_kelyfos_pids)" ] && return 0
+    fi
     sleep 1
   done
   return 1
@@ -152,7 +188,9 @@ scope_kill_machines() {
   local fc_pids p left
   fc_pids="$(scope_pids)"
 
-  scope_kill_kelyfos
+  # Any subcommands given are passed straight through, so a caller that used to
+  # name the ones it killed keeps naming them (see scope_kill_kelyfos).
+  scope_kill_kelyfos "$@"
   sleep 1
   for p in $fc_pids; do kill "$p" 2>/dev/null; done
   sleep 1
