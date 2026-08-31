@@ -1,0 +1,10 @@
+# IA-L2 (independent audit, 2026-08-31): a synthetic test token in the view
+# tests' fixture — entropy 3.99 trips generic-api-key on a literal that is
+# not a credential, verified by running gitleaks over the full history
+# (563 commits, this is the only pre-existing finding).
+c9424027ab586821bda519ca2e4fe838d5b6df78:host/view_test.go:generic-api-key:68
+# The same fixture one commit later: the surfaces suite asserted that the
+# shim REJECTS the help text's static key, which put e2b_kelyfos inline in a
+# curl -H. Fixed to name the value through a variable; the historical
+# finding is the same non-secret the IA-L2 audit described.
+c02b32f761c75ff46d86adc2ac02f950dd3bb74f:dev/accept-security-surfaces.sh:curl-auth-header:136
