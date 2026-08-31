@@ -15,6 +15,64 @@ reference described in the README and re-measured per release.
 
 ---
 
+## v1.1.2 — 2026-08-31
+
+A patch release with one defect in it, found by downloading the published
+release and reading the artifacts rather than the code that produced them.
+Nothing in the product moves: no CLI surface, no `kelyfos.toml` key, no record
+format, no guest image, and no section 2 surface of
+[`docs/compatibility.md`](docs/compatibility.md) — the SBOM has never been one.
+What changes is the bill of materials the release publishes.
+
+`sbom-aarch64.cdx.json` and `sbom-x86_64.cdx.json` were **the same bytes** in
+v1.1 and in v1.1.1, and neither said which product, which version or which
+architecture it described. Underneath that sat a larger one: the merge that
+produces them decoded Buildroot's output through a struct modelling seven fields
+and wrote that struct back out, so every licence, CPE, source-tarball hash and
+patch record Buildroot had computed was deleted on the way through — 333 KB of
+input published as 11 KB — and the host build of a package silently replaced the
+target build of it.
+
+### Fixed
+- **The two architectures' SBOMs were byte-identical, and neither named the
+  product, the version or the architecture it described.** `-arch` was validated
+  non-empty, printed to the terminal and discarded; `-version` reached nothing
+  but the same progress line; and the merge copied Buildroot's metadata verbatim,
+  so the document a stranger downloads from a KelyfOS release declared its
+  subject to be `buildroot 2025.02.17`. The consequence was not cosmetic:
+  `release.yml` cuts two SBOM attestations on purpose, one per architecture,
+  because *"an attestation that pointed at both sets of artifacts would be
+  claiming that either SBOM describes either image"* — and with one document
+  under two names, both attestations said exactly that. The document now carries
+  a `metadata.component` naming KelyfOS, its version and its architecture, and
+  the serial number covers it, so the two files differ and identify themselves.
+- **The architecture is read out of the binaries instead of copied from a flag.**
+  Every binary the merge opens reports its own `GOOS` and `GOARCH` through
+  `debug/buildinfo`; `-arch` is now an assertion checked against all of them, and
+  a mismatch writes no document at all. The binaries know what they were built
+  for; the flag was a claim.
+- **The merge deleted most of what it merged.** Every Buildroot component lost
+  its `licenses`, its `cpe`, its `externalReferences` — which is where the
+  SHA-256 of each source tarball lives — its patch pedigree and its `BR_TYPE`
+  property, and the document lost Buildroot's dependency graph. A bill of
+  materials without licences is not one, and a component without a CPE is one no
+  scanner can match a CVE against. Components this tool did not author now pass
+  through as the bytes they arrived as: 49 components carry licences where none
+  did, 30 carry a CPE, and 40 carry a source hash.
+- **The host build of a package replaced the target build of it.** Components
+  were deduplicated on name and version, and `libzlib` and `host-libzlib` are one
+  name at one version. The v1.1.1 SBOM lists the *host* OpenSSL, zlib, libffi and
+  python3 — the ones on the build machine — and not the ones in the guest image,
+  and which of each pair survived was decided by the order Buildroot happened to
+  emit them in. Deduplication is on `bom-ref` now, which is the identifier
+  CycloneDX gives a component for this reason and the one its dependency graph
+  refers to.
+- **The document said CycloneDX 1.5 while carrying a 1.6 generator's output.**
+  Harmless only for as long as the 1.6-only fields were being deleted: the
+  document validates as 1.5 today and would fail in 42 places once its components
+  survive. It declares 1.6 now, carries the matching `$schema`, and the merge
+  refuses a Buildroot input whose own `specVersion` is not the one it writes.
+
 ## v1.1.1 — 2026-08-31
 
 A patch release with one fix in it. The flight recorder's own last-line-of-defense
