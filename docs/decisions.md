@@ -1478,3 +1478,49 @@ permission error that looks like a Firecracker bug and costs an afternoon.
 from a gate is hosted minutes, and hosted minutes on this account are the
 maintainer's budget to set. The row prices the tiers so the choice is a
 number, not a vibe.
+
+## D90
+
+*2026-08-31*
+
+**The controlled-origin egress lab (ST-2.1, ST-2.2) is proposed and NOT
+provisioned: it needs a small VPS with a wildcard domain — recurring spend
+and a piece of externally reachable infrastructure — which is the
+maintainer's decision and the maintainer's money.**
+
+The audit could not test redirect handling, upstream request smuggling,
+compression torture or leaf-cache reuse because the proxy's
+post-resolution address check (`internal/egress/dial.go:73–89`, the RFC1918
+and link-local prefixes) rightly refuses private upstreams. Answering those
+questions needs an origin on a public IP this project controls, with a
+wildcard domain pointed at it, running a scriptable origin with modes:
+302-chain, chunked, gzip/brotli echo-suppression torture, smuggling
+payloads, header echo.
+
+**The shape, so approval is all that is missing:**
+
+- one cheap VPS (2–5 USD/month, any provider), Debian, nothing but the
+  origin script and an SSH port open;
+- one wildcard domain (`*.origin.<domain>`), free with most DNS providers;
+- one origin script (a small Go server or mitmproxy config, committed under
+  `dev/origin/`), started by systemd, logging to the instance;
+- setup documented in `dev/security-lab-origin.md` **with the monthly cost
+  stated at the top**, per the plan's own requirement;
+- the battery (`dev/accept-security-egress-origin.sh`, ST-2.2) runs against
+  it: credential-follows-redirect (a 302 from the bound host to an attacker
+  host must not carry the credential), upstream request smuggling,
+  gzip echo-suppression torture at a size the audit's compressed test could
+  not reach, TLS mismatch and leaf-cache reuse across two runs on one
+  session, path-scope probing (`%2f`, matrix params, unicode, `/..`), and
+  431-drain versus fast and slow writers — pinning the real behaviour and
+  fixing the doc to match (IA-L1(c)).
+
+| candidate | verdict |
+| --- | --- |
+| Point the proxy at a host-local origin | **Rejected.** The private-range refusal is correct and is itself under test; undermining it to test the proxy is cutting the fence to measure it. |
+| Use somebody else's public sandbox/echo service | **Rejected.** Redirects, smuggling and compression torture against a service you do not run is abusing a stranger's machine and proves less. |
+| Skip Phase 2 | **Rejected as a default.** These are the four proxy questions the audit could not answer, and the proxy is the product's security headline. |
+
+**Why:** the work is a script and a suite; the blocker is a monthly invoice
+and a hostname only the owner can authorise. Everything below the invoice is
+ready to be written the moment the row is approved.
