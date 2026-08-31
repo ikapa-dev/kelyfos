@@ -974,15 +974,31 @@ func fitUnderMaxLine(e *Event) error {
 		}
 		// The measured excess is what the content budget has to give up.
 		// Removing a byte of content removes at least a byte of line, so
-		// subtracting the excess cannot undershoot. Halving is a floor under
-		// that, so the loop terminates even where a value's escaping is
-		// pathological enough that subtracting the excess barely moves it.
+		// subtracting the excess cannot undershoot.
+		//
+		// Halving is the FLOOR under that step and not a ceiling on it, which
+		// is a distinction worth one sentence because getting it backwards
+		// silently destroys the record rather than the line. An excess LARGER
+		// than the budget is ordinary, not pathological: encoding/json escapes
+		// `<`, `>` and `&` six bytes for one, so a shell transcript full of
+		// redirects overshoots by five times the budget on the first
+		// measurement. Subtracting that unclamped drives the budget below zero
+		// and reduces every field to its own clip note — an 8 MiB budget spent
+		// on a 232-byte line that says only that something was dropped.
+		// Clamping the step at half instead costs one more marshal at budget
+		// size and keeps the record; three halvings clear the worst escaping
+		// there is, out of the eight attempts available.
+		//
+		// Why eight attempts is enough, which is the part the old bound
+		// asserted and did not have: if the excess is at most half the budget,
+		// subtracting it converges on the NEXT marshal, because removing a byte
+		// of content removes at least a byte of line. If it is more than half,
+		// the step halves. A line is at most six times its content plus a fixed
+		// framing, so three halvings put the excess back under half the budget
+		// whatever the input. Four passes, worst case, out of eight.
 		next := budget - (len(b) - lineBudget)
-		if half := budget / 2; next > half {
+		if half := budget / 2; next < half {
 			next = half
-		}
-		if next < 0 {
-			next = 0
 		}
 		budget = next
 		if !clipToBudget(e, budget) {

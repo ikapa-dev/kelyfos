@@ -33,9 +33,11 @@ import (
 //
 //   - Because the loop could not converge it spent all nine of its
 //     json.Marshal calls at nearly full size. One Append of an event holding
-//     340 MiB across its fields allocated 4.3 GiB and left a 4.4 GiB resident
-//     set. TestAppendAllocatesAgainstMaxLineNotAgainstTheEventHandedToIt is
-//     that half, and it measures 80 MiB now.
+//     340 MiB across its fields allocated between 4.3 and 7.6 GiB — the spread
+//     is encoding/json's own buffer pool, not noise in the measurement — and
+//     left a 4.4 GiB resident set. TestAppendAllocatesAgainstMaxLineNotAgainstTheEventHandedToIt
+//     is that half, and it measures 80.2 MiB now, stable to a kilobyte across
+//     runs.
 //
 //   - TestClippingKeepsWhatItCanRatherThanHalvingUntilItFits is the property
 //     that keeps a later simplification from putting halving back.
@@ -269,13 +271,22 @@ func TestAppendKeepsTheCommandStartTheMCPBridgeCanBuild(t *testing.T) {
 	if len(events) != 1 {
 		t.Fatalf("want 1 event recorded, got %d", len(events))
 	}
-	// Every one of the three has to survive in some form. A clip that kept the
-	// argv and lost the working directory would still pass the size checks
-	// above and would still be a record that cannot answer what was run.
+	// Every one of the three has to survive with CONTENT in it, not merely be
+	// non-empty. An earlier version of this test asserted only that the fields
+	// were non-empty, and a build that reduced all three to a bare
+	// "...(clipped from N to 0 bytes)" note — 36 bytes, no argv, no path, no
+	// call id — passed it while writing a record that answers nothing. The
+	// floor is deliberately far below what a correct clip retains (the three
+	// share a budget of MaxLine, so each gets roughly MaxLine/3 before
+	// escaping): it is here to catch a collapse, not to pin a ratio.
 	got := events[0]
-	if got.Cwd == "" || got.Call == "" || len(got.Cmd) == 0 {
-		t.Fatalf("the clipped event lost a field entirely: call=%d bytes, cmd=%d elements, cwd=%d bytes",
-			len(got.Call), len(got.Cmd), len(got.Cwd))
+	const floor = MaxLine / 64
+	if len(got.Call) < floor || len(got.Cwd) < floor || len(got.Cmd) == 0 || len(got.Cmd[0]) < floor {
+		t.Fatalf("the clipped event kept almost nothing: call=%d bytes, cmd=%d elements (first %d bytes), "+
+			"cwd=%d bytes, each of which should hold at least %d.\n"+
+			"An event too large to write whole must be written CLIPPED — a record reduced to three notes "+
+			"saying something was dropped is the same lost evidence as dropping the event.",
+			len(got.Call), len(got.Cmd), len(got.Cmd[0]), len(got.Cwd), floor)
 	}
 	if _, _, verr := Verify(bytes.NewReader(blob)); verr != nil {
 		t.Fatalf("the clipped event does not verify: %v", verr)
@@ -291,17 +302,24 @@ func TestAppendKeepsTheCommandStartTheMCPBridgeCanBuild(t *testing.T) {
 // says that in a number.
 //
 // The input is FuzzAppendFieldValues' own worst seed, replayed exactly:
-// setAllStringFields with a 9 MiB value, which is 40 string fields sharing one
-// backing array — 9 MiB of distinct bytes and roughly 360 MiB of field
-// content. On the parent that is nine marshals at 360 MiB and about 12 GiB of
-// allocation; the fixture below measured 11.9 GiB. The ceiling is not that
-// number halved, it is the shape: whatever the caller hands Append, the work
-// Append does is bounded by MaxLine, and 32 x MaxLine leaves room for the four
-// marshals a single Append genuinely needs (the fit loop's, hashOf's and the
-// line's) plus the slack an append-grown buffer costs, without leaving room
-// for a loop that never converged.
+// setAllStringFields with a 9 MiB value. That reaches 36 string fields — every
+// string on Event and *EvError less the four appendLocked stamps over — all
+// sharing one backing array, so it is 9 MiB of distinct bytes and roughly
+// 340 MiB of field content. On this machine the parent allocated between
+// 4278.6 and 7621.7 MiB for it across five runs, bimodally, because
+// encoding/json reuses a pooled buffer when one of the right size happens to
+// be free; the fix allocates 80.2 MiB every time.
+//
+// The ceiling is not either of those numbers, it is the shape: whatever the
+// caller hands Append, the work Append does is bounded by MaxLine. 24 x MaxLine
+// leaves room for the four marshals one Append genuinely needs (the pre-pass's,
+// the fit loop's correction, hashOf's and the line's) plus the slack an
+// append-grown buffer costs, and it is loose enough not to go red on a
+// different allocator. It is not tight enough to notice a 2x regression: the
+// tests above are what pin the behaviour, and this one exists to catch a return
+// to allocating against the caller's event, which is fifty times over.
 func TestAppendAllocatesAgainstMaxLineNotAgainstTheEventHandedToIt(t *testing.T) {
-	const ceiling = 32 * MaxLine // 256 MiB
+	const ceiling = 24 * MaxLine // 192 MiB
 
 	root := t.TempDir()
 	rec, err := Open(root, "alloc")
@@ -363,45 +381,74 @@ func TestAppendAllocatesAgainstMaxLineNotAgainstTheEventHandedToIt(t *testing.T)
 }
 
 // TestClippingKeepsWhatItCanRatherThanHalvingUntilItFits is the second-order
-// property the convergence fix buys, pinned so a later "simplification" back
-// to halving is caught by something other than the two tests above.
+// property the convergence fix buys, pinned so a later "simplification" back to
+// halving is caught by something other than the two tests above.
 //
-// Halving reduces to whatever power of two happens to land under the limit: a
+// Halving reduced to whatever power of two happened to land under the limit: a
 // 20 MiB field became 5 MiB, throwing away 3 MiB of record the line had room
 // for. Scaling to the ratio actually needed keeps the field at the size the
-// budget allows. This asserts the record is at least half full rather than
-// naming an exact size, because the exact size depends on JSON escaping of the
-// value, which is the caller's business and not this test's.
+// budget allows.
+//
+// The filler matters more than it looks, and the first version of this test got
+// it wrong. With a filler that does not escape, the pre-pass alone brings the
+// event under the budget and the correction loop never runs — so the test
+// passed while the loop's own arithmetic was inverted and reduced an escaping
+// event to a 232-byte line. encoding/json escapes `"` to two bytes and `<` to
+// six, so the two cases below are the ones that actually exercise the step, and
+// `<` is not an exotic input: it is what a shell transcript is full of.
 func TestClippingKeepsWhatItCanRatherThanHalvingUntilItFits(t *testing.T) {
-	root := t.TempDir()
-	rec, err := Open(root, "proportion")
-	if err != nil {
-		t.Fatalf("open: %v", err)
+	cases := []struct {
+		name string
+		data string
+		// least is the fraction of MaxLine the written line must reach. A
+		// value that escapes n:1 cannot fill the line with more than 1/n of
+		// its own bytes, so the bar is lower for `<` — but "lower" is still
+		// megabytes, and the collapse this guards against is three orders of
+		// magnitude below it.
+		least float64
+	}{
+		{"plain", strings.Repeat("d", 20<<20), 0.75},
+		{"quoted every 200 bytes", strings.Repeat(strings.Repeat("a", 199)+`"`, (20<<20)/200), 0.75},
+		{"angle brackets, six bytes each once escaped", strings.Repeat("<", 20<<20), 0.50},
 	}
-	if err := rec.Append(Event{Type: TypeCommandOutput, Data: strings.Repeat("d", 20<<20)}); err != nil {
-		t.Fatalf("Append refused a single oversized Data field: %v", err)
-	}
-	if err := rec.Close(); err != nil {
-		t.Fatalf("close: %v", err)
-	}
-	blob, err := os.ReadFile(Path(root, "proportion"))
-	if err != nil {
-		t.Fatalf("reading the chain back: %v", err)
-	}
-	line := bytes.TrimRight(blob, "\n")
-	if len(line) > MaxLine {
-		t.Fatalf("the written line is %d bytes, over MaxLine (%d)", len(line), MaxLine)
-	}
-	if len(line) < MaxLine*3/4 {
-		t.Fatalf("the written line is %d bytes and MaxLine is %d — clipping threw away more of the "+
-			"record than it had to. It must reduce a field to the size the budget allows, not halve "+
-			"it until a power of two happens to fit.", len(line), MaxLine)
-	}
-	var e Event
-	if err := json.Unmarshal(line, &e); err != nil {
-		t.Fatalf("the written line does not parse: %v", err)
-	}
-	if !strings.Contains(e.Data, "clipped from") {
-		t.Fatalf("Data does not carry the clip note")
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			root := t.TempDir()
+			rec, err := Open(root, "proportion")
+			if err != nil {
+				t.Fatalf("open: %v", err)
+			}
+			if err := rec.Append(Event{Type: TypeCommandOutput, Data: c.data}); err != nil {
+				t.Fatalf("Append refused a single oversized Data field: %v", err)
+			}
+			if err := rec.Close(); err != nil {
+				t.Fatalf("close: %v", err)
+			}
+			blob, err := os.ReadFile(Path(root, "proportion"))
+			if err != nil {
+				t.Fatalf("reading the chain back: %v", err)
+			}
+			line := bytes.TrimRight(blob, "\n")
+			if len(line) > MaxLine {
+				t.Fatalf("the written line is %d bytes, over MaxLine (%d)", len(line), MaxLine)
+			}
+			var e Event
+			if err := json.Unmarshal(line, &e); err != nil {
+				t.Fatalf("the written line does not parse: %v", err)
+			}
+			t.Logf("%s: line %d bytes (%.1f%% of MaxLine), Data kept %d of %d",
+				c.name, len(line), 100*float64(len(line))/float64(MaxLine), len(e.Data), len(c.data))
+			if want := int(float64(MaxLine) * c.least); len(line) < want {
+				t.Fatalf("the written line is %d bytes and MaxLine is %d — clipping threw away more of "+
+					"the record than it had to (wanted at least %d).\n"+
+					"It must reduce a field to the size the budget allows, not halve it until a power of "+
+					"two happens to fit, and it must not treat an excess larger than the budget as a "+
+					"reason to reduce every field to its own clip note.", len(line), MaxLine, want)
+			}
+			if !strings.Contains(e.Data, "clipped from") {
+				t.Fatalf("Data does not carry the clip note")
+			}
+		})
 	}
 }
