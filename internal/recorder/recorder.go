@@ -1103,13 +1103,22 @@ func clipToBudget(e *Event, budget int) bool {
 	keep := capForBudget(sizes, budget)
 	clipped := false
 	for _, f := range fields {
-		// The second use of clipNoteBytes is a floor: a field already shorter
-		// than the note a clip would add to it cannot be made smaller by
-		// clipping, and clipping it anyway would make the line longer. It is
-		// also what keeps a clip aimed at a payload away from the header —
-		// `type`, `source`, `prev` — which clipLargestField could reach on an
-		// event where every payload field happened to be empty.
-		if f.bytes > keep && f.bytes > clipNoteBytes {
+		// The second use of clipNoteBytes is a floor, and it is keep+note
+		// rather than note alone: clipping replaces `bytes` with at most
+		// `keep` bytes PLUS the note, so a field only actually shrinks when it
+		// is longer than both together. Guarding on the note alone still let a
+		// 65-byte field become 96 at keep=64 — the line growing, in the
+		// function whose whole job is to shrink it. It is also what keeps a
+		// clip aimed at a payload away from the header — `type`, `source`,
+		// `prev` — which clipLargestField could reach on an event where every
+		// payload field happened to be empty.
+		//
+		// This cannot make clipToBudget give up early. If no field exceeds
+		// keep+note then every field is at most keep+note, so the total is at
+		// most sum(min(size,keep)) + n*note, which is the water level plus
+		// exactly the reserve already subtracted above — that is, at most the
+		// caller's budget, and the early return would have fired.
+		if f.bytes > keep+clipNoteBytes {
 			f.reduce(keep)
 			clipped = true
 		}
