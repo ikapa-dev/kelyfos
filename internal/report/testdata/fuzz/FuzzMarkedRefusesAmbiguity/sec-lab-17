@@ -1,0 +1,3 @@
+go test fuzz v1
+[]byte("<span id=\"kelyfos-signing-key\">a</span><span id=\"kelyfos-signing-key\">b</span><span id=\"kelyfos-signing-key\">c</span>")
+string("kelyfos-signing-key")

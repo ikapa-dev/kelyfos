@@ -1,0 +1,2 @@
+go test fuzz v1
+string("<html><pre id=\"kelyfos-chain\"></pre><pre id=\"kelyfos-chain\"></pre></html>")
