@@ -349,6 +349,19 @@ accept-e2: linux-only cli ## Run Epic E2's acceptance test end to end
 	@echo "note: binding numbers come from the bare-KVM CI runner (D15); this run is informational"
 	ARCH=$(ARCH) bash $(CURDIR)/dev/accept-e2.sh
 
+# The security lab suites (ST-1.2..1.9): the independent audit's scenarios,
+# committed as machine-checked suites. Each sources dev/security-lab.sh, which
+# sources scope.sh (D83), and tears down only the machines it started. The
+# egress suite's online battery skips itself, loudly, when the network is down
+# (D87); the rest of it and the other suites never need the internet.
+accept-security: linux-only cli ## Run the security lab suites (egress, secrets, record, caps, surfaces, workspace)
+	ARCH=$(ARCH) bash $(CURDIR)/dev/accept-security-egress.sh
+	ARCH=$(ARCH) bash $(CURDIR)/dev/accept-security-secrets.sh
+	ARCH=$(ARCH) bash $(CURDIR)/dev/accept-security-record.sh
+	ARCH=$(ARCH) bash $(CURDIR)/dev/accept-security-caps.sh
+	ARCH=$(ARCH) bash $(CURDIR)/dev/accept-security-surfaces.sh
+	ARCH=$(ARCH) bash $(CURDIR)/dev/accept-security-workspace.sh
+
 # The generated half of the documentation (E3-1). Nothing here is written by
 # hand: the commands and flags come from the CLI's own -h, the MCP tools from
 # the supervisor's own tools/list, and the toml keys, event types and exit codes

@@ -1401,3 +1401,40 @@ a run pid orphaned the machine deterministically (IA-M1's second trigger), and
 the fix is one case in the select that was already there to be extended —
 with the record now able to tell the three ways a run with a command can end
 apart: the command finished, the budget stopped it, the operator did.
+
+## D87
+
+*2026-08-31*
+
+**The security egress suite's offline battery runs everywhere; its online
+battery declares its network dependency and skips loudly, by name, when the
+network is not there — a flake is neither absorbed silently nor allowed to
+read as a regression (ST-1.2).**
+
+Six existing dev suites reach example.com, and none of them runs in CI, so
+ST-1.2 would be the first. Its online battery additionally makes nip.io — a
+third party's wildcard resolver — load-bearing for the resolved-address
+assertions. The warn box in the plan offered two doors: gate behind a flag
+CI does not set, or accept the flake and say so. The third door taken here is
+the one that keeps the suite honest in both directions: a reachability probe
+at suite start (`curl https://example.com` from the VM host, 10 s budget) and
+a named SKIP when it fails, with the skip counted and printed in the summary.
+A network outage therefore reads as "this was not measured today", never as
+"the wall broke" and never as "the wall held". The offline battery — the
+no-allow machine with no interface, no routes, no resolver and no proxy —
+needs nothing from the internet and is never skipped.
+
+| candidate | verdict |
+| --- | --- |
+| Flag-gated (`SLAB_NET=1`), CI never sets it | **Rejected as the default**, because a suite whose most important battery cannot run unless somebody remembers a variable is a suite that silently stops measuring — D79's lesson about teardown scoping applies to assertion scoping too. The probe keeps the battery on by default wherever the network actually exists. |
+| Accept the flake, retry or fail red | **Rejected.** A red main is a blocker fixed before new work (CONTRIBUTING); a third party's resolver must not own that lever. |
+| Self-hosted origin inside the VM | **Rejected for this suite.** The resolved-address check needs names that resolve to metadata and RFC1918 addresses from a resolver the guest trusts; a local origin cannot answer that without becoming a DNS spoofer, which is its own project. The controlled-origin lab (ST-2.1) is where a self-hosted origin belongs, pending the owner's approval. |
+
+Two transcription corrections the machine forced, recorded here because the
+audit's summary was looser than its own evidence: curl reports `%{http_code}`
+as 000 for a 403 that answers a CONNECT — the suite asserts refusals over raw
+sockets, where the wall's answer is actually visible; and the audit's
+"no-Host 400; evil Host 403" are the **origin-form** shapes — on the plain
+absolute-URI path the proxy rebuilds the request with the URI's host (IA-I5),
+so no-Host and a lying Host both answer 200 there, which is correct by
+construction and now pinned as a named behaviour rather than an observation.

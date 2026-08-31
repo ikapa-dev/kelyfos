@@ -59,12 +59,18 @@ slab_exit_cleanup() {
 # The pass/fail conventions of the existing suites (dev/accept-shell.sh), once,
 # so the security suites differ from their siblings only in what they check.
 
-PASSES=0 FAILURES=0
+PASSES=0 FAILURES=0 SKIPPED=0
 SUMMARY=()
 
 say()  { printf '\n\033[1m%s\033[0m\n' "$*"; }
 pass() { PASSES=$((PASSES+1)); SUMMARY+=("PASS  $*"); printf '  \033[32mPASS\033[0m  %s\n' "$*"; }
 fail() { FAILURES=$((FAILURES+1)); SUMMARY+=("FAIL  $*"); printf '  \033[31mFAIL\033[0m  %s\n' "$*"; }
+# skip is for a check the environment cannot host today — a third party's
+# resolver being down, a feature this image lacks — and it is loud on purpose:
+# a quiet skip is how a suite stops measuring without anyone noticing. The
+# reason is the message; the suite still exits 0 unless something FAILED,
+# because an environment gap is not a security regression.
+skip() { SKIPPED=$((SKIPPED+1)); SUMMARY+=("SKIP  $*"); printf '  \033[33mSKIP\033[0m  %s\n' "$*"; }
 check() { if [ "$1" = "yes" ]; then pass "$2"; else fail "$2"; fi; }
 
 # The one exit a suite needs: prints the summary and exits green or red. A red
@@ -73,7 +79,7 @@ check() { if [ "$1" = "yes" ]; then pass "$2"; else fail "$2"; fi; }
 slab_done() {
   say "summary"
   printf '%s\n' "${SUMMARY[@]}" | sed 's/^/  /'
-  printf '\n  %d passed, %d failed\n' "$PASSES" "$FAILURES"
+  printf '\n  %d passed, %d failed, %d skipped\n' "$PASSES" "$FAILURES" "$SKIPPED"
   [ "$FAILURES" -eq 0 ]
 }
 
@@ -114,6 +120,15 @@ slab_nft_md5() { sudo -n nft list ruleset 2>/dev/null | md5sum | awk '{print $1}
 nft_mark() { SLAB_NFT_MARK="$(slab_nft_md5)"; }
 assert_nft_unchanged() { # assert_nft_unchanged <label>
   assert_eq "$(slab_nft_md5)" "${SLAB_NFT_MARK:-}" "$1"
+}
+
+# slab_net_ok — whether the VM host can reach the open internet right now.
+# The security suites assert against live origins (example.com) and a third
+# party's wildcard resolver (nip.io), and the honest choice is to say so
+# rather than let a network hiccup read as a security regression: suites call
+# this once and skip their online battery, loudly and by name, when it fails.
+slab_net_ok() {
+  curl -sS -o /dev/null --max-time 10 https://example.com 2>/dev/null
 }
 
 # ---------------------------------------------------------------- boot layer
