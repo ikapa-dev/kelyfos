@@ -11021,6 +11021,34 @@ Capture it from stdout, not by listing sessions afterwards: on a shared host,
 "the newest session" is whoever booted last, which is a race this line exists
 to settle.
 
+The line's appearance *is* the readiness signal — `run` has already waited for
+the guest (`--ready-timeout`, 30 s by default) before printing anything — so
+there is no second wait and no `grep "ready in"` loop to write. A script that
+backgrounds `run` waits for that one line with a bounded poll, and checks the
+run process is still alive while it waits, so a boot that died costs two
+seconds rather than the whole deadline:
+
+```sh
+( kelyfos run --image dev >run.log 2>&1 & echo $! >run.pid )
+id=""
+for i in $(seq 1 150); do
+  id="$(sed -n 's/^sandbox=\([0-9a-f]*\)$/\1/p' run.log | sed -n '1,1p')"
+  [ -n "$id" ] && break
+  kill -0 "$(cat run.pid)" 2>/dev/null || break
+  sleep 0.2
+done
+```
+
+Read the file the run redirected to, not a pipe you quit early. A filter that
+stops reading after the line it wanted — `kelyfos run … | sed -n '/^sandbox=/q'`
+— closes the pipe, and the run's next banner write dies with `SIGPIPE`, which
+ends the process without running its own teardown: the machine it booted is
+orphaned, and it is the exact shape the defect `host/snapshot.go`'s teardown
+comment describes from the other side — a VMM whose parent is gone and nothing
+that reaps it. The trailing-command form (`kelyfos run … -- <command>`) needs
+none of this — the command's exit is the defined end, and the id arrives with
+`KELYFOS_SANDBOX` already set.
+
 ### Read the record rather than the output
 
 `kelyfos log --json` is the parseable form and
