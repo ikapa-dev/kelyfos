@@ -1231,3 +1231,60 @@ by this work, and discovered only because the harness reported "1 firecracker
 already running before we start". Every one of the fifteen suites left it alone.
 Before this change every one of them would have killed it, which is the
 reviewer's `make test` in D79's last paragraph happening to somebody else.
+
+## D84
+
+*2026-08-31*
+
+**`kelyfos run` prints a machine-readable `sandbox=<id>` line, because every
+piece of automation that ever attached to a sandbox broke at least once on
+capturing its id.**
+
+The independent audit's scenarios (SECURITY-AUDIT-independent-2026-08-31.html)
+each improvised the same first step — boot a sandbox, learn its id — and each
+improvisation failed in its own way. The only source today is the human boot
+banner, `sandbox <id> ready in … ms` (`host/run.go:697`), and scraping it has
+already cost a session an afternoon: a log carrying bytes `grep` considers
+binary needs `grep -a`, which is the kind of detail that survives until the one
+run that omits it. `kelyfos log --list` is the other door, and it answers with
+the newest *session directory*, not the machine just booted — on a shared host
+that is a race between this run and everybody else's. The security suites
+(ST-1.2…1.9) commit the audit's scenarios as permanent suites, which means
+committing the id capture once instead of once per suite.
+
+**The shape: one additive line on stdout, printed at the same point in the boot
+as the banner it annotates.**
+
+```
+sandbox=<id>
+```
+
+| candidate | verdict |
+| --- | --- |
+| Fold it into the banner: `sandbox=<id> ready in …` | **Rejected.** It rewrites a line existing scripts and `ci.yml`'s boot job already match (`grep "ready in"`), and buys nothing the extra line does not. The human banner stays exactly as it was. |
+| A `--json` boot banner | **Rejected for now.** A second output mode is a surface to keep stable under `docs/compatibility.md` §2, where one stable line is enough. Adding a JSON banner later takes nothing away from this line. |
+| Print the id earlier — at `sandbox.New` | **Rejected.** An id without a ready sandbox is not attachable, and the line's promise is "you can exec into this now". Printing it before ready invites a script to race the boot it just won. |
+| Emit from `fork`/`resume`/`restore` too | **Rejected without a consumer.** `run` is what the suites and the audit drive; the other commands print their own lines and nothing parses them. Surface added without a consumer is surface maintained for nobody. |
+
+**stdout, and the same stream as the banner.** A warning on stdout corrupts a
+pipeline (`docs/compatibility.md` §3), but this is not a warning — it is the
+line's payload, which is why it is on the same stream the banner is on and
+where a script that captures stdout already has its answer. The session
+directory is where the id already lives, but reading the directory from the
+process that just booted the machine is the indirection this line exists to
+delete, and it is internal layout the compatibility promise deliberately does
+not cover.
+
+**Where the promise lands.** The line is documented in `run`'s own help text;
+`docs/integrating.md` §4 shows the capture; a cookbook recipe runs the
+two-line script, and CI executes it; and `docs/compatibility.md` §2 names the
+line among the surfaces a script may build on. The generated
+`reference/cli.md` carries a command's flags and one-line summary but not its
+usage prose, so the line's home in the generated set is the compatibility
+promise's own paragraph rather than a flag row — a stdout line is not a flag,
+and pretending otherwise would put it in a table nothing fills in.
+
+**Why:** the audit's every automation broke on id capture, the suites inherit
+that step, and the fix is one line that changes nothing an existing script
+matches. A form a script can `sed` out is the difference between a harness that
+reads the product and one that reads tea leaves.

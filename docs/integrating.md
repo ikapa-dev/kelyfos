@@ -361,6 +361,20 @@ internal layout rather than a surface this project promises to keep still
 (`docs/compatibility.md` §2). `kelyfos team ps --json` is the answer that is
 promised.
 
+**For a sandbox you just booted yourself**, `kelyfos run` names it on stdout
+(D84): when the guest is ready it prints
+
+```
+sandbox=<id>
+```
+
+on the same stream as the human banner, and the id is attachable the moment the
+line appears — `sandbox=<id>` is a promised surface (`docs/compatibility.md`
+§2), so a script may `sed` it out and pass it to `kelyfos exec -sandbox`.
+Capture it from stdout, not by listing sessions afterwards: on a shared host,
+"the newest session" is whoever booted last, which is a race this line exists
+to settle.
+
 ### Read the record rather than the output
 
 `kelyfos log --json` is the parseable form and

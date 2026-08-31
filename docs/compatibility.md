@@ -84,6 +84,13 @@ scripts branch on them, and an identifier that changed meaning would break a
 caller silently rather than loudly. The *text* beside one may be improved at any
 time; the identifier may not.
 
+**`kelyfos run`'s `sandbox=<id>` line is part of the promise** (D84), for the
+same reason a denial identifier is: a script captures it and then attaches to
+the machine it names, and a capture that stopped working would break that caller
+silently rather than loudly. It is printed on stdout when the sandbox is ready —
+and not before, because the promise it makes is "you can exec into this now".
+The prose around it may improve; the `sandbox=<id>` shape may not.
+
 **Exit codes are shell convention rather than a private numbering**, so a script
 wrapping `kelyfos` can branch on them the way it already branches on `timeout(1)`.
 That is a promise about the numbers, not only about the list.

@@ -15,6 +15,16 @@ reference described in the README and re-measured per release.
 
 ---
 
+## Unreleased
+
+### Added
+- **`kelyfos run` prints a machine-readable `sandbox=<id>` line on stdout when
+  the sandbox is ready** (D84), for scripts that attach to the machine they
+  just booted and should not parse the human banner beside it. The existing
+  boot banner is unchanged, so anything matching `ready in` keeps working;
+  the line is documented in `run`'s own help text and listed in
+  `docs/compatibility.md` §2 among the surfaces scripts may build on.
+
 ## v1.1.2 — 2026-08-31
 
 A patch release with one defect in it, found by downloading the published

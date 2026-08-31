@@ -1,6 +1,6 @@
 # KelyfOS cookbook
 
-Twenty-three recipes, each one complete, each one runnable as it stands.
+Twenty-four recipes, each one complete, each one runnable as it stands.
 
 These are not illustrations. `bash dev/cookbook.sh` extracts every script below
 and runs it on a real machine. Every commit checks that each recipe still
@@ -2364,6 +2364,61 @@ kelyfos log --session "$A_SESSION" --verify | sed -n '1,3p'
 
 kelyfos team down --team "$B_SESSION"
 echo "both teams retired"
+```
+
+---
+
+## 23. Boot a sandbox from a script, capture its id, stop it cleanly
+
+The recipe most automation wants first. Every script that drives a sandbox has
+the same three problems — learn the id, know when the machine is ready, stop it
+without leaving anything behind — and each has one answer.
+
+The id comes from the machine-readable line `run` prints on stdout when the
+guest is ready (D84). `sandbox=<id>` is a promised surface
+(`docs/compatibility.md` §2), so a script may `sed` it out and hand it to
+`kelyfos exec -sandbox`; the line's appearance *is* the readiness signal, which
+is why there is no separate wait for it. And the stop is a signal to the run
+process with a wait on the process itself, not on the shell's `job table` — the
+write-back and the teardown finish before the process exits, so a script that
+waits on the pid never reads a workspace mid-write.
+
+<!-- recipe: sandbox-id-capture -->
+
+```bash
+set -euo pipefail
+work="$(mktemp -d)"
+cd "$work"
+trap '{ kill -INT "$run_pid" 2>/dev/null || true; } ; rm -rf "$work"' EXIT
+
+# Boot in the background, keep the pid, capture the id from stdout only.
+run_pid=""
+( kelyfos run --image dev > run.log 2>&1 & echo $! > run.pid )
+run_pid="$(cat run.pid)"
+
+id=""
+for i in $(seq 1 150); do
+  id="$(sed -n 's/^sandbox=\([0-9a-f]*\)$/\1/p' run.log | sed -n '1,1p')"
+  [ -n "$id" ] && break
+  # A run that died before the line ever appeared gets its log shown, not a
+  # thirty-second wait for a poll that can never succeed.
+  kill -0 "$run_pid" 2>/dev/null || break
+  sleep 0.2
+done
+[ -n "$id" ] || { echo "no sandbox= line; run.log said:"; sed -n '1,5p' run.log; exit 1; }
+echo "captured sandbox id: $id"
+
+# The line's promise is "you can exec into this now" (D84) — no further wait.
+kelyfos exec -sandbox "$id" 'uname -m'
+
+# Stop it: SIGINT to the run process, then wait on the process itself. The
+# shell's `wait` is what the common-mistakes page warns about; a poll on
+# kill -0 ends exactly when the teardown does, because that is when the
+# process goes away.
+kill -INT "$run_pid"
+for i in $(seq 1 120); do kill -0 "$run_pid" 2>/dev/null || break; sleep 0.5; done
+kill -0 "$run_pid" 2>/dev/null && { echo "run pid $run_pid refused to stop"; exit 1; }
+echo "sandbox $id torn down"
 ```
 
 ---

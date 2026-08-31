@@ -86,6 +86,9 @@ func runWithSandbox(argv []string, reviewDeclinedOut *bool) error {
        kelyfos run [flags] -- <command>...
 
 Boots a sandbox. With no trailing command it keeps running until Ctrl-C.
+When the sandbox is ready it prints sandbox=<id> on stdout — one line a
+script can sed out, so attaching to the machine does not mean parsing the
+human banner beside it (D84).
 
 With one, that command runs on the host for as long as the sandbox lives, with
 KELYFOS_SANDBOX set so its `+"`kelyfos mcp`"+` and `+"`kelyfos exec`"+` attach to this machine.
@@ -694,6 +697,12 @@ status. This is how you hand an agent a sandbox and nothing else:
 		Tools:        sessionpolicy.ToolsForCLI(plugins != nil),
 	}))
 
+	// The machine-readable twin of the banner below (D84): one stable line a
+	// script can capture from stdout alone, printed at the same point in the
+	// boot. The promise it makes is "you can exec into this now", which is why
+	// it is not printed earlier, when the id exists but the guest cannot
+	// answer yet.
+	fmt.Printf("sandbox=%s\n", sb.State.ID)
 	fmt.Printf("sandbox %s ready in %d ms (vmm %d ms + guest %d ms)\n",
 		sb.State.ID, sb.State.BootReadyMS, sb.State.BootReadyMS-guestMS, guestMS)
 	// The boot line SafeText's own doc comment is written about: where a
