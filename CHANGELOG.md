@@ -15,7 +15,7 @@ reference described in the README and re-measured per release.
 
 ---
 
-## v1.1 — 2026-08-30
+## v1.1 — 2026-08-31
 
 The declared shape of a run. v1.0 could say what a sandbox did; this one says
 what it was *allowed* to do, in the same record and under the same hash chain —
