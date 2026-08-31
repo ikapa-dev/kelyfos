@@ -45,7 +45,8 @@ target build of it.
   claiming that either SBOM describes either image"* — and with one document
   under two names, both attestations said exactly that. The document now carries
   a `metadata.component` naming KelyfOS, its version and its architecture, and
-  the serial number covers it, so the two files differ and identify themselves.
+  the serial number is a digest of the whole document, so the two files differ
+  and each identifies itself.
 - **The architecture is read out of the binaries instead of copied from a flag.**
   Every binary the merge opens reports its own `GOOS` and `GOARCH` through
   `debug/buildinfo`; `-arch` is now an assertion checked against all of them, and

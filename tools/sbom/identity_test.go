@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"unicode/utf8"
 )
 
 // What this file checks is the document itself, from outside: it builds the
@@ -186,26 +187,45 @@ func buildFixtures() {
 	}
 }
 
-// release runs the tool the way `make release-sbom` runs it, for one
-// architecture, and returns the bytes it wrote.
-func release(t *testing.T, arch, goarch, version, out string) []byte {
+// runTool runs the tool the way `make release-sbom` runs it, for one
+// architecture and one Buildroot input, and returns what it wrote to stderr
+// beside whether it succeeded.
+func runTool(t *testing.T, arch, goarch, version, buildroot, out string) (string, error) {
 	t.Helper()
 	tool := theTool(t)
-	args := []string{"-arch", arch, "-version", version, "-out", out, "-buildroot", buildrootAt}
+	args := []string{"-arch", arch, "-version", version, "-out", out, "-buildroot", buildroot}
 	for _, b := range fixtureBins[goarch] {
 		args = append(args, "-binary", b)
 	}
 	cmd := exec.Command(tool, args...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("sbom %s: %v\n%s", strings.Join(args, " "), err, stderr.String())
+	err := cmd.Run()
+	return stderr.String(), err
+}
+
+// release is runTool over the standard fixture, for a run that has to succeed.
+func release(t *testing.T, arch, goarch, version, out string) []byte {
+	t.Helper()
+	stderr, err := runTool(t, arch, goarch, version, buildrootAt, out)
+	if err != nil {
+		t.Fatalf("sbom -arch %s: %v\n%s", arch, err, stderr)
 	}
 	body, err := os.ReadFile(out)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return body
+}
+
+// serialOf reads the serial number back out of a document.
+func serialOf(t *testing.T, body []byte) string {
+	t.Helper()
+	s, _ := parse(t, body)["serialNumber"].(string)
+	if s == "" {
+		t.Fatal("no serialNumber: actions/attest refuses a document without one (P6-20)")
+	}
+	return s
 }
 
 func parse(t *testing.T, body []byte) map[string]any {
@@ -401,6 +421,112 @@ func TestAnArchitectureTheBinariesDoNotAgreeWithIsRefused(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "arm64") {
 		t.Errorf("the refusal does not say what the binaries actually are: %s", stderr.String())
+	}
+	if _, err := os.Stat(out); err == nil {
+		t.Error("a document was written anyway")
+	}
+}
+
+// A serial number identifies this exact BOM, so a change anywhere in the BOM
+// has to change it — including in the places no identifier names.
+//
+// This is the defect the adversarial review of D81's first version found, and
+// it was introduced by the fix rather than inherited. Hashing five identifying
+// fields per component was a content digest for as long as those five fields
+// were nearly all a component had; once Buildroot's components pass through
+// whole, they are about three per cent of the document. A licence, a CPE and
+// the SHA-256 of the tarball a package was built from all sat outside the hash,
+// so two materially different documents went out under one serial — the same
+// failure the architecture case describes, reached through content.
+func TestAChangeBuriedInAComponentChangesTheSerialNumber(t *testing.T) {
+	dir := t.TempDir()
+	clean := release(t, "aarch64", "arm64", "v1.1.2", filepath.Join(dir, "clean.json"))
+
+	// The licence, the CPE and the source-tarball hash of one component, and
+	// nothing else. None of the five fields that identify a component moves.
+	tampered := strings.NewReplacer(
+		`{"license": {"name": "Zlib"}}`, `{"license": {"name": "MIT"}}`,
+		`cpe:2.3:a:zlib:zlib:1.3.2:*:*:*:*:*:*:*`, `cpe:2.3:a:someone:else:1.3.2:*:*:*:*:*:*:*`,
+		`38ef96b8dfe510d42707d9c781877914792541133e1870841463bfa73f883e32`,
+		`0000000000000000000000000000000000000000000000000000000000000000`,
+	).Replace(buildrootFixture)
+	if tampered == buildrootFixture {
+		t.Fatal("the fixture no longer contains what this test edits")
+	}
+	other := filepath.Join(dir, "tampered-buildroot.json")
+	if err := os.WriteFile(other, []byte(tampered), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(dir, "tampered.json")
+	if stderr, err := runTool(t, "aarch64", "arm64", "v1.1.2", other, out); err != nil {
+		t.Fatalf("%v\n%s", err, stderr)
+	}
+	changed, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if bytes.Equal(clean, changed) {
+		t.Fatal("the two documents are identical, so this test is not editing what it thinks it is")
+	}
+	if a, b := serialOf(t, clean), serialOf(t, changed); a == b {
+		t.Errorf("a component's licence, its CPE and the hash of the tarball it was built from all "+
+			"changed and the serial number did not: %s. The serial covers a summary of the document "+
+			"rather than the document, so an attestation over it says nothing about what changed.", a)
+	}
+}
+
+// Bytes this tool did not write go out under this project's name and a
+// signature, so the one property Go's JSON encoder does not check for them is
+// checked here. encoding/json escapes what it must inside a json.RawMessage and
+// does not validate UTF-8 in it, so a component carrying an invalid sequence
+// would produce a published, attested document that no JSON parser can read —
+// the shape of P6-20 with a different field.
+func TestAComponentThatIsNotValidUTF8IsRefusedRatherThanPublished(t *testing.T) {
+	dir := t.TempDir()
+	broken := []byte(strings.Replace(buildrootFixture,
+		`"name": "libzlib",`, "\"name\": \"libz\xc3(lib\",", 1))
+	if bytes.Equal(broken, []byte(buildrootFixture)) {
+		t.Fatal("the fixture no longer contains what this test edits")
+	}
+	in := filepath.Join(dir, "not-utf8.json")
+	if err := os.WriteFile(in, broken, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(dir, "out.json")
+
+	stderr, err := runTool(t, "aarch64", "arm64", "v1.1.2", in, out)
+	if err == nil {
+		body, readErr := os.ReadFile(out)
+		if readErr == nil && !utf8.Valid(body) {
+			t.Fatal("a document that is not valid UTF-8 was written and the tool exited 0: " +
+				"no JSON reader will accept it, and the release would attest it anyway")
+		}
+		t.Fatalf("expected a refusal; stderr was %q", stderr)
+	}
+	if _, err := os.Stat(out); err == nil {
+		t.Error("a document was written anyway")
+	}
+}
+
+// Two components sharing one bom-ref is a document nothing can resolve a
+// dependency against, and no JSON schema catches it: the schema does not
+// cross-check metadata.component against the components array.
+func TestAComponentCollidingWithTheSubjectsBomRefIsRefused(t *testing.T) {
+	dir := t.TempDir()
+	colliding := strings.Replace(buildrootFixture,
+		`"bom-ref": "host-libzlib",`, `"bom-ref": "kelyfos:os",`, 1)
+	if colliding == buildrootFixture {
+		t.Fatal("the fixture no longer contains what this test edits")
+	}
+	in := filepath.Join(dir, "colliding.json")
+	if err := os.WriteFile(in, []byte(colliding), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(dir, "out.json")
+
+	if stderr, err := runTool(t, "aarch64", "arm64", "v1.1.2", in, out); err == nil {
+		t.Fatalf("a component took the document's own subject bom-ref and nothing objected:\n%s", stderr)
 	}
 	if _, err := os.Stat(out); err == nil {
 		t.Error("a document was written anyway")

@@ -29,13 +29,20 @@
 // # Two rules, both learned by reading a published release (D81)
 //
 // **What this tool did not author, it does not re-encode.** Buildroot's
-// components arrive as bytes and leave as the same bytes. Modelling a component
+// components arrive as bytes and are written out of the same bytes — not quite
+// byte for byte, because encoding/json escapes `<`, `>` and `&` inside a
+// json.RawMessage on the way out, which changes the spelling of a value and
+// never its content. Nothing is dropped, which is the property that matters and
+// the one that was missing. Modelling a component
 // with a struct and writing that struct back out is how the licence, the CPE,
 // the source-tarball hashes and the patch pedigree of all forty-nine Buildroot
 // packages were deleted from every SBOM this project ever published — 333 KB of
 // input left as 11 KB of output, and nothing said so. The struct below is for
 // *reading* identity out of a component in order to sort, deduplicate and hash
-// it. It is never the shape anything is written back through.
+// it. It is never the shape anything is written back through, and the serial
+// number is a digest of the whole document rather than of that summary — a
+// correction the adversarial review of this change forced, and the reason
+// serialFor takes bytes.
 //
 // **The document says what it describes, and the architecture in it is checked
 // rather than claimed.** -arch used to be validated non-empty, printed, and
@@ -48,15 +55,16 @@
 package main
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"debug/buildinfo"
 	"encoding/json"
 	"flag"
 	"fmt"
-	"io"
 	"os"
 	"sort"
 	"strings"
+	"unicode/utf8"
 )
 
 // The CycloneDX version this tool writes, and the schema that validates it.
@@ -112,7 +120,7 @@ type inputDoc struct {
 
 type inputMetadata struct {
 	Component json.RawMessage `json:"component"`
-	Tools     *tools          `json:"tools"`
+	Tools     json.RawMessage `json:"tools"`
 }
 
 type metadata struct {
@@ -170,33 +178,30 @@ type entry struct {
 // obvious implementation is a random one per run. That would be wrong here for a
 // reason this project has already measured: two builds of one commit produce
 // byte-identical artifacts (P6-9), and a random field would break that quietly —
-// the SBOM would differ every time and repro-check would report a difference
-// that means nothing. So it is a digest of the content instead: same subject and
-// same components, same serial, and a change to any of them changes it.
+// the SBOM would differ every time and a difference that means nothing is worse
+// than no measurement at all. So it is a digest of the content instead.
 //
-// The subject is hashed first, and that is not decoration. Two documents that
-// describe different architectures with the same component list would otherwise
-// share a serial number — one identifier naming two different BOMs, which is
-// worse than the identical documents it would replace, because a serial number
-// is the field whose whole job is to tell them apart.
+// **Of all of the content**, which is the correction the review of this change
+// forced and is worth stating rather than assuming. This used to hash five
+// identifying fields per component, and that was a content digest for as long as
+// those five fields were nearly all a component had. Once Buildroot's components
+// pass through whole, they are about three per cent of the document: a licence,
+// a CPE, a source-tarball SHA-256, the text of a patch and the dependency graph
+// all sat outside the hash. Two documents differing in a component's licence and
+// in the hash of the tarball it was built from came out under one serial number,
+// which is the failure the paragraph below describes, reached by content instead
+// of by architecture. So the input is the marshalled document with this field
+// left empty — every byte that will be written, including the subject.
 //
 // Formatted as a v4-shaped UUID because the field's grammar demands one, with
 // the version and variant nibbles set as the RFC requires. It is not random and
-// does not pretend to be — the bytes underneath are SHA-256 of the content.
-func serialFor(subject identity, components []identity) string {
-	h := sha256.New()
-	writeIdentity(h, subject)
-	for _, c := range components {
-		writeIdentity(h, c)
-	}
-	b := h.Sum(nil)[:16]
+// does not pretend to be — the bytes underneath are SHA-256 of the document.
+func serialFor(document []byte) string {
+	sum := sha256.Sum256(document)
+	b := sum[:16]
 	b[6] = (b[6] & 0x0f) | 0x40 // version
 	b[8] = (b[8] & 0x3f) | 0x80 // variant
 	return fmt.Sprintf("urn:uuid:%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
-}
-
-func writeIdentity(h io.Writer, c identity) {
-	fmt.Fprintf(h, "%s\x00%s\x00%s\x00%s\x00%s\n", c.Type, c.Name, c.Version, c.PURL, c.BOMRef)
 }
 
 func main() {
@@ -249,12 +254,13 @@ func main() {
 		// would lose which Buildroot built it. Its bom-ref is what the
 		// dependency graph below is rooted at, so it has to survive by name.
 		if br.Metadata != nil {
-			if len(br.Metadata.Component) > 0 {
-				entries = append(entries, passedThrough(br.Metadata.Component, *from))
+			// `null` decodes into four bytes rather than none, so a document
+			// that declares no subject has to be recognised rather than
+			// measured by length.
+			if c := bytes.TrimSpace(br.Metadata.Component); len(c) > 0 && string(c) != "null" {
+				entries = append(entries, passedThrough(c, *from))
 			}
-			if br.Metadata.Tools != nil {
-				toolComponents = append(toolComponents, br.Metadata.Tools.Components...)
-			}
+			toolComponents = append(toolComponents, toolComponentsOf(br.Metadata.Tools, *from)...)
 		}
 		// Buildroot's own dependency graph, rooted at its own bom-ref. It says
 		// how Buildroot's packages relate and claims nothing about this
@@ -307,11 +313,18 @@ func main() {
 	// because the merge copied Buildroot's metadata verbatim and the document
 	// went out declaring itself to be "buildroot 2025.02.17".
 	subject := component{
-		Type:        "operating-system",
-		Name:        "kelyfos",
-		Version:     *version,
-		PURL:        "pkg:generic/kelyfos@" + *version + "?arch=" + *arch,
-		BOMRef:      "kelyfos",
+		Type:    "operating-system",
+		Name:    "kelyfos",
+		Version: *version,
+		PURL:    "pkg:generic/kelyfos@" + *version + "?arch=" + *arch,
+		// Namespaced, like every other bom-ref this tool authors. A bare
+		// `kelyfos` would sit in the same namespace as Buildroot's package
+		// names, where a package of that name would produce a document with two
+		// components sharing one bom-ref — which CycloneDX forbids and which no
+		// schema catches, because the schema does not cross-check
+		// metadata.component against the components array. The check below
+		// catches it anyway; this makes the class unreachable.
+		BOMRef:      "kelyfos:os",
 		Description: "KelyfOS " + *version + " for " + *arch,
 		Properties: []property{
 			{Name: "kelyfos:architecture", Value: *arch},
@@ -330,17 +343,43 @@ func main() {
 	}
 	merged.Metadata.Tools = &tools{Components: append(toolComponents, self)}
 
-	ids := make([]identity, len(entries))
 	merged.Components = make([]json.RawMessage, len(entries))
 	for i, e := range entries {
-		ids[i] = e.id
 		merged.Components[i] = e.raw
+		// A bom-ref identifies one component, and dedupe has already made the
+		// components unique on it. The subject is the one ref that did not go
+		// through dedupe, so it is the one that can still collide.
+		if e.id.BOMRef == subject.BOMRef {
+			die("a component carries the bom-ref %q, which is the document's own subject: "+
+				"two components sharing one bom-ref is a document nothing can resolve a "+
+				"dependency against", subject.BOMRef)
+		}
 	}
-	merged.SerialNumber = serialFor(identityOf(subject), ids)
 
+	// The serial covers the document, so it has to be computed from the
+	// document — marshalled once with the field empty, then again with it
+	// filled in. Anything cheaper hashes a summary of the content and calls it
+	// a digest of the content, which is the defect this had.
 	body, err := json.MarshalIndent(merged, "", "  ")
 	if err != nil {
 		die("%v", err)
+	}
+	merged.SerialNumber = serialFor(body)
+	body, err = json.MarshalIndent(merged, "", "  ")
+	if err != nil {
+		die("%v", err)
+	}
+
+	// Somebody else's bytes go out under this project's name and an
+	// attestation, so they are checked for the one property Go's JSON encoder
+	// does not check for them. encoding/json escapes what it must inside a
+	// json.RawMessage but does not validate UTF-8 in it, and a component
+	// carrying an invalid sequence would produce a published, signed document
+	// that no JSON parser can read — which is the shape of P6-20 with a
+	// different field.
+	if !utf8.Valid(body) {
+		die("the merged document is not valid UTF-8, which means a component this tool passed "+
+			"through carries bytes no JSON reader will accept; %s is not written", *out)
 	}
 	if err := os.WriteFile(*out, append(body, '\n'), 0o644); err != nil {
 		die("%v", err)
@@ -414,6 +453,38 @@ func fromBinary(path string) (components []component, goos, goarch string, err e
 	return out, goos, goarch, nil
 }
 
+// toolComponentsOf reads metadata.tools, which CycloneDX 1.6 gives two shapes.
+//
+// The object form — `{"components": [...]}` — is what Buildroot emits and what
+// this tool writes. The array form is the older one, still legal in 1.6 and
+// deprecated in it, and its entries are `tool` objects rather than components:
+// a `vendor` field where a component has `publisher`, and no `type`. Copying
+// those into a components array would produce a document that fails validation,
+// so this refuses with what happened instead of converting. Recognising the
+// shape is the point: decoding the array into the object form fails with
+// "cannot unmarshal array into Go struct field", which says nothing a reader
+// could act on.
+func toolComponentsOf(raw json.RawMessage, from string) []json.RawMessage {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || string(trimmed) == "null" {
+		return nil
+	}
+	switch trimmed[0] {
+	case '{':
+		var t tools
+		if err := json.Unmarshal(trimmed, &t); err != nil {
+			die("metadata.tools in %s is not readable: %v", from, err)
+		}
+		return t.Components
+	case '[':
+		die("metadata.tools in %s is CycloneDX's older array-of-tools form, whose entries are not "+
+			"components and cannot be copied into a components array. Convert them, or take the "+
+			"generator's name and licence across by hand.", from)
+	}
+	die("metadata.tools in %s is neither the object form nor the array form", from)
+	return nil
+}
+
 // passedThrough keeps a component nobody here wrote exactly as it arrived.
 func passedThrough(raw json.RawMessage, from string) entry {
 	var id identity
@@ -454,9 +525,14 @@ func dedupe(in []entry) []entry {
 	seen := map[string]bool{}
 	var out []entry
 	for _, e := range in {
-		k := e.id.BOMRef
-		if k == "" {
-			k = e.id.Name + "@" + e.id.Version
+		// The two kinds of key are namespaced apart. Without that, a component
+		// with no bom-ref keyed as `name@version` collides with one whose
+		// bom-ref is literally the string `name@version`, and dedupe drops one
+		// of two genuinely different things — which is the failure being fixed,
+		// in miniature.
+		k := "ref:" + e.id.BOMRef
+		if e.id.BOMRef == "" {
+			k = "nv:" + e.id.Name + "@" + e.id.Version
 		}
 		if seen[k] {
 			continue

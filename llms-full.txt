@@ -7633,8 +7633,10 @@ attestations attached the same bytes to both sets of artifacts. From v1.1.2 the
 document carries a `metadata.component` naming the product, its version and its
 architecture; the architecture is read out of each binary's own `GOARCH` through
 `debug/buildinfo` and `-arch` is checked against all of them rather than copied
-into the output; and the serial number covers the subject, so two documents over
-one component list cannot share the identifier that exists to tell them apart.
+into the output; and the serial number is a digest of the whole document, so two
+documents over one component list — or two differing only in a licence, a CPE or
+the hash of a source tarball — cannot share the identifier that exists to tell
+them apart.
 
 **And it carries what Buildroot computed rather than a seventh of it.** Until
 v1.1.2 the merge decoded every Buildroot component through a struct modelling
@@ -7644,7 +7646,7 @@ CPE, every source-tarball SHA-256 and every patch record on the way through —
 version replaced the target build of `libzlib`, `libopenssl`, `libffi` and
 `python3` with the host build of the same package at the same version. A reader
 asking the v1.1.1 SBOM which OpenSSL is in the image gets an answer about the
-build machine. Components this tool did not author now pass through as bytes,
+build machine. Components this tool did not author now pass through whole,
 deduplication is on `bom-ref`, and the document declares CycloneDX 1.6 — which is
 what Buildroot's generator emits, and which the restored components require: the
 same document labelled 1.5 fails schema validation in forty-two places. What is

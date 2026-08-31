@@ -176,8 +176,8 @@ func TestEveryReleasedCLIBinaryIsMeasuredForReproducibility(t *testing.T) {
 	}
 }
 
-// The three fields actions/attest tests for, and the two properties a random
-// serial or an architecture-blind one would each have broken (P6-20, D81).
+// The three fields actions/attest tests for, and the property a random serial
+// would have broken (P6-20, D81).
 //
 // `actions/attest` decides a document is CycloneDX by checking bomFormat,
 // serialNumber and specVersion, and refuses the whole SBOM with "Unsupported
@@ -186,21 +186,26 @@ func TestEveryReleasedCLIBinaryIsMeasuredForReproducibility(t *testing.T) {
 // and nothing found out until v1.0-rc1, because no release had ever run the
 // workflow that attests them.
 //
-// The second assertion is the one worth keeping: the serial has to be derived
-// from the content rather than generated, or two builds of one commit stop
-// producing byte-identical artifacts and P6-9's measurement quietly stops
-// meaning anything. The third is the one v1.1 needed and did not have: the
-// serial has to cover the subject as well as the components, or two documents
-// describing different architectures out of the same package list share an
-// identifier whose entire job is to tell them apart.
+// The assertions after the first are the ones worth keeping. The serial has to
+// be derived from the content rather than generated, or two builds of one
+// commit stop producing byte-identical artifacts and P6-9's measurement quietly
+// stops meaning anything. And it has to be derived from *all* of the content:
+// the two cases below are the two ways this has actually been got wrong — a
+// change buried inside a component, which the first version of D81's fix hashed
+// nothing of, and two architectures over one component list, which v1.1 shipped
+// under one serial twice.
 func TestTheSerialNumberIsPresentAndDerivedRatherThanRandom(t *testing.T) {
-	subject := identity{Type: "operating-system", Name: "kelyfos", Version: "v1.1.2", PURL: "pkg:generic/kelyfos@v1.1.2?arch=aarch64"}
-	components := []identity{
-		{Type: "library", Name: "zlib", Version: "1.3.1"},
-		{Type: "library", Name: "busybox", Version: "1.36.1"},
+	document := func(arch, licence string) []byte {
+		return []byte(`{"bomFormat":"CycloneDX","specVersion":"1.6","serialNumber":"",` +
+			`"metadata":{"component":{"type":"operating-system","name":"kelyfos",` +
+			`"version":"v1.1.2","purl":"pkg:generic/kelyfos@v1.1.2?arch=` + arch + `"}},` +
+			`"components":[{"type":"library","name":"zlib","version":"1.3.1",` +
+			`"licenses":[{"license":{"name":"` + licence + `"}}]},` +
+			`{"type":"library","name":"busybox","version":"1.36.1"}]}`)
 	}
+	base := document("aarch64", "Zlib")
 
-	got := serialFor(subject, components)
+	got := serialFor(base)
 	if got == "" {
 		t.Fatal("no serial number: actions/attest refuses the document without one")
 	}
@@ -208,21 +213,21 @@ func TestTheSerialNumberIsPresentAndDerivedRatherThanRandom(t *testing.T) {
 		t.Errorf("serial %q is not a URN UUID, which is the field's grammar", got)
 	}
 	// Same content, same serial — the whole point.
-	if again := serialFor(subject, components); again != got {
-		t.Errorf("two calls over the same components gave different serials:\n  %s\n  %s\n"+
+	if again := serialFor(base); again != got {
+		t.Errorf("two calls over the same document gave different serials:\n  %s\n  %s\n"+
 			"A serial that changes per run breaks the byte-identical build P6-9 measured.", got, again)
 	}
-	// Different content, different serial — otherwise it is not identifying anything.
-	changed := append([]identity{}, components...)
-	changed[0].Version = "1.3.2"
-	if serialFor(subject, changed) == got {
-		t.Error("changing a component's version did not change the serial")
+	// A change buried in a component, in a field no identifier names. This is
+	// where a licence, a CPE and the SHA-256 of a source tarball live, and a
+	// serial that does not cover them identifies a document that can change
+	// underneath it.
+	if serialFor(document("aarch64", "MIT")) == got {
+		t.Error("changing a component's licence did not change the serial, so the serial covers " +
+			"a summary of the document rather than the document")
 	}
 	// Different subject, different serial — the case the release actually hit,
 	// where both architectures resolve an identical component list.
-	otherArch := subject
-	otherArch.PURL = "pkg:generic/kelyfos@v1.1.2?arch=x86_64"
-	if serialFor(otherArch, components) == got {
+	if serialFor(document("x86_64", "Zlib")) == got {
 		t.Error("two architectures with the same component list share a serial number, " +
 			"which is the one field that exists to tell two BOMs apart")
 	}
