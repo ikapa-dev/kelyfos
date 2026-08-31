@@ -119,7 +119,7 @@ else
   kelyfos log --session "$session" > log.txt 2>/dev/null
   check "$(grep -q 'api.stripe.com' log.txt && echo yes || echo no)" \
         "and the refusal is in the record, not only on the guest's terminal"
-  scope_kill_kelyfos; sleep 2
+  scope_kill_kelyfos run; sleep 2
 fi
 
 say "every ID a refusal printed is a heading in the generated reference"

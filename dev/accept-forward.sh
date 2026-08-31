@@ -65,8 +65,8 @@ boot() {
 }
 
 halt() {
-  scope_kill_kelyfos
-  scope_wait_kelyfos_gone 30
+  scope_kill_kelyfos run
+  scope_wait_kelyfos_gone 30 run
   sleep 2
 }
 

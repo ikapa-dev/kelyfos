@@ -19,14 +19,17 @@ WORK="$(mktemp -d)"
 PASSES=0 FAILURES=0
 SUMMARY=()
 
+# This run gets its own KELYFOS_CACHE and tears down only the machines under
+# it (D79). The kills that used to be here were host-wide, and this harness is
+# where the class was caught doing its damage: while a full run was going, a
+# reviewing agent's `make test` went red with three internal/sandbox failures,
+# "firecracker exited before the guest was ready: signal: terminated". Between
+# every recipe is twenty-three times per run.
+source "$REPO/dev/scope.sh"
+scope_init cookbook
+
 cleanup() {
-  pkill -f "$BIN/kelyfos run"  2>/dev/null
-  pkill -f "$BIN/kelyfos fork" 2>/dev/null
-  pkill -f "$BIN/kelyfos team" 2>/dev/null
-  pkill -f "$BIN/kelyfos shim" 2>/dev/null
-  pkill -f "$BIN/kelyfos serve-mcp" 2>/dev/null
-  sleep 1
-  for p in $(pgrep firecracker 2>/dev/null); do kill "$p" 2>/dev/null; done
+  scope_teardown
   rm -rf "$WORK"
 }
 trap cleanup EXIT
@@ -59,19 +62,12 @@ for script in "$WORK"/recipes/*.sh; do
   # previous one makes the next one fail for a reason that has nothing to do
   # with it — `kelyfos exec` with several sandboxes running asks which one.
   #
-  # These two lines are host-wide questions answered with a kill, and they are
-  # the P7-16 class this harness runs the recipes for (D79). They are left, and
-  # named there rather than here, because narrowing them properly means giving
-  # this run its own KELYFOS_CACHE and four recipes read
-  # $HOME/.cache/kelyfos/sessions by hand — a task rather than a step, and one
-  # that has to re-earn twenty-three live recipes.
-  pkill -f "$BIN/kelyfos run"  2>/dev/null
-  pkill -f "$BIN/kelyfos fork" 2>/dev/null
-  pkill -f "$BIN/kelyfos team" 2>/dev/null
-  pkill -f "$BIN/kelyfos shim" 2>/dev/null
-  pkill -f "$BIN/kelyfos serve-mcp" 2>/dev/null
-  sleep 1
-  for p in $(pgrep firecracker 2>/dev/null); do kill "$p" 2>/dev/null; done
+  # This run's own machines only. These lines used to be host-wide questions
+  # answered with a kill, twenty-three times in a full run; they now stop the
+  # kelyfos processes carrying this run's KELYFOS_CACHE and the Firecrackers
+  # whose pid files are under it, and nothing else on the host. The cache
+  # survives -- the next recipe wants the sessions this one wrote.
+  scope_kill_machines
   # What is NOT left is the line that used to follow:
   #
   #     rm -rf "${HOME:?}/.cache/kelyfos/run"/*

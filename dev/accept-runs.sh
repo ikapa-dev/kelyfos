@@ -133,7 +133,7 @@ check "$(grep -q 'caught-by-the-tail' tail.txt && echo yes || echo no)" \
       "a command run after the tail started shows up in it"
 check "$(grep -q '{' tail.txt && echo no || echo yes)" \
       "and it is plain text, not JSON — the greppable sibling of watch"
-scope_kill_kelyfos
+scope_kill_kelyfos run
 sleep 2
 
 say "summary"

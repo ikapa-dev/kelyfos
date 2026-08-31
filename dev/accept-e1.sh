@@ -14,7 +14,15 @@ set -uo pipefail
 
 ARCH="${ARCH:-$(uname -m | sed -e 's/^arm64$/aarch64/' -e 's/^amd64$/x86_64/')}"
 KELYFOS="${KELYFOS:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/kelyfos}"
-RUN_ROOT="${HOME}/.cache/kelyfos/run"
+# This run gets its own KELYFOS_CACHE and tears down only the machines under
+# it. The lines that used to be here -- a `pkill -f` on a kelyfos process name
+# and `for p in $(pgrep firecracker); do kill "$p"; done` -- were host-wide
+# questions answered with a kill, and on a machine running more than one
+# worktree they took a peer's microVMs down with them (D79).
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"/dev/scope.sh
+scope_init accept-e1
+
+RUN_ROOT="$KELYFOS_CACHE/run"
 
 # The run directory has moved twice. The jailer put a sandbox's state at
 # <run>/firecracker/<id>/root/sandbox.json rather than <run>/<id>/ (P5-1), and
@@ -35,9 +43,7 @@ PASSES=0 FAILURES=0 SKIPS=0
 SUMMARY=()
 
 cleanup() {
-  pkill -f "[b]in/kelyfos run" 2>/dev/null
-  sleep 1
-  for p in $(pgrep -x firecracker 2>/dev/null); do kill "$p" 2>/dev/null; done
+  scope_teardown
   sudo pkill -f "[h]ttp[.]server" 2>/dev/null
   rm -rf "$WORK"
 }
@@ -260,7 +266,7 @@ else
   fail "kelyfos log --verify does not pass"
 fi
 for want in resource.timeout resource.summary; do
-  if [ -n "$SB" ] && grep -q "\"$want\"" "$HOME/.cache/kelyfos/sessions/$SB/events.jsonl" 2>/dev/null; then
+  if [ -n "$SB" ] && grep -q "\"$want\"" "$KELYFOS_CACHE/sessions/$SB/events.jsonl" 2>/dev/null; then
     pass "the log contains $want"
   else
     fail "the log has no $want"

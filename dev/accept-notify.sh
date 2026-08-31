@@ -107,7 +107,7 @@ else
         "three refusals of the same domain are one notification, not three"
   check "$(grep -q 'add allow' "$NOTIFY_LOG" && echo no || echo yes)" \
         "the fix line stays on the terminal, where it can be acted on"
-  scope_kill_kelyfos
+  scope_kill_kelyfos run
   sleep 3
 fi
 

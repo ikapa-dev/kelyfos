@@ -491,14 +491,14 @@ echo
 echo "== the record comes back out with two lines of shell =="
 sed -n '/<pre id="kelyfos-chain">/,/<\/pre>/p' report.html | sed '1d;$d' | base64 -d > extracted.jsonl
 session="$(kelyfos log --verify | sed -n 's/^session \([0-9a-f]*\):.*/\1/p')"
-cmp extracted.jsonl "$HOME/.cache/kelyfos/sessions/$session/events.jsonl"
+cmp extracted.jsonl "${KELYFOS_CACHE:-$HOME/.cache/kelyfos}/sessions/$session/events.jsonl"
 echo "byte-identical to the flight recorder"
 
 # With kelyfos, the same thing and a check in one command. The record goes to
 # stdout and the verdict to stderr, so the redirect captures the record and
 # nothing else.
 kelyfos verify --json report.html > piped.jsonl
-cmp piped.jsonl "$HOME/.cache/kelyfos/sessions/$session/events.jsonl"
+cmp piped.jsonl "${KELYFOS_CACHE:-$HOME/.cache/kelyfos}/sessions/$session/events.jsonl"
 echo "and the same through kelyfos verify --json"
 
 # Editing the page's timeline and leaving the record alone is the one thing
@@ -580,7 +580,7 @@ echo "refused, as it must be"
 echo
 echo "== and one altered byte breaks it =="
 session="$(kelyfos log --verify | sed -n 's/^session \([0-9a-f]*\):.*/\1/p')"
-events="$HOME/.cache/kelyfos/sessions/$session/events.jsonl"
+events="${KELYFOS_CACHE:-$HOME/.cache/kelyfos}/sessions/$session/events.jsonl"
 cp "$events" "$work/events.bak"
 python3 - "$events" <<'PY'
 import sys
@@ -1736,7 +1736,7 @@ kelyfos run --image dev -- bash -c '
 '
 
 session="$(kelyfos log --verify | sed -n 's/^session \([0-9a-f]*\):.*/\1/p')"
-record="$HOME/.cache/kelyfos/sessions/$session/events.jsonl"
+record="${KELYFOS_CACHE:-$HOME/.cache/kelyfos}/sessions/$session/events.jsonl"
 
 # The retention floor protects a session this fresh: -dry-run finds nothing
 # eligible, because prune's own floor is 180 days by default (D61 — six

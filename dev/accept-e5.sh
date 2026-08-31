@@ -24,11 +24,16 @@ fail() { FAILURES=$((FAILURES+1)); SUMMARY+=("FAIL  $*"); printf '  \033[31mFAIL
 check() { if [ "$1" = "yes" ]; then pass "$2"; else fail "$2"; fi; }
 
 WORK="$(mktemp -d)"
+# This run gets its own KELYFOS_CACHE and tears down only the machines under
+# it. The lines that used to be here -- a `pkill -f` on a kelyfos process name
+# and `for p in $(pgrep firecracker); do kill "$p"; done` -- were host-wide
+# questions answered with a kill, and on a machine running more than one
+# worktree they took a peer's microVMs down with them (D79).
+source "$REPO"/dev/scope.sh
+scope_init accept-e5
+
 killall_kelyfos() {
-  pkill -f "kelyfos run" 2>/dev/null
-  pkill -f "kelyfos resume" 2>/dev/null
-  sleep 1
-  for p in $(pgrep firecracker 2>/dev/null); do kill "$p" 2>/dev/null; done
+  scope_kill_machines run resume
   sleep 1
 }
 cleanup() {
@@ -77,9 +82,14 @@ kelyfos exec "cat /tmp/scratch-note" | sed 's/^/  /'
 kelyfos pause --as t1 > pause.log 2>&1
 grep -E 'stored|resume it with' pause.log | sed 's/^/  /'
 
-# Every kelyfos process, gone. Nothing is holding this in memory anywhere.
+# Every kelyfos process of THIS run, gone. Nothing is holding this in memory
+# anywhere. The question is deliberately about this run and not about the host:
+# `pgrep -f 'kelyfos run'` sees a peer worktree's run too, and it used to pass
+# only because the teardown beside it had just killed that peer. Once the kills
+# stopped reaching other people's machines, the read had to stop reaching them
+# as well, or the suite would fail whenever it was not alone (D79).
 killall_kelyfos
-check "$(pgrep -f 'kelyfos run' >/dev/null && echo no || echo yes)" \
+check "$([ -z "$(scope_own_kelyfos_pids)" ] && echo yes || echo no)" \
       "every kelyfos process was killed before the resume"
 check "$(kelyfos sessions | grep -q t1 && echo yes || echo no)" \
       "the paused session survives with nothing running"
@@ -150,7 +160,7 @@ check "$(grep -q '40 132' shell.log && echo yes || echo no)" "a window resize re
 kelyfos log --session "$shell_session" > shelllog.txt 2>/dev/null
 check "$(grep -q 'shell opened' shelllog.txt && grep -q 'shell closed' shelllog.txt && echo yes || echo no)" \
       "shell.start and shell.end are in the record"
-check "$(ls ~/.cache/kelyfos/sessions/"$shell_session"/shell-*.stream >/dev/null 2>&1 && echo no || echo yes)" \
+check "$(ls "$KELYFOS_CACHE"/sessions/"$shell_session"/shell-*.stream >/dev/null 2>&1 && echo no || echo yes)" \
       "and without --transcript nothing of the contents is stored"
 check "$(grep -q 'hello-from-the-shell' shelllog.txt && echo no || echo yes)" \
       "the record holds none of what was typed"
@@ -244,7 +254,7 @@ check "$(grep -q 'exited 5 after' "$NOTIFY_LOG" && echo yes || echo no)" \
 missing=""
 for t in shell.start shell.end run.review session.pause session.resume forward.accept; do
   found=no
-  for d in ~/.cache/kelyfos/sessions/*/; do
+  for d in "$KELYFOS_CACHE"/sessions/*/; do
     grep -q "\"type\":\"$t\"" "$d/events.jsonl" 2>/dev/null && { found=yes; break; }
   done
   [ "$found" = yes ] || missing="$missing $t"
