@@ -1,0 +1,2 @@
+mkdir /d
+ln /d /hardlink-to-dir

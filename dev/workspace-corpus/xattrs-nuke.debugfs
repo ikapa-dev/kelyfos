@@ -1,0 +1,2 @@
+write /etc/hostname /plain
+ea_set /plain security.selinux unconfined_u
