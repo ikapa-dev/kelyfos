@@ -8,7 +8,21 @@
 
 # Version stamped into the CLI. A dev build says so rather than claiming a
 # release number it does not have.
-KELYFOS_VERSION ?= $(shell git describe --tags --dirty --always 2>/dev/null || echo dev)
+#
+# --abbrev=12 is not cosmetic. `git describe` with core.abbrev unset picks its
+# abbreviation length from the repository's object count, so a commit followed
+# by an automatic repack moved it from eight hex digits to seven between two
+# invocations seconds apart: v1.1.1-4-ge74699a0 and then v1.1.1-4-ge74699a, one
+# commit, two version strings. That string is stamped into every CLI through
+# -X main.Version, into the guest's generated /etc/os-release and into the SBOM,
+# so two builds of one commit could differ for no reason but how many objects
+# were in .git at the time -- which is exactly the property P6-9 measures and
+# repro-check reports on. Fixing the length makes it depend on the commit alone.
+# It cannot happen at a tag, where `git describe` returns the tag and no
+# abbreviation at all, so no release ever carried this; it is dev builds and
+# anything measured from one. Found by D81's SBOM work and left to the owner
+# there because it changes every dev artifact's version string.
+KELYFOS_VERSION ?= $(shell git describe --tags --dirty --always --abbrev=12 2>/dev/null || echo dev)
 
 # The timestamp everything that records one uses (P6-9, D38).
 #
