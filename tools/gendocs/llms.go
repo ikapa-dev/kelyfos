@@ -63,6 +63,8 @@ func docSet() []doc {
 			Summary: "what breaks between versions and what to do about it — the pre-v0.9 snapshot, the writable trees, and what has never broken"},
 		{Path: "docs/threat-model.md", Title: "Threat model", Full: true,
 			Summary: "what is defended and what is not — read before trusting it with anything"},
+		{Path: "docs/security-assertions.md", Title: "Security assertions", Full: true,
+			Summary: "the claim → assertion matrix: which threat-model and README claims a suite checks, and which are unchecked"},
 		{Path: "docs/resources.md", Title: "Resource limits", Full: true,
 			Summary: "how much machine an agent gets: units, precedence, and what enforces each cap"},
 		{Path: "docs/networking.md", Title: "Egress", Full: true,

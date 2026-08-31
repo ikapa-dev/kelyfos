@@ -14,6 +14,7 @@ Apache-2.0. Single-host developer tool, not a multi-tenant sandbox for hostile c
 - [The compatibility promise](https://raw.githubusercontent.com/ikapa-dev/kelyfos/main/docs/compatibility.md): what v1.0 promises will not move, what is explicitly allowed to, and how anything is deprecated before it is removed
 - [Upgrading](https://raw.githubusercontent.com/ikapa-dev/kelyfos/main/docs/upgrading.md): what breaks between versions and what to do about it — the pre-v0.9 snapshot, the writable trees, and what has never broken
 - [Threat model](https://raw.githubusercontent.com/ikapa-dev/kelyfos/main/docs/threat-model.md): what is defended and what is not — read before trusting it with anything
+- [Security assertions](https://raw.githubusercontent.com/ikapa-dev/kelyfos/main/docs/security-assertions.md): the claim → assertion matrix: which threat-model and README claims a suite checks, and which are unchecked
 - [Resource limits](https://raw.githubusercontent.com/ikapa-dev/kelyfos/main/docs/resources.md): how much machine an agent gets: units, precedence, and what enforces each cap
 - [Egress](https://raw.githubusercontent.com/ikapa-dev/kelyfos/main/docs/networking.md): why a sandbox has no NIC by default, what --allow builds, and why there is no DNS
 - [Agent teams](https://raw.githubusercontent.com/ikapa-dev/kelyfos/main/docs/teams.md): several agents on one host: the schema, the broker, the store, the budget
@@ -45,7 +46,7 @@ Apache-2.0. Single-host developer tool, not a multi-tenant sandbox for hostile c
 
 ## Optional
 
-- [Everything in one file](https://raw.githubusercontent.com/ikapa-dev/kelyfos/main/llms-full.txt): every page above concatenated, roughly 217k tokens, for a client that would rather spend context than fetch
+- [Everything in one file](https://raw.githubusercontent.com/ikapa-dev/kelyfos/main/llms-full.txt): every page above concatenated, roughly 219k tokens, for a client that would rather spend context than fetch
 - [Roadmap](https://raw.githubusercontent.com/ikapa-dev/kelyfos/main/docs/roadmap.md): what was built, phase by phase and epic by epic, and the task identifiers the source comments cite
 - [Decision log](https://raw.githubusercontent.com/ikapa-dev/kelyfos/main/docs/decisions.md): every irreversible choice with the reasoning that produced it; the source cites these by number
 - [Decision log, feature epics](https://raw.githubusercontent.com/ikapa-dev/kelyfos/main/docs/decisions-features.md): the same for E1-E5, cited from comments as F-D<n>
