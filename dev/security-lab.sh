@@ -291,6 +291,11 @@ slab_init() {
   SLAB_WORK="$(mktemp -d)"
   AUP_SEQ=0
   trap slab_exit_cleanup EXIT
+  # Run from the scratch dir, not wherever the suite was invoked: `run`
+  # discovers kelyfos.toml by walking up, and a suite started inside a
+  # worktree would otherwise inherit that tree's policy instead of the flags
+  # it passed. The suites write their own policy when they want one.
+  cd "$SLAB_WORK"
 
   say "KelyfOS security lab — $suite"
   echo "  cache  $KELYFOS_CACHE"
