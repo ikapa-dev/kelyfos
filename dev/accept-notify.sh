@@ -25,10 +25,16 @@ fail() { FAILURES=$((FAILURES+1)); SUMMARY+=("FAIL  $*"); printf '  \033[31mFAIL
 check() { if [ "$1" = "yes" ]; then pass "$2"; else fail "$2"; fi; }
 
 WORK="$(mktemp -d)"
+# This run gets its own KELYFOS_CACHE and tears down only the machines under
+# it. The lines that used to be here -- `pkill -f "kelyfos run"` and
+# `for p in $(pgrep firecracker); do kill "$p"; done` -- were host-wide
+# questions answered with a kill, and on a machine running more than one
+# worktree they took a peer's microVMs down with them (D79).
+source "$REPO/dev/scope.sh"
+scope_init accept-notify
+
 cleanup() {
-  pkill -f "kelyfos run" 2>/dev/null
-  sleep 1
-  for p in $(pgrep firecracker 2>/dev/null); do kill "$p" 2>/dev/null; done
+  scope_teardown
   rm -rf "$WORK"
 }
 trap cleanup EXIT
@@ -101,7 +107,7 @@ else
         "three refusals of the same domain are one notification, not three"
   check "$(grep -q 'add allow' "$NOTIFY_LOG" && echo no || echo yes)" \
         "the fix line stays on the terminal, where it can be acted on"
-  pkill -f "kelyfos run" 2>/dev/null
+  scope_kill_kelyfos
   sleep 3
 fi
 

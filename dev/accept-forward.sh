@@ -24,10 +24,16 @@ fail() { FAILURES=$((FAILURES+1)); SUMMARY+=("FAIL  $*"); printf '  \033[31mFAIL
 check() { if [ "$1" = "yes" ]; then pass "$2"; else fail "$2"; fi; }
 
 WORK="$(mktemp -d)"
+# This run gets its own KELYFOS_CACHE and tears down only the machines under
+# it. The lines that used to be here -- `pkill -f "kelyfos run"` and
+# `for p in $(pgrep firecracker); do kill "$p"; done` -- were host-wide
+# questions answered with a kill, and on a machine running more than one
+# worktree they took a peer's microVMs down with them (D79).
+source "$REPO/dev/scope.sh"
+scope_init accept-forward
+
 cleanup() {
-  pkill -f "kelyfos run" 2>/dev/null
-  sleep 1
-  for p in $(pgrep firecracker 2>/dev/null); do kill "$p" 2>/dev/null; done
+  scope_teardown
   rm -rf "$WORK"
 }
 trap cleanup EXIT
@@ -59,8 +65,8 @@ boot() {
 }
 
 halt() {
-  pkill -f "kelyfos run" 2>/dev/null
-  for i in $(seq 1 30); do pgrep -f "kelyfos run" >/dev/null || break; sleep 1; done
+  scope_kill_kelyfos
+  scope_wait_kelyfos_gone 30
   sleep 2
 }
 

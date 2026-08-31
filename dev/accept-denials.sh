@@ -39,10 +39,16 @@ shaped() {
 }
 
 WORK="$(mktemp -d)"
+# This run gets its own KELYFOS_CACHE and tears down only the machines under
+# it. The lines that used to be here -- `pkill -f "kelyfos run"` and
+# `for p in $(pgrep firecracker); do kill "$p"; done` -- were host-wide
+# questions answered with a kill, and on a machine running more than one
+# worktree they took a peer's microVMs down with them (D79).
+source "$REPO/dev/scope.sh"
+scope_init accept-denials
+
 cleanup() {
-  pkill -f "kelyfos run" 2>/dev/null
-  sleep 1
-  for p in $(pgrep firecracker 2>/dev/null); do kill "$p" 2>/dev/null; done
+  scope_teardown
   rm -rf "$WORK"
 }
 trap cleanup EXIT
@@ -113,7 +119,7 @@ else
   kelyfos log --session "$session" > log.txt 2>/dev/null
   check "$(grep -q 'api.stripe.com' log.txt && echo yes || echo no)" \
         "and the refusal is in the record, not only on the guest's terminal"
-  pkill -f "kelyfos run" 2>/dev/null; sleep 2
+  scope_kill_kelyfos; sleep 2
 fi
 
 say "every ID a refusal printed is a heading in the generated reference"

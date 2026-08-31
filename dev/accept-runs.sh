@@ -23,10 +23,16 @@ fail() { FAILURES=$((FAILURES+1)); SUMMARY+=("FAIL  $*"); printf '  \033[31mFAIL
 check() { if [ "$1" = "yes" ]; then pass "$2"; else fail "$2"; fi; }
 
 WORK="$(mktemp -d)"
+# This run gets its own KELYFOS_CACHE and tears down only the machines under
+# it. The lines that used to be here -- `pkill -f "kelyfos run"` and
+# `for p in $(pgrep firecracker); do kill "$p"; done` -- were host-wide
+# questions answered with a kill, and on a machine running more than one
+# worktree they took a peer's microVMs down with them (D79).
+source "$REPO/dev/scope.sh"
+scope_init accept-runs
+
 cleanup() {
-  pkill -f "kelyfos run" 2>/dev/null
-  sleep 1
-  for p in $(pgrep firecracker 2>/dev/null); do kill "$p" 2>/dev/null; done
+  scope_teardown
   rm -rf "$WORK"
 }
 trap cleanup EXIT
@@ -70,11 +76,11 @@ say "the history is the records, not a second copy of them"
 # fewer. A separate index would drift from that the first time one was removed.
 rows="$(kelyfos runs --all | tail -n +2 | wc -l)"
 dirs=0
-for d in ~/.cache/kelyfos/sessions/*/; do [ -d "$d" ] && dirs=$((dirs+1)); done
+for d in "$KELYFOS_CACHE"/sessions/*/; do [ -d "$d" ] && dirs=$((dirs+1)); done
 echo "  $rows rows, $dirs session directories"
 check "$([ "$rows" = "$dirs" ] && echo yes || echo no)" \
       "there is one row per session record, and nothing else to keep in step"
-check "$([ -f ~/.cache/kelyfos/sessions/"$session"/kelyfos.toml ] && echo yes || echo no)" \
+check "$([ -f "$KELYFOS_CACHE"/sessions/"$session"/kelyfos.toml ] && echo yes || echo no)" \
       "the policy in force was frozen beside that session's record"
 
 say "the policy changes underneath it"
@@ -127,7 +133,7 @@ check "$(grep -q 'caught-by-the-tail' tail.txt && echo yes || echo no)" \
       "a command run after the tail started shows up in it"
 check "$(grep -q '{' tail.txt && echo no || echo yes)" \
       "and it is plain text, not JSON — the greppable sibling of watch"
-pkill -f "kelyfos run" 2>/dev/null
+scope_kill_kelyfos
 sleep 2
 
 say "summary"

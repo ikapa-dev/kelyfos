@@ -40,10 +40,21 @@
 # image` takes about thirty-five minutes on a cold machine, and out/ is
 # read-only to everything but that — so it is shared by symlink and every
 # writable thing under the cache is this run's alone.
+# The directory is named "kelyfos-cache" and NOT after the suite, which is not
+# a cosmetic choice. KELYFOS_CACHE appears in a run's own output -- the vsock
+# path and the jail path are printed -- and several suites assert on that
+# output. dev/accept-notify.sh checks that a run without --notify "does not
+# mention notifications at all" with `grep -q notify quiet.log`; a cache at
+# /tmp/kelyfos-accept-notify.XXXXXX put the word in the jail path and turned
+# that check red, a failure caused entirely by the directory's name. The two
+# words used here are the two the shared path $HOME/.cache/kelyfos already
+# contributed, so no suite can start matching on a word it did not match
+# before. The suite name goes in a file inside instead.
 scope_init() {
   local name="${1:-suite}"
   SCOPE_SHARED_CACHE="${SCOPE_SHARED_CACHE:-$HOME/.cache/kelyfos}"
-  SCOPE_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/kelyfos-${name}.XXXXXX")" || return 1
+  SCOPE_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/kelyfos-cache.XXXXXX")" || return 1
+  printf '%s\n' "$name" > "$SCOPE_ROOT/.suite" 2>/dev/null
   if [ -d "$SCOPE_SHARED_CACHE/out" ]; then
     ln -s "$SCOPE_SHARED_CACHE/out" "$SCOPE_ROOT/out"
   fi
@@ -60,6 +71,26 @@ scope_pids() {
   for f in "$KELYFOS_CACHE"/run/firecracker/*/root/firecracker.pid; do
     [ -f "$f" ] || continue
     cat "$f" 2>/dev/null
+  done
+}
+
+# scope_live_pids — this run's Firecracker pids that are actually running.
+#
+# scope_pids reads pid files, and a sandbox that was killed rather than shut
+# down leaves its file behind; a zombie also still answers kill -0, so the
+# state field in /proc/<pid>/stat is what separates a machine from its corpse.
+#
+# This is what replaces `pgrep -n firecracker` where a suite wanted "the VMM I
+# just booted". That idiom asks the host for its newest Firecracker, which on a
+# shared machine is a peer's -- so the suite would go on to read a stranger's
+# /proc/<pid>/mountinfo and /proc/<pid>/cgroup and check ITS jail, passing or
+# failing on a machine it did not start.
+scope_live_pids() {
+  local p st
+  for p in $(scope_pids); do
+    [ -e "/proc/$p/stat" ] || continue
+    st="$(awk '{print $3}' "/proc/$p/stat" 2>/dev/null)"
+    [ -n "$st" ] && [ "$st" != "Z" ] && echo "$p"
   done
 }
 
@@ -87,17 +118,41 @@ scope_own_kelyfos_pids() {
   done
 }
 
-# scope_teardown — stop this run's kelyfos processes, then its machines.
+# scope_kill_kelyfos — stop this run's kelyfos processes and nobody else's.
+# The mid-run equivalent of the `pkill -f "kelyfos run"` these suites used
+# between steps, which matched a peer's run and the suite's own shell too.
+scope_kill_kelyfos() {
+  local p
+  for p in $(scope_own_kelyfos_pids); do kill "$p" 2>/dev/null; done
+}
+
+# scope_wait_kelyfos_gone [seconds] — wait for this run's own kelyfos processes
+# to exit. Replaces `pgrep -f "kelyfos run"` used as a wait condition, which on
+# a shared host waits on a peer's run and times out for a reason that has
+# nothing to do with this suite.
+scope_wait_kelyfos_gone() {
+  local i limit="${1:-30}"
+  for i in $(seq 1 "$limit"); do
+    [ -z "$(scope_own_kelyfos_pids)" ] && return 0
+    sleep 1
+  done
+  return 1
+}
+
+# scope_kill_machines — stop this run's kelyfos processes, then its machines,
+# and leave the cache in place. This is the mid-run form: several suites stop
+# everything between steps and keep going, and a teardown that removed the
+# cache underneath them would take the sessions they are about to read.
 #
 # The pids are collected BEFORE anything is signalled, because a `kelyfos run`
 # that is shutting down removes the run directory the Firecracker pid is read
 # from, and a teardown that reads them afterwards finds an empty list and
 # reports success having killed nothing.
-scope_teardown() {
+scope_kill_machines() {
   local fc_pids p left
   fc_pids="$(scope_pids)"
 
-  for p in $(scope_own_kelyfos_pids); do kill "$p" 2>/dev/null; done
+  scope_kill_kelyfos
   sleep 1
   for p in $fc_pids; do kill "$p" 2>/dev/null; done
   sleep 1
@@ -114,7 +169,13 @@ scope_teardown() {
     printf '  scope: this run left Firecracker pids alive:%s\n' "$left" >&2
     for p in $left; do kill -9 "$p" 2>/dev/null; done
   fi
+  return 0
+}
 
+# scope_teardown — the trap cleanup EXIT form: stop everything this run started
+# and take its cache with it.
+scope_teardown() {
+  scope_kill_machines
   [ -n "${SCOPE_ROOT:-}" ] && rm -rf "$SCOPE_ROOT" 2>/dev/null
   return 0
 }
