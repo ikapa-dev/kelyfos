@@ -191,6 +191,7 @@ type Sandbox struct {
 	api      *api
 	opts     Options
 	cmd      *exec.Cmd
+	watchdog *os.Process
 	readyLn  net.Listener
 	eventsLn net.Listener
 	teamLn   net.Listener
@@ -673,8 +674,11 @@ func (s *Sandbox) Start(ctx context.Context) error {
 	argv = s.opts.CPUSlice.WrapArgv(argv)
 	cmd := exec.Command(argv[0], argv[1:]...)
 	// Its own process group, so a Ctrl-C delivered to the whole foreground
-	// group does not race our orderly shutdown.
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	// group does not race our orderly shutdown. Pdeathsig takes the direct
+	// child down with this process — the unjailed VMM entirely, the jailed
+	// one's sudo wrapper — and the watchdog (spawned below, once the pid is
+	// known) covers the rest of that chain (ST-5.3).
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Pdeathsig: syscall.SIGKILL}
 	// On the direct path, place it in its cgroup at clone time rather than
 	// moving it once it is already running: a quota that starts a moment late
 	// is a quota with a hole in it (E1-2).
@@ -710,6 +714,7 @@ func (s *Sandbox) Start(ctx context.Context) error {
 		}
 		s.State.PID = pid
 	}
+	s.spawnVMMWatchdog()
 	go s.drainConsole(stdout)
 	go func() {
 		s.waitErr = cmd.Wait()
@@ -1168,7 +1173,8 @@ func Restore(snapDir string, opts Options) (*Sandbox, time.Duration, error) {
 	// Start: on the systemd path the scope is what places the VMM (P5-6).
 	argv = s.opts.CPUSlice.WrapArgv(argv)
 	cmd := exec.Command(argv[0], argv[1:]...)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	// Pdeathsig: the same reasoning Start has (ST-5.3).
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Pdeathsig: syscall.SIGKILL}
 	// The same placement a cold boot gets: at clone time on the direct path, so
 	// a quota that starts a moment late is not a quota with a hole in it (E1-2)
 	// — except through the jailer, which forks and is told the parent cgroup.
@@ -1198,6 +1204,7 @@ func Restore(snapDir string, opts Options) (*Sandbox, time.Duration, error) {
 		}
 		s.State.PID = pid
 	}
+	s.spawnVMMWatchdog()
 	go s.drainConsole(stdout)
 	go func() { s.waitErr = cmd.Wait(); close(s.done) }()
 
@@ -1688,6 +1695,7 @@ func (s *Sandbox) closeListeners() {
 
 func (s *Sandbox) cleanup() {
 	s.closeListeners()
+	s.stopVMMWatchdog()
 	if s.State.RunDir == "" {
 		return
 	}

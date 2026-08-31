@@ -58,22 +58,61 @@ scope_kill_kelyfos
 say "SIGKILL a restore process: the orphan is listed, then reaped"
 ( "$BIN/kelyfos" snapshot restore --name sec-lab-lifecycle > "$SLAB_WORK/restore.log" 2>&1 & echo $! > "$SLAB_WORK/restore.pid" )
 rpid="$(cat "$SLAB_WORK/restore.pid")"
-for i in $(seq 1 60); do
-  grep -aq "^sandbox=" "$SLAB_WORK/restore.log" 2>/dev/null && break
+for i in $(seq 1 120); do
+  restore_id="$(sed -n 's/^sandbox \([0-9a-f]*\) restored.*/\1/p' "$SLAB_WORK/restore.log" 2>/dev/null | head -1)"
+  [ -n "$restore_id" ] && break
   kill -0 "$rpid" 2>/dev/null || break
   sleep 0.5
 done
 # restore prints its own banner — `sandbox <id> restored from "name"` — and
 # deliberately no sandbox= line (D84 scoped that to run, which is what the
 # suites drive); the id comes from that banner here.
-restore_id="$(sed -n 's/^sandbox \([0-9a-f]*\) restored.*/\1/p' "$SLAB_WORK/restore.log" | head -1)"
 check "$([ -n "$restore_id" ] && echo yes || echo no)" "the restore booted a machine (id ${restore_id:-none})"
 kill -9 "$rpid"
 sleep 1
 
-# The machine outlives the process (IA-M1). Doctor must list exactly it.
+# ST-5.3's watchdog now fires where the audit found an immortal machine: the
+# parent's death takes the VMM down and frees the network names without
+# anybody asking. The assertion is the absence of what the audit measured.
+vmm_gone=""
+for i in $(seq 1 20); do
+  [ -z "$(pgrep -x firecracker)" ] && { vmm_gone=yes; break; }
+  sleep 0.5
+done
+check "$([ "$vmm_gone" = "yes" ] && echo yes || echo no)" \
+      "the watchdog stopped the orphaned machine on its own"
+after="$("$BIN/kelyfos" doctor 2>&1 | sed -n '/orphaned instances/p')"
+case "$after" in
+  *"orphaned instances     none"*) pass "doctor is clean — no orphan ever formed" ;;
+  *) fail "doctor reports residue the watchdog should have prevented: $after" ;;
+esac
+
+say "the reaper still answers residue the watchdog cannot reach"
+# A watchdog that was SIGKILLed itself cannot act — that residue is exactly
+# what the doctor reaper exists for. Kill the watchdog first (it is this
+# restore's other kelyfos child), then the restore, and doctor must list and
+# reap the orphan the old-fashioned way.
+( "$BIN/kelyfos" snapshot restore --name sec-lab-lifecycle > "$SLAB_WORK/restore3.log" 2>&1 & echo $! > "$SLAB_WORK/restore3.pid" )
+r3pid="$(cat "$SLAB_WORK/restore3.pid")"
+restore3_id=""
+for i in $(seq 1 120); do
+  restore3_id="$(sed -n 's/^sandbox \([0-9a-f]*\) restored.*/\1/p' "$SLAB_WORK/restore3.log" 2>/dev/null | head -1)"
+  [ -n "$restore3_id" ] && break
+  kill -0 "$r3pid" 2>/dev/null || break
+  sleep 0.5
+done
+check "$([ -n "$restore3_id" ] && echo yes || echo no)" "the third restore booted (id ${restore3_id:-none})"
+wd_killed=""
+for c in $(pgrep -P "$r3pid"); do
+  if [ "$(cat /proc/$c/comm 2>/dev/null)" = "kelyfos" ]; then
+    kill -9 "$c" && wd_killed=yes
+  fi
+done
+check "$([ "$wd_killed" = "yes" ] && echo yes || echo no)" "the watchdog itself was SIGKILLed"
+kill -9 "$r3pid"
+sleep 1
 listing="$("$BIN/kelyfos" doctor 2>&1 | sed -n '/orphaned/,/reap-orphaned/p')"
-if [ -n "$restore_id" ] && grep -q "$restore_id" <<<"$listing"; then
+if [ -n "$restore3_id" ] && grep -q "$restore3_id" <<<"$listing"; then
   pass "doctor lists the orphaned machine by id"
 else
   fail "doctor does not list the orphaned machine by id ($(head -c 60 <<<"$listing" | tr -d '\n'))"

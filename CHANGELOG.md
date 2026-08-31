@@ -1266,3 +1266,13 @@ the repository layout, and an acceptance test that passed.
   work. The trade: a run whose agent genuinely deleted every file in the
   workspace is now refused with that message rather than silently writing
   back an empty tree.
+### Fixed
+- **The machine a killed `kelyfos` process leaves behind is no longer
+  immortal** (D92, the independent audit's IA-M1). Every VMM's direct child
+  now carries PDEATHSIG, and a watchdog re-exec — spawned per sandbox, no
+  new command surface — stops the machine and frees its TAP, nft table and
+  jail directory when the parent dies without a teardown. `kelyfos doctor`
+  reports what the watchdog could not reach (a watchdog that was itself
+  SIGKILLed, or legacy runs), and `--reap-orphaned` removes it. No change to
+  the clean path: on a normal shutdown the watchdog exits before it could
+  ever act.

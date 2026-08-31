@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+
+	"github.com/ikapa-dev/kelyfos/internal/sandbox"
 )
 
 // Version is stamped at build time; the zero value is honest about being a
@@ -127,5 +129,17 @@ func main() {
 		}
 		fmt.Fprintf(os.Stderr, "kelyfos: %v\n", err)
 		os.Exit(1)
+	}
+}
+
+func init() {
+	// The VMM watchdog (ST-5.3): a re-exec of this binary spawned by the
+	// sandbox with Pdeathsig SIGTERM, whose whole life is "when the parent
+	// dies with the machine still up, stop the machine". It runs before the
+	// command dispatch — it has no argv — and it is not a command: nothing in
+	// help, nothing in the generated reference, nothing a client can call.
+	if runDir := os.Getenv("KELYFOS_VMM_WATCHDOG"); runDir != "" {
+		sandbox.RunVMMWatchdog(runDir)
+		os.Exit(0)
 	}
 }

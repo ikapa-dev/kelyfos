@@ -1585,3 +1585,46 @@ exit. The fix makes the durable write a precondition of the handshake and
 makes the write-back refuse when its own precondition failed, and the
 regression test that reproduced the loss twice now asserts the survival
 twice.
+
+## D92
+
+*2026-08-31*
+
+**The VMM's parent death is now a signal instead of a state: a watchdog
+re-exec stops the machine and frees its network names when the kelyfos
+process dies without its teardown, and the direct children carry
+PDEATHSIG — IA-M1's prevention half (ST-5.3).**
+
+The chain is kelyfos → sudo → jailer(exec) → firecracker, and the reason a
+one-line PDEATHSIG cannot cover it is structural: prctl(PR_SET_PDEATHSIG) is
+set on the child at spawn, fires when that child's parent dies, and the
+jailer is Firecracker's binary — it execs into the VMM without setting one.
+So the direct child (sudo jailed, firecracker unjailed) carries
+`Pdeathsig: SIGKILL` from its spawn — the unjailed VMM dies with its parent
+outright — and the jailed chain gets a watchdog: a re-exec of the binary,
+spawned once the VMM's pid is known, carrying `Pdeathsig: SIGTERM` and
+pointed at the run directory. Its whole life is one branch: parent dead
+while the VMM lives → SIGKILL the VMM, free the TAP and table, remove the
+jail directory, exit.
+
+| candidate | verdict |
+| --- | --- |
+| PDEATHSIG on the firecracker process | **Rejected as unreachable.** It must be set by the jailer before exec, the jailer offers no hook, and clearing rules for privileged binaries make it fragile at best. |
+| A Go goroutine watching the VMM | **Rejected.** It dies with the process whose death it is supposed to notice. |
+| Rely on the doctor reaper alone | **Rejected as the whole answer.** The reaper reconciles residue after the fact; a watchdog shrinks the window from forever to milliseconds, which is the difference between "cleaned up later" and "never existed". |
+| Register the watchdog as a real subcommand | **Rejected.** It has no argv, no flags and no clients; surface added for a process nobody invokes is surface maintained for nobody. It rides an environment marker checked before dispatch. |
+
+**Lifecycle, stated so nobody debugs it twice.** On a normal teardown the
+VMM exits first and the watchdog exits on its next 300 ms tick — its cleanup
+never runs. On an abnormal parent death the watchdog acts within one tick or
+on the signal. A watchdog that was SIGKILLed itself cannot act, and that
+residue is what the doctor reaper sweeps — the two mechanisms are layers,
+not alternatives, and ST-1.9's suite now exercises both: a restore orphaned
+with its watchdog alive is taken down with no orphan ever forming, and a
+restore orphaned with the watchdog SIGKILLed first is listed and reaped by
+doctor.
+
+**Why:** the audit's M-1 was "immortal orphaned microVMs, no reaper"; the
+reaper alone answers what already happened, PDEATHSIG answers what the
+kernel can do for free, and the watchdog bridges the gap between them. The
+machine outlives its supervisor for at most a third of a second.
