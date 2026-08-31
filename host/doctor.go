@@ -90,6 +90,7 @@ type check struct {
 func doctorCmd(argv []string) error {
 	fs := flag.NewFlagSet("kelyfos doctor", flag.ExitOnError)
 	arch := fs.String("arch", sandbox.HostArch(), "architecture to check images for")
+	reapOrphaned := fs.Bool("reap-orphaned", false, "stop orphaned KelyfOS machines and remove their TAPs, nft tables and jail dirs (Linux only; see the orphaned-instances check)")
 	// The Linux layer, on the platform that needs one (P6-12). On Linux these
 	// are accepted and refused with one sentence, rather than being absent —
 	// a flag that exists on one platform and is an unknown flag on the other
@@ -98,7 +99,7 @@ func doctorCmd(argv []string) error {
 	recreate := fs.Bool("recreate", false, "macOS: delete the Linux layer and provision it again")
 	stop := fs.Bool("stop", false, "macOS: stop the Linux layer")
 	fs.Usage = func() {
-		fmt.Fprintln(fs.Output(), "usage: kelyfos doctor\n\nChecks that this machine can run KelyfOS, and says exactly how to fix what cannot.")
+		fmt.Fprintln(fs.Output(), "usage: kelyfos doctor\n\nChecks that this machine can run KelyfOS, and says exactly how to fix what cannot.\n\nWith --reap-orphaned, also stops the machines a dead run/restore process left\nbehind — listed by the orphaned-instances check, and only those.")
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(argv); err != nil {
@@ -154,6 +155,7 @@ func doctorCmd(argv []string) error {
 		images,
 		checkDisk(images.ok),
 		checkSessionsSize(),
+		checkOrphans(*reapOrphaned),
 	}
 
 	var failed int
@@ -452,4 +454,66 @@ func sessionsSizeCheck(root string, n int, total int64) check {
 		fix: "Nothing is deleted automatically — the flight recorder's own history grows until pruned.\n" +
 			"    kelyfos sessions prune           deletes recorded sessions past the retention floor\n" +
 			"    kelyfos sessions prune -dry-run  shows what that would delete first"}
+}
+
+// checkOrphans is the reconciliation sweep (ST-0.2, the doctor half of IA-M1).
+// Read-only unless --reap-orphaned, and advisory either way (warn, per this
+// file's own S3 rule): orphaned machines are dead weight and a blocked
+// snapshot name, but they do not stop this machine from running KelyfOS.
+func checkOrphans(reap bool) check {
+	var actions []string
+	if reap {
+		found, err := scanOrphans(os.Getpid())
+		if err != nil {
+			return check{name: "orphaned instances", ok: false, warn: true,
+				detail: "cannot scan: " + err.Error()}
+		}
+		actions = reapOrphans(found)
+		for _, a := range actions {
+			fmt.Printf("  [reap] %-22s %s\n", "", a)
+		}
+		if len(actions) == 0 {
+			fmt.Printf("  [reap] %-22s %s\n", "", "nothing to reap — the scan found no orphaned residue")
+		}
+	}
+
+	found, err := scanOrphans(os.Getpid())
+	if err != nil {
+		return check{name: "orphaned instances", ok: false, warn: true,
+			detail: "cannot scan: " + err.Error()}
+	}
+	return orphansCheck(found, reap)
+}
+
+// orphansCheck is checkOrphans's own decision, split out so the report shape
+// is testable against a synthetic scan rather than a real machine — the same
+// split sessionsSizeCheck makes above.
+func orphansCheck(found []orphan, reaped bool) check {
+	if len(found) == 0 {
+		detail := "none — every KelyfOS machine here has a live supervisor"
+		if reaped {
+			detail = "none — what --reap-orphaned removed above was all of it"
+		}
+		return check{name: "orphaned instances", ok: true, detail: detail}
+	}
+	var nv, nt, nk int
+	for _, o := range found {
+		switch o.Kind {
+		case orphanKindVMM:
+			nv++
+		case orphanKindTAP:
+			nt++
+		case orphanKindTable:
+			nk++
+		}
+	}
+	var fix strings.Builder
+	for _, o := range found {
+		fmt.Fprintf(&fix, "  %s %s: %s\n", o.Kind, o.ID, o.Detail)
+	}
+	fix.WriteString("kelyfos doctor --reap-orphaned stops these and removes their TAPs, tables and jail dirs.\n" +
+		"It only ever touches what the scan proved is KelyfOS's and unclaimed by any live process;")
+	return check{name: "orphaned instances", ok: false, warn: true,
+		detail: fmt.Sprintf("%d orphaned VMM(s), %d leftover TAP(s), %d leftover nft table(s)", nv, nt, nk),
+		fix:    strings.TrimRight(fix.String(), "\n")}
 }

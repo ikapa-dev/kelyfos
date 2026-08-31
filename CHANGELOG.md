@@ -24,6 +24,13 @@ reference described in the README and re-measured per release.
   boot banner is unchanged, so anything matching `ready in` keeps working;
   the line is documented in `run`'s own help text and listed in
   `docs/compatibility.md` §2 among the surfaces scripts may build on.
+- **`kelyfos doctor` now reports orphaned KelyfOS machines** (D85) — VMMs a
+  dead `run`/`restore` process left behind, plus their leftover TAPs, nft
+  tables and jail dirs, each with evidence. Read-only by default;
+  `kelyfos doctor --reap-orphaned` stops what the scan proved is KelyfOS's and
+  unclaimed, and reports every action it took. It never touches a machine a
+  live `kelyfos` process supervises, and never touches a firecracker it cannot
+  prove is KelyfOS's.
 
 ## v1.1.2 — 2026-08-31
 

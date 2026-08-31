@@ -458,6 +458,14 @@ has finished** — passing on a fast machine and failing on a slow one.
 
 Use `kelyfos run [flags] -- <command>` instead. It has a defined exit point.
 
+And when the worst case has already happened — the script crashed, or something
+sent `kill -9`, and the machine is still running with nothing attached to it —
+`kelyfos doctor` lists those orphans with their evidence, and
+`kelyfos doctor --reap-orphaned` stops them and removes their TAPs, tables and
+jail directories. It only touches machines no live `kelyfos` process
+supervises, so running it beside somebody else's work is safe; it still asks
+for the flag, because stopping a machine is a judgement somebody should make.
+
 ### Expecting the workspace directory to survive
 
 The write-back is a **swap, not a merge**: the old directory is renamed away and

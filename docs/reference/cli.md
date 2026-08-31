@@ -50,6 +50,7 @@ kelyfos doctor
 | Flag | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `--arch` | string | the build host's architecture | architecture to check images for |
+| `--reap-orphaned` | boolean | — | stop orphaned KelyfOS machines and remove their TAPs, nft tables and jail dirs (Linux only; see the orphaned-instances check) |
 | `--recreate` | boolean | — | macOS: delete the Linux layer and provision it again |
 | `--setup` | boolean | — | macOS: provision and start the Linux layer, then check inside it |
 | `--stop` | boolean | — | macOS: stop the Linux layer |

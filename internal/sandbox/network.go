@@ -275,6 +275,70 @@ func (n *Network) Down() {
 	_, _ = sudo("ip", "link", "del", n.TAP)
 }
 
+// RemoveNetworkResidue deletes the TAP and the nft table a sandbox id owns,
+// without a Network struct to own them. It is the orphan reaper's tool
+// (host/orphan.go, ST-0.2): a machine whose supervising process died still has
+// both, nothing else will ever remove them, and the names are derived from the
+// id exactly as newNetwork derived them — `kelyfos<id>` (truncated to
+// IFNAMSIZ-1, which for the 8-hex ids newID mints is no truncation at all) and
+// `kelyfos_<id>`. Best-effort like Down, for the same reason: residue that
+// cannot be removed is the doctor's report to make, not a boot to fail.
+// The returned string says what was removed, so the reaper can report actions
+// rather than imply them.
+func RemoveNetworkResidue(id string) string {
+	tap := "kelyfos" + id
+	if len(tap) > 15 { // IFNAMSIZ - 1, the same bound newNetwork applies
+		tap = tap[:15]
+	}
+	var removed []string
+	if linkExists(tap) {
+		if _, err := sudo("ip", "link", "del", tap); err == nil {
+			removed = append(removed, "removed TAP "+tap)
+		} else {
+			removed = append(removed, "could not remove TAP "+tap)
+		}
+	}
+	if tableExists("kelyfos_" + id) {
+		if _, err := sudo("nft", "delete", "table", "inet", "kelyfos_"+id); err == nil {
+			removed = append(removed, "removed nft table kelyfos_"+id)
+		} else {
+			removed = append(removed, "could not remove nft table kelyfos_"+id)
+		}
+	}
+	return strings.Join(removed, ", ")
+}
+
+// linkExists and tableExists read the live state rather than assuming it, so
+// the reaper reports what it actually did rather than what it attempted.
+func linkExists(name string) bool {
+	out, err := exec.Command("ip", "-j", "-o", "link", "show", name).Output()
+	return err == nil && len(out) > 0
+}
+
+func tableExists(name string) bool {
+	out, err := sudoJSON("nft", "-j", "list", "tables")
+	if err != nil {
+		return false
+	}
+	var doc struct {
+		Nftables []struct {
+			Table *struct {
+				Family string `json:"family"`
+				Name   string `json:"name"`
+			} `json:"table"`
+		} `json:"nftables"`
+	}
+	if json.Unmarshal([]byte(out), &doc) != nil {
+		return false
+	}
+	for _, item := range doc.Nftables {
+		if item.Table != nil && item.Table.Family == "inet" && item.Table.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
 // BlockedPackets reports how many of the GUEST's packets the drop rules
 // counted, which is what lets a session say traffic was blocked rather than
 // merely not allowed.

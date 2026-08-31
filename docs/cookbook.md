@@ -1,6 +1,6 @@
 # KelyfOS cookbook
 
-Twenty-four recipes, each one complete, each one runnable as it stands.
+Twenty-five recipes, each one complete, each one runnable as it stands.
 
 These are not illustrations. `bash dev/cookbook.sh` extracts every script below
 and runs it on a real machine. Every commit checks that each recipe still
@@ -2419,6 +2419,63 @@ kill -INT "$run_pid"
 for i in $(seq 1 120); do kill -0 "$run_pid" 2>/dev/null || break; sleep 0.5; done
 kill -0 "$run_pid" 2>/dev/null && { echo "run pid $run_pid refused to stop"; exit 1; }
 echo "sandbox $id torn down"
+```
+
+---
+
+## 24. Clean up a machine a dead script left behind
+
+The failure this recipe creates on purpose is the one a crashed script leaves
+behind for real: a `run` process killed before its teardown ran, and the
+machine it booted — Firecracker, its TAP, its nftables table — still up with
+nothing attached to it. Nothing else notices or removes that; `kelyfos doctor`
+lists it, and `--reap-orphaned` is the opt-in that removes it (D85). The
+reaper only ever touches machines no live `kelyfos` process supervises, so it
+is safe to run beside somebody else's work.
+
+<!-- recipe: orphan-cleanup -->
+
+```bash
+set -euo pipefail
+work="$(mktemp -d)"
+cd "$work"
+trap '{ [ -f run.pid ] && kill -9 "$(cat run.pid)" 2>/dev/null || true; } ;
+      kelyfos doctor --reap-orphaned >/dev/null 2>&1 || true ;
+      rm -rf "$work"' EXIT
+
+# Boot an egress machine the way the crash will find it: running, with a TAP
+# and a firewall table of its own.
+cache="$(mktemp -d)"
+ln -s "$HOME/.cache/kelyfos/out" "$cache/out"
+export KELYFOS_CACHE="$cache"
+( kelyfos run --image dev --allow example.com > run.log 2>&1 & echo $! > run.pid )
+id=""
+for i in $(seq 1 150); do
+  id="$(sed -n 's/^sandbox=\([0-9a-f]*\)$/\1/p' run.log | sed -n '1,1p')"
+  [ -n "$id" ] && break
+  kill -0 "$(cat run.pid)" 2>/dev/null || break
+  sleep 0.2
+done
+[ -n "$id" ] || { echo "no sandbox= line; run.log said:"; sed -n '1,5p' run.log; exit 1; }
+echo "booted sandbox $id, about to orphan it"
+
+# The crash: SIGKILL to the run process, no teardown, no write-back — the
+# exact thing a CI timeout or an OOM kill does. The machine outlives it.
+kill -9 "$(cat run.pid)"
+sleep 1
+
+# Doctor sees what the audit saw: the VMM with a dead supervisor, named with
+# its pid and age.
+kelyfos doctor 2>&1 | sed -n '/orphaned/,/reap/p' | sed -n '1,8p'
+
+# The opt-in: stop it, remove its TAP, its table, its jail dir — and then a
+# plain doctor is clean again, which is the assertion.
+kelyfos doctor --reap-orphaned 2>&1 | sed -n '/\[reap\]/p' | sed -n "1,4p"
+if kelyfos doctor 2>&1 | grep -q "orphaned instances     none"; then
+  echo "orphan $id reaped; doctor is clean"
+else
+  echo "doctor still reports orphans after the reap"; exit 1
+fi
 ```
 
 ---

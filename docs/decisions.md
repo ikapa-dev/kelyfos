@@ -1288,3 +1288,66 @@ and pretending otherwise would put it in a table nothing fills in.
 that step, and the fix is one line that changes nothing an existing script
 matches. A form a script can `sed` out is the difference between a harness that
 reads the product and one that reads tea leaves.
+
+## D85
+
+*2026-08-31*
+
+**`kelyfos doctor` reports orphaned KelyfOS machines, and `--reap-orphaned`
+removes them — and the line it will not cross is proof: it reaps only what the
+scan can attribute to this product *and* to no live process (ST-0.2, the
+doctor half of IA-M1).**
+
+The audit killed a `run` process and watched the machine it booted outlive it
+indefinitely — Firecracker, its TAP, its nftables table, its jail directory,
+all unreachable (the vsock channel died with the process), `doctor` noticing
+nothing. A reconciliation sweep belongs in the command that already inspects
+the machine rather than a session.
+
+**What the scan accepts as proof, and why each layer exists.** On a machine
+where several worktrees run sandboxes at once, "a firecracker with a dead
+parent" is not proof of anything.
+
+- *KelyfOS's.* A jailed VMM's argv is chroot-relative (`/firecracker --api-sock
+  /fc.sock`) and its `/proc/<pid>/root` readlink resolves to `/` from outside
+  the jail — the id and the cache survive only on the `sudo -n jailer --id
+  <id> … --chroot-base-dir <run root>` wrapper's argv, which stays alive for
+  exactly as long as the VMM it started. An unjailed VMM is known by its
+  api-sock path under a run directory. A bare `firecracker` somebody is
+  running by hand matches neither and is never listed, let alone signalled.
+- *Orphaned.* No live `kelyfos` process anywhere in the ancestor chain — the
+  chain, not one ppid, because a peer worktree's boot in progress has one and
+  reading one ppid is how a doctor kills a peer's machine. A zombie in the
+  chain does not claim its child: a zombie supervises nothing.
+- *Leftover.* A TAP `kelyfos<id>` or table `kelyfos_<id>` whose id no live VMM
+  carries and no live `kelyfos` process's run directory names — the second
+  condition keeps a machine that is mid-boot (TAP up, VMM milliseconds away)
+  from being reported by a doctor that ran inside the window.
+
+| candidate | verdict |
+| --- | --- |
+| Reap automatically at startup | **Rejected.** Doctor is read-only by default and stays that way; stopping a VMM is a judgement somebody asks for. `--reap-orphaned` is the ask. |
+| Match `pgrep firecracker` and check ppid | **Rejected.** It is the exact question D83 closed — host-wide, answered with a kill — and it claims every firecracker on the machine, ours or not. |
+| `prctl(PR_SET_PDEATHSIG)` in this change | **Rejected here, tracked as ST-5.3.** A reaper reconciles what already happened; PDEATHSIG prevents the next one. Both are wanted; they are different tasks. |
+| Orphans fail doctor's exit code | **Rejected.** This file's own S3 rule: advisory checks do not flip "can this machine run KelyfOS". The orphan check is `warn` for the same reason the session-size one is. |
+
+**Known gap, stated.** A jailed VMM whose *wrapper* was killed while the VMM
+lives has neither wrapper argv nor a matching root link nor a host-side socket
+path — the scan cannot attribute it, so it does not list it. Its TAP and table
+are still caught by the leftover path. Closing the gap means recording the
+VMM's pid in the session dir at boot (IA-M1's own fix sketch) — ST-5.3's
+territory, not this check's.
+
+**The audit's own residue.** IA-I4 left a foreign nftables table
+(`kelyfos_741d2ffa`) on the shared dev VM, named "never delete it" because
+nothing could attribute it. The reaper is the attribution mechanism: a table
+whose id no live machine claims is exactly what it reaps, with the evidence
+printed. The trap was audit-time caution, not a permanent prohibition — but it
+binds anything *but* the reaper: no suite, no script, no agent cleanup may
+delete residue it did not prove.
+
+**Why:** the audit's second finding is a lifecycle defect with no verification
+path — nothing noticed, nothing reaped, nothing asserted it. A doctor check
+with evidence lines, an opt-in reaper whose scoping is proven rather than
+pattern-matched, and a suite (ST-1.9) that creates a real orphan and asserts
+this exact behaviour close it.
