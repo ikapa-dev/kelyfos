@@ -1651,3 +1651,96 @@ rather than silently accepted.
 'verifies' to 'fails'" — turns out to be one `--sign-key` away for every
 operator who names a key, and the suite proves it live. The unsigned path's
 verifies-clean is now the documented exception rather than the whole story.
+
+## D94
+
+*2026-08-31*
+
+**The fuzz budget is proposed at three tiers, priced, and NOT applied to
+`security.yml` — editing that workflow is one of the three paths that starts
+a run on push, and the nightly proposal needs the maintainer's minutes first
+(ST-4.1).**
+
+The scheduled budget is a smoke test: 29 targets × 10 seconds weekly says a
+target still runs, not that it hunts. The corrected target list (§6.3 of the
+plan) splits what a larger budget buys:
+
+| tier | targets | budget | cost | when |
+| --- | --- | --- | --- | --- |
+| per-push | all 29+ (dev/fuzz.sh discovers them — the new chain-link target included) | 10 s each | unchanged | every push, already in ci.yml |
+| weekly hunt | the chain extractor (internal/report), the four proto framing targets, FuzzExtractImageLinks, FuzzAppendFieldValues | 5 min each ≈ 35 min | ≈ 35 runner-minutes weekly | Saturday, the one day no workflow uses, behind `workflow_dispatch` too |
+| pre-release | the same, 30 min each | ≈ 3.5 hours | host time | locally, before a release |
+
+Targets that need a target WRITTEN first stay out of the budget until written:
+the workspace enumeration is covered by FuzzExtractImageLinks as of ST-3.3;
+MCP framing (internal/mcp) still has none and is named as the gap rather than
+hidden by a schedule. The proxy request parser keeps its two targets and no
+new budget — duplicate coverage is not coverage.
+
+**Nightly is deliberately not proposed.** Seven times the current cost for a
+codebase whose fuzz targets are the same nine every night is spend without a
+hypothesis; weekly hunting plus per-push seeds answers what a night would.
+If the maintainer wants nightly, the row's Saturday slot moves to daily and
+the price is the only thing that changes.
+
+| candidate | verdict |
+| --- | --- |
+| Apply the schedule to security.yml in this commit | **Rejected pending approval** — §3's rule, the same one D89 applied to the suites. The row prices it; the maintainer decides it. |
+| One shared 60-minute pool instead of per-target minutes | **Rejected.** A pool silently spends everything on whichever target a corpus lucky-streak favours; per-target minutes are the budget a person can audit. |
+
+**Why:** a fuzz budget nobody priced is a budget nobody can defend, and a
+schedule nobody approved is §3's incident happening politely.
+
+## D95
+
+*2026-08-31*
+
+**Semgrep rules for the four checklists are proposed as a LOCAL gate first —
+wired into `ci.yml`'s checks job only if the tool download keeps
+`make ci-act` green and offline-tolerant (ST-4.3).**
+
+RECORD/PROXY/BROKER/RENDER are precise enough to lint: `template.HTML`
+outside the chain blob, `os.Create` in report paths, unescaped writes,
+post-effect ACL checks. The rules themselves are a day's work and are not
+the gate here; the gate is §3's again — CI minutes and, new for this tool,
+the Docker image `make ci-act` runs in, which would need semgrep present or
+would download it per run (a download in a job that is currently
+network-light, and a supply-chain surface of its own: the rules' semantics
+pin to a semgrep version that must be pinned in versions.mk like everything
+else).
+
+| candidate | verdict |
+| --- | --- |
+| Land the rules in ci.yml's checks job now | **Rejected pending approval** — the tool download changes what `make ci-act` needs, and the plan's own §3 makes that the maintainer's call. |
+| Rules without version pinning | **Rejected.** A lint whose findings move with an unpinned tool version is a lint that cannot be argued with. |
+| Skip semgrep entirely | **Rejected.** The four checklists are prose today; a mechanical pass over the exact constructs they name — even locally, even advisory — is the cheapest way to keep them read. |
+
+**Why:** the checklists are the product's security vocabulary and nothing
+executes them; a local advisory pass is the honest first step, and the CI
+wiring is D89's decision wearing a different tool.
+
+## D97
+
+*2026-08-31*
+
+**The security cadence proposed to the maintainer, assembling D89's suite
+tiers, D94's fuzz tiers and D95's lint gate into one calendar (ST-6.2) —
+proposed, not adopted; every schedule in it is the maintainer's to move.**
+
+| what | cadence | where |
+| --- | --- | --- |
+| per-push | ci.yml's checks + boot jobs (unchanged), + the fast security subset if D89 is approved | hosted CI |
+| fuzz hunt | weekly hunt tier (D94) | hosted CI, Saturday |
+| security suites | heavy suites via workflow_dispatch + Thursday weekly (D89) | hosted CI / local |
+| lint gate | local advisory pass until D95 is approved | local |
+| full lab | locally, `make accept-security` + the origin battery if D90 is approved | local, pre-release |
+| fresh-agent exam | after each epic that touches recorder, egress, broker or renderers (ST-6.3) | local |
+| audit re-run | after each such epic, fresh eyes, the audit's own scope | owner-arranged |
+
+A red lab run is a blocker under the existing "CI is the gate" rule — the
+cadence proposal does not soften that, it schedules it.
+
+**Why:** ST-6.2 was "proposed to the maintainer, not adopted unilaterally" in
+the plan's own words, and every row above cites the decision that prices it.
+What is adopted locally is adopted: the suites run, the exams run, the gates
+are red or green on this machine regardless.
