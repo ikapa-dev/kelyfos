@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -162,4 +163,181 @@ func TestScopePidsReadsOnlyItsOwnCache(t *testing.T) {
 		t.Errorf("scope_pids returned %v; it must return only the pid under its "+
 			"own KELYFOS_CACHE (11111), never the peer's (22222)", got)
 	}
+}
+
+// buildFakeKelyfos makes a stand-in whose comm really is "kelyfos" and whose
+// argv[1] is a chosen subcommand — the two things the predicates read. A shell
+// script will not do: comm comes from the executable, so a script's process is
+// named after its interpreter and `pgrep -x kelyfos` never sees it. So /bin/sh
+// is copied to a file called "kelyfos" and handed a script named after the
+// subcommand, which puts that word in argv[1] exactly where a real invocation
+// would have it.
+func buildFakeKelyfos(t *testing.T, dir string, subcommands ...string) string {
+	t.Helper()
+	sh, err := os.ReadFile("/bin/sh")
+	if err != nil {
+		t.Skipf("no /bin/sh to copy: %v", err)
+	}
+	bin := filepath.Join(dir, "kelyfos")
+	if err := os.WriteFile(bin, sh, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, sub := range subcommands {
+		if err := os.WriteFile(filepath.Join(dir, sub), []byte("sleep 600\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return bin
+}
+
+func startFake(t *testing.T, bin, cache string, args ...string) *exec.Cmd {
+	t.Helper()
+	cmd := exec.Command(bin, args...)
+	cmd.Dir = filepath.Dir(bin)
+	cmd.Env = append(os.Environ(), "KELYFOS_CACHE="+cache)
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		_, _ = cmd.Process.Wait()
+	})
+	return cmd
+}
+
+func runScope(t *testing.T, cache, snippet string) string {
+	t.Helper()
+	out, err := exec.Command("bash", "-c",
+		`set -u; source "$1"; KELYFOS_CACHE="$2"; export KELYFOS_CACHE; `+snippet,
+		"bash", filepath.Join(repoRoot(t), "dev", "scope.sh"), cache).CombinedOutput()
+	if err != nil {
+		t.Fatalf("scope.sh snippet %q failed: %v\n%s", snippet, err, out)
+	}
+	return string(out)
+}
+
+// TestScopePidsToleratesAPidFileWithNoTrailingNewline is a regression test for a
+// defect this change shipped and a live run caught: the jailer writes
+// firecracker.pid with no trailing newline, so cat-ing a pid file and a
+// sandbox.json pid in sequence produced "111222" — one token that is not a pid,
+// which the teardown then failed to kill while reporting nothing wrong.
+func TestScopePidsToleratesAPidFileWithNoTrailingNewline(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("the dev suites are Linux-only")
+	}
+	cache := t.TempDir()
+	dir := filepath.Join(cache, "run", "firecracker", "aaaaaaaa")
+	if err := os.MkdirAll(filepath.Join(dir, "root"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// One jailed sandbox writes BOTH: the jailer's pid file, with no trailing
+	// newline, and its own state file naming the same pid. That is where the
+	// two reads meet, and where "111" + "111" became "111111".
+	if err := os.WriteFile(filepath.Join(dir, "root", "firecracker.pid"),
+		[]byte("111"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "sandbox.json"),
+		[]byte(`{"id":"aaaaaaaa","pid":111,"jailed":true}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got := strings.Fields(runScope(t, cache, "scope_pids"))
+	sort.Strings(got)
+	if len(got) != 1 || got[0] != "111" {
+		t.Errorf("scope_pids returned %v, want [111]; the jailer writes firecracker.pid "+
+			"with no trailing newline, so an unframed read concatenates it with the "+
+			"state file's pid into a token that is not a pid and cannot be killed", got)
+	}
+}
+
+// TestScopePidsFindsAnUnjailedMachine pins the blocker the review found:
+// firecracker.pid is written by the jailer, so a --no-jail sandbox has none,
+// and a teardown reading only that file walks past the machine and reports
+// success. dev/accept-jail.sh and dev/accept-seccomp.sh both boot --no-jail.
+func TestScopePidsFindsAnUnjailedMachine(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("the dev suites are Linux-only")
+	}
+	cache := t.TempDir()
+	dir := filepath.Join(cache, "run", "firecracker", "cccccccc")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// What an unjailed run leaves behind: a state file with its pid, and no
+	// firecracker.pid anywhere.
+	if err := os.WriteFile(filepath.Join(dir, "sandbox.json"),
+		[]byte(`{"id":"cccccccc","pid":31337,"jailed":false}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got := strings.Fields(runScope(t, cache, "scope_pids"))
+	if len(got) != 1 || got[0] != "31337" {
+		t.Errorf("scope_pids returned %v; an unjailed machine records its pid only in "+
+			"sandbox.json, and a teardown that cannot see it leaks the machine silently", got)
+	}
+}
+
+// TestScopeOwnKelyfosPidsMatchesOnTheCacheNotTheName pins the predicate that
+// replaced `pkill -f "kelyfos run"`. It is the most novel thing in scope.sh and
+// was untested until the review said so.
+func TestScopeOwnKelyfosPidsMatchesOnTheCacheNotTheName(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("reads /proc/<pid>/environ")
+	}
+	bin := buildFakeKelyfos(t, t.TempDir(), "run")
+	ourCache, peerCache := t.TempDir(), t.TempDir()
+
+	ours := startFake(t, bin, ourCache, "run")
+	peer := startFake(t, bin, peerCache, "run")
+	time.Sleep(300 * time.Millisecond)
+
+	got := strings.Fields(runScope(t, ourCache, "scope_own_kelyfos_pids"))
+	if !slicesContain(got, strconv.Itoa(ours.Process.Pid)) {
+		t.Errorf("scope_own_kelyfos_pids %v omitted this run's own kelyfos (pid %d)",
+			got, ours.Process.Pid)
+	}
+	if slicesContain(got, strconv.Itoa(peer.Process.Pid)) {
+		t.Errorf("scope_own_kelyfos_pids %v included a peer's kelyfos (pid %d) — it must "+
+			"match on KELYFOS_CACHE in the environment, never on the process name",
+			got, peer.Process.Pid)
+	}
+}
+
+// TestScopeKillKelyfosHonoursItsSubcommandFilter pins the defect that broke
+// dev/accept-profile.sh: halt() was `pkill -f "kelyfos run"`, which by
+// construction spares a `kelyfos snapshot restore`, and the suite execs into
+// the machine that restore brought up.
+func TestScopeKillKelyfosHonoursItsSubcommandFilter(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("reads /proc/<pid>/cmdline")
+	}
+	bin := buildFakeKelyfos(t, t.TempDir(), "run", "snapshot")
+	cache := t.TempDir()
+
+	run := startFake(t, bin, cache, "run")
+	restore := startFake(t, bin, cache, "snapshot", "restore", "--workspace", "/srv/run/x")
+	time.Sleep(300 * time.Millisecond)
+
+	runScope(t, cache, "scope_kill_kelyfos run")
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) && alive(run.Process.Pid) {
+		time.Sleep(50 * time.Millisecond)
+	}
+	if alive(run.Process.Pid) {
+		t.Errorf("scope_kill_kelyfos run left the `kelyfos run` (pid %d) alive", run.Process.Pid)
+	}
+	if !alive(restore.Process.Pid) {
+		t.Errorf("scope_kill_kelyfos run killed a `kelyfos snapshot restore` (pid %d). "+
+			"`pkill -f \"kelyfos run\"` never did, and dev/accept-profile.sh execs into "+
+			"the machine that restore brought up", restore.Process.Pid)
+	}
+}
+
+func slicesContain(xs []string, want string) bool {
+	for _, x := range xs {
+		if x == want {
+			return true
+		}
+	}
+	return false
 }

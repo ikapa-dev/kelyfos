@@ -60,7 +60,18 @@ scope_init() {
   # $HOME here would discard the caller's setting and then fail to find an image
   # for a reason that names nothing about the cause.
   SCOPE_SHARED_CACHE="${SCOPE_SHARED_CACHE:-${KELYFOS_CACHE:-$HOME/.cache/kelyfos}}"
-  SCOPE_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/kelyfos-cache.XXXXXX")"
+  # Beside the shared cache, not in $TMPDIR, and that is a correctness choice
+  # rather than a tidiness one. internal/sandbox/jail.go's linkInto hard-links
+  # the rootfs into each jail "when the source is on the same filesystem, which
+  # it is for everything KelyfOS builds -- images and jails both live under the
+  # cache root -- and a copy otherwise", and says why it matters: "copying a
+  # 128 MiB image per sandbox would make `fork -n 4` cost half a gigabyte".
+  # Putting run/ under /tmp while out/ stays under $HOME breaks that invariant
+  # silently on any host where /tmp is a separate filesystem -- tmpfs is the
+  # systemd default on Fedora, Arch and Ubuntu 24.10+ -- so `dev/cookbook.sh`,
+  # which forks, would copy 128 MiB into RAM per machine and nothing would say
+  # so. SCOPE_TMPDIR overrides for anyone who wants it elsewhere.
+  SCOPE_ROOT="$(mktemp -d "${SCOPE_TMPDIR:-$(dirname "$SCOPE_SHARED_CACHE")}/kelyfos-cache.XXXXXX")"
   # Loudly, and not `|| return 1`. No caller checked that, and the consequence
   # of carrying on is the exact silent failure D79 names: KELYFOS_CACHE stays
   # unset, sandbox.Root() falls back to the SHARED cache, every guard in this
@@ -68,8 +79,8 @@ scope_init() {
   # still returns 0, and the suite runs against everybody's cache and reports
   # PASS.
   if [ -z "${SCOPE_ROOT:-}" ] || [ ! -d "$SCOPE_ROOT" ]; then
-    printf 'scope: could not create a private cache under %s; refusing to run against the shared one\n' \
-      "${TMPDIR:-/tmp}" >&2
+    printf 'scope: could not create a private cache beside %s; refusing to run against the shared one\n' \
+      "$SCOPE_SHARED_CACHE" >&2
     exit 1
   fi
   printf '%s\n' "$name" > "$SCOPE_ROOT/.suite" 2>/dev/null
@@ -100,21 +111,33 @@ scope_init() {
 # State.PID from cmd.Process.Pid, and it lands as "pid" in sandbox.json, which
 # sits either beside the jail directory or inside it depending on the path. Both
 # are read, and the pids are de-duplicated because a jailed sandbox has both.
+# The jailer writes firecracker.pid with NO trailing newline, so `cat`-ing two
+# of them in a row yields "111222" -- one token that is not a pid, which a
+# teardown then fails to kill while reporting nothing wrong. Every read here
+# goes through this, which strips whatever framing a file has and emits one pid
+# per line.
+scope_emit_pid() {
+  local raw
+  raw="$(tr -dc '0-9' < "$1" 2>/dev/null)"
+  [ -n "$raw" ] && [ "$raw" != "0" ] && printf '%s\n' "$raw"
+  return 0
+}
+
+# The "pid" field of a sandbox.json, on its own line.
+scope_emit_state_pid() {
+  local raw
+  raw="$(sed -n 's/.*"pid"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$1" 2>/dev/null | sed -n 1p)"
+  [ -n "$raw" ] && [ "$raw" != "0" ] && printf '%s\n' "$raw"
+  return 0
+}
+
 scope_pids() {
-  local f d p
+  local d
   [ -n "${KELYFOS_CACHE:-}" ] || return 0
   {
-    for f in "$KELYFOS_CACHE"/run/firecracker/*/root/firecracker.pid; do
-      [ -f "$f" ] || continue
-      cat "$f" 2>/dev/null
-    done
     for d in "$KELYFOS_CACHE"/run/firecracker/*/; do
       [ -d "$d" ] || continue
-      for f in "$d/sandbox.json" "$d/root/sandbox.json"; do
-        [ -f "$f" ] || continue
-        p="$(sed -n 's/.*"pid"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$f" 2>/dev/null | sed -n 1p)"
-        [ -n "$p" ] && [ "$p" != "0" ] && echo "$p"
-      done
+      scope_pids_in "$d"
     done
   } | sort -u
 }
@@ -151,13 +174,12 @@ scope_newest_pid() {
 
 # The pids recorded under one run directory, both sources (see scope_pids).
 scope_pids_in() {
-  local d="$1" f p
+  local d="$1" f
   {
-    [ -f "$d/root/firecracker.pid" ] && cat "$d/root/firecracker.pid" 2>/dev/null
+    [ -f "$d/root/firecracker.pid" ] && scope_emit_pid "$d/root/firecracker.pid"
     for f in "$d/sandbox.json" "$d/root/sandbox.json"; do
       [ -f "$f" ] || continue
-      p="$(sed -n 's/.*"pid"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$f" 2>/dev/null | sed -n 1p)"
-      [ -n "$p" ] && [ "$p" != "0" ] && echo "$p"
+      scope_emit_state_pid "$f"
     done
   } | sort -u
 }
@@ -217,12 +239,19 @@ scope_own_kelyfos_pids() {
 # caller that used to name a subcommand names it still; with no argument every
 # kelyfos process carrying this run's cache is stopped.
 scope_kill_kelyfos() {
-  local p sub want
+  local p sub want argv1
   for p in $(scope_own_kelyfos_pids); do
     if [ "$#" -gt 0 ]; then
+      # The subcommand is kelyfos' FIRST argument, so match it there rather
+      # than anywhere in the command line. `grep -qw run` also matches a path
+      # component -- `kelyfos fork --workspace /srv/run/x` would answer to
+      # "run" -- and treats its argument as a regex. This is the mechanism that
+      # keeps `halt` from killing a `kelyfos snapshot restore`, so it is worth
+      # being exact about.
       want=""
+      argv1="$(tr '\0' '\n' < "/proc/$p/cmdline" 2>/dev/null | sed -n 2p)"
       for sub in "$@"; do
-        if tr '\0' ' ' < "/proc/$p/cmdline" 2>/dev/null | grep -qw -- "$sub"; then
+        if [ "$argv1" = "$sub" ]; then
           want=yes
           break
         fi
@@ -244,10 +273,11 @@ scope_wait_kelyfos_gone() {
     if [ "$#" -gt 0 ]; then
       # Wait only for the subcommands this halt actually signalled; a process
       # it deliberately left running must not hold the loop for its full limit.
-      local p sub still=""
+      local p sub still="" a1
       for p in $(scope_own_kelyfos_pids); do
+        a1="$(tr '\0' '\n' < "/proc/$p/cmdline" 2>/dev/null | sed -n 2p)"
         for sub in "$@"; do
-          tr '\0' ' ' < "/proc/$p/cmdline" 2>/dev/null | grep -qw -- "$sub" && still=yes
+          [ "$a1" = "$sub" ] && still=yes
         done
       done
       [ -z "$still" ] && return 0
@@ -313,8 +343,8 @@ scope_teardown() {
 # breadcrumb naming the culprit deleted first because it is the one file we own.
 scope_remove_cache() {
   [ -n "${SCOPE_ROOT:-}" ] || return 0
-  case "$SCOPE_ROOT" in
-    "${TMPDIR:-/tmp}"/kelyfos-cache.*) ;;
+  case "$(basename "$SCOPE_ROOT")" in
+    kelyfos-cache.??????) ;;
     *) return 0 ;;   # never rm -rf something this function did not create
   esac
   rm -rf "$SCOPE_ROOT" 2>/dev/null
