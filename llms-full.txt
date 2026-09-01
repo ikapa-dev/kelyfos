@@ -1631,10 +1631,40 @@ secret and the workspace is the agent's own — but it is stated here rather tha
 left to be inferred from a sentence about writes. `/dev/shm` is worth naming on its own: it
 is a tmpfs the guest kernel sizes at half the machine's RAM, so it is a
 general-purpose writable area, bounded by `mem` rather than by the profile. The
-seccomp half refuses a list of syscalls with `EPERM` — 28 of them on the `base`
-flavor on x86_64, 27 on `dev`, which keeps `ptrace` out of the list, and one
-fewer again on arm64, which has no `settimeofday` — among them `mount`,
-`reboot`, the clock-setting family, the keyring calls and module loading.
+seccomp half refuses a list of syscalls with `EPERM` — among them `mount`,
+`reboot`, the clock-setting family, the keyring calls and module loading. Since
+the audit of 2026-09-01 the list also refuses the fd-based mount API
+(`open_tree`, `move_mount`, `fsopen`, `fsconfig`, `fsmount`, `fspick`,
+`mount_setattr`) and the cross-memory and fd-theft family
+(`process_vm_readv`, `process_vm_writev`, `pidfd_open`, `pidfd_getfd`,
+`pidfd_send_signal`); the counts this paragraph used to carry by hand — and
+once carried stale — now live in the supervisor's own resolution test, which
+fails when a policy name has no number on an architecture, and in the
+confinement suite's probe battery, which fails when a listed name stops being
+refused.
+
+**The read residuals the audit's A19 confirmed, named in one place.** Each is
+verified reachable from a confined process and accepted, with the reason:
+
+- **`/dev/kmsg` is readable.** The supervisor reads it to report OOM kills
+  (E1-4); nothing fences a confined process reading the same kernel ring, so
+  a guest process can read kernel messages — which inside this threat model
+  are the guest's own, and contain no host information.
+- **The block devices are readable raw.** `dd if=/dev/vdb` succeeds (above):
+  the root image is not secret and the workspace is the agent's own.
+- **Read-only device ioctls succeed.** `BLKGETSIZE` and its kind answer
+  without transferring data; `LANDLOCK_ACCESS_FS_IOCTL_DEV` is deliberately
+  unhandled (§5.2) because refusing it would refuse the terminal ioctls every
+  interactive program makes.
+- **`/proc/1/environ` is readable** — PID 1's environment, which carries no
+  proxy address, no CA material and no credential: the egress environment
+  reaches commands as their own default environment, and the channel
+  credential (A2/A3) lives in the supervisor's memory only, never in its
+  environment. After the same audit's A17 the supervisor is non-dumpable, so
+  this file is the residual's floor rather than an invitation.
+
+These are the residuals of a profile that fences writes and refuses syscalls,
+not of a sandbox that pretends the guest's own kernel view is secret.
 
 *"Every" is asserted rather than intended, since the security review of
 2026-08-28.* It was not true when this paragraph was first written. `confine`
@@ -2203,6 +2233,7 @@ assertion's subject.
 | the resolved-address check refuses metadata and RFC1918 addresses (DNS hijack) | egress suite via nip.io, `[egress.resolved_addr]` | CHECKED |
 | a foreign peer — another sandbox's guest, or a VM-side process — is dropped silently | egress suite peer probes (guest→guest, VM→proxy) | CHECKED |
 | every attempt recorded with mode, reason and byte counts | egress suite record assertions | CHECKED |
+| each proxy owns its upstream transports — a connection pooled under one sandbox's policy cannot serve another's, so the per-dial resolved-address re-check cannot be skipped by cross-proxy reuse (audit A13) | `internal/egress/a13_test.go` — two proxies hold two transports, one proxy holds one | CHECKED |
 | a plain-URI request's Host is rebuilt by the proxy (IA-I5) | egress suite (ABS-REBUILD/REWRITE shapes) | CHECKED |
 | redirect credential-following, upstream smuggling, compression torture, leaf-cache reuse | — requires the controlled-origin lab (D90, owner approval) | UNCHECKED — proposed |
 | 431-with-drain observed vs a fast writer's reset: the drain rescues a pausing client only (IA-L1c) | documented in `docs/networking.md`; dynamic pin needs the origin lab | UNCHECKED — documented |
@@ -2228,7 +2259,8 @@ assertion's subject.
 | marker removal is refused | record suite | CHECKED |
 | rendered output escapes hostile strings (RENDER) | record suite | CHECKED |
 | a connection to a guest channel without the session's credential is refused, logged and recorded — the audit's A2/A3 forgery paths (same-uid host process on the events socket; raw `AF_VSOCK` dial from inside the guest) are dead | `internal/sandbox/channelauth_test.go` (absent, wrong and un-minted credentials on all three channels, refusal reported); verified live in the test VM against the audit's own repro shape (`local/audit/a2a3_verify.sh`, not committed) | CHECKED |
-| truncation with recomputed claims verifies — the documented keyless limit (IA-M2) | record suite, EXPECTED-CURRENT with TODO(IA-M2) | UNCHECKED — accepted, flagged |
+| a wholesale rewrite of the chain that does not also update its out-of-band anchor (`head.json`, written per append) is detected by `kelyfos log --verify` — the anchor narrows the keyless limit; a writer that rewrites both still passes, so the signed export remains the strong answer (audit A14) | `internal/recorder/a14_test.go` (forged tail latched, not extended; anchor detects truncation; missing anchor is not an error) | CHECKED |
+| truncation with recomputed claims verifies — the documented keyless limit (IA-M2) | record suite, EXPECTED-CURRENT with TODO(IA-M2); narrowed by the head anchor above, not closed | UNCHECKED — accepted, flagged |
 | a SIGNED export detects the truncation attack | record suite signed battery (D93) | CHECKED |
 | erasure redacts payloads while the chain verifies; refuses a live session | `docs/exam/2026-08-31-security-erase.md` (survived one attempt) | PARTIALLY CHECKED — one attempt, no suite |
 
@@ -2242,6 +2274,7 @@ assertion's subject.
 | a teardown racing the ext4 commit cannot lose the last writes with a false success (IA-H1) | workspace suite IA-H1 regression (post D91) | CHECKED |
 | the flush covers the crash door too: a guest crash or VMM kill mid-run loses only what the ext4 commit had not reached — the cross-check catches total emptiness, not a lost delta | — the flush runs on the shutdown handshake; the crash door is the machine dying uncleanly | PARTIALLY CHECKED — the crash door is inherent to a power cut; the false-success half is closed by the cross-check and the handshake |
 | a 40-deep path lands; the refusal threshold is 128 | workspace suite | CHECKED |
+| one hostile-but-legal name fails the whole write-back, naming the entry — the availability trade the audit's A16 named is kept and documented rather than quarantined (D100) | workspace suite (the refusal battery); docs/hardening.md §5 and D100 carry the trade and the deferral reasoning | CHECKED — documented |
 | plain entries land with their modes | workspace suite | CHECKED |
 
 ## Confinement
@@ -2253,6 +2286,8 @@ assertion's subject.
 | seccomp refuses the fd-based mount API (open_tree, fsopen, fsconfig, fsmount, fspick, move_mount, mount_setattr) and the cross-memory/fd-theft family (process_vm_readv, pidfd_getfd) — the audit's A5, probed from a confined child so map drift fails CI (audit A5/A17b) | confinement battery; `supervisor/profile_policy_test.go` fails at build time when a policy name is missing from a per-arch map | CHECKED |
 | the supervisor is non-dumpable, so ptrace-shaped attacks are refused by the policy and the flag, not only the kernel ACL (audit A17) | confinement battery (process_vm/pidfd probes EPERM); prctl failure would log at boot | CHECKED |
 | the host's own VMM-API actions (pause, resume, snapshot create/load, drive patch) are recorded as `vmm.api` events (audit A11); the socket's same-uid reachability is documented as a residual with the layout reasoning | `internal/sandbox` api instrumentation + `host/plugins.go` vmmActionRecorder, wired at every door; docs/hardening.md §2.1 carries the residual | CHECKED |
+| plugin stderr is sanitised at the console boundary (audit A18) | `supervisor/pluginhost_sanitize_test.go` — escape sequences quoted whole, clean lines untouched, and a structural check pins the call site | CHECKED |
+| the accepted read residuals (/dev/kmsg, raw device reads, read-only ioctls, /proc/1/environ) are named with their reasons, and the refusal-list counts live in tests rather than prose (audit A19) | docs/threat-model.md §4's residual list; the counts are enforced by `supervisor/profile_policy_test.go` and the confinement battery | CHECKED — documented |
 | PTRACE_ATTACH to PID 1 is EPERM even on the dev flavor that permits ptrace | confinement battery | CHECKED |
 | io_uring, abstract unix sockets are allowed by the filter and fenced by namespaces | confinement battery — documented, not lied about | CHECKED — documented |
 | the profile is per-flavor and per-architecture; the docs state the policy, the dump resolves the machine | profiles page + `--dump-profile` (see §6.2 correction) | CHECKED |
@@ -3393,6 +3428,15 @@ the proxy either way.
   per *response*, not per connection: the de-duplication is built fresh for each
   response, so a keep-alive connection whose five responses each echo the same
   token produces five events.
+
+- **Every tunnelled and forwarded byte is on a clock.** The audit of
+  2026-09-01 (A12) found tunnels carrying nothing at all: 128 idle CONNECTs
+  pinned the egress semaphore for the sandbox's life. A tunnel now closes
+  after five minutes of silence in either direction — generous for
+  interactive keepalives — and no arm of its clock can outrun the one-hour
+  connection ceiling the terminated leg already had, so a dribbling guest is
+  bounded too. The plain-HTTP leg's body copy carries the same write-side
+  clock and a context-bounded ceiling.
 
 - **Certificate pinning breaks for a secret-bound domain, by construction.**
   This is the cost D6 accepted, and it belongs here as well as in the threat
@@ -7878,6 +7922,22 @@ Signals themselves are not scoped, so `kill` between siblings still works.
 
 Stated here, before the code, so the README sentence at the end of the phase can
 be checked against it rather than composed to sound good.
+
+**One hostile name fails the whole workspace sync-back** (the audit of
+2026-09-01's A16, documented as a trade rather than fixed — D100). The
+write-back is fail-closed: a workspace containing one entry this host will not
+extract — a control character in a name, a quote the debugfs command cannot
+carry, an entry that does not parse — is refused whole, the host directory is
+untouched, and the refusal names the entry. The cost is availability: an agent
+(or a build system inside it) that created one awkward filename loses the
+session's write-back until the entry is removed. The audit proposed a
+quarantine — extract the valid entries, list the refused names in a sidecar,
+keep the hard fail only for the escape class. D100 records why it is deferred:
+the parser's strictness is the check the fuzzer holds, the write-back's
+cross-checks reason in terms of the whole manifest, and a quiet partial
+write-back is the shape of the loss D88 already flagged once. The remedy until
+then is ordinary: the refusal names the entry, and deleting it inside the
+sandbox before shutdown lets everything else write back.
 
 **The invoking user's own processes.** The jailed VMM drops to the user who
 started it rather than to a dedicated account (D29). The chroot takes the host
