@@ -207,7 +207,7 @@ var (
 	// policy's, because a policy that permits more than the host can run is
 	// still bounded by the host.
 	CeilingHost = Denial{
-		ID:  "ceiling.host",
+		ID: "ceiling.host",
 		Doc: "a machine was asked for that is larger than the physical host itself — RAM or " +
 			"cores beyond what the machine has, which no policy can grant (audit 2026-09-01, A8)",
 		Msg: "<field> <asked> exceeds what this host can run (<limit>)",

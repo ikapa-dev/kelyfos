@@ -161,7 +161,7 @@ them can widen it (`docs/mcp-surface.md`).
 
 ### `sandbox_run`
 
-Boot a hardware-isolated microVM and return its id. Anything run inside it cannot reach this machine. It has no network at all unless the project's policy grants one. Every argument here may ask for less than the policy allows and never for more; a request above a ceiling is refused and names the ceiling.
+Boot a hardware-isolated microVM and return its id. Anything run inside it cannot reach this machine. It has no network at all unless the project's policy grants one. Every argument here may ask for less than the policy allows and never for more; a request above a ceiling is refused and names the ceiling. The host's own limits apply regardless: cores cannot exceed the machine's, and memory cannot exceed what the host can carry with room left for itself. When no policy is found, defaults are 2 vcpu and 512 MiB with no network, and those host limits are the only ceilings.
 
 | Parameter | Type | Required | Meaning |
 | --- | --- | --- | --- |
