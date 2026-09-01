@@ -2189,24 +2189,12 @@ func (st *State) validateNetwork(bad func(string, ...any) error) error {
 		}
 		return nil
 	}
-	host, guest := net.ParseIP(st.HostIP).To4(), net.ParseIP(st.GuestIP).To4()
-	if host == nil || guest == nil {
-		return bad("its addressing is unusable (host %q, guest %q)", st.HostIP, st.GuestIP)
-	}
-	if host[0] != 169 || host[1] != 254 {
-		return bad("its host address %s is outside the link-local range every sandbox address "+
-			"is derived from", host)
-	}
-	if !sameSlash30(host, guest) || host[3]&0x03 != 1 || guest[3] != host[3]+1 {
-		return bad("host %s and guest %s are not the two halves of a /30 this host derives", host, guest)
-	}
-	if sameSlash30(host, metadataIP) {
-		return bad("its /30 holds the cloud metadata address %s, which no sandbox is given", metadataIP)
-	}
-	if st.Netmask != "" && st.Netmask != "255.255.255.252" {
-		// It becomes the guest's own `ip=` boot argument, so it is what the
-		// guest treats as on-link. Every sandbox gets a /30.
-		return bad("its netmask is %q and every sandbox is a /30", st.Netmask)
+	// The addressing gate is shared with a snapshot's meta.json
+	// (validateSnapshotAddressing): one set of derivation checks for the two
+	// files that carry a recorded pair, so a rule added for one cannot be
+	// absent from the other.
+	if err := validateSnapshotAddressing(st.HostIP, st.GuestIP, st.Netmask, st.HostMAC); err != nil {
+		return bad("%v", err)
 	}
 	if st.TAP != "" && st.TAP != tapName(st.ID) {
 		// Derivable, so nothing else is legitimate. Read back as a path under
@@ -2214,20 +2202,6 @@ func (st *State) validateNetwork(bad func(string, ...any) error) error {
 		// one puts another interface's traffic in the flight recorder under
 		// this sandbox's name.
 		return bad("its interface is %q and sandbox %s's is %q", st.TAP, st.ID, tapName(st.ID))
-	}
-	if st.HostMAC != "" {
-		// Not bound to the id: a restore deliberately keeps the address the
-		// snapshot was taken with, so the guest's ARP entry still matches (D22).
-		// What is checked is the class — unicast and locally administered, which
-		// is all hostMAC ever mints — because this is the argument to
-		// `ip link set … address`.
-		mac, err := net.ParseMAC(st.HostMAC)
-		if err != nil || len(mac) != 6 {
-			return bad("its host MAC %q is not an address", st.HostMAC)
-		}
-		if mac[0]&0x01 != 0 || mac[0]&0x02 == 0 {
-			return bad("its host MAC %s is not a locally administered unicast address", mac)
-		}
 	}
 	if st.ProxyPort < 0 || st.ProxyPort > 65535 {
 		return bad("its proxy port is %d", st.ProxyPort)

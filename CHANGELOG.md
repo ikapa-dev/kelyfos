@@ -18,6 +18,15 @@ reference described in the README and re-measured per release.
 ## Unreleased
 
 ### Fixed
+- **A restored snapshot's recorded network addressing is validated like a
+  state file's** (independent audit 2026-09-01, A7). A snapshot's meta.json
+  went to `ip link` with no gate at all — the audit's scenario, a meta.json
+  naming host_ip 127.0.0.1, installed loopback on the TAP, bound the
+  credential-carrying proxy to it, and armed a host-wide drop rule for the
+  sandbox's life. Both files now go through one derivation gate: a recorded
+  pair must be a link-local /30 this host derives and must not be the cloud
+  metadata /30; anything else is refused by name, naming meta.json. Verified
+  live: a poisoned snapshot refuses on restore.
 - **A bare top-level domain in an allowlist or credential binding is refused**
   (independent audit 2026-09-01, A6). The allowlist's suffix rule turned one
   label — `--allow org` — into every host under that TLD, credential binding

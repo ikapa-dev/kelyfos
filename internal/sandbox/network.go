@@ -122,6 +122,53 @@ func sameSlash30(a, b net.IP) bool {
 	return x[0] == y[0] && x[1] == y[1] && x[2] == y[2] && x[3]&0xfc == y[3]&0xfc
 }
 
+// validateSnapshotAddressing is the gate a recorded address pair survives
+// before this host acts on it, and it is one gate for the two files that carry
+// one: sandbox.json, via State's validate, and a snapshot's meta.json, via
+// newNetworkAt (audit 2026-09-01, A7).
+//
+// The rule is derivation, not plausibility: every sandbox address is derived
+// from the sandbox id as a link-local /30 that is never the metadata address,
+// so a recorded pair that is not that could not have come from here — loopback
+// included, which is the pair that would install the credential-carrying
+// proxy on 127.0.0.1 and arm a host-wide drop rule for the sandbox's life.
+func validateSnapshotAddressing(hostIP, guestIP, netmask, hostMACAddr string) error {
+	host, guest := net.ParseIP(hostIP).To4(), net.ParseIP(guestIP).To4()
+	if host == nil || guest == nil {
+		return fmt.Errorf("the recorded addressing is unusable (host %q, guest %q)", hostIP, guestIP)
+	}
+	if host[0] != 169 || host[1] != 254 {
+		return fmt.Errorf("the recorded host address %s is outside the link-local range every "+
+			"sandbox address is derived from", host)
+	}
+	if !sameSlash30(host, guest) || host[3]&0x03 != 1 || guest[3] != host[3]+1 {
+		return fmt.Errorf("the recorded pair (host %s, guest %s) is not the two halves of a /30 "+
+			"this host derives", host, guest)
+	}
+	if sameSlash30(host, metadataIP) {
+		return fmt.Errorf("the recorded /30 holds the cloud metadata address %s, which no "+
+			"sandbox is given", metadataIP)
+	}
+	if netmask != "" && netmask != "255.255.255.252" {
+		return fmt.Errorf("the recorded netmask is %q and every sandbox is a /30", netmask)
+	}
+	if hostMACAddr != "" {
+		// Not bound to the id: a restore deliberately keeps the address the
+		// snapshot was taken with, so the guest's ARP entry still matches
+		// (D22). What is checked is the class — unicast and locally
+		// administered, which is all hostMAC ever mints — because this is the
+		// argument to `ip link set … address`.
+		mac, err := net.ParseMAC(hostMACAddr)
+		if err != nil || len(mac) != 6 {
+			return fmt.Errorf("the recorded host MAC %q is not an address", hostMACAddr)
+		}
+		if mac[0]&0x01 != 0 || mac[0]&0x02 == 0 {
+			return fmt.Errorf("the recorded host MAC %s is not a locally administered unicast address", mac)
+		}
+	}
+	return nil
+}
+
 // newNetworkAt re-creates a TAP using addressing a snapshot recorded, instead
 // of deriving fresh addresses from the sandbox id.
 //
@@ -131,7 +178,17 @@ func sameSlash30(a, b net.IP) bool {
 // guest still dialling the address the proxy used to be on — which is exactly
 // the failure this exists to prevent (D22). The TAP name is still new: the old
 // one is gone, and Firecracker re-pairs the interface by name on load.
+//
+// The addressing a snapshot records goes through the same gate a state file's
+// does (validateSnapshotAddressing) — the audit of 2026-09-01's A7. meta.json
+// is as much a file as sandbox.json, and a poisoned meta.json used to install
+// 127.0.0.1 on the TAP, bind the credential-carrying proxy to loopback, and
+// arm a host-wide drop rule for the sandbox's life. Derivation, not
+// plausibility, is the rule; it applies to both files.
 func newNetworkAt(sandboxID, user, hostIP, guestIP, netmask, hostMACAddr string) (*Network, error) {
+	if err := validateSnapshotAddressing(hostIP, guestIP, netmask, hostMACAddr); err != nil {
+		return nil, fmt.Errorf("the snapshot's meta.json is not a network this host will install: %w", err)
+	}
 	h, g := net.ParseIP(hostIP), net.ParseIP(guestIP)
 	if h == nil || g == nil {
 		return nil, fmt.Errorf("snapshot recorded an unusable address pair (host %q, guest %q)", hostIP, guestIP)
