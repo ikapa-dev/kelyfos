@@ -130,9 +130,45 @@ for script in "$WORK"/recipes/*.sh; do
   # block: `timeout`'s own status is read directly, and 124 is reported as
   # TIMED OUT with the recipe's name.
   out="$WORK/$name.out"
-  timeout --kill-after=30 "${RECIPE_TIMEOUT:-600}" bash "$script" >"$out" 2>&1
+  # Each recipe runs in its own empty directory, and neither half of that is
+  # tidiness.
+  #
+  # *Out of the repository*, because `run` discovers a policy by walking up
+  # from the working directory, and this script never left the tree it lives
+  # in. The committed kelyfos.toml at the repo root was therefore every
+  # recipe's policy, silently — and on 2026-09-01 the first scheduled cookbook
+  # run went red on `one-sandbox` saying so: the workflow runs the recipes
+  # under sudo (cookbook.yml, because --allow needs it for TAP and nft), the
+  # checkout belongs to the runner user, and P7-17/F21's ownership check
+  # correctly refuses a policy file uid 1001 left where uid 0 would walk over
+  # it. The check is right; the harness was wrong to be standing there. It
+  # passes on a developer's machine for the one reason that hides it: you own
+  # the file and you are not root.
+  #
+  # *Its own*, because three recipes write a kelyfos.toml of their own into the
+  # working directory — three-agent-team, mcp-client-config, connect-a-client —
+  # and a shared directory would hand one recipe's policy to the next, which is
+  # the same bug one level in. They also write ./ws, ./plugins/demo and
+  # ./.venv; a recipe is documentation and starts from nothing.
+  #
+  # dev/security-lab.sh already does this, for the first of those two reasons,
+  # and says so where it cds.
+  rundir="$WORK/run/$name"
+  mkdir -p "$rundir"
+  ( cd "$rundir" && exec timeout --kill-after=30 "${RECIPE_TIMEOUT:-600}" bash "$script" ) >"$out" 2>&1
   rc=$?
   sed 's/^/      /' "$out"
+  # A recipe may load a policy it wrote itself, in its own directory. It may
+  # not load this repository's. The cd above is one line and deleting it would
+  # look harmless, so the property it exists for is asserted rather than
+  # trusted: on 2026-09-01 the first scheduled cookbook run failed on exactly
+  # this and nothing in the harness could have told you why.
+  if grep -qE "^policy: $REPO/kelyfos.toml\$" "$out"; then
+    echo "      cookbook: this recipe loaded the repository's own kelyfos.toml." >&2
+    echo "      A recipe runs in its own directory precisely so it cannot; see the" >&2
+    echo "      comment on rundir above." >&2
+    rc=1
+  fi
   if [ "$rc" -eq 0 ]; then
     pass "$name ($(( $(date +%s) - start ))s)"
   else
