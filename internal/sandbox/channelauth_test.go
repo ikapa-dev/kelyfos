@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -43,17 +44,35 @@ func dialGuestChannel(t *testing.T, s *Sandbox, port uint32) net.Conn {
 	return conn
 }
 
-// refusedConnections collects what the gate reported to the caller.
+// refusedLog collects what the gate reported to the caller. The OnChannelRefused
+// callback fires on the serving goroutine while the test reads on its own, so
+// the two share this under a mutex — without it the race detector flags the
+// append-versus-read and both refusal tests fail under -race (adversarial
+// review 2026-09-01).
 type refusedLog struct {
+	mu     sync.Mutex
 	ports  []uint32
 	reason string
+}
+
+func (l *refusedLog) add(port uint32, reason string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.ports = append(l.ports, port)
+	l.reason = reason
+}
+
+func (l *refusedLog) snapshot() []uint32 {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return append([]uint32(nil), l.ports...)
 }
 
 func TestChannelRefusesAConnectionWithoutTheCredential(t *testing.T) {
 	for _, port := range []uint32{proto.PortReady, proto.PortEvents, proto.PortTeam} {
 		t.Run(fmt.Sprint(port), func(t *testing.T) {
 			dir := t.TempDir()
-			log := refusedLog{}
+			log := &refusedLog{}
 			s := withCredential(&Sandbox{
 				State: State{UDSPath: filepath.Join(dir, "v.sock")},
 				opts: Options{
@@ -65,10 +84,7 @@ func TestChannelRefusesAConnectionWithoutTheCredential(t *testing.T) {
 					OnTeamRequest: func(proto.TeamRequest) proto.TeamResponse {
 						return proto.TeamResponse{OK: true}
 					},
-					OnChannelRefused: func(port uint32, reason string) {
-						log.ports = append(log.ports, port)
-						log.reason = reason
-					},
+					OnChannelRefused: log.add,
 				},
 			})
 			switch port {
@@ -83,7 +99,11 @@ func TestChannelRefusesAConnectionWithoutTheCredential(t *testing.T) {
 				}
 				t.Cleanup(func() { _ = s.teamLn.Close() })
 			case proto.PortReady:
-				s.readyLn, _ = net.Listen("unix", fmt.Sprintf("%s_%d", s.State.UDSPath, port))
+				ln, err := net.Listen("unix", fmt.Sprintf("%s_%d", s.State.UDSPath, port))
+				if err != nil {
+					t.Fatal(err)
+				}
+				s.readyLn = ln
 				t.Cleanup(func() { _ = s.readyLn.Close() })
 				go s.serveReady()
 			}
@@ -110,8 +130,8 @@ func TestChannelRefusesAConnectionWithoutTheCredential(t *testing.T) {
 			if err := proto.NewReader(conn).Read(&ignore); err == nil {
 				t.Fatal("the connection stayed open after a frame without a credential")
 			}
-			if len(log.ports) != 1 || log.ports[0] != port {
-				t.Errorf("the refusal was not reported for port %d: %+v", port, log.ports)
+			if got := log.snapshot(); len(got) != 1 || got[0] != port {
+				t.Errorf("the refusal was not reported for port %d: %+v", port, got)
 			}
 		})
 	}
@@ -122,14 +142,12 @@ func TestChannelRefusesAConnectionWithoutTheCredential(t *testing.T) {
 // the absent one does, and no frame.
 func TestChannelRefusesTheWrongCredential(t *testing.T) {
 	dir := t.TempDir()
-	log := refusedLog{}
+	log := &refusedLog{}
 	s := withCredential(&Sandbox{
 		State: State{UDSPath: filepath.Join(dir, "v.sock")},
 		opts: Options{
-			OnGuestEvent: func(proto.GuestEvent) { t.Error("a forged frame reached the handler") },
-			OnChannelRefused: func(port uint32, reason string) {
-				log.ports = append(log.ports, port)
-			},
+			OnGuestEvent:     func(proto.GuestEvent) { t.Error("a forged frame reached the handler") },
+			OnChannelRefused: log.add,
 		},
 	})
 	if err := s.listenEvents(); err != nil {
@@ -153,11 +171,11 @@ func TestChannelRefusesTheWrongCredential(t *testing.T) {
 	// The refusal happens on the serving goroutine, which may not have read
 	// the hello the instant the writes return.
 	deadline := time.Now().Add(5 * time.Second)
-	for len(log.ports) == 0 && time.Now().Before(deadline) {
+	for len(log.snapshot()) == 0 && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
 	}
-	if len(log.ports) != 1 {
-		t.Errorf("the wrong credential was not refused: %+v", log.ports)
+	if got := log.snapshot(); len(got) != 1 {
+		t.Errorf("the wrong credential was not refused: %+v", got)
 	}
 }
 
