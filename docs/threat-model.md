@@ -412,10 +412,40 @@ secret and the workspace is the agent's own — but it is stated here rather tha
 left to be inferred from a sentence about writes. `/dev/shm` is worth naming on its own: it
 is a tmpfs the guest kernel sizes at half the machine's RAM, so it is a
 general-purpose writable area, bounded by `mem` rather than by the profile. The
-seccomp half refuses a list of syscalls with `EPERM` — 28 of them on the `base`
-flavor on x86_64, 27 on `dev`, which keeps `ptrace` out of the list, and one
-fewer again on arm64, which has no `settimeofday` — among them `mount`,
-`reboot`, the clock-setting family, the keyring calls and module loading.
+seccomp half refuses a list of syscalls with `EPERM` — among them `mount`,
+`reboot`, the clock-setting family, the keyring calls and module loading. Since
+the audit of 2026-09-01 the list also refuses the fd-based mount API
+(`open_tree`, `move_mount`, `fsopen`, `fsconfig`, `fsmount`, `fspick`,
+`mount_setattr`) and the cross-memory and fd-theft family
+(`process_vm_readv`, `process_vm_writev`, `pidfd_open`, `pidfd_getfd`,
+`pidfd_send_signal`); the counts this paragraph used to carry by hand — and
+once carried stale — now live in the supervisor's own resolution test, which
+fails when a policy name has no number on an architecture, and in the
+confinement suite's probe battery, which fails when a listed name stops being
+refused.
+
+**The read residuals the audit's A19 confirmed, named in one place.** Each is
+verified reachable from a confined process and accepted, with the reason:
+
+- **`/dev/kmsg` is readable.** The supervisor reads it to report OOM kills
+  (E1-4); nothing fences a confined process reading the same kernel ring, so
+  a guest process can read kernel messages — which inside this threat model
+  are the guest's own, and contain no host information.
+- **The block devices are readable raw.** `dd if=/dev/vdb` succeeds (above):
+  the root image is not secret and the workspace is the agent's own.
+- **Read-only device ioctls succeed.** `BLKGETSIZE` and its kind answer
+  without transferring data; `LANDLOCK_ACCESS_FS_IOCTL_DEV` is deliberately
+  unhandled (§5.2) because refusing it would refuse the terminal ioctls every
+  interactive program makes.
+- **`/proc/1/environ` is readable** — PID 1's environment, which carries no
+  proxy address, no CA material and no credential: the egress environment
+  reaches commands as their own default environment, and the channel
+  credential (A2/A3) lives in the supervisor's memory only, never in its
+  environment. After the same audit's A17 the supervisor is non-dumpable, so
+  this file is the residual's floor rather than an invitation.
+
+These are the residuals of a profile that fences writes and refuses syscalls,
+not of a sandbox that pretends the guest's own kernel view is secret.
 
 *"Every" is asserted rather than intended, since the security review of
 2026-08-28.* It was not true when this paragraph was first written. `confine`

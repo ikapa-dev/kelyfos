@@ -17,6 +17,17 @@ reference described in the README and re-measured per release.
 
 ## Unreleased
 
+### Documented
+- **The guest's accepted read residuals, named in one place** (independent
+  audit 2026-09-01, A19): `/dev/kmsg` readable (the guest's own kernel ring),
+  raw block-device reads (`/dev/vdb` — the root image is not secret and the
+  workspace is the agent's own), read-only device ioctls (`BLKGETSIZE` and its
+  kind), and `/proc/1/environ` (PID 1's environment carries no proxy address,
+  no CA material and no credential). Each is verified reachable from a
+  confined process and accepted with its reason in docs/threat-model.md. The
+  stale per-architecture syscall counts the audit flagged were replaced by a
+  pointer to the resolution test and probe battery that cannot go stale.
+
 ### Fixed
 - **A plugin's stderr is sanitised at the console boundary** (independent audit
   2026-09-01, A18). Plugin stderr reached the operator's terminal unsanitised;
