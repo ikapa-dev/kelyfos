@@ -373,6 +373,12 @@ status. This is how you hand an agent a sandbox and nothing else:
 	// (P7-2, docs/policy-record.md §5).
 	var boundSecrets []*egress.Secret
 	if list := splitAllow(*allow); len(list) > 0 {
+		// A bare top-level domain — org, com — is every host under that TLD
+		// once the suffix rule is applied, credentials included
+		// (audit 2026-09-01, A6). Refused before a machine is built.
+		if err := egress.CheckAllowList(list); err != nil {
+			return err
+		}
 		opts.Allow = list
 		opts.Net, err = sandbox.NewNetwork(sandboxID)
 		if err != nil {

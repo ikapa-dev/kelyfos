@@ -247,6 +247,18 @@ var (
 			"file": "/home/you/project/kelyfos.toml"},
 	}
 
+	AllowSingleLabel = Denial{
+		ID: "allow.single_label",
+		Doc: "an allowlist or credential binding named a bare top-level domain — org, com, io — " +
+			"and the allowlist's suffix rule would then match every site under it: egress to the " +
+			"whole TLD, credentials included (audit 2026-09-01, A6)",
+		Msg: "allow <domain> is a bare top-level domain, and the allowlist's suffix rule " +
+			"would match every site under it",
+		Fix: "name the hosts you mean — for example <example> instead of <domain> — " +
+			"so the entry permits what it says and nothing more",
+		Sample: V{"domain": "org", "example": "example.org"},
+	}
+
 	// --- budgets: how many machines this server may have at once ----------
 
 	BudgetSandboxes = Denial{
@@ -374,7 +386,7 @@ var (
 // them groups them.
 func All() []Denial {
 	all := []Denial{
-		AllowProject, AllowResume, AllowSnapshot,
+		AllowProject, AllowResume, AllowSnapshot, AllowSingleLabel,
 		BudgetSandboxes,
 		CeilingFlag, CeilingResume, CeilingSnapshot, CeilingSnapshotUnknown, CeilingTool,
 		EgressHost, EgressPort, EgressResolvedAddr,

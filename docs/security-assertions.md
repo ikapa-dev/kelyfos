@@ -17,6 +17,7 @@ assertion's subject.
 | --- | --- | --- |
 | no `--allow` → no network interface at all (off, not filtered) | `accept-security-egress.sh` offline battery (interfaces, routes, resolv.conf, proxy env, curl) | CHECKED |
 | allowlist: exact host + dot-anchored subdomains; case and trailing-dot normalised | egress suite online battery | CHECKED |
+| a bare top-level domain (`org`, `com`) is refused at every door that takes an allowlist or a credential binding — the suffix rule cannot be turned into a whole-TLD grant (audit A6) | `internal/egress/a6_test.go` (both doors, refusal is the `[allow.single_label]` catalog entry); `internal/config/a6_config_test.go` (refused at toml load, file named) | CHECKED |
 | the suffix trap (`notexample.com`) is refused, naming `[egress.host]` | egress suite online battery | CHECKED |
 | ports 80/443 globally; no key, flag or trick widens them | egress suite (`[egress.port]` over raw sockets on 22/8080/8443) | CHECKED |
 | CONNECT, absolute-URI and origin-form decided on the same target string | egress suite parser matrix (8 shapes) | CHECKED |

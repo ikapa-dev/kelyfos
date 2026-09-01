@@ -15638,6 +15638,17 @@ session before-the-migration was paused with api.stripe.com in its allowlist, an
 
 Named: `domain`, `file`, `name`. The values above are an example.
 
+## `allow.single_label`
+
+An allowlist or credential binding named a bare top-level domain — org, com, io — and the allowlist's suffix rule would then match every site under it: egress to the whole TLD, credentials included (audit 2026-09-01, A6).
+
+```
+allow org is a bare top-level domain, and the allowlist's suffix rule would match every site under it [allow.single_label]
+    name the hosts you mean — for example example.org instead of org — so the entry permits what it says and nothing more
+```
+
+Named: `domain`, `example`. The values above are an example.
+
 ## `allow.snapshot`
 
 A restore asked for a domain the frozen machine itself could not reach.

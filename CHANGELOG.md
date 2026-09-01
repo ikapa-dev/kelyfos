@@ -18,6 +18,15 @@ reference described in the README and re-measured per release.
 ## Unreleased
 
 ### Fixed
+- **A bare top-level domain in an allowlist or credential binding is refused**
+  (independent audit 2026-09-01, A6). The allowlist's suffix rule turned one
+  label — `--allow org` — into every host under that TLD, credential binding
+  included, with nothing at parse time warning or refusing; it is demonstrated
+  live in the audit. `--allow org`, `allow = ["org"]` in kelyfos.toml (including
+  a team agent's list), and `--secret TOKEN@org` are now refused at parse time
+  with the new `[allow.single_label]` catalog entry naming what to type
+  instead. Multi-label entries are unchanged: the suffix rule remains correct
+  for `example.org` and its subdomains.
 - **The seccomp refusal list covers the fd-based mount API and the
   cross-memory/fd-theft family** (independent audit 2026-09-01, A5/A17).
   `open_tree`, `fsopen` and friends reach the same ends as `mount` without

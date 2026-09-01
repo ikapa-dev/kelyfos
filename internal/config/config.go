@@ -19,6 +19,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/ikapa-dev/kelyfos/internal/egress"
 )
 
 // FileName is the policy file a project commits.
@@ -310,6 +312,21 @@ func (c *Config) validate() error {
 		}
 		if !strings.Contains(s, "@") {
 			return fmt.Errorf("%s: secret %q must be NAME@domain", c.Path, s)
+		}
+	}
+	// A bare top-level domain in an allowlist — org, com — is every host under
+	// that TLD, credential binding included (audit 2026-09-01, A6). Refused at
+	// parse time, with the file named, because a one-word typo should cost a
+	// clear error rather than internet-wide egress. Team agents' lists get the
+	// same check: a member's allowlist is the same wall.
+	if err := egress.CheckAllowList(c.Allow); err != nil {
+		return fmt.Errorf("%s: %w", c.Path, err)
+	}
+	if c.Team != nil {
+		for _, a := range c.Team.Agents {
+			if err := egress.CheckAllowList(a.Allow); err != nil {
+				return fmt.Errorf("%s: team agent %s: %w", c.Path, a.Name, err)
+			}
 		}
 	}
 	if c.Vcpus < 0 || c.MemMiB < 0 {

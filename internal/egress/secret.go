@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"github.com/ikapa-dev/kelyfos/internal/denial"
 )
 
 // Secret binds a credential to a domain. The value is read from the host
@@ -156,6 +158,12 @@ func ParseSecretSpec(spec string) (SecretSpec, error) {
 	// paths are not, and running the whole target through NormaliseDomain would
 	// have lower-cased somebody's path segment.
 	out.Host = NormaliseDomain(hostpart)
+	// A bare TLD gets the same refusal the allowlist door gives, before the
+	// generic shape error can swallow the reason (audit 2026-09-01, A6).
+	if d := out.Host; d != "" && len(strings.Split(d, ".")) < 2 {
+		return out, denial.AllowSingleLabel.Err(denial.V{
+			"domain": d, "example": "example." + d})
+	}
 	if !validDomain(out.Host) {
 		return out, fmt.Errorf("--secret %q does not name a domain a request could ever reach", spec)
 	}
@@ -202,11 +210,23 @@ func validDomain(d string) bool {
 	if !plausibleHost(d) {
 		return false
 	}
+	labels := strings.Split(d, ".")
+	// A bare top-level domain — "org", "com" — is refused. The allowlist's
+	// suffix rule turns one label into every host under it, and the audit of
+	// 2026-09-01 (A6) demonstrated the whole-TLD grant live: --allow org
+	// permitted gnu.org and httpbin.org alike, credential binding included.
+	// A credential that binds to a TLD is the same grant through the other
+	// door, so both doors require the shape of a real host: two labels or
+	// more. The same check is exported as CheckAllowList for allowlist
+	// entries, which arrive as a list rather than one spec.
+	if len(labels) < 2 {
+		return false
+	}
 	// Labels, because a name with an empty one — "..github.com", "a..b" — passes
 	// every character test and still matches no host that exists. Enumerating
 	// malformed shapes one at a time does not converge; requiring the shape of a
 	// name does.
-	for _, label := range strings.Split(d, ".") {
+	for _, label := range labels {
 		if label == "" {
 			return false
 		}
@@ -232,6 +252,28 @@ func NormaliseDomain(s string) string {
 	// domain side is a guaranteed non-match — "0.." bound "0." and matched
 	// nothing. Found by the scheduled fuzz run.
 	return strings.TrimPrefix(strings.TrimRight(strings.ToLower(s), "."), "*.")
+}
+
+// CheckAllowList refuses an allowlist entry that is a bare top-level domain
+// (audit 2026-09-01, A6). The suffix rule is otherwise correct — a two-label
+// entry covers its own subdomains and nothing broader — but one label, "org"
+// or "com", is every host under that TLD: egress to the internet at large and
+// credential binding to match, accepted silently at parse time until the audit
+// priced it. Refused at every door that takes an allowlist, consistently
+// between allow and secret binding (validDomain requires the same two labels
+// of a credential's domain).
+func CheckAllowList(list []string) error {
+	for _, a := range list {
+		d := NormaliseDomain(a)
+		if d == "" {
+			continue
+		}
+		if len(strings.Split(d, ".")) < 2 {
+			return denial.AllowSingleLabel.Err(denial.V{
+				"domain": d, "example": "example." + d})
+		}
+	}
+	return nil
 }
 
 // secretFor returns the credential bound to a host, if any. Matching follows
