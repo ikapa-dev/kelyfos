@@ -2,6 +2,8 @@ package shim
 
 import (
 	"fmt"
+	"os"
+	"strings"
 	"sync"
 	"testing"
 
@@ -69,5 +71,30 @@ func TestA9_ABurstOfRacingRegistrationsNeverExceedsTheCap(t *testing.T) {
 	}
 	if len(s.boxes) != MaxSandboxes {
 		t.Errorf("the fleet holds %d boxes after the burst, want the cap", len(s.boxes))
+	}
+}
+
+// The adversarial review of this fix caught the first version refusing the
+// request and walking away: a booted loser that never enters s.boxes is
+// unreachable by GET, DELETE and Close — an orphaned VMM the cap never
+// counts. The teardown call is structural, so the structural check is what
+// pins it (the same shape TestEveryToolCallPassesTheAudit uses), because
+// driving a real booted loser needs KVM.
+func TestA9_TheLoserIsTornDownNotAbandoned(t *testing.T) {
+	src, err := os.ReadFile("shim.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	i := strings.Index(string(src), "if !s.register(b) {")
+	if i < 0 {
+		t.Fatal("the register-failure branch is gone; this test needs rewriting with it")
+	}
+	body := string(src)[i:]
+	if end := strings.Index(body, "\n\t}\n"); end > 0 {
+		body = body[:end]
+	}
+	if !strings.Contains(body, `b.close("over_limit")`) {
+		t.Error("a lost race no longer tears down the booted loser — it would orphan a " +
+			"VMM nothing can reach, outside the cap")
 	}
 }

@@ -105,9 +105,10 @@ reference described in the README and re-measured per release.
   exceed what the host can carry with a quarter (never less than 2 GiB) kept
   for the host — refused with the new `[ceiling.host]` catalog entry. The
   legacy `[sandbox]` `mem_mib`/`vcpus` keys, which behaved as overridable
-  defaults on this door, are now ceilings there too, matching what the tool
-  schema has always promised ("at most what the policy allows"); the tool
-  description states the real defaults and the host limits.
+  defaults on this door, are now ceilings there too — both of them, on the
+  policy-less and policy paths alike — matching what the tool schema has
+  always promised ("at most what the policy allows"); the tool description
+  states the real defaults and the host limits.
 - **A restored snapshot's recorded network addressing is validated like a
   state file's** (independent audit 2026-09-01, A7). A snapshot's meta.json
   went to `ip link` with no gate at all — the audit's scenario, a meta.json

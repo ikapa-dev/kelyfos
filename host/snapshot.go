@@ -200,6 +200,12 @@ func snapshotRestore(argv []string) error {
 		if len(list) == 0 {
 			return fmt.Errorf("snapshot %q was taken from a networked sandbox but recorded no allowlist; pass --allow", *name)
 		}
+		// A bare TLD restores the whole-TLD grant the snapshot recorded, or
+		// the operator typed one now (audit 2026-09-01, A6) — refused before
+		// a proxy is built.
+		if err := egress.CheckAllowList(list); err != nil {
+			return err
+		}
 		// A named policy narrows the allowlist the same way restoreAllow
 		// narrows sandbox_restore's (host/servemcpstate.go, F9): a domain the
 		// project's kelyfos.toml does not permit is refused here, before a

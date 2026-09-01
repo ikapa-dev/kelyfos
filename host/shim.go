@@ -59,8 +59,12 @@ commands. See docs/e2b-shim.md.
 	// The project's policy applies here exactly as it applies to `kelyfos run`.
 	// An entry path that skips the file is a hole in the wall, and a shim
 	// sandbox that quietly ran uncapped was one (F-D33).
+	shimAllow := splitAllow(*allow)
+	if err := egress.CheckAllowList(shimAllow); err != nil {
+		return err
+	}
 	pol := shim.Policy{
-		Arch: *arch, Flavor: *flavor, Allow: splitAllow(*allow),
+		Arch: *arch, Flavor: *flavor, Allow: shimAllow,
 		Vcpus: 2, MemMiB: 512,
 		Argv: append([]string{"kelyfos", "shim"}, argv...), Version: Version,
 	}

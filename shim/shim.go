@@ -519,7 +519,12 @@ func (s *Server) createSandbox(w http.ResponseWriter, r *http.Request) {
 	// concurrent POSTs took the space while this machine was coming up. The
 	// already-booted machine is torn down on a lost race — that cost is
 	// bounded, because the loser is exactly one machine per racing request.
+	// The close is load-bearing, not tidiness: a booted box that never enters
+	// s.boxes is unreachable by GET/DELETE and by Close, an orphaned VMM the
+	// cap never counts (found by the adversarial review of this fix — the
+	// first version refused the request and walked away).
 	if !s.register(b) {
+		b.close("over_limit")
 		writeErr(w, http.StatusTooManyRequests, fmt.Sprintf(
 			"this shim's limit is %d sandboxes and it is full; delete one before asking for another",
 			MaxSandboxes))

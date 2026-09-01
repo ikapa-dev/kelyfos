@@ -280,6 +280,13 @@ func (s *hostServer) restoreAllow(name string, asked []string, meta *sandbox.Sna
 		return nil, fmt.Errorf("snapshot %q was taken from a networked sandbox but recorded no "+
 			"allowlist, so there is nothing to restore it with; name one in `allow`", name)
 	}
+	// A bare TLD in the list — asked for now, or recorded by the snapshot —
+	// restores the whole-TLD grant (audit 2026-09-01, A6). meta.json is a
+	// file a same-uid process can write, so the frozen list is checked and
+	// not just the ask.
+	if err := egress.CheckAllowList(list); err != nil {
+		return nil, err
+	}
 	for _, d := range list {
 		if !containsDomain(meta.Allow, d) {
 			return nil, denial.AllowSnapshot.Err(denial.V{

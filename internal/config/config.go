@@ -313,6 +313,13 @@ func (c *Config) validate() error {
 		if !strings.Contains(s, "@") {
 			return fmt.Errorf("%s: secret %q must be NAME@domain", c.Path, s)
 		}
+		// The whole spec grammar — including the bare-TLD refusal (audit
+		// 2026-09-01, A6) — is ParseSecretSpec's; running it here means a
+		// malformed or whole-TLD binding costs a clear error at load rather
+		// than a surprise at boot.
+		if _, err := egress.ParseSecretSpec(s); err != nil {
+			return fmt.Errorf("%s: %w", c.Path, err)
+		}
 	}
 	// A bare top-level domain in an allowlist — org, com — is every host under
 	// that TLD, credential binding included (audit 2026-09-01, A6). Refused at

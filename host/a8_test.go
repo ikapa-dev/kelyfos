@@ -91,3 +91,50 @@ mem_mib = 512
 		t.Errorf("asking under the legacy ceiling was refused: %v", err)
 	}
 }
+
+// The policy-path host ceilings were the half the first test pass missed:
+// every A8 test drove the policy-less door, so removing capToHost from the
+// policy path passed the suite silently (adversarial review, A8). This one
+// resolves through a policy — the ceilings must hold there too.
+func TestA8_TheHostCeilingsHoldOnThePolicyPath(t *testing.T) {
+	// A policy with no [resources] ceilings of its own: the host's are what
+	// must fire. (With a [resources] mem below the host ceiling, the policy
+	// refusal fires first — that order is correct and tested elsewhere.)
+	s := serverWith(t, `[sandbox]
+image = "dev"
+allow = ["example.com"]
+`)
+	ask := hostMemCeilingMiB()*2 + 512
+	if _, err := s.resolve(&runArgs{CPUs: 1, Mem: fmt.Sprintf("%dM", ask)}); err == nil {
+		t.Fatalf("a %d MiB machine passed the policy path's host ceiling", ask)
+	} else if !strings.Contains(err.Error(), "[ceiling.host]") {
+		t.Errorf("the refusal is not the catalog one:\n%v", err)
+	}
+	askCPUs := hostCPUCeiling()*4 + 4
+	if _, err := s.resolve(&runArgs{CPUs: askCPUs}); err == nil {
+		t.Fatalf("%d vcpu passed the policy path's host ceiling", askCPUs)
+	}
+}
+
+// The legacy vcpus key is a ceiling on this door, the same as mem_mib — the
+// mem half was tested at first and this half was not, which is exactly how a
+// claim like "both keys are ceilings" gets half-implemented.
+func TestA8_TheLegacyVcpusIsACeilingOnThisDoor(t *testing.T) {
+	s := serverWith(t, `[sandbox]
+image = "dev"
+allow = ["example.com"]
+vcpus = 2
+`)
+	_, err := s.resolve(&runArgs{CPUs: 4})
+	if err == nil {
+		t.Fatal("a client raised cpus over the legacy vcpus ceiling")
+	}
+	for _, want := range []string{"vcpus = 2", "ceiling"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not mention %q:\n%v", want, err)
+		}
+	}
+	if _, err := s.resolve(&runArgs{CPUs: 1}); err != nil {
+		t.Errorf("asking under the legacy ceiling was refused: %v", err)
+	}
+}

@@ -61,6 +61,14 @@ func CheckForkSpace(dir string, n int, perFork int64) error {
 	if err != nil {
 		return nil
 	}
+	if free < 0 {
+		// A filesystem that reports negative free space is not one this
+		// comparison can reason about: converting it to unsigned would make
+		// the check pass everything. Refuse on the ceiling instead — the
+		// same answer an unmeasurable filesystem gets.
+		return fmt.Errorf("%d forks need more space than %s reports it has (statfs says %d bytes free)",
+			n, dir, free)
+	}
 	if uint64(free) < need {
 		return fmt.Errorf("%d forks need %d bytes of workspace copies in %s but only %d are free "+
 			"(a filesystem without reflink support copies the whole image per fork)",

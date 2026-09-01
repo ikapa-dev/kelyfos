@@ -286,6 +286,12 @@ func (s *hostServer) resolve(a *runArgs) (sandbox.Options, error) {
 			}
 			opts.MemMiB = n
 		}
+		// The allowlist check applies with no policy too (audit 2026-09-01,
+		// A6): this is the door where the client names its own allowlist, and
+		// a bare TLD here was internet-wide egress accepted silently.
+		if err := egress.CheckAllowList(a.Allow); err != nil {
+			return opts, err
+		}
 		opts.Allow = a.Allow
 		// No policy is no ceiling of the policy's — the host's own are still
 		// in force (audit 2026-09-01, A8).
@@ -318,6 +324,14 @@ func (s *hostServer) resolve(a *runArgs) (sandbox.Options, error) {
 				"field": "cpus", "asked": strconv.Itoa(a.CPUs), "key": "cpus",
 				"limit": strconv.Itoa(cfg.ResCPUs), "file": cfg.Path,
 				"line": strconv.Itoa(line)})
+		}
+		// The legacy [sandbox] vcpus is a ceiling on this door, exactly as
+		// mem_mib is for memory (audit 2026-09-01, A8): the tool schema
+		// promises at most what the policy allows, whichever key spells it.
+		if cfg.ResCPUs == 0 && cfg.Vcpus > 0 && a.CPUs > cfg.Vcpus {
+			return opts, fmt.Errorf("cpus %d exceeds the ceiling vcpus = %d set at %s — "+
+				"on this door a declared size is a ceiling, not a default; raise it in the "+
+				"file's [resources] if the machine is meant to have more", a.CPUs, cfg.Vcpus, cfg.Path)
 		}
 		opts.VcpuCount = a.CPUs
 	}

@@ -70,13 +70,62 @@ func TestA10_PipelinedCallsNeverExceedTheDispatchCap(t *testing.T) {
 	}
 }
 
-// The audit also observed a list racing a run: with the cap forcing the
-// pipeline's floor through one bounded set of goroutines, calls dispatched in
-// burst order can still overlap — that is the concurrency MCP promises and
-// this documents, not a race the cap was meant to remove. What the cap removes
-// is the amplification.
-func TestA10_TheCapIsSizedLikeEveryOtherListener(t *testing.T) {
-	if maxConcurrentToolCalls != 128 {
-		t.Errorf("maxConcurrentToolCalls = %d, want the 128 every other listener uses", maxConcurrentToolCalls)
+// The cap is the same 128 the guest channels' listeners use, and it is
+// actually in force on a real serve: a server constructed without a preset
+// semaphore builds one lazily, and the bound holds on it too — the first test
+// pins the preset case, this one pins the lazily-built default, which a
+// refactor could quietly drop.
+func TestA10_TheDefaultCapIsBuiltAndHolds(t *testing.T) {
+	s := serverWith(t, policy)
+	if s.toolSem != nil {
+		t.Fatal("a fresh server pre-built its semaphore; the lazy build moved")
+	}
+
+	var mu sync.Mutex
+	inFlight, maxInFlight := 0, 0
+	release := make(chan struct{})
+	s.dispatched = func(tool string) {
+		mu.Lock()
+		inFlight++
+		if inFlight > maxInFlight {
+			maxInFlight = inFlight
+		}
+		mu.Unlock()
+		<-release
+		mu.Lock()
+		inFlight--
+		mu.Unlock()
+	}
+
+	// Two over the built-in cap of maxConcurrentToolCalls: at most that many
+	// in flight, and everything answered.
+	in := ""
+	for i := 1; i <= maxConcurrentToolCalls+2; i++ {
+		in += fmt.Sprintf(`{"jsonrpc":"2.0","id":%d,"method":"tools/call","params":{"name":"sandbox_list","arguments":{}}}`+"\n", i)
+	}
+	var out strings.Builder
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = s.serve(strings.NewReader(in), &out)
+	}()
+
+	// Fill the cap and confirm the bound, then let everything through.
+	time.Sleep(500 * time.Millisecond)
+	mu.Lock()
+	reached := inFlight
+	mu.Unlock()
+	if reached != maxConcurrentToolCalls {
+		t.Fatalf("%d calls were in flight, want the default cap of %d", reached, maxConcurrentToolCalls)
+	}
+	close(release)
+	<-done
+	mu.Lock()
+	defer mu.Unlock()
+	if maxInFlight > maxConcurrentToolCalls {
+		t.Errorf("%d calls were in flight at once, want at most %d", maxInFlight, maxConcurrentToolCalls)
+	}
+	if got := strings.Count(out.String(), `"id"`); got != maxConcurrentToolCalls+2 {
+		t.Errorf("the transcript holds %d answers, want %d", got, maxConcurrentToolCalls+2)
 	}
 }
