@@ -798,6 +798,24 @@ func (d *Digest) Absorb(e recorder.Event) *Entry {
 			}
 		}
 
+	case recorder.TypeSecretUnscrubbable:
+		// A compressed response from a credential-bound origin: the echo
+		// suppression could not read the body (audit 2026-09-01, A4). It
+		// counts as a secret fact about the session without naming a use.
+		entry.Category = "secret"
+
+	case recorder.TypeChannelRefused:
+		// A connection to a guest-initiated channel refused for lacking the
+		// session's credential (audit 2026-09-01, A2/A3): egress-adjacent,
+		// host-side, and drawn as what it is — a refusal.
+		entry.Category = "egress"
+
+	case recorder.TypeVMMAction:
+		// A state-changing Firecracker API call the host made (audit
+		// 2026-09-01, A11): pause, resume, snapshot create or load, drive
+		// patch. Lifecycle, like the session events it sits between.
+		entry.Category = "session"
+
 	case recorder.TypeSecretUse:
 		entry.Category = "secret"
 		count(agent, &d.Session, func(c *Counters) { c.Secrets++ })
