@@ -1932,3 +1932,37 @@ boot and one frame per connection; its residue is honest and documented — the
 host still cannot tell *which* same-uid process presented a valid credential,
 only that one did, and the credential gates authenticity of the channel, not
 truthfulness of what a genuinely running guest chooses to report.
+
+## D100
+
+*2026-09-01*
+
+**The workspace sync-back's fail-wholesale default for hostile-but-legal
+names is kept, and the availability trade is documented instead of fixed
+(the audit of 2026-09-01's A16 proposed a quarantine sidecar).**
+
+The finding is real and reproduced: one control-character name in an agent's
+workspace fails the entire sync-back, and a whole session's work is not
+written back — fail-closed in the direction of losing work. The audit's
+quarantine — extract valid entries, list the offending names in a
+`rejected/` sidecar, hard-fail only the escape class — is the right product
+shape, and this decision records why it is deferred rather than shipped now:
+
+| concern | what it means here |
+| --- | --- |
+| the escape class is interlocked with the parser | `entryFrom`'s strictness *is* the check: a slash or newline in a record looks exactly like a parse failure, and the fuzz seed corpus (and `TestFuzz`) pins "entryFrom refuses" for the whole hostile-name class. Splitting that class into refused-extractable vs refused-nonexistent changes the invariant the fuzzer holds, and the invariant is what makes the rest of the extraction auditable |
+| the cross-check is built on totality | the IA-H1 repair refuses a write-back that produces nothing against a non-empty pack manifest (D91). A quarantine produces *something* — a tree missing the entries the manifest says exist — and every downstream honesty check (pack manifest diff, `--review`'s modified-file report) would have to learn to reason about a third state between present and absent |
+| the honest failure is loud today | today's failure names the entry and stops; nothing is half-written. A quarantine that silently omits an entry (which a sidecar is, to any script that does not read it) is quieter than the failure it replaces — the same shape D88 already flagged once for symlinks |
+| the trigger is rare and self-inflicted | a control-character name comes from a build system or a shell quoting accident inside the sandbox; the record names it, the operator sees the refusal, and the fix is one `rm` before the session ends |
+
+**What ships instead:** the trade is in the release notes, `docs/hardening.md`
+and the assertion matrix. A quarantine sidecar with an empty-host-path
+guarantee and a manifest that reasons about a third state remains available
+to a maintainer who wants it; the interlocks above are the list to work
+through first.
+
+**Why:** the brief the audit itself gives — "if decided against, document the
+trade in docs/ and the release notes" — and the project's rule that a
+half-migration of a fail-closed control is worse than either end of it. The
+record names the offending entry today; nothing about this decision changes
+that.

@@ -417,6 +417,22 @@ Signals themselves are not scoped, so `kill` between siblings still works.
 Stated here, before the code, so the README sentence at the end of the phase can
 be checked against it rather than composed to sound good.
 
+**One hostile name fails the whole workspace sync-back** (the audit of
+2026-09-01's A16, documented as a trade rather than fixed — D100). The
+write-back is fail-closed: a workspace containing one entry this host will not
+extract — a control character in a name, a quote the debugfs command cannot
+carry, an entry that does not parse — is refused whole, the host directory is
+untouched, and the refusal names the entry. The cost is availability: an agent
+(or a build system inside it) that created one awkward filename loses the
+session's write-back until the entry is removed. The audit proposed a
+quarantine — extract the valid entries, list the refused names in a sidecar,
+keep the hard fail only for the escape class. D100 records why it is deferred:
+the parser's strictness is the check the fuzzer holds, the write-back's
+cross-checks reason in terms of the whole manifest, and a quiet partial
+write-back is the shape of the loss D88 already flagged once. The remedy until
+then is ordinary: the refusal names the entry, and deleting it inside the
+sandbox before shutdown lets everything else write back.
+
 **The invoking user's own processes.** The jailed VMM drops to the user who
 started it rather than to a dedicated account (D29). The chroot takes the host
 filesystem away entirely — verified from the host's own `mountinfo`, not claimed

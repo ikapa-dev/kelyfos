@@ -18,6 +18,15 @@ reference described in the README and re-measured per release.
 ## Unreleased
 
 ### Fixed
+- **The one-hostile-name sync-back trade is documented** (independent audit
+  2026-09-01, A16; D100). A workspace containing a single entry this host will
+  not extract — a control character in a filename, for example — fails the
+  entire write-back, and the refusal names the entry. The audit proposed a
+  quarantine sidecar; D100 records why it is deferred (the parser's strictness
+  is the invariant the fuzzer holds, and the write-back's cross-checks reason
+  in terms of the whole manifest) and what the remedy is today: delete the
+  named entry inside the sandbox before shutdown. docs/hardening.md §5 carries
+  the trade.
 - **The flight recorder verifies its own tail, and publishes its head
   out-of-band** (independent audit 2026-09-01, A14). A live writer's catch-up
   trusted the file tail without re-verifying it, so a same-uid writer who
