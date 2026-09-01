@@ -18,6 +18,12 @@ reference described in the README and re-measured per release.
 ## Unreleased
 
 ### Fixed
+- **A plugin's stderr is sanitised at the console boundary** (independent audit
+  2026-09-01, A18). Plugin stderr reached the operator's terminal unsanitised;
+  a plugin could write escape sequences — or a line that reads as the
+  supervisor's own — onto the console a person is reading. Every line now goes
+  through the sanitiser, which quotes a line carrying any control character
+  whole: the diagnostic survives, the escape does not.
 - **The one-hostile-name sync-back trade is documented** (independent audit
   2026-09-01, A16; D100). A workspace containing a single entry this host will
   not extract — a control character in a filename, for example — fails the

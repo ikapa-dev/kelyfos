@@ -417,16 +417,29 @@ func describeExit(ws syscall.WaitStatus) string {
 
 // prefixedLog turns a plugin's stderr into console lines that say whose they
 // are, so a plugin complaining is distinguishable from the supervisor doing so.
+//
+// Every line is sanitised before it is written (audit 2026-09-01, A18): a
+// plugin's stderr is untrusted output aimed at the operator's terminal, and
+// without the sanitiser a plugin could write escape sequences — or a line that
+// reads as the supervisor's own — onto the console the operator is reading.
+// SafeText quotes a line carrying any control character whole, which is the
+// right shape: the diagnostic survives, the escape does not.
 func prefixedLog(prefix string) io.Writer {
 	r, w := io.Pipe()
 	go func() {
 		sc := bufio.NewScanner(r)
 		sc.Buffer(make([]byte, 0, 4<<10), 64<<10)
 		for sc.Scan() {
-			logf("%s: %s", prefix, sc.Text())
+			logf("%s: %s", prefix, sanitizeConsoleLine(sc.Text()))
 		}
 	}()
 	return w
+}
+
+// sanitizeConsoleLine is the one place a plugin's own words reach the
+// operator's console, so it is the one place the sanitiser runs.
+func sanitizeConsoleLine(line string) string {
+	return proto.SafeText(line)
 }
 
 // builtinTool reports whether a name is one the sandbox already answers.
