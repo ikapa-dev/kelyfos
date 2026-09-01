@@ -495,3 +495,44 @@ jobs:
 
       - name: Integration tests against a real microVM
         run: go test -count=1 -timeout 20m -run 'TestConcurrent|TestOrphans|TestExec|TestMCP' ./internal/sandbox/
+
+      # Last in the job on purpose. Every step above it is older evidence —
+      # the smoke test, the x86_64 host seccomp filter (P5-2, and this is the
+      # only place a real x86_64 VMM runs), the integration tests. A new step
+      # that has never run on a hosted runner must not be able to mask any of
+      # them by failing first.
+      # D89 tier 1: the security lab's offline subset, on every push.
+      #
+      # Three suites, chosen because none of them needs the network: the record
+      # suite (export, verify, byte-flip, marker removal), the caps suite (a
+      # ceiling refused by flag and by file), and the offline battery of the
+      # egress suite (a sandbox with no --allow has no NIC at all). The online
+      # battery gates itself off when the host cannot reach example.com (D87),
+      # so it costs nothing here.
+      #
+      # Its own cache, and that is not tidiness. IMAGE_DIR does not vary with
+      # FLAVOR (Makefile:81) — the flavor lives in image.json and checkManifest
+      # refuses a mismatch — so two flavors cannot share a cache. This job's own
+      # image is `base`, which is "BusyBox and musl and nothing else", and every
+      # suite here needs `dev` for its TLS client and interpreters. Fetching the
+      # released dev image into ~/.cache/kelyfos-sec leaves the base image the
+      # smoke test above boots exactly where it was.
+      #
+      # The tag is pinned rather than `latest`: a workflow whose behaviour
+      # changes when somebody publishes a release fails for reasons the commit
+      # cannot explain. Bump it deliberately when a release moves the guest.
+      # The trade D89 records: this guards the host side against the release's
+      # guest, so a guest-image regression is caught by the Thursday lab in
+      # security-lab.yml, not here.
+      - name: Security lab — the offline subset
+        env:
+          KELYFOS_SEC_TAG: v1.1.2
+        run: |
+          set -o pipefail
+          export KELYFOS_CACHE="$HOME/.cache/kelyfos-sec"
+          bash dev/fetch-image.sh x86_64 "$KELYFOS_SEC_TAG"
+          for suite in record caps egress; do
+            echo "::group::accept-security-$suite"
+            ARCH=x86_64 bash "dev/accept-security-$suite.sh"
+            echo "::endgroup::"
+          done

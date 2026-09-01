@@ -1,0 +1,143 @@
+# KelyfOS — the security lab, weekly (D89 tier 2).
+#
+# The independent audit of 2026-08-31 attacked the sandbox boundary and it held
+# everywhere; these suites are that audit turned into assertions that run again
+# without anybody remembering how. What they check is in
+# docs/security-assertions.md, one row per claim, with the rows nothing checks
+# marked UNCHECKED rather than quietly omitted.
+#
+# Why its own workflow, and its own day. ci.yml's Monday cron runs the whole
+# build with no caches; cookbook.yml has Tuesday; security.yml — govulncheck and
+# the fuzz hunt — has Wednesday. This one takes Thursday. Mixing a boundary
+# failure into any of those would muddy a signal designed to mean one thing: a
+# red run here says an audited security property stopped holding, and nothing
+# else.
+#
+# Why not on push. This account has had Actions disabled once and sustained load
+# is the likely cause (D89). Five suites booting microVMs on every push is the
+# design that row rejected. What runs on a push is the offline subset inside
+# ci.yml's existing boot job — three suites, no network, no new run — and this
+# is where the rest live. workflow_dispatch is here because a schedule nobody
+# can trigger is a suite nobody re-runs when it matters.
+#
+# The full lab, including the controlled-origin battery once ST-2.1 is
+# provisioned (D90), runs locally before a release: `make accept-security`.
+name: security-lab
+
+on:
+  schedule:
+    # Thursdays, 05:29 UTC. An odd minute on purpose: GitHub drops scheduled
+    # runs that pile up on the hour.
+    - cron: "29 5 * * 4"
+  workflow_dispatch:
+    inputs:
+      suites:
+        description: "Suites to run, space separated (default: all five heavy ones)"
+        required: false
+        default: "secrets surfaces workspace team lifecycle"
+      tag:
+        description: "Release tag to take the dev guest image from"
+        required: false
+        default: "v1.1.2"
+
+permissions:
+  contents: read
+
+# A second concurrent run would have two labs booting microVMs on one runner's
+# KVM and racing for the same nft table names. Queue, do not cancel: a run
+# already measuring something should finish saying what it found.
+concurrency:
+  group: security-lab-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  lab:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      ARCH: x86_64
+      SUITES: ${{ github.event.inputs.suites || 'secrets surfaces workspace team lifecycle' }}
+      KELYFOS_SEC_TAG: ${{ github.event.inputs.tag || 'v1.1.2' }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # Standard Linux runners expose /dev/kvm as root:kvm 0660 with the runner
+      # user outside the group; without this every boot fails with a permission
+      # error that looks like a Firecracker bug. bench.yml, caps.yml and
+      # cookbook.yml all carry the same step.
+      - name: Grant access to /dev/kvm
+        run: |
+          set -eux
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -l /dev/kvm
+
+      - name: Install Firecracker
+        run: bash dev/install-firecracker.sh
+
+      - name: Build the CLI
+        run: make cli
+
+      # The dev flavor, downloaded rather than built. IMAGE_DIR does not vary
+      # with FLAVOR (Makefile:81) — the flavor is recorded in image.json and
+      # checkManifest refuses a mismatch — so the suites need a cache of their
+      # own holding dev, and building one here would cost ~35 minutes to learn
+      # nothing this job is asking. The tag is pinned rather than `latest` so a
+      # published release cannot change what this run means.
+      - name: Fetch the dev guest image
+        run: |
+          set -eux
+          export KELYFOS_CACHE="$HOME/.cache/kelyfos-sec"
+          bash dev/fetch-image.sh "$ARCH" "$KELYFOS_SEC_TAG"
+          cat "$KELYFOS_CACHE/out/$ARCH/image.json"
+
+      - name: kelyfos doctor
+        run: |
+          export KELYFOS_CACHE="$HOME/.cache/kelyfos-sec"
+          ./bin/kelyfos doctor --arch "$ARCH"
+
+      # One suite per group, and `continue-on-error` is deliberately absent: a
+      # boundary that stopped holding is a blocker under CONTRIBUTING.md's "CI
+      # is the gate", not a warning. The suites tear down only their own
+      # machines (D83's scope.sh), so a failure does not poison the ones after
+      # it — but the run stops at the first, because the first is the finding.
+      - name: Run the suites
+        run: |
+          set -o pipefail
+          export KELYFOS_CACHE="$HOME/.cache/kelyfos-sec"
+          for suite in $SUITES; do
+            echo "::group::accept-security-$suite"
+            ARCH="$ARCH" bash "dev/accept-security-$suite.sh" 2>&1 | tee "lab-$suite.log"
+            echo "::endgroup::"
+          done
+
+      - name: Summarise
+        if: always()
+        run: |
+          {
+            echo "## Security lab — $ARCH, image $KELYFOS_SEC_TAG"
+            echo
+            for f in lab-*.log; do
+              [ -e "$f" ] || continue
+              echo "### ${f%.log}"
+              echo '```'
+              sed -e 's/\x1b\[[0-9;]*m//g' "$f" | tail -25
+              echo '```'
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Kept because a boundary failure is worth reading in full a week later,
+      # and the run that found it may be gone by then.
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: security-lab-${{ github.run_id }}
+          path: lab-*.log
+          if-no-files-found: ignore
+          retention-days: 30

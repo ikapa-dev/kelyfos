@@ -1511,6 +1511,55 @@ from a gate is hosted minutes, and hosted minutes on this account are the
 maintainer's budget to set. The row prices the tiers so the choice is a
 number, not a vibe.
 
+**Approved 2026-09-01: both tiers — and the fast tier needed a fix this row
+did not see.**
+
+The pricing above was right about minutes and wrong about images. The fast
+subset cannot run in `ci.yml`'s boot job as written, because that job's guest
+image is the **base** flavor and every suite in the subset needs **dev**:
+
+- `Makefile:81` sets `IMAGE_DIR ?= $(KELYFOS_CACHE)/out/$(ARCH)`, which does
+  not vary with `FLAVOR`. The flavor is recorded in `image.json` alone, and
+  `checkManifest` (`internal/sandbox/sandbox.go:264`) refuses a machine whose
+  manifest names a different one. Two flavors cannot coexist in one cache.
+- `ci.yml`'s build matrix runs `make image FLAVOR=${{ inputs.flavor || 'base' }}`,
+  so every push produces base and the boot job downloads base.
+- `image/flavors/base/buildroot.fragment` describes itself: "BusyBox and musl
+  and nothing else. No TLS client, no interpreters." The subset needs what
+  only `dev` carries — the egress suite asserts on `curl` inside the guest,
+  `dev/accept-security-caps.sh:72` names `-image dev` outright, and the
+  harness defaults to `-image "${SLAB_IMAGE:-dev}"`.
+
+Wired as priced, the first hosted run would have failed the manifest check and
+turned main red — on this repository, where a red main is a blocker before any
+new task, that is not a small cost.
+
+**The fix is a download, not a build.** The release images are the dev flavor
+— `image-x86_64.json` in v1.1.2 reads `"flavor": "dev"` — and
+`dev/fetch-image.sh` honours `KELYFOS_CACHE`, so the subset gets its own cache
+beside the job's:
+
+    KELYFOS_CACHE=$HOME/.cache/kelyfos-sec dev/fetch-image.sh x86_64 <tag>
+
+A second cache rather than the same one, because overwriting
+`~/.cache/kelyfos/out/x86_64` would replace the base image the boot job's own
+smoke test boots two steps earlier. The added cost per push is one ~100 MB
+download and three boots, not the ~35 minutes a second flavor in the build
+matrix would cost — which is rejected for exactly the load reason §3 exists.
+
+**The trade this accepts, stated:** the subset boots the last *release's* dev
+image rather than one built from the commit under test. It is therefore a
+guard on the host side of the boundary — the CLI, the proxy, the recorder,
+teardown — and not on guest changes, which the weekly tier and the local
+`make accept-security` still cover. A guest-image change that breaks a suite
+is caught on Thursday, not on the push.
+
+| candidate | verdict |
+| --- | --- |
+| Rewrite the subset to run on `base` | **Rejected.** The egress battery's subject is a guest with a TLS client; running it against an image with no TLS client tests the harness, not the boundary. |
+| Add `dev` to the build matrix | **Rejected.** ~35 minutes of extra build on every push is the load pattern §3 is written against, to make a per-push gate marginally more exact. |
+| Pin the fetched tag to `latest` | **Rejected.** A workflow whose behaviour changes when a release is published is a workflow that fails for reasons the commit cannot explain; the tag is written down and bumped deliberately. |
+
 ## D90
 
 *2026-08-31*
@@ -1556,6 +1605,20 @@ payloads, header echo.
 **Why:** the work is a script and a suite; the blocker is a monthly invoice
 and a hostname only the owner can authorise. Everything below the invoice is
 ready to be written the moment the row is approved.
+
+**Approved 2026-09-01.** The maintainer authorised the spend. The decisive
+question is credential-follows-redirect: whether a 302 from a bound host to
+an attacker's host carries the credential the proxy attached. Nothing in the
+tree answers it today, and it is a credential-leak question rather than a
+hardening nicety.
+
+Provisioning is the owner's act — the VPS, the wildcard record and the SSH
+key are theirs — so ST-2.1's committed half (`dev/origin/`, and
+`dev/security-lab-origin.md` with the monthly cost at the top) lands first
+and ST-2.2's battery is written and verified against the box once it exists.
+Until then the four rows stay UNCHECKED in `docs/security-assertions.md`,
+which is the honest state: approved is not provisioned, and a suite that has
+never run against a real origin proves nothing.
 
 ## D91
 
@@ -1693,8 +1756,14 @@ verifies-clean is now the documented exception rather than the whole story.
 a run on push, and the nightly proposal needs the maintainer's minutes first
 (ST-4.1).**
 
-The scheduled budget is a smoke test: 29 targets × 10 seconds weekly says a
-target still runs, not that it hunts. The corrected target list (§6.3 of the
+**Correction, 2026-09-01.** This row opened by calling the scheduled budget "a
+smoke test: 29 targets × 10 seconds weekly", which conflated two different
+budgets and understated the existing one by 18×. `ci.yml` runs 10 seconds a
+target on every push (`ci.yml:181`); `security.yml`'s Wednesday cron already
+runs **three minutes** a target — `FUZZTIME: schedule && '3m' || '30s'` at
+`security.yml:119`, and its own comment says "3m x 29 = 87 min weekly". The
+scheduled hunt exists and is 87 minutes. What follows was priced against a
+budget that was never 10 seconds. The corrected target list (§6.3 of the
 plan) splits what a larger budget buys:
 
 | tier | targets | budget | cost | when |
@@ -1722,6 +1791,20 @@ the price is the only thing that changes.
 
 **Why:** a fuzz budget nobody priced is a budget nobody can defend, and a
 schedule nobody approved is §3's incident happening politely.
+
+**Decided 2026-09-01: the Saturday slot is DECLINED; nothing changes.** Once
+the correction above is applied the proposal reads as a second scheduled day
+buying five minutes instead of three on nine targets that Wednesday already
+hunts for three. That is a small marginal gain on an account whose Actions
+were disabled once for sustained load, and the row's own argument against
+nightly — "spend without a hypothesis" — applies to it with more force. The
+per-push 10 s and Wednesday's 87 minutes stand as they are.
+
+The two things that survive the refusal, because neither costs a run:
+`internal/mcp` still has no fuzz target and stays named as a gap rather than
+hidden by a schedule; and if a crasher ever escapes to a release, the cheap
+answer is to raise Wednesday's `FUZZTIME` for the named targets, not to add a
+day.
 
 ## D95
 
