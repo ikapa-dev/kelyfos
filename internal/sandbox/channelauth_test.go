@@ -207,9 +207,9 @@ func TestChannelWithoutAMintedCredentialRefusesEverything(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer conn.Close()
-	if err := proto.NewWriter(conn).Write(channelHello{V: proto.Version, Auth: testCredential}); err != nil {
-		t.Fatal(err)
-	}
+	// The server may close the connection before this write lands — it refuses
+	// without reading anything — and a broken pipe here is the refusal itself.
+	_ = proto.NewWriter(conn).Write(channelHello{V: proto.Version, Auth: testCredential})
 	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 	var ignore json.RawMessage
 	if err := proto.NewReader(conn).Read(&ignore); err == nil {
