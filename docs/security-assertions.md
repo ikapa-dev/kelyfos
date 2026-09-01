@@ -24,6 +24,7 @@ assertion's subject.
 | the resolved-address check refuses metadata and RFC1918 addresses (DNS hijack) | egress suite via nip.io, `[egress.resolved_addr]` | CHECKED |
 | a foreign peer — another sandbox's guest, or a VM-side process — is dropped silently | egress suite peer probes (guest→guest, VM→proxy) | CHECKED |
 | every attempt recorded with mode, reason and byte counts | egress suite record assertions | CHECKED |
+| each proxy owns its upstream transports — a connection pooled under one sandbox's policy cannot serve another's, so the per-dial resolved-address re-check cannot be skipped by cross-proxy reuse (audit A13) | `internal/egress/a13_test.go` — two proxies hold two transports, one proxy holds one | CHECKED |
 | a plain-URI request's Host is rebuilt by the proxy (IA-I5) | egress suite (ABS-REBUILD/REWRITE shapes) | CHECKED |
 | redirect credential-following, upstream smuggling, compression torture, leaf-cache reuse | — requires the controlled-origin lab (D90, owner approval) | UNCHECKED — proposed |
 | 431-with-drain observed vs a fast writer's reset: the drain rescues a pausing client only (IA-L1c) | documented in `docs/networking.md`; dynamic pin needs the origin lab | UNCHECKED — documented |

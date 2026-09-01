@@ -536,25 +536,36 @@ const (
 // longer than thirty seconds to its first byte is ordinary rather than hostile.
 // The forward transport carries the same number and has none of the machinery
 // above, which is why removing the field was rejected there.
-var terminatedTransport = &http.Transport{
-	DisableCompression:  true,
-	ForceAttemptHTTP2:   false,
-	MaxIdleConns:        100,
-	MaxIdleConnsPerHost: 4,
-	TLSClientConfig:     &tls.Config{MinVersion: tls.VersionTLS12},
-	DialContext:         dialContextSafe,
+func newTerminatedTransport() *http.Transport {
+	return &http.Transport{
+		DisableCompression:  true,
+		ForceAttemptHTTP2:   false,
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 4,
+		TLSClientConfig:     &tls.Config{MinVersion: tls.VersionTLS12},
+		DialContext:         dialContextSafe,
 
-	IdleConnTimeout:       90 * time.Second,
-	TLSHandshakeTimeout:   10 * time.Second,
-	ExpectContinueTimeout: 1 * time.Second,
-	ResponseHeaderTimeout: maxTerminatedIdleTotal,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+		ResponseHeaderTimeout: maxTerminatedIdleTotal,
+	}
 }
 
+// upstream returns the transport for the terminated leg. It is per proxy
+// (audit 2026-09-01, A13): the transports are the only thing in this package
+// that pool connections across requests, and a package-global pool shared a
+// dialled-and-vetted connection from policy A's request with policy B's —
+// skipping B's per-dial resolved-address re-check on the way. Upstream
+// (injectable, for tests) wins when set.
 func (p *Proxy) upstream() http.RoundTripper {
 	if p.Upstream != nil {
 		return p.Upstream
 	}
-	return terminatedTransport
+	p.terminatedOnce.Do(func() {
+		p.terminatedRT = newTerminatedTransport()
+	})
+	return p.terminatedRT
 }
 
 // sameHost reports whether a request's Host header names the host the

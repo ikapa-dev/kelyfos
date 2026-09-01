@@ -441,14 +441,12 @@ func TestAbsoluteFormHTTPSWithoutConnectIsRecordedTruthfully(t *testing.T) {
 	policy := Policy{Allow: []string{host}, Ports: []int{atoiOrZero(portStr)}, Secrets: []*Secret{secret}}
 	proxyAddr, attempts, secretUses, withheld, _ := proxyFor(t, upstream, policy, nil)
 
-	// forwardHTTP fetches through forwardTransport (F2 gave it one of its own,
-	// separate from http.DefaultTransport, so its DialContext could carry the
-	// resolved-address check) — so this test's self-signed certificate has to
-	// be trusted there instead. Swapped for the length of this test and
-	// restored after; nothing else in this package runs concurrently with it.
-	prevTransport := forwardTransport
-	forwardTransport = upstream.Client().Transport
-	defer func() { forwardTransport = prevTransport }()
+	// forwardHTTP fetches through the proxy's own plain transport (F2 gave it
+	// one of its own, separate from http.DefaultTransport, so its DialContext
+	// could carry the resolved-address check) — so this test's self-signed
+	// certificate has to be trusted there instead. Injected per proxy since
+	// the audit of 2026-09-01 made the transports per proxy (A13): there is
+	// no global left to swap.
 
 	raw, err := net.Dial("tcp", proxyAddr)
 	if err != nil {

@@ -18,6 +18,13 @@ reference described in the README and re-measured per release.
 ## Unreleased
 
 ### Fixed
+- **Each egress proxy owns its upstream transports** (independent audit
+  2026-09-01, A13). The transports were package-global, so their connection
+  pools were shared by every proxy in the process: a connection dialled and
+  resolved-address-vetted under one sandbox's policy could serve another
+  sandbox's request, skipping the per-dial re-check that reuse makes
+  unnecessary from the transport's point of view and mandatory from this one's.
+  The pools are cheap; the isolation is the point.
 - **CONNECT tunnels and plain-HTTP body copies are clocked and bounded**
   (independent audit 2026-09-01, A12). A tunnel had no clock at all: 128 idle
   CONNECTs pinned the proxy's whole egress semaphore for the sandbox's life,

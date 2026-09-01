@@ -46,7 +46,7 @@ func TestB2_TheResponseHeaderBoundIsTheIdleBudgetOnBothTransports(t *testing.T) 
 		tr   *http.Transport
 	}{
 		{"forward", newForwardTransport()},
-		{"terminated", terminatedTransport},
+		{"terminated", newTerminatedTransport()},
 	} {
 		got := c.tr.ResponseHeaderTimeout
 		if got != want {
@@ -70,7 +70,7 @@ func TestB2_TheResponseHeaderBoundIsTheIdleBudgetOnBothTransports(t *testing.T) 
 // kept the same deliberately.
 func TestB2_TheTwoTransportsAgreeOnIt(t *testing.T) {
 	fwd := newForwardTransport().ResponseHeaderTimeout
-	term := terminatedTransport.ResponseHeaderTimeout
+	term := newTerminatedTransport().ResponseHeaderTimeout
 	if fwd != term {
 		t.Errorf("the forward leg waits %v for a response head and the terminated leg waits "+
 			"%v.\n  D74 keeps them equal: whichever value is chosen, one number is the point.",

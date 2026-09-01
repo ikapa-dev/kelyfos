@@ -33,7 +33,8 @@ func proxyFor(t *testing.T, upstream *httptest.Server, policy Policy, ca *CA) (s
 		CA:     ca,
 		// The test server has a self-signed certificate of its own; the proxy
 		// validating it properly is the point of the upstream leg.
-		Upstream: upstream.Client().Transport,
+		Upstream:      upstream.Client().Transport,
+		UpstreamPlain: upstream.Client().Transport,
 		OnEvent: func(a Attempt) {
 			mu.Lock()
 			defer mu.Unlock()

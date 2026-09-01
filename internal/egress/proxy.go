@@ -363,6 +363,21 @@ type Proxy struct {
 	// because it serves three requests one way and eight the other (F16).
 	terminatedIdleBudget time.Duration
 
+	// UpstreamPlain is the injectable plain-HTTP transport, for tests pointing
+	// forwardHTTP at a local origin; zero means the per-proxy transport built
+	// by newForwardTransport (audit 2026-09-01, A13).
+	UpstreamPlain http.RoundTripper
+
+	// The per-proxy transports themselves, built lazily once. Package-global
+	// transports pooled connections across every proxy in the process, which
+	// let a connection dialled under one sandbox's policy serve another's —
+	// skipping the per-dial resolved-address re-check on reuse (audit
+	// 2026-09-01, A13). The pools are cheap; the isolation is the point.
+	plainOnce      sync.Once
+	plainRT        http.RoundTripper
+	terminatedOnce sync.Once
+	terminatedRT   http.RoundTripper
+
 	// terminatedConnCeiling overrides maxTerminatedConnTime for this proxy;
 	// zero means the constant. Unexported, like the budget above and for the
 	// same reason: nothing exercised the ceiling's clamp, and removing that
@@ -467,6 +482,18 @@ func (t *tunnelClock) Write(p []byte) (int, error) {
 		t.p.touch()
 	}
 	return n, err
+}
+
+// plainUpstream returns the transport for forwardHTTP's fetches. Per proxy,
+// like upstream (audit 2026-09-01, A13); UpstreamPlain wins when a test set it.
+func (p *Proxy) plainUpstream() http.RoundTripper {
+	if p.UpstreamPlain != nil {
+		return p.UpstreamPlain
+	}
+	p.plainOnce.Do(func() {
+		p.plainRT = newForwardTransport()
+	})
+	return p.plainRT
 }
 
 // Listen binds the proxy. The address is the host's TAP address.
@@ -881,7 +908,7 @@ func (p *Proxy) forwardHTTP(client net.Conn, req *http.Request, host string, por
 	hardCtx, cancelHard := context.WithTimeout(req.Context(), maxTerminatedConnTime)
 	defer cancelHard()
 	req = req.WithContext(hardCtx)
-	resp, err := forwardTransport.RoundTrip(req)
+	resp, err := p.plainUpstream().RoundTrip(req)
 	if err != nil {
 		p.reportDialFailure(client, host, port, err)
 		return

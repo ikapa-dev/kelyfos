@@ -112,7 +112,7 @@ func TestF15_BothEgressTransportsSetTheirOwnFields(t *testing.T) {
 		tr   *http.Transport
 	}{
 		{"forward", newForwardTransport()},
-		{"terminated", terminatedTransport},
+		{"terminated", newTerminatedTransport()},
 	} {
 		tr := c.tr
 		if tr.Proxy != nil {

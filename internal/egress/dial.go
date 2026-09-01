@@ -293,16 +293,6 @@ func dialFailureAddr(err error) string {
 	return ""
 }
 
-// forwardTransport is what forwardHTTP fetches through: a plain-HTTP
-// request, and an absolute-form https:// request that reached this proxy
-// without a CONNECT first (ModeDirectTLS, S5d).
-//
-// A var, not a literal call at each request, so a test can still swap it for
-// the length of one test to trust a self-signed certificate — the same
-// purpose http.DefaultTransport was swapped for before this change gave
-// forwardHTTP a transport of its own to swap instead.
-var forwardTransport http.RoundTripper = newForwardTransport()
-
 // newForwardTransport builds the transport field by field from a zero value.
 //
 // It used to be http.DefaultTransport.Clone(), and the field that clone
