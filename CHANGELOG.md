@@ -18,6 +18,12 @@ reference described in the README and re-measured per release.
 ## Unreleased
 
 ### Fixed
+- **`serve-mcp` bounds concurrent tool calls** (independent audit 2026-09-01,
+  A10). Calls were dispatched on unbounded goroutines — every other listener
+  in the product has a semaphore; this door had none, and a pipelined stream
+  was an N-goroutine, N×16 MiB amplification. Dispatch is now capped at 128 in
+  flight, and a call past the cap meets backpressure (a slower read) rather
+  than a refusal or an amplification. docs/mcp-surface.md §2.3 states it.
 - **The E2B shim's sandbox cap is enforced at registration, not before a
   multi-second boot** (independent audit 2026-09-01, A9). A burst of
   concurrent `POST /sandboxes` censused the fleet, released the lock, booted,

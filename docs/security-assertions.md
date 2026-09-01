@@ -86,6 +86,7 @@ assertion's subject.
 | shim: minted per-process token required, static help-text key rejected (IA-L1a), loopback bind | surfaces suite | CHECKED |
 | the shim's sandbox cap is enforced at registration: a burst of racing registrations never exceeds MaxSandboxes (audit A9) | `shim/a9_test.go` — 32 goroutines racing for one slot, exactly one wins; raced under `-race` | CHECKED |
 | team: edges enforced before effect; refusals recorded; spawn budget; peers leak nothing; exactly 6+7 tools | `accept-security-team.sh` | CHECKED |
+| serve-mcp's client-facing door bounds concurrent tool calls at 128 — a pipelined stream cannot amplify into unbounded dispatch (audit A10) | `host/a10_test.go` — pipelined calls against a cap of 2 under `-race`, max in flight asserted | CHECKED |
 | shim / E2B SDK: command execution is not supported — a REST subset only | documented (`docs/e2b-shim.md`); not suite-checked | UNCHECKED — documented |
 
 ## Lifecycle

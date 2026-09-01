@@ -345,6 +345,16 @@ explicit argument rather than relying on a "current" one. There is no implicit
 session state between calls, which is what makes concurrency safe rather than
 merely permitted.
 
+Concurrency is bounded, and the bound is the server's, not the client's to
+discover by racing it. Calls are dispatched on their own goroutines up to
+**128 in flight** — the same ceiling as every other listener in the product;
+the audit of 2026-09-01 (A10) found this door dispatching without one, which
+made a pipelined stream an N-goroutine, N×16 MiB amplification. A call past
+the cap is not refused: the server reads more slowly, which a client sees as
+backpressure and nothing else. Answers still arrive keyed by their own ids and
+may still come back out of order — two overlapping calls race each other by
+design; the ceiling bounds how many can race at once.
+
 When the server exits, every sandbox it created is stopped. A client that
 disconnects without calling `sandbox_stop` does not leave microVMs behind.
 

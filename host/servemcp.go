@@ -169,9 +169,25 @@ type hostServer struct {
 	// (that was the finding).
 	crashTool func(tool string) bool
 
+	// toolSem bounds how many tool calls are dispatched at once. Every
+	// network listener in this product has had one since F5; this door, the
+	// one place a model's calls are turned into machines and credentials,
+	// is where the audit found it missing (2026-09-01, A10): a pipelined
+	// stream of calls is an N-goroutine, N×16 MiB amplification with no
+	// ceiling. A call past the cap does not fail — the read loop simply
+	// waits for a slot, which is backpressure a client cannot distinguish
+	// from a slow server, and exactly what serialize means here. Created
+	// lazily in serve; a test may set a smaller one to watch the bound hold.
+	toolSem chan struct{}
+
 	wmu sync.Mutex // one writer, because tool calls may be concurrent
 	out *json.Encoder
 }
+
+// maxConcurrentToolCalls is toolSem's capacity. Same number as the guest
+// channels' connection cap, for the same reason: generous for any real
+// client, and an end to unbounded.
+const maxConcurrentToolCalls = 128
 
 // servedBox is a sandbox this server owns, and everything that comes down with
 // it. The recorder is per sandbox because a sandbox created through this door is
@@ -453,6 +469,9 @@ func (s *hostServer) closeAll() {
 // `sandbox_list` behind it (docs/mcp-surface.md §2.3).
 func (s *hostServer) serve(in io.Reader, out io.Writer) error {
 	s.out = json.NewEncoder(out)
+	if s.toolSem == nil {
+		s.toolSem = make(chan struct{}, maxConcurrentToolCalls)
+	}
 	r := proto.NewReaderLimit(in, proto.MaxMCPLine)
 	var wg sync.WaitGroup
 	defer wg.Wait()
@@ -474,6 +493,11 @@ func (s *hostServer) serve(in io.Reader, out io.Writer) error {
 			}
 			continue
 		}
+		// The semaphore is taken on the read loop, so a client that pipelines
+		// more calls than the cap is throttled rather than amplified: the
+		// reads wait, the answers still come, and the floor of the pipeline
+		// is the bound (audit 2026-09-01, A10).
+		s.toolSem <- struct{}{}
 		wg.Add(1)
 		go func(req mcp.Request) {
 			// The outer panic net: one call's crash is an error frame to the
@@ -483,6 +507,7 @@ func (s *hostServer) serve(in io.Reader, out io.Writer) error {
 			// anything outside runCall — the params unmarshal, the encoder —
 			// ever panics (audit 2026-09-01, A1).
 			defer wg.Done()
+			defer func() { <-s.toolSem }()
 			defer func() {
 				if r := recover(); r != nil {
 					s.write(mcp.NewError(req.ID, mcp.CodeInternalError,
