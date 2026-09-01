@@ -85,6 +85,11 @@ func (c *teamClient) call(req proto.TeamRequest) (proto.TeamResponse, error) {
 // connect dials on first use and after a drop. A snapshot restore severs every
 // connection and only the guest can re-dial (docs/protocol.md §1.6), so this
 // has to be a reconnect rather than a one-time setup.
+//
+// The credential is presented before anything else on the connection, the same
+// as every other guest-initiated channel (audit 2026-09-01, A2/A3); the host
+// refuses the connection without it, which surfaces to the caller as a failed
+// call to retry — the shape a team channel not yet answering already had.
 func (c *teamClient) connect() error {
 	if c.conn != nil {
 		return nil
@@ -92,6 +97,10 @@ func (c *teamClient) connect() error {
 	conn, err := vsock.Dial(proto.CIDHost, proto.PortTeam)
 	if err != nil {
 		return fmt.Errorf("the team channel is not answering: %w", err)
+	}
+	if err := presentCredential(conn); err != nil {
+		conn.Close()
+		return fmt.Errorf("the team channel refused its handshake: %w", err)
 	}
 	c.conn, c.w, c.r = conn, proto.NewWriter(conn), proto.NewReader(conn)
 	return nil

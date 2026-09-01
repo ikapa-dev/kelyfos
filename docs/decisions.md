@@ -1900,3 +1900,35 @@ as one batch in a single session and the sequence skipped a number on the
 way through; renumbering published decisions to close the gap would break
 every citation to them, and an unused number documented here is honest in a
 way a silent gap is not. The next decision takes D99.
+
+## D99
+
+*2026-09-01*
+
+**The guest-initiated vsock channels take a per-session credential (the
+independent audit of 2026-09-01, A2 and A3) — one secret per machine, minted
+by the host, pushed over the control channel, and presented as the first
+frame of every connection the guest's supervisor dials to ports 10100, 10101
+and 10102. The host refuses, before reading anything past that frame, a
+connection that does not present it, and records every refusal as
+`channel.refused`.**
+
+| question | answer |
+| --- | --- |
+| what was broken | The record's authenticity, not its tamper-evidence. Any same-uid process on the host could connect to the events unix socket, and any process inside the guest could dial CID 2:10101 raw; both could hand the flight recorder a guest-attributed event, and the chain — built by the host, as designed — verified over it |
+| why not a uid check alone | The host-side attacker is same-uid by hypothesis (a compromised dependency, a malicious MCP client); a uid check refuses exactly the peers that are not a threat today |
+| why not Landlock or seccomp | Neither governs `connect()`; the guest's channels cannot be fenced that way, which is why the audit named an application-level credential |
+| why memory, not a file, env or argv | Every process in the guest is root, so file permissions cannot separate the supervisor from the code it runs; env and cmdline are readable through /proc. The supervisor's memory is the one place the audit's probes could not reach, and A17 (PR_SET_DUMPABLE 0) hardens it further |
+| why the control channel carries it | The guest's listeners serve the host's CID alone (a check that held under every probe the audit ran), so host→guest is already authenticated by construction — it is the one direction a guest process cannot speak on |
+| why a fresh value on restore | The restoring process did not boot the machine; the frozen credential belongs to a session that is over, and N forks of one snapshot would otherwise share one value across sessions |
+| version skew | A supervisor that predates the handshake answers the auth op with bad_request; the boot then fails with a named refusal telling the operator to rebuild the image, on the precedent of P5-3's profile refusal — a machine whose guest cannot present a credential is a machine whose record can be forged, and that is not a machine this CLI starts. Recorded as a narrowing in CHANGELOG and docs/upgrading.md |
+| the console log | One line per port per machine (the same discipline as vsock's refused-peer log), with every refusal recorded — a knock loop must not drive unbounded console output, but the chain should hold every attempt to forge it |
+
+**Why:** the audit called the record the product's trust anchor and the two
+forgeries HIGH verified; closing them with transport-level trust (the 0700
+run directory) was the gap, and the fix is a property of the channel rather
+than of the directory it lives in. The scheme's cost is one round trip at
+boot and one frame per connection; its residue is honest and documented — the
+host still cannot tell *which* same-uid process presented a valid credential,
+only that one did, and the credential gates authenticity of the channel, not
+truthfulness of what a genuinely running guest chooses to report.

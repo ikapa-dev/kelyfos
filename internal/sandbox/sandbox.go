@@ -20,6 +20,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -113,6 +114,13 @@ type Options struct {
 	// (docs/protocol.md §5.5). The caller decides what to record; the guest
 	// never writes the flight recorder itself (docs/events.md §1).
 	OnGuestEvent func(proto.GuestEvent)
+	// OnChannelRefused receives every connection refused on a guest-initiated
+	// channel for lacking this session's credential (audit 2026-09-01, A2/A3):
+	// the port that refused, and why. The refused connection never reaches the
+	// guest's own event path, so without this callback the attempt is visible
+	// nowhere but the console — and an attempt to forge the audit record is
+	// exactly what the record exists to hold.
+	OnChannelRefused func(port uint32, reason string)
 }
 
 // State is the on-disk description of a running sandbox, written into the run
@@ -215,6 +223,31 @@ type Sandbox struct {
 	// the fixtures that drive them directly.
 	teamSem   chan struct{}
 	eventsSem chan struct{}
+	// readySem is serveReady's, for the same reason teamSem and eventsSem are
+	// theirs: the ready channel is as dialable as the other two, and an accept
+	// loop with no bound is a budget with no end.
+	readySem chan struct{}
+	// channelAuth is the credential every connection on the guest-initiated
+	// channels (ready 10100, events 10101, team 10102) must present as its
+	// first frame (audit 2026-09-01, A2/A3). Minted per machine — per boot and
+	// again per restore — and held in memory only: it is written to no file,
+	// no state, no environment, because every same-uid process on the host
+	// reads all three. A connection that does not present it is closed before
+	// a frame of it is read, and the refusal is reported to the caller through
+	// Options.OnChannelRefused. Written before any listener accepts, and
+	// immutable after.
+	channelAuth string
+	// refusedLogged rate-limits the console line for refused connections: one
+	// per port per machine, with the count kept so the volume is not lost —
+	// the same discipline internal/vsock's refused-peer log keeps on the
+	// listener side of the same wall.
+	refusedLogged sync.Map
+	// authMu guards authUnsupported, which the credential-pushing goroutine
+	// sets when the guest answers that it does not know the auth op — an
+	// image older than the handshake — and WaitReady and Restore read to turn
+	// an eventual boot timeout into a named refusal.
+	authMu          sync.Mutex
+	authUnsupported error
 	// profileError is why the guest could not confine what it spawns, when it
 	// could not. Kept off State because it is a fault to report rather than a
 	// fact to record: a machine that has one does not become a session.
@@ -296,6 +329,14 @@ func New(opts Options) (*Sandbox, error) {
 			StartedAt: time.Now(),
 		},
 	}
+	// Minted before anything listens (channelauth.go): every connection the
+	// guest-initiated channels accept from here on is checked against it.
+	auth, err := newChannelCredential()
+	if err != nil {
+		s.cleanup()
+		return nil, fmt.Errorf("mint channel credential: %w", err)
+	}
+	s.channelAuth = auth
 
 	cfg := firecrackerConfig(opts, kernel, rootfs, s.State.UDSPath, id)
 	if opts.Workspace != nil {
@@ -440,10 +481,16 @@ func (s *Sandbox) serveTeam() {
 			r, w := proto.NewReader(conn), proto.NewWriter(conn)
 			// Set before anything is read, so a connection that never sends a
 			// frame is closed by the deadline rather than holding its
-			// semaphore slot forever (F5). Cleared below the first time
-			// r.Read succeeds.
+			// semaphore slot forever (F5). It covers the credential handshake
+			// as well, and is cleared the moment the credential is accepted.
 			_ = conn.SetReadDeadline(time.Now().Add(guestFirstFrameTimeout))
-			first := true
+			// The credential comes first, and a connection without this
+			// session's is refused before one frame past it is read
+			// (audit 2026-09-01, A2/A3).
+			if !s.authenticate(r, conn, proto.PortTeam) {
+				return
+			}
+			_ = conn.SetReadDeadline(time.Time{})
 			for {
 				var req proto.TeamRequest
 				if err := r.Read(&req); err != nil {
@@ -456,10 +503,6 @@ func (s *Sandbox) serveTeam() {
 						continue
 					}
 					return
-				}
-				if first {
-					_ = conn.SetReadDeadline(time.Time{})
-					first = false
 				}
 				// Before the broker acts on it, because acting on it is what
 				// makes it unrecoverable: a message the broker accepts is a
@@ -619,11 +662,19 @@ func (s *Sandbox) serveEvents() {
 			defer func() { <-s.eventsSem }()
 			r := proto.NewReader(conn)
 			// Same reasoning as serveTeam's: bounds a connection that never
-			// sends a parseable frame, cleared the first time one arrives so a
-			// guest that reports events sparsely over the sandbox's life is
-			// never punished for the gaps (F5).
+			// sends a parseable frame, cleared once the credential is accepted
+			// so a guest that reports events sparsely over the sandbox's life
+			// is never punished for the gaps (F5).
 			_ = conn.SetReadDeadline(time.Now().Add(guestFirstFrameTimeout))
-			first := true
+			// The credential comes first, and a connection without this
+			// session's is refused before one frame past it is read
+			// (audit 2026-09-01, A2/A3). This is the gate the audit's host-side
+			// forgery repro used: a same-uid process could connect here and
+			// hand the recorder a guest-attributed event; now it cannot get
+			// past the first frame.
+			if !s.authenticate(r, conn, proto.PortEvents) {
+				return
+			}
 			for {
 				var ev proto.GuestEvent
 				if err := r.Read(&ev); err != nil {
@@ -640,10 +691,6 @@ func (s *Sandbox) serveEvents() {
 						continue
 					}
 					return
-				}
-				if first {
-					_ = conn.SetReadDeadline(time.Time{})
-					first = false
 				}
 				if s.opts.OnGuestEvent != nil {
 					s.opts.OnGuestEvent(ev)
@@ -733,6 +780,14 @@ func (s *Sandbox) Start(ctx context.Context) error {
 		s.waitErr = cmd.Wait()
 		close(s.done)
 	}()
+	// Hand the guest its channel credential the moment it can hear (that is,
+	// as soon as control answers), on its own goroutine: the ready frame the
+	// caller waits on below cannot arrive until the guest can present what it
+	// is given here, and waiting for ready to start the push would deadlock
+	// the other way round (channelauth.go, audit 2026-09-01, A2/A3). A guest
+	// too old to take one ends the boot with the named refusal WaitReady
+	// surfaces.
+	go func() { _ = s.pushChannelCredential(5 * time.Minute) }()
 	// Read the quota back rather than trusting that asking for it worked.
 	if s.opts.CPUSlice != nil {
 		if err := s.opts.CPUSlice.Confirm(s.State.PID); err != nil {
@@ -784,6 +839,14 @@ func (s *Sandbox) WaitReady(ctx context.Context) (proto.Ready, error) {
 	case <-s.done:
 		return proto.Ready{}, fmt.Errorf("firecracker exited before the guest was ready: %w", s.waitErr)
 	case <-ctx.Done():
+		// The commonest cause of a boot that never becomes ready under this
+		// CLI is a guest that cannot take its channel credential — every
+		// ready frame it sends is refused, so it never becomes ready. When
+		// the guest said so itself, that is the refusal, not the timeout.
+		if err := s.authUnsupportedReason(); err != nil {
+			_ = s.Shutdown(2 * time.Second)
+			return proto.Ready{}, err
+		}
 		return proto.Ready{}, ctx.Err()
 	}
 }
@@ -1155,6 +1218,18 @@ func Restore(snapDir string, opts Options) (*Sandbox, time.Duration, error) {
 			ScratchByte: opts.ScratchBytes,
 		},
 	}
+	// A restore mints its own credential, never the frozen machine's: the
+	// process doing the restore did not boot it, the snapshot's copy belongs
+	// to a session that is over, and N forks of one snapshot would otherwise
+	// share one value between sessions (channelauth.go). It is pushed to the
+	// guest below, before Resync, and every channel the guest dials from
+	// resume on is refused until it lands.
+	auth, err := newChannelCredential()
+	if err != nil {
+		s.cleanup()
+		return nil, 0, fmt.Errorf("mint channel credential: %w", err)
+	}
+	s.channelAuth = auth
 	// The guest's channels must exist before it runs again: a restored guest
 	// reconnects its outbound channels immediately (docs/protocol.md §1.6).
 	ln, err := net.Listen("unix", fmt.Sprintf("%s_%d", s.State.UDSPath, proto.PortReady))
@@ -1430,6 +1505,15 @@ func Restore(snapDir string, opts Options) (*Sandbox, time.Duration, error) {
 	// stopping at resume() would time a machine that is running but not yet
 	// known to be usable, which is the flattering number rather than the true
 	// one.
+	// The fresh credential goes first, and inline: a restored machine's
+	// outbound channels come back the instant it resumes, and every one of
+	// them is refused until this lands (channelauth.go). A guest too old to
+	// take one is refused here, by name, rather than left to fail on every
+	// channel it dials.
+	if err := s.pushChannelCredential(30 * time.Second); err != nil {
+		_ = s.Shutdown(2 * time.Second)
+		return nil, 0, err
+	}
 	if err := s.Resync(); err != nil {
 		_ = s.Shutdown(2 * time.Second)
 		return nil, 0, err
@@ -1778,15 +1862,36 @@ func (s *Sandbox) writeState() error {
 
 // serveReady accepts the guest's ready channel and forwards the first ready
 // frame. The guest reconnects after a drop, so this keeps accepting.
+//
+// Bound by the same semaphore the other two guest-initiated channels got at
+// F5, and covered by the same first-frame deadline: this channel is as
+// dialable as they are, an accept loop with no bound is a budget with no end,
+// and a connection that opens and says nothing would otherwise hold its slot
+// forever.
 func (s *Sandbox) serveReady() {
+	if s.readySem == nil {
+		// Same as serveTeam's nil check: a fixture driving this loop directly.
+		s.readySem = make(chan struct{}, maxConcurrentGuestConnections)
+	}
 	for {
+		s.readySem <- struct{}{}
 		conn, err := s.readyLn.Accept()
 		if err != nil {
+			<-s.readySem
 			return
 		}
 		go func() {
 			defer conn.Close()
+			defer func() { <-s.readySem }()
 			r := proto.NewReader(conn)
+			_ = conn.SetReadDeadline(time.Now().Add(guestFirstFrameTimeout))
+			// The credential comes first (audit 2026-09-01, A2/A3): a ready
+			// frame from a connection that cannot present it is a machine
+			// that is not, and this is where a forged one used to be able to
+			// make the host believe a boot had succeeded.
+			if !s.authenticate(r, conn, proto.PortReady) {
+				return
+			}
 			for {
 				var msg struct {
 					proto.Ready

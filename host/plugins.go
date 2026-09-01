@@ -103,3 +103,18 @@ func guestEventRecorder(rec *recorder.Recorder, agent string, memMiB int) func(p
 		}
 	}
 }
+
+// channelRefusedRecorder builds the sandbox.Options.OnChannelRefused handler
+// for the same doors: every connection refused on a guest-initiated channel
+// for lacking the session's credential lands in the chain that machine is
+// already writing (audit 2026-09-01, A2/A3). The refusal is the host's own
+// act — source host — and the port and the reason are all the event holds,
+// because everything else the peer sent stopped at the gate.
+func channelRefusedRecorder(rec *recorder.Recorder, agent string) func(port uint32, reason string) {
+	return func(port uint32, reason string) {
+		_ = rec.Append(recorder.Event{
+			Type: recorder.TypeChannelRefused, Source: recorder.SourceHost, Agent: agent,
+			Port: int(port), Reason: proto.SafeText(reason),
+		})
+	}
+}

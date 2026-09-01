@@ -177,6 +177,7 @@ unique guest network identity, which is backlog work.
 				Kelyfos: Version, Argv: os.Args, Reason: "forked from " + *name,
 			})
 			opts.OnGuestEvent = guestEventRecorder(rec, "", meta.MemMiB)
+			opts.OnChannelRefused = channelRefusedRecorder(rec, "")
 			// sdir, not a second snapshotDir call: the name is the same for
 			// every fork in the batch and was validated once above, before
 			// anything was built (P7-17/F7).

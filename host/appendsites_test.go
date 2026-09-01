@@ -43,7 +43,14 @@ import (
 // `rec.Append(...)` whose error is dropped without even a blank. The first
 // version counted only the former, which left a way past the number that
 // changed no line of it.
-const discardedAppendSites = 75
+//
+// 75 → 78, audit of 2026-09-01 (A2/A3): the channel-credential refusals are
+// recorded at three new sites — channelRefusedRecorder in host/plugins.go,
+// servedBox.channelRefused in host/servemcp.go, and the late-wired closure in
+// host/run.go — one per door shape. Each is a refusal the record is meant to
+// hold, and each ignores the error for the reason every other site here does:
+// a failed Append latches the recorder and the run loops act on that.
+const discardedAppendSites = 78
 
 // discardedAppendPackages are the trees the finding counted.
 var discardedAppendPackages = []string{"host", "internal", "shim"}

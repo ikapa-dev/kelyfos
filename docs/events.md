@@ -822,6 +822,29 @@ the moment the team came up, not a live view of it.
 | `cpu_quota_percent` | integer | The collective slice's cap — `[team.resources] cpu_quota`. The same field `resource.oom`, `resource.summary` and `session.policy` already carry, reused here for the team-wide number rather than one machine's. Absent when `[team.resources] cpu_quota` is not set — a team can still have a shared cgroup for another reason (a per-agent or per-spawn `cpu_quota`, which needs one too) with this field absent even so. |
 | `record_payloads` | boolean | Whether `[team] record_payloads` is set. Always present on this event, unlike most other fields here: `false` is distinguishable from "not a team," the same reason `jailed` and `overlay` are recorded as pointers rather than left absent. |
 
+### `channel.refused`
+A connection to one of the guest-initiated channels — ready (10100), events
+(10101), team (10102) — was refused because its first frame did not carry the
+session's channel credential (`docs/protocol.md` §1.7). This is the event that
+answers the independent audit of 2026-09-01's A2 and A3: before the
+credential, any same-uid process on the host could connect to the events
+socket, and any process inside the guest could dial the port raw, and either
+could hand this record a guest-attributed event the chain would endorse. The
+refusal is the host's own act — `"source": "host"` — made before anything the
+peer sent past the credential frame could reach the chain, so the event is
+evidence of an attempt, never a record of what the attempt carried.
+
+The first frames of every boot usually show one or two of these at low
+sequence numbers: the supervisor dials the moment its listeners are bound, and
+the credential arrives over `control` a moment later. What matters is the
+pattern — a steady stream of refusals from boot to teardown is something
+trying to forge the record, and everything it sent died at the gate.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `port` | integer | The channel that refused the connection: 10100, 10101 or 10102. |
+| `reason` | string | Why — no credential was presented, the credential presented was not this session's, or the peer was not this user. |
+
 ### `session.erasure`
 Appended by `kelyfos sessions erase` (`docs/retention.md`, D61) once, as the
 new last event, after every field elsewhere in the chain known to carry

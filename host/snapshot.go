@@ -254,6 +254,7 @@ func snapshotRestore(argv []string) error {
 		memMiB = meta.MemMiB
 	}
 	opts.OnGuestEvent = guestEventRecorder(rec, "", memMiB)
+	opts.OnChannelRefused = channelRefusedRecorder(rec, "")
 	// A restored machine records its egress like any other. It did not until
 	// P6-4 went looking: this is the fifth of five proxies in the product and
 	// the only one whose audit hooks were never wired, so a restore wrote a

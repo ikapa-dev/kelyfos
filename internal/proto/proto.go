@@ -524,6 +524,14 @@ type ControlRequest struct {
 	// certificate, never a key — the guest is asked to trust the proxy, not
 	// given the means to impersonate it.
 	CAPEM string `json:"ca_pem,omitempty"`
+	// Token carries the channel credential for OpAuth (audit 2026-09-01,
+	// A2/A3): the per-session secret the guest's supervisor presents on every
+	// guest-initiated connection. It travels the control channel — the one
+	// direction a guest process cannot reach, because a guest vsock listener
+	// serves the host's CID alone — and is held in the supervisor's memory
+	// only: never in the environment, the command line, or a file, each of
+	// which every root process in the guest reads.
+	Token string `json:"token,omitempty"`
 }
 
 type ControlResponse struct {
@@ -560,6 +568,13 @@ const (
 	// run and never persisted (decision D6), and after the overlay is up
 	// because the rootfs itself is read-only.
 	OpTrust = "trust"
+	// OpAuth hands the supervisor its channel credential (audit 2026-09-01,
+	// A2/A3). The host sends it as soon as the guest answers control, and
+	// again with a fresh value on every restore — the restoring process did
+	// not boot the machine and so holds no credential of its own. The
+	// supervisor presents it on every connection it dials to the host's
+	// 101xx listeners, which refuse the connection without it.
+	OpAuth = "auth"
 )
 
 // Writer emits newline-delimited JSON. Callers must not share one across

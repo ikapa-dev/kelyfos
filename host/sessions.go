@@ -906,6 +906,7 @@ final shutdown the pause deferred.
 	rec, recErr := recorder.Open(sandbox.Root(), meta.Session)
 	if recErr == nil {
 		opts.OnGuestEvent = guestEventRecorder(rec, "", snapMeta.MemMiB)
+		opts.OnChannelRefused = channelRefusedRecorder(rec, "")
 		defer rec.Close()
 	}
 

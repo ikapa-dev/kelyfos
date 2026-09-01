@@ -437,8 +437,11 @@ func (s *hostServer) boot(opts sandbox.Options, traceparent string) (*servedBox,
 	// What the guest reports goes into this sandbox's own chain. The recorder
 	// does not exist yet when the machine is built, so the handler reads it
 	// through the box — which is also what keeps a report arriving after
-	// teardown from writing into a closed file.
+	// teardown from writing into a closed file. The channel-credential
+	// refusals go through the same box, for the same reason
+	// (audit 2026-09-01, A2/A3).
 	opts.OnGuestEvent = b.guestEvent
+	opts.OnChannelRefused = b.channelRefused
 
 	if b.sb, err = sandbox.New(opts); err != nil {
 		return nil, err

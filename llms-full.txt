@@ -1155,7 +1155,50 @@ milliseconds and shuts down as it always did.
 
 ---
 
-## 9. What has never broken
+## 9. An old guest image can no longer boot against a new CLI (2026-09-01)
+
+**The guest-initiated vsock channels now take a per-session credential**
+(`docs/protocol.md` §1.7; the independent audit's A2/A3, D99). The host
+refuses — and records — any connection to ports 10100, 10101 and 10102 whose
+first frame does not carry it, which includes the ready frame: a supervisor
+that predates the handshake cannot present what it was never given, so the
+machine never becomes ready and the boot fails.
+
+A supervisor old enough to predate the handshake says so itself: the host's
+`auth` op is answered `bad_request`, and the boot ends with the refusal
+instead of a timeout:
+
+```
+this image's supervisor does not accept a channel credential — it predates
+the authentication handshake the running CLI requires.
+    rebuild the guest image for this CLI:  make image FLAVOR=dev   (or FLAVOR=base)
+```
+
+**What to do:** rebuild the image — `make image FLAVOR=dev`, or `base` for
+the flavor a team's spawn budget names. The CLI and the image were always one
+system where it matters; this change makes the coupling explicit where before
+it was silent.
+
+**Snapshots are the harder edge, said plainly.** A snapshot's frozen memory
+*is* its supervisor, so a snapshot taken before the handshake can never learn
+a credential — restoring one under this CLI is refused with the same named
+error, and rebuilding the image does not fix it. The way forward is to re-take
+the snapshot: boot a fresh machine on the rebuilt image, prepare it, and
+`kelyfos snapshot save` over the old name. That is the same answer §1 gives
+for pre-v0.9 confinement, and for the same reason: restoring does not upgrade
+the guest inside it.
+
+**Why a refusal rather than a warning:** the ready, events and team channels
+are how the record learns what happened inside the machine. A machine whose
+guest cannot authenticate those channels is a machine whose record can be
+forged by any process inside it, and starting one that looks ordinary would
+repeat the exact gap the credential exists to close. The precedent is P5-3's
+profile refusal — a machine that confines nothing is refused, not warned
+about — and D99 records the reasoning.
+
+---
+
+## 10. What has never broken
 
 Stated because "nothing changed" is only useful if somebody checked:
 
@@ -2182,6 +2225,7 @@ assertion's subject.
 | an exported report verifies clean; a flipped byte is named | `accept-security-record.sh` tamper battery | CHECKED |
 | marker removal is refused | record suite | CHECKED |
 | rendered output escapes hostile strings (RENDER) | record suite | CHECKED |
+| a connection to a guest channel without the session's credential is refused, logged and recorded — the audit's A2/A3 forgery paths (same-uid host process on the events socket; raw `AF_VSOCK` dial from inside the guest) are dead | `internal/sandbox/channelauth_test.go` (absent, wrong and un-minted credentials on all three channels, refusal reported); verified live in the test VM against the audit's own repro shape (`local/audit/a2a3_verify.sh`, not committed) | CHECKED |
 | truncation with recomputed claims verifies — the documented keyless limit (IA-M2) | record suite, EXPECTED-CURRENT with TODO(IA-M2) | UNCHECKED — accepted, flagged |
 | a SIGNED export detects the truncation attack | record suite signed battery (D93) | CHECKED |
 | erasure redacts payloads while the chain verifies; refuses a live session | `docs/exam/2026-08-31-security-erase.md` (survived one attempt) | PARTIALLY CHECKED — one attempt, no suite |
@@ -5503,6 +5547,29 @@ the moment the team came up, not a live view of it.
 | `cpu_quota_percent` | integer | The collective slice's cap — `[team.resources] cpu_quota`. The same field `resource.oom`, `resource.summary` and `session.policy` already carry, reused here for the team-wide number rather than one machine's. Absent when `[team.resources] cpu_quota` is not set — a team can still have a shared cgroup for another reason (a per-agent or per-spawn `cpu_quota`, which needs one too) with this field absent even so. |
 | `record_payloads` | boolean | Whether `[team] record_payloads` is set. Always present on this event, unlike most other fields here: `false` is distinguishable from "not a team," the same reason `jailed` and `overlay` are recorded as pointers rather than left absent. |
 
+### `channel.refused`
+A connection to one of the guest-initiated channels — ready (10100), events
+(10101), team (10102) — was refused because its first frame did not carry the
+session's channel credential (`docs/protocol.md` §1.7). This is the event that
+answers the independent audit of 2026-09-01's A2 and A3: before the
+credential, any same-uid process on the host could connect to the events
+socket, and any process inside the guest could dial the port raw, and either
+could hand this record a guest-attributed event the chain would endorse. The
+refusal is the host's own act — `"source": "host"` — made before anything the
+peer sent past the credential frame could reach the chain, so the event is
+evidence of an attempt, never a record of what the attempt carried.
+
+The first frames of every boot usually show one or two of these at low
+sequence numbers: the supervisor dials the moment its listeners are bound, and
+the credential arrives over `control` a moment later. What matters is the
+pattern — a steady stream of refusals from boot to teardown is something
+trying to forge the record, and everything it sent died at the gate.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `port` | integer | The channel that refused the connection: 10100, 10101 or 10102. |
+| `reason` | string | Why — no credential was presented, the credential presented was not this session's, or the peer was not this user. |
+
 ### `session.erasure`
 Appended by `kelyfos sessions erase` (`docs/retention.md`, D61) once, as the
 new last event, after every field elsewhere in the chain known to carry
@@ -5846,10 +5913,51 @@ failures.
 
 The host listens on a Unix socket at **`<uds_path>_<port>`** — the vsock UDS path
 with an underscore and the decimal destination port appended. The guest connects
-an `AF_VSOCK` socket to CID **2** and that port. There is no handshake line in
-this direction: the connection is channel bytes from the first byte.
+an `AF_VSOCK` socket to CID **2** and that port. **The first frame is the
+credential** (§1.7) on every port in the `101xx` range; after it, the connection
+is channel bytes from the next byte.
 
 If no host socket exists at that path, the guest's `connect()` fails with a reset.
+
+### 1.7 The channel credential
+
+The guest-initiated channels are authenticated (audit 2026-09-01, A2/A3). The
+host mints one credential per machine — 32 bytes of entropy, hex-encoded, 64
+characters — and hands it to the supervisor over the `control` channel (§5.4,
+op `auth`), the one direction a process inside the guest cannot reach because a
+guest vsock listener serves the host's CID alone. The supervisor holds it in
+memory only — never in the environment, the command line or a file, each of
+which every root process in the guest reads — and presents it as the first
+frame of every connection it dials to `10100`, `10101` and `10102`:
+
+```json
+{"v":1,"auth":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}
+```
+
+The host compares it in constant time and refuses the connection — closing it
+before reading anything past that frame — if it is absent or wrong, recording
+every refusal as a `channel.refused` event. A peer the kernel names as coming
+from another account is refused the same way (`SO_PEERCRED`, where the kernel
+says; the credential is the control either way).
+
+Three properties are deliberate:
+
+- **One credential per machine, not per port.** The ready, events and team
+  channels are one trust decision: what the guest reports, the host records.
+- **A fresh value on restore.** The process doing the restore did not boot the
+  machine; the frozen credential belongs to a session that is over, and N forks
+  of one snapshot would otherwise share one value across sessions. The host
+  pushes a new one over `control` before `resync`, and the supervisor replaces
+  what it holds.
+- **No fallback.** There is no port, flag or mode that turns the credential
+  off. A supervisor that predates the handshake answers `auth` with
+  `bad_request`, and the boot fails with a named refusal rather than starting
+  a machine whose record could be forged.
+
+The dials a supervisor makes before the credential lands are refused by the
+host and retried under the existing dial backoff; a boot costs a few refused
+connections, which the record shows as `channel.refused` at the front of the
+chain.
 
 ### 1.3 CIDs
 
@@ -6098,7 +6206,10 @@ and `stderr` reflects the order the guest read them and nothing stronger.
 
 ### 5.3 `ready` — port 10100, guest → host
 
-The last thing the supervisor announces, and deliberately so. It comes after the
+The last thing the supervisor announces, and deliberately so — and behind the
+credential like every guest-initiated channel (§1.7): a ready frame from a
+connection that cannot present it is a machine that is not, and the host
+refuses it rather than announcing a boot that did not happen. It comes after the
 mounts, the confinement profile, the egress environment, every plugin and the MCP
 handshake paid with each one, loopback, and the bind of every listener — because
 ready means the machine is usable, and a machine whose `tools/list` is still
@@ -6156,6 +6267,7 @@ to `resync` is where the host learns what that machine confines (P5-7).
 | `shutdown` | — | `SIGTERM` everything but PID 1, `SIGKILL` what is left after the grace period, flush the filesystems, power off. The host still supervises the Firecracker process and force-kills after a grace period of its own. |
 | `trust` | `ca_pem` | Install the egress CA's trust anchor (P2-6). |
 | `resync` | `realtime_ns`, `entropy` | Post-snapshot-restore fix-up (P3-1). |
+| `auth` | `token` | Store the channel credential (§1.7), presented on every guest-initiated dial. Sent as soon as the guest answers control, and again with a fresh value on every restore. A supervisor that predates the handshake answers `bad_request`, and the boot is refused with a named error. |
 
 ```json
 {"v":1,"id":"c3","op":"trust","ca_pem":"-----BEGIN CERTIFICATE-----\n…"}
@@ -6195,6 +6307,10 @@ is defined in `docs/events.md` at P2-4, and the host is responsible for the hash
 chain — the guest never computes it, because a guest that could forge chain
 links could forge its own audit trail.
 
+Connections carry the credential (§1.7) — this is the channel the audit's A2
+and A3 forgeries rode, and the reason the handshake exists: an unauthenticated
+frame here is a forged line in the record the project's claims stand on.
+
 Implemented at E1-4. The frame is deliberately thin:
 
 ```json
@@ -6219,7 +6335,8 @@ console.
 ### 5.6 `team` — port 10102, guest → host
 
 Team messaging (E2-1). Request/response, newline-delimited JSON, one connection
-held for the life of the sandbox.
+held for the life of the sandbox, behind the same credential as the other
+guest-initiated channels (§1.7).
 
 This channel runs guest → host, unlike `exec`, `mcp` and `control`, and the
 direction is the design. Every other host-initiated channel exists because the
@@ -6476,6 +6593,7 @@ session's record rather than inferred from the CLI's own version.
 | `events` feeds the hash-chained recorder | P2-4 |
 | `resync` applied on every snapshot restore; per-fork `vsock_override` | P3-1, P3-2 |
 | Supervisor re-dials `10100`, `10101` and `10102` after a snapshot reset | P3-1, E2-1 |
+| Every guest-initiated connection presents the session's credential; the host refuses and records a connection without it | §1.7, audit 2026-09-01 A2/A3 |
 | A forward's stream is unframed, and the handshake reader keeps reading it | E5-5 |
 | `team` channel serves §5.6, and the guest prefers the host's `agent` on `peers` | E2-1, E2-9 |
 
@@ -15389,6 +15507,15 @@ Every field somewhere in this chain known to carry guest-influenced or operator-
 | `redacted_fields` | integer | how many fields were replaced, across every event — the other half of `modified`, so an auditor has a number to compare against what a redaction should have touched (F6). An event with three redactable fields set moves `modified` by one and this by three |
 | `sha256` | string | the chain head — the last event's own hash — immediately before this rewrite began, so a reader already holding an earlier export of this chain can confirm the erased chain is its honest successor rather than a fabrication |
 
+## `channel.refused`
+
+A connection to one of the guest-initiated channels — ready (10100), events (10101), team (10102) — was refused because its first frame did not carry the session's channel credential (audit 2026-09-01, A2/A3). Before the credential, any same-uid host process or any process inside the guest could hand this record guest-attributed content; this event is the host refusing one such attempt, written before anything the peer sent could reach the chain. Written by the **host**.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `port` | integer | the channel that refused the connection: 10100, 10101 or 10102 |
+| `reason` | string | why — no credential was presented, the credential presented was not this session's, or the peer was not this user |
+
 
 ---
 title: Exit codes
@@ -15569,6 +15696,17 @@ api.example.com resolved to an address this proxy will not dial [egress.resolved
 ```
 
 Named: `host`. The values above are an example.
+
+## `fork.count`
+
+A fork asked for more machines in one call than any fleet limit could honour — a count near the largest signed integer once overflowed the ceiling arithmetic and crashed the server, so the count is bounded before anything multiplies it.
+
+```
+sandbox_fork cannot restore 9223372036854775807 machines in one call; 256 is the most one call may ask for [fork.count]
+    ask for a smaller count — [mcp] max_sandboxes still bounds how many machines run at once, so a batch larger than 256 could never be honoured
+```
+
+Named: `asked`, `limit`. The values above are an example.
 
 ## `forward.closed`
 

@@ -406,5 +406,16 @@ func Types() []EventType {
 				{Name: "redacted_fields", Type: "integer", Doc: "how many fields were replaced, across every event — the other half of `modified`, so an auditor has a number to compare against what a redaction should have touched (F6). An event with three redactable fields set moves `modified` by one and this by three"},
 				{Name: "sha256", Type: "string", Doc: "the chain head — the last event's own hash — immediately before this rewrite began, so a reader already holding an earlier export of this chain can confirm the erased chain is its honest successor rather than a fabrication"},
 			}},
+		{Type: TypeChannelRefused, Source: SourceHost,
+			Doc: "a connection to one of the guest-initiated channels — ready (10100), events " +
+				"(10101), team (10102) — was refused because its first frame did not carry the " +
+				"session's channel credential (audit 2026-09-01, A2/A3). Before the credential, " +
+				"any same-uid host process or any process inside the guest could hand this record " +
+				"guest-attributed content; this event is the host refusing one such attempt, " +
+				"written before anything the peer sent could reach the chain",
+			Fields: []Field{
+				{Name: "port", Type: "integer", Doc: "the channel that refused the connection: 10100, 10101 or 10102"},
+				{Name: "reason", Type: "string", Doc: "why — no credential was presented, the credential presented was not this session's, or the peer was not this user"},
+			}},
 	}
 }

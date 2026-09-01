@@ -209,6 +209,7 @@ func (s *hostServer) toolRestore(raw json.RawMessage) *mcp.CallToolResult {
 	// returns, and an OOM kill or a plugin crash here otherwise left no trace
 	// at all (F3).
 	opts.OnGuestEvent = guestEventRecorder(rec, "", meta.MemMiB)
+	opts.OnChannelRefused = channelRefusedRecorder(rec, "")
 
 	sb, elapsed, err := sandbox.Restore(dir, opts)
 	if err != nil {
@@ -429,7 +430,8 @@ func (s *hostServer) toolFork(raw json.RawMessage) *mcp.CallToolResult {
 			sb, elapsed, err := sandbox.Restore(dir, sandbox.Options{
 				ID: id, Arch: arch, Flavor: meta.Flavor, Quiet: true,
 				VcpuCount: meta.VcpuCount, MemMiB: meta.MemMiB,
-				OnGuestEvent: guestEventRecorder(rec, "", meta.MemMiB),
+				OnGuestEvent:     guestEventRecorder(rec, "", meta.MemMiB),
+				OnChannelRefused: channelRefusedRecorder(rec, ""),
 			})
 			if err != nil {
 				_ = rec.Append(recorder.Event{Type: recorder.TypeSessionEnd, Reason: "error",

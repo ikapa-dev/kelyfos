@@ -253,6 +253,23 @@ func (b *servedBox) guestEvent(ev proto.GuestEvent) {
 	}
 }
 
+// channelRefused records a refused connection on this sandbox's guest-initiated
+// channels (audit 2026-09-01, A2/A3): an attempt to write guest-attributed
+// content into the chain without the session's credential. Same shape as
+// guestEvent, with the same reason the recorder is read through the box.
+func (b *servedBox) channelRefused(port uint32, reason string) {
+	b.recMu.Lock()
+	rec := b.rec
+	b.recMu.Unlock()
+	if rec == nil {
+		return
+	}
+	_ = rec.Append(recorder.Event{
+		Type: recorder.TypeChannelRefused, Source: recorder.SourceHost,
+		Port: int(port), Reason: proto.SafeText(reason),
+	})
+}
+
 func (b *servedBox) close(reason string) {
 	// First, so the watcher does not race the teardown it would otherwise
 	// start a second time.

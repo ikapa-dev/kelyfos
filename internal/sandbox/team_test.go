@@ -20,20 +20,16 @@ import (
 func teamChannel(t *testing.T, answer func(proto.TeamRequest) proto.TeamResponse) (*proto.Writer, *proto.Reader) {
 	t.Helper()
 	dir := t.TempDir()
-	s := &Sandbox{
+	s := withCredential(&Sandbox{
 		State: State{UDSPath: filepath.Join(dir, "v.sock")},
 		opts:  Options{OnTeamRequest: answer},
-	}
+	})
 	if err := s.listenTeam(); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = s.teamLn.Close() })
 
-	conn, err := net.Dial("unix", fmt.Sprintf("%s_%d", s.State.UDSPath, proto.PortTeam))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = conn.Close() })
+	conn := dialGuestChannel(t, s, proto.PortTeam)
 	if err := conn.SetDeadline(time.Now().Add(30 * time.Second)); err != nil {
 		t.Fatal(err)
 	}
@@ -237,13 +233,13 @@ func TestAnOversizedKeyIsRefusedRatherThanReachingTheStore(t *testing.T) {
 func TestSilentTeamConnectionsAreCappedAndReclaimed(t *testing.T) {
 	dir := t.TempDir()
 	served := make(chan struct{}, 1)
-	s := &Sandbox{
+	s := withCredential(&Sandbox{
 		State: State{UDSPath: filepath.Join(dir, "v.sock")},
 		opts: Options{OnTeamRequest: func(proto.TeamRequest) proto.TeamResponse {
 			served <- struct{}{}
 			return proto.TeamResponse{OK: true}
 		}},
-	}
+	})
 	if err := s.listenTeam(); err != nil {
 		t.Fatal(err)
 	}
@@ -273,11 +269,7 @@ func TestSilentTeamConnectionsAreCappedAndReclaimed(t *testing.T) {
 	// One legitimate connection on top of the cap: with every slot held by a
 	// connection that will never free it on its own, this must not reach the
 	// broker yet — that is the bound actually doing something.
-	conn, err := net.Dial("unix", addr)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = conn.Close() })
+	conn := dialGuestChannel(t, s, proto.PortTeam)
 	if err := conn.SetDeadline(time.Now().Add(guestFirstFrameTimeout + 20*time.Second)); err != nil {
 		t.Fatal(err)
 	}

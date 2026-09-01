@@ -43,6 +43,10 @@ func everyEventType() []string {
 		// this list had nothing to name. secret.withheld and secret.scrubbed
 		// were already here, which is why only three arrive now.
 		recorder.TypeSessionPolicy, recorder.TypeTeamTopology, recorder.TypeSessionErasure,
+		// channel.refused (audit 2026-09-01, A2/A3): its Reason is host text,
+		// but the sweep's job is that nobody decides by hand what gets
+		// checked — it is swept like every other arm.
+		recorder.TypeChannelRefused,
 	}
 }
 

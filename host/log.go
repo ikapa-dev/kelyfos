@@ -887,6 +887,23 @@ func printEvent(line []byte, asJSON bool) {
 	case recorder.TypeResourceOOM:
 		fmt.Printf("%s  OOM-killed      %s%s (pid %d) holding %s of a %d MiB machine\n",
 			ts, who, proto.SafeText(e.Comm), e.PID, report.HumanKiB(e.RSSKiB), e.MemMiB)
+	case recorder.TypeChannelRefused:
+		// A connection to a guest-initiated channel arrived without the
+		// session's credential and was refused (audit 2026-09-01, A2/A3).
+		// Which channel and why is the whole of what the event holds; the
+		// word REFUSED keeps it scannable beside the egress BLOCKED lines
+		// it most resembles.
+		channel := "unknown"
+		switch e.Port {
+		case 10100:
+			channel = "ready"
+		case 10101:
+			channel = "events"
+		case 10102:
+			channel = "team"
+		}
+		fmt.Printf("%s  REFUSED         %sa connection on the %s channel: %s\n",
+			ts, who, channel, proto.SafeText(e.Reason))
 	case recorder.TypeSessionPolicy:
 		// The ceiling this session ran under, as one greppable line. The full
 		// record is in the chain and `kelyfos log --json` prints it; this is

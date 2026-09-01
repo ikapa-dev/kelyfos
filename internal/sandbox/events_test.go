@@ -16,20 +16,16 @@ import (
 func TestEventsChannelDeliversGuestReports(t *testing.T) {
 	dir := t.TempDir()
 	got := make(chan proto.GuestEvent, 4)
-	s := &Sandbox{
+	s := withCredential(&Sandbox{
 		State: State{UDSPath: filepath.Join(dir, "v.sock")},
 		opts:  Options{OnGuestEvent: func(ev proto.GuestEvent) { got <- ev }},
-	}
+	})
 	if err := s.listenEvents(); err != nil {
 		t.Fatal(err)
 	}
 	defer s.eventsLn.Close()
 
-	conn, err := net.Dial("unix", fmt.Sprintf("%s_%d", s.State.UDSPath, proto.PortEvents))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer conn.Close()
+	conn := dialGuestChannel(t, s, proto.PortEvents)
 
 	w := proto.NewWriter(conn)
 	sent := proto.GuestEvent{
@@ -68,20 +64,16 @@ func TestEventsChannelDeliversGuestReports(t *testing.T) {
 func TestEventsChannelSurvivesRubbish(t *testing.T) {
 	dir := t.TempDir()
 	got := make(chan proto.GuestEvent, 4)
-	s := &Sandbox{
+	s := withCredential(&Sandbox{
 		State: State{UDSPath: filepath.Join(dir, "v.sock")},
 		opts:  Options{OnGuestEvent: func(ev proto.GuestEvent) { got <- ev }},
-	}
+	})
 	if err := s.listenEvents(); err != nil {
 		t.Fatal(err)
 	}
 	defer s.eventsLn.Close()
 
-	conn, err := net.Dial("unix", fmt.Sprintf("%s_%d", s.State.UDSPath, proto.PortEvents))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer conn.Close()
+	conn := dialGuestChannel(t, s, proto.PortEvents)
 
 	// Not JSON at all, then a valid frame of an unknown type. Neither may stop
 	// the channel; the unknown type is passed on and dropped upstream, where the
@@ -108,17 +100,13 @@ func TestEventsChannelSurvivesRubbish(t *testing.T) {
 // is before the flight recorder has been opened.
 func TestEventsChannelToleratesNoHandler(t *testing.T) {
 	dir := t.TempDir()
-	s := &Sandbox{State: State{UDSPath: filepath.Join(dir, "v.sock")}}
+	s := withCredential(&Sandbox{State: State{UDSPath: filepath.Join(dir, "v.sock")}})
 	if err := s.listenEvents(); err != nil {
 		t.Fatal(err)
 	}
 	defer s.eventsLn.Close()
 
-	conn, err := net.Dial("unix", fmt.Sprintf("%s_%d", s.State.UDSPath, proto.PortEvents))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer conn.Close()
+	conn := dialGuestChannel(t, s, proto.PortEvents)
 	if err := proto.NewWriter(conn).Write(proto.GuestEvent{V: 1, Type: proto.GuestEventOOM}); err != nil {
 		t.Fatal(err)
 	}
@@ -135,10 +123,10 @@ func TestEventsChannelToleratesNoHandler(t *testing.T) {
 func TestSilentEventsConnectionsAreCappedAndReclaimed(t *testing.T) {
 	dir := t.TempDir()
 	got := make(chan proto.GuestEvent, 1)
-	s := &Sandbox{
+	s := withCredential(&Sandbox{
 		State: State{UDSPath: filepath.Join(dir, "v.sock")},
 		opts:  Options{OnGuestEvent: func(ev proto.GuestEvent) { got <- ev }},
-	}
+	})
 	if err := s.listenEvents(); err != nil {
 		t.Fatal(err)
 	}
@@ -160,11 +148,7 @@ func TestSilentEventsConnectionsAreCappedAndReclaimed(t *testing.T) {
 		t.Fatalf("only %d of %d silent connections filled the cap", n, maxConcurrentGuestConnections)
 	}
 
-	conn, err := net.Dial("unix", addr)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = conn.Close() })
+	conn := dialGuestChannel(t, s, proto.PortEvents)
 	sent := proto.GuestEvent{V: proto.Version, Type: proto.GuestEventOOM, PID: 99}
 	if err := proto.NewWriter(conn).Write(sent); err != nil {
 		t.Fatal(err)

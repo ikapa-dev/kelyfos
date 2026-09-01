@@ -18,6 +18,24 @@ reference described in the README and re-measured per release.
 ## Unreleased
 
 ### Fixed
+- **The guest-initiated vsock channels now require a per-session credential;
+  guest-attributed record content can no longer be forged** (independent audit
+  2026-09-01, A2/A3; D99). Any same-uid host process could connect to the
+  events unix socket in the run directory, and any process inside the guest
+  could dial CID 2 ports 10100/10101/10102 raw — either could hand the flight
+  recorder a guest-attributed event, and the hash chain verified over it. The
+  host now mints one credential per machine, pushes it to the supervisor over
+  the control channel (the direction guest processes cannot reach), and
+  refuses — recording a `channel.refused` event for — every connection whose
+  first frame does not carry it, compared in constant time; a `SO_PEERCRED`
+  uid check refuses peers from other accounts as well. Restores mint a fresh
+  credential and push it before `resync`.
+  **This narrows a surface deliberately** (docs/compatibility.md §3's
+  exception): a supervisor that predates the handshake cannot present a
+  credential, so an image older than this CLI is refused at boot with a named
+  error, and a snapshot taken before the handshake cannot be restored until it
+  is re-taken on a rebuilt image — the frozen guest is the old supervisor, and
+  restoring does not upgrade it. See docs/upgrading.md §9 for the way out.
 - **A malicious or broken MCP call can no longer crash `kelyfos serve-mcp` and
   orphan every sandbox it owns** (independent audit 2026-09-01, A1).
   `sandbox_fork` with a count near the largest signed integer overflowed the

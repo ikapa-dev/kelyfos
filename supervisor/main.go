@@ -245,6 +245,19 @@ func pumpEvents(queue <-chan proto.GuestEvent) {
 			}
 			continue
 		}
+		// The credential goes first, and the host refuses the connection
+		// without it (audit 2026-09-01, A2/A3). On the first dials of a boot
+		// the host's auth op has not landed yet, so the connection closes
+		// here and the retry below brings it round again once it has — the
+		// same discipline that already absorbs the host binding its end late.
+		if err := presentCredential(conn); err != nil {
+			conn.Close()
+			time.Sleep(backoff)
+			if backoff < dialBackoffMax {
+				backoff *= 2
+			}
+			continue
+		}
 		backoff = dialBackoffMin
 		w := proto.NewWriter(conn)
 		for {
@@ -285,6 +298,18 @@ func announceReady(start time.Duration) {
 	for {
 		conn, err := vsock.Dial(proto.CIDHost, proto.PortReady)
 		if err != nil {
+			time.Sleep(backoff)
+			if backoff < dialBackoffMax {
+				backoff *= 2
+			}
+			continue
+		}
+		// Same presentation, same reasoning, as the events pump's: the host
+		// refuses a ready connection without this session's credential, so
+		// the first dials of a boot close here and the retry brings it round
+		// once the host's auth op has landed (audit 2026-09-01, A2/A3).
+		if err := presentCredential(conn); err != nil {
+			conn.Close()
 			time.Sleep(backoff)
 			if backoff < dialBackoffMax {
 				backoff *= 2

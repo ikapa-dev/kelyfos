@@ -332,8 +332,10 @@ status. This is how you hand an agent a sandbox and nothing else:
 	// The guest reports; the host records. onGuestEvent is late-bound because
 	// the flight recorder is opened after the sandbox is built, and a guest that
 	// managed to report before then must not take the process down with a nil
-	// call (docs/events.md §1).
+	// call (docs/events.md §1). onChannelRefused is late-bound for the same
+	// reason (audit 2026-09-01, A2/A3).
 	var onGuestEvent atomic.Pointer[func(proto.GuestEvent)]
+	var onChannelRefused atomic.Pointer[func(port uint32, reason string)]
 
 	opts := sandbox.Options{
 		CPUSlice:     cpuSlice,
@@ -343,6 +345,11 @@ status. This is how you hand an agent a sandbox and nothing else:
 		OnGuestEvent: func(ev proto.GuestEvent) {
 			if fn := onGuestEvent.Load(); fn != nil {
 				(*fn)(ev)
+			}
+		},
+		OnChannelRefused: func(port uint32, reason string) {
+			if fn := onChannelRefused.Load(); fn != nil {
+				(*fn)(port, reason)
 			}
 		},
 		Arch:      *arch,
@@ -581,6 +588,18 @@ status. This is how you hand an agent a sandbox and nothing else:
 		}
 	}
 	onGuestEvent.Store(&handler)
+
+	// Same late wiring for the channel-credential refusals (audit 2026-09-01,
+	// A2/A3): every connection refused on a guest-initiated channel goes into
+	// this session's chain the moment it is refused — an attempt to forge the
+	// record is part of what the record is for.
+	refused := func(port uint32, reason string) {
+		_ = rec.Append(recorder.Event{
+			Type: recorder.TypeChannelRefused, Source: recorder.SourceHost,
+			Port: int(port), Reason: proto.SafeText(reason),
+		})
+	}
+	onChannelRefused.Store(&refused)
 
 	// Teardown must happen on every path out of this function, including the
 	// signal path — a sandbox left running with its run directory deleted, or a

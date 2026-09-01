@@ -281,7 +281,50 @@ milliseconds and shuts down as it always did.
 
 ---
 
-## 9. What has never broken
+## 9. An old guest image can no longer boot against a new CLI (2026-09-01)
+
+**The guest-initiated vsock channels now take a per-session credential**
+(`docs/protocol.md` §1.7; the independent audit's A2/A3, D99). The host
+refuses — and records — any connection to ports 10100, 10101 and 10102 whose
+first frame does not carry it, which includes the ready frame: a supervisor
+that predates the handshake cannot present what it was never given, so the
+machine never becomes ready and the boot fails.
+
+A supervisor old enough to predate the handshake says so itself: the host's
+`auth` op is answered `bad_request`, and the boot ends with the refusal
+instead of a timeout:
+
+```
+this image's supervisor does not accept a channel credential — it predates
+the authentication handshake the running CLI requires.
+    rebuild the guest image for this CLI:  make image FLAVOR=dev   (or FLAVOR=base)
+```
+
+**What to do:** rebuild the image — `make image FLAVOR=dev`, or `base` for
+the flavor a team's spawn budget names. The CLI and the image were always one
+system where it matters; this change makes the coupling explicit where before
+it was silent.
+
+**Snapshots are the harder edge, said plainly.** A snapshot's frozen memory
+*is* its supervisor, so a snapshot taken before the handshake can never learn
+a credential — restoring one under this CLI is refused with the same named
+error, and rebuilding the image does not fix it. The way forward is to re-take
+the snapshot: boot a fresh machine on the rebuilt image, prepare it, and
+`kelyfos snapshot save` over the old name. That is the same answer §1 gives
+for pre-v0.9 confinement, and for the same reason: restoring does not upgrade
+the guest inside it.
+
+**Why a refusal rather than a warning:** the ready, events and team channels
+are how the record learns what happened inside the machine. A machine whose
+guest cannot authenticate those channels is a machine whose record can be
+forged by any process inside it, and starting one that looks ordinary would
+repeat the exact gap the credential exists to close. The precedent is P5-3's
+profile refusal — a machine that confines nothing is refused, not warned
+about — and D99 records the reasoning.
+
+---
+
+## 10. What has never broken
 
 Stated because "nothing changed" is only useful if somebody checked:
 

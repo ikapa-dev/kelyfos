@@ -91,6 +91,12 @@ func TestArgumentSummarySurvivesGarbage(t *testing.T) {
 // the record. Reading the source is the check: the alternative is trusting that
 // whoever adds the next tool remembers.
 func TestEveryToolCallPassesTheAudit(t *testing.T) {
+	// Since the audit of 2026-09-01 (A1), callTool hands every call to
+	// runCall, which holds the panic net and the audit pair together — a
+	// recovery has to record the call it refused, so the pair moved with the
+	// dispatch. The structural claim is the same and now has two links:
+	// callTool goes through runCall, and runCall both audits and dispatches
+	// through the one place.
 	src := readSource(t, "servemcp.go")
 	i := strings.Index(src, "func (s *hostServer) callTool(")
 	if i < 0 {
@@ -100,11 +106,26 @@ func TestEveryToolCallPassesTheAudit(t *testing.T) {
 	if end := strings.Index(body, "\nfunc "); end > 0 {
 		body = body[:end]
 	}
+	if !strings.Contains(body, "s.runCall(p)") {
+		t.Error("callTool does not route through runCall; a call that bypasses it bypasses the record and the panic net")
+	}
+
+	i = strings.Index(src, "func (s *hostServer) runCall(")
+	if i < 0 {
+		t.Fatal("runCall is gone; this test needs rewriting with it")
+	}
+	body = src[i:]
+	if end := strings.Index(body, "\nfunc "); end > 0 {
+		body = body[:end]
+	}
 	if !strings.Contains(body, "s.auditCall(p)") {
-		t.Error("callTool does not audit; a tool call that is not recorded is a door with no record")
+		t.Error("runCall does not audit; a tool call that is not recorded is a door with no record")
 	}
 	if !strings.Contains(body, "s.dispatchTool(p)") {
-		t.Error("callTool no longer dispatches through one place")
+		t.Error("runCall no longer dispatches through one place")
+	}
+	if !strings.Contains(body, "recover()") {
+		t.Error("runCall lost the panic net; a tool that panics would kill this server and orphan its machines")
 	}
 }
 

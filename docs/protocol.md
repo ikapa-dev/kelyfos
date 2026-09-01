@@ -62,10 +62,51 @@ failures.
 
 The host listens on a Unix socket at **`<uds_path>_<port>`** — the vsock UDS path
 with an underscore and the decimal destination port appended. The guest connects
-an `AF_VSOCK` socket to CID **2** and that port. There is no handshake line in
-this direction: the connection is channel bytes from the first byte.
+an `AF_VSOCK` socket to CID **2** and that port. **The first frame is the
+credential** (§1.7) on every port in the `101xx` range; after it, the connection
+is channel bytes from the next byte.
 
 If no host socket exists at that path, the guest's `connect()` fails with a reset.
+
+### 1.7 The channel credential
+
+The guest-initiated channels are authenticated (audit 2026-09-01, A2/A3). The
+host mints one credential per machine — 32 bytes of entropy, hex-encoded, 64
+characters — and hands it to the supervisor over the `control` channel (§5.4,
+op `auth`), the one direction a process inside the guest cannot reach because a
+guest vsock listener serves the host's CID alone. The supervisor holds it in
+memory only — never in the environment, the command line or a file, each of
+which every root process in the guest reads — and presents it as the first
+frame of every connection it dials to `10100`, `10101` and `10102`:
+
+```json
+{"v":1,"auth":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}
+```
+
+The host compares it in constant time and refuses the connection — closing it
+before reading anything past that frame — if it is absent or wrong, recording
+every refusal as a `channel.refused` event. A peer the kernel names as coming
+from another account is refused the same way (`SO_PEERCRED`, where the kernel
+says; the credential is the control either way).
+
+Three properties are deliberate:
+
+- **One credential per machine, not per port.** The ready, events and team
+  channels are one trust decision: what the guest reports, the host records.
+- **A fresh value on restore.** The process doing the restore did not boot the
+  machine; the frozen credential belongs to a session that is over, and N forks
+  of one snapshot would otherwise share one value across sessions. The host
+  pushes a new one over `control` before `resync`, and the supervisor replaces
+  what it holds.
+- **No fallback.** There is no port, flag or mode that turns the credential
+  off. A supervisor that predates the handshake answers `auth` with
+  `bad_request`, and the boot fails with a named refusal rather than starting
+  a machine whose record could be forged.
+
+The dials a supervisor makes before the credential lands are refused by the
+host and retried under the existing dial backoff; a boot costs a few refused
+connections, which the record shows as `channel.refused` at the front of the
+chain.
 
 ### 1.3 CIDs
 
@@ -314,7 +355,10 @@ and `stderr` reflects the order the guest read them and nothing stronger.
 
 ### 5.3 `ready` — port 10100, guest → host
 
-The last thing the supervisor announces, and deliberately so. It comes after the
+The last thing the supervisor announces, and deliberately so — and behind the
+credential like every guest-initiated channel (§1.7): a ready frame from a
+connection that cannot present it is a machine that is not, and the host
+refuses it rather than announcing a boot that did not happen. It comes after the
 mounts, the confinement profile, the egress environment, every plugin and the MCP
 handshake paid with each one, loopback, and the bind of every listener — because
 ready means the machine is usable, and a machine whose `tools/list` is still
@@ -372,6 +416,7 @@ to `resync` is where the host learns what that machine confines (P5-7).
 | `shutdown` | — | `SIGTERM` everything but PID 1, `SIGKILL` what is left after the grace period, flush the filesystems, power off. The host still supervises the Firecracker process and force-kills after a grace period of its own. |
 | `trust` | `ca_pem` | Install the egress CA's trust anchor (P2-6). |
 | `resync` | `realtime_ns`, `entropy` | Post-snapshot-restore fix-up (P3-1). |
+| `auth` | `token` | Store the channel credential (§1.7), presented on every guest-initiated dial. Sent as soon as the guest answers control, and again with a fresh value on every restore. A supervisor that predates the handshake answers `bad_request`, and the boot is refused with a named error. |
 
 ```json
 {"v":1,"id":"c3","op":"trust","ca_pem":"-----BEGIN CERTIFICATE-----\n…"}
@@ -411,6 +456,10 @@ is defined in `docs/events.md` at P2-4, and the host is responsible for the hash
 chain — the guest never computes it, because a guest that could forge chain
 links could forge its own audit trail.
 
+Connections carry the credential (§1.7) — this is the channel the audit's A2
+and A3 forgeries rode, and the reason the handshake exists: an unauthenticated
+frame here is a forged line in the record the project's claims stand on.
+
 Implemented at E1-4. The frame is deliberately thin:
 
 ```json
@@ -435,7 +484,8 @@ console.
 ### 5.6 `team` — port 10102, guest → host
 
 Team messaging (E2-1). Request/response, newline-delimited JSON, one connection
-held for the life of the sandbox.
+held for the life of the sandbox, behind the same credential as the other
+guest-initiated channels (§1.7).
 
 This channel runs guest → host, unlike `exec`, `mcp` and `control`, and the
 direction is the design. Every other host-initiated channel exists because the
@@ -692,6 +742,7 @@ session's record rather than inferred from the CLI's own version.
 | `events` feeds the hash-chained recorder | P2-4 |
 | `resync` applied on every snapshot restore; per-fork `vsock_override` | P3-1, P3-2 |
 | Supervisor re-dials `10100`, `10101` and `10102` after a snapshot reset | P3-1, E2-1 |
+| Every guest-initiated connection presents the session's credential; the host refuses and records a connection without it | §1.7, audit 2026-09-01 A2/A3 |
 | A forward's stream is unframed, and the handshake reader keeps reading it | E5-5 |
 | `team` channel serves §5.6, and the guest prefers the host's `agent` on `peers` | E2-1, E2-9 |
 

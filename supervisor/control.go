@@ -74,6 +74,20 @@ func handleControl(conn net.Conn, shutdown chan<- struct{}) {
 				resp.Error = &proto.Error{Kind: proto.ErrInternal, Message: err.Error()}
 			}
 
+		case proto.OpAuth:
+			// The per-session credential for the channels this supervisor
+			// dials outbound (audit 2026-09-01, A2/A3). Held in this
+			// process's memory only — never written, never exported into a
+			// child's environment — and presented on every dial; the host
+			// refuses the connection without it. A malformed token is
+			// refused rather than stored (credential.go), and the host
+			// retries: the only legitimate sender recovers, and nothing else
+			// gets a second look at the value.
+			if err := setChannelCredential(req.Token); err != nil {
+				resp.OK = false
+				resp.Error = &proto.Error{Kind: proto.ErrBadRequest, Message: err.Error()}
+			}
+
 		case proto.OpResync:
 			if err := applyResync(&req); err != nil {
 				resp.OK = false

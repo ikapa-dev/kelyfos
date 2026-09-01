@@ -88,6 +88,14 @@ const (
 	// touched — reused rather than a new field, the same way session.policy
 	// and team.topology already reuse VcpuCount/MemMiB/CPUQuota.
 	TypeSessionErasure = "session.erasure"
+	// TypeChannelRefused is the audit of 2026-09-01's A2/A3: a connection to
+	// one of the guest-initiated channels (ready, events, team) was refused
+	// for lacking the session's channel credential — an attempt to write
+	// guest-attributed content into this record without it. Port carries the
+	// channel; Reason carries why the connection was refused. Source is host:
+	// the refusal is the host's own act, made before anything the peer sent
+	// could reach the chain.
+	TypeChannelRefused = "channel.refused"
 )
 
 // ReasonServeMCP marks a session.start as a server's own session rather than a
