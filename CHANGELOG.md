@@ -18,6 +18,13 @@ reference described in the README and re-measured per release.
 ## Unreleased
 
 ### Fixed
+- **`sandbox_exec` refuses an absurd `timeout_ms` instead of silently killing
+  the command at ten seconds** (independent audit 2026-09-01, A15). A
+  timeout_ms near the largest signed integer multiplied out to a negative
+  Duration, which the guest path absorbed into its grace path: the command
+  was killed at ten seconds while the record said nothing of it. The door now
+  refuses above a documented 24-hour ceiling, naming the bound, and the exec
+  library clamps the deadline arithmetic so no caller can make it wrap.
 - **`serve-mcp` bounds concurrent tool calls** (independent audit 2026-09-01,
   A10). Calls were dispatched on unbounded goroutines — every other listener
   in the product has a semaphore; this door had none, and a pipelined stream

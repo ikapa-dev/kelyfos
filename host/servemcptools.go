@@ -578,6 +578,17 @@ func (s *hostServer) toolExec(raw json.RawMessage) *mcp.CallToolResult {
 	if err := json.Unmarshal(raw, &a); err != nil {
 		return mcp.Errorf("sandbox_exec: %v", err)
 	}
+	// Refused before anything is resolved: a timeout_ms near the largest
+	// signed integer multiplied out to a negative Duration, which the guest
+	// path absorbed into a silent ten-second kill — the asked behaviour and
+	// the delivered behaviour disagreed with nothing on the record to say so
+	// (audit 2026-09-01, A15). The ceiling is documented and the refusal says
+	// both the number and the bound.
+	if a.TimeoutMS > int(sandbox.MaxExecTimeout/time.Millisecond) {
+		return mcp.Errorf("sandbox_exec: timeout_ms %d exceeds the maximum of %d ms (24 hours); "+
+			"pass a smaller timeout_ms, or no timeout_ms for the one-minute default",
+			a.TimeoutMS, int64(sandbox.MaxExecTimeout/time.Millisecond))
+	}
 	b, err := s.box(a.Sandbox)
 	if err != nil {
 		return mcp.Errorf("%v", err)

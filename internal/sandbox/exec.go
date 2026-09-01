@@ -48,12 +48,28 @@ const execGrace = 10 * time.Second
 // ceiling that holds and one that reads as if it does.
 const maxExecFrames = 1 << 20
 
+// MaxExecTimeout bounds the timeout a command may be given, and is exported so
+// the doors that take one from a client can refuse above it before the
+// arithmetic lies (audit 2026-09-01, A15): a timeout_ms near the largest
+// signed integer multiplied out to a negative Duration, which the grace path
+// below absorbed into a silent ten-second kill. Clamped here as well, so the
+// deadline arithmetic this function does can never wrap whatever a caller
+// passes.
+const MaxExecTimeout = 24 * time.Hour
+
 // Exec runs one command in a sandbox and collects its output.
 //
 // It is the programmatic form of `kelyfos exec`, for callers that need the
 // result rather than a terminal — the E2B shim, and anything else that has to
 // act on what a command produced.
 func Exec(udsPath string, argv []string, stdin []byte, timeout time.Duration) (*ExecResult, error) {
+	if timeout > MaxExecTimeout {
+		// Clamped, not refused: the door that took the ask from a person
+		// refuses above this ceiling; the library's job is that no caller,
+		// however wrong its number, turns the deadline arithmetic into a
+		// wrap (audit 2026-09-01, A15).
+		timeout = MaxExecTimeout
+	}
 	conn, err := Connect(udsPath, proto.PortExec, 15*time.Second)
 	if err != nil {
 		return nil, err
