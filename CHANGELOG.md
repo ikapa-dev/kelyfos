@@ -18,6 +18,34 @@ reference described in the README and re-measured per release.
 ## Unreleased
 
 ### Fixed
+- **The seccomp refusal list covers the fd-based mount API and the
+  cross-memory/fd-theft family** (independent audit 2026-09-01, A5/A17).
+  `open_tree`, `fsopen` and friends reach the same ends as `mount` without
+  calling it, and the guest's refusal map predated that API — the audit
+  demonstrated both syscalls reaching the kernel. The policy now also refuses
+  `move_mount`, `fsconfig`, `fsmount`, `fspick`, `mount_setattr`,
+  `process_vm_readv`, `process_vm_writev`, `pidfd_open`, `pidfd_getfd` and
+  `pidfd_send_signal`. A supervisor unit test fails CI when a policy name is
+  missing from a per-arch number map (the exact silent-drop that let this
+  drift), and the confinement suite probes every one of them from a confined
+  child. The audit's report misnumbered this API — it named `fsmount` 431,
+  which is `fsconfig`'s slot — and the first probe run against the corrected
+  filter came back EINVAL, the kernel's answer, rather than the filter's
+  EPERM; that is how `fsconfig` joined the list. The guest image must be
+  rebuilt (`make image FLAVOR=dev`) for this to take effect; the profile line
+  at boot now reports 38 syscalls refused on the dev flavor.
+- **`--cpu-quota` no longer hangs the boot when the machine cannot honour
+  it** (independent audit 2026-09-01, A17b). On a host with cgroup v2 but no
+  delegation and no working user systemd session, the boot sat after
+  session.start with no refusal and no output. A boot-path preflight now
+  proves `systemd-run --user` works before anything is built and refuses
+  within its bound, naming the fix:
+  `cannot apply a CPU quota on this machine: systemd-run --user did not
+  complete within 4s ...` — reproduced on the audit's own test VM.
+- **The supervisor is no longer dumpable** (independent audit 2026-09-01,
+  A17). PID 1 sets `PR_SET_DUMPABLE 0` before anything else, so the safety of
+  its memory — the channel credential most of all — no longer rests on the
+  kernel's ACL alone.
 - **A bound secret's value can no longer reach the guest through a compressed
   origin response** (independent audit 2026-09-01, A4). The response scrubber
   is byte-based, so an allowlisted origin that echoes the Authorization header

@@ -2249,6 +2249,8 @@ assertion's subject.
 | --- | --- | --- |
 | Landlock fences /etc and /proc/sys writes | `accept-security-confinement.sh` | CHECKED |
 | seccomp refuses mount, mknod, setns, unshare, bpf, add_key, open_by_handle_at | confinement battery | CHECKED |
+| seccomp refuses the fd-based mount API (open_tree, fsopen, fsconfig, fsmount, fspick, move_mount, mount_setattr) and the cross-memory/fd-theft family (process_vm_readv, pidfd_getfd) — the audit's A5, probed from a confined child so map drift fails CI (audit A5/A17b) | confinement battery; `supervisor/profile_policy_test.go` fails at build time when a policy name is missing from a per-arch map | CHECKED |
+| the supervisor is non-dumpable, so ptrace-shaped attacks are refused by the policy and the flag, not only the kernel ACL (audit A17) | confinement battery (process_vm/pidfd probes EPERM); prctl failure would log at boot | CHECKED |
 | PTRACE_ATTACH to PID 1 is EPERM even on the dev flavor that permits ptrace | confinement battery | CHECKED |
 | io_uring, abstract unix sockets are allowed by the filter and fenced by namespaces | confinement battery — documented, not lied about | CHECKED — documented |
 | the profile is per-flavor and per-architecture; the docs state the policy, the dump resolves the machine | profiles page + `--dump-profile` (see §6.2 correction) | CHECKED |
@@ -7843,9 +7845,13 @@ unprivileged. It is not the only jailer flag left unpassed — `--netns` and
 reach the whole syscall surface the seccomp profile permits. Landlock restricts
 the filesystem; it does not make the kernel smaller. *After P5-3:* the profile is
 a refusal list, not an allowlist, so the surface it leaves is everything a
-kernel offers root minus the names on that list — twenty-eight of them, of which
-`dev`, the flavor a release publishes, takes `ptrace` back out, and aarch64
-drops `settimeofday` because it has no such syscall to refuse. A real reduction
+kernel offers root minus the names on that list — thirty-nine of them since the
+audit of 2026-09-01 added the fd-based mount API (`open_tree`, `move_mount`,
+`fsopen`, `fsconfig`, `fsmount`, `fspick`, `mount_setattr`) and the
+cross-memory and fd-theft family (`process_vm_readv`, `process_vm_writev`,
+`pidfd_open`, `pidfd_getfd`, `pidfd_send_signal`), of which `dev`, the flavor a
+release publishes, takes `ptrace` back out, and aarch64 drops `settimeofday`
+because it has no such syscall to refuse. A real reduction
 at exactly the places that matter (no module loading, no mount, no clock, no
 keyrings) and not a small surface. Landlock also cannot restrict `chdir`,
 `stat`, `chmod`, `chown`, `access` or `fcntl` at all, by its own documentation,
@@ -15906,7 +15912,7 @@ Writable device trees: `/dev/pts`, `/dev/shm`
 
 Writable device nodes, read/write/truncate only: `/dev/null`, `/dev/zero`, `/dev/full`, `/dev/random`, `/dev/urandom`, `/dev/tty`, `/dev/ptmx`
 
-Refused, 28 syscalls: `init_module`, `finit_module`, `delete_module`, `kexec_load`, `kexec_file_load`, `mount`, `umount2`, `pivot_root`, `chroot`, `swapon`, `swapoff`, `reboot`, `clock_settime`, `clock_adjtime`, `adjtimex`, `settimeofday`, `setns`, `unshare`, `add_key`, `request_key`, `keyctl`, `open_by_handle_at`, `bpf`, `perf_event_open`, `acct`, `quotactl`, `syslog`, `ptrace`
+Refused, 40 syscalls: `init_module`, `finit_module`, `delete_module`, `kexec_load`, `kexec_file_load`, `mount`, `umount2`, `pivot_root`, `chroot`, `swapon`, `swapoff`, `open_tree`, `move_mount`, `fsopen`, `fsconfig`, `fsmount`, `fspick`, `mount_setattr`, `reboot`, `clock_settime`, `clock_adjtime`, `adjtimex`, `settimeofday`, `setns`, `unshare`, `add_key`, `request_key`, `keyctl`, `open_by_handle_at`, `process_vm_readv`, `process_vm_writev`, `pidfd_open`, `pidfd_getfd`, `pidfd_send_signal`, `bpf`, `perf_event_open`, `acct`, `quotactl`, `syslog`, `ptrace`
 
 ## `dev`
 
@@ -15918,7 +15924,7 @@ Writable device trees: `/dev/pts`, `/dev/shm`
 
 Writable device nodes, read/write/truncate only: `/dev/null`, `/dev/zero`, `/dev/full`, `/dev/random`, `/dev/urandom`, `/dev/tty`, `/dev/ptmx`
 
-Refused, 27 syscalls: `init_module`, `finit_module`, `delete_module`, `kexec_load`, `kexec_file_load`, `mount`, `umount2`, `pivot_root`, `chroot`, `swapon`, `swapoff`, `reboot`, `clock_settime`, `clock_adjtime`, `adjtimex`, `settimeofday`, `setns`, `unshare`, `add_key`, `request_key`, `keyctl`, `open_by_handle_at`, `bpf`, `perf_event_open`, `acct`, `quotactl`, `syslog`
+Refused, 39 syscalls: `init_module`, `finit_module`, `delete_module`, `kexec_load`, `kexec_file_load`, `mount`, `umount2`, `pivot_root`, `chroot`, `swapon`, `swapoff`, `open_tree`, `move_mount`, `fsopen`, `fsconfig`, `fsmount`, `fspick`, `mount_setattr`, `reboot`, `clock_settime`, `clock_adjtime`, `adjtimex`, `settimeofday`, `setns`, `unshare`, `add_key`, `request_key`, `keyctl`, `open_by_handle_at`, `process_vm_readv`, `process_vm_writev`, `pidfd_open`, `pidfd_getfd`, `pidfd_send_signal`, `bpf`, `perf_event_open`, `acct`, `quotactl`, `syslog`
 
 ## Attaching a debugger
 

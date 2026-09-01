@@ -34,7 +34,7 @@ Writable device trees: `/dev/pts`, `/dev/shm`
 
 Writable device nodes, read/write/truncate only: `/dev/null`, `/dev/zero`, `/dev/full`, `/dev/random`, `/dev/urandom`, `/dev/tty`, `/dev/ptmx`
 
-Refused, 28 syscalls: `init_module`, `finit_module`, `delete_module`, `kexec_load`, `kexec_file_load`, `mount`, `umount2`, `pivot_root`, `chroot`, `swapon`, `swapoff`, `reboot`, `clock_settime`, `clock_adjtime`, `adjtimex`, `settimeofday`, `setns`, `unshare`, `add_key`, `request_key`, `keyctl`, `open_by_handle_at`, `bpf`, `perf_event_open`, `acct`, `quotactl`, `syslog`, `ptrace`
+Refused, 40 syscalls: `init_module`, `finit_module`, `delete_module`, `kexec_load`, `kexec_file_load`, `mount`, `umount2`, `pivot_root`, `chroot`, `swapon`, `swapoff`, `open_tree`, `move_mount`, `fsopen`, `fsconfig`, `fsmount`, `fspick`, `mount_setattr`, `reboot`, `clock_settime`, `clock_adjtime`, `adjtimex`, `settimeofday`, `setns`, `unshare`, `add_key`, `request_key`, `keyctl`, `open_by_handle_at`, `process_vm_readv`, `process_vm_writev`, `pidfd_open`, `pidfd_getfd`, `pidfd_send_signal`, `bpf`, `perf_event_open`, `acct`, `quotactl`, `syslog`, `ptrace`
 
 ## `dev`
 
@@ -46,7 +46,7 @@ Writable device trees: `/dev/pts`, `/dev/shm`
 
 Writable device nodes, read/write/truncate only: `/dev/null`, `/dev/zero`, `/dev/full`, `/dev/random`, `/dev/urandom`, `/dev/tty`, `/dev/ptmx`
 
-Refused, 27 syscalls: `init_module`, `finit_module`, `delete_module`, `kexec_load`, `kexec_file_load`, `mount`, `umount2`, `pivot_root`, `chroot`, `swapon`, `swapoff`, `reboot`, `clock_settime`, `clock_adjtime`, `adjtimex`, `settimeofday`, `setns`, `unshare`, `add_key`, `request_key`, `keyctl`, `open_by_handle_at`, `bpf`, `perf_event_open`, `acct`, `quotactl`, `syslog`
+Refused, 39 syscalls: `init_module`, `finit_module`, `delete_module`, `kexec_load`, `kexec_file_load`, `mount`, `umount2`, `pivot_root`, `chroot`, `swapon`, `swapoff`, `open_tree`, `move_mount`, `fsopen`, `fsconfig`, `fsmount`, `fspick`, `mount_setattr`, `reboot`, `clock_settime`, `clock_adjtime`, `adjtimex`, `settimeofday`, `setns`, `unshare`, `add_key`, `request_key`, `keyctl`, `open_by_handle_at`, `process_vm_readv`, `process_vm_writev`, `pidfd_open`, `pidfd_getfd`, `pidfd_send_signal`, `bpf`, `perf_event_open`, `acct`, `quotactl`, `syslog`
 
 ## Attaching a debugger
 

@@ -416,9 +416,13 @@ unprivileged. It is not the only jailer flag left unpassed — `--netns` and
 reach the whole syscall surface the seccomp profile permits. Landlock restricts
 the filesystem; it does not make the kernel smaller. *After P5-3:* the profile is
 a refusal list, not an allowlist, so the surface it leaves is everything a
-kernel offers root minus the names on that list — twenty-eight of them, of which
-`dev`, the flavor a release publishes, takes `ptrace` back out, and aarch64
-drops `settimeofday` because it has no such syscall to refuse. A real reduction
+kernel offers root minus the names on that list — thirty-nine of them since the
+audit of 2026-09-01 added the fd-based mount API (`open_tree`, `move_mount`,
+`fsopen`, `fsconfig`, `fsmount`, `fspick`, `mount_setattr`) and the
+cross-memory and fd-theft family (`process_vm_readv`, `process_vm_writev`,
+`pidfd_open`, `pidfd_getfd`, `pidfd_send_signal`), of which `dev`, the flavor a
+release publishes, takes `ptrace` back out, and aarch64 drops `settimeofday`
+because it has no such syscall to refuse. A real reduction
 at exactly the places that matter (no module loading, no mount, no clock, no
 keyrings) and not a small surface. Landlock also cannot restrict `chdir`,
 `stat`, `chmod`, `chown`, `access` or `fcntl` at all, by its own documentation,

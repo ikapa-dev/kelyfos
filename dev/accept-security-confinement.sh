@@ -107,6 +107,79 @@ def s_open_by_handle():
         raise OSError(ctypes.get_errno(), "open_by_handle_at")
 attempt("seccomp.open_by_handle_at", s_open_by_handle, "REFUSED by seccomp")
 
+# --- the fd-based mount API and the cross-memory family (audit 2026-09-01, A5) ---
+# The refusal list is name-keyed against a hand-maintained per-arch map, and
+# the audit found open_tree and fsopen reaching the kernel because the map
+# predated that API. These probes are the CI drift gate the audit asked for:
+# each syscall is probed from this confined child, and an allow is a red run
+# rather than a stale map nobody reads. Numbers are arm64/asm-generic, the
+# arch this lab runs; the supervisor's own unit test
+# (supervisor/profile_policy_test.go) is what fails when a name is missing
+# from a per-arch map, on both arches, at build time.
+#
+# fsconfig is probed on its own evidence: the audit's report misnumbered this
+# API (it named fsmount 431 — fsconfig's slot), and the first probe run came
+# back EINVAL — the kernel's own answer — rather than the filter's EPERM,
+# which is how the one name both had missed was found.
+def s_open_tree():
+    # open_tree(AT_FDCWD, "/", OPEN_TREE_CLONE|AT_RECURSIVE) — the audit's own
+    # probe, which returned a live fd before the fix.
+    if libc.syscall(428, -100, b"/", 0x1 | 0x8000) < 0:
+        raise OSError(ctypes.get_errno(), "open_tree")
+attempt("seccomp.open_tree", s_open_tree, "REFUSED by seccomp (fd-mount API)")
+
+def s_fsopen():
+    if libc.syscall(430, b"tmpfs", 0) < 0:
+        raise OSError(ctypes.get_errno(), "fsopen")
+attempt("seccomp.fsopen", s_fsopen, "REFUSED by seccomp (fd-mount API)")
+
+def s_fsconfig():
+    if libc.syscall(431, -1, 0, 0, 0, 0) < 0:
+        raise OSError(ctypes.get_errno(), "fsconfig")
+attempt("seccomp.fsconfig", s_fsconfig, "REFUSED by seccomp (fd-mount API)")
+
+def s_fsmount():
+    if libc.syscall(432, -1, 0) < 0:
+        raise OSError(ctypes.get_errno(), "fsmount")
+attempt("seccomp.fsmount", s_fsmount, "REFUSED by seccomp (fd-mount API)")
+
+def s_fspick():
+    if libc.syscall(433, -100, b"/", 0) < 0:
+        raise OSError(ctypes.get_errno(), "fspick")
+attempt("seccomp.fspick", s_fspick, "REFUSED by seccomp (fd-mount API)")
+
+def s_move_mount():
+    if libc.syscall(429, -100, b"/", -100, b"/tmp/x", 0) < 0:
+        raise OSError(ctypes.get_errno(), "move_mount")
+attempt("seccomp.move_mount", s_move_mount, "REFUSED by seccomp (fd-mount API)")
+
+def s_mount_setattr():
+    if libc.syscall(442, -100, b"/", 0, None, 0) < 0:
+        raise OSError(ctypes.get_errno(), "mount_setattr")
+attempt("seccomp.mount_setattr", s_mount_setattr, "REFUSED by seccomp (fd-mount API)")
+
+def s_process_vm_readv():
+    # local iov, remote iov, flags — the audit's A17b companion: the refusal
+    # list, not only the kernel ACL, now refuses cross-memory reads.
+    if libc.syscall(270, 0, None, 0, None, 0, 0) < 0:
+        raise OSError(ctypes.get_errno(), "process_vm_readv")
+attempt("seccomp.process_vm_readv", s_process_vm_readv, "REFUSED by seccomp (cross-memory)")
+
+def s_pidfd_getfd():
+    # pidfd_open(getpid()) then pidfd_getfd on it — fd theft, the audit's
+    # A17b; refusing pidfd_open alone would leave the probe honest but the
+    # family half-covered, so both are in the policy.
+    pidfd = libc.syscall(434, 0, 0)  # __NR_pidfd_open on arm64
+    if pidfd >= 0:
+        try:
+            if libc.syscall(438, pidfd, 1, 0) < 0:
+                raise OSError(ctypes.get_errno(), "pidfd_getfd")
+        finally:
+            libc.close(pidfd)
+    else:
+        raise OSError(ctypes.get_errno(), "pidfd_open")
+attempt("seccomp.pidfd_getfd", s_pidfd_getfd, "REFUSED by seccomp (fd theft)")
+
 # --- ptrace: permitted by the dev flavor, fenced by Landlock's sibling rule ---
 def p_pid1():
     if libc.ptrace(16, 1, 0, 0) < 0:  # PTRACE_ATTACH
@@ -149,6 +222,15 @@ assert_contains "$out" "seccomp.unshare: ERRNO 1" "unshare returns EPERM"
 assert_contains "$out" "seccomp.bpf: ERRNO 1" "bpf returns EPERM"
 assert_contains "$out" "seccomp.add_key: ERRNO 1" "add_key returns EPERM"
 assert_contains "$out" "seccomp.open_by_handle_at: ERRNO 1" "open_by_handle_at returns EPERM"
+assert_contains "$out" "seccomp.open_tree: ERRNO 1" "open_tree returns EPERM — the fd-based mount API is refused (audit A5)"
+assert_contains "$out" "seccomp.fsopen: ERRNO 1" "fsopen returns EPERM (audit A5)"
+assert_contains "$out" "seccomp.fsconfig: ERRNO 1" "fsconfig returns EPERM (audit A5)"
+assert_contains "$out" "seccomp.fsmount: ERRNO 1" "fsmount returns EPERM (audit A5)"
+assert_contains "$out" "seccomp.fspick: ERRNO 1" "fspick returns EPERM (audit A5)"
+assert_contains "$out" "seccomp.move_mount: ERRNO 1" "move_mount returns EPERM (audit A5)"
+assert_contains "$out" "seccomp.mount_setattr: ERRNO 1" "mount_setattr returns EPERM (audit A5)"
+assert_contains "$out" "seccomp.process_vm_readv: ERRNO 1" "process_vm_readv returns EPERM from the filter, not only the ACL (audit A5/A17b)"
+assert_contains "$out" "seccomp.pidfd_getfd: ERRNO 1" "pidfd_getfd returns EPERM — fd theft refused by the policy (audit A5/A17b)"
 assert_contains "$out" "ptrace.attach-pid1: ERRNO 1" "PTRACE_ATTACH to PID 1 returns EPERM — even on the dev flavor that permits ptrace"
 assert_contains "$out" "filter.io_uring_setup: ALLOWED" "io_uring is allowed by the filter — documented, not lied about"
 assert_contains "$out" "filter.abstract-unix: ALLOWED" "abstract unix sockets are allowed — netns-local, documented"

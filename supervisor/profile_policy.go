@@ -27,7 +27,24 @@ var refusalPolicy = []string{
 
 	// The read-only root is a promise. A guest that can mount can lay a tmpfs
 	// over /usr and hand the next command a different toolbox.
+	//
+	// The fd-based mount API (open_tree, move_mount, fsopen, fsconfig,
+	// fsmount, fspick, mount_setattr) reaches the same ends without ever
+	// calling mount — the audit of 2026-09-01 demonstrated open_tree(CLONE|
+	// RECURSIVE) and fsopen("tmpfs") succeeding inside a guest whose map
+	// predated that API (A5). Refusing the classic mount while leaving its
+	// modern successors reachable was a refusal policy two syscall
+	// generations behind the kernel's.
+	//
+	// fsconfig is in the list on its own evidence: the audit's report
+	// misnumbered this API (it named fsmount 431, which is fsconfig's slot),
+	// and the first probe run against the corrected filter came back EINVAL
+	// — the kernel's own answer — rather than the filter's EPERM, which is
+	// how the one name the audit and this file had both missed was found.
+	// The numbers are resolved by the compiler from the kernel's own
+	// constants; the probe is what keeps the policy honest.
 	"mount", "umount2", "pivot_root", "chroot", "swapon", "swapoff",
+	"open_tree", "move_mount", "fsopen", "fsconfig", "fsmount", "fspick", "mount_setattr",
 
 	// Only the supervisor powers this machine off, because a clean shutdown is
 	// what makes a workspace write-back trustworthy (P2-1).
@@ -42,6 +59,17 @@ var refusalPolicy = []string{
 	// Namespaces, keyrings and handle-based opens: the classic escape surface,
 	// and unreachable from anything this image ships.
 	"setns", "unshare", "add_key", "request_key", "keyctl", "open_by_handle_at",
+
+	// The cross-memory and fd-theft family. Every ptrace-shaped attack on the
+	// supervisor failed at the kernel ACL during the 2026-09-01 audit — and
+	// the audit's own point stands: that safety rests on an ACL, not on this
+	// policy, and a kernel or LSM change away from re-exposure is one rebuild
+	// nobody would make. Refusing them by name is the second, independent
+	// refusal, and it costs nothing: no process this supervisor spawns has
+	// business reading another process's memory or stealing its fds (A5,
+	// A17b).
+	"process_vm_readv", "process_vm_writev",
+	"pidfd_open", "pidfd_getfd", "pidfd_send_signal",
 
 	// Kernel interfaces with a long history and no use here. bpf and
 	// perf_event_open are compiled out of the guest kernel; acct, quotactl and

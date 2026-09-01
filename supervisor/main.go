@@ -91,6 +91,21 @@ func main() {
 	start := monotonic()
 
 	if isPID1 {
+		// Non-dumpable, first (audit 2026-09-01, A17): everything this
+		// process holds — the channel credential most of all (credential.go)
+		// — is exactly what a guest-side process would want to read out of
+		// its memory. The kernel's own ACL on /proc/1/mem and ptrace held
+		// under every probe that audit ran, but an ACL is a default, not a
+		// promise: clearing the dumpable flag makes the protection this
+		// process's own, independent of the kernel's semantics and of the
+		// dev flavor's wider ptrace allowance. No guest code may inspect
+		// PID 1, and after this line the kernel agrees with the policy.
+		if err := unix.Prctl(unix.PR_SET_DUMPABLE, 0, 0, 0, 0); err != nil {
+			// Not fatal — but said, because a supervisor that could not make
+			// itself non-dumpable is running with one wall fewer than it
+			// believes.
+			logf("prctl PR_SET_DUMPABLE: %v — the supervisor may be inspectable by guest processes", err)
+		}
 		// Nothing has mounted anything yet, so there is no /proc to read and
 		// no writable filesystem to log to — only the console the kernel gave
 		// us. setupRoot changes that.

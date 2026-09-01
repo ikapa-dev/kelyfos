@@ -70,6 +70,8 @@ assertion's subject.
 | --- | --- | --- |
 | Landlock fences /etc and /proc/sys writes | `accept-security-confinement.sh` | CHECKED |
 | seccomp refuses mount, mknod, setns, unshare, bpf, add_key, open_by_handle_at | confinement battery | CHECKED |
+| seccomp refuses the fd-based mount API (open_tree, fsopen, fsconfig, fsmount, fspick, move_mount, mount_setattr) and the cross-memory/fd-theft family (process_vm_readv, pidfd_getfd) — the audit's A5, probed from a confined child so map drift fails CI (audit A5/A17b) | confinement battery; `supervisor/profile_policy_test.go` fails at build time when a policy name is missing from a per-arch map | CHECKED |
+| the supervisor is non-dumpable, so ptrace-shaped attacks are refused by the policy and the flag, not only the kernel ACL (audit A17) | confinement battery (process_vm/pidfd probes EPERM); prctl failure would log at boot | CHECKED |
 | PTRACE_ATTACH to PID 1 is EPERM even on the dev flavor that permits ptrace | confinement battery | CHECKED |
 | io_uring, abstract unix sockets are allowed by the filter and fenced by namespaces | confinement battery — documented, not lied about | CHECKED — documented |
 | the profile is per-flavor and per-architecture; the docs state the policy, the dump resolves the machine | profiles page + `--dump-profile` (see §6.2 correction) | CHECKED |

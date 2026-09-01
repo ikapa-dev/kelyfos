@@ -1,6 +1,7 @@
 package sandbox
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -24,6 +25,16 @@ const cpuPeriodUS = 100000
 // than left to the kernel, so "no agent was privileged" is something the proof
 // reads back instead of something the code assumes.
 const DefaultCPUWeight = 100
+
+// systemdScopePreflightTimeout bounds the boot-path check that systemd-run
+// actually works (audit 2026-09-01, A17b). In an environment with no cgroup
+// delegation and no working user systemd session, the boot used to sit after
+// session.start with no refusal and no output — the scope request blocked on a
+// D-Bus call with no timeout while the caller waited for a machine that was
+// never going to come up. A boot-path preflight that cannot finish inside
+// this bound is a machine that cannot be quotaed, and it is refused by name
+// instead of discovered at the timeout nobody set.
+const systemdScopePreflightTimeout = 4 * time.Second
 
 // Slice is a cgroup v2 directory holding one sandbox's Firecracker process.
 //
@@ -260,6 +271,15 @@ func NewCPUSlice(id string, percent int) (*Slice, error) {
 	}
 	sl := &Slice{Percent: percent, name: "kelyfos-" + id, mode: m}
 	if m == modeSystemd {
+		// The preflight (audit 2026-09-01, A17b): pickMode chose the systemd
+		// path because the binary exists, which is not the same as a working
+		// user session for it to talk to. Everything after this point waits
+		// on the scope it requests, so what cannot be answered now is
+		// refused now — before any machine, TAP or run directory exists —
+		// with the fix in the message.
+		if err := preflightSystemdScope(sl.name + "-preflight"); err != nil {
+			return nil, err
+		}
 		return sl, nil
 	}
 
@@ -267,6 +287,36 @@ func NewCPUSlice(id string, percent int) (*Slice, error) {
 		return nil, err
 	}
 	return sl, nil
+}
+
+// preflightSystemdScope proves the systemd path works before a boot depends
+// on it (audit 2026-09-01, A17b): one throwaway transient scope that runs
+// true. A scope that cannot be started — no user session, no bus, a hung
+// dbus call — fails or times out inside systemdScopePreflightTimeout, and the
+// refusal says what is broken and what to do, where before there was a boot
+// that hung without a word after session.start.
+func preflightSystemdScope(unit string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), systemdScopePreflightTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "systemd-run", "--user", "--scope", "--quiet",
+		"--unit", unit, "--", "true")
+	// WaitDelay makes Wait stop waiting on the output pipes a hung grandchild
+	// may still hold after the context kill — systemd-run's own D-Bus stall
+	// is exactly the shape this preflight exists to catch, and without the
+	// delay the kill would not actually unblock the read.
+	cmd.WaitDelay = 2 * time.Second
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		return nil
+	}
+	detail := strings.TrimSpace(string(out))
+	if detail == "" {
+		detail = err.Error()
+	}
+	return fmt.Errorf("cannot apply a CPU quota on this machine: systemd-run --user did not "+
+		"complete within %s and this boot will not hang waiting for it (%s).\n"+
+		"    Run under a systemd user session with a working bus, as root with a delegated "+
+		"cgroup, or drop --cpu-quota.", systemdScopePreflightTimeout, detail)
 }
 
 // prepareDirect creates and configures one sandbox's cgroup under root.
