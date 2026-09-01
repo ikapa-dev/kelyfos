@@ -55,7 +55,12 @@ import (
 // secret.unscrubbable — a compressed response from a credential-bound origin,
 // where the echo suppression cannot read the body. The one event that says
 // the value may have reached the guest.
-const discardedAppendSites = 79
+// 79 → 82, audit of 2026-09-01 (A11): the host's own VMM-API actions are
+// recorded — vmmActionRecorder in host/plugins.go, servedBox.vmmAction in
+// host/servemcp.go, and the late-wired closure in host/run.go. The API
+// socket's reachability is the jailer layout's; the transcript is this
+// package's, and a pause it makes must be a pause the chain holds.
+const discardedAppendSites = 82
 
 // discardedAppendPackages are the trees the finding counted.
 var discardedAppendPackages = []string{"host", "internal", "shim"}

@@ -18,8 +18,15 @@ import (
 // more than that — pause, create, load, resume — so the API socket is now always
 // present. It stays a separate socket from the vsock UDS, with an unrelated
 // protocol: this one carries HTTP (docs/protocol.md §1).
+//
+// Every state-changing call reports itself through onAction (audit
+// 2026-09-01, A11): pause, resume, snapshot create and load, drive patch were
+// invisible to the transcript, while the API socket itself stays reachable by
+// any same-uid process on the host — a VMM action a reader cannot see is a
+// VMM action nobody can distinguish from one the record's owner made.
 type api struct {
-	c *http.Client
+	c        *http.Client
+	onAction func(action string)
 }
 
 func newAPI(socketPath string) *api {
@@ -31,6 +38,13 @@ func newAPI(socketPath string) *api {
 			},
 		},
 	}}
+}
+
+// report fires once per state-changing API call, with the action's name.
+func (a *api) report(action string) {
+	if a.onAction != nil {
+		a.onAction(action)
+	}
 }
 
 func (a *api) do(method, path string, body any) error {
@@ -80,16 +94,19 @@ func (a *api) waitReady(ctx context.Context) error {
 }
 
 func (a *api) pause() error {
+	a.report("pause")
 	return a.do(http.MethodPatch, "/vm", map[string]string{"state": "Paused"})
 }
 
 func (a *api) resume() error {
+	a.report("resume")
 	return a.do(http.MethodPatch, "/vm", map[string]string{"state": "Resumed"})
 }
 
 // createSnapshot writes the machine state and a full copy of guest memory.
 // The microVM must already be paused.
 func (a *api) createSnapshot(statePath, memPath string) error {
+	a.report("snapshot.create")
 	return a.do(http.MethodPut, "/snapshot/create", map[string]string{
 		"snapshot_type": "Full",
 		"snapshot_path": statePath,
@@ -129,6 +146,7 @@ type networkOverride struct {
 // snapshot-loaded VM that has not been resumed qualifies — which is what lets N
 // forks of one snapshot each get their own workspace disk.
 func (a *api) patchDrive(driveID, pathOnHost string) error {
+	a.report("drive.patch")
 	return a.do(http.MethodPatch, "/drives/"+driveID, map[string]string{
 		"drive_id":     driveID,
 		"path_on_host": pathOnHost,
@@ -141,5 +159,6 @@ func (a *api) patchDrive(driveID, pathOnHost string) error {
 // snapshot cannot share a vsock socket path, so each restore is given its own
 // (docs/protocol.md §1.6).
 func (a *api) loadSnapshot(req snapshotLoad) error {
+	a.report("snapshot.load")
 	return a.do(http.MethodPut, "/snapshot/load", req)
 }

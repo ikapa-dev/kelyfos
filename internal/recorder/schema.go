@@ -428,5 +428,15 @@ func Types() []EventType {
 				{Name: "port", Type: "integer", Doc: "the channel that refused the connection: 10100, 10101 or 10102"},
 				{Name: "reason", Type: "string", Doc: "why — no credential was presented, the credential presented was not this session's, or the peer was not this user"},
 			}},
+		{Type: TypeVMMAction, Source: SourceHost,
+			Doc: "a state-changing Firecracker API call the host itself made — pause, resume, " +
+				"snapshot.create, snapshot.load, drive.patch (audit 2026-09-01, A11). The API " +
+				"socket is reachable by any same-uid process on the host; recording the host's " +
+				"own VMM actions is the half of that this package can close, so a reader of the " +
+				"transcript can tell a pause the record's owner made from one nobody recorded",
+			Fields: []Field{
+				{Name: "mode", Type: "string", Doc: "the API call: pause, resume, snapshot.create, snapshot.load or drive.patch"},
+				agentField(),
+			}},
 	}
 }

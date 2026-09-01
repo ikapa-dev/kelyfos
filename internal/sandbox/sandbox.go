@@ -121,6 +121,14 @@ type Options struct {
 	// nowhere but the console — and an attempt to forge the audit record is
 	// exactly what the record exists to hold.
 	OnChannelRefused func(port uint32, reason string)
+	// OnVMMAction receives each state-changing Firecracker API call this host
+	// itself makes — pause, resume, snapshot.create, snapshot.load,
+	// drive.patch (audit 2026-09-01, A11). The API socket is reachable by any
+	// same-uid process on the host, and the jailer layout is what puts it
+	// there; what this package can do is make sure the actions it takes
+	// itself are in the transcript rather than invisible beside the ones it
+	// cannot see.
+	OnVMMAction func(action string)
 }
 
 // State is the on-disk description of a running sandbox, written into the run
@@ -400,6 +408,7 @@ func New(opts Options) (*Sandbox, error) {
 		return nil, err
 	}
 	s.api = newAPI(s.State.APIPath)
+	s.api.onAction = s.opts.OnVMMAction
 
 	return s, nil
 }
@@ -1251,6 +1260,7 @@ func Restore(snapDir string, opts Options) (*Sandbox, time.Duration, error) {
 		return nil, 0, err
 	}
 	s.api = newAPI(s.State.APIPath)
+	s.api.onAction = s.opts.OnVMMAction
 
 	started := time.Now()
 	argv := []string{"firecracker", "--api-sock", s.State.APIPath}
@@ -1851,6 +1861,16 @@ func (s *Sandbox) cleanup() {
 // above its own root at all. Everything the VMM legitimately needs — the vsock
 // socket, the API socket, config.json, the images — stays exactly where it was.
 func stateDir(runDir string) string { return filepath.Dir(runDir) }
+
+// SetVMMObserver wires the VMM-API action reporter after construction, for the
+// door whose recorder opens after sandbox.New — the same late binding that
+// door's OnGuestEvent uses. On every path the observer is set before the
+// machine starts, which is before any API call this package could make.
+func (s *Sandbox) SetVMMObserver(fn func(action string)) {
+	if s.api != nil {
+		s.api.onAction = fn
+	}
+}
 
 func (s *Sandbox) writeState() error {
 	blob, err := json.MarshalIndent(s.State, "", "  ")

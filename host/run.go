@@ -607,6 +607,17 @@ status. This is how you hand an agent a sandbox and nothing else:
 	}
 	onChannelRefused.Store(&refused)
 
+	// The host's own VMM-API actions — pause, resume, snapshot create/load,
+	// drive patch — are in this session's transcript (audit 2026-09-01, A11).
+	// The observer is set on the machine after the recorder exists and before
+	// Start, which is before any API call this package makes.
+	sb.SetVMMObserver(func(action string) {
+		_ = rec.Append(recorder.Event{
+			Type: recorder.TypeVMMAction, Source: recorder.SourceHost,
+			Mode: proto.SafeText(action),
+		})
+	})
+
 	// Teardown must happen on every path out of this function, including the
 	// signal path — a sandbox left running with its run directory deleted, or a
 	// stale socket left behind, is worse than a failure.

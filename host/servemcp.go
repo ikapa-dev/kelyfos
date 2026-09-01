@@ -286,6 +286,22 @@ func (b *servedBox) channelRefused(port uint32, reason string) {
 	})
 }
 
+// vmmAction records a state-changing Firecracker API call this server made on
+// the sandbox's behalf (audit 2026-09-01, A11): pause, resume, snapshot
+// create/load, drive patch. Same shape as channelRefused.
+func (b *servedBox) vmmAction(action string) {
+	b.recMu.Lock()
+	rec := b.rec
+	b.recMu.Unlock()
+	if rec == nil {
+		return
+	}
+	_ = rec.Append(recorder.Event{
+		Type: recorder.TypeVMMAction, Source: recorder.SourceHost,
+		Mode: proto.SafeText(action),
+	})
+}
+
 func (b *servedBox) close(reason string) {
 	// First, so the watcher does not race the teardown it would otherwise
 	// start a second time.

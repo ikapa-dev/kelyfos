@@ -437,3 +437,12 @@ A connection to one of the guest-initiated channels — ready (10100), events (1
 | --- | --- | --- |
 | `port` | integer | the channel that refused the connection: 10100, 10101 or 10102 |
 | `reason` | string | why — no credential was presented, the credential presented was not this session's, or the peer was not this user |
+
+## `vmm.api`
+
+A state-changing Firecracker API call the host itself made — pause, resume, snapshot.create, snapshot.load, drive.patch (audit 2026-09-01, A11). The API socket is reachable by any same-uid process on the host; recording the host's own VMM actions is the half of that this package can close, so a reader of the transcript can tell a pause the record's owner made from one nobody recorded. Written by the **host**.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `mode` | string | the API call: pause, resume, snapshot.create, snapshot.load or drive.patch |
+| `agent` | string | which machine produced it; present inside a team *(in a team)* |

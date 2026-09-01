@@ -861,6 +861,7 @@ func memberOptions(a plannedAgent, id, arch string, broker *team.Broker,
 		// A refused connection on a member's guest-initiated channels lands in
 		// the team's chain, under the member's name (audit 2026-09-01, A2/A3).
 		OnChannelRefused: channelRefusedRecorder(rec, a.name),
+		OnVMMAction:      vmmActionRecorder(rec, a.name),
 	}
 }
 

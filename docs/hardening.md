@@ -147,6 +147,23 @@ target uid. KelyfOS passes its own `--api-sock`, so the API socket is
 `<chroot>/fc.sock`, and the host keeps its own absolute path to the same file in
 `State.APIPath`.
 
+**The API socket's reachability, stated plainly** (the audit of 2026-09-01's
+A11): `fc.sock` lives in the run directory, which is 0700 — a wall against
+*other users*, and no wall at all against a process running as this one, which
+is exactly the same-uid attacker the channel credential answers on the
+guest-initiated channels. Driving the VMM API as this user is possible:
+pause, resume, snapshot, resize. Two reasons the stronger form is not taken
+here, recorded so the maintainer can weigh them with the layout in front of
+them: the jailed VMM runs as the invoking uid and creates its socket inside
+the chroot — the run directory *is* the chroot — so a root-owned subdirectory
+would need a jailer layout change, not a flag; and Firecracker's API carries
+no authentication of its own to gate, so gating would mean proxying the
+socket, which is a new moving part on the boot path. What this version does
+instead is the minimum the audit named: every state-changing API call the
+host itself makes — pause, resume, snapshot.create, snapshot.load,
+drive.patch — is recorded as a `vmm.api` event in the session's chain, so the
+transcript can no longer be silent about a pause or a snapshot it contains.
+
 ### 2.2 The part that is work rather than a flag
 
 > "The user must create hard links for (or copy) any resources which will be

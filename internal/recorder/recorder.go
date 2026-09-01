@@ -42,17 +42,17 @@ const MaxLine = 8 << 20
 
 // Event types.
 const (
-	TypeSessionStart    = "session.start"
-	TypeSessionReady    = "session.ready"
-	TypeSessionEnd      = "session.end"
-	TypeCommandStart    = "command.start"
-	TypeCommandOutput   = "command.output"
-	TypeCommandExit     = "command.exit"
-	TypeFileWrite       = "file.write"
-	TypeEgressAttempt   = "egress.attempt"
-	TypeSecretUse       = "secret.use"
-	TypeSecretWithheld  = "secret.withheld"
-	TypeSecretScrubbed  = "secret.scrubbed"
+	TypeSessionStart   = "session.start"
+	TypeSessionReady   = "session.ready"
+	TypeSessionEnd     = "session.end"
+	TypeCommandStart   = "command.start"
+	TypeCommandOutput  = "command.output"
+	TypeCommandExit    = "command.exit"
+	TypeFileWrite      = "file.write"
+	TypeEgressAttempt  = "egress.attempt"
+	TypeSecretUse      = "secret.use"
+	TypeSecretWithheld = "secret.withheld"
+	TypeSecretScrubbed = "secret.scrubbed"
 	// TypeSecretUnscrubbable is the audit of 2026-09-01's A4: a response from
 	// a credential-bound origin arrived with a Content-Encoding, so the
 	// byte-based echo suppression could not read the body — and the guest
@@ -61,23 +61,23 @@ const (
 	// origin that ignored that costs, recorded instead of the silence that
 	// used to sit here.
 	TypeSecretUnscrubbable = "secret.unscrubbable"
-	TypeResourceOOM     = "resource.oom"
-	TypeResourceTimeout = "resource.timeout"
-	TypeResourceSummary = "resource.summary"
-	TypeTeamMessage     = "team.message"
-	TypeTeamRefused     = "team.refused"
-	TypeTeamStore       = "team.store"
-	TypeTeamSpawn       = "team.spawn"
-	TypeMCPHostCall     = "mcp.host.call"
-	TypeMCPHostResult   = "mcp.host.result"
-	TypePluginCall      = "plugin.call"
-	TypePluginCrash     = "plugin.crash"
-	TypeSessionPause    = "session.pause"
-	TypeSessionResume   = "session.resume"
-	TypeRunReview       = "run.review"
-	TypeShellStart      = "shell.start"
-	TypeShellEnd        = "shell.end"
-	TypeForwardAccept   = "forward.accept"
+	TypeResourceOOM        = "resource.oom"
+	TypeResourceTimeout    = "resource.timeout"
+	TypeResourceSummary    = "resource.summary"
+	TypeTeamMessage        = "team.message"
+	TypeTeamRefused        = "team.refused"
+	TypeTeamStore          = "team.store"
+	TypeTeamSpawn          = "team.spawn"
+	TypeMCPHostCall        = "mcp.host.call"
+	TypeMCPHostResult      = "mcp.host.result"
+	TypePluginCall         = "plugin.call"
+	TypePluginCrash        = "plugin.crash"
+	TypeSessionPause       = "session.pause"
+	TypeSessionResume      = "session.resume"
+	TypeRunReview          = "run.review"
+	TypeShellStart         = "shell.start"
+	TypeShellEnd           = "shell.end"
+	TypeForwardAccept      = "forward.accept"
 	// TypeSessionPolicy is P7-2's addition: what a machine was permitted to
 	// do, declared once per machine at the door that made it, alongside that
 	// machine's session.ready — never on session.start, for the reason
@@ -104,6 +104,12 @@ const (
 	// the refusal is the host's own act, made before anything the peer sent
 	// could reach the chain.
 	TypeChannelRefused = "channel.refused"
+	// TypeVMMAction is the audit of 2026-09-01's A11: a state-changing
+	// Firecracker API call — pause, resume, snapshot create or load, drive
+	// patch — the host itself made, recorded because the API socket is
+	// reachable by any same-uid process and a VMM action invisible to the
+	// transcript is indistinguishable from one nobody made.
+	TypeVMMAction = "vmm.api"
 )
 
 // ReasonServeMCP marks a session.start as a server's own session rather than a

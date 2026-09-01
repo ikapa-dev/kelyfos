@@ -49,6 +49,8 @@ func everyEventType() []string {
 		recorder.TypeChannelRefused,
 		// secret.unscrubbable (A4): same reasoning — swept, not exempted.
 		recorder.TypeSecretUnscrubbable,
+		// vmm.api (A11): the host's own VMM actions, swept like every arm.
+		recorder.TypeVMMAction,
 	}
 }
 

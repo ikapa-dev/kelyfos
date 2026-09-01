@@ -210,6 +210,7 @@ func (s *hostServer) toolRestore(raw json.RawMessage) *mcp.CallToolResult {
 	// at all (F3).
 	opts.OnGuestEvent = guestEventRecorder(rec, "", meta.MemMiB)
 	opts.OnChannelRefused = channelRefusedRecorder(rec, "")
+	opts.OnVMMAction = vmmActionRecorder(rec, "")
 
 	sb, elapsed, err := sandbox.Restore(dir, opts)
 	if err != nil {

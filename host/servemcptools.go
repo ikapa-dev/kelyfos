@@ -483,6 +483,7 @@ func (s *hostServer) boot(opts sandbox.Options, traceparent string) (*servedBox,
 	// (audit 2026-09-01, A2/A3).
 	opts.OnGuestEvent = b.guestEvent
 	opts.OnChannelRefused = b.channelRefused
+	opts.OnVMMAction = b.vmmAction
 
 	if b.sb, err = sandbox.New(opts); err != nil {
 		return nil, err

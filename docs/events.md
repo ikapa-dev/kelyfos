@@ -868,6 +868,22 @@ trying to forge the record, and everything it sent died at the gate.
 | `port` | integer | The channel that refused the connection: 10100, 10101 or 10102. |
 | `reason` | string | Why — no credential was presented, the credential presented was not this session's, or the peer was not this user. |
 
+### `vmm.api`
+A state-changing Firecracker API call the host itself made — pause, resume,
+snapshot.create, snapshot.load, drive.patch. Written from the independent
+audit of 2026-09-01 (A11): the VMM's API socket is reachable by any same-uid
+process on the host, and until this event, the pause, resume or snapshot the
+host's own commands performed were invisible to the transcript — a reader of
+the record could not tell a lifecycle change the record's owner made from one
+nobody had recorded. The reachability itself is a documented residual
+(`docs/hardening.md` §2.1): what this event closes is the silence around what
+the host does with that reachability.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `mode` | string | The API call: pause, resume, snapshot.create, snapshot.load or drive.patch. |
+| `agent` | string | Present inside a team: whose machine performed it. |
+
 ### `session.erasure`
 Appended by `kelyfos sessions erase` (`docs/retention.md`, D61) once, as the
 new last event, after every field elsewhere in the chain known to carry

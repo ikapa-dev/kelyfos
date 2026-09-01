@@ -907,6 +907,7 @@ final shutdown the pause deferred.
 	if recErr == nil {
 		opts.OnGuestEvent = guestEventRecorder(rec, "", snapMeta.MemMiB)
 		opts.OnChannelRefused = channelRefusedRecorder(rec, "")
+		opts.OnVMMAction = vmmActionRecorder(rec, "")
 		defer rec.Close()
 	}
 

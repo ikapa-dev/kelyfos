@@ -118,3 +118,16 @@ func channelRefusedRecorder(rec *recorder.Recorder, agent string) func(port uint
 		})
 	}
 }
+
+// vmmActionRecorder builds the sandbox.Options.OnVMMAction handler: every
+// state-changing Firecracker API call the host makes is in the transcript
+// (audit 2026-09-01, A11), where before pause, resume, snapshot create/load
+// and drive patch happened with nothing saying so.
+func vmmActionRecorder(rec *recorder.Recorder, agent string) func(action string) {
+	return func(action string) {
+		_ = rec.Append(recorder.Event{
+			Type: recorder.TypeVMMAction, Source: recorder.SourceHost, Agent: agent,
+			Mode: proto.SafeText(action),
+		})
+	}
+}

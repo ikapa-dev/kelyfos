@@ -2252,6 +2252,7 @@ assertion's subject.
 | seccomp refuses mount, mknod, setns, unshare, bpf, add_key, open_by_handle_at | confinement battery | CHECKED |
 | seccomp refuses the fd-based mount API (open_tree, fsopen, fsconfig, fsmount, fspick, move_mount, mount_setattr) and the cross-memory/fd-theft family (process_vm_readv, pidfd_getfd) — the audit's A5, probed from a confined child so map drift fails CI (audit A5/A17b) | confinement battery; `supervisor/profile_policy_test.go` fails at build time when a policy name is missing from a per-arch map | CHECKED |
 | the supervisor is non-dumpable, so ptrace-shaped attacks are refused by the policy and the flag, not only the kernel ACL (audit A17) | confinement battery (process_vm/pidfd probes EPERM); prctl failure would log at boot | CHECKED |
+| the host's own VMM-API actions (pause, resume, snapshot create/load, drive patch) are recorded as `vmm.api` events (audit A11); the socket's same-uid reachability is documented as a residual with the layout reasoning | `internal/sandbox` api instrumentation + `host/plugins.go` vmmActionRecorder, wired at every door; docs/hardening.md §2.1 carries the residual | CHECKED |
 | PTRACE_ATTACH to PID 1 is EPERM even on the dev flavor that permits ptrace | confinement battery | CHECKED |
 | io_uring, abstract unix sockets are allowed by the filter and fenced by namespaces | confinement battery — documented, not lied about | CHECKED — documented |
 | the profile is per-flavor and per-architecture; the docs state the policy, the dump resolves the machine | profiles page + `--dump-profile` (see §6.2 correction) | CHECKED |
@@ -2263,7 +2264,10 @@ assertion's subject.
 | view: token on every route, loopback bind, Host check vs rebinding, GET/HEAD only, pinned CSP, token absent from argv | `accept-security-surfaces.sh` | CHECKED |
 | forward: the firewall gains nothing; loopback bind; guest service reachable; no guest→host path; 0.0.0.0 warns | surfaces suite | CHECKED |
 | shim: minted per-process token required, static help-text key rejected (IA-L1a), loopback bind | surfaces suite | CHECKED |
+| the shim's sandbox cap is enforced at registration: a burst of racing registrations never exceeds MaxSandboxes (audit A9) | `shim/a9_test.go` — 32 goroutines racing for one slot, exactly one wins; raced under `-race` | CHECKED |
 | team: edges enforced before effect; refusals recorded; spawn budget; peers leak nothing; exactly 6+7 tools | `accept-security-team.sh` | CHECKED |
+| serve-mcp's client-facing door bounds concurrent tool calls at 128 — a pipelined stream cannot amplify into unbounded dispatch (audit A10) | `host/a10_test.go` — pipelined calls against a cap of 2 under `-race`, max in flight asserted | CHECKED |
+| an absurd `timeout_ms` is refused by name, not silently converted to a grace-kill (audit A15) | `host/a15_test.go` — the audit's MaxInt64 frame refused with the bound named; the ms↔Duration round-trip asserted | CHECKED |
 | shim / E2B SDK: command execution is not supported — a REST subset only | documented (`docs/e2b-shim.md`); not suite-checked | UNCHECKED — documented |
 
 ## Lifecycle
@@ -2275,6 +2279,7 @@ assertion's subject.
 | SIGTERM to the run pid tears down cleanly, with and without a trailing command (IA-M1's second trigger) | lifecycle suite signal battery | CHECKED |
 | a second restore of the same snapshot works after cleanup | lifecycle suite | CHECKED |
 | ceilings: flag-over-policy refused pre-boot; guest sees the capped machine; max-runtime exits 124; disk ceiling pre-boot | `accept-security-caps.sh` | CHECKED |
+| the policy-less serve-mcp door has absolute ceilings: cores ≤ the host's, mem ≤ what the host can carry, and a legacy `mem_mib` acts as a ceiling there (audit A8) | `host/a8_test.go` (the audit's exact 262144 MiB repro refused; a reasonable ask passes) | CHECKED |
 | a snapshot's recorded network addressing goes through the same derivation gate a state file's does: a poisoned meta.json (loopback, metadata /30, non-/30 pair) is refused by name on restore (audit A7) | `internal/sandbox/a7_test.go` (gate units incl. the audit's loopback scenario); verified live — a snapshot with a poisoned meta.json refuses on restore | CHECKED |
 
 ## The supply chain
@@ -5609,6 +5614,22 @@ trying to forge the record, and everything it sent died at the gate.
 | `port` | integer | The channel that refused the connection: 10100, 10101 or 10102. |
 | `reason` | string | Why — no credential was presented, the credential presented was not this session's, or the peer was not this user. |
 
+### `vmm.api`
+A state-changing Firecracker API call the host itself made — pause, resume,
+snapshot.create, snapshot.load, drive.patch. Written from the independent
+audit of 2026-09-01 (A11): the VMM's API socket is reachable by any same-uid
+process on the host, and until this event, the pause, resume or snapshot the
+host's own commands performed were invisible to the transcript — a reader of
+the record could not tell a lifecycle change the record's owner made from one
+nobody had recorded. The reachability itself is a documented residual
+(`docs/hardening.md` §2.1): what this event closes is the silence around what
+the host does with that reachability.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `mode` | string | The API call: pause, resume, snapshot.create, snapshot.load or drive.patch. |
+| `agent` | string | Present inside a team: whose machine performed it. |
+
 ### `session.erasure`
 Appended by `kelyfos sessions erase` (`docs/retention.md`, D61) once, as the
 new last event, after every field elsewhere in the chain known to carry
@@ -7006,6 +7027,16 @@ explicit argument rather than relying on a "current" one. There is no implicit
 session state between calls, which is what makes concurrency safe rather than
 merely permitted.
 
+Concurrency is bounded, and the bound is the server's, not the client's to
+discover by racing it. Calls are dispatched on their own goroutines up to
+**128 in flight** — the same ceiling as every other listener in the product;
+the audit of 2026-09-01 (A10) found this door dispatching without one, which
+made a pipelined stream an N-goroutine, N×16 MiB amplification. A call past
+the cap is not refused: the server reads more slowly, which a client sees as
+backpressure and nothing else. Answers still arrive keyed by their own ids and
+may still come back out of order — two overlapping calls race each other by
+design; the ceiling bounds how many can race at once.
+
 When the server exits, every sandbox it created is stopped. A client that
 disconnects without calling `sandbox_stop` does not leave microVMs behind.
 
@@ -7577,6 +7608,23 @@ Inside the jail it `mknod`s `/dev/kvm` and `/dev/net/tun` and chowns them to the
 target uid. KelyfOS passes its own `--api-sock`, so the API socket is
 `<chroot>/fc.sock`, and the host keeps its own absolute path to the same file in
 `State.APIPath`.
+
+**The API socket's reachability, stated plainly** (the audit of 2026-09-01's
+A11): `fc.sock` lives in the run directory, which is 0700 — a wall against
+*other users*, and no wall at all against a process running as this one, which
+is exactly the same-uid attacker the channel credential answers on the
+guest-initiated channels. Driving the VMM API as this user is possible:
+pause, resume, snapshot, resize. Two reasons the stronger form is not taken
+here, recorded so the maintainer can weigh them with the layout in front of
+them: the jailed VMM runs as the invoking uid and creates its socket inside
+the chroot — the run directory *is* the chroot — so a root-owned subdirectory
+would need a jailer layout change, not a flag; and Firecracker's API carries
+no authentication of its own to gate, so gating would mean proxying the
+socket, which is a new moving part on the boot path. What this version does
+instead is the minimum the audit named: every state-changing API call the
+host itself makes — pause, resume, snapshot.create, snapshot.load,
+drive.patch — is recorded as a `vmm.api` event in the session's chain, so the
+transcript can no longer be silent about a pause or a snapshot it contains.
 
 ### 2.2 The part that is work rather than a flag
 
@@ -15019,7 +15067,7 @@ them can widen it (`docs/mcp-surface.md`).
 
 ### `sandbox_run`
 
-Boot a hardware-isolated microVM and return its id. Anything run inside it cannot reach this machine. It has no network at all unless the project's policy grants one. Every argument here may ask for less than the policy allows and never for more; a request above a ceiling is refused and names the ceiling.
+Boot a hardware-isolated microVM and return its id. Anything run inside it cannot reach this machine. It has no network at all unless the project's policy grants one. Every argument here may ask for less than the policy allows and never for more; a request above a ceiling is refused and names the ceiling. The host's own limits apply regardless: cores cannot exceed the machine's, and memory cannot exceed what the host can carry with room left for itself. When no policy is found, defaults are 2 vcpu and 512 MiB with no network, and those host limits are the only ceilings.
 
 | Parameter | Type | Required | Meaning |
 | --- | --- | --- | --- |
@@ -15568,6 +15616,15 @@ A connection to one of the guest-initiated channels — ready (10100), events (1
 | --- | --- | --- |
 | `port` | integer | the channel that refused the connection: 10100, 10101 or 10102 |
 | `reason` | string | why — no credential was presented, the credential presented was not this session's, or the peer was not this user |
+
+## `vmm.api`
+
+A state-changing Firecracker API call the host itself made — pause, resume, snapshot.create, snapshot.load, drive.patch (audit 2026-09-01, A11). The API socket is reachable by any same-uid process on the host; recording the host's own VMM actions is the half of that this package can close, so a reader of the transcript can tell a pause the record's owner made from one nobody recorded. Written by the **host**.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `mode` | string | the API call: pause, resume, snapshot.create, snapshot.load or drive.patch |
+| `agent` | string | which machine produced it; present inside a team *(in a team)* |
 
 
 ---

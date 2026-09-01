@@ -178,6 +178,7 @@ unique guest network identity, which is backlog work.
 			})
 			opts.OnGuestEvent = guestEventRecorder(rec, "", meta.MemMiB)
 			opts.OnChannelRefused = channelRefusedRecorder(rec, "")
+			opts.OnVMMAction = vmmActionRecorder(rec, "")
 			// sdir, not a second snapshotDir call: the name is the same for
 			// every fork in the batch and was validated once above, before
 			// anything was built (P7-17/F7).

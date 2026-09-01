@@ -949,6 +949,11 @@ func printEvent(line []byte, asJSON bool) {
 	case recorder.TypeSecretScrubbed:
 		fmt.Printf("%s  secret scrubbed %s%s out of a response from %s\n", ts, who,
 			proto.SafeText(e.Name), proto.SafeText(e.Host))
+	case recorder.TypeVMMAction:
+		// A state-changing Firecracker API call the host made (audit
+		// 2026-09-01, A11) — the pause, resume or snapshot this transcript
+		// is entitled to see.
+		fmt.Printf("%s  vmm             %s%s\n", ts, who, proto.SafeText(e.Mode))
 	case recorder.TypeSecretUnscrubbable:
 		// Audit 2026-09-01, A4: a compressed response from a credential-bound
 		// origin — the echo suppression could not read the body. The word

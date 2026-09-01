@@ -18,6 +18,13 @@ reference described in the README and re-measured per release.
 ## Unreleased
 
 ### Fixed
+- **The host's own VMM-API actions are recorded** (independent audit 2026-09-01,
+  A11). Pause, resume, snapshot create and load, and drive patch were invisible
+  to the transcript; each is now a `vmm.api` event in the session's chain. The
+  API socket's reachability by same-uid processes is documented as a residual
+  with the reasoning for not moving it (docs/hardening.md §2.1) — the jailed
+  VMM creates its socket inside the chroot, so a root-owned subdirectory is a
+  jailer-layout change, recorded for the maintainer's decision.
 - **`sandbox_exec` refuses an absurd `timeout_ms` instead of silently killing
   the command at ten seconds** (independent audit 2026-09-01, A15). A
   timeout_ms near the largest signed integer multiplied out to a negative
