@@ -59,8 +59,17 @@ halt
 boot() {
   rm -f run.log
   (timeout 300 kelyfos run "$@" > run.log 2>&1 &)
-  for i in $(seq 1 90); do kelyfos exec true >/dev/null 2>&1 && break; sleep 1; done
-  kelyfos exec true >/dev/null 2>&1
+  # Wait for the ready banner, not merely for an exec to succeed. Since the
+  # audit of 2026-09-01 (A2/A3, D99) the guest's ready frame waits for the
+  # channel credential to land, so an exec succeeding — the exec channel
+  # binds before control does — no longer means the run has reached ready and
+  # confirmed the VMM's seccomp mode. The checks below read the banner and
+  # the state file confirmSeccomp writes, and both exist only after ready.
+  for i in $(seq 1 120); do
+    grep -q 'ready in' run.log 2>/dev/null && break
+    sleep 1
+  done
+  grep -q 'ready in' run.log 2>/dev/null
 }
 
 # The probe is built here rather than by `make`, because it is the acceptance's
