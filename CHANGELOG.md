@@ -15,7 +15,7 @@ reference described in the README and re-measured per release.
 
 ---
 
-## Unreleased
+## v1.2.0 — 2026-09-01
 
 ### Changed
 - **`kelyfos run` with a trailing command now stops when the run process
@@ -42,6 +42,28 @@ reference described in the README and re-measured per release.
   unclaimed, and reports every action it took. It never touches a machine a
   live `kelyfos` process supervises, and never touches a firecracker it cannot
   prove is KelyfOS's.
+
+### Fixed
+- **A teardown racing the guest's ext4 commit no longer loses the files an
+  agent wrote last while reporting success** (D91, the independent audit's
+  IA-H1). The supervisor now flushes the workspace filesystem — syncfs(2) —
+  before answering the shutdown handshake, so the ack means the files are on
+  the disk; a failed flush refuses the shutdown instead of hiding it. The
+  write-back cross-checks the pack manifest and refuses an image that came
+  back empty against a non-empty pack, leaving the host directory untouched
+  and saying why, instead of printing "workspace written back" over lost
+  work. The trade: a run whose agent genuinely deleted every file in the
+  workspace is now refused with that message rather than silently writing
+  back an empty tree.
+- **The machine a killed `kelyfos` process leaves behind is no longer
+  immortal** (D92, the independent audit's IA-M1). Every VMM's direct child
+  now carries PDEATHSIG, and a watchdog re-exec — spawned per sandbox, no
+  new command surface — stops the machine and frees its TAP, nft table and
+  jail directory when the parent dies without a teardown. `kelyfos doctor`
+  reports what the watchdog could not reach (a watchdog that was itself
+  SIGKILLed, or legacy runs), and `--reap-orphaned` removes it. No change to
+  the clean path: on a normal shutdown the watchdog exits before it could
+  ever act.
 
 ## v1.1.2 — 2026-08-31
 
@@ -1254,25 +1276,3 @@ Buildroot guest with a supervisor on vsock.
 
 Tagged at the end of phase 0; no release was published. The pinned toolchain,
 the repository layout, and an acceptance test that passed.
-### Fixed
-- **A teardown racing the guest's ext4 commit no longer loses the files an
-  agent wrote last while reporting success** (D91, the independent audit's
-  IA-H1). The supervisor now flushes the workspace filesystem — syncfs(2) —
-  before answering the shutdown handshake, so the ack means the files are on
-  the disk; a failed flush refuses the shutdown instead of hiding it. The
-  write-back cross-checks the pack manifest and refuses an image that came
-  back empty against a non-empty pack, leaving the host directory untouched
-  and saying why, instead of printing "workspace written back" over lost
-  work. The trade: a run whose agent genuinely deleted every file in the
-  workspace is now refused with that message rather than silently writing
-  back an empty tree.
-### Fixed
-- **The machine a killed `kelyfos` process leaves behind is no longer
-  immortal** (D92, the independent audit's IA-M1). Every VMM's direct child
-  now carries PDEATHSIG, and a watchdog re-exec — spawned per sandbox, no
-  new command surface — stops the machine and frees its TAP, nft table and
-  jail directory when the parent dies without a teardown. `kelyfos doctor`
-  reports what the watchdog could not reach (a watchdog that was itself
-  SIGKILLed, or legacy runs), and `--reap-orphaned` removes it. No change to
-  the clean path: on a normal shutdown the watchdog exits before it could
-  ever act.

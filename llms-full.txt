@@ -1119,7 +1119,43 @@ one above.
 
 ---
 
-## 8. What has never broken
+## 8. Shutdown waits for the workspace flush, and can refuse (v1.2.0)
+
+The guest used to answer the shutdown handshake and flush afterwards, inside
+`halt`. The ack therefore meant "I heard you", while the ext4 commit was still
+in flight — and a teardown that won that race read the image before the last
+writes reached it. The files an agent wrote in its final seconds were gone, and
+both sides said `workspace written back`. That is the independent audit's IA-H1
+(D91), reproduced 2/2 before the fix and 0/2 after.
+
+The supervisor now runs `syncfs(2)` against `/work` **before** it answers, so
+the ack means the files are on the disk. Three things follow that you can
+observe:
+
+- **A shutdown can take longer.** It waits for the flush, which is what the
+  grace period was always for. The host's read deadline on the handshake is now
+  that grace rather than a fixed two seconds — a short fixed deadline would kill
+  the VMM mid-`syncfs` on a slow disk and reintroduce the very race through the
+  fix.
+- **A failed flush refuses the shutdown**, with the error, rather than
+  proceeding and hiding it. Previously there was nothing to fail.
+- **An empty write-back against a non-empty pack is refused.** The write-back
+  cross-checks the pack manifest: zero extracted entries where the pack held
+  files is the shape data loss takes, so it refuses, leaves the host directory
+  untouched, and says why — the same behaviour §6 describes for a hostile entry.
+
+**The trade, stated plainly:** a run whose agent genuinely deleted every file in
+the workspace is now refused with that message instead of silently writing back
+an empty tree. That is the intended direction — this product does not print
+success on a doubt path — but if you have automation that expects an emptied
+workspace to be written back, it needs `--no-sync-back` or a file left in place.
+
+Nothing changes on the clean path. A normal run flushes a quiet filesystem in
+milliseconds and shuts down as it always did.
+
+---
+
+## 9. What has never broken
 
 Stated because "nothing changed" is only useful if somebody checked:
 
