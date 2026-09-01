@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strconv"
 	"strings"
@@ -331,6 +332,17 @@ func Erase(root, sandboxID, reason string) (redacted int, err error) {
 	}
 	if err := f.Sync(); err != nil {
 		return redacted, fmt.Errorf("sync the rewritten chain: %w", err)
+	}
+	// The anchor follows the rewrite (audit 2026-09-01, A14): it describes the
+	// chain as it now is, or the next verify would report a rewrite that this
+	// legitimate operation caused. Verified against the bytes just written so
+	// the anchor can only ever carry a head the chain itself proves.
+	if n, newHead, verr := Verify(bytes.NewReader(buf.Bytes())); verr == nil {
+		if err := writeHeadFile(filepath.Dir(path), headDoc{
+			Sandbox: sandboxID, Seq: n, Hash: newHead,
+		}); err != nil {
+			_ = os.Remove(HeadFile(filepath.Dir(path)))
+		}
 	}
 	return redacted, nil
 }

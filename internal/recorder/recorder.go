@@ -514,6 +514,103 @@ func Path(root, sandboxID string) string {
 	return filepath.Join(SessionsDir(root), sandboxID, "events.jsonl")
 }
 
+// headDoc is the out-of-band chain anchor: the head as this process last
+// wrote it, kept in a second file so a wholesale rewrite of events.jsonl can
+// be detected by comparing the two (audit 2026-09-01, A14).
+type headDoc struct {
+	V       int    `json:"v"`
+	Sandbox string `json:"sandbox"`
+	Seq     int    `json:"seq"`
+	Hash    string `json:"hash"`
+	TS      string `json:"ts,omitempty"`
+}
+
+// HeadFile is the anchor file beside one session's events.jsonl.
+func HeadFile(sessionDir string) string { return filepath.Join(sessionDir, "head.json") }
+
+// HeadPath is the anchor file for one sandbox, by root and id.
+func HeadPath(root, sandboxID string) string {
+	return filepath.Join(SessionsDir(root), sandboxID, "head.json")
+}
+
+// writeHeadFile atomically replaces the anchor: a temp file and a rename in
+// the same directory, so a reader never sees half a head.
+func writeHeadFile(dir string, h headDoc) error {
+	h.V = 1
+	blob, err := json.Marshal(h)
+	if err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(dir, "head.json.tmp-")
+	if err != nil {
+		return err
+	}
+	name := tmp.Name()
+	if _, err := tmp.Write(blob); err != nil {
+		tmp.Close()
+		os.Remove(name)
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(name)
+		return err
+	}
+	return os.Rename(name, HeadFile(dir))
+}
+
+// CheckHead compares the anchor against a verified chain. A missing anchor is
+// not an error — chains written before the anchor existed, and sessions whose
+// anchor write failed, are records this check simply cannot speak about; the
+// error is reserved for the case the anchor exists to catch, a chain whose
+// head disagrees with what was last written here.
+//
+// A mismatch is confirmed once more against a fresh read of both files before
+// it is reported: an append lands its line and its anchor under one lock, and
+// a verify that read the chain between those two would otherwise report the
+// benign ordering as tampering — the loudest false alarm this product can
+// produce, and the reason the confirmation pass exists.
+func CheckHead(root, sandboxID string, events int, head string) error {
+	if err := checkHeadOnce(root, sandboxID, events, head); err == nil {
+		return nil
+	}
+	time.Sleep(50 * time.Millisecond)
+	n2, h2, verr := verifyFile(Path(root, sandboxID))
+	if verr != nil {
+		return verr
+	}
+	return checkHeadOnce(root, sandboxID, n2, h2)
+}
+
+func checkHeadOnce(root, sandboxID string, events int, head string) error {
+	blob, err := os.ReadFile(HeadPath(root, sandboxID))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("read the chain anchor: %w", err)
+	}
+	var h headDoc
+	if err := json.Unmarshal(blob, &h); err != nil {
+		return fmt.Errorf("the chain anchor at %s is corrupt: %w", HeadPath(root, sandboxID), err)
+	}
+	if h.Seq == events && h.Hash == head {
+		return nil
+	}
+	return fmt.Errorf("the chain does not end where its anchor says it does: the anchor records "+
+		"event %d (head %s), the chain holds %d events (head %s) — the chain has been rewritten "+
+		"since the last write this file recorded. A signed export is the answer that survives this",
+		h.Seq, short(h.Hash), events, short(head))
+}
+
+// verifyFile verifies the chain at path, for CheckHead's confirmation pass.
+func verifyFile(path string) (int, string, error) {
+	blob, err := os.ReadFile(path)
+	if err != nil {
+		return 0, "", err
+	}
+	return Verify(bytes.NewReader(blob))
+}
+
 // Open creates or reopens a session's recorder.
 func Open(root, sandboxID string) (*Recorder, error) {
 	path := Path(root, sandboxID)
@@ -602,14 +699,40 @@ func (r *Recorder) catchUp() error {
 	}
 	sc := bufio.NewScanner(io.NewSectionReader(r.f, 0, info.Size()))
 	sc.Buffer(make([]byte, 0, 64<<10), MaxLine)
+	// The scan verifies, not just derives (audit 2026-09-01, A14): the same
+	// rules Verify applies, applied to every line a live writer would chain
+	// onto. Before this, catchUp trusted the last line's seq and prev without
+	// recomputing anything — so a same-uid writer who appended a
+	// wrongly-chained line, or rewrote the tail, had the next Append extend
+	// the forgery as if it were history. A mismatch fails the latch, which is
+	// fail-closed in both directions: nothing is appended after content that
+	// does not verify, and a legitimate concurrent erase (which rehashes the
+	// chain it rewrites) still verifies.
 	seq, prev := 0, ""
 	for sc.Scan() {
-		if len(sc.Bytes()) == 0 {
+		raw := sc.Bytes()
+		if len(raw) == 0 {
 			continue
 		}
 		var e Event
-		if err := json.Unmarshal(sc.Bytes(), &e); err != nil {
+		if err := json.Unmarshal(raw, &e); err != nil {
 			return fmt.Errorf("flight recorder is corrupt: %w", err)
+		}
+		if e.Seq != seq+1 {
+			return fmt.Errorf("flight recorder is corrupt: event %d breaks the sequence (expected %d) — "+
+				"nothing is appended after a chain with a gap in it", e.Seq, seq+1)
+		}
+		if e.Prev != prev {
+			return fmt.Errorf("flight recorder is corrupt: event %d does not follow event %d (prev %s, expected %s)",
+				e.Seq, e.Seq-1, short(e.Prev), short(prev))
+		}
+		if e.Hash == "" {
+			return fmt.Errorf("flight recorder is corrupt: event %d carries no digest — nothing is appended "+
+				"after a line this package did not write", e.Seq)
+		}
+		if want := digestOfLine(raw, e.Hash); want != e.Hash {
+			return fmt.Errorf("flight recorder is corrupt: event %d has been modified — its contents hash to %s, "+
+				"but it carries %s; nothing is appended after it", e.Seq, short(want), short(e.Hash))
 		}
 		seq, prev = e.Seq, e.Hash
 	}
@@ -725,6 +848,20 @@ func (r *Recorder) appendLocked(e Event) error {
 	}
 	r.prev = digest
 	r.off += int64(len(line))
+	// The out-of-band anchor (audit 2026-09-01, A14): a second file holding
+	// the chain head, written after every append. A same-uid writer who
+	// rewrites events.jsonl wholesale produces a chain that verifies — that
+	// is the documented keyless limit — but now one that does not also find
+	// and update this file leaves the two disagreeing, and CheckHead says so.
+	// It is a canary, not a wall: the same uid can rewrite both, which is why
+	// the signed export exists. A failed anchor write removes the stale file
+	// rather than leaving one that would cry wolf at the next verify.
+	if err := writeHeadFile(filepath.Dir(r.f.Name()), headDoc{
+		Sandbox: r.sandbox, Seq: r.seq, Hash: r.prev, TS: e.TS,
+	}); err != nil {
+		_ = os.Remove(HeadFile(filepath.Dir(r.f.Name())))
+		return nil
+	}
 	return nil
 }
 

@@ -18,6 +18,17 @@ reference described in the README and re-measured per release.
 ## Unreleased
 
 ### Fixed
+- **The flight recorder verifies its own tail, and publishes its head
+  out-of-band** (independent audit 2026-09-01, A14). A live writer's catch-up
+  trusted the file tail without re-verifying it, so a same-uid writer who
+  appended a wrongly-chained line or rewrote the tail had the next append
+  extend the forgery as if it were history; catch-up now applies the same
+  rules Verify does and latches on a mismatch. Every append also writes an
+  out-of-band anchor (`head.json`) beside the chain, and `kelyfos log
+  --verify` compares the two — a wholesale rewrite that does not also update
+  the anchor is detected. This narrows the documented keyless truncation
+  limit; a writer that rewrites chain and anchor together still passes, so a
+  signed export (D93) remains the answer that survives.
 - **Each egress proxy owns its upstream transports** (independent audit
   2026-09-01, A13). The transports were package-global, so their connection
   pools were shared by every proxy in the process: a connection dialled and

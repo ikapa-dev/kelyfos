@@ -561,6 +561,14 @@ func verifySession(id, path string) error {
 		fmt.Printf("session %s: FAILED after %d events\n  %v\n", id, n, err)
 		return &exitError{code: 1}
 	}
+	// The out-of-band anchor (audit 2026-09-01, A14): the chain just verified
+	// must end where the anchor beside it says it does. A missing anchor is
+	// not a failure — older records, and sessions whose anchor write failed,
+	// are records this check cannot speak about.
+	if err := recorder.CheckHead(sandbox.Root(), id, n, head); err != nil {
+		fmt.Printf("session %s: FAILED after %d events\n  %v\n", id, n, err)
+		return &exitError{code: 1}
+	}
 	// Deferred because the verdict has two shapes below — a team's names its
 	// members, a single sandbox's does not — and the head belongs under both.
 	// A reader on this machine quotes it to whoever they send the export to,

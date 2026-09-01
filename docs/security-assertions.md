@@ -50,7 +50,8 @@ assertion's subject.
 | marker removal is refused | record suite | CHECKED |
 | rendered output escapes hostile strings (RENDER) | record suite | CHECKED |
 | a connection to a guest channel without the session's credential is refused, logged and recorded — the audit's A2/A3 forgery paths (same-uid host process on the events socket; raw `AF_VSOCK` dial from inside the guest) are dead | `internal/sandbox/channelauth_test.go` (absent, wrong and un-minted credentials on all three channels, refusal reported); verified live in the test VM against the audit's own repro shape (`local/audit/a2a3_verify.sh`, not committed) | CHECKED |
-| truncation with recomputed claims verifies — the documented keyless limit (IA-M2) | record suite, EXPECTED-CURRENT with TODO(IA-M2) | UNCHECKED — accepted, flagged |
+| a wholesale rewrite of the chain that does not also update its out-of-band anchor (`head.json`, written per append) is detected by `kelyfos log --verify` — the anchor narrows the keyless limit; a writer that rewrites both still passes, so the signed export remains the strong answer (audit A14) | `internal/recorder/a14_test.go` (forged tail latched, not extended; anchor detects truncation; missing anchor is not an error) | CHECKED |
+| truncation with recomputed claims verifies — the documented keyless limit (IA-M2) | record suite, EXPECTED-CURRENT with TODO(IA-M2); narrowed by the head anchor above, not closed | UNCHECKED — accepted, flagged |
 | a SIGNED export detects the truncation attack | record suite signed battery (D93) | CHECKED |
 | erasure redacts payloads while the chain verifies; refuses a live session | `docs/exam/2026-08-31-security-erase.md` (survived one attempt) | PARTIALLY CHECKED — one attempt, no suite |
 
