@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/ikapa-dev/kelyfos/internal/denial"
 	"github.com/ikapa-dev/kelyfos/internal/recorder"
 	"github.com/ikapa-dev/kelyfos/internal/sandbox"
 	"github.com/ikapa-dev/kelyfos/internal/sessionpolicy"
@@ -53,6 +54,15 @@ unique guest network identity, which is backlog work.
 	}
 	if *n < 1 {
 		return errors.New("-n must be at least 1")
+	}
+	// The same bound the serve-mcp door applies before its ceiling arithmetic:
+	// the space check below multiplies n by a workspace size, and an n near
+	// MaxInt64 made that product read negative on the MCP door — past every
+	// check and into a make() that panicked (audit 2026-09-01, A1). The CLI
+	// gets the same refusal rather than a smaller variant of it.
+	if *n > maxForkCall {
+		return denial.ForkCount.Err(denial.V{
+			"asked": strconv.Itoa(*n), "limit": strconv.Itoa(maxForkCall)})
 	}
 
 	type forked struct {

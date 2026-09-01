@@ -324,6 +324,18 @@ func (s *hostServer) checkSnapshotFits(name string, meta *sandbox.SnapshotMeta) 
 
 // --- sandbox_fork ------------------------------------------------------------
 
+// maxForkCall is the most machines one sandbox_fork call may ask for.
+//
+// It is a hard constant rather than a policy key, because its job is to stand
+// between a client's count and arithmetic that the count could overflow: the
+// ceiling checks below multiply and add, and a count near the largest signed
+// integer wrapped both of them — through the fleet ceiling and into a
+// make([]result, n) that panicked the server and orphaned every machine it
+// owned (independent audit 2026-09-01, A1). Nothing that survives this bound
+// can wrap: 256 × any workspace size fits an int64 many times over, and
+// [mcp] max_sandboxes still says how many of the batch may run at once.
+const maxForkCall = 256
+
 func (s *hostServer) toolFork(raw json.RawMessage) *mcp.CallToolResult {
 	var a struct {
 		Name        string `json:"name"`
@@ -341,6 +353,15 @@ func (s *hostServer) toolFork(raw json.RawMessage) *mcp.CallToolResult {
 	}
 	if a.Count < 1 {
 		return mcp.Errorf("sandbox_fork needs a `count` of at least 1")
+	}
+	// The count is bounded before anything is done with it — before the space
+	// check, which multiplies it by a workspace size, and before the fleet
+	// ceiling, which adds it to what is running. Both were wrappable with an
+	// unbounded count, and the second wrapped into a panic that killed this
+	// server and every machine it owned (audit 2026-09-01, A1).
+	if a.Count > maxForkCall {
+		return mcp.Errorf("%v", denial.ForkCount.Err(denial.V{
+			"asked": strconv.Itoa(a.Count), "limit": strconv.Itoa(maxForkCall)}))
 	}
 	meta, err := sandbox.ReadSnapshotMeta(dir)
 	if err != nil {
@@ -484,11 +505,17 @@ func (s *hostServer) toolFork(raw json.RawMessage) *mcp.CallToolResult {
 // room refuses before anything is built when the limit could not hold what is
 // being asked for. adopt is the same check again at the moment of registration,
 // because between the two another call may have taken the space.
+//
+// The comparison is written as a subtraction, `n > s.max-have`, and never as
+// the addition it replaced: `have+n` wraps for an n near MaxInt64 and reads as
+// though there were room when there is none (audit 2026-09-01, A1). have
+// cannot exceed s.max — adopt refuses the registration that would — so
+// s.max-have is never negative, and no unsigned count survives it.
 func (s *hostServer) room(n int) error {
 	s.mu.Lock()
 	have := len(s.boxes)
 	s.mu.Unlock()
-	if have+n > s.max {
+	if n > s.max-have {
 		return denial.BudgetSandboxes.Err(denial.V{
 			"running": strconv.Itoa(have), "asked": strconv.Itoa(n),
 			"limit": strconv.Itoa(s.max), "file": s.policyPath()})

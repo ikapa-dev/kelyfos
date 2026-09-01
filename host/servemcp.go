@@ -163,6 +163,11 @@ type hostServer struct {
 	// stayed green (P7-17/A2, review round). Every tool whose dispatch has a
 	// visible side effect needs KVM to have one.
 	dispatched func(tool string)
+	// crashTool makes the named tool's dispatch panic — a test seam, nil in
+	// every real run. The panic net cannot be said to hold if it cannot be
+	// made to fire, and no tool left after the A1 fixes panics on its own
+	// (that was the finding).
+	crashTool func(tool string) bool
 
 	wmu sync.Mutex // one writer, because tool calls may be concurrent
 	out *json.Encoder
@@ -454,7 +459,19 @@ func (s *hostServer) serve(in io.Reader, out io.Writer) error {
 		}
 		wg.Add(1)
 		go func(req mcp.Request) {
+			// The outer panic net: one call's crash is an error frame to the
+			// client, never the end of this server and never the orphaning of
+			// every machine it owns. runCall, inside, holds the net that also
+			// completes the call's audit record; this one is what answers if
+			// anything outside runCall — the params unmarshal, the encoder —
+			// ever panics (audit 2026-09-01, A1).
 			defer wg.Done()
+			defer func() {
+				if r := recover(); r != nil {
+					s.write(mcp.NewError(req.ID, mcp.CodeInternalError,
+						fmt.Sprintf("%v (this server recovered and is still serving)", r)))
+				}
+			}()
 			if resp := s.dispatch(&req); resp != nil {
 				s.write(resp)
 			}
@@ -541,18 +558,41 @@ func (s *hostServer) callTool(p *mcp.CallToolParams) *mcp.CallToolResult {
 	if res := s.refuseIfUnrecorded(p.Name); res != nil {
 		return res
 	}
+	return s.runCall(p)
+}
+
+// runCall dispatches one tool call behind the panic net.
+//
+// The net is here rather than only around the goroutine that serves the
+// request, for the same reason the refusal path runs through auditCall: a tool
+// that panicked used to take the whole process with it — orphaning every
+// sandbox this server owned (audit 2026-09-01, A1) — and a panic that skips
+// `done` leaves an mcp.host.call in the record that nothing ever answered. So
+// the recovery replaces the result with a structured refusal, and the deferred
+// done records it, before the outer net in serve() ever gets involved.
+func (s *hostServer) runCall(p *mcp.CallToolParams) (res *mcp.CallToolResult) {
 	// One place, so no tool can be added that skips the record — the same
 	// reason the guest's events are written by the host and not by the guest
 	// (F-D33, docs/mcp-surface.md §2.5).
 	done := s.auditCall(p)
-	res := s.dispatchTool(p)
-	done(res)
+	defer func() {
+		if r := recover(); r != nil {
+			res = mcp.Errorf("%s: internal error (%v); the call was refused and this server "+
+				"is still serving", p.Name, r)
+			fmt.Fprintf(s.stderr(), "kelyfos: tool %s panicked: %v\n", p.Name, r)
+		}
+		done(res)
+	}()
+	res = s.dispatchTool(p)
 	return res
 }
 
 func (s *hostServer) dispatchTool(p *mcp.CallToolParams) *mcp.CallToolResult {
 	if s.dispatched != nil {
 		s.dispatched(p.Name)
+	}
+	if s.crashTool != nil && s.crashTool(p.Name) {
+		panic("dispatch crash (test seam)")
 	}
 	args := p.Arguments
 	if len(args) == 0 {

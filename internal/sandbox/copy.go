@@ -40,16 +40,28 @@ func copyFile(src, dst string) error {
 // CheckForkSpace refuses a fork that cannot fit rather than failing partway
 // through the third copy. On a filesystem without reflinks each fork is a full
 // copy of the workspace image, so the cost is N times the size.
+//
+// The product n*perFork is computed without letting it wrap: n arrives from a
+// client that once asked for MaxInt64 forks, and int64(n)*perFork over that
+// ask reads negative, compares smaller than any free space, and waves the fork
+// through (audit 2026-09-01, A1). The division proves the multiplication fits
+// before it happens; a count the division refuses needs more than
+// spaceNeedCeiling bytes, which no filesystem this could check has, so the
+// refusal is made on the ceiling itself.
 func CheckForkSpace(dir string, n int, perFork int64) error {
 	if perFork <= 0 || n <= 0 {
 		return nil
 	}
-	need := int64(n) * perFork
+	const spaceNeedCeiling = uint64(1) << 50 // 1 PiB
+	need := spaceNeedCeiling
+	if uint64(n) <= spaceNeedCeiling/uint64(perFork) {
+		need = uint64(n) * uint64(perFork)
+	}
 	free, err := freeBytes(dir)
 	if err != nil {
 		return nil
 	}
-	if free < need {
+	if uint64(free) < need {
 		return fmt.Errorf("%d forks need %d bytes of workspace copies in %s but only %d are free "+
 			"(a filesystem without reflink support copies the whole image per fork)",
 			n, need, dir, free)

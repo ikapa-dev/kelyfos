@@ -145,6 +145,17 @@ api.example.com resolved to an address this proxy will not dial [egress.resolved
 
 Named: `host`. The values above are an example.
 
+## `fork.count`
+
+A fork asked for more machines in one call than any fleet limit could honour — a count near the largest signed integer once overflowed the ceiling arithmetic and crashed the server, so the count is bounded before anything multiplies it.
+
+```
+sandbox_fork cannot restore 9223372036854775807 machines in one call; 256 is the most one call may ask for [fork.count]
+    ask for a smaller count — [mcp] max_sandboxes still bounds how many machines run at once, so a batch larger than 256 could never be honoured
+```
+
+Named: `asked`, `limit`. The values above are an example.
+
 ## `forward.closed`
 
 A connection reached a forwarded port and nothing inside the sandbox was listening.

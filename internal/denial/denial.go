@@ -260,6 +260,18 @@ var (
 			"file": "/home/you/project/kelyfos.toml"},
 	}
 
+	ForkCount = Denial{
+		ID: "fork.count",
+		Doc: "a fork asked for more machines in one call than any fleet limit could honour " +
+			"— a count near the largest signed integer once overflowed the ceiling arithmetic " +
+			"and crashed the server, so the count is bounded before anything multiplies it",
+		Msg: "sandbox_fork cannot restore <asked> machines in one call; <limit> is the most " +
+			"one call may ask for",
+		Fix: "ask for a smaller count — [mcp] max_sandboxes still bounds how many machines " +
+			"run at once, so a batch larger than <limit> could never be honoured",
+		Sample: V{"asked": "9223372036854775807", "limit": "256"},
+	}
+
 	// --- the jail: the wall around the VMM --------------------------------
 
 	JailNoSudo = Denial{
@@ -366,6 +378,7 @@ func All() []Denial {
 		BudgetSandboxes,
 		CeilingFlag, CeilingResume, CeilingSnapshot, CeilingSnapshotUnknown, CeilingTool,
 		EgressHost, EgressPort, EgressResolvedAddr,
+		ForkCount,
 		ForwardClosed,
 		JailNoSudo,
 		ProfileNotEnforced,

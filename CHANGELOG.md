@@ -15,6 +15,22 @@ reference described in the README and re-measured per release.
 
 ---
 
+## Unreleased
+
+### Fixed
+- **A malicious or broken MCP call can no longer crash `kelyfos serve-mcp` and
+  orphan every sandbox it owns** (independent audit 2026-09-01, A1).
+  `sandbox_fork` with a count near the largest signed integer overflowed the
+  fleet-ceiling arithmetic, walked past it and panicked the server in
+  `make()`, killing the process and leaving its machines unwatched. The count
+  is now bounded by a hard constant (256 per call) before anything multiplies
+  or adds it, the ceiling itself compares by subtraction so it cannot wrap,
+  the fork-space check computes its product on unsigned arithmetic with a
+  proven ceiling, and every tool call is dispatched behind a panic net that
+  returns a structured refusal and completes the call's audit record instead
+  of dying. The same bound applies to `kelyfos fork -n`. Refusals name the
+  new `fork.count` catalog entry.
+
 ## v1.2.0 — 2026-09-01
 
 ### Changed
