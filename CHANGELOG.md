@@ -29,6 +29,14 @@ reference described in the README and re-measured per release.
   pointer to the resolution test and probe battery that cannot go stale.
 
 ### Fixed
+- **`proto.SafeText` quotes strings that are not valid UTF-8** (adversarial
+  cross-check, 2026-09-01). Ranging over invalid UTF-8 yields U+FFFD per bad
+  byte, and U+FFFD is printable — so each raw bad byte passed the sanitiser
+  verbatim, and a lone 0x9b is CSI on an 8-bit terminal: the same rewriting
+  power as an escape sequence, delivered through the one function every
+  guest-influenced string crosses into the record, the console and the
+  refusals. Any string that is not valid UTF-8 is now quoted whole;
+  `SafeBody` already replaced such bytes and is unchanged.
 - **A plugin's stderr is sanitised at the console boundary** (independent audit
   2026-09-01, A18). Plugin stderr reached the operator's terminal unsanitised;
   a plugin could write escape sequences — or a line that reads as the

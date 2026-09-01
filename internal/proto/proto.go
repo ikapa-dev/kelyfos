@@ -812,6 +812,13 @@ func (p *Reader) DrainOverlongLine() error {
 // -egress line, a path, a store key, a command — that is the right side to err
 // on. strconv.Quote already renders U+202E as \u202e; it only needed calling.
 func SafeText(s string) string {
+	if !utf8.ValidString(s) {
+		// Ranging over invalid UTF-8 yields U+FFFD per bad byte, and U+FFFD
+		// is printable — so the raw byte would pass through verbatim, and a
+		// lone 0x9b is CSI on an 8-bit terminal (adversarial cross-check,
+		// 2026-09-01). Quoting renders it as \x9b and keeps printable runs.
+		return strconv.Quote(s)
+	}
 	for _, r := range s {
 		if r < 0x20 || r == 0x7f || !unicode.IsPrint(r) {
 			return strconv.Quote(s)
