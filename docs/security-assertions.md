@@ -84,6 +84,7 @@ assertion's subject.
 | view: token on every route, loopback bind, Host check vs rebinding, GET/HEAD only, pinned CSP, token absent from argv | `accept-security-surfaces.sh` | CHECKED |
 | forward: the firewall gains nothing; loopback bind; guest service reachable; no guest→host path; 0.0.0.0 warns | surfaces suite | CHECKED |
 | shim: minted per-process token required, static help-text key rejected (IA-L1a), loopback bind | surfaces suite | CHECKED |
+| the shim's sandbox cap is enforced at registration: a burst of racing registrations never exceeds MaxSandboxes (audit A9) | `shim/a9_test.go` — 32 goroutines racing for one slot, exactly one wins; raced under `-race` | CHECKED |
 | team: edges enforced before effect; refusals recorded; spawn budget; peers leak nothing; exactly 6+7 tools | `accept-security-team.sh` | CHECKED |
 | shim / E2B SDK: command execution is not supported — a REST subset only | documented (`docs/e2b-shim.md`); not suite-checked | UNCHECKED — documented |
 

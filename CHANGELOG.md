@@ -18,6 +18,13 @@ reference described in the README and re-measured per release.
 ## Unreleased
 
 ### Fixed
+- **The E2B shim's sandbox cap is enforced at registration, not before a
+  multi-second boot** (independent audit 2026-09-01, A9). A burst of
+  concurrent `POST /sandboxes` censused the fleet, released the lock, booted,
+  and registered without a re-check — 32 concurrent POSTs against a cap of 16
+  overshoots it roughly two times, each excess box a real microVM. The
+  registration now re-checks under the lock (the pattern serve-mcp's adopt
+  already used); a lost race tears down one machine.
 - **`serve-mcp`'s door cannot name a machine bigger than the host** (independent
   audit 2026-09-01, A8). A client launched from a directory with no
   kelyfos.toml above it named its own cpus and mem, and a request for

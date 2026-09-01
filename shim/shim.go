@@ -514,15 +514,17 @@ func (s *Server) createSandbox(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.mu.Lock()
-	s.boxes[b.sb.State.ID] = b
-	// Where the box is registered, and not where its recorder was opened: the
-	// watcher and the map entry come into existence together, so the watcher
-	// can never fire on a box the map does not hold (P7-17/A2, review round).
-	// The same single registration point serve-mcp's adopt uses.
-	b.stopped = make(chan struct{})
-	go s.watchRecorder(b.sb.State.ID, b)
-	s.mu.Unlock()
+	// Registration is the limit's enforcement point (register): the census
+	// above released the lock before a multi-second boot, and a burst of
+	// concurrent POSTs took the space while this machine was coming up. The
+	// already-booted machine is torn down on a lost race — that cost is
+	// bounded, because the loser is exactly one machine per racing request.
+	if !s.register(b) {
+		writeErr(w, http.StatusTooManyRequests, fmt.Sprintf(
+			"this shim's limit is %d sandboxes and it is full; delete one before asking for another",
+			MaxSandboxes))
+		return
+	}
 
 	template := req.TemplateID
 	if template == "" {
@@ -546,6 +548,26 @@ func (s *Server) createSandbox(w http.ResponseWriter, r *http.Request) {
 // only reachable destination, and only then a machine that can send a packet
 // anywhere (docs/networking.md). Anything that fails part way unwinds what it
 // already built rather than leaving a TAP behind.
+// register installs one booted box, and is the moment MaxSandboxes is
+// enforced (audit 2026-09-01, A9). It is a copy of the pattern host/servemcp's
+// adopt has always used, for the reason that function's own comment gives:
+// the census at the top of createSandbox releases the lock before a
+// multi-second boot, so checking only there turns the cap into a race that a
+// burst of concurrent POSTs wins. The watcher starts here rather than at the
+// boot site, so the map entry and its watcher come into existence together
+// and the watcher can never fire on a box the map does not hold (P7-17/A2).
+func (s *Server) register(b *box) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.boxes) >= MaxSandboxes {
+		return false
+	}
+	s.boxes[b.sb.State.ID] = b
+	b.stopped = make(chan struct{})
+	go s.watchRecorder(b.sb.State.ID, b)
+	return true
+}
+
 func (s *Server) boot(parent context.Context) (*box, error) {
 	id, err := sandbox.NewID()
 	if err != nil {
