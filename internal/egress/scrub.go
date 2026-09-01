@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"io"
 	"net/http"
+	"strings"
 )
 
 // Echo suppression (P6-5, decision D37).
@@ -33,14 +34,20 @@ import (
 //     relays ciphertext for every domain with no secret bound; there is nothing
 //     to match. Only a terminated connection and a plaintext request pass
 //     through here at all.
-//   - **A compressed body is not covered.** The terminated transport sets
-//     DisableCompression so bodies reach the guest framed exactly as the server
-//     sent them, which is what keeps keep-alive working — so a guest whose
-//     client asked for gzip gets gzip, and gzip of a credential does not
-//     contain the credential. Decompressing to scrub would undo the framing
-//     this project deliberately preserves.
+//   - **A compressed body is not matchable.** Since the audit of 2026-09-01
+//     (A4) the proxy asks an origin with a credential bound not to compress —
+//     identity on the terminated and plain-HTTP legs' requests — so a
+//     compliant origin's response is matchable end to end. An origin that
+//     compresses anyway gets its response passed through unread — gzip of a
+//     credential does not contain the credential — and the fact recorded via
+//     OnUnscrubbable as a secret.unscrubbable event, replacing the silence
+//     that used to sit here. Decompressing to scrub and re-compressing after
+//     would break the byte-for-byte framing this proxy deliberately
+//     preserves; asking not to compress and saying so when ignored does not.
 //   - **A value shorter than minScrub is not scrubbed.** Replacing a short
 //     string everywhere it occurs would corrupt far more than it protects.
+//     ParseSecret warns at parse time, where the user can still choose a
+//     longer credential.
 //
 // The replacement is length-preserving, which is not cosmetic: a terminated
 // connection carries many requests, and a body whose written length disagrees
@@ -176,10 +183,21 @@ func (r *scrubReader) Read(p []byte) (int, error) {
 func (r *scrubReader) Close() error { return r.src.Close() }
 
 // scrubResponse replaces any bound credential a server echoed back, in the
-// headers and in the body, before either reaches the guest.
+// headers, in the body, and in the trailers, before any of it reaches the
+// guest.
 //
 // Headers as well as the body because the plainest echo of all is a server
 // quoting the Authorization header it rejected straight back in an error.
+// Trailers because they are headers by another door (audit 2026-09-01, A4):
+// a chunked response's trailer values arrive after the body and used to be
+// written to the guest unexamined. They are scrubbed at body EOF, which is
+// the moment the transport fills them in — before resp.Write, the only thing
+// that writes them, reads the map.
+//
+// A response that arrives with a Content-Encoding this cannot match is not
+// silently passed: the encoding is reported (OnUnscrubbable) and the body
+// goes on as it came, because byte-matching inside an encoding matches
+// nothing.
 func (p *Proxy) scrubResponse(resp *http.Response, host string) {
 	s := newScrubber(p.Policy.secretsFor(host), func(name string) {
 		if p.OnScrubbed != nil {
@@ -197,5 +215,42 @@ func (p *Proxy) scrubResponse(resp *http.Response, host string) {
 			}
 		}
 	}
-	resp.Body = s.wrap(resp.Body)
+	if enc := resp.Header.Get("Content-Encoding"); enc != "" && !strings.EqualFold(enc, "identity") {
+		if p.OnUnscrubbable != nil {
+			p.OnUnscrubbable(host, enc)
+		}
+		return
+	}
+	resp.Body = &trailerScrubReader{src: s.wrap(resp.Body), resp: resp, s: s}
 }
+
+// trailerScrubReader scrubs the response's trailers at body EOF.
+//
+// The transport fills resp.Trailer as the body is consumed, so the values do
+// not exist until the read that ends the body; scrubbing there is the only
+// moment they can be caught, and it is before resp.Write writes them — resp.Write
+// copies the body to EOF and only then reads the trailer map to write it.
+type trailerScrubReader struct {
+	src      io.ReadCloser
+	resp     *http.Response
+	s        *scrubber
+	scrubbed bool
+}
+
+func (r *trailerScrubReader) Read(p []byte) (int, error) {
+	n, err := r.src.Read(p)
+	if err == io.EOF && !r.scrubbed {
+		r.scrubbed = true
+		for k, vs := range r.resp.Trailer {
+			for i, v := range vs {
+				b := []byte(v)
+				if r.s.scrub(b) {
+					r.resp.Trailer[k][i] = string(b)
+				}
+			}
+		}
+	}
+	return n, err
+}
+
+func (r *trailerScrubReader) Close() error { return r.src.Close() }

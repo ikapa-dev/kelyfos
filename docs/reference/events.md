@@ -159,6 +159,16 @@ A response echoed a bound credential back and the proxy replaced it before the g
 | `host` | string | the domain whose response carried it back |
 | `agent` | string | which machine produced it; present inside a team *(in a team)* |
 
+## `secret.unscrubbable`
+
+A response from a credential-bound origin arrived compressed, and the echo suppression cannot match inside an encoding — the guest received a body the proxy cannot vouch for (audit 2026-09-01, A4). The proxy asks credentialed origins not to compress; this event is what an origin that ignored that costs, recorded instead of the silence that used to sit here. Written by the **host**.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `host` | string | the domain whose response was compressed |
+| `mode` | string | the Content-Encoding the response named — gzip, deflate, br, whatever the origin sent |
+| `agent` | string | which machine produced it; present inside a team *(in a team)* |
+
 ## `resource.oom`
 
 The guest's OOM killer ran; the supervisor read it off /dev/kmsg and the host wrote it. Written by the **guest**.

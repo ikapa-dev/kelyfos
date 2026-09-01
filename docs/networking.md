@@ -510,11 +510,22 @@ the proxy either way.
   Three limits, first rather than last, because a reader who misses them will
   assume more than this does. **The tunnelled majority is not covered and never
   can be** — the proxy relays ciphertext for every domain with no secret bound,
-  so there is nothing to match. **A compressed body is not covered**: the
-  terminated transport deliberately does not decompress, so a client that asked
-  for gzip gets gzip, and gzip of a credential does not contain the credential.
-  **A value under eight bytes is not scrubbed**, because replacing a short
-  string everywhere it appears would corrupt far more than it protects.
+  so there is nothing to match. **A compressed body is not matchable**: where a
+  credential is bound the proxy asks the origin not to compress —
+  `Accept-Encoding: identity` on the terminated and plain-HTTP legs' requests —
+  so a compliant origin's response is matchable end to end, and the guest's own
+  encoding preference is overridden for exactly those requests. An origin that
+  compresses anyway gets its body passed through unread — gzip of a credential
+  does not contain the credential — and a `secret.unscrubbable` event records
+  it, replacing the silence that sat here until the independent audit of
+  2026-09-01 (A4) demonstrated the echo end to end. The proxy still does not
+  decompress to scrub and re-compress after: that would break the byte-for-byte
+  framing it deliberately preserves. **A value under eight bytes is not
+  scrubbed**, because replacing a short string everywhere it appears would
+  corrupt far more than it protects — and `--secret` warns about that at parse
+  time now, where the user can still choose a longer credential. Trailers are
+  scrubbed like headers: a chunked response's trailer values arrive after the
+  body, and they used to reach the guest unexamined (the same audit, A4).
 
   The replacement keeps the byte length exactly. That is not cosmetic: a
   terminated connection carries many requests, and a body whose written length

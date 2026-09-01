@@ -50,7 +50,12 @@ import (
 // host/run.go — one per door shape. Each is a refusal the record is meant to
 // hold, and each ignores the error for the reason every other site here does:
 // a failed Append latches the recorder and the run loops act on that.
-const discardedAppendSites = 78
+//
+// 78 → 79, audit of 2026-09-01 (A4): wireProxyAudit records
+// secret.unscrubbable — a compressed response from a credential-bound origin,
+// where the echo suppression cannot read the body. The one event that says
+// the value may have reached the guest.
+const discardedAppendSites = 79
 
 // discardedAppendPackages are the trees the finding counted.
 var discardedAppendPackages = []string{"host", "internal", "shim"}

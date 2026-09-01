@@ -169,6 +169,17 @@ func Types() []EventType {
 				{Name: "host", Type: "string", Doc: "the domain whose response carried it back"},
 				agentField(),
 			}},
+		{Type: TypeSecretUnscrubbable, Source: SourceHost,
+			Doc: "a response from a credential-bound origin arrived compressed, and the echo " +
+				"suppression cannot match inside an encoding — the guest received a body the " +
+				"proxy cannot vouch for (audit 2026-09-01, A4). The proxy asks credentialed " +
+				"origins not to compress; this event is what an origin that ignored that costs, " +
+				"recorded instead of the silence that used to sit here",
+			Fields: []Field{
+				{Name: "host", Type: "string", Doc: "the domain whose response was compressed"},
+				{Name: "mode", Type: "string", Doc: "the Content-Encoding the response named — gzip, deflate, br, whatever the origin sent"},
+				agentField(),
+			}},
 		{Type: TypeResourceOOM, Source: SourceGuest,
 			Doc: "the guest's OOM killer ran; the supervisor read it off /dev/kmsg and the host wrote it",
 			Fields: []Field{

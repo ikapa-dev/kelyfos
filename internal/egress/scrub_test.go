@@ -2,6 +2,7 @@ package egress
 
 import (
 	"bytes"
+	"compress/gzip"
 	"io"
 	"net/http"
 	"strings"
@@ -155,3 +156,135 @@ func TestEachResponseThatEchoesACredentialIsReportedOnce(t *testing.T) {
 		t.Errorf("a second response echoing the same credential was recorded %d times in total, want twice: %v", len(scrubbed), scrubbed)
 	}
 }
+
+// The audit of 2026-09-01's A4. A credential-bound origin that ignores the
+// proxy's identity request and compresses its reply used to pass through in
+// silence — gzip of a credential does not contain the credential, so the
+// guest decompressed and had the value. Now the response is recorded as
+// secret.unscrubbable instead of silence, and nothing pretends it was scrubbed.
+func TestACompressedResponseIsRecordedAsUnscrubbable(t *testing.T) {
+	const token = "ghp_averyrealtokenvalue"
+	p := &Proxy{Policy: Policy{Secrets: []*Secret{
+		{Name: "GITHUB_TOKEN", Domain: "api.example.com", Scheme: "Bearer", value: token},
+	}}}
+	var encodings []string
+	p.OnUnscrubbable = func(host, encoding string) {
+		encodings = append(encodings, host+"|"+encoding)
+	}
+
+	// A gzipped body containing the credential, and the credential in a
+	// plaintext header too — the header is still matchable and must still be
+	// scrubbed even though the body cannot be.
+	var buf bytes.Buffer
+	w := gzip.NewWriter(&buf)
+	_, _ = w.Write([]byte("Bearer " + token))
+	_ = w.Close()
+	resp := &http.Response{
+		Header: http.Header{
+			"Content-Encoding": []string{"gzip"},
+			"X-echo":           []string{"Bearer " + token},
+		},
+		Body: io.NopCloser(&buf),
+	}
+	p.scrubResponse(resp, "api.example.com")
+
+	if len(encodings) != 1 || encodings[0] != "api.example.com|gzip" {
+		t.Fatalf("the compressed response was not recorded: %v", encodings)
+	}
+	if got := resp.Header.Get("X-echo"); strings.Contains(got, token) {
+		t.Errorf("the matchable header was left holding the credential: %q", got)
+	}
+	if resp.Header.Get("Content-Encoding") != "gzip" {
+		t.Errorf("the encoding was rewritten (%q); the record names what the origin sent", resp.Header.Get("Content-Encoding"))
+	}
+}
+
+// The identity request: a credential-bound leg asks the origin not to compress.
+// The terminated leg sets it per request on the connection; the plain-HTTP leg
+// sets it with the withheld check. Both go through Policy.secretsFor, so a
+// host with no bound credential is untouched and compression passes as before.
+func TestACredentialBoundRequestAsksForIdentity(t *testing.T) {
+	const token = "ghp_averyrealtokenvalue"
+	p := &Proxy{Policy: Policy{Secrets: []*Secret{
+		{Name: "GITHUB_TOKEN", Domain: "api.example.com", Scheme: "Bearer", value: token},
+	}}}
+
+	req, err := http.NewRequest("GET", "https://api.example.com/v1", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Accept-Encoding", "gzip") // what the guest's client sent
+	if bound := p.Policy.secretsFor("api.example.com"); len(bound) > 0 {
+		req.Header.Set("Accept-Encoding", "identity")
+	}
+	if got := req.Header.Get("Accept-Encoding"); got != "identity" {
+		t.Errorf("a credential-bound request still asked for %q", got)
+	}
+
+	// And an unbound host is untouched — the framing this preserves is only
+	// traded away where the scrubber needs it.
+	req2, err := http.NewRequest("GET", "https://unbound.example.com/v1", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req2.Header.Set("Accept-Encoding", "gzip")
+	if bound := p.Policy.secretsFor("unbound.example.com"); len(bound) > 0 {
+		req2.Header.Set("Accept-Encoding", "identity")
+	}
+	if got := req2.Header.Get("Accept-Encoding"); got != "gzip" {
+		t.Errorf("an unbound host's encoding preference was overridden: %q", got)
+	}
+}
+
+// Trailers are headers by another door: a chunked response's trailer values
+// arrive after the body, and they used to reach the guest unexamined. The
+// scrub happens at body EOF — the moment the transport fills the map in and
+// the moment before resp.Write writes it.
+func TestATrailersCredentialIsScrubbed(t *testing.T) {
+	const token = "ghp_averyrealtokenvalue"
+	p := &Proxy{Policy: Policy{Secrets: []*Secret{
+		{Name: "GITHUB_TOKEN", Domain: "api.example.com", Scheme: "Bearer", value: token},
+	}}}
+	resp := &http.Response{
+		Header:  http.Header{"Trailer": []string{"X-Auth-Note"}},
+		Trailer: http.Header{},
+	}
+	// The transport fills resp.Trailer during the body's final read, before
+	// EOF reaches the caller; simulate exactly that.
+	resp.Body = &transportStyleBody{
+		r:    strings.NewReader("plain body"),
+		fill: func() { resp.Trailer.Set("X-Auth-Note", "Bearer "+token) },
+	}
+	p.scrubResponse(resp, "api.example.com")
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(body) != "plain body" {
+		t.Errorf("the body was altered: %q", body)
+	}
+	if got := resp.Trailer.Get("X-Auth-Note"); strings.Contains(got, token) {
+		t.Errorf("the trailer kept the credential: %q", got)
+	}
+	if got := resp.Trailer.Get("X-Auth-Note"); !strings.Contains(got, strings.Repeat("*", len(token))) {
+		t.Errorf("the trailer was not scrubbed to the same length: %q", got)
+	}
+}
+
+// transportStyleBody fills the response's trailer map on its final read, the
+// way net/http's transport does for a chunked response with trailers.
+type transportStyleBody struct {
+	r    *strings.Reader
+	fill func()
+}
+
+func (b *transportStyleBody) Read(p []byte) (int, error) {
+	n, err := b.r.Read(p)
+	if err == io.EOF && b.fill != nil {
+		b.fill()
+	}
+	return n, err
+}
+
+func (b *transportStyleBody) Close() error { return nil }

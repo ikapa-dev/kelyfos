@@ -49,6 +49,7 @@ func typeConstValue(name string) (string, bool) {
 		"recorder.TypeTeamTopology":    recorder.TypeTeamTopology,
 		"recorder.TypeSessionErasure":  recorder.TypeSessionErasure,
 		"recorder.TypeChannelRefused":  recorder.TypeChannelRefused,
+		"recorder.TypeSecretUnscrubbable": recorder.TypeSecretUnscrubbable,
 	}[name]
 	return v, ok
 }

@@ -498,6 +498,29 @@ proxy whose record understates what the host did — the same reasoning that mad
 `mode` say how much of a connection the proxy could *read* (F-D33). `mode`
 answers "how much could it see"; this answers "did it change anything".
 
+### `secret.unscrubbable`
+A response from a credential-bound origin arrived compressed, and the echo
+suppression cannot match inside an encoding — so the guest received a body the
+proxy cannot vouch for. Written from the independent audit of 2026-09-01 (A4),
+which demonstrated the leak end to end: an origin that echoes rejected
+Authorization headers inside a gzipped body used to hand the guest the
+credential while the proxy's record showed only `secret.scrubbed` events from
+its plain-echo checks.
+
+The proxy asks credentialed origins not to compress — `Accept-Encoding:
+identity` on the terminated and plain-HTTP legs — so a compliant origin never
+triggers this. An origin that ignores that gets its body passed through
+unread, and this event is what that costs: recorded instead of the silence
+that used to sit here. It is the one event in this file that says "the value
+may have reached the guest and nothing could be done", which is precisely a
+fact a reader of the record needs.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `host` | string | The domain whose response was compressed. |
+| `mode` | string | The `Content-Encoding` the response named — gzip, deflate, br, whatever the origin sent. |
+| `agent` | string | Present inside a team: whose credential was bound. |
+
 ### `team.message` and `team.refused`
 One inter-agent message, or one the edge list did not permit. Written from E2-1.
 

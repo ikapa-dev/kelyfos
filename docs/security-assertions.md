@@ -34,6 +34,7 @@ assertion's subject.
 | the secret never enters the guest (env, PID 1 environ, /etc, /tmp, /work) | `accept-security-secrets.sh` absence battery | CHECKED |
 | attaches only on terminated TLS, to the bound host | secrets suite | CHECKED |
 | response reflections scrubbed to same-length asterisks; the scrub recorded | secrets suite | CHECKED |
+| the reflection survives compression: a credential-bound leg asks the origin for identity, a compressed response from a defiant origin is recorded (`secret.unscrubbable`) rather than silent, and trailers are scrubbed like headers (audit A4) | `internal/egress/a4_test.go` end-to-end against a local TLS origin (compliant and defiant), `scrub_test.go` trailer + encoding units, `a4_secret_test.go` parse-time warning | CHECKED |
 | plain HTTP → withheld `not_encrypted` | secrets suite | CHECKED |
 | forged Host on a tunnel → withheld `host_mismatch`, nothing at the origin | secrets suite | CHECKED |
 | a credential bound to a host covers its subdomains (IA-I1, pinned as-is) | secrets suite | CHECKED — pinned |

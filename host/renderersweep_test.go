@@ -47,6 +47,8 @@ func everyEventType() []string {
 		// but the sweep's job is that nobody decides by hand what gets
 		// checked — it is swept like every other arm.
 		recorder.TypeChannelRefused,
+		// secret.unscrubbable (A4): same reasoning — swept, not exempted.
+		recorder.TypeSecretUnscrubbable,
 	}
 }
 

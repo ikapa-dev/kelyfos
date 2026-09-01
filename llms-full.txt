@@ -2213,6 +2213,7 @@ assertion's subject.
 | the secret never enters the guest (env, PID 1 environ, /etc, /tmp, /work) | `accept-security-secrets.sh` absence battery | CHECKED |
 | attaches only on terminated TLS, to the bound host | secrets suite | CHECKED |
 | response reflections scrubbed to same-length asterisks; the scrub recorded | secrets suite | CHECKED |
+| the reflection survives compression: a credential-bound leg asks the origin for identity, a compressed response from a defiant origin is recorded (`secret.unscrubbable`) rather than silent, and trailers are scrubbed like headers (audit A4) | `internal/egress/a4_test.go` end-to-end against a local TLS origin (compliant and defiant), `scrub_test.go` trailer + encoding units, `a4_secret_test.go` parse-time warning | CHECKED |
 | plain HTTP → withheld `not_encrypted` | secrets suite | CHECKED |
 | forged Host on a tunnel → withheld `host_mismatch`, nothing at the origin | secrets suite | CHECKED |
 | a credential bound to a host covers its subdomains (IA-I1, pinned as-is) | secrets suite | CHECKED — pinned |
@@ -3359,11 +3360,22 @@ the proxy either way.
   Three limits, first rather than last, because a reader who misses them will
   assume more than this does. **The tunnelled majority is not covered and never
   can be** — the proxy relays ciphertext for every domain with no secret bound,
-  so there is nothing to match. **A compressed body is not covered**: the
-  terminated transport deliberately does not decompress, so a client that asked
-  for gzip gets gzip, and gzip of a credential does not contain the credential.
-  **A value under eight bytes is not scrubbed**, because replacing a short
-  string everywhere it appears would corrupt far more than it protects.
+  so there is nothing to match. **A compressed body is not matchable**: where a
+  credential is bound the proxy asks the origin not to compress —
+  `Accept-Encoding: identity` on the terminated and plain-HTTP legs' requests —
+  so a compliant origin's response is matchable end to end, and the guest's own
+  encoding preference is overridden for exactly those requests. An origin that
+  compresses anyway gets its body passed through unread — gzip of a credential
+  does not contain the credential — and a `secret.unscrubbable` event records
+  it, replacing the silence that sat here until the independent audit of
+  2026-09-01 (A4) demonstrated the echo end to end. The proxy still does not
+  decompress to scrub and re-compress after: that would break the byte-for-byte
+  framing it deliberately preserves. **A value under eight bytes is not
+  scrubbed**, because replacing a short string everywhere it appears would
+  corrupt far more than it protects — and `--secret` warns about that at parse
+  time now, where the user can still choose a longer credential. Trailers are
+  scrubbed like headers: a chunked response's trailer values arrive after the
+  body, and they used to reach the guest unexamined (the same audit, A4).
 
   The replacement keeps the byte length exactly. That is not cosmetic: a
   terminated connection carries many requests, and a body whose written length
@@ -5222,6 +5234,29 @@ It is recorded because a proxy that rewrites a byte stream and says nothing is a
 proxy whose record understates what the host did — the same reasoning that made
 `mode` say how much of a connection the proxy could *read* (F-D33). `mode`
 answers "how much could it see"; this answers "did it change anything".
+
+### `secret.unscrubbable`
+A response from a credential-bound origin arrived compressed, and the echo
+suppression cannot match inside an encoding — so the guest received a body the
+proxy cannot vouch for. Written from the independent audit of 2026-09-01 (A4),
+which demonstrated the leak end to end: an origin that echoes rejected
+Authorization headers inside a gzipped body used to hand the guest the
+credential while the proxy's record showed only `secret.scrubbed` events from
+its plain-echo checks.
+
+The proxy asks credentialed origins not to compress — `Accept-Encoding:
+identity` on the terminated and plain-HTTP legs — so a compliant origin never
+triggers this. An origin that ignores that gets its body passed through
+unread, and this event is what that costs: recorded instead of the silence
+that used to sit here. It is the one event in this file that says "the value
+may have reached the guest and nothing could be done", which is precisely a
+fact a reader of the record needs.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `host` | string | The domain whose response was compressed. |
+| `mode` | string | The `Content-Encoding` the response named — gzip, deflate, br, whatever the origin sent. |
+| `agent` | string | Present inside a team: whose credential was bound. |
 
 ### `team.message` and `team.refused`
 One inter-agent message, or one the edge list did not permit. Written from E2-1.
@@ -15245,6 +15280,16 @@ A response echoed a bound credential back and the proxy replaced it before the g
 | --- | --- | --- |
 | `name` | string | the secret's environment-variable name |
 | `host` | string | the domain whose response carried it back |
+| `agent` | string | which machine produced it; present inside a team *(in a team)* |
+
+## `secret.unscrubbable`
+
+A response from a credential-bound origin arrived compressed, and the echo suppression cannot match inside an encoding — the guest received a body the proxy cannot vouch for (audit 2026-09-01, A4). The proxy asks credentialed origins not to compress; this event is what an origin that ignored that costs, recorded instead of the silence that used to sit here. Written by the **host**.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `host` | string | the domain whose response was compressed |
+| `mode` | string | the Content-Encoding the response named — gzip, deflate, br, whatever the origin sent |
 | `agent` | string | which machine produced it; present inside a team *(in a team)* |
 
 ## `resource.oom`

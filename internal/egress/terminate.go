@@ -308,6 +308,20 @@ func (p *Proxy) terminate(client net.Conn, host string, port int, bound []*Secre
 		// Withheld rather than rewritten: rewriting a guest's Host header would
 		// silently change what it asked for, and the request itself is allowed
 		// — `allow` decided that. What is refused is the credential.
+
+		// An origin with a credential bound is asked not to compress its
+		// reply (audit 2026-09-01, A4). DisableCompression on the transport
+		// stops *this* proxy from adding an Accept-Encoding of its own; it
+		// does nothing about the guest's, which is forwarded verbatim — and
+		// gzip of a credential does not contain the credential, which is the
+		// hole the audit demonstrated with an origin that echoes rejected
+		// Authorization headers inside a gzipped body. identity is what the
+		// echo suppression can read; scrubResponse records a response that
+		// arrives compressed anyway. Set for every request on this
+		// connection: the binding is per host, not per request.
+		if len(bound) > 0 {
+			req.Header.Set("Accept-Encoding", "identity")
+		}
 		secret, why := pick(bound, req, host)
 		if secret != nil {
 			req.Header.Set("Authorization", secret.Header())

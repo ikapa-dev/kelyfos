@@ -179,6 +179,16 @@ func wireProxyAudit(proxy *egress.Proxy, rec *recorder.Recorder, agent string, b
 			Type: recorder.TypeSecretScrubbed, Agent: agent, Name: name, Host: host,
 		})
 	}
+	// The audit of 2026-09-01's A4: a compressed response from a
+	// credential-bound origin reaches the guest unmatchable by the echo
+	// suppression. Recorded rather than silent — this is the one event that
+	// says "the value may have reached the guest and nothing could be done".
+	proxy.OnUnscrubbable = func(host, encoding string) {
+		_ = rec.Append(recorder.Event{
+			Type: recorder.TypeSecretUnscrubbable, Agent: agent,
+			Host: host, Mode: proto.SafeText(encoding),
+		})
+	}
 	proxy.OnEvent = func(a egress.Attempt) {
 		if blocked != nil {
 			// The person watching the run is the one with the policy file open,

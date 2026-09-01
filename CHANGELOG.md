@@ -18,6 +18,20 @@ reference described in the README and re-measured per release.
 ## Unreleased
 
 ### Fixed
+- **A bound secret's value can no longer reach the guest through a compressed
+  origin response** (independent audit 2026-09-01, A4). The response scrubber
+  is byte-based, so an allowlisted origin that echoes the Authorization header
+  inside a gzipped body delivered the credential to the guest in cleartext —
+  the proxy saw only compressed bytes. Where a credential is bound, the proxy
+  now asks the origin not to compress (`Accept-Encoding: identity` on the
+  terminated and plain-HTTP legs), so the scrubber reads what comes back; a
+  response that arrives compressed anyway is passed through unread and
+  recorded as a new `secret.unscrubbable` event instead of silently. Response
+  trailers are scrubbed like headers — a chunked response's trailer values
+  used to reach the guest unexamined — and `--secret` warns at parse time when
+  the value is under the eight-byte scrubbing floor, where the user can still
+  choose a longer credential. The echo-suppression guarantee in
+  docs/networking.md states all of this explicitly.
 - **The guest-initiated vsock channels now require a per-session credential;
   guest-attributed record content can no longer be forged** (independent audit
   2026-09-01, A2/A3; D99). Any same-uid host process could connect to the

@@ -331,6 +331,15 @@ type Proxy struct {
 	// because a proxy that rewrites a byte stream and says nothing is a proxy
 	// whose record understates what the host did (P6-5).
 	OnScrubbed func(name, host string)
+	// OnUnscrubbable says the opposite, and it is the audit of 2026-09-01's
+	// A4: a response arrived compressed where a credential is bound, and the
+	// byte-based scrubber cannot match inside an encoding. The proxy asks
+	// origins not to compress (identity on the terminated leg, below), so
+	// reaching here means an origin ignored that — and the guest is about to
+	// receive a body the echo suppression cannot read. Recorded instead of
+	// silence, because "the value may have reached the guest and nothing
+	// could be done" is precisely a fact the record exists to hold.
+	OnUnscrubbable func(host, encoding string)
 	// CA terminates TLS for secret-bound domains. Ephemeral, per run.
 	CA *CA
 	// Upstream is the transport used for terminated requests. Injectable so
@@ -771,12 +780,19 @@ func (p *Proxy) forwardHTTP(client net.Conn, req *http.Request, host string, por
 	// is actually true there is narrower — this code path simply has no
 	// injection point of its own, encrypted or not — so it gets its own
 	// reason instead (P6-4, S5d).
-	if bound := p.Policy.secretsFor(host); len(bound) > 0 && p.OnWithheld != nil {
-		reason := WithheldUnencrypted
-		if effectiveScheme == "https" {
-			reason = WithheldNotViaConnect
+	if bound := p.Policy.secretsFor(host); len(bound) > 0 {
+		if p.OnWithheld != nil {
+			reason := WithheldUnencrypted
+			if effectiveScheme == "https" {
+				reason = WithheldNotViaConnect
+			}
+			p.OnWithheld(bound[0].Name, host, reason)
 		}
-		p.OnWithheld(bound[0].Name, host, reason)
+		// A credential-bound origin is asked not to compress, so the echo
+		// suppression can read what comes back (audit 2026-09-01, A4). The
+		// terminated leg does the same; this is the plain-HTTP leg, where a
+		// bound credential is never attached but a scrubbing policy still is.
+		req.Header.Set("Accept-Encoding", "identity")
 	}
 	req.RequestURI = ""
 	if req.URL.Scheme == "" {

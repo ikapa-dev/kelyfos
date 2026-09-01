@@ -53,6 +53,14 @@ const (
 	TypeSecretUse       = "secret.use"
 	TypeSecretWithheld  = "secret.withheld"
 	TypeSecretScrubbed  = "secret.scrubbed"
+	// TypeSecretUnscrubbable is the audit of 2026-09-01's A4: a response from
+	// a credential-bound origin arrived with a Content-Encoding, so the
+	// byte-based echo suppression could not read the body — and the guest
+	// received a body the proxy cannot vouch for. The proxy asks origins not
+	// to compress (identity on credentialed requests); this event is what an
+	// origin that ignored that costs, recorded instead of the silence that
+	// used to sit here.
+	TypeSecretUnscrubbable = "secret.unscrubbable"
 	TypeResourceOOM     = "resource.oom"
 	TypeResourceTimeout = "resource.timeout"
 	TypeResourceSummary = "resource.summary"

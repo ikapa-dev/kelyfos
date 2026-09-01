@@ -949,6 +949,14 @@ func printEvent(line []byte, asJSON bool) {
 	case recorder.TypeSecretScrubbed:
 		fmt.Printf("%s  secret scrubbed %s%s out of a response from %s\n", ts, who,
 			proto.SafeText(e.Name), proto.SafeText(e.Host))
+	case recorder.TypeSecretUnscrubbable:
+		// Audit 2026-09-01, A4: a compressed response from a credential-bound
+		// origin — the echo suppression could not read the body. The word
+		// UNREAD is the honest verb: this is not "nothing happened", it is
+		// "the proxy could not check what happened".
+		fmt.Printf("%s  UNREAD body     %sa compressed response (%s) from credential-bound %s — "+
+			"echo suppression cannot match inside an encoding\n",
+			ts, who, proto.SafeText(e.Mode), proto.SafeText(e.Host))
 	default:
 		// The raw line, through the sanitiser (P7-17/C). This arm is what an
 		// event type this build has no case for prints as — a chain written by

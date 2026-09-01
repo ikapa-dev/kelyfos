@@ -35,6 +35,15 @@ func (s *Secret) String() string {
 //
 //	GITHUB_TOKEN@api.github.com
 //	GITHUB_TOKEN@github.com:basic
+//
+// A value shorter than minScrub is accepted — a short credential is the
+// user's to choose and refusing one would break real credentials — but it is
+// warned about at parse time, where the user can still choose differently:
+// the echo suppression never matches below minScrub, so an origin that echoes
+// a short credential hands it to the guest (audit 2026-09-01, A4). The
+// warning is the package's one write to stderr, narrow and deliberate the way
+// internal/sandbox's warnf is: a risk the user cannot see at parse time is a
+// risk they learn about from the guest.
 func ParseSecret(spec string) (*Secret, error) {
 	parsed, err := ParseSecretSpec(spec)
 	if err != nil {
@@ -47,6 +56,12 @@ func ParseSecret(spec string) (*Secret, error) {
 	}
 	if value == "" {
 		return nil, fmt.Errorf("--secret %s: %s is set but empty", spec, name)
+	}
+	if len(value) < minScrub {
+		fmt.Fprintf(os.Stderr, "kelyfos: secret %s (bound to %s) is %d bytes; values shorter than "+
+			"%d are never scrubbed from responses, so an origin that echoes this credential "+
+			"hands it to the guest — prefer a credential of at least %d bytes\n",
+			name, parsed.Host, len(value), minScrub, minScrub)
 	}
 	return &Secret{
 		Name: name, Domain: parsed.Host, Scheme: parsed.Scheme,
