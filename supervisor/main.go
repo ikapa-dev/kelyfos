@@ -91,7 +91,7 @@ func main() {
 	start := monotonic()
 
 	if isPID1 {
-		// Non-dumpable, first (audit 2026-09-01, A17): everything this
+		// Non-dumpable, first (audit 2026-09-01, A17b): everything this
 		// process holds — the channel credential most of all (credential.go)
 		// — is exactly what a guest-side process would want to read out of
 		// its memory. The kernel's own ACL on /proc/1/mem and ptrace held

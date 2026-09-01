@@ -11,7 +11,7 @@
 // code it runs; the environment and the kernel command line are readable by
 // every process through /proc; and the supervisor's own memory is the one
 // place the audit's probes could not go (ptrace and process_vm were refused
-// at the kernel ACL, and PR_SET_DUMPABLE 0 — this audit's A17 — is set in the
+// at the kernel ACL, and PR_SET_DUMPABLE 0 — this audit's A17b — is set in the
 // boot path so that safety does not rest on the ACL alone). A credential in a
 // file, an env var or argv would gate nothing.
 package main

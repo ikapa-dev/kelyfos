@@ -433,6 +433,7 @@ func (s *hostServer) toolFork(raw json.RawMessage) *mcp.CallToolResult {
 				VcpuCount: meta.VcpuCount, MemMiB: meta.MemMiB,
 				OnGuestEvent:     guestEventRecorder(rec, "", meta.MemMiB),
 				OnChannelRefused: channelRefusedRecorder(rec, ""),
+				OnVMMAction:      vmmActionRecorder(rec, ""),
 			})
 			if err != nil {
 				_ = rec.Append(recorder.Event{Type: recorder.TypeSessionEnd, Reason: "error",

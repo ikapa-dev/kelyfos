@@ -127,7 +127,7 @@ reference described in the README and re-measured per release.
   instead. Multi-label entries are unchanged: the suffix rule remains correct
   for `example.org` and its subdomains.
 - **The seccomp refusal list covers the fd-based mount API and the
-  cross-memory/fd-theft family** (independent audit 2026-09-01, A5/A17).
+  cross-memory/fd-theft family** (independent audit 2026-09-01, A5/A17b).
   `open_tree`, `fsopen` and friends reach the same ends as `mount` without
   calling it, and the guest's refusal map predated that API — the audit
   demonstrated both syscalls reaching the kernel. The policy now also refuses
@@ -143,7 +143,7 @@ reference described in the README and re-measured per release.
   rebuilt (`make image FLAVOR=dev`) for this to take effect; the profile line
   at boot now reports 38 syscalls refused on the dev flavor.
 - **`--cpu-quota` no longer hangs the boot when the machine cannot honour
-  it** (independent audit 2026-09-01, A17b). On a host with cgroup v2 but no
+  it** (independent audit 2026-09-01, A17). On a host with cgroup v2 but no
   delegation and no working user systemd session, the boot sat after
   session.start with no refusal and no output. A boot-path preflight now
   proves `systemd-run --user` works before anything is built and refuses
@@ -151,7 +151,7 @@ reference described in the README and re-measured per release.
   `cannot apply a CPU quota on this machine: systemd-run --user did not
   complete within 4s ...` — reproduced on the audit's own test VM.
 - **The supervisor is no longer dumpable** (independent audit 2026-09-01,
-  A17). PID 1 sets `PR_SET_DUMPABLE 0` before anything else, so the safety of
+  A17b). PID 1 sets `PR_SET_DUMPABLE 0` before anything else, so the safety of
   its memory — the channel credential most of all — no longer rests on the
   kernel's ACL alone.
 - **A bound secret's value can no longer reach the guest through a compressed

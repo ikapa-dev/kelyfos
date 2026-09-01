@@ -445,8 +445,11 @@ machine.
 A restored VM resumes believing the wall clock and its entropy pool are what they
 were when the snapshot was taken — for N forks of one snapshot, identically so.
 The supervisor applies `realtime_ns` with `clock_settime(CLOCK_REALTIME, …)` and
-writes `entropy` into `/dev/urandom`. This is the first message the host sends on
-a restored VM, before handing the sandbox back to its caller. (`ptp_kvm` +
+writes `entropy` into `/dev/urandom`. This is the first *resync* the host sends
+on a restored VM, before handing the sandbox back to its caller — and it is no
+longer the host's very first message: the fresh channel credential (§1.7) is
+pushed over `control` before it, because a restored machine's outbound channels
+are refused until the new credential lands. (`ptp_kvm` +
 `chrony` were considered and rejected: too heavy for a BusyBox image.)
 
 ### 5.5 `events` — port 10101, guest → host

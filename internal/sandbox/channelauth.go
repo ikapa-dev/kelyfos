@@ -30,7 +30,7 @@
 // from anything the guest already knows, because then it would gate nothing.
 // Memory is the one place the guest's own code does not reach — the kernel's
 // ACL on /proc/<pid>/mem held under every probe the audit threw at it, and
-// PR_SET_DUMPABLE 0 on the supervisor (the same audit's A17) hardens it
+// PR_SET_DUMPABLE 0 on the supervisor (the same audit's A17b) hardens it
 // further.
 package sandbox
 

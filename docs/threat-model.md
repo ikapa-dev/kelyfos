@@ -441,7 +441,7 @@ verified reachable from a confined process and accepted, with the reason:
   proxy address, no CA material and no credential: the egress environment
   reaches commands as their own default environment, and the channel
   credential (A2/A3) lives in the supervisor's memory only, never in its
-  environment. After the same audit's A17 the supervisor is non-dumpable, so
+  environment. After the same audit's A17b the supervisor is non-dumpable, so
   this file is the residual's floor rather than an invitation.
 
 These are the residuals of a profile that fences writes and refuses syscalls,
