@@ -18,6 +18,14 @@ reference described in the README and re-measured per release.
 ## Unreleased
 
 ### Fixed
+- **CONNECT tunnels and plain-HTTP body copies are clocked and bounded**
+  (independent audit 2026-09-01, A12). A tunnel had no clock at all: 128 idle
+  CONNECTs pinned the proxy's whole egress semaphore for the sandbox's life,
+  and a guest dribbling one byte a minute defeated idle-timeout reaping at the
+  same time. Tunnels now carry a stall clock per direction (5 minutes of
+  silence closes one — generous for interactive keepalives) with every arm
+  clamped by the one-hour connection ceiling, and the plain-HTTP leg's body
+  copy gets the same write-side clock plus a context-bounded ceiling.
 - **The host's own VMM-API actions are recorded** (independent audit 2026-09-01,
   A11). Pause, resume, snapshot create and load, and drive patch were invisible
   to the transcript; each is now a `vmm.api` event in the session's chain. The

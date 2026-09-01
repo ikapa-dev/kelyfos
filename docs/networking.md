@@ -535,6 +535,15 @@ the proxy either way.
   response, so a keep-alive connection whose five responses each echo the same
   token produces five events.
 
+- **Every tunnelled and forwarded byte is on a clock.** The audit of
+  2026-09-01 (A12) found tunnels carrying nothing at all: 128 idle CONNECTs
+  pinned the egress semaphore for the sandbox's life. A tunnel now closes
+  after five minutes of silence in either direction — generous for
+  interactive keepalives — and no arm of its clock can outrun the one-hour
+  connection ceiling the terminated leg already had, so a dribbling guest is
+  bounded too. The plain-HTTP leg's body copy carries the same write-side
+  clock and a context-bounded ceiling.
+
 - **Certificate pinning breaks for a secret-bound domain, by construction.**
   This is the cost D6 accepted, and it belongs here as well as in the threat
   model. A terminated domain is presented a certificate minted by the run's own
