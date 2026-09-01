@@ -96,6 +96,7 @@ assertion's subject.
 | SIGTERM to the run pid tears down cleanly, with and without a trailing command (IA-M1's second trigger) | lifecycle suite signal battery | CHECKED |
 | a second restore of the same snapshot works after cleanup | lifecycle suite | CHECKED |
 | ceilings: flag-over-policy refused pre-boot; guest sees the capped machine; max-runtime exits 124; disk ceiling pre-boot | `accept-security-caps.sh` | CHECKED |
+| the policy-less serve-mcp door has absolute ceilings: cores ≤ the host's, mem ≤ what the host can carry, and a legacy `mem_mib` acts as a ceiling there (audit A8) | `host/a8_test.go` (the audit's exact 262144 MiB repro refused; a reasonable ask passes) | CHECKED |
 | a snapshot's recorded network addressing goes through the same derivation gate a state file's does: a poisoned meta.json (loopback, metadata /30, non-/30 pair) is refused by name on restore (audit A7) | `internal/sandbox/a7_test.go` (gate units incl. the audit's loopback scenario); verified live — a snapshot with a poisoned meta.json refuses on restore | CHECKED |
 
 ## The supply chain

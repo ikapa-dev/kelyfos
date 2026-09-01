@@ -79,6 +79,17 @@ A command-line flag asked for more than the policy file's [resources] ceiling pe
 
 Named: `asked`, `file`, `flag`, `key`, `limit`, `line`. The values above are an example.
 
+## `ceiling.host`
+
+A machine was asked for that is larger than the physical host itself — RAM or cores beyond what the machine has, which no policy can grant (audit 2026-09-01, A8).
+
+```
+mem 262144 MiB exceeds what this host can run (8192 MiB) [ceiling.host]
+    ask for a smaller machine — this is the physical host's ceiling, and no policy file or tool argument raises it
+```
+
+Named: `asked`, `field`, `limit`. The values above are an example.
+
 ## `ceiling.resume`
 
 A paused session's frozen policy asks for more than the current policy's ceiling, and a resume runs the frozen one.

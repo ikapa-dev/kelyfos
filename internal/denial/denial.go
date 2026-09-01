@@ -202,6 +202,20 @@ var (
 		Sample: V{"name": "before-the-migration", "file": "/home/you/project/kelyfos.toml"},
 	}
 
+	// CeilingHost is the machine's own ceiling, which no policy file raises
+	// and no flag widens (audit 2026-09-01, A8). It is checked after the
+	// policy's, because a policy that permits more than the host can run is
+	// still bounded by the host.
+	CeilingHost = Denial{
+		ID:  "ceiling.host",
+		Doc: "a machine was asked for that is larger than the physical host itself — RAM or " +
+			"cores beyond what the machine has, which no policy can grant (audit 2026-09-01, A8)",
+		Msg: "<field> <asked> exceeds what this host can run (<limit>)",
+		Fix: "ask for a smaller machine — this is the physical host's ceiling, and no " +
+			"policy file or tool argument raises it",
+		Sample: V{"field": "mem", "asked": "262144 MiB", "limit": "8192 MiB"},
+	}
+
 	CeilingResume = Denial{
 		ID: "ceiling.resume",
 		Doc: "a paused session's frozen policy asks for more than the current policy's ceiling, " +
@@ -388,7 +402,7 @@ func All() []Denial {
 	all := []Denial{
 		AllowProject, AllowResume, AllowSnapshot, AllowSingleLabel,
 		BudgetSandboxes,
-		CeilingFlag, CeilingResume, CeilingSnapshot, CeilingSnapshotUnknown, CeilingTool,
+		CeilingFlag, CeilingHost, CeilingResume, CeilingSnapshot, CeilingSnapshotUnknown, CeilingTool,
 		EgressHost, EgressPort, EgressResolvedAddr,
 		ForkCount,
 		ForwardClosed,

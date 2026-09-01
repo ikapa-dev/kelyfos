@@ -18,6 +18,17 @@ reference described in the README and re-measured per release.
 ## Unreleased
 
 ### Fixed
+- **`serve-mcp`'s door cannot name a machine bigger than the host** (independent
+  audit 2026-09-01, A8). A client launched from a directory with no
+  kelyfos.toml above it named its own cpus and mem, and a request for
+  262144 MiB or 4096 vcpu went to Firecracker verbatim. Absolute host ceilings
+  now apply on every path — cores cannot exceed the machine's, memory cannot
+  exceed what the host can carry with a quarter (never less than 2 GiB) kept
+  for the host — refused with the new `[ceiling.host]` catalog entry. The
+  legacy `[sandbox]` `mem_mib`/`vcpus` keys, which behaved as overridable
+  defaults on this door, are now ceilings there too, matching what the tool
+  schema has always promised ("at most what the policy allows"); the tool
+  description states the real defaults and the host limits.
 - **A restored snapshot's recorded network addressing is validated like a
   state file's** (independent audit 2026-09-01, A7). A snapshot's meta.json
   went to `ip link` with no gate at all — the audit's scenario, a meta.json

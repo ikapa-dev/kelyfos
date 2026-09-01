@@ -107,17 +107,25 @@ func TestServeMCPAllowMatchesSubdomains(t *testing.T) {
 	}
 }
 
-// With no policy file at all there is no ceiling to enforce, and the defaults
-// apply. A server that refused everything without a kelyfos.toml would be
-// unusable in exactly the case a new user meets first.
+// With no policy file at all the policy's ceilings do not apply, and the
+// defaults hold. A server that refused everything without a kelyfos.toml would
+// be unusable in exactly the case a new user meets first.
+//
+// Since the audit of 2026-09-01 (A8), the host's own ceilings apply even with
+// no policy — which is why the ask here is inside them: the test pins "the
+// defaults apply", not "the machine is bigger than it is".
 func TestServeMCPWithoutAPolicy(t *testing.T) {
 	s := &hostServer{arch: "x86_64", max: defaultMaxSandboxes, boxes: map[string]*servedBox{}}
-	opts, err := s.resolve(&runArgs{CPUs: 8})
-	if err != nil {
-		t.Fatalf("no policy means no ceiling, but: %v", err)
+	cpus := hostCPUCeiling()
+	if cpus > 8 {
+		cpus = 8
 	}
-	if opts.VcpuCount != 8 {
-		t.Errorf("vcpu = %d, want the 8 that was asked for", opts.VcpuCount)
+	opts, err := s.resolve(&runArgs{CPUs: cpus})
+	if err != nil {
+		t.Fatalf("no policy means no policy ceiling, but: %v", err)
+	}
+	if opts.VcpuCount != cpus {
+		t.Errorf("vcpu = %d, want the %d that was asked for", opts.VcpuCount, cpus)
 	}
 }
 

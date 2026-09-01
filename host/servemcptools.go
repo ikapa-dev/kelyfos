@@ -36,7 +36,11 @@ func hostToolDefinitions() []mcp.Tool {
 			Description: "Boot a hardware-isolated microVM and return its id. Anything run inside " +
 				"it cannot reach this machine. It has no network at all unless the project's " +
 				"policy grants one. Every argument here may ask for less than the policy allows " +
-				"and never for more; a request above a ceiling is refused and names the ceiling.",
+				"and never for more; a request above a ceiling is refused and names the ceiling. " +
+				"The host's own limits apply regardless: cores cannot exceed the machine's, and " +
+				"memory cannot exceed what the host can carry with room left for itself. When no " +
+				"policy is found, defaults are 2 vcpu and 512 MiB with no network, and those " +
+				"host limits are the only ceilings.",
 			InputSchema: mcp.Schema{
 				Type: "object",
 				Properties: map[string]mcp.Property{
@@ -228,6 +232,25 @@ func (s *hostServer) toolRun(raw json.RawMessage) *mcp.CallToolResult {
 	}
 }
 
+// capToHost applies the machine's own ceilings to resolved options (audit
+// 2026-09-01, A8): cores the host has, RAM the host can carry with room left
+// for itself. A policy is a person's ceiling; this one is nobody's to edit,
+// and it is checked after the policy's for exactly that reason — a policy
+// that permits more than the host can run is still bounded by the host.
+func (s *hostServer) capToHost(opts sandbox.Options) error {
+	if cpus := hostCPUCeiling(); cpus > 0 && opts.VcpuCount > cpus {
+		return denial.CeilingHost.Err(denial.V{
+			"field": "cpus", "asked": strconv.Itoa(opts.VcpuCount),
+			"limit": strconv.Itoa(cpus)})
+	}
+	if ceiling := hostMemCeilingMiB(); ceiling > 0 && int64(opts.MemMiB) > int64(ceiling) {
+		return denial.CeilingHost.Err(denial.V{
+			"field": "mem", "asked": fmt.Sprintf("%d MiB", opts.MemMiB),
+			"limit": fmt.Sprintf("%d MiB", ceiling)})
+	}
+	return nil
+}
+
 func describeAllow(allow []string) string {
 	if len(allow) == 0 {
 		return "no network interface at all"
@@ -264,6 +287,11 @@ func (s *hostServer) resolve(a *runArgs) (sandbox.Options, error) {
 			opts.MemMiB = n
 		}
 		opts.Allow = a.Allow
+		// No policy is no ceiling of the policy's — the host's own are still
+		// in force (audit 2026-09-01, A8).
+		if err := s.capToHost(opts); err != nil {
+			return opts, err
+		}
 		return opts, nil
 	}
 
@@ -311,6 +339,16 @@ func (s *hostServer) resolve(a *runArgs) (sandbox.Options, error) {
 				"limit": fmt.Sprintf("%d MiB", cfg.ResMemMiB), "file": cfg.Path,
 				"line": strconv.Itoa(line)})
 		}
+		// The legacy [sandbox] mem_mib is a default on the CLI door; on this
+		// one it is a ceiling too (audit 2026-09-01, A8). The tool schema
+		// promises "at most what the policy allows", and a client naming its
+		// own size over a default the project declared contradicts that
+		// whichever key spells the default.
+		if cfg.ResMemMiB == 0 && cfg.MemMiB > 0 && n > cfg.MemMiB {
+			return opts, fmt.Errorf("mem %s exceeds the ceiling mem_mib = %d set at %s — "+
+				"on this door a declared size is a ceiling, not a default; raise it in the "+
+				"file's [resources] if the machine is meant to have more", a.Mem, cfg.MemMiB, cfg.Path)
+		}
 		opts.MemMiB = n
 	}
 
@@ -344,6 +382,9 @@ func (s *hostServer) resolve(a *runArgs) (sandbox.Options, error) {
 	opts.IO = sandbox.IOLimits{
 		NetMbpsRx: cfg.ResNetMbpsRx, NetMbpsTx: cfg.ResNetMbpsTx,
 		DiskIOPS: cfg.ResDiskIOPS, DiskMbps: cfg.ResDiskMbps,
+	}
+	if err := s.capToHost(opts); err != nil {
+		return opts, err
 	}
 	return opts, nil
 }
