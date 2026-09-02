@@ -38,7 +38,18 @@ RUN_ROOT="$KELYFOS_CACHE/run"
 statefile() { ls -t "$RUN_ROOT"/*/"$1"/sandbox.json "$RUN_ROOT"/*/"$1"/root/sandbox.json "$RUN_ROOT/$1/sandbox.json" 2>/dev/null | sed -n '1,1p'; }
 
 WORK="$(mktemp -d)"
-NETHOST="kelyfos-accept.test"
+# The local test server's address, as a literal. It used to be a name mapped
+# to 127.0.0.1 in /etc/hosts, and since v1.1 the proxy refuses an allowlisted
+# *name* whose resolved address is loopback, link-local or private (the DNS
+# rebinding fix, internal/egress/dial.go, F14) — so the guest's download got
+# nothing and this step measured 0 Mbps. A literal address never goes through
+# a resolver, so there is nothing for DNS to have hijacked and the check does
+# not apply; and it cannot be the loopback address, because the guest's own
+# NO_PROXY excludes 127.0.0.1 from the proxy. The host's primary address is
+# what remains: private on a runner or in a VM, and reached only through the
+# proxy, which is the path being measured.
+NETHOST="$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i = 1; i <= NF; i++) if ($i == "src") { print $(i+1); exit }}')"
+[ -n "$NETHOST" ] || NETHOST="$(hostname -I 2>/dev/null | awk '{print $1}')"
 PASSES=0 FAILURES=0 SKIPS=0
 SUMMARY=()
 
@@ -85,8 +96,7 @@ echo "        (max_runtime is 600s here and 60s in step 5; see the note in this 
 # The download in step 4 needs somewhere to download from, and it has to be
 # ready before the sandbox that will fetch from it.
 NETSERVER=no
-if sudo -n true 2>/dev/null; then
-  grep -q "$NETHOST" /etc/hosts || echo "127.0.0.1 $NETHOST" | sudo tee -a /etc/hosts >/dev/null
+if [ -n "$NETHOST" ] && sudo -n true 2>/dev/null; then
   mkdir -p "$WORK/web"
   # 20 MB: about sixteen seconds at the 10 Mbps this policy sets, which is long
   # enough for the opening burst to be a small share of the transfer and short
@@ -94,9 +104,9 @@ if sudo -n true 2>/dev/null; then
   head -c 20000000 /dev/urandom > "$WORK/web/blob.bin"
   sudo pkill -f "[h]ttp[.]server 80" 2>/dev/null
   sleep 1
-  ( cd "$WORK/web" && sudo nohup python3 -m http.server 80 --bind 127.0.0.1 >/dev/null 2>&1 & )
+  ( cd "$WORK/web" && sudo nohup python3 -m http.server 80 --bind "$NETHOST" >/dev/null 2>&1 & )
   sleep 2
-  [ "$(curl -s -o /dev/null -w '%{size_download}' http://127.0.0.1/blob.bin || echo 0)" = "20000000" ] && NETSERVER=yes
+  [ "$(curl -s -o /dev/null -w '%{size_download}' "http://$NETHOST/blob.bin" || echo 0)" = "20000000" ] && NETSERVER=yes
 fi
 
 pushd "$PROJ" >/dev/null || exit 1
@@ -186,7 +196,7 @@ fi
 # ------------------------------------------------------------------ step 4 --
 step "4. download from an allowlisted local server, against net_mbps_rx = 10"
 if [ "$NETSERVER" = "no" ]; then
-  skip "no local test server (needs sudo to bind port 80)"
+  skip "no local test server (needs sudo to bind port 80, and a primary address to bind it on)"
 elif [ -z "$TAP" ]; then
   skip "the sandbox has no TAP to measure"
 else

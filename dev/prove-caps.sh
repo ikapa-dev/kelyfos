@@ -270,11 +270,21 @@ fi
 
 # ------------------------------------------------------------------ network --
 say "4. Network bandwidth — Firecracker's token bucket on the NIC"
-NETHOST="kelyfos-caps.test"
-if ! sudo -n true 2>/dev/null; then
-  skip "network: needs sudo to serve on port 80 and to add a hosts entry"
+# The local test server's address, as a literal. It used to be a name mapped
+# to 127.0.0.1 in /etc/hosts, and since v1.1 the proxy refuses an allowlisted
+# *name* whose resolved address is loopback, link-local or private (the DNS
+# rebinding fix, internal/egress/dial.go, F14) — so the guest's download got
+# nothing and this step measured 0 Mbps. A literal address never goes through
+# a resolver, so there is nothing for DNS to have hijacked and the check does
+# not apply; and it cannot be the loopback address, because the guest's own
+# NO_PROXY excludes 127.0.0.1 from the proxy. The host's primary address is
+# what remains: private on a runner or in a VM, and reached only through the
+# proxy, which is the path being measured.
+NETHOST="$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i = 1; i <= NF; i++) if ($i == "src") { print $(i+1); exit }}')"
+[ -n "$NETHOST" ] || NETHOST="$(hostname -I 2>/dev/null | awk '{print $1}')"
+if [ -z "$NETHOST" ] || ! sudo -n true 2>/dev/null; then
+  skip "network: needs sudo to serve on port 80, and a primary address to serve on"
 else
-  grep -q "$NETHOST" /etc/hosts || echo "127.0.0.1 $NETHOST" | sudo tee -a /etc/hosts >/dev/null
   mkdir -p "$WORK/web"
   # 100 MB, so the two-second opening burst is a tenth of the transfer rather
   # than a quarter of it. A short download measures the burst, not the cap.
@@ -284,10 +294,10 @@ else
   # without looking wrong.
   sudo pkill -f "http.server 80" 2>/dev/null
   sleep 1
-  ( cd "$WORK/web" && sudo nohup python3 -m http.server 80 --bind 127.0.0.1 >/dev/null 2>&1 & )
+  ( cd "$WORK/web" && sudo nohup python3 -m http.server 80 --bind "$NETHOST" >/dev/null 2>&1 & )
   sleep 2
   NETSERVER=yes
-  served="$(curl -s -o /dev/null -w '%{size_download}' "http://127.0.0.1/blob.bin" || echo 0)"
+  served="$(curl -s -o /dev/null -w '%{size_download}' "http://$NETHOST/blob.bin" || echo 0)"
   if [ "$served" != "100000000" ]; then
     skip "network: the test server returned $served bytes, not the 100 MB file this case needs"
     NETSERVER=no
