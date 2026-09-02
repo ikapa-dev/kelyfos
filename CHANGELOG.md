@@ -15,7 +15,7 @@ reference described in the README and re-measured per release.
 
 ---
 
-## Unreleased
+## v1.3.0 — 2026-09-02
 
 ### Documented
 - **The guest's accepted read residuals, named in one place** (independent
