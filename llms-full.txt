@@ -67,7 +67,7 @@ KelyfOS is a minimal guest OS for [Firecracker](https://firecracker-microvm.gith
 - **Egress is off, not filtered.** Without `--allow` the VM has no network interface at all.
 - **Secrets never enter the guest.** `--secret GITHUB_TOKEN@api.github.com` keeps the value on the host; a proxy attaches it on the way out.
 - **The record is written by the host.** Hash-chained, exportable, and verifiable offline with `kelyfos verify report.html`.
-- **Fast.** Cold boot to ready in ~150 ms, snapshot restore in ~50 ms, a five-agent team in about half a second.
+- **Fast.** Cold boot to ready in ~110 ms, snapshot restore in ~40 ms, a five-agent team in about half a second.
 
 > An agent is still root inside its own guest, and the VM is the boundary. Read [`docs/threat-model.md`](https://raw.githubusercontent.com/ikapa-dev/kelyfos/main/docs/threat-model.md) before trusting KelyfOS with anything.
 
@@ -209,7 +209,7 @@ No guest ever has a network path to another guest. Every message goes through th
 | `kelyfos doctor` | Check the machine and print the exact fix for anything missing |
 | `kelyfos run` / `exec` | Boot a sandbox and run commands in it |
 | `kelyfos shell` | A real terminal inside the sandbox |
-| `kelyfos snapshot save\|restore` | Freeze a prepared machine and bring it back in ~48 ms |
+| `kelyfos snapshot save\|restore` | Freeze a prepared machine and bring it back in ~40 ms |
 | `kelyfos fork -n 4` | Four divergent copies of one snapshot |
 | `kelyfos pause --as <name>` / `resume` | Stop for the day and pick up the same machine later |
 | `kelyfos diff` / `run --review` | See what the agent changed, and approve before it reaches your directory |
@@ -245,11 +245,11 @@ Measured by workflows in this repository on a stock `ubuntu-latest` GitHub runne
 
 | Figure | Result | Measured by |
 | --- | --- | --- |
-| Cold boot to ready | 152 ms median, 10 runs (146–159 ms) | [`bench.yml`](https://raw.githubusercontent.com/ikapa-dev/kelyfos/main/.github/workflows/bench.yml), v1.3.0, 2026-09-02 |
-| Snapshot restore | 48 ms median, 10 runs (45–54 ms) | [`bench.yml`](https://raw.githubusercontent.com/ikapa-dev/kelyfos/main/.github/workflows/bench.yml), v1.3.0, 2026-09-02 |
-| Five-agent team up | 524 ms cold, 361 ms with forked workers, single runs | [`caps.yml`](https://raw.githubusercontent.com/ikapa-dev/kelyfos/main/.github/workflows/caps.yml), v1.3.0, 2026-09-02 |
+| Cold boot to ready | 111 ms median, 10 runs (103–120 ms) | [`bench.yml`](https://raw.githubusercontent.com/ikapa-dev/kelyfos/main/.github/workflows/bench.yml), `347a402`, 2026-09-02 |
+| Snapshot restore | 40 ms median, 10 runs (37–44 ms) | [`bench.yml`](https://raw.githubusercontent.com/ikapa-dev/kelyfos/main/.github/workflows/bench.yml), `347a402`, 2026-09-02 |
+| Five-agent team up | 510 ms cold, 391 ms with forked workers, single runs | [`caps.yml`](https://raw.githubusercontent.com/ikapa-dev/kelyfos/main/.github/workflows/caps.yml), `347a402`, 2026-09-02 |
 
-Boot was 134 ms at v1.0; the v1.3.0 channel handshake sits on the boot path. Both bars, ≤ 300 ms cold and ≤ 100 ms restore, hold.
+Two runs of the same v1.3.0 tree on the same day gave 122 and 152 ms, so treat a single run as ±15%: the runner pool varies more than the code does. The bars, ≤ 300 ms cold and ≤ 100 ms restore, hold with room. v1.3.0's channel handshake had put up to a probe interval on the boot path; `347a402` removed it.
 
 ## Building from source
 
