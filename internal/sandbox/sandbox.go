@@ -264,6 +264,17 @@ type Sandbox struct {
 	// a select simply never fires, which is the right behaviour there.
 	authUnsupportedCh   chan struct{}
 	authUnsupportedOnce sync.Once
+	// controlUp is closed by drainConsole when the guest's console says its
+	// control port is listening (supervisor/main.go's controlListeningMarker).
+	// pushChannelCredential wakes on it for an immediate attempt instead of
+	// waiting out its backoff: the ready frame the boot is measured to waits
+	// behind that push, and a probe cadence coarse enough not to load the
+	// booting guest was leaving up to a whole interval on the table. It is a
+	// hint, not a trust boundary — the console is the guest's to write, and
+	// all a forged line can do is bring forward a probe that fails and is
+	// retried. Nil on a fixture sandbox that never boots.
+	controlUp     chan struct{}
+	controlUpOnce sync.Once
 	// profileError is why the guest could not confine what it spawns, when it
 	// could not. Kept off State because it is a fault to report rather than a
 	// fact to record: a machine that has one does not become a session.
@@ -354,6 +365,7 @@ func New(opts Options) (*Sandbox, error) {
 	}
 	s.channelAuth = auth
 	s.authUnsupportedCh = make(chan struct{})
+	s.controlUp = make(chan struct{})
 
 	cfg := firecrackerConfig(opts, kernel, rootfs, s.State.UDSPath, id)
 	if opts.Workspace != nil {
@@ -811,7 +823,7 @@ func (s *Sandbox) Start(ctx context.Context) error {
 	// the other way round (channelauth.go, audit 2026-09-01, A2/A3). A guest
 	// too old to take one ends the boot with the named refusal WaitReady
 	// surfaces.
-	go func() { _ = s.pushChannelCredential(5 * time.Minute) }()
+	go func() { _ = s.pushChannelCredential(5*time.Minute, s.controlUp) }()
 	// Read the quota back rather than trusting that asking for it worked.
 	if s.opts.CPUSlice != nil {
 		if err := s.opts.CPUSlice.Confirm(s.State.PID); err != nil {
@@ -1555,7 +1567,9 @@ func Restore(snapDir string, opts Options) (*Sandbox, time.Duration, error) {
 	// them is refused until this lands (channelauth.go). A guest too old to
 	// take one is refused here, by name, rather than left to fail on every
 	// channel it dials.
-	if err := s.pushChannelCredential(30 * time.Second); err != nil {
+	// No console hint: the restored guest printed its marker before the
+	// snapshot was taken, and its control port is listening already.
+	if err := s.pushChannelCredential(30*time.Second, nil); err != nil {
 		_ = s.Shutdown(2 * time.Second)
 		return nil, 0, err
 	}
@@ -1976,11 +1990,21 @@ func (s *Sandbox) drainConsole(r io.Reader) {
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 4096), 256<<10)
 	for sc.Scan() {
+		line := sc.Text()
 		if s.opts.Console != nil {
-			fmt.Fprintln(s.opts.Console, sc.Text())
+			fmt.Fprintln(s.opts.Console, line)
+		}
+		if s.controlUp != nil && strings.Contains(line, controlListeningLine) {
+			s.controlUpOnce.Do(func() { close(s.controlUp) })
 		}
 	}
 }
+
+// controlListeningLine is what the supervisor prints on its console once its
+// control port is listening (supervisor/main.go controlListeningMarker, through
+// logf's prefix). Matched by substring because the kernel's console may
+// prepend its own timestamp.
+const controlListeningLine = "kelyfos-supervisor: control listening"
 
 // RunningSessions is the set of flight-recorder session ids with a live
 // sandbox writing into them right now — every currently-alive sandbox's own

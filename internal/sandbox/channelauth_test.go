@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"net"
 	"path/filepath"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -232,5 +234,87 @@ func TestChannelWithoutAMintedCredentialRefusesEverything(t *testing.T) {
 	var ignore json.RawMessage
 	if err := proto.NewReader(conn).Read(&ignore); err == nil {
 		t.Fatal("a sandbox that minted no credential served a connection")
+	}
+}
+
+// The console marker is how the host learns the guest's control port is
+// listening without probing for it (supervisor/main.go controlListeningMarker).
+// The line is matched by substring through whatever the console prepends, and
+// a sandbox that has no hint channel — a fixture, or one built by Restore —
+// ignores it rather than panicking on a nil channel.
+func TestConsoleMarkerClosesTheControlHint(t *testing.T) {
+	s := &Sandbox{controlUp: make(chan struct{})}
+	s.drainConsole(strings.NewReader("[    0.412] kelyfos-supervisor: profile: landlock\nkelyfos-supervisor: control listening\n"))
+	select {
+	case <-s.controlUp:
+	default:
+		t.Fatal("the marker line did not close controlUp")
+	}
+	// A second marker (a restore after a snapshot taken before the line) must
+	// not close it twice.
+	s.drainConsole(strings.NewReader("kelyfos-supervisor: control listening\n"))
+
+	none := &Sandbox{}
+	none.drainConsole(strings.NewReader("kelyfos-supervisor: control listening\n"))
+}
+
+// The push loop wakes on the hint rather than sleeping out its backoff. A fake
+// VMM socket refuses the CONNECT handshake — closes, the way Firecracker does
+// when nothing listens — until the hint fires, then answers it and takes the
+// auth op. Success has to follow the hint closely; without the hint the next
+// probe would be up to probeCapBooting later.
+func TestCredentialPushWakesOnTheHint(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "v.sock")
+	ln, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+
+	hint := make(chan struct{})
+	var listening atomic.Bool
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				if _, err := readLineByte(c); err != nil { // "CONNECT 10003"
+					return
+				}
+				if !listening.Load() {
+					return // closed without an ack: errHandshakeClosed on the host side
+				}
+				fmt.Fprint(c, "OK 1\n")
+				var req proto.ControlRequest
+				if err := proto.NewReader(c).Read(&req); err != nil || req.Op != proto.OpAuth {
+					return
+				}
+				_ = proto.NewWriter(c).Write(proto.ControlResponse{V: proto.Version, ID: req.ID, OK: true})
+			}(conn)
+		}
+	}()
+
+	s := &Sandbox{done: make(chan struct{}), channelAuth: "00"}
+	s.State.UDSPath = path
+	const hintAt = 120 * time.Millisecond
+	go func() {
+		time.Sleep(hintAt)
+		listening.Store(true)
+		close(hint)
+	}()
+	started := time.Now()
+	if err := s.pushChannelCredential(5*time.Second, hint); err != nil {
+		t.Fatalf("push: %v", err)
+	}
+	elapsed := time.Since(started)
+	// Unhinted, the probes after 120 ms fall at 125 ms and 175 ms — the
+	// 25/50/50 cadence from t=0 lands at 0, 25, 75, 125, 175 — so a success
+	// well inside 125 ms is the hint's doing. Loose enough for a loaded runner.
+	if elapsed > hintAt+40*time.Millisecond {
+		t.Fatalf("the push landed %v after start; the hint at %v should have brought it to within a few ms of that", elapsed, hintAt)
 	}
 }

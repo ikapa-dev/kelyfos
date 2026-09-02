@@ -153,8 +153,17 @@ func (s *Sandbox) refuseChannel(conn net.Conn, port uint32, reason string) bool 
 // restore runs it inline, because a restored machine's outbound channels come
 // back the moment it resumes and every one of them is refused until the fresh
 // credential lands.
-func (s *Sandbox) pushChannelCredential(timeout time.Duration) error {
+//
+// hint, when not nil, is closed the moment the guest's console says its control
+// port is listening (sandbox.go controlUp). The loop's first attempt is made
+// at once regardless, because the guest may already be up; a later attempt is
+// brought forward the instant the hint fires, rather than at the end of
+// whatever backoff was in progress. The probing cadence itself is unchanged —
+// every probe is a CONNECT the VMM carries into a booting guest, and probing
+// faster measured slower — so the hint removes the wait without adding load.
+func (s *Sandbox) pushChannelCredential(timeout time.Duration, hint <-chan struct{}) error {
 	giveUp := time.After(timeout)
+	started := time.Now()
 	backoff := 25 * time.Millisecond
 	for {
 		err := s.tryPushCredential()
@@ -179,17 +188,50 @@ func (s *Sandbox) pushChannelCredential(timeout time.Duration) error {
 			return fmt.Errorf("the machine ended before it took its channel credential: %w", s.waitErr)
 		case <-giveUp:
 			return fmt.Errorf("the guest did not take its channel credential in time: %w", err)
+		case <-hint:
+			// Once. A closed channel would fire on every pass, turning the
+			// loop into a busy one if the first attempt after the hint fails.
+			hint = nil
+			continue
 		case <-time.After(backoff):
 		}
-		if backoff < time.Second {
+		// The cadence is the boot's: at most probeCap apart while a boot could
+		// still be in progress, then backing off to a second for a guest that
+		// is taking its time or never coming. Each attempt is one connect,
+		// not Connect's own retrying loop, so this select — and the hint — is
+		// reached between every pair of probes rather than once per two-second
+		// window (adversarial review 2026-09-02: the hint was unreachable
+		// behind Connect's internal retry, which is what made the loop's own
+		// cadence the only one that mattered).
+		ceiling := probeCapBooting
+		if time.Since(started) > probeBootWindow {
+			ceiling = time.Second
+		}
+		if backoff < ceiling {
 			backoff *= 2
+			if backoff > ceiling {
+				backoff = ceiling
+			}
 		}
 	}
 }
 
-// tryPushCredential is one control-channel round trip.
+// probeCapBooting is how far apart credential probes may be while the guest is
+// expected to be booting, and probeBootWindow is how long that expectation
+// lasts. Fifty milliseconds is what Connect's own retry cadence was before the
+// hint existed, and it stays: a probe is a CONNECT the VMM carries into a
+// guest that is busy booting, and probing every few milliseconds measured
+// slower under nested virtualisation, not faster. The hint is what makes the
+// probe land on time; the cadence only bounds the loss when it does not come.
+const (
+	probeCapBooting = 50 * time.Millisecond
+	probeBootWindow = 2 * time.Second
+)
+
+// tryPushCredential is one control-channel round trip: a single connect, not
+// Connect's retrying one, so the caller's loop owns the cadence and its hint.
 func (s *Sandbox) tryPushCredential() error {
-	conn, err := Connect(s.State.UDSPath, proto.PortControl, 2*time.Second)
+	conn, err := connectOnce(s.State.UDSPath, proto.PortControl, 2*time.Second)
 	if err != nil {
 		// The guest is not answering yet, which during a boot is ordinary.
 		return err

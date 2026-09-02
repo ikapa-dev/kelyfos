@@ -169,6 +169,28 @@ func main() {
 	guestEvents = events
 	go watchKmsg(reportGuestEvent)
 
+	// The control listener is bound first, ahead of the plugins and the other
+	// listeners: it is where the host's channel credential arrives, and the
+	// ready and events pumps hold their first dial until it has (credential.go).
+	// Every millisecond this port is not yet listening while the host is
+	// already probing for it is a millisecond on boot-to-ready, and with
+	// plugins to start below the gap would otherwise be their whole handshake.
+	// Nothing control serves needs what is set up after this point: ping,
+	// auth, trust, resync and shutdown all act on package-level state.
+	if ln, err := vsock.Listen(proto.PortControl); err != nil {
+		logf("cannot listen on control port %d: %v", proto.PortControl, err)
+	} else {
+		go serveControl(ln, shutdown)
+		// One console line, and the host's credential push wakes on it
+		// (internal/sandbox/channelauth.go). Without it the host can only
+		// probe the port, and each probe is a CONNECT the VMM has to carry
+		// into a guest that is busy booting: a probe every few milliseconds
+		// measured slower, not faster, under nested virtualisation. The line
+		// is a hint and nothing more — a guest that prints it early only
+		// brings a probe forward that would have failed and been retried.
+		logf(controlListeningMarker)
+	}
+
 	// Plugins start before readiness is announced, and the handshake with each
 	// one is paid for here rather than later.
 	//
@@ -217,12 +239,6 @@ func main() {
 	} else {
 		go serveForward(ln)
 	}
-	if ln, err := vsock.Listen(proto.PortControl); err != nil {
-		logf("cannot listen on control port %d: %v", proto.PortControl, err)
-	} else {
-		go serveControl(ln, shutdown)
-	}
-
 	go announceReady(start)
 
 	<-shutdown
@@ -393,6 +409,11 @@ func pumpReady(conn net.Conn, bootID string, start time.Duration) error {
 // logf writes to the console. There is no syslog and no log file: PID 1's
 // diagnostics have to reach a human before the machine has a filesystem worth
 // writing to.
+// controlListeningMarker is the console line the host watches for
+// (internal/sandbox/sandbox.go's drainConsole). Changing the text changes what
+// the host greps, so it is a constant here and quoted verbatim there.
+const controlListeningMarker = "control listening"
+
 func logf(format string, args ...any) {
 	fmt.Fprintf(os.Stderr, "kelyfos-supervisor: "+format+"\n", args...)
 }

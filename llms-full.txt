@@ -5794,6 +5794,18 @@ every refusal as a `channel.refused` event. A peer the kernel names as coming
 from another account is refused the same way (`SO_PEERCRED`, where the kernel
 says; the credential is the control either way).
 
+The push is timed by a hint rather than by polling. Once its `control` listener
+is bound, the supervisor prints one line to its console — `kelyfos-supervisor:
+control listening` — and the host, which reads the serial console anyway, makes
+its next `auth` attempt the moment that line arrives instead of at the end of
+its probe interval. The line is not part of the protocol and carries no trust:
+a guest that prints it early only brings forward a connect that fails and is
+retried, and a host that never sees it falls back to probing at the cadence it
+always used. It exists because every probe is a `CONNECT` the VMM has to carry
+into a guest that is busy booting, so probing faster costs the boot it is
+trying to shorten, while the hint lands the credential within a millisecond of
+the port existing.
+
 Three properties are deliberate:
 
 - **One credential per machine, not per port.** The ready, events and team
