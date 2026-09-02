@@ -526,7 +526,15 @@ jobs:
       # security-lab.yml, not here.
       - name: Security lab — the offline subset
         env:
-          KELYFOS_SEC_TAG: v1.2.0
+          # The security suites take the current release's guest image, and it
+          # has to be current: since v1.3.0 the CLI requires a channel
+          # credential the supervisor answers (audit 2026-09-01, A2/A3), so an
+          # image built before that handshake is refused at boot by design
+          # (docs/upgrading.md §9). Pinning this to the previous release would
+          # boot the new CLI against a supervisor that cannot authenticate its
+          # channels — the exact pairing this release makes unsupported. Bump
+          # it with each release, the way v1.2.0 was bumped in for its own.
+          KELYFOS_SEC_TAG: v1.3.0
         run: |
           set -o pipefail
           export KELYFOS_CACHE="$HOME/.cache/kelyfos-sec"

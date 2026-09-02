@@ -38,7 +38,7 @@ on:
       tag:
         description: "Release tag to take the dev guest image from"
         required: false
-        default: "v1.2.0"
+        default: "v1.3.0"
 
 permissions:
   contents: read
@@ -57,7 +57,7 @@ jobs:
     env:
       ARCH: x86_64
       SUITES: ${{ github.event.inputs.suites || 'secrets surfaces workspace team lifecycle' }}
-      KELYFOS_SEC_TAG: ${{ github.event.inputs.tag || 'v1.2.0' }}
+      KELYFOS_SEC_TAG: ${{ github.event.inputs.tag || 'v1.3.0' }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
