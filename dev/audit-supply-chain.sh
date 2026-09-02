@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # KelyfOS — supply-chain scanning of the guest image, against the Buildroot
-# layer the README admits is "taken on trust" (ST-4.4).
+# layer SECURITY.md and docs/hardening.md §5 admit is "taken on trust" (ST-4.4).
 #
 #   bash dev/audit-supply-chain.sh                       scan the built image
 #   bash dev/audit-supply-chain.sh old.cdx.json new.cdx.json   diff two SBOMs

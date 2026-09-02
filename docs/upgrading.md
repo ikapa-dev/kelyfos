@@ -281,7 +281,7 @@ milliseconds and shuts down as it always did.
 
 ---
 
-## 9. An old guest image can no longer boot against a new CLI (2026-09-01)
+## 9. An old guest image can no longer boot against a new CLI (v1.3.0)
 
 **The guest-initiated vsock channels now take a per-session credential**
 (`docs/protocol.md` §1.7; the independent audit's A2/A3, D99). The host
@@ -324,7 +324,7 @@ about — and D99 records the reasoning.
 
 ---
 
-## 10. On the `serve-mcp` door, a declared size is a ceiling (2026-09-01)
+## 10. On the `serve-mcp` door, a declared size is a ceiling (v1.3.0)
 
 **`[sandbox] vcpus` and `mem_mib` are ceilings on the `serve-mcp` door** (the
 independent audit's A8; docs/mcp-surface.md §1). On the command line they keep

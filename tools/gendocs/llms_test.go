@@ -29,7 +29,7 @@ var (
 )
 
 func TestLLMsIndexFollowsTheSpec(t *testing.T) {
-	doc := llmsIndex(48000)
+	doc := llmsIndex(48000, "v1.3.0 (2026-09-02)")
 
 	// An H1 with the project name, first, and exactly one of them.
 	lines := strings.Split(doc, "\n")
@@ -160,5 +160,30 @@ func TestEveryDocumentUnderDocsIsInTheLLMsSet(t *testing.T) {
 		t.Errorf("%s is not in docSet(), so llms-full.txt would not contain it "+
 			"while still calling itself every documentation page. Add an entry, "+
 			"or list it in `omitted` above with the reason.", rel)
+	}
+}
+
+// The release both machine-reader files name is read from CHANGELOG.md's newest
+// section rather than typed, so it cannot say v1.0 while v1.3.0 is the newest
+// tag — which is what the README's status block said for three releases before
+// the block was removed. The heading convention is the changelog's own; if it
+// changes, this fails before llms-full.txt starts naming nothing.
+func TestLLMsReleaseComesFromTheNewestChangelogSection(t *testing.T) {
+	got, err := changelogRelease("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !regexp.MustCompile(`^v[0-9]+\.[0-9]+(\.[0-9]+)? \([0-9]{4}-[0-9]{2}-[0-9]{2}\)$`).MatchString(got) {
+		t.Fatalf("changelogRelease = %q, want v<version> (<date>)", got)
+	}
+	full, err := llmsFull("../..", got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(full, "The release this describes is "+got) {
+		t.Errorf("llms-full.txt does not name the release %q", got)
+	}
+	if !strings.Contains(llmsIndex(1000, got), "The newest release is "+got) {
+		t.Errorf("llms.txt does not name the release %q", got)
 	}
 }

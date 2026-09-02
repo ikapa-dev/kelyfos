@@ -69,6 +69,21 @@ play() {
   printf '[sandbox]\nimage = "dev"\nallow = ["github.com"]\n\n' > single.toml
   cat kelyfos.toml >> single.toml
 
+  # Warm the fork template before anything is shown. This run has a private
+  # cache (D79), so without this the recorded `team up` is the first team of
+  # this shape the machine has ever booted: five cold boots at once, which under
+  # nested virtualisation take about five seconds each. The recording is meant
+  # to show what the second team of the day looks like — the workers forked in
+  # well under a second, the master cold because it has egress — which is the
+  # shape the README's five-agent figure describes. Nothing here is printed.
+  # The template is built in the background after the team is up, so wait for
+  # the line that says it was cached before tearing the team down; a teardown
+  # that arrives first cancels the build and the recording boots cold anyway.
+  (timeout 180 kelyfos team up > warm.log 2>&1 &)
+  for i in $(seq 1 240); do grep -q 'cached a fork template' warm.log 2>/dev/null && break; sleep 0.5; done
+  kelyfos team down > /dev/null 2>&1 || true
+  sleep 1
+
   # Not `clear`: it wants TERM, and the recorder's shell may not have one.
   printf '\033[2J\033[H'
   printf '\033[1;37m# KelyfOS — a sandbox an agent can only reach through tools\033[0m\n\n'

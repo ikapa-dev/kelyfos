@@ -57,7 +57,7 @@ jobs:
       # Linux and macOS, each in two architectures — and the release ships all
       # four, so measuring half of them left the two a macOS user actually
       # downloads outside the only check this project makes about them, while
-      # the table in the README reported on that check by name. The scope of a
+      # the README cited that check by name as the measurement. The scope of a
       # measurement is part of its result, and a scope narrower than the shipped
       # set is the kind of gap a reader would never think to ask about.
       - name: Build twice, from two different paths

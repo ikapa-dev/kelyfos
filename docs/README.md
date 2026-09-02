@@ -31,11 +31,13 @@ hand-written half, and this page says where each is still thin.
 | stuck on something KelyfOS refused | [`denials.md`](denials.md), then [`reference/denials.md`](reference/denials.md) for the exact one |
 | running something long and walking away | [`denials.md`](denials.md) on `--notify`, and [`events.md`](events.md) §6 for the history afterwards |
 | keeping an agent off the network | [`networking.md`](networking.md) |
-| after something that works, right now | [`cookbook.md`](cookbook.md) — twenty-one recipes, each one runnable as it stands |
+| after something that works, right now | [`cookbook.md`](cookbook.md) — twenty-five recipes, each one runnable as it stands |
 | putting KelyfOS inside something else | [`integrating.md`](integrating.md) |
 | building KelyfOS into something else | [`protocol.md`](protocol.md), then [`e2b-shim.md`](e2b-shim.md) |
 | driving KelyfOS from an MCP client | [`mcp-surface.md`](mcp-surface.md) — `serve-mcp` and `[[plugin]]`, and [recipe 9](cookbook.md) for the configuration |
 | judging whether to trust it | [`threat-model.md`](threat-model.md), then [`hardening.md`](hardening.md) for what v0.9 added |
+| checking which security claims a test actually exercises | [`security-assertions.md`](security-assertions.md) — the claim → assertion matrix, with the unchecked rows named |
+| moving to a newer release | [`upgrading.md`](upgrading.md) — what broke between versions and what to do about it, plus [`../CHANGELOG.md`](../CHANGELOG.md) |
 | what the VMM process itself may ask the host kernel for | [`host-seccomp.md`](host-seccomp.md) — every syscall the filter permits, read out of a running machine |
 
 ## The map
@@ -59,7 +61,9 @@ hand-written half, and this page says where each is still thin.
 | [`hardening.md`](hardening.md) | concept | The v0.9 specification, written before the code: what a compromised agent reaches today, what the jailer and the guest profiles take away, and what remains reachable afterwards. |
 | [`host-seccomp.md`](host-seccomp.md) | mixed | The syscall filter around the VMM process: which one is in force and why that is settled, how it is proved from the kernel's own copy rather than from the absence of a flag, and every syscall it permits. |
 | [`threat-model.md`](threat-model.md) | concept | What KelyfOS defends against and — the longer half — what it does not. |
-| [`cookbook.md`](cookbook.md) | recipes | Twenty-one complete, copy-pasteable recipes. Every one is a script CI extracts and runs on a real machine. |
+| [`security-assertions.md`](security-assertions.md) | mixed | The claim → assertion matrix: every load-bearing claim in `threat-model.md` and the README's security table, mapped to the suite assertion that checks it, with the unchecked ones marked as such. |
+| [`upgrading.md`](upgrading.md) | mixed | What breaks between releases and what to do about it, one section per break, and what has never broken. |
+| [`cookbook.md`](cookbook.md) | recipes | Twenty-five complete, copy-pasteable recipes. Every one is a script CI extracts and runs on a real machine. |
 | [`integrating.md`](integrating.md) | mixed | For building on KelyfOS: the four ways in, orchestrator patterns, and a long list of the mistakes people actually make. |
 | [`e2b-shim.md`](e2b-shim.md) | mixed | The E2B-compatible REST subset: what it implements, what it does not, and why. |
 | [`../llms.txt`](../llms.txt) | **generated** | The index a machine reads first: every page above as a link with a one-line description, per the llmstxt.org spec. |
@@ -124,8 +128,8 @@ re-listing it, so six of the seven cannot go stale by the mechanism that already
 keeps the reference honest (F-D4). The seventh is the host↔guest protocol, whose
 page is hand-written and checked by no drift gate; the promise says so itself
 rather than letting the citation imply otherwise.
-*Thin:* it is normative from v1.0 and this repository is at v0.9, so nothing in
-it binds yet. §4's deprecation mechanism has not been used: `vcpus`, which
+*Thin:* it has been normative since v1.0, and §4's deprecation mechanism has
+not yet been used: `vcpus`, which
 `kelyfos run` describes as an alias kept so v0.3 command lines keep working, is
 still accepted in silence by both the flag and `kelyfos.toml`.
 
@@ -207,7 +211,7 @@ neither refusal mentions the other, so a user who follows the first message hits
 the second; `team ps` has no sample output; the store's `not_found` is described as
 "not a refusal" and is recorded as one.
 
-### `cookbook.md` — twenty things that work
+### `cookbook.md` — twenty-five things that work
 
 *Recipes:* one sandbox; an allowlist and an injected credential; a workspace
 round-trip; snapshot and fork; a three-agent team with an ask round-trip and a
@@ -406,6 +410,25 @@ are undocumented — the endpoint table says what exists and not what it looks
 like. The `E2B_API_KEY` value it tells you to export disagrees with the one
 `kelyfos shim --help` prints.
 
+### `security-assertions.md` — the claim → assertion matrix
+
+*Concept:* why a security claim nobody tests is listed as unchecked rather than
+left out, and how the matrix is grouped by the threat each claim answers.
+*Reference:* every row — the claim, the suite file and the assertion that checks
+it — is a statement about the test tree, and goes stale when a suite is renamed
+or a claim reworded.
+*Thin:* compiled by hand at ST-6.4 and kept by review; no gate compares its rows
+to the suites, so a suite that drops an assertion leaves the row standing.
+
+### `upgrading.md` — what broke, and what to do
+
+*Concept:* one section per break, in the order they shipped, and a closing list
+of what has never broken. *Reference:* the exact refusal strings a reader will
+see, and the commands that clear each one.
+*Thin:* it is written when a break is made, so a break nobody noticed making has
+no section. Sections are numbered by order of arrival, and other documents cite
+those numbers, so a section is never removed or renumbered.
+
 ## Not written down yet
 
 The parts of the product with no documentation at all. Code-derived rather than
@@ -457,3 +480,10 @@ and has not been paid.
 4. **Shipped with the feature.** From E3 onward no epic closes until the
    generated reference, `llms-full.txt` and the recipes cover what it added
    (F-D9).
+5. **Checked against each other.** `bash dev/docs-align.sh` is the checklist
+   for what no generator reaches: that every relative link resolves, that every
+   page under `docs/` is on this map and in the llms set, that the recipe count
+   is quoted the same everywhere, that `upgrading.md` names releases rather
+   than dates, that the two llms files name the changelog's newest release, and
+   what the hosted workflows a page reports on last said. It lists the places
+   that describe the README so a rewrite of it can be checked by hand.

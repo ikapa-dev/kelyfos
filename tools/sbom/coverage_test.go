@@ -133,11 +133,11 @@ func TestEverySBOMSubjectIsABinaryTheSBOMRead(t *testing.T) {
 	}
 }
 
-// The README publishes a table of what rebuilds byte-identically, sourced from
-// the repro-check workflow, and the scope of that measurement is part of its
+// The README points at the repro-check workflow as the measurement of what
+// rebuilds byte-identically, and the scope of that measurement is part of its
 // result. A check that measured the Linux pair while the release shipped four
 // binaries left the two a macOS user downloads outside the only statement this
-// project makes about them — under a heading that named the check by its own
+// project makes about them — under a name the README cites by its own
 // filename.
 //
 // So every binary the release ships has to be one every glob in that job

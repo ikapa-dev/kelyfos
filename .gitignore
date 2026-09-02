@@ -34,8 +34,10 @@
 /team.html
 /*.log
 
-# Local tool settings, not project configuration.
-/.claude/
+# Local tool settings, not project configuration. The skills directory is the
+# exception: a skill is a committed procedure, like the scripts under dev/.
+/.claude/*
+!/.claude/skills/
 
 # The seccomp probe leaves what it observed here when no record for this
 # architecture is committed yet; the record itself is tracked.

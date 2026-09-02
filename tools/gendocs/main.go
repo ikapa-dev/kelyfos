@@ -100,11 +100,15 @@ func run(bin, sup, out, repo string) error {
 
 	// The two machine-reader files at the repository root (E3-2). They are
 	// written last because llms-full.txt concatenates what was just generated.
-	full, err := llmsFull(repo)
+	release, err := changelogRelease(repo)
 	if err != nil {
 		return err
 	}
-	index := llmsIndex(tokenEstimate(full))
+	full, err := llmsFull(repo, release)
+	if err != nil {
+		return err
+	}
+	index := llmsIndex(tokenEstimate(full), release)
 	for name, body := range map[string]string{"llms.txt": index, "llms-full.txt": full} {
 		if err := os.WriteFile(filepath.Join(repo, name), []byte(body), 0o644); err != nil {
 			return err

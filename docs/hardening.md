@@ -32,9 +32,10 @@ sentence that says "hardened" and stops would be a worse lie than the one it
 replaced.
 
 *Replaced at P5-4.* The README now carries a two-part statement in both places
-the old sentence appeared — a table of what is enforced, and a list of what is
-not, the second longer than the first. The word "hardened" does not appear in
-either as a claim about the product. What replaced it can be checked against §5
+the old sentence appeared: a table of what is enforced under its Security
+heading, followed by what is not, and a first-screen note that an agent is
+still root inside its own guest and the VM is the boundary. The word
+"hardened" does not appear in either as a claim about the product. What replaced it can be checked against §5
 below, which was written before any of it was built for exactly that purpose.
 
 ---

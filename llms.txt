@@ -2,6 +2,8 @@
 
 > A minimal guest operating system for Firecracker microVMs, whose PID 1 is an MCP server. An agent attached to a sandbox reaches it only through tools: there is no shell login, no SSH, and no network interface at all unless the policy names a domain. Credentials stay on the host and are attached by an egress proxy, so the value never exists inside the guest. Every tool call, every file write and every connection attempt is recorded by the host in a hash-chained log the guest cannot edit.
 
+The newest release is v1.3.0 (2026-09-02); CHANGELOG.md names what each one changed.
+
 Single host, no control plane, no hosted service. `kelyfos run` boots one sandbox; `kelyfos team up` boots a declared graph of them with the paths between them enforced by a host broker. Everything is configured by a committed `kelyfos.toml` and flags that may ask for less than it allows, never more.
 
 The reference pages are generated from the source on every commit and CI fails when they disagree with it, so a flag or a key found there exists. The concept pages are written by hand.
@@ -46,7 +48,7 @@ Apache-2.0. Single-host developer tool, not a multi-tenant sandbox for hostile c
 
 ## Optional
 
-- [Everything in one file](https://raw.githubusercontent.com/ikapa-dev/kelyfos/main/llms-full.txt): every page above concatenated, roughly 224k tokens, for a client that would rather spend context than fetch
+- [Everything in one file](https://raw.githubusercontent.com/ikapa-dev/kelyfos/main/llms-full.txt): every page above concatenated, roughly 225k tokens, for a client that would rather spend context than fetch
 - [Roadmap](https://raw.githubusercontent.com/ikapa-dev/kelyfos/main/docs/roadmap.md): what was built, phase by phase and epic by epic, and the task identifiers the source comments cite
 - [Decision log](https://raw.githubusercontent.com/ikapa-dev/kelyfos/main/docs/decisions.md): every irreversible choice with the reasoning that produced it; the source cites these by number
 - [Decision log, feature epics](https://raw.githubusercontent.com/ikapa-dev/kelyfos/main/docs/decisions-features.md): the same for E1-E5, cited from comments as F-D<n>

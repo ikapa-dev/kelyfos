@@ -1,6 +1,6 @@
 # KelyfOS threat model
 
-**Status:** current as of v0.9. This document is a launch gate (P3-5) and is
+**Status:** current as of v1.3.0. This document is a launch gate (P3-5) and is
 meant to be read before anyone trusts KelyfOS with anything.
 
 Its job is to be honest about the shape of the protection, including where it

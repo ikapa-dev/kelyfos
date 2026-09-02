@@ -38,6 +38,9 @@ with no `--allow` — no network interface at all.
 
 ```bash
 set -euo pipefail
+work="$(mktemp -d)"
+cd "$work"
+trap 'rm -rf "$work"' EXIT
 
 # The shortest useful thing: boot a sandbox, run something in it, tear it down.
 # `run -- <command>` gives the sandbox the command's lifetime, exports

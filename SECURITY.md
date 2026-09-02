@@ -138,7 +138,7 @@ time, but it will be answered with a link rather than a fix.
   images themselves has no task and no date, and the compiler and the upstream
   tarballs are taken on trust, checked by checksum against what upstream
   published and no further. A report that the layer beneath Buildroot is
-  unverified tells us something we say ourselves, in the README and in
+  unverified tells us something we say ourselves, in
   [`docs/hardening.md`](docs/hardening.md) §5.
 - **Anything that requires already having code execution as the invoking user on
   the host.** At that point the sandbox is not the boundary that failed.
