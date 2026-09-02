@@ -13,7 +13,7 @@ KelyfOS is a minimal guest OS for [Firecracker](https://firecracker-microvm.gith
 - **Egress is off, not filtered.** Without `--allow` the VM has no network interface at all.
 - **Secrets never enter the guest.** `--secret GITHUB_TOKEN@api.github.com` keeps the value on the host; a proxy attaches it on the way out.
 - **The record is written by the host.** Hash-chained, exportable, and verifiable offline with `kelyfos verify report.html`.
-- **Fast.** Cold boot to ready in ~134 ms, snapshot restore in ~48 ms, a five-agent team in under a second.
+- **Fast.** Cold boot to ready in ~150 ms, snapshot restore in ~50 ms, a five-agent team in about half a second.
 
 > An agent is still root inside its own guest, and the VM is the boundary. Read [`docs/threat-model.md`](docs/threat-model.md) before trusting KelyfOS with anything.
 
@@ -187,13 +187,15 @@ What is **not** covered: KelyfOS is a single-host developer tool, not a multi-te
 
 ## Performance
 
-Measured by workflows in this repository on a stock `ubuntu-latest` GitHub runner with KVM, never by hand. Numbers on a Mac are 6–8× slower because of nested virtualisation.
+Measured by workflows in this repository on a stock `ubuntu-latest` GitHub runner with KVM, never by hand, and re-measured after each release. Numbers on a Mac are 6–8× slower because of nested virtualisation.
 
 | Figure | Result | Measured by |
 | --- | --- | --- |
-| Cold boot to ready | 134 ms median, 10 runs | [`bench.yml`](.github/workflows/bench.yml) |
-| Snapshot restore | 48 ms median, 10 runs | [`bench.yml`](.github/workflows/bench.yml) |
-| Five-agent team up | 343–543 ms, single runs | [`caps.yml`](.github/workflows/caps.yml) |
+| Cold boot to ready | 152 ms median, 10 runs (146–159 ms) | [`bench.yml`](.github/workflows/bench.yml), v1.3.0, 2026-09-02 |
+| Snapshot restore | 48 ms median, 10 runs (45–54 ms) | [`bench.yml`](.github/workflows/bench.yml), v1.3.0, 2026-09-02 |
+| Five-agent team up | 524 ms cold, 361 ms with forked workers, single runs | [`caps.yml`](.github/workflows/caps.yml), v1.3.0, 2026-09-02 |
+
+Boot was 134 ms at v1.0; the v1.3.0 channel handshake sits on the boot path. Both bars, ≤ 300 ms cold and ≤ 100 ms restore, hold.
 
 ## Building from source
 
