@@ -103,7 +103,18 @@ func snapshotSave(argv []string) error {
 		return err
 	}
 	started := time.Now()
-	state, mem, err := sandbox.SnapshotRunning(st, dir)
+	// The pause, snapshot.create and resume this performs go into the running
+	// machine's own chain as vmm.api events (audit 2026-09-01, A11): a save is
+	// a state-changing API action a reader of the transcript is entitled to
+	// see. The chain stays open — the machine keeps running — so the recorder
+	// is opened for this action and closed again (adversarial review
+	// 2026-09-01: this door recorded nothing before).
+	var onVMM func(string)
+	if rec, err := recorder.Open(sandbox.Root(), st.RecordSession()); err == nil {
+		defer rec.Close()
+		onVMM = vmmActionRecorder(rec, "")
+	}
+	state, mem, err := sandbox.SnapshotRunning(st, dir, onVMM)
 	if err != nil {
 		return err
 	}

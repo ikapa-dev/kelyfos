@@ -378,12 +378,14 @@ One outbound connection attempt. Written from P2-5.
 | `host` | string | Requested host. |
 | `port` | integer | Requested port. |
 | `allowed` | boolean | Whether policy permitted it. |
-| `reason` | string | Why it did not go through. See below. |
+| `reason` | string | Why it did not go through — or, on an allowed attempt, why the proxy ended it. See below. |
 | `mode` | string | How much the proxy could read: `tunnelled` (a `CONNECT` it relayed unopened), `terminated` (a secret-bound domain it decrypted), `plain` (ordinary HTTP, which it necessarily read in full), or `direct_tls` (an absolute-form `https://` request sent straight to the proxy with no `CONNECT`, fetched over a real TLS connection the proxy performed itself). **Required whenever `allowed` is true.** |
 | `bytes_in`, `bytes_out` | integer | Transferred, when the connection closed. |
+| `error` | object | `{kind, message}` when `reason` is `upstream_unreachable` and the transport said why — a dial timeout, a name that resolved to nothing, a TLS failure. Redacted by an erasure like every other free-text field. |
 | `agent` | string | Present inside a team: which agent's proxy this was. |
 
-`reason` is one of five, and only the first is a policy refusal:
+`reason` is one of seven, and only the first is a policy refusal; the last two
+are the only ones that can sit beside `allowed: true`:
 
 | `reason` | Meaning |
 | --- | --- |
@@ -392,6 +394,8 @@ One outbound connection attempt. Written from P2-5.
 | `bad_request` | The proxy could not parse the request or its target, or could not mint a certificate for a secret-bound domain. `host` and `port` may be absent. |
 | `upstream_unreachable` | Policy allowed it and the dial failed. |
 | `tls_pinning_rejected_our_ca` | A secret-bound domain was terminated and the TLS handshake with the guest failed. Pinning is the common cause and the one worth naming — a pinned client refusing the run's CA is behaving correctly — but any handshake failure on a terminated domain lands here (`docs/networking.md` §6). |
+| `stalled` | The proxy closed it: no bytes in either direction of a tunnel for five minutes, or a plain request's body idle for ten seconds. On an allowed attempt the transfer had begun; on a refused one the guest's own request never completed. |
+| `ceiling_reached` | The proxy closed it at the one-hour connection ceiling, whatever the time was spent on. Same allowed/refused reading as `stalled`. |
 
 `mode` exists because of decision D6, and answers exactly one question: how much
 of this connection could the host read? `tunnelled` means nothing — a `CONNECT`
@@ -499,26 +503,30 @@ proxy whose record understates what the host did — the same reasoning that mad
 answers "how much could it see"; this answers "did it change anything".
 
 ### `secret.unscrubbable`
-A response from a credential-bound origin arrived compressed, and the echo
-suppression cannot match inside an encoding — so the guest received a body the
-proxy cannot vouch for. Written from the independent audit of 2026-09-01 (A4),
-which demonstrated the leak end to end: an origin that echoes rejected
-Authorization headers inside a gzipped body used to hand the guest the
-credential while the proxy's record showed only `secret.scrubbed` events from
-its plain-echo checks.
+A response from a credential-bound origin arrived compressed, the echo
+suppression cannot match inside an encoding — and the response was **refused**:
+the guest read a `502` naming the encoding and the host in the body's place,
+the connection closed, and nothing of the origin's answer was delivered.
+Written from the independent audit of 2026-09-01 (A4), which demonstrated the
+leak end to end: an origin that echoes rejected Authorization headers inside a
+gzipped body used to hand the guest the credential while the proxy's record
+showed only `secret.scrubbed` events from its plain-echo checks. The first fix
+delivered the body and recorded this event; the adversarial review of
+2026-09-01 (H4) is why it now means "refused, not delivered".
 
 The proxy asks credentialed origins not to compress — `Accept-Encoding:
-identity` on the terminated and plain-HTTP legs — so a compliant origin never
-triggers this. An origin that ignores that gets its body passed through
-unread, and this event is what that costs: recorded instead of the silence
-that used to sit here. It is the one event in this file that says "the value
-may have reached the guest and nothing could be done", which is precisely a
-fact a reader of the record needs.
+identity` on the terminated and plain-HTTP legs — so an origin that negotiates
+never triggers this. Two kinds do: one that compresses regardless of the
+request (httpbin's `/gzip`), and one serving pre-compressed objects with
+`Content-Encoding` in the object's own metadata (an object store), which is
+refused on every fetch of such an object while a credential is bound. Every
+`Content-Encoding` line and coding is checked; responses that carry no body —
+HEAD, 204, 304 — are delivered with no event.
 
 | Field | Type | Meaning |
 | --- | --- | --- |
-| `host` | string | The domain whose response was compressed. |
-| `mode` | string | The `Content-Encoding` the response named — gzip, deflate, br, whatever the origin sent. |
+| `host` | string | The domain whose compressed response was refused. |
+| `mode` | string | The content codings the response named that the scrubber cannot see through, normalised to gzip, deflate, br, compress, zstd — or other; `identity` omitted. |
 | `agent` | string | Present inside a team: whose credential was bound. |
 
 ### `team.message` and `team.refused`
@@ -857,16 +865,19 @@ refusal is the host's own act — `"source": "host"` — made before anything th
 peer sent past the credential frame could reach the chain, so the event is
 evidence of an attempt, never a record of what the attempt carried.
 
-The first frames of every boot usually show one or two of these at low
-sequence numbers: the supervisor dials the moment its listeners are bound, and
-the credential arrives over `control` a moment later. What matters is the
-pattern — a steady stream of refusals from boot to teardown is something
-trying to forge the record, and everything it sent died at the gate.
+An ordinary boot shows none of these: the supervisor holds its first ready and
+events dial until the host's credential has landed over `control` (adversarial
+review 2026-09-01), so the dials it makes are the ones it can authenticate. A
+refusal here is therefore something worth reading — a same-uid host process or
+an in-guest process that dialled a guest channel without the session's
+credential — and a steady stream of them from boot to teardown is something
+trying to forge the record, everything it sent dead at the gate.
 
 | Field | Type | Meaning |
 | --- | --- | --- |
 | `port` | integer | The channel that refused the connection: 10100, 10101 or 10102. |
-| `reason` | string | Why — no credential was presented, the credential presented was not this session's, or the peer was not this user. |
+| `reason` | string | Why — no credential was minted for this session, no credential was presented, the credential presented is not this session's, or the peer is not this user. |
+| `agent` | string | Present inside a team: whose machine's channel refused the connection. |
 
 ### `vmm.api`
 A state-changing Firecracker API call the host itself made — pause, resume,

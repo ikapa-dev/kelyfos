@@ -50,3 +50,31 @@ func TestASecretCannotBindToABareTLD(t *testing.T) {
 		t.Errorf("a real credential binding was refused: %v", err)
 	}
 }
+
+// The audit of 2026-09-01's M3/L13: A6 split an allow entry on "." to count its
+// labels, so an IPv6 literal — one group when split on "." — was read as a
+// bare top-level domain and refused, a host that was accepted before A6. An IP
+// literal is one host, not a whole-TLD grant, and is exempt from the bare-TLD
+// refusal at every door it enters.
+func TestAnIPLiteralAllowEntryIsNotABareTLD(t *testing.T) {
+	for _, ip := range []string{"2001:db8::1", "::1", "192.0.2.1", "[2001:db8::1]", "fe80::1"} {
+		if err := CheckAllowList([]string{ip}); err != nil {
+			t.Errorf("an IP-literal allow entry (%q) was refused: %v", ip, err)
+		}
+	}
+	// The refusal it must not swallow still fires for an actual bare TLD.
+	if err := CheckAllowList([]string{"org"}); err == nil {
+		t.Error("a bare TLD is no longer refused; the IP exemption is too wide")
+	}
+
+	// validDomain — the credential door's predicate — shares the exemption, so
+	// an IP literal is a domain a request could reach, and a bare TLD is not.
+	for _, ip := range []string{"2001:db8::1", "192.0.2.1", "[2001:db8::1]"} {
+		if !validDomain(ip) {
+			t.Errorf("validDomain refused an IP literal as if it were a bare TLD: %q", ip)
+		}
+	}
+	if validDomain("org") {
+		t.Error("validDomain accepted a bare TLD after the IP exemption")
+	}
+}

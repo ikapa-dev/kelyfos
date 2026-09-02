@@ -256,6 +256,14 @@ type Sandbox struct {
 	// an eventual boot timeout into a named refusal.
 	authMu          sync.Mutex
 	authUnsupported error
+	// authUnsupportedCh is closed once, by the credential-pushing goroutine,
+	// when the guest reveals it is too old to take a credential. WaitReady
+	// selects on it so an old image is refused the moment the guest says so,
+	// not after the whole ready timeout expires (adversarial review
+	// 2026-09-01). Nil on fixture sandboxes that never push; a nil channel in
+	// a select simply never fires, which is the right behaviour there.
+	authUnsupportedCh   chan struct{}
+	authUnsupportedOnce sync.Once
 	// profileError is why the guest could not confine what it spawns, when it
 	// could not. Kept off State because it is a fault to report rather than a
 	// fact to record: a machine that has one does not become a session.
@@ -345,6 +353,7 @@ func New(opts Options) (*Sandbox, error) {
 		return nil, fmt.Errorf("mint channel credential: %w", err)
 	}
 	s.channelAuth = auth
+	s.authUnsupportedCh = make(chan struct{})
 
 	cfg := firecrackerConfig(opts, kernel, rootfs, s.State.UDSPath, id)
 	if opts.Workspace != nil {
@@ -684,6 +693,12 @@ func (s *Sandbox) serveEvents() {
 			if !s.authenticate(r, conn, proto.PortEvents) {
 				return
 			}
+			// The first-frame deadline covered the credential; clear it now,
+			// or a guest that reports events sparsely over the machine's life
+			// is cut ten seconds after it authenticates and re-dials on every
+			// gap (F5, and the reset serveTeam already had — adversarial
+			// review 2026-09-01, the events/ready listeners had lost it).
+			_ = conn.SetReadDeadline(time.Time{})
 			for {
 				var ev proto.GuestEvent
 				if err := r.Read(&ev); err != nil {
@@ -847,11 +862,22 @@ func (s *Sandbox) WaitReady(ctx context.Context) (proto.Ready, error) {
 		return r, nil
 	case <-s.done:
 		return proto.Ready{}, fmt.Errorf("firecracker exited before the guest was ready: %w", s.waitErr)
+	case <-s.authUnsupportedCh:
+		// The guest answered the auth op with bad_request: it predates the
+		// credential handshake, so every ready frame it sends is refused and
+		// it can never become ready. Surface the named refusal the moment the
+		// guest says so, rather than after the ready timeout (adversarial
+		// review 2026-09-01) — the boot is already lost.
+		_ = s.Shutdown(2 * time.Second)
+		if err := s.authUnsupportedReason(); err != nil {
+			return proto.Ready{}, err
+		}
+		return proto.Ready{}, errAuthUnsupported
 	case <-ctx.Done():
-		// The commonest cause of a boot that never becomes ready under this
-		// CLI is a guest that cannot take its channel credential — every
-		// ready frame it sends is refused, so it never becomes ready. When
-		// the guest said so itself, that is the refusal, not the timeout.
+		// A boot that never became ready for some other reason. If the guest
+		// had in fact revealed it was too old, prefer that named refusal to a
+		// bare timeout (the select above usually wins this race, but a very
+		// short ctx could not).
 		if err := s.authUnsupportedReason(); err != nil {
 			_ = s.Shutdown(2 * time.Second)
 			return proto.Ready{}, err
@@ -1051,7 +1077,14 @@ func ReadSnapshotMeta(dir string) (*SnapshotMeta, error) {
 	return &meta, nil
 }
 
-func SnapshotRunning(st *State, dir string) (statePath, memPath string, err error) {
+// SnapshotRunning pauses a running machine, captures its state and memory, and
+// resumes it, from a process that did not start the machine (kelyfos snapshot
+// save, sessions pause, the MCP sandbox_snapshot tool). onAction records each
+// state-changing VMM API call the pause/create/resume makes into the machine's
+// own chain (audit 2026-09-01, A11); it was nil on this path until the
+// adversarial review of 2026-09-01 found these three doors snapshotting with
+// nothing in the transcript. nil is allowed, for callers that record elsewhere.
+func SnapshotRunning(st *State, dir string, onAction func(action string)) (statePath, memPath string, err error) {
 	if st.APIPath == "" {
 		return "", "", fmt.Errorf("sandbox %s was started by an older kelyfos with no API socket", st.ID)
 	}
@@ -1071,6 +1104,7 @@ func SnapshotRunning(st *State, dir string) (statePath, memPath string, err erro
 	}
 
 	a := newAPI(st.APIPath)
+	a.onAction = onAction
 	if err := a.pause(); err != nil {
 		return "", "", err
 	}
@@ -1239,6 +1273,7 @@ func Restore(snapDir string, opts Options) (*Sandbox, time.Duration, error) {
 		return nil, 0, fmt.Errorf("mint channel credential: %w", err)
 	}
 	s.channelAuth = auth
+	s.authUnsupportedCh = make(chan struct{})
 	// The guest's channels must exist before it runs again: a restored guest
 	// reconnects its outbound channels immediately (docs/protocol.md §1.6).
 	ln, err := net.Listen("unix", fmt.Sprintf("%s_%d", s.State.UDSPath, proto.PortReady))
@@ -1912,6 +1947,12 @@ func (s *Sandbox) serveReady() {
 			if !s.authenticate(r, conn, proto.PortReady) {
 				return
 			}
+			// Clear the first-frame deadline once the credential is in: the
+			// ready frame and then a heartbeat every few seconds must not be
+			// read against a ten-second bound, or the host cuts the channel
+			// mid-life and the guest re-dials on every gap (adversarial
+			// review 2026-09-01).
+			_ = conn.SetReadDeadline(time.Time{})
 			for {
 				var msg struct {
 					proto.Ready

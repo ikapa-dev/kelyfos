@@ -2,9 +2,11 @@ package egress
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
+	"unicode/utf8"
 )
 
 // Echo suppression (P6-5, decision D37).
@@ -184,7 +186,11 @@ func (r *scrubReader) Close() error { return r.src.Close() }
 
 // scrubResponse replaces any bound credential a server echoed back, in the
 // headers, in the body, and in the trailers, before any of it reaches the
-// guest.
+// guest — and reports the Content-Encoding that made the body impossible to
+// read when there is one, so the caller can refuse the response rather than
+// deliver a body the echo suppression could not check (audit 2026-09-01, H4).
+// The return is "" when the guest may have the body; a non-empty encoding
+// means nothing was delivered and the caller writes a 502.
 //
 // Headers as well as the body because the plainest echo of all is a server
 // quoting the Authorization header it rejected straight back in an error.
@@ -194,18 +200,21 @@ func (r *scrubReader) Close() error { return r.src.Close() }
 // the moment the transport fills them in — before resp.Write, the only thing
 // that writes them, reads the map.
 //
-// A response that arrives with a Content-Encoding this cannot match is not
-// silently passed: the encoding is reported (OnUnscrubbable) and the body
-// goes on as it came, because byte-matching inside an encoding matches
-// nothing.
-func (p *Proxy) scrubResponse(resp *http.Response, host string) {
+// A body-less response — HEAD, 204, 304, http.NoBody — has no body to be
+// unable to read, so it is delivered with no event whatever its
+// Content-Encoding header claims. Anything else that arrives in an encoding
+// this cannot match — every Content-Encoding line, every comma-separated
+// coding, checked case-insensitively (L12) — is reported (OnUnscrubbable) and
+// refused: the first pass passed the compressed body through and only recorded
+// it, which still handed the guest a credential gzip does not hide (H4).
+func (p *Proxy) scrubResponse(resp *http.Response, host string) string {
 	s := newScrubber(p.Policy.secretsFor(host), func(name string) {
 		if p.OnScrubbed != nil {
 			p.OnScrubbed(name, host)
 		}
 	})
 	if s == nil {
-		return
+		return ""
 	}
 	for k, vs := range resp.Header {
 		for i, v := range vs {
@@ -215,13 +224,89 @@ func (p *Proxy) scrubResponse(resp *http.Response, host string) {
 			}
 		}
 	}
-	if enc := resp.Header.Get("Content-Encoding"); enc != "" && !strings.EqualFold(enc, "identity") {
+	// Body-less first: a HEAD/204/304 answer carrying Content-Encoding: gzip
+	// leaks nothing, so it is delivered as it came with no spurious event.
+	if bodyless(resp) {
+		return ""
+	}
+	if enc := unscrubbableEncoding(resp.Header); enc != "" {
 		if p.OnUnscrubbable != nil {
 			p.OnUnscrubbable(host, enc)
 		}
-		return
+		return enc
 	}
 	resp.Body = &trailerScrubReader{src: s.wrap(resp.Body), resp: resp, s: s}
+	return ""
+}
+
+// bodyless reports whether a response carries no body to scrub — a HEAD
+// response, a 204 or 304, or an explicit http.NoBody. Such a response leaks no
+// credential however it is encoded, so scrubResponse delivers it unrefused.
+func bodyless(resp *http.Response) bool {
+	if resp.Body == http.NoBody {
+		return true
+	}
+	if resp.Request != nil && resp.Request.Method == http.MethodHead {
+		return true
+	}
+	switch resp.StatusCode {
+	case http.StatusNoContent, http.StatusNotModified:
+		return true
+	}
+	return false
+}
+
+// unscrubbableEncoding reports the Content-Encoding that makes a response body
+// impossible for the byte-based echo suppression to read, or "" when the body
+// is identity or unencoded. It checks EVERY Content-Encoding header line
+// (Header.Values, not Get's first) and every comma-separated coding within
+// each, case-insensitively: "identity, gzip" is gzip, and a second
+// "Content-Encoding: br" line after a first "identity" is br (L12). br is
+// refused, not decoded — decoding it would mean a new dependency and a
+// re-compress that breaks the byte-for-byte framing this proxy preserves.
+func unscrubbableEncoding(h http.Header) string {
+	for _, line := range h.Values("Content-Encoding") {
+		for _, coding := range strings.Split(line, ",") {
+			coding = strings.TrimSpace(coding)
+			if coding == "" || strings.EqualFold(coding, "identity") {
+				continue
+			}
+			return coding
+		}
+	}
+	return ""
+}
+
+// maxRefusedEncoding bounds how much of the origin-supplied encoding name the
+// refusal body repeats. An encoding token is a short word; a hostile origin's
+// is whatever it likes, and this string reaches the guest.
+const maxRefusedEncoding = 64
+
+// unscrubbableRefusal is the body of the 502 a leg sends when it refuses a
+// response whose encoding the echo suppression cannot read (audit 2026-09-01,
+// H4). It names the host and the encoding — the encoding clipped, on a rune
+// boundary — and never a header value or a body byte, which is the thing being
+// withheld.
+func unscrubbableRefusal(host, enc string) string {
+	if len(enc) > maxRefusedEncoding {
+		enc = enc[:maxRefusedEncoding]
+		for len(enc) > 0 && !utf8.ValidString(enc) {
+			enc = enc[:len(enc)-1]
+		}
+	}
+	return fmt.Sprintf("kelyfos: the response from %s arrived %q-encoded, which the "+
+		"credential echo suppression cannot read, so it was refused rather than "+
+		"delivered unchecked", host, enc)
+}
+
+// askForIdentity replaces a request's Accept-Encoding with identity, so an
+// origin with a credential bound answers uncompressed and the echo suppression
+// can read the reply (audit 2026-09-01, A4/H4). Replaced, not appended:
+// leaving the guest's own gzip in place would let a compliant origin still
+// compress. The terminated leg and the plain-HTTP leg both call it where a
+// credential is bound.
+func askForIdentity(req *http.Request) {
+	req.Header.Set("Accept-Encoding", "identity")
 }
 
 // trailerScrubReader scrubs the response's trailers at body EOF.

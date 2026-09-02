@@ -182,6 +182,25 @@ var (
 			"file": "/home/you/project/kelyfos.toml", "line": "12"},
 	}
 
+	// CeilingToolLegacy is an MCP tool call over a legacy [sandbox] size key —
+	// vcpus or mem_mib. On the CLI those keys are defaults a flag may exceed;
+	// on this door the tool schema promises "at most what the policy allows",
+	// so a declared size is a ceiling whichever key spells it (audit
+	// 2026-09-01, A8). Its own entry rather than CeilingTool's because the fix
+	// is different: the size lives in [sandbox], not [resources], and it has no
+	// line to name — config does not track the legacy keys' positions.
+	CeilingToolLegacy = Denial{
+		ID: "ceiling.tool_legacy",
+		Doc: "an MCP tool call asked for more than a legacy [sandbox] size key — vcpus or " +
+			"mem_mib — which on this door is a ceiling and not merely a default (audit 2026-09-01, A8)",
+		Msg: "<field> <value> exceeds the ceiling <key> = <limit> set at <file> — on this door " +
+			"a declared size is a ceiling, not a default",
+		Fix: "ask for less, or move the size into <file>'s [resources] and raise it there if " +
+			"the machine is meant to have more",
+		Sample: V{"field": "cpus", "value": "4", "key": "vcpus", "limit": "2",
+			"file": "/home/you/project/kelyfos.toml"},
+	}
+
 	CeilingSnapshot = Denial{
 		ID:  "ceiling.snapshot",
 		Doc: "a snapshot holds a machine larger than the ceiling now in force",
@@ -214,6 +233,25 @@ var (
 		Fix: "ask for a smaller machine — this is the physical host's ceiling, and no " +
 			"policy file or tool argument raises it",
 		Sample: V{"field": "mem", "asked": "262144 MiB", "limit": "8192 MiB"},
+	}
+
+	// CeilingHostSnapshot is a snapshot that holds a machine larger than the
+	// physical host it is being restored on (audit 2026-09-01, A8). Firecracker
+	// takes vcpu and memory from the state file, so a restore cannot shrink the
+	// machine to fit — the only honest answers are to allow it or refuse it, and
+	// a machine larger than the host has cannot be allowed. It applies even with
+	// no policy: the host is nobody's to edit. Its own entry rather than
+	// CeilingHost's because it names the snapshot, and there is no argument to
+	// lower — the size is frozen.
+	CeilingHostSnapshot = Denial{
+		ID: "ceiling.host_snapshot",
+		Doc: "a snapshot holds a machine larger than the physical host itself — more cores or " +
+			"RAM than the machine has — and a restore cannot resize it (audit 2026-09-01, A8)",
+		Msg: "snapshot <name> holds a <held> machine, over what this host can run (<limit>), " +
+			"and a restore cannot resize it",
+		Fix: "restore it on a larger host, or take the snapshot again from a machine that fits " +
+			"this one — this is the physical host's ceiling, which no policy raises",
+		Sample: V{"name": "before-the-migration", "held": "8 vcpu", "limit": "4"},
 	}
 
 	CeilingResume = Denial{
@@ -402,7 +440,8 @@ func All() []Denial {
 	all := []Denial{
 		AllowProject, AllowResume, AllowSnapshot, AllowSingleLabel,
 		BudgetSandboxes,
-		CeilingFlag, CeilingHost, CeilingResume, CeilingSnapshot, CeilingSnapshotUnknown, CeilingTool,
+		CeilingFlag, CeilingHost, CeilingHostSnapshot, CeilingResume, CeilingSnapshot,
+		CeilingSnapshotUnknown, CeilingTool, CeilingToolLegacy,
 		EgressHost, EgressPort, EgressResolvedAddr,
 		ForkCount,
 		ForwardClosed,

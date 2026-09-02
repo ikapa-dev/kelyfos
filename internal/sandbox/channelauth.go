@@ -99,22 +99,26 @@ func (s *Sandbox) authenticate(r *proto.Reader, conn net.Conn, port uint32) bool
 		// otherwise accept an empty one.
 		return s.refuseChannel(conn, port, "no credential was minted for this session")
 	}
+	// The belt to the credential's braces, checked first so it can refuse a
+	// peer the kernel names as another account before a frame of what that
+	// peer sent is read — which is what peercred_linux.go's contract promises
+	// and, until the adversarial review of 2026-09-01, was not true because
+	// the credential compare below ran first and spent the "not this user"
+	// reason on nothing. The credential already refuses every same-uid peer,
+	// which is the threat; this is the second, independent refusal for a peer
+	// from a different account that reached the socket anyway, skipped where
+	// the kernel cannot say (peercred_other.go).
+	if u, ok := conn.(*net.UnixConn); ok {
+		if same, said, err := peerIsThisUser(u); err == nil && said && !same {
+			return s.refuseChannel(conn, port, "the peer is not this user")
+		}
+	}
 	var hello channelHello
 	if err := r.Read(&hello); err != nil {
 		return s.refuseChannel(conn, port, "no credential was presented")
 	}
 	if subtle.ConstantTimeCompare([]byte(hello.Auth), []byte(s.channelAuth)) != 1 {
 		return s.refuseChannel(conn, port, "the credential presented is not this session's")
-	}
-	// The belt to the credential's braces: a peer the kernel says is from
-	// another account is refused before anything else about it matters. The
-	// credential already refuses every same-uid peer — which is the threat —
-	// so this is the second, independent refusal for a peer from a different
-	// one, and it is skipped where the kernel cannot say (peercred_other.go).
-	if u, ok := conn.(*net.UnixConn); ok {
-		if same, said, err := peerIsThisUser(u); err == nil && said && !same {
-			return s.refuseChannel(conn, port, "the peer is not this user")
-		}
 	}
 	return true
 }
@@ -161,6 +165,13 @@ func (s *Sandbox) pushChannelCredential(timeout time.Duration) error {
 			s.authMu.Lock()
 			s.authUnsupported = err
 			s.authMu.Unlock()
+			// Wake WaitReady now rather than letting it discover this when the
+			// ready timeout expires (adversarial review 2026-09-01): the guest
+			// has told us it cannot take a credential, so the boot is already
+			// doomed and there is nothing to wait out.
+			if s.authUnsupportedCh != nil {
+				s.authUnsupportedOnce.Do(func() { close(s.authUnsupportedCh) })
+			}
 			return err
 		}
 		select {

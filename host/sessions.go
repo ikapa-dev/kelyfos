@@ -163,8 +163,22 @@ the session finally ends.
 	}()
 
 	started := time.Now()
-	statePath, memPath, err := sandbox.SnapshotRunning(st, dir)
+	// Open the machine's chain before the snapshot, not after, so the pause,
+	// snapshot.create and resume it performs are recorded as vmm.api events in
+	// the order they happen (audit 2026-09-01, A11; adversarial review
+	// 2026-09-01 found this door taking the snapshot with an unobserved API
+	// client). The chain is not closed — this session is coming back — and the
+	// session.pause event is appended to the same recorder below.
+	rec, recErr := recorder.Open(sandbox.Root(), st.RecordSession())
+	var onVMM func(string)
+	if recErr == nil {
+		onVMM = vmmActionRecorder(rec, "")
+	}
+	statePath, memPath, err := sandbox.SnapshotRunning(st, dir, onVMM)
 	if err != nil {
+		if recErr == nil {
+			_ = rec.Close()
+		}
 		return err
 	}
 
@@ -201,8 +215,9 @@ the session finally ends.
 
 	// Into the machine's own chain, and the chain is not closed: this session is
 	// coming back, and a session.end would make `--verify` describe a machine
-	// that still exists as finished (docs/qol.md §1.4).
-	if rec, err := recorder.Open(sandbox.Root(), st.RecordSession()); err == nil {
+	// that still exists as finished (docs/qol.md §1.4). The recorder was opened
+	// above so the snapshot's vmm.api events precede this one; close it here.
+	if recErr == nil {
 		_ = rec.Append(recorder.Event{Type: recorder.TypeSessionPause, Name: *name,
 			DurationMS: time.Since(started).Milliseconds()})
 		_ = rec.Close()

@@ -124,6 +124,7 @@ One outbound connection attempt, permitted or not. Written by the **host**.
 | `mode` | string | how much the proxy could read: tunnelled (a CONNECT it relayed unopened), terminated (a secret-bound domain it decrypted), plain (ordinary HTTP, which it necessarily read in full), or direct_tls (an absolute-form https request reaching the proxy without a CONNECT, fetched itself over a real TLS connection) *(allowed)* |
 | `bytes_in` | integer | bytes read from upstream |
 | `bytes_out` | integer | bytes written upstream |
+| `error` | object | kind and message, when the reason is a category rather than an explanation — a refused connection, a timeout, a name that resolved to nothing, a TLS failure, all of which share reason upstream_unreachable and until this left the operator with none of the detail *(reason is upstream_unreachable)* |
 | `peer` | string | who connected — the address a connection refused as foreign_peer came from; the request was never parsed, so host and port are absent on those *(reason is foreign_peer)* |
 | `resolved_addr` | string | where the requested host actually resolved to. Recorded because the 403 the guest reads names no address: telling a sandbox which address an allowlisted name resolves to hands it a DNS lookup it has no resolver to perform *(reason is unsafe_resolved_address)* |
 | `agent` | string | which machine produced it; present inside a team *(in a team)* |
@@ -161,12 +162,12 @@ A response echoed a bound credential back and the proxy replaced it before the g
 
 ## `secret.unscrubbable`
 
-A response from a credential-bound origin arrived compressed, and the echo suppression cannot match inside an encoding — the guest received a body the proxy cannot vouch for (audit 2026-09-01, A4). The proxy asks credentialed origins not to compress; this event is what an origin that ignored that costs, recorded instead of the silence that used to sit here. Written by the **host**.
+A response from a credential-bound origin arrived compressed, and the echo suppression cannot match inside an encoding, so the proxy refused the response rather than deliver a body it cannot vouch for: the guest read a 502 in its place (audit 2026-09-01, A4; refusal per review H4). The proxy asks credentialed origins not to compress; this event is what an origin that ignored that costs, recorded instead of the silence that used to sit here. Written by the **host**.
 
 | Field | Type | Meaning |
 | --- | --- | --- |
-| `host` | string | the domain whose response was compressed |
-| `mode` | string | the Content-Encoding the response named — gzip, deflate, br, whatever the origin sent |
+| `host` | string | the domain whose compressed response was refused |
+| `mode` | string | the response's Content-Encoding, normalised to one of gzip, deflate, br, compress, zstd or other — so origin-chosen text never lands in the record |
 | `agent` | string | which machine produced it; present inside a team *(in a team)* |
 
 ## `resource.oom`
@@ -436,7 +437,8 @@ A connection to one of the guest-initiated channels — ready (10100), events (1
 | Field | Type | Meaning |
 | --- | --- | --- |
 | `port` | integer | the channel that refused the connection: 10100, 10101 or 10102 |
-| `reason` | string | why — no credential was presented, the credential presented was not this session's, or the peer was not this user |
+| `reason` | string | why — no credential was minted for this session, no credential was presented, the credential presented is not this session's, or the peer is not this user |
+| `agent` | string | which machine produced it; present inside a team *(in a team)* |
 
 ## `vmm.api`
 

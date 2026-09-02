@@ -2,10 +2,15 @@ package main
 
 import (
 	"fmt"
+	"io"
+	"net"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/ikapa-dev/kelyfos/internal/sandbox"
 )
 
 // The audit of 2026-09-01's A10: tool calls were dispatched on unbounded
@@ -127,5 +132,119 @@ func TestA10_TheDefaultCapIsBuiltAndHolds(t *testing.T) {
 	}
 	if got := strings.Count(out.String(), `"id"`); got != maxConcurrentToolCalls+2 {
 		t.Errorf("the transcript holds %d answers, want %d", got, maxConcurrentToolCalls+2)
+	}
+}
+
+// M10: at the dispatch cap the read loop reads nothing further, so before this
+// fix a shutdown could not break in — stop() now closes s.stopping, and the
+// read loop parked on a full toolSem wakes and returns rather than dispatching
+// the next call. The stopping channel is built here as newHostServer does, not
+// left to serve's lazy build, so the test's stop() cannot race the init.
+func TestM10_AStopReleasesAReadLoopParkedAtTheCap(t *testing.T) {
+	s := serverWith(t, policy)
+	s.toolSem = make(chan struct{}, 1) // one slot
+	s.stopping = make(chan struct{})
+
+	var mu sync.Mutex
+	dispatched := 0
+	release := make(chan struct{})
+	firstIn := make(chan struct{})
+	var once sync.Once
+	s.dispatched = func(tool string) {
+		mu.Lock()
+		dispatched++
+		mu.Unlock()
+		once.Do(func() { close(firstIn) })
+		<-release // hold the one slot until the test lets go
+	}
+
+	// Two pipelined calls: the first takes the slot and blocks in dispatch, so
+	// the read loop parks trying to take the slot for the second.
+	in := ""
+	for i := 1; i <= 2; i++ {
+		in += fmt.Sprintf(`{"jsonrpc":"2.0","id":%d,"method":"tools/call","params":{"name":"sandbox_list","arguments":{}}}`+"\n", i)
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = s.serve(strings.NewReader(in), io.Discard)
+	}()
+
+	<-firstIn                          // the first call is in dispatch, holding the slot
+	time.Sleep(100 * time.Millisecond) // let the read loop park on the cap for the second
+
+	s.stop()       // wakes the parked read loop; it returns without dispatching the second
+	close(release) // let the first call finish so serve's wg.Wait() can return
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("serve did not return after stop() released the read loop parked at the cap")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if dispatched != 1 {
+		t.Errorf("%d calls were dispatched; the second must never have been — the read loop was stopped at the cap", dispatched)
+	}
+}
+
+// M10: a sandbox_exec in flight is cut short by stop() rather than held for its
+// whole timeout. The guest here is a socket that accepts and never answers, so
+// the exec blocks in its handshake; stop() returns errServerStopping.
+func TestM10_AnInFlightExecIsCutShortByAStop(t *testing.T) {
+	s := serverWith(t, policy)
+	s.stopping = make(chan struct{})
+
+	sock := filepath.Join(t.TempDir(), "x.sock")
+	ln, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	accepted := make(chan struct{}, 1)
+	go func() {
+		var held []net.Conn
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				for _, h := range held {
+					_ = h.Close()
+				}
+				return
+			}
+			held = append(held, c) // hold open, never respond
+			select {
+			case accepted <- struct{}{}:
+			default:
+			}
+		}
+	}()
+
+	b := &servedBox{sb: &sandbox.Sandbox{State: sandbox.State{UDSPath: sock}}}
+	type outcome struct {
+		res *sandbox.ExecResult
+		err error
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		res, err := s.execUnlessStopping(b, []string{"true"}, nil, time.Minute)
+		done <- outcome{res, err}
+	}()
+
+	select {
+	case <-accepted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the exec never dialled the guest")
+	}
+	s.stop() // the exec is blocked in its handshake; stop cuts it short
+	select {
+	case o := <-done:
+		if o.err != errServerStopping {
+			t.Errorf("a stopped exec returned %v, want errServerStopping", o.err)
+		}
+		if o.res != nil {
+			t.Errorf("a cut-short exec returned a result, want none: %v", o.res)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("execUnlessStopping did not return after stop()")
 	}
 }

@@ -47,6 +47,43 @@ def attempt(name, fn, expect):
     except Exception as e:
         print(f"{name}: EXCEPTION {type(e).__name__} ({expect})")
 
+# musl exports no wrapper for most of what this battery probes, so the raw
+# syscall(2) is the only way to reach them — and a raw number is arch-specific.
+# That is the whole shape of the audit of 2026-09-01 (A5/M8): the supervisor's
+# refusal policy is a per-arch name->number map, and a name absent from it is
+# dropped from the compiled filter silently. This battery keeps its own map,
+# per-arch, so it probes the same numbers on whatever arch the guest is — and
+# every probe is written so that if the filter missed the syscall the kernel's
+# own answer (EINVAL, EBADF) would come back instead of the filter's EPERM,
+# which is the drift signal a stale map would show.
+#
+# ARCH_NR holds the legacy numbers that differ between ABIs; SHARED holds the
+# asm-generic range (>= 424) x86_64 and aarch64 number identically. NR is the
+# merge the probes index by name.
+m = os.uname().machine
+ARCH_NR = {
+    "aarch64": {
+        "bpf": 280, "add_key": 217, "open_by_handle_at": 265,
+        "process_vm_readv": 270, "process_vm_writev": 271,
+    },
+    "x86_64": {
+        "bpf": 321, "add_key": 248, "open_by_handle_at": 304,
+        "process_vm_readv": 310, "process_vm_writev": 311,
+    },
+}
+SHARED = {
+    "open_tree": 428, "move_mount": 429, "fsopen": 430, "fsconfig": 431,
+    "fsmount": 432, "fspick": 433, "mount_setattr": 442,
+    "pidfd_send_signal": 424, "pidfd_open": 434, "pidfd_getfd": 438,
+    "io_uring_setup": 425,
+}
+if m not in ARCH_NR:
+    print(f"battery: no syscall table for {m}")
+    sys.exit(3)
+print(f"battery: arch {m} table")
+NR = dict(SHARED)
+NR.update(ARCH_NR[m])
+
 # --- filesystem: Landlock fences everything outside the writable trees ---
 def w_etc():
     with open("/etc/passwd", "a") as f:
@@ -91,19 +128,18 @@ def s_unshare():
 attempt("seccomp.unshare", s_unshare, "REFUSED by seccomp (unshare)")
 
 def s_bpf():
-    if libc.syscall(280, 0, 0, 0, 0, 0) < 0:  # __NR_bpf on arm64 (the dump prints it)
+    if libc.syscall(NR["bpf"], 0, 0, 0, 0, 0) < 0:
         raise OSError(ctypes.get_errno(), "bpf")
 attempt("seccomp.bpf", s_bpf, "REFUSED by seccomp (bpf)")
 
 def s_keyctl():
-    # musl exports no add_key wrapper: the raw syscall, arm64 #217 (the dump
-    # prints the number).
-    if libc.syscall(217, b"user", b"k", b"v", 1, -2) < 0:  # KEY_SPEC_PROCESS_KEYRING
+    # musl exports no add_key wrapper: the raw syscall, numbered per arch.
+    if libc.syscall(NR["add_key"], b"user", b"k", b"v", 1, -2) < 0:  # KEY_SPEC_PROCESS_KEYRING
         raise OSError(ctypes.get_errno(), "add_key")
 attempt("seccomp.add_key", s_keyctl, "REFUSED by seccomp (add_key)")
 
 def s_open_by_handle():
-    if libc.syscall(265, 0, 0, 0) < 0:  # __NR_open_by_handle_at on arm64
+    if libc.syscall(NR["open_by_handle_at"], 0, 0, 0) < 0:
         raise OSError(ctypes.get_errno(), "open_by_handle_at")
 attempt("seccomp.open_by_handle_at", s_open_by_handle, "REFUSED by seccomp")
 
@@ -111,74 +147,92 @@ attempt("seccomp.open_by_handle_at", s_open_by_handle, "REFUSED by seccomp")
 # The refusal list is name-keyed against a hand-maintained per-arch map, and
 # the audit found open_tree and fsopen reaching the kernel because the map
 # predated that API. These probes are the CI drift gate the audit asked for:
-# each syscall is probed from this confined child, and an allow is a red run
-# rather than a stale map nobody reads. Numbers are arm64/asm-generic, the
-# arch this lab runs; the supervisor's own unit test
+# each of the twelve names is probed by its own number from this confined
+# child, and an allow is a red run rather than a stale map nobody reads. The
+# numbers come from NR, per-arch, so the same probes run on aarch64 and on
+# x86_64; the supervisor's own unit test
 # (supervisor/profile_policy_test.go) is what fails when a name is missing
 # from a per-arch map, on both arches, at build time.
 #
 # fsconfig is probed on its own evidence: the audit's report misnumbered this
 # API (it named fsmount 431 — fsconfig's slot), and the first probe run came
 # back EINVAL — the kernel's own answer — rather than the filter's EPERM,
-# which is how the one name both had missed was found.
+# which is how the one name both had missed was found. Every probe below
+# keeps that property: a bogus fd or an invalid flag, so a kernel that saw the
+# call would answer EBADF or EINVAL and only the filter answers EPERM.
 def s_open_tree():
     # open_tree(AT_FDCWD, "/", OPEN_TREE_CLONE|AT_RECURSIVE) — the audit's own
     # probe, which returned a live fd before the fix.
-    if libc.syscall(428, -100, b"/", 0x1 | 0x8000) < 0:
+    if libc.syscall(NR["open_tree"], -100, b"/", 0x1 | 0x8000) < 0:
         raise OSError(ctypes.get_errno(), "open_tree")
 attempt("seccomp.open_tree", s_open_tree, "REFUSED by seccomp (fd-mount API)")
 
 def s_fsopen():
-    if libc.syscall(430, b"tmpfs", 0) < 0:
+    if libc.syscall(NR["fsopen"], b"tmpfs", 0) < 0:
         raise OSError(ctypes.get_errno(), "fsopen")
 attempt("seccomp.fsopen", s_fsopen, "REFUSED by seccomp (fd-mount API)")
 
 def s_fsconfig():
-    if libc.syscall(431, -1, 0, 0, 0, 0) < 0:
+    if libc.syscall(NR["fsconfig"], -1, 0, 0, 0, 0) < 0:
         raise OSError(ctypes.get_errno(), "fsconfig")
 attempt("seccomp.fsconfig", s_fsconfig, "REFUSED by seccomp (fd-mount API)")
 
 def s_fsmount():
-    if libc.syscall(432, -1, 0) < 0:
+    if libc.syscall(NR["fsmount"], -1, 0) < 0:
         raise OSError(ctypes.get_errno(), "fsmount")
 attempt("seccomp.fsmount", s_fsmount, "REFUSED by seccomp (fd-mount API)")
 
 def s_fspick():
-    if libc.syscall(433, -100, b"/", 0) < 0:
+    if libc.syscall(NR["fspick"], -100, b"/", 0) < 0:
         raise OSError(ctypes.get_errno(), "fspick")
 attempt("seccomp.fspick", s_fspick, "REFUSED by seccomp (fd-mount API)")
 
 def s_move_mount():
-    if libc.syscall(429, -100, b"/", -100, b"/tmp/x", 0) < 0:
+    if libc.syscall(NR["move_mount"], -100, b"/", -100, b"/tmp/x", 0) < 0:
         raise OSError(ctypes.get_errno(), "move_mount")
 attempt("seccomp.move_mount", s_move_mount, "REFUSED by seccomp (fd-mount API)")
 
 def s_mount_setattr():
-    if libc.syscall(442, -100, b"/", 0, None, 0) < 0:
+    if libc.syscall(NR["mount_setattr"], -100, b"/", 0, None, 0) < 0:
         raise OSError(ctypes.get_errno(), "mount_setattr")
 attempt("seccomp.mount_setattr", s_mount_setattr, "REFUSED by seccomp (fd-mount API)")
 
 def s_process_vm_readv():
-    # local iov, remote iov, flags — the audit's A17b companion: the refusal
-    # list, not only the kernel ACL, now refuses cross-memory reads.
-    if libc.syscall(270, 0, None, 0, None, 0, 0) < 0:
+    # local iov, remote iov, flags — the cross-memory read the audit's A17b
+    # class rests on. The refusal list, not only the kernel ACL, refuses it.
+    if libc.syscall(NR["process_vm_readv"], 0, None, 0, None, 0, 0) < 0:
         raise OSError(ctypes.get_errno(), "process_vm_readv")
 attempt("seccomp.process_vm_readv", s_process_vm_readv, "REFUSED by seccomp (cross-memory)")
 
-def s_pidfd_getfd():
-    # pidfd_open(getpid()) then pidfd_getfd on it — fd theft, the audit's
-    # A17b; refusing pidfd_open alone would leave the probe honest but the
-    # family half-covered, so both are in the policy.
-    pidfd = libc.syscall(434, 0, 0)  # __NR_pidfd_open on arm64
-    if pidfd >= 0:
-        try:
-            if libc.syscall(438, pidfd, 1, 0) < 0:
-                raise OSError(ctypes.get_errno(), "pidfd_getfd")
-        finally:
-            libc.close(pidfd)
-    else:
+def s_process_vm_writev():
+    # pid -1, flags 1 — flags must be 0, so an unfiltered kernel answers EINVAL
+    # and only the filter answers EPERM. The write half of the cross-memory
+    # family, probed on its own number rather than assumed from the read (M8).
+    if libc.syscall(NR["process_vm_writev"], -1, None, 0, None, 0, 1) < 0:
+        raise OSError(ctypes.get_errno(), "process_vm_writev")
+attempt("seccomp.process_vm_writev", s_process_vm_writev, "REFUSED by seccomp (cross-memory)")
+
+def s_pidfd_open():
+    # pid 0 is not a valid target, so an unfiltered kernel answers EINVAL; a
+    # probe by number rather than behind another call, so a missing 434 shows.
+    if libc.syscall(NR["pidfd_open"], 0, 0) < 0:
         raise OSError(ctypes.get_errno(), "pidfd_open")
+attempt("seccomp.pidfd_open", s_pidfd_open, "REFUSED by seccomp (fd theft)")
+
+def s_pidfd_getfd():
+    # 438 probed directly with a bogus pidfd (-1). Behind pidfd_open the probe
+    # printed EPERM whether or not 438 was mapped, because pidfd_open is refused
+    # first (audit 2026-09-01, M8) — so a drop of 438 alone stayed green. A
+    # direct call is EBADF from an unfiltered kernel and EPERM from the filter.
+    if libc.syscall(NR["pidfd_getfd"], -1, 0, 0) < 0:
+        raise OSError(ctypes.get_errno(), "pidfd_getfd")
 attempt("seccomp.pidfd_getfd", s_pidfd_getfd, "REFUSED by seccomp (fd theft)")
+
+def s_pidfd_send_signal():
+    # bogus pidfd (-1): an unfiltered kernel answers EBADF, the filter EPERM.
+    if libc.syscall(NR["pidfd_send_signal"], -1, 0, None, 0) < 0:
+        raise OSError(ctypes.get_errno(), "pidfd_send_signal")
+attempt("seccomp.pidfd_send_signal", s_pidfd_send_signal, "REFUSED by seccomp (fd theft)")
 
 # --- ptrace: permitted by the dev flavor, fenced by Landlock's sibling rule ---
 def p_pid1():
@@ -189,7 +243,7 @@ attempt("ptrace.attach-pid1", p_pid1, "REFUSED by Landlock (sibling domains; dev
 # --- allowed by the filter, fenced by the namespaces: the documented half ---
 def s_io_uring():
     buf = ctypes.create_string_buffer(200)
-    if libc.syscall(425, 4, buf, 0, 0, 0) < 0:  # __NR_io_uring_setup on arm64
+    if libc.syscall(NR["io_uring_setup"], 4, buf, 0, 0, 0) < 0:
         raise OSError(ctypes.get_errno(), "io_uring_setup")
 attempt("filter.io_uring_setup", s_io_uring, "FENCED: not in the refusal policy; the guest's own kernel view is its own")
 
@@ -212,6 +266,10 @@ PY
 out="$(ax_script python3 "$SLAB_WORK/battery.py" 2>/dev/null)"
 echo "$out" | sed 's/^/  | /'
 
+# First: the battery found a per-arch table for the guest it ran in. Without
+# this the twelve seccomp.* probes below would be probing numbers for an arch
+# the guest is not, and an unknown arch exits the battery 3 with no table.
+assert_contains "$out" "battery: arch" "the battery selected a per-arch syscall table for the guest"
 assert_contains "$out" "landlock.etc-write: ERRNO" "writing /etc fails with an errno, not a success"
 assert_contains "$out" "landlock.proc-sys-write: ERRNO" "writing /proc/sys fails"
 assert_contains "$out" "blk.dev-vda-write: ERRNO" "opening /dev/vda for write fails"
@@ -230,7 +288,10 @@ assert_contains "$out" "seccomp.fspick: ERRNO 1" "fspick returns EPERM (audit A5
 assert_contains "$out" "seccomp.move_mount: ERRNO 1" "move_mount returns EPERM (audit A5)"
 assert_contains "$out" "seccomp.mount_setattr: ERRNO 1" "mount_setattr returns EPERM (audit A5)"
 assert_contains "$out" "seccomp.process_vm_readv: ERRNO 1" "process_vm_readv returns EPERM from the filter, not only the ACL (audit A5/A17b)"
-assert_contains "$out" "seccomp.pidfd_getfd: ERRNO 1" "pidfd_getfd returns EPERM — fd theft refused by the policy (audit A5/A17b)"
+assert_contains "$out" "seccomp.process_vm_writev: ERRNO 1" "process_vm_writev returns EPERM — the write half of the cross-memory family (audit A5/M8)"
+assert_contains "$out" "seccomp.pidfd_open: ERRNO 1" "pidfd_open returns EPERM from the filter (audit A5/M8)"
+assert_contains "$out" "seccomp.pidfd_getfd: ERRNO 1" "pidfd_getfd returns EPERM — 438 probed directly, not behind pidfd_open (audit A5/M8)"
+assert_contains "$out" "seccomp.pidfd_send_signal: ERRNO 1" "pidfd_send_signal returns EPERM from the filter (audit A5/M8)"
 assert_contains "$out" "ptrace.attach-pid1: ERRNO 1" "PTRACE_ATTACH to PID 1 returns EPERM — even on the dev flavor that permits ptrace"
 assert_contains "$out" "filter.io_uring_setup: ALLOWED" "io_uring is allowed by the filter — documented, not lied about"
 assert_contains "$out" "filter.abstract-unix: ALLOWED" "abstract unix sockets are allowed — netns-local, documented"

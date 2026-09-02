@@ -1933,6 +1933,21 @@ host still cannot tell *which* same-uid process presented a valid credential,
 only that one did, and the credential gates authenticity of the channel, not
 truthfulness of what a genuinely running guest chooses to report.
 
+**Two residuals the adversarial review of 2026-09-01 named, kept rather than
+closed.** A same-uid host process can reach the guest's control listener (the
+host→guest direction, authenticated only by the run directory's 0700) and send
+an `auth` op that re-keys the supervisor, locking the legitimate host out — its
+own dials then read as `channel.refused`. This is a suppression and
+misattribution path, not a forgery one (the host compares against its own
+value, so nothing forged is endorsed), and it is the same class of same-uid
+host access the VMM API socket already has (docs/hardening.md §2.1); the honest
+answer is that the run directory's owner is inside the trust boundary, which
+D29 already states. And the `channel.refused` events a knock loop drives are
+rate-limited on the console but not in the chain, so a same-uid or in-guest
+process can grow the record by one event per refused dial; that is the same
+unbounded-refusal shape `team.refused` already has, and bounding it belongs
+with that one.
+
 ## D100
 
 *2026-09-01*

@@ -52,12 +52,30 @@
 /STATUS.md
 /tools/check-plan.py
 
-# Point-in-time security review reports and audits. These are working documents
-# for whoever is fixing findings, not project documentation — what actually
-# changed and why lives in CHANGELOG.md, in the commit that fixed it. Keep the
-# review itself outside the repo once its findings are closed.
+# Working documents that are not project documentation: security reviews and
+# audits, testing plans, handoff briefs, agent prompts, scratch notes. They are
+# point-in-time artefacts for whoever is acting on them, and what actually
+# changed and why belongs in CHANGELOG.md and docs/decisions.md, in the commit
+# that changed it — not in a report that will be stale next week.
+#
+# One directory rather than a rule per filename, because the rules below were
+# written one incident at a time and a document whose name nobody predicted is
+# a document that gets committed by a stray `git add -A`. Put it in local/ and
+# the question does not arise.
+#
+# Not for: PLAN.html, PLAN-FEATURES.html, STATUS.md and team.html, which stay
+# at the root because committed things point at them there — CLAUDE.md and
+# README.md name PLAN.html, tools/check-plan.py resolves it as a sibling of
+# tools/ (check-plan.py:15), and caps.yml and dev/demo-team.sh reach for the
+# others. Moving them would break a reference to buy tidiness.
+/local/
+
+# The filename rules that predate local/. Kept rather than replaced: they cost
+# nothing, and they still catch a review dropped in the root out of habit.
 /SECURITY-REVIEW.html
 /SECURITY-REVIEW-*.html
+/SECURITY-AUDIT-*.html
+/SECURITY-TESTING-PLAN*.html
 /SECURITY_AUDIT.md
 /PEN_TEST_REPORT.md
 /dev/docs-audit-*.md

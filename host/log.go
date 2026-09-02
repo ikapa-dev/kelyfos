@@ -552,28 +552,38 @@ func writeRefreshedReport(dest, id string, blob []byte, key ed25519.PrivateKey, 
 func refreshStamp() string { return time.Now().Format("15:04:05") }
 
 func verifySession(id, path string) error {
-	blob, err := os.ReadFile(path)
+	// One locked read of the chain and its anchor as a consistent pair (audit
+	// 2026-09-01, A14; review H6): a verify that read the chain between an
+	// append's line and its anchor would otherwise see the anchor one ahead and
+	// call an honest, live session tampered.
+	snap, err := recorder.ReadSnapshot(sandbox.Root(), id)
 	if err != nil {
 		return fmt.Errorf("no flight recorder for session %s: %w", id, err)
 	}
-	n, head, err := verifiedChain(blob)
+	n, head, err := verifiedChain(snap.Chain)
 	if err != nil {
 		fmt.Printf("session %s: FAILED after %d events\n  %v\n", id, n, err)
 		return &exitError{code: 1}
 	}
-	// The out-of-band anchor (audit 2026-09-01, A14): the chain just verified
-	// must end where the anchor beside it says it does. A missing anchor is
-	// not a failure — older records, and sessions whose anchor write failed,
-	// are records this check cannot speak about.
-	if err := recorder.CheckHead(sandbox.Root(), id, n, head); err != nil {
-		fmt.Printf("session %s: FAILED after %d events\n  %v\n", id, n, err)
+	// The out-of-band anchor: the chain just verified must not genuinely
+	// disagree with the anchor beside it. A missing or unreadable anchor, and
+	// an anchor one behind an interrupted append, are observations rather than
+	// failures — only a present anchor that disagrees is a rewrite.
+	report, aerr := snap.CheckAnchor(n, head)
+	if aerr != nil {
+		fmt.Printf("session %s: FAILED after %d events\n  %v\n", id, n, aerr)
 		return &exitError{code: 1}
 	}
 	// Deferred because the verdict has two shapes below — a team's names its
 	// members, a single sandbox's does not — and the head belongs under both.
 	// A reader on this machine quotes it to whoever they send the export to,
-	// which is the comparison an unsigned report rests on.
-	defer func() { fmt.Printf("  chain head %s\n", head) }()
+	// which is the comparison an unsigned report rests on. The anchor line goes
+	// under it on every pass, so a reader can always see whether an anchor was
+	// consulted and what it said (review M9).
+	defer func() {
+		fmt.Printf("  chain head %s\n", head)
+		fmt.Printf("  anchor     %s\n", report)
+	}()
 	// For a team, "the chain" is the whole team's — one file covering every
 	// agent's commands, messages, store accesses and egress. Saying which
 	// agents it covers is what makes the claim checkable: a reader can compare
@@ -963,12 +973,13 @@ func printEvent(line []byte, asJSON bool) {
 		// is entitled to see.
 		fmt.Printf("%s  vmm             %s%s\n", ts, who, proto.SafeText(e.Mode))
 	case recorder.TypeSecretUnscrubbable:
-		// Audit 2026-09-01, A4: a compressed response from a credential-bound
-		// origin — the echo suppression could not read the body. The word
-		// UNREAD is the honest verb: this is not "nothing happened", it is
-		// "the proxy could not check what happened".
-		fmt.Printf("%s  UNREAD body     %sa compressed response (%s) from credential-bound %s — "+
-			"echo suppression cannot match inside an encoding\n",
+		// Audit 2026-09-01, A4; refusal per review H4: a compressed response
+		// from a credential-bound origin — the echo suppression could not read
+		// the body, so the proxy refused it and the guest read a 502 in its
+		// place. REFUSED is the honest verb, matching what the proxy did rather
+		// than what it merely observed.
+		fmt.Printf("%s  REFUSED body    %sa compressed response (%s) from credential-bound %s — "+
+			"echo suppression cannot read inside an encoding, so it was refused\n",
 			ts, who, proto.SafeText(e.Mode), proto.SafeText(e.Host))
 	default:
 		// The raw line, through the sanitiser (P7-17/C). This arm is what an

@@ -35,6 +35,49 @@ func TestA15_TheAuditReproTimeoutIsRefused(t *testing.T) {
 	}
 }
 
+// A negative timeout_ms is not the default and is not a duration: it is refused
+// by name (audit 2026-09-01, L1), naming the value and the range it is outside.
+func TestA15_ANegativeTimeoutIsRefusedByName(t *testing.T) {
+	t.Setenv("KELYFOS_CACHE", t.TempDir())
+	s := serverWith(t, policy)
+	res := s.toolExec(json.RawMessage(`{"sandbox":"nosuch","command":"true","timeout_ms":-5}`))
+	if !res.IsError {
+		t.Fatal("a negative timeout_ms was accepted")
+	}
+	text := res.Content[0].Text
+	for _, want := range []string{"timeout_ms -5", "negative", "1 to 86400000"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the refusal does not mention %q:\n%s", want, text)
+		}
+	}
+	// Zero is the one non-positive value that means something: it stays the
+	// default and is not refused here, so this call fails at the box lookup
+	// rather than at the timeout.
+	res = s.toolExec(json.RawMessage(`{"sandbox":"nosuch","command":"true","timeout_ms":0}`))
+	if strings.Contains(res.Content[0].Text, "negative") {
+		t.Errorf("timeout_ms 0 was treated as negative:\n%s", res.Content[0].Text)
+	}
+}
+
+// The description a model reads states both the 24-hour ceiling and that a
+// negative value is refused (audit 2026-09-01, A15/L1).
+func TestA15_TheTimeoutDescriptionStatesTheCeiling(t *testing.T) {
+	var desc string
+	for _, tool := range hostToolDefinitions() {
+		if tool.Name == "sandbox_exec" {
+			desc = tool.InputSchema.Properties["timeout_ms"].Description
+		}
+	}
+	if desc == "" {
+		t.Fatal("sandbox_exec has no timeout_ms description")
+	}
+	for _, want := range []string{"86400000", "24", "negative"} {
+		if !strings.Contains(desc, want) {
+			t.Errorf("the timeout_ms description does not state %q:\n%s", want, desc)
+		}
+	}
+}
+
 // The ceiling is real and the conversion under it cannot wrap.
 func TestA15_TheExecTimeoutCeilingIsDocumentedAndBounded(t *testing.T) {
 	if sandbox.MaxExecTimeout != 24*60*60*1e9 {

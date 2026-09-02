@@ -3,6 +3,7 @@ package recorder
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -26,6 +27,23 @@ func a14Recorder(t *testing.T, root, id string) *Recorder {
 		t.Fatal(err)
 	}
 	return r
+}
+
+// a14Anchor is the sequence every reader of a record now follows — a locked
+// snapshot, a chain verify, then the anchor check — collapsed for the tests
+// that assert what the anchor says. It replaces the old CheckHead, which read
+// the chain and the anchor unlocked and in separate steps.
+func a14Anchor(t *testing.T, root, id string) (AnchorReport, error) {
+	t.Helper()
+	snap, err := ReadSnapshot(root, id)
+	if err != nil {
+		t.Fatalf("read snapshot: %v", err)
+	}
+	n, head, err := Verify(bytes.NewReader(snap.Chain))
+	if err != nil {
+		t.Fatalf("verify: %v", err)
+	}
+	return snap.CheckAnchor(n, head)
 }
 
 func a14Event(seq int, name string) Event {
@@ -98,12 +116,12 @@ func TestA14_TheAnchorDetectsAWholesaleRewrite(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	n, head, err := Verify(bytes.NewReader(blob))
+	report, err := a14Anchor(t, root, id)
 	if err != nil {
-		t.Fatal(err)
-	}
-	if err := CheckHead(root, id, n, head); err != nil {
 		t.Fatalf("an intact chain failed its own anchor: %v", err)
+	}
+	if report.State != AnchorMatches {
+		t.Fatalf("an intact chain's anchor did not match: %v", report)
 	}
 
 	// The attacker truncates to the first event and leaves it — a chain that
@@ -112,16 +130,21 @@ func TestA14_TheAnchorDetectsAWholesaleRewrite(t *testing.T) {
 	if err := os.WriteFile(Path(root, id), append(first, '\n'), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	n2, head2, err := Verify(bytes.NewReader(append(first, '\n')))
-	if err != nil {
+	if _, _, err := Verify(bytes.NewReader(append(first, '\n'))); err != nil {
 		t.Fatalf("the truncated chain does not verify, so the anchor is not what caught this: %v", err)
 	}
-	err = CheckHead(root, id, n2, head2)
+	report, err = a14Anchor(t, root, id)
 	if err == nil {
 		t.Fatal("a wholesale rewrite was not detected")
 	}
+	if !errors.Is(err, ErrAnchorMismatch) {
+		t.Errorf("the refusal does not wrap ErrAnchorMismatch:\n%v", err)
+	}
 	if !strings.Contains(err.Error(), "does not end where its anchor says") {
 		t.Errorf("the refusal does not say what it is:\n%v", err)
+	}
+	if report.State != AnchorMismatch {
+		t.Errorf("a wholesale rewrite reported state %v, not AnchorMismatch", report.State)
 	}
 }
 
@@ -135,7 +158,11 @@ func TestA14_AChainWithoutAnAnchorIsNotAnError(t *testing.T) {
 	if err := os.WriteFile(Path(root, id), []byte(""), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := CheckHead(root, id, 0, ""); err != nil {
+	report, err := a14Anchor(t, root, id)
+	if err != nil {
 		t.Errorf("a missing anchor was reported as a failure: %v", err)
+	}
+	if report.State != AnchorMissing {
+		t.Errorf("a missing anchor reported state %v, not AnchorMissing", report.State)
 	}
 }

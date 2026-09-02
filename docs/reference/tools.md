@@ -161,7 +161,7 @@ them can widen it (`docs/mcp-surface.md`).
 
 ### `sandbox_run`
 
-Boot a hardware-isolated microVM and return its id. Anything run inside it cannot reach this machine. It has no network at all unless the project's policy grants one. Every argument here may ask for less than the policy allows and never for more; a request above a ceiling is refused and names the ceiling. The host's own limits apply regardless: cores cannot exceed the machine's, and memory cannot exceed what the host can carry with room left for itself. When no policy is found, defaults are 2 vcpu and 512 MiB with no network, and those host limits are the only ceilings.
+Boot a hardware-isolated microVM and return its id. Anything run inside it cannot reach this machine. It has no network at all unless the project's policy grants one. Every argument here may ask for less than the policy allows and never for more; a request above a ceiling is refused and names the ceiling. The host's own limits apply regardless: the 2-vcpu default is clamped to the machine rather than refused, and only an explicit ask above the host — more cores than the machine has, or more memory than it can carry with room left for itself — is refused, naming the host as the ceiling. When no policy is found, defaults are 2 vcpu and 512 MiB with no network.
 
 | Parameter | Type | Required | Meaning |
 | --- | --- | --- | --- |
@@ -182,7 +182,7 @@ Run a command inside a sandbox and return its output and exit code. Give `comman
 | `cwd` | string | no | Working directory inside the guest. Defaults to /. |
 | `sandbox` | string | **yes** | The sandbox id from sandbox_run. |
 | `stdin` | string | no | Text written to the command's standard input. |
-| `timeout_ms` | integer | no | Kill the command after this many milliseconds. |
+| `timeout_ms` | integer | no | Kill the command after this many milliseconds, from 1 to 86400000 (a documented 24-hour ceiling). Omit it, or pass 0, for the one-minute default; a negative value is refused by name. |
 
 ### `sandbox_read_file`
 
@@ -242,7 +242,7 @@ Restore one snapshot into several sandboxes at once. Each fork resumes from the 
 
 | Parameter | Type | Required | Meaning |
 | --- | --- | --- | --- |
-| `count` | integer | **yes** | How many forks to make. At least 1. |
+| `count` | integer | **yes** | How many forks to make. At least 1 and at most 256 in one call; [mcp] max_sandboxes still bounds how many run at once. |
 | `name` | string | **yes** | The snapshot name. |
 | `traceparent` | string | no | An inbound W3C traceparent header, for a caller that wants each fork's record to carry it. Recorded verbatim; not required and not parsed. |
 

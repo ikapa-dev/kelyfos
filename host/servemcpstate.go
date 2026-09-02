@@ -80,7 +80,11 @@ func (s *hostServer) toolSnapshot(raw json.RawMessage) *mcp.CallToolResult {
 		return mcp.Errorf("%v", err)
 	}
 	started := time.Now()
-	statePath, memPath, err := sandbox.SnapshotRunning(&b.sb.State, dir)
+	// The three-arg SnapshotRunning: the onAction closure is this box's own
+	// vmmAction, so the pause / createSnapshot / resume this door drives are
+	// recorded in the sandbox's chain like the ones every other door makes
+	// (audit 2026-09-01, A11/H8).
+	statePath, memPath, err := sandbox.SnapshotRunning(&b.sb.State, dir, b.vmmAction)
 	if err != nil {
 		return mcp.Errorf("sandbox_snapshot: %v", err)
 	}
@@ -300,33 +304,53 @@ func (s *hostServer) restoreAllow(name string, asked []string, meta *sandbox.Sna
 	return list, nil
 }
 
-// checkSnapshotFits holds a frozen machine to the same ceiling a fresh one gets.
+// checkSnapshotFits holds a frozen machine to the same ceilings a fresh one gets.
 //
 // Firecracker takes vcpu and memory from the state file, so a restore cannot
 // shrink a machine to fit — the only honest answers are to allow it or refuse
-// it. A snapshot from an older kelyfos does not say what it holds; when there
-// is a ceiling to enforce, that unknown is refused rather than waved through,
-// because a wall with an exception in it is not a wall.
+// it. Two ceilings apply. The policy's [resources], when there is one: a
+// snapshot from an older kelyfos does not say what it holds, and against a
+// policy ceiling that unknown is refused rather than waved through, because a
+// wall with an exception in it is not a wall. And the host's own, which no
+// policy raises and which apply even with no policy at all (audit 2026-09-01,
+// M2b): a snapshot holding more cores or RAM than this machine has cannot be
+// restored here whatever any file says.
 func (s *hostServer) checkSnapshotFits(name string, meta *sandbox.SnapshotMeta) error {
 	cfg := s.policy
-	if cfg == nil || (cfg.ResCPUs == 0 && cfg.ResMemMiB == 0) {
-		return nil
+	if cfg != nil && (cfg.ResCPUs > 0 || cfg.ResMemMiB > 0) {
+		if meta.VcpuCount == 0 && meta.MemMiB == 0 {
+			return denial.CeilingSnapshotUnknown.Err(denial.V{"name": name, "file": cfg.Path})
+		}
+		if cfg.ResCPUs > 0 && meta.VcpuCount > cfg.ResCPUs {
+			line, _ := cfg.Ceiling("cpus")
+			return denial.CeilingSnapshot.Err(denial.V{
+				"name": name, "held": fmt.Sprintf("%d vcpu", meta.VcpuCount), "key": "cpus",
+				"limit": strconv.Itoa(cfg.ResCPUs), "file": cfg.Path, "line": strconv.Itoa(line)})
+		}
+		if cfg.ResMemMiB > 0 && meta.MemMiB > cfg.ResMemMiB {
+			line, _ := cfg.Ceiling("mem")
+			return denial.CeilingSnapshot.Err(denial.V{
+				"name": name, "held": fmt.Sprintf("%d MiB", meta.MemMiB), "key": "mem",
+				"limit": fmt.Sprintf("%d MiB", cfg.ResMemMiB), "file": cfg.Path,
+				"line": strconv.Itoa(line)})
+		}
 	}
-	if meta.VcpuCount == 0 && meta.MemMiB == 0 {
-		return denial.CeilingSnapshotUnknown.Err(denial.V{"name": name, "file": cfg.Path})
+
+	// The host's own ceilings, always — even when cfg is nil (audit 2026-09-01,
+	// M2b). An unsized snapshot (pre-E4-2) with no policy is allowed through
+	// here: its VcpuCount and MemMiB are both zero, so neither comparison
+	// fires, and the host has nothing to check it against. Unlike the policy
+	// case above there is no file to name as the authority that would refuse
+	// it, so the honest move is to let the host decide it can run and find out.
+	if cpus := hostCPUCeiling(); cpus > 0 && meta.VcpuCount > cpus {
+		return denial.CeilingHostSnapshot.Err(denial.V{
+			"name": name, "held": fmt.Sprintf("%d vcpu", meta.VcpuCount),
+			"limit": strconv.Itoa(cpus)})
 	}
-	if cfg.ResCPUs > 0 && meta.VcpuCount > cfg.ResCPUs {
-		line, _ := cfg.Ceiling("cpus")
-		return denial.CeilingSnapshot.Err(denial.V{
-			"name": name, "held": fmt.Sprintf("%d vcpu", meta.VcpuCount), "key": "cpus",
-			"limit": strconv.Itoa(cfg.ResCPUs), "file": cfg.Path, "line": strconv.Itoa(line)})
-	}
-	if cfg.ResMemMiB > 0 && meta.MemMiB > cfg.ResMemMiB {
-		line, _ := cfg.Ceiling("mem")
-		return denial.CeilingSnapshot.Err(denial.V{
-			"name": name, "held": fmt.Sprintf("%d MiB", meta.MemMiB), "key": "mem",
-			"limit": fmt.Sprintf("%d MiB", cfg.ResMemMiB), "file": cfg.Path,
-			"line": strconv.Itoa(line)})
+	if ceiling := hostMemCeilingMiB(); ceiling > 0 && meta.MemMiB > ceiling {
+		return denial.CeilingHostSnapshot.Err(denial.V{
+			"name": name, "held": fmt.Sprintf("%d MiB", meta.MemMiB),
+			"limit": fmt.Sprintf("%d MiB", ceiling)})
 	}
 	return nil
 }
@@ -415,6 +439,29 @@ func (s *hostServer) toolFork(raw json.RawMessage) *mcp.CallToolResult {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
+			// A panic in one fork worker is that fork's failure, never the
+			// batch's and never the process's (audit 2026-09-01, L2). The A1
+			// net around a tool call covers the call goroutine, not these
+			// per-fork workers a fork spawns — a panic here would take the whole
+			// server down and orphan every machine it owns. So each worker
+			// recovers its own: it brings down a machine that came up, ends the
+			// fork's record through the same endSession the CLI uses (so it is
+			// not left open forever, and so appendsites need not grow a site),
+			// tells the operator, and files the panic as this fork's error.
+			var sb *sandbox.Sandbox
+			var rec *recorder.Recorder
+			defer func() {
+				if r := recover(); r != nil {
+					if sb != nil {
+						_ = sb.Shutdown(5 * time.Second)
+					}
+					if rec != nil {
+						endSession(rec, "error", nil)
+					}
+					fmt.Fprintf(s.stderr(), "kelyfos: fork %d panicked: %v\n", i+1, r)
+					results[i] = result{err: fmt.Errorf("fork %d panicked: %v", i+1, r)}
+				}
+			}()
 			id, err := sandbox.NewID()
 			if err != nil {
 				results[i] = result{err: err}
@@ -425,7 +472,7 @@ func (s *hostServer) toolFork(raw json.RawMessage) *mcp.CallToolResult {
 			// Restore resumes it, and a recorder opened only once every fork
 			// in the batch has finished is a recorder that missed whatever
 			// the fastest of them said first (F3).
-			rec, err := recorder.Open(sandbox.Root(), id)
+			rec, err = recorder.Open(sandbox.Root(), id)
 			if err != nil {
 				results[i] = result{err: err}
 				return
@@ -435,7 +482,14 @@ func (s *hostServer) toolFork(raw json.RawMessage) *mcp.CallToolResult {
 				Kelyfos: Version, Argv: s.argv,
 				Reason: "forked from " + a.Name + " through serve-mcp session " + s.auditID,
 			})
-			sb, elapsed, err := sandbox.Restore(dir, sandbox.Options{
+			// The seam fires here, after session.start: a panic now finds rec
+			// open (so endSession has a chain to close) and no machine up yet,
+			// which is the shape the recover above is written for.
+			if s.crashFork != nil && s.crashFork(i) {
+				panic("fork crash (test seam)")
+			}
+			var elapsed time.Duration
+			sb, elapsed, err = sandbox.Restore(dir, sandbox.Options{
 				ID: id, Arch: arch, Flavor: meta.Flavor, Quiet: true,
 				VcpuCount: meta.VcpuCount, MemMiB: meta.MemMiB,
 				OnGuestEvent:     guestEventRecorder(rec, "", meta.MemMiB),
@@ -446,6 +500,7 @@ func (s *hostServer) toolFork(raw json.RawMessage) *mcp.CallToolResult {
 				_ = rec.Append(recorder.Event{Type: recorder.TypeSessionEnd, Reason: "error",
 					DurationMS: rec.Since().Milliseconds()})
 				_ = rec.Close()
+				rec = nil
 				results[i] = result{err: err}
 				return
 			}

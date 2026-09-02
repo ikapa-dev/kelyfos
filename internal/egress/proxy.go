@@ -107,6 +107,21 @@ const (
 	// counting it against the sandbox would put another party's traffic in this
 	// sandbox's receipt (P7-17/C).
 	ReasonForeignPeer = "foreign_peer"
+	// ReasonStalled and ReasonCeilingReached annotate a connection that WAS
+	// allowed and DID carry traffic, then ended for a reason worth recording —
+	// so they sit on an Attempt with Allowed:true, not on a refusal (audit
+	// 2026-09-01, M4). Before this, a tunnel that went silent both ways or ran
+	// out its lifetime was closed and reported with an empty Reason, and the two
+	// were indistinguishable in the record from a connection that simply ended.
+	//
+	// ReasonStalled: no byte crossed for the stall window — a tunnel gone quiet
+	// in both directions, a plain request body that stopped producing.
+	ReasonStalled = "stalled"
+	// ReasonCeilingReached: the connection reached its absolute lifetime,
+	// however the time was spent. The stall clock re-arms while bytes move; this
+	// is the bound a stream dribbling just fast enough to keep re-arming cannot
+	// outrun.
+	ReasonCeilingReached = "ceiling_reached"
 )
 
 // WithheldNotViaConnect belongs beside scope.go's own WithheldPath,
@@ -333,13 +348,15 @@ type Proxy struct {
 	// whose record understates what the host did (P6-5).
 	OnScrubbed func(name, host string)
 	// OnUnscrubbable says the opposite, and it is the audit of 2026-09-01's
-	// A4: a response arrived compressed where a credential is bound, and the
+	// A4/H4: a response arrived compressed where a credential is bound, and the
 	// byte-based scrubber cannot match inside an encoding. The proxy asks
-	// origins not to compress (identity on the terminated leg, below), so
-	// reaching here means an origin ignored that — and the guest is about to
-	// receive a body the echo suppression cannot read. Recorded instead of
-	// silence, because "the value may have reached the guest and nothing
-	// could be done" is precisely a fact the record exists to hold.
+	// origins not to compress (identity on the terminated and plain-HTTP legs),
+	// so reaching here means an origin ignored that. The response is refused,
+	// nothing is delivered — the guest gets a 502 that names the host and the
+	// encoding and no byte of the body — and this event records the refusal.
+	// The alternative the first pass took, passing the compressed body through
+	// and recording it, still handed the guest a credential gzip does not
+	// hide (H4); this does not.
 	OnUnscrubbable func(host, encoding string)
 	// CA terminates TLS for secret-bound domains. Ephemeral, per run.
 	CA *CA
@@ -387,13 +404,20 @@ type Proxy struct {
 	// can reach it (F16).
 	terminatedConnCeiling time.Duration
 
-	// tunnelStall and tunnelCeiling override tunnelStallTimeout and the
-	// tunnel connection ceiling for this proxy; zero means the constants.
-	// Unexported for the same reason the terminated leg's overrides are
-	// (F16): a bound a test cannot shrink is a bound nothing can watch fail
-	// (audit 2026-09-01, A12).
+	// tunnelStall, tunnelCeiling and bodyStall override the defaults the
+	// relayed and forwarded (non-terminated) legs run under; zero means the
+	// constant. Unexported for the same reason the terminated leg's overrides
+	// are (F16): a bound a test cannot shrink is a bound nothing can watch fail
+	// (audit 2026-09-01, A12/M4).
+	//
+	// tunnelStall is the tunnel's silence bound (tunnelStallTimeout);
+	// tunnelCeiling is the absolute lifetime ceiling shared by the tunnel and
+	// forwardHTTP's plain leg (maxTerminatedConnTime, via connCeiling);
+	// bodyStall is how long forwardHTTP's request body may produce nothing
+	// (bodyStallTimeout, via bodyStallBound) before the plain leg closes it.
 	tunnelStall   time.Duration
 	tunnelCeiling time.Duration
+	bodyStall     time.Duration
 
 	ln   net.Listener
 	wg   sync.WaitGroup
@@ -452,37 +476,149 @@ func (a activeWriter) Write(b []byte) (int, error) {
 // sandbox's life.
 const tunnelStallTimeout = 5 * time.Minute
 
-// tunnelClock is a stall clock for one direction of one tunnel, the tunnel
-// counterpart of the terminated leg's bodyClock: every Read and Write arms a
-// deadline for its direction, and every arm is clamped by the connection
-// ceiling through notAfter — the same clamp, so a stall that re-arms faster
-// than it fires still cannot outrun the ceiling. Progress touches the proxy,
-// which is what activeWriter did for the terminated leg and what keeps
-// idle-timeout reaping honest for a tunnel that is genuinely carrying bytes.
+// tunnelClock is one tunnel's activity clock, shared by both directions. It is
+// the tunnel-wide answer to A12/H3: the first pass gave each direction its own
+// stall clock, so a transfer that flowed one way only — a long download, a
+// long upload — was cut the moment the quiet side's clock fired, and the
+// comment claimed "no bytes either way" while the code meant "no bytes THIS
+// way". Here any byte crossing in either direction is progress, and progress
+// re-arms BOTH conns, so a one-way transfer is not cut while it keeps moving.
+//
+// Every arm — the one before the copies and every progress after — is clamped
+// to the connection ceiling by notAfter, so a stream that dribbles just fast
+// enough to keep re-arming still cannot push a deadline past hard: both
+// goroutines exit by the ceiling at the latest, the slot is released, nothing
+// leaks. Progress touches the proxy, which is what activeWriter did for the
+// terminated leg and what keeps idle-timeout reaping honest for a tunnel that
+// is genuinely carrying bytes.
+//
+// SetDeadline, not SetReadDeadline: a guest that stops reading a download
+// blocks the proxy inside a write to it, which only a write deadline can
+// bound, and the ceiling has to reach that write too. Setting both directions'
+// deadlines on both conns is the whole of it.
 type tunnelClock struct {
+	guest, origin net.Conn
+	stall         time.Duration
+	hard          time.Time
+	p             *Proxy
+}
+
+// arm sets the initial stall deadline on both conns, once, before the copies
+// start.
+func (t *tunnelClock) arm() {
+	dl := notAfter(time.Now().Add(t.stall), t.hard)
+	_ = t.guest.SetDeadline(dl)
+	_ = t.origin.SetDeadline(dl)
+}
+
+// progress re-arms both directions of both conns and marks the proxy busy. Any
+// byte, either way, is progress.
+func (t *tunnelClock) progress() {
+	dl := notAfter(time.Now().Add(t.stall), t.hard)
+	_ = t.guest.SetDeadline(dl)
+	_ = t.origin.SetDeadline(dl)
+	t.p.touch()
+}
+
+// tunnelSide wraps one end of a tunnel so every byte it moves reports to the
+// shared clock. Read and Write both call progress, so a flow in either
+// direction re-arms both directions — which is what keeps a one-way transfer
+// alive.
+type tunnelSide struct {
 	c     net.Conn
-	stall time.Duration
-	hard  time.Time
-	p     *Proxy
+	clock *tunnelClock
 }
 
-func (t *tunnelClock) Read(p []byte) (int, error) {
-	_ = t.c.SetReadDeadline(notAfter(time.Now().Add(t.stall), t.hard))
-	n, err := t.c.Read(p)
+func (s tunnelSide) Read(p []byte) (int, error) {
+	n, err := s.c.Read(p)
 	if n > 0 {
-		t.p.touch()
+		s.clock.progress()
 	}
 	return n, err
 }
 
-func (t *tunnelClock) Write(p []byte) (int, error) {
-	_ = t.c.SetWriteDeadline(notAfter(time.Now().Add(t.stall), t.hard))
-	n, err := t.c.Write(p)
+func (s tunnelSide) Write(p []byte) (int, error) {
+	n, err := s.c.Write(p)
 	if n > 0 {
-		t.p.touch()
+		s.clock.progress()
 	}
 	return n, err
 }
+
+// closedBy names why a relayed connection ended, from the copy errors both
+// directions returned (audit 2026-09-01, M4). A deadline that fired is one of
+// two things: if the connection has reached its ceiling, it is the ceiling;
+// otherwise it is the stall clock. A clean end (io.Copy returns nil on EOF) is
+// neither, and returns "" — the connection simply finished.
+func closedBy(hard time.Time, errs ...error) string {
+	timedOut := false
+	for _, err := range errs {
+		if err == nil {
+			continue
+		}
+		var ne net.Error
+		if errors.As(err, &ne) && ne.Timeout() {
+			timedOut = true
+		}
+	}
+	if !timedOut {
+		return ""
+	}
+	if !time.Now().Before(hard) {
+		return ReasonCeilingReached
+	}
+	return ReasonStalled
+}
+
+// connCeiling is the absolute lifetime a relayed or forwarded connection may
+// occupy, from an override or the shared default. The tunnel and the plain leg
+// both bound themselves by it (audit 2026-09-01, A12/M4).
+func connCeiling(override time.Duration) time.Duration {
+	if override > 0 {
+		return override
+	}
+	return maxTerminatedConnTime
+}
+
+// bodyStallBound is how long forwardHTTP's request body may produce nothing
+// before the stall clock closes it, from an override or the shared default —
+// so a test can shrink it the way the terminated leg's bounds can be shrunk
+// (audit 2026-09-01, A12/M4).
+func bodyStallBound(override time.Duration) time.Duration {
+	if override > 0 {
+		return override
+	}
+	return bodyStallTimeout
+}
+
+// clockBody arms a stall clock's read deadline before each read of a request
+// body, so a guest that stops sending an upload mid-transfer is closed at the
+// stall rather than held to the connection ceiling (audit 2026-09-01, M4). The
+// deadline is on the client conn; the bytes come from the parsed req.Body over
+// that same conn. stalled records that a client-read deadline — not an upstream
+// failure — is what ended the RoundTrip, which is how forwardHTTP tells a
+// stalled request body from an origin that would not answer. It is set on the
+// transport's write goroutine and read on the handler goroutine, so it is
+// atomic.
+type clockBody struct {
+	r       io.ReadCloser
+	clock   *bodyClock
+	stalled atomic.Bool
+}
+
+func (b *clockBody) Read(p []byte) (int, error) {
+	b.clock.arm(b.clock.stall)
+	n, err := b.r.Read(p)
+	if err != nil {
+		var ne net.Error
+		if errors.As(err, &ne) && ne.Timeout() {
+			b.stalled.Store(true)
+		}
+	}
+	return n, err
+}
+
+func (b *clockBody) Close() error { return b.r.Close() }
 
 // plainUpstream returns the transport for forwardHTTP's fetches. Per proxy,
 // like upstream (audit 2026-09-01, A13); UpstreamPlain wins when a test set it.
@@ -564,6 +700,19 @@ func (p *Proxy) Close() {
 	p.once.Do(func() {
 		if p.ln != nil {
 			_ = p.ln.Close()
+		}
+		// Drop the per-proxy transports' idle upstream connections (audit
+		// 2026-09-01, M11). Close closed the listener and nothing else, so up to
+		// MaxIdleConns vetted sockets per proxy lingered to origins until their
+		// 90-second idle timer — a per-sandbox fd surge under serve-mcp/shim
+		// churn. The fields are read directly, not through upstream() /
+		// plainUpstream(): a transport this proxy never built is nil and must
+		// stay nil, not be constructed here only to be closed. An injected
+		// Upstream/UpstreamPlain is the caller's to close, so it is left alone.
+		for _, rt := range []http.RoundTripper{p.terminatedRT, p.plainRT} {
+			if c, ok := rt.(interface{ CloseIdleConnections() }); ok {
+				c.CloseIdleConnections()
+			}
 		}
 	})
 	p.wg.Wait()
@@ -809,43 +958,48 @@ func (p *Proxy) tunnel(client net.Conn, host string, port int) {
 		return
 	}
 
-	// The clocks (audit 2026-09-01, A12). The terminated leg has had them
-	// since F16; a tunnel had nothing, so 128 idle CONNECTs pinned this
-	// proxy's whole semaphore for the sandbox's life, and a guest dribbling
-	// one byte a minute kept p.lastActive fresh enough to defeat idle-timeout
-	// reaping at the same time. Both directions now carry a stall clock — no
-	// bytes either way for tunnelStallTimeout closes the tunnel — and every
-	// arm is clamped by the ceiling, so no stall re-arm can outrun it.
+	// The clock (audit 2026-09-01, A12/H3). The terminated leg has had one
+	// since F16; a tunnel had nothing, so 128 idle CONNECTs pinned this proxy's
+	// whole semaphore for the sandbox's life, and a guest dribbling one byte a
+	// minute kept p.lastActive fresh enough to defeat idle-timeout reaping at
+	// the same time. One tunnel-wide clock now watches both directions: any
+	// byte either way re-arms both conns, so no bytes either way for
+	// tunnelStallTimeout closes the tunnel while a one-way transfer that keeps
+	// moving is not cut. Every arm is clamped by the ceiling, so no stall
+	// re-arm can outrun it, and both goroutines exit by the ceiling at the
+	// latest — the slot is released, nothing leaks.
 	stall := p.tunnelStall
 	if stall <= 0 {
 		stall = tunnelStallTimeout
 	}
-	ceiling := p.tunnelCeiling
-	if ceiling <= 0 {
-		ceiling = maxTerminatedConnTime
-	}
-	hard := time.Now().Add(ceiling)
-	guest := &tunnelClock{c: client, stall: stall, hard: hard, p: p}
-	remote := &tunnelClock{c: upstream, stall: stall, hard: hard, p: p}
+	hard := time.Now().Add(connCeiling(p.tunnelCeiling))
+	clock := &tunnelClock{guest: client, origin: upstream, stall: stall, hard: hard, p: p}
+	clock.arm()
+	guest := tunnelSide{c: client, clock: clock}
+	remote := tunnelSide{c: upstream, clock: clock}
 
 	var in, out int64
+	var outErr, inErr error
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		out, _ = io.Copy(remote, guest)
+		out, outErr = io.Copy(remote, guest)
 		halfClose(upstream)
 	}()
 	go func() {
 		defer wg.Done()
-		in, _ = io.Copy(guest, remote)
+		in, inErr = io.Copy(guest, remote)
 		halfClose(client)
 	}()
 	wg.Wait()
 
+	// The copy errors are no longer discarded: a tunnel closed by the stall
+	// clock or the ceiling says so in its record (M4).
 	p.report(Attempt{
 		Host: host, Port: port, Allowed: true, Mode: ModeTunnelled,
 		BytesOut: out, BytesIn: in,
+		Reason: closedBy(hard, outErr, inErr),
 	})
 }
 
@@ -884,10 +1038,12 @@ func (p *Proxy) forwardHTTP(client net.Conn, req *http.Request, host string, por
 			p.OnWithheld(bound[0].Name, host, reason)
 		}
 		// A credential-bound origin is asked not to compress, so the echo
-		// suppression can read what comes back (audit 2026-09-01, A4). The
+		// suppression can read what comes back (audit 2026-09-01, A4/H4). The
 		// terminated leg does the same; this is the plain-HTTP leg, where a
-		// bound credential is never attached but a scrubbing policy still is.
-		req.Header.Set("Accept-Encoding", "identity")
+		// bound credential is never attached but a scrubbing policy still is —
+		// and a response that arrives compressed anyway is refused below, not
+		// delivered unchecked.
+		askForIdentity(req)
 	}
 	req.RequestURI = ""
 	if req.URL.Scheme == "" {
@@ -902,19 +1058,68 @@ func (p *Proxy) forwardHTTP(client net.Conn, req *http.Request, host string, por
 	// reaches a private address through (F2).
 	//
 	// The whole exchange is bounded by the connection ceiling through the
-	// request context (audit 2026-09-01, A12): an origin that dribbles a body
-	// forever, or never finishes one, held this slot as long as it liked,
-	// because the transport's own timeout covers headers and nothing else.
-	hardCtx, cancelHard := context.WithTimeout(req.Context(), maxTerminatedConnTime)
+	// request context, and the request body — the guest→proxy upload — by a
+	// stall clock on the client conn (audit 2026-09-01, A12/M4). Before this,
+	// an origin that dribbled a body forever held the slot as long as it liked
+	// (the transport's own timeout covers headers only), and a guest that
+	// opened a request, declared a body and then stopped sending held it just
+	// as long — the ceiling was the only bound, an hour away.
+	hard := time.Now().Add(connCeiling(p.tunnelCeiling))
+	hardCtx, cancelHard := context.WithDeadline(req.Context(), hard)
 	defer cancelHard()
 	req = req.WithContext(hardCtx)
+	clock := &bodyClock{c: client, stall: bodyStallBound(p.bodyStall), hard: hard}
+	var body *clockBody
+	if req.Body != nil && req.Body != http.NoBody {
+		body = &clockBody{r: req.Body, clock: clock}
+		req.Body = body
+	}
 	resp, err := p.plainUpstream().RoundTrip(req)
 	if err != nil {
-		p.reportDialFailure(client, host, port, err)
+		// The request body stalled, or the connection reached its ceiling, or
+		// the origin simply would not answer — three different records. The
+		// ceiling is checked first: a read deadline clamped to hard fires as a
+		// timeout on the body too, so a stall that IS the ceiling would else be
+		// misread as an ordinary stall. A stall the client body read reported is
+		// a 408 the guest can act on; the ceiling is a 504; anything else is the
+		// upstream failure reportDialFailure already renders, which preserves
+		// the dial-error path unchanged (M4).
+		switch {
+		case !time.Now().Before(hard):
+			p.report(Attempt{Host: host, Port: port, Reason: ReasonCeilingReached})
+			writeStatus(client, http.StatusGatewayTimeout,
+				"kelyfos: the request reached the connection ceiling before it completed")
+		case body != nil && body.stalled.Load():
+			p.report(Attempt{Host: host, Port: port, Reason: ReasonStalled})
+			writeStatus(client, http.StatusRequestTimeout,
+				"kelyfos: the request body stalled")
+		default:
+			p.reportDialFailure(client, host, port, err)
+		}
 		return
 	}
 	defer resp.Body.Close()
-	p.scrubResponse(resp, host)
+	// A response the echo suppression cannot read — compressed, where a
+	// credential is bound — is refused, not delivered (audit 2026-09-01, H4).
+	// scrubResponse returns the encoding that forced it; the guest gets a 502
+	// that names the host and the encoding and no byte of the body, and this
+	// attempt reports allowed (the request was permitted and reached the
+	// origin) with BytesIn 0 (nothing was delivered back).
+	mode := ModePlain
+	if effectiveScheme == "https" {
+		mode = ModeDirectTLS
+	}
+	if enc := p.scrubResponse(resp, host); enc != "" {
+		resp.Body.Close()
+		writeStatus(client, http.StatusBadGateway, unscrubbableRefusal(host, enc))
+		out := int64(0)
+		if req.ContentLength > 0 {
+			out = req.ContentLength
+		}
+		p.report(Attempt{Host: host, Port: port, Allowed: true, Mode: mode,
+			BytesOut: out, BytesIn: 0})
+		return
+	}
 	// Counted rather than left at zero: this path moved bytes like any other,
 	// and a receipt that reads 0 for a transfer that happened is its own small
 	// lie. ContentLength is -1 for a chunked body, which is not a byte count,
@@ -925,16 +1130,13 @@ func (p *Proxy) forwardHTTP(client net.Conn, req *http.Request, host string, por
 	}
 	counted := &countingReader{r: resp.Body}
 	resp.Body = counted
-	// The clocks (audit 2026-09-01, A12): the guest's side of the body copy
-	// gets the stall clock the terminated leg's write side has had since F16,
-	// and the whole exchange is bounded by the connection ceiling through the
-	// request context — a silent origin or a guest that stops reading costs
-	// this slot no longer than any other.
-	hard := time.Now().Add(maxTerminatedConnTime)
-	clock := &bodyClock{c: client, stall: bodyStallTimeout, hard: hard}
-	if werr := resp.Write(activeWriter{clock, p}); werr != nil {
-		// The guest stopped reading: the clocks above made that visible
-		// instead of a blocked write, and the attempt still reports.
+	// The response write reuses the same clock (its write side arms the client
+	// write deadline, clamped by the same hard): a guest that stops reading is
+	// closed at the stall, the whole exchange at the ceiling. A mid-body write
+	// failure is not a refusal — the request was allowed and bytes were
+	// delivered — but it carries the reason it ended (audit 2026-09-01, A12/M4).
+	werr := resp.Write(activeWriter{clock, p})
+	if werr != nil {
 		p.touch()
 	}
 	in = counted.n
@@ -942,12 +1144,8 @@ func (p *Proxy) forwardHTTP(client net.Conn, req *http.Request, host string, por
 	// performed a real TLS handshake to fetch it. Recording that as ModePlain
 	// would repeat F-D33's mistake in the other direction: ModePlain's own doc
 	// says "nothing was encrypted", and here something genuinely was (S5d).
-	mode := ModePlain
-	if effectiveScheme == "https" {
-		mode = ModeDirectTLS
-	}
 	p.report(Attempt{Host: host, Port: port, Allowed: true, Mode: mode,
-		BytesOut: out, BytesIn: in})
+		BytesOut: out, BytesIn: in, Reason: closedBy(hard, werr)})
 }
 
 func splitTarget(req *http.Request) (string, int, error) {

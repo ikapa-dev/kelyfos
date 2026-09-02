@@ -515,12 +515,20 @@ the proxy either way.
   `Accept-Encoding: identity` on the terminated and plain-HTTP legs' requests —
   so a compliant origin's response is matchable end to end, and the guest's own
   encoding preference is overridden for exactly those requests. An origin that
-  compresses anyway gets its body passed through unread — gzip of a credential
-  does not contain the credential — and a `secret.unscrubbable` event records
-  it, replacing the silence that sat here until the independent audit of
-  2026-09-01 (A4) demonstrated the echo end to end. The proxy still does not
-  decompress to scrub and re-compress after: that would break the byte-for-byte
-  framing it deliberately preserves. **A value under eight bytes is not
+  compresses anyway — every `Content-Encoding` line and coding is checked, gzip
+  and br alike — gets its response **refused**, not delivered: the guest reads a
+  `502` naming the encoding and the host in the body's place, and a
+  `secret.unscrubbable` event records the refusal. The first fix passed the
+  body through unread and only recorded it; the adversarial review of
+  2026-09-01 (H4) priced that as recording the leak rather than stopping it —
+  httpbin's `/gzip`, the audit's own repro, compresses whatever the request
+  asked for — so the compressed response is now refused. A response with no
+  body (HEAD, 204, 304) is delivered with no event. An origin serving
+  pre-compressed objects — an object store with `Content-Encoding` in the
+  object's own metadata — is refused on every fetch of such an object while a
+  credential is bound. The proxy does not decompress to scrub and re-compress:
+  that would break the byte-for-byte framing it deliberately preserves. **A
+  value under eight bytes is not
   scrubbed**, because replacing a short string everywhere it appears would
   corrupt far more than it protects — and `--secret` warns about that at parse
   time now, where the user can still choose a longer credential. Trailers are
@@ -535,14 +543,22 @@ the proxy either way.
   response, so a keep-alive connection whose five responses each echo the same
   token produces five events.
 
-- **Every tunnelled and forwarded byte is on a clock.** The audit of
-  2026-09-01 (A12) found tunnels carrying nothing at all: 128 idle CONNECTs
-  pinned the egress semaphore for the sandbox's life. A tunnel now closes
-  after five minutes of silence in either direction — generous for
-  interactive keepalives — and no arm of its clock can outrun the one-hour
-  connection ceiling the terminated leg already had, so a dribbling guest is
-  bounded too. The plain-HTTP leg's body copy carries the same write-side
-  clock and a context-bounded ceiling.
+- **Every tunnelled and forwarded byte is on a clock, and the tunnel's clock
+  spans the whole tunnel.** The audit of 2026-09-01 (A12) found tunnels
+  carrying nothing at all: 128 idle CONNECTs pinned the egress semaphore for
+  the sandbox's life. A tunnel now closes after five minutes with **no bytes in
+  either direction** — one clock for the whole tunnel, re-armed by a byte moving
+  either way, so a keepalive or a one-way transfer of any length (a long
+  download, an upload to an origin that answers only at the end) keeps it open
+  while it is making progress. The first cut of this clock was per direction and
+  cut exactly those one-way transfers; that is the adversarial review of
+  2026-09-01's H3. No arm can outrun the one-hour connection ceiling the
+  terminated leg already had, so a dribbling guest is bounded too. The
+  plain-HTTP leg's request body carries the same rolling stall clock (a guest
+  that declares a body and stops sending it is answered `408`) beside the
+  write-side clock and the hour's ceiling. When the proxy itself ends a
+  connection the `egress.attempt` records `reason` `stalled` or
+  `ceiling_reached`, on an allowed attempt if the transfer had begun.
 
 - **Certificate pinning breaks for a secret-bound domain, by construction.**
   This is the cost D6 accepted, and it belongs here as well as in the threat

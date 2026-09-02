@@ -64,7 +64,11 @@ of its own.
 `cpus`, `mem`, `cpu_quota`, `scratch` and the four I/O rates cap every sandbox
 it creates, and `allow` and `secrets` decide what those sandboxes may reach, but
 the **time budgets `max_runtime` and `idle_timeout` are not applied here**. A
-shim sandbox lives until it is killed or the shim stops. `workspace`,
+shim sandbox lives until it is killed or the shim stops. Unlike the `serve-mcp`
+door, the shim boots the size its policy declares and does not additionally
+check it against the host's own ceiling: the size comes from the project's
+`kelyfos.toml` rather than from a request, so there is no client ask to bound.
+`workspace`,
 `[[plugin]]` and `[[forward]]` are not read here either: a shim sandbox gets no
 workspace device — `/work` is the guest's own and nothing written there comes
 back to the host — no plugin device, so the guest advertises none of the

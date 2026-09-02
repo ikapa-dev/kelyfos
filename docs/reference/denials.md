@@ -90,6 +90,17 @@ mem 262144 MiB exceeds what this host can run (8192 MiB) [ceiling.host]
 
 Named: `asked`, `field`, `limit`. The values above are an example.
 
+## `ceiling.host_snapshot`
+
+A snapshot holds a machine larger than the physical host itself — more cores or RAM than the machine has — and a restore cannot resize it (audit 2026-09-01, A8).
+
+```
+snapshot before-the-migration holds a 8 vcpu machine, over what this host can run (4), and a restore cannot resize it [ceiling.host_snapshot]
+    restore it on a larger host, or take the snapshot again from a machine that fits this one — this is the physical host's ceiling, which no policy raises
+```
+
+Named: `held`, `limit`, `name`. The values above are an example.
+
 ## `ceiling.resume`
 
 A paused session's frozen policy asks for more than the current policy's ceiling, and a resume runs the frozen one.
@@ -133,6 +144,17 @@ cpus 8 exceeds the ceiling cpus = 4 set at /home/you/project/kelyfos.toml:12 [ce
 ```
 
 Named: `asked`, `field`, `file`, `key`, `limit`, `line`. The values above are an example.
+
+## `ceiling.tool_legacy`
+
+An MCP tool call asked for more than a legacy [sandbox] size key — vcpus or mem_mib — which on this door is a ceiling and not merely a default (audit 2026-09-01, A8).
+
+```
+cpus 4 exceeds the ceiling vcpus = 2 set at /home/you/project/kelyfos.toml — on this door a declared size is a ceiling, not a default [ceiling.tool_legacy]
+    ask for less, or move the size into /home/you/project/kelyfos.toml's [resources] and raise it there if the machine is meant to have more
+```
+
+Named: `field`, `file`, `key`, `limit`, `value`. The values above are an example.
 
 ## `egress.host`
 

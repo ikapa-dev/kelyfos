@@ -15,6 +15,12 @@ import (
 	"github.com/ikapa-dev/kelyfos/internal/proto"
 )
 
+// maxExecTimeoutMS is the ceiling on a command's timeout, matching the host
+// doors' 24-hour bound (audit 2026-09-01, A15). It exists so the multiply into
+// time.Duration below cannot wrap negative; a caller wanting no timeout passes
+// zero, not a number near the top of int64.
+const maxExecTimeoutMS = 24 * 60 * 60 * 1000
+
 // defaultEnv is the environment a command gets when the request does not carry
 // one. It is a fixed set, not the supervisor's own environment: a sandbox that
 // silently hands its process environment to guest commands is one leak away
@@ -162,7 +168,16 @@ func runCommand(req proto.ExecRequest, rp *reaper, onStdout, onStderr func([]byt
 	var timedOut atomic.Bool
 	var timer *time.Timer
 	if req.TimeoutMS > 0 {
-		timer = time.AfterFunc(time.Duration(req.TimeoutMS)*time.Millisecond, func() {
+		// Clamp before the multiply, or a timeout_ms near the top of int64
+		// overflows time.Duration to a negative and fires the kill at once
+		// (audit 2026-09-01, A15). The host doors already refuse absurd values;
+		// this is the same guard at the source, for the in-guest MCP exec tool
+		// that reaches this path directly (adversarial review 2026-09-01).
+		ms := req.TimeoutMS
+		if ms > maxExecTimeoutMS {
+			ms = maxExecTimeoutMS
+		}
+		timer = time.AfterFunc(time.Duration(ms)*time.Millisecond, func() {
 			timedOut.Store(true)
 			killGroup(cmd.Process.Pid)
 		})

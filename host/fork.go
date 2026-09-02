@@ -148,6 +148,30 @@ unique guest network identity, which is backlog work.
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
+			// A panic in one fork worker is that fork's failure, not the
+			// process's (audit 2026-09-01, L2): recover it, bring down a machine
+			// that came up (and drop its workspace copy, which outlives the run
+			// directory here), end the fork's record through endSession, tell
+			// the operator, and file the panic as this fork's error. The same
+			// shape the serve-mcp fork door carries, on the CLI side.
+			var sb *sandbox.Sandbox
+			var rec *recorder.Recorder
+			defer func() {
+				if r := recover(); r != nil {
+					if sb != nil {
+						ws := sb.State.Workspace
+						_ = sb.Shutdown(5 * time.Second)
+						if ws != "" {
+							_ = os.Remove(ws)
+						}
+					}
+					if rec != nil {
+						endSession(rec, "error", nil)
+					}
+					fmt.Fprintf(os.Stderr, "fork %d panicked: %v\n", i+1, r)
+					results[i] = forked{err: fmt.Errorf("fork %d panicked: %v", i+1, r)}
+				}
+			}()
 			id, err := sandbox.NewID()
 			if err != nil {
 				results[i] = forked{err: err}
@@ -167,7 +191,7 @@ unique guest network identity, which is backlog work.
 			// has finished as this used to do: the guest is live and reporting
 			// from the instant Restore resumes it, and a handler wired only
 			// afterward missed whatever the fastest of them said first (F3).
-			rec, err := recorder.Open(sandbox.Root(), id)
+			rec, err = recorder.Open(sandbox.Root(), id)
 			if err != nil {
 				results[i] = forked{err: err}
 				return
@@ -182,11 +206,13 @@ unique guest network identity, which is backlog work.
 			// sdir, not a second snapshotDir call: the name is the same for
 			// every fork in the batch and was validated once above, before
 			// anything was built (P7-17/F7).
-			sb, elapsed, err := sandbox.Restore(sdir, opts)
+			var elapsed time.Duration
+			sb, elapsed, err = sandbox.Restore(sdir, opts)
 			if err != nil {
 				_ = rec.Append(recorder.Event{Type: recorder.TypeSessionEnd, Reason: "error",
 					DurationMS: rec.Since().Milliseconds()})
 				_ = rec.Close()
+				rec = nil
 				results[i] = forked{err: err}
 				return
 			}

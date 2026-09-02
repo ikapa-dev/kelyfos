@@ -324,9 +324,17 @@ max_sandboxes = 4
 **Which policy file is a decision, not a default.** The server searches upward
 from its working directory for `kelyfos.toml`, which is right on a command line
 and a trap under a client: the working directory belongs to the client, and one
-launched from outside the project finds no policy and runs with no ceiling at
-all. `--policy <path>` names the file, and a `--policy` that does not exist is
-an error rather than a quiet fall back to the search. The `initialize`
+launched from outside the project finds no policy and runs with no ceiling of
+the policy's — only the host's own, which apply on every path of this door: a
+machine with more cores than the host has, or more memory than it can carry
+with room left for itself, is refused as `[ceiling.host]` (a snapshot's frozen
+size, through `sandbox_restore` and `sandbox_fork`, as `[ceiling.host_snapshot]`).
+A size nobody asked for — the door's 2 vcpu / 512 MiB default — is clamped to
+the machine rather than refused, and a `[sandbox] vcpus` or `mem_mib` declared
+without a `[resources]` section is a ceiling here, not an overridable default
+(`[ceiling.tool_legacy]`; docs/upgrading.md §10). `--policy <path>` names the
+file, and a `--policy` that does not exist is an error rather than a quiet fall
+back to the search. The `initialize`
 instructions name the policy in force, or say plainly that none was found —
 because the banner naming it goes to stderr, and clients bury stderr.
 
@@ -349,11 +357,19 @@ Concurrency is bounded, and the bound is the server's, not the client's to
 discover by racing it. Calls are dispatched on their own goroutines up to
 **128 in flight** — the same ceiling as every other listener in the product;
 the audit of 2026-09-01 (A10) found this door dispatching without one, which
-made a pipelined stream an N-goroutine, N×16 MiB amplification. A call past
-the cap is not refused: the server reads more slowly, which a client sees as
-backpressure and nothing else. Answers still arrive keyed by their own ids and
-may still come back out of order — two overlapping calls race each other by
-design; the ceiling bounds how many can race at once.
+made a pipelined stream an N-goroutine, N×16 MiB amplification. The cap is
+taken on the read loop, so its effect at the cap is precise and worth stating
+(adversarial review 2026-09-01, M10): with 128 calls in flight the server reads
+nothing more — no `ping`, no `tools/list`, no `sandbox_stop`, and a
+`notifications/cancelled` is not seen — until one of them finishes, and a
+`sandbox_exec` finishes when its command does. Only a shutdown gets through:
+a signal stops the server even when the read loop is parked at the cap, and an
+in-flight `sandbox_exec` is then cut short with its `command.exit` saying so,
+rather than the process being held up to the 24-hour command ceiling after the
+client is gone. A bare stdin EOF at the cap is noticed once a slot frees.
+Answers still arrive keyed by their own ids and may still come back out of
+order — two overlapping calls race each other by design; the ceiling bounds how
+many can race at once.
 
 When the server exits, every sandbox it created is stopped. A client that
 disconnects without calling `sandbox_stop` does not leave microVMs behind.

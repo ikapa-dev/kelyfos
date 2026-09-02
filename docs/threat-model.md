@@ -220,6 +220,19 @@ ends in a `session.end`, and `kelyfos verify` prints its absence as an
 observation rather than a verdict, because a record with no `session.end` is a
 session still open as often as it is one that was cut.
 
+On the machine that wrote the record there is one more check, narrower than it
+sounds. Every append also writes `head.json` beside the chain — the head as the
+recorder last saw it — and `kelyfos log --verify` reads chain and anchor
+together under the recorder's own lock and says whether they agree: `anchor
+matches event N`. A chain rewritten or cut short by someone who did not know to
+update the anchor is caught. A same-uid writer who rewrites both is not, and
+one who removes or corrupts the anchor reduces the check to `anchor none — …
+this check cannot rule out a rewrite`, printed rather than treated as a verdict
+because it is the attacker's cheapest move and also exactly what an older
+session or a failed anchor write looks like. The anchor narrows the keyless
+truncation limit; it does not close it. An export carries no anchor, so off the
+machine only the signature answers.
+
 Signing answers both, and only for a reader who already holds the key.
 `kelyfos log --export ... --sign-key` signs an export with an ed25519 key of
 yours, and `kelyfos verify --key` checks the signature against one the reader
@@ -424,8 +437,10 @@ fails when a policy name has no number on an architecture, and in the
 confinement suite's probe battery, which fails when a listed name stops being
 refused.
 
-**The read residuals the audit's A19 confirmed, named in one place.** Each is
-verified reachable from a confined process and accepted, with the reason:
+**The read residuals the audit's A19 confirmed, named in one place.** The first
+three are verified reachable from a confined process and accepted, with the
+reason; the fourth the audit named as a residual and this review found already
+closed:
 
 - **`/dev/kmsg` is readable.** The supervisor reads it to report OOM kills
   (E1-4); nothing fences a confined process reading the same kernel ring, so
@@ -437,12 +452,24 @@ verified reachable from a confined process and accepted, with the reason:
   without transferring data; `LANDLOCK_ACCESS_FS_IOCTL_DEV` is deliberately
   unhandled (§5.2) because refusing it would refuse the terminal ioctls every
   interactive program makes.
-- **`/proc/1/environ` is readable** — PID 1's environment, which carries no
-  proxy address, no CA material and no credential: the egress environment
-  reaches commands as their own default environment, and the channel
-  credential (A2/A3) lives in the supervisor's memory only, never in its
-  environment. After the same audit's A17b the supervisor is non-dumpable, so
-  this file is the residual's floor rather than an invitation.
+**`/proc/1/environ` is *not* readable from a confined process, and the reason
+is worth stating precisely** (the adversarial review of 2026-09-01, M7,
+corrected a first draft of this list that called it readable). `cat
+/proc/1/environ` from a confined command answers `Permission denied`, as do
+`/proc/1/maps`, `/proc/1/mem` and `PTRACE_ATTACH` to PID 1. What refuses them
+is **Landlock's ptrace scoping**: a Landlocked task may not trace or read a
+task outside its own domain hierarchy, and PID 1 has no Landlock domain, so
+none of the guest's confined processes may reach into it — on both flavors,
+`dev` included, where the seccomp filter permits `ptrace`. On `base` the
+seccomp refusal list refuses `process_vm_readv`, `pidfd_getfd` and the rest of
+that family as a second, independent wall. `PR_SET_DUMPABLE 0` on the
+supervisor (A17b) is defence in depth behind those two, not the wall itself: it
+is bypassed by a `CAP_SYS_PTRACE` holder, which every confined process is, so
+it protects only against a process that has dropped that capability. Were the
+file readable, it would carry nothing anyway — no proxy address (that reaches
+commands as their own default environment), no CA material (installed at
+`/etc/ssl/certs`), and no channel credential (A2/A3, in the supervisor's memory
+only).
 
 These are the residuals of a profile that fences writes and refuses syscalls,
 not of a sandbox that pretends the guest's own kernel view is secret.

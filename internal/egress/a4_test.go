@@ -2,6 +2,7 @@ package egress
 
 import (
 	"bufio"
+	"bytes"
 	"compress/gzip"
 	"crypto/tls"
 	"crypto/x509"
@@ -10,9 +11,11 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // The audit of 2026-09-01's A4, end to end, against a local TLS origin: a
@@ -94,7 +97,7 @@ func a4ThroughProxy(t *testing.T, proxyAddr, target, acceptEncoding string, root
 	return resp, err
 }
 
-func TestACompressedEchoOfTheCredentialIsScrubbedOrRecorded(t *testing.T) {
+func TestACompressedEchoOfTheCredentialIsScrubbedOrRefused(t *testing.T) {
 	// An origin that echoes the credential it rejected — the exact shape the
 	// audit reproduced with httpbin's /gzip — and honours the encoding the
 	// request asked for.
@@ -162,18 +165,143 @@ func TestACompressedEchoOfTheCredentialIsScrubbedOrRecorded(t *testing.T) {
 	secretD := &Secret{Name: "GITHUB_TOKEN", Domain: dhost, Scheme: "Bearer", value: testToken}
 	policyD := Policy{Allow: []string{dhost}, Ports: []int{upstreamPort(t, defiant)}, Secrets: []*Secret{secretD}}
 	addrD, unscrubbableD := a4Proxy(t, defiant, policyD, ca)
-	resp, err := a4ThroughProxy(t, addrD, dtarget, "gzip", roots)
+	raw := a4RawThroughProxy(t, addrD, dtarget, "gzip", roots)
+	// Refused, not delivered (H4): the guest gets a 502 that names the encoding
+	// and closes the connection, the gzip body never reaches the wire, and the
+	// credential is nowhere in what arrived.
+	resp, err := http.ReadResponse(bufio.NewReader(bytes.NewReader(raw)), nil)
 	if err != nil {
-		t.Fatalf("through the proxy: %v", err)
+		t.Fatalf("parsing the refusal from the wire dump: %v (%q)", err, raw)
 	}
-	// The body passes as it came — reading it proves the framing is intact —
-	// while the record is what carries the fact that it could not be checked.
-	raw, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
-	if len(raw) == 0 {
-		t.Error("no body arrived at all; the defiant-origin leg did not complete")
+	if resp.StatusCode != http.StatusBadGateway {
+		t.Errorf("the defiant origin's compressed echo was answered %d, want 502", resp.StatusCode)
+	}
+	if !resp.Close {
+		t.Error("the refusal did not close the connection")
+	}
+	if bytes.Contains(raw, []byte{0x1f, 0x8b}) {
+		t.Error("a gzip body reached the guest; it should have been refused, not delivered")
+	}
+	if bytes.Contains(raw, []byte(testToken)) {
+		t.Fatalf("the credential reached the guest in the refusal path: %q", raw)
+	}
+	if !strings.Contains(string(raw), "gzip") {
+		t.Errorf("the refusal does not name the encoding it refused:\n%s", raw)
 	}
 	if got := unscrubbableD(); len(got) != 1 || !strings.Contains(got[0], "gzip") {
 		t.Fatalf("the compressed response was not recorded as unscrubbable: %v", got)
+	}
+}
+
+// a4RawThroughProxy is a4ThroughProxy that returns the raw bytes the proxy
+// wrote back, so a refusal can be inspected on the wire — the status, the
+// absence of the gzip body, the absence of the credential.
+func a4RawThroughProxy(t *testing.T, proxyAddr, target, acceptEncoding string, roots *x509.CertPool) []byte {
+	t.Helper()
+	raw, err := net.Dial("tcp", proxyAddr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = raw.Close() })
+	host, _, _ := net.SplitHostPort(target)
+	fmt.Fprintf(raw, "CONNECT %s HTTP/1.1\r\nHost: %s\r\n\r\n", target, target)
+	br := bufio.NewReader(raw)
+	line, err := br.ReadString('\n')
+	if err != nil {
+		t.Fatalf("no CONNECT answer: %v", err)
+	}
+	if !strings.Contains(line, "200") {
+		t.Fatalf("proxy refused the tunnel: %s", strings.TrimSpace(line))
+	}
+	for {
+		l, err := br.ReadString('\n')
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.TrimSpace(l) == "" {
+			break
+		}
+	}
+	inner := tls.Client(raw, &tls.Config{ServerName: host, RootCAs: roots})
+	if err := inner.Handshake(); err != nil {
+		t.Fatalf("inner handshake: %v", err)
+	}
+	fmt.Fprintf(inner, "GET / HTTP/1.1\r\nHost: %s\r\nAccept-Encoding: %s\r\nConnection: close\r\n\r\n",
+		host, acceptEncoding)
+	_ = inner.SetReadDeadline(time.Now().Add(5 * time.Second))
+	out, _ := io.ReadAll(inner)
+	return out
+}
+
+// The plain-HTTP leg shares the identity request and the refusal: a bound
+// credential is never attached to an unencrypted request (D6), but the echo
+// suppression policy still applies, so the leg asks the origin for identity and
+// refuses a compressed answer rather than deliver a body it cannot read (H4).
+func TestA4_ThePlainLegAsksForIdentityAndRefusesACompressedAnswer(t *testing.T) {
+	var mu sync.Mutex
+	var gotAE string
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		gotAE = r.Header.Get("Accept-Encoding")
+		mu.Unlock()
+		w.Header().Set("Content-Encoding", "gzip")
+		w.Header().Set("Content-Type", "application/json")
+		gz := gzip.NewWriter(w)
+		_, _ = gz.Write([]byte(fmt.Sprintf(`{"echo":"Bearer %s"}`, testToken)))
+		_ = gz.Close()
+	}))
+	defer origin.Close()
+	target := strings.TrimPrefix(origin.URL, "http://")
+	host, portStr, _ := net.SplitHostPort(target)
+	port, _ := strconv.Atoi(portStr)
+
+	secret := &Secret{Name: "TOKEN", Domain: host, Scheme: "Bearer", value: testToken}
+	var unscrubbable []string
+	p := &Proxy{
+		Policy:        Policy{Allow: []string{host}, Ports: []int{port}, Secrets: []*Secret{secret}},
+		UpstreamPlain: origin.Client().Transport,
+		OnUnscrubbable: func(h, e string) {
+			mu.Lock()
+			unscrubbable = append(unscrubbable, h+"|"+e)
+			mu.Unlock()
+		},
+	}
+	proxyPort, err := p.Listen("127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	go p.Serve()
+	t.Cleanup(p.Close)
+
+	raw, err := net.Dial("tcp", "127.0.0.1:"+strconv.Itoa(proxyPort))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = raw.Close() })
+	fmt.Fprintf(raw, "GET http://%s/ HTTP/1.1\r\nHost: %s\r\nAccept-Encoding: gzip\r\nConnection: close\r\n\r\n", target, target)
+	_ = raw.SetReadDeadline(time.Now().Add(5 * time.Second))
+	out, _ := io.ReadAll(raw)
+
+	resp, err := http.ReadResponse(bufio.NewReader(bytes.NewReader(out)), nil)
+	if err != nil {
+		t.Fatalf("parsing the plain-leg refusal: %v (%q)", err, out)
+	}
+	if resp.StatusCode != http.StatusBadGateway {
+		t.Errorf("the plain leg answered %d, want 502", resp.StatusCode)
+	}
+	if bytes.Contains(out, []byte(testToken)) {
+		t.Fatalf("the credential reached the guest on the plain leg: %q", out)
+	}
+	if bytes.Contains(out, []byte{0x1f, 0x8b}) {
+		t.Error("a gzip body reached the guest on the plain leg")
+	}
+	mu.Lock()
+	ae, uns := gotAE, append([]string(nil), unscrubbable...)
+	mu.Unlock()
+	if ae != "identity" {
+		t.Errorf("the plain leg did not ask the origin for identity: %q", ae)
+	}
+	if len(uns) != 1 || !strings.Contains(uns[0], "gzip") {
+		t.Errorf("the plain leg's compressed refusal was not recorded: %v", uns)
 	}
 }

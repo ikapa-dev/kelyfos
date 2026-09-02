@@ -800,8 +800,9 @@ func (d *Digest) Absorb(e recorder.Event) *Entry {
 
 	case recorder.TypeSecretUnscrubbable:
 		// A compressed response from a credential-bound origin: the echo
-		// suppression could not read the body (audit 2026-09-01, A4). It
-		// counts as a secret fact about the session without naming a use.
+		// suppression could not read the body, so the proxy refused it (audit
+		// A4; refusal per review H4). It counts as a secret fact about the
+		// session without naming a use.
 		entry.Category = "secret"
 
 	case recorder.TypeChannelRefused:

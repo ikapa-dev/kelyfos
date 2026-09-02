@@ -98,7 +98,7 @@ func Erase(root, sandboxID, reason string) (redacted int, err error) {
 	if err != nil {
 		return 0, err
 	}
-	_, preHead, err := Verify(bytes.NewReader(blob))
+	preCount, preHead, err := Verify(bytes.NewReader(blob))
 	if err != nil {
 		return 0, fmt.Errorf("refusing to erase: chain does not verify: %w", err)
 	}
@@ -108,6 +108,22 @@ func Erase(root, sandboxID, reason string) (redacted int, err error) {
 	}
 	if len(events) == 0 {
 		return 0, fmt.Errorf("%s: empty chain, nothing to erase", sandboxID)
+	}
+	// The anchor has to agree with the chain before this rewrite runs (review
+	// M9b). Read under the LOCK_EX already held above, so it is the anchor that
+	// belongs to the chain just verified. A genuine disagreement is refused:
+	// erasing rewrites the chain AND writes a fresh anchor over it, so an erase
+	// that ran here would launder a mismatch into a matching pair — destroying
+	// the one signal that a rewrite had happened, which is exactly what the
+	// anchor exists to preserve. A missing anchor (an old record, or one whose
+	// write failed) and an anchor one behind an interrupted append are not
+	// disagreements and proceed: the rewrite below writes the anchor the new
+	// chain proves.
+	anchorBlob, anchorErr := os.ReadFile(HeadPath(root, sandboxID))
+	if _, cerr := checkAnchor(anchorBlob, anchorErr, preCount, preHead, prevOfHead(blob)); cerr != nil {
+		return 0, fmt.Errorf("%s: refusing to erase: %w — the chain and its anchor disagree, and an "+
+			"erasure would write a fresh anchor over the evidence of that; a signed export of this "+
+			"session is the record to keep", sandboxID, cerr)
 	}
 	// Refuse a file whose last line was never finished, the same way catchUp
 	// does for a writer (recorder.go).
@@ -342,6 +358,11 @@ func Erase(root, sandboxID, reason string) (redacted int, err error) {
 			Sandbox: sandboxID, Seq: n, Hash: newHead,
 		}); err != nil {
 			_ = os.Remove(HeadFile(filepath.Dir(path)))
+			// The chain is rewritten and sync'd; only its anchor could not be
+			// replaced. Say so once (review L9) rather than leave the next
+			// verify reporting a missing anchor with no reason for it.
+			warnf("session %s: the chain anchor could not be rewritten after erasure (%v); the next "+
+				"verify will report the anchor missing, not a rewrite", sandboxID, err)
 		}
 	}
 	return redacted, nil
@@ -813,7 +834,16 @@ var eraseExempt = map[string]string{
 
 	"SHA256": "a digest, not the content it fingerprints — the exact pattern this whole mechanism generalises from file.write, and now also what session.erasure's own SHA256 anchors (S1)",
 
-	"Mode":    "tunnelled/terminated/plain/direct_tls, a fixed enumeration",
+	// Mode is a fixed enumeration whichever event carries it, which is what
+	// makes it safe to leave alone (review L8). On egress.attempt it is
+	// tunnelled/terminated/plain/direct_tls; on vmm.api it is the API verb
+	// (pause/resume/snapshot.create/snapshot.load/drive.patch); and on
+	// secret.unscrubbable it WOULD be the origin's own Content-Encoding string
+	// — guest-adjacent text — except that host/denials.go's contentEncodingMode
+	// normalises it to the bounded set gzip/deflate/br/compress/zstd/other
+	// before it is ever recorded, so no origin-chosen text reaches this field
+	// and there is nothing here for an erasure to remove.
+	"Mode":    "a fixed enumeration on every event that carries it: tunnelled/terminated/plain/direct_tls, the vmm.api verb, or the normalised Content-Encoding set gzip/deflate/br/compress/zstd/other (review L8)",
 	"Budget":  "max_runtime or idle_timeout, a fixed enumeration",
 	"Kind":    "a fixed enumeration across every type that carries it (send/ask/reply, get/put/delete, spawn/despawn)",
 	"Outcome": "a fixed enumeration (delivered/refused/unreachable/timeout, ok/error)",

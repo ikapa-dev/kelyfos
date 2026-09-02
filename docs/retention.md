@@ -404,7 +404,19 @@ the hash of a string of English text. The refusal a chain with nothing
 left to redact already gets ("nothing to erase") now correctly fires on
 the second run instead of on neither.
 
-### 5.3 The pre-erasure anchor
+### 5.3 The pre-erasure head — `session.erasure`'s own `sha256`
+
+This "anchor" is `session.erasure`'s own `sha256` field, and it is a different
+thing from `head.json`, the out-of-band chain anchor every append writes beside
+the record (docs/threat-model.md §4; audit 2026-09-01 A14). This one is
+recorded *inside* the erased chain and proves the erased chain is the honest
+successor of the one a reader already holds; `head.json` sits *outside* the
+chain and catches a rewrite that did not also update it. Erasure keeps both
+consistent: it rewrites `head.json` to the erased chain's new head under the
+same lock, and — since the adversarial review of 2026-09-01 — it reads the
+anchor first and **refuses** the erasure if the chain and `head.json` already
+disagree, rather than writing a fresh anchor over the evidence of that
+disagreement. A signed export of the session is then the record to keep.
 
 `session.erasure`'s own `sha256` field carries the chain head — the last
 event's own `hash` — immediately before the rewrite began. Without it,

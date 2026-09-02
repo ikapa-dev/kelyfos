@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"io"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -179,14 +180,17 @@ func wireProxyAudit(proxy *egress.Proxy, rec *recorder.Recorder, agent string, b
 			Type: recorder.TypeSecretScrubbed, Agent: agent, Name: name, Host: host,
 		})
 	}
-	// The audit of 2026-09-01's A4: a compressed response from a
-	// credential-bound origin reaches the guest unmatchable by the echo
-	// suppression. Recorded rather than silent — this is the one event that
-	// says "the value may have reached the guest and nothing could be done".
+	// The audit of 2026-09-01's A4, with review H4's refusal: a compressed
+	// response from a credential-bound origin cannot be read by the byte-based
+	// echo suppression, so the proxy refuses it (review H4) rather than hand the
+	// guest a body it cannot vouch for. This event says "a compressed response
+	// was refused, and nothing of it reached the guest" — the encoding
+	// normalised to a bounded set (contentEncodingMode) so no origin-chosen
+	// text lands in a field an erasure leaves alone (review L8).
 	proxy.OnUnscrubbable = func(host, encoding string) {
 		_ = rec.Append(recorder.Event{
 			Type: recorder.TypeSecretUnscrubbable, Agent: agent,
-			Host: host, Mode: proto.SafeText(encoding),
+			Host: host, Mode: contentEncodingMode(encoding),
 		})
 	}
 	proxy.OnEvent = func(a egress.Attempt) {
@@ -237,4 +241,30 @@ func attemptError(a egress.Attempt) *recorder.EvError {
 		return nil
 	}
 	return &recorder.EvError{Kind: "io", Message: proto.SafeText(a.Detail)}
+}
+
+// contentEncodingMode normalises an origin's Content-Encoding to a bounded set
+// before it is recorded on secret.unscrubbable, so the Mode field stays a fixed
+// enumeration an erasure can leave alone (review L8; internal/recorder's
+// eraseExempt names Mode as exempt on exactly this promise). It is case- and
+// space-insensitive because a Content-Encoding is a token the origin chose; a
+// header naming more than one coding — or any coding not in the known set — is
+// "other", because the fact worth keeping is only that the body was encoded
+// beyond what the suppression can read, not precisely how. Nothing origin-typed
+// survives this: the return is always one of the six words below.
+func contentEncodingMode(encoding string) string {
+	switch strings.ToLower(strings.TrimSpace(encoding)) {
+	case "gzip", "x-gzip":
+		return "gzip"
+	case "deflate":
+		return "deflate"
+	case "br":
+		return "br"
+	case "compress", "x-compress":
+		return "compress"
+	case "zstd":
+		return "zstd"
+	default:
+		return "other"
+	}
 }

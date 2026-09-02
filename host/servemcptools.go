@@ -37,10 +37,11 @@ func hostToolDefinitions() []mcp.Tool {
 				"it cannot reach this machine. It has no network at all unless the project's " +
 				"policy grants one. Every argument here may ask for less than the policy allows " +
 				"and never for more; a request above a ceiling is refused and names the ceiling. " +
-				"The host's own limits apply regardless: cores cannot exceed the machine's, and " +
-				"memory cannot exceed what the host can carry with room left for itself. When no " +
-				"policy is found, defaults are 2 vcpu and 512 MiB with no network, and those " +
-				"host limits are the only ceilings.",
+				"The host's own limits apply regardless: the 2-vcpu default is clamped to the " +
+				"machine rather than refused, and only an explicit ask above the host — more " +
+				"cores than the machine has, or more memory than it can carry with room left for " +
+				"itself — is refused, naming the host as the ceiling. When no policy is found, " +
+				"defaults are 2 vcpu and 512 MiB with no network.",
 			InputSchema: mcp.Schema{
 				Type: "object",
 				Properties: map[string]mcp.Property{
@@ -65,12 +66,14 @@ func hostToolDefinitions() []mcp.Tool {
 			InputSchema: mcp.Schema{
 				Type: "object",
 				Properties: map[string]mcp.Property{
-					"sandbox":    str("The sandbox id from sandbox_run."),
-					"command":    str("Shell command line, run as /bin/sh -c \"<command>\"."),
-					"argv":       {Type: "array", Description: "Argument vector, executed with no shell.", Items: &mcp.Property{Type: "string"}},
-					"cwd":        str("Working directory inside the guest. Defaults to /."),
-					"stdin":      str("Text written to the command's standard input."),
-					"timeout_ms": {Type: "integer", Description: "Kill the command after this many milliseconds."},
+					"sandbox": str("The sandbox id from sandbox_run."),
+					"command": str("Shell command line, run as /bin/sh -c \"<command>\"."),
+					"argv":    {Type: "array", Description: "Argument vector, executed with no shell.", Items: &mcp.Property{Type: "string"}},
+					"cwd":     str("Working directory inside the guest. Defaults to /."),
+					"stdin":   str("Text written to the command's standard input."),
+					"timeout_ms": {Type: "integer", Description: "Kill the command after this many " +
+						"milliseconds, from 1 to 86400000 (a documented 24-hour ceiling). Omit it, or " +
+						"pass 0, for the one-minute default; a negative value is refused by name."},
 				},
 				Required: []string{"sandbox"},
 			},
@@ -167,8 +170,9 @@ func hostToolDefinitions() []mcp.Tool {
 			InputSchema: mcp.Schema{
 				Type: "object",
 				Properties: map[string]mcp.Property{
-					"name":  str("The snapshot name."),
-					"count": {Type: "integer", Description: "How many forks to make. At least 1."},
+					"name": str("The snapshot name."),
+					"count": {Type: "integer", Description: "How many forks to make. At least 1 and " +
+						"at most 256 in one call; [mcp] max_sandboxes still bounds how many run at once."},
 					"traceparent": str("An inbound W3C traceparent header, for a caller that wants each " +
 						"fork's record to carry it. Recorded verbatim; not required and not parsed."),
 				},
@@ -237,16 +241,34 @@ func (s *hostServer) toolRun(raw json.RawMessage) *mcp.CallToolResult {
 // for itself. A policy is a person's ceiling; this one is nobody's to edit,
 // and it is checked after the policy's for exactly that reason — a policy
 // that permits more than the host can run is still bounded by the host.
-func (s *hostServer) capToHost(opts sandbox.Options) error {
+//
+// A size the client did not ask for is CLAMPED to the host rather than refused
+// (audit 2026-09-01, M1). The built-in 2-vcpu / 512-MiB default, and a
+// policy's own default size, are the server's choice and not the client's — so
+// on a one-core or cpuset-pinned host, where the first pass of this check
+// refused its own 2-vcpu default and the door would not boot at all, the
+// default is quietly brought down to what the host can run. Firecracker
+// oversubscribes vcpus and that default booted before this ceiling existed.
+// Only an EXPLICIT ask above the host is refused, because that is the client
+// asking for a machine the host cannot give, and the honest answer is to name
+// the host as the ceiling. askedCPUs and askedMem say which of the two the
+// client named; opts is a pointer so a clamp lands on the caller's options.
+func (s *hostServer) capToHost(opts *sandbox.Options, askedCPUs, askedMem bool) error {
 	if cpus := hostCPUCeiling(); cpus > 0 && opts.VcpuCount > cpus {
-		return denial.CeilingHost.Err(denial.V{
-			"field": "cpus", "asked": strconv.Itoa(opts.VcpuCount),
-			"limit": strconv.Itoa(cpus)})
+		if askedCPUs {
+			return denial.CeilingHost.Err(denial.V{
+				"field": "cpus", "asked": strconv.Itoa(opts.VcpuCount),
+				"limit": strconv.Itoa(cpus)})
+		}
+		opts.VcpuCount = cpus
 	}
-	if ceiling := hostMemCeilingMiB(); ceiling > 0 && int64(opts.MemMiB) > int64(ceiling) {
-		return denial.CeilingHost.Err(denial.V{
-			"field": "mem", "asked": fmt.Sprintf("%d MiB", opts.MemMiB),
-			"limit": fmt.Sprintf("%d MiB", ceiling)})
+	if ceiling := hostMemCeilingMiB(); ceiling > 0 && opts.MemMiB > ceiling {
+		if askedMem {
+			return denial.CeilingHost.Err(denial.V{
+				"field": "mem", "asked": fmt.Sprintf("%d MiB", opts.MemMiB),
+				"limit": fmt.Sprintf("%d MiB", ceiling)})
+		}
+		opts.MemMiB = ceiling
 	}
 	return nil
 }
@@ -294,8 +316,10 @@ func (s *hostServer) resolve(a *runArgs) (sandbox.Options, error) {
 		}
 		opts.Allow = a.Allow
 		// No policy is no ceiling of the policy's — the host's own are still
-		// in force (audit 2026-09-01, A8).
-		if err := s.capToHost(opts); err != nil {
+		// in force (audit 2026-09-01, A8). The default cpus/mem are clamped to
+		// the host; only a size the client named over the host is refused
+		// (audit 2026-09-01, M1).
+		if err := s.capToHost(&opts, a.CPUs > 0, a.Mem != ""); err != nil {
 			return opts, err
 		}
 		return opts, nil
@@ -327,11 +351,13 @@ func (s *hostServer) resolve(a *runArgs) (sandbox.Options, error) {
 		}
 		// The legacy [sandbox] vcpus is a ceiling on this door, exactly as
 		// mem_mib is for memory (audit 2026-09-01, A8): the tool schema
-		// promises at most what the policy allows, whichever key spells it.
+		// promises at most what the policy allows, whichever key spells it. A
+		// catalog refusal now, not a bare fmt.Errorf, so a caller can branch on
+		// it and the reference lists it (audit 2026-09-01, M2a).
 		if cfg.ResCPUs == 0 && cfg.Vcpus > 0 && a.CPUs > cfg.Vcpus {
-			return opts, fmt.Errorf("cpus %d exceeds the ceiling vcpus = %d set at %s — "+
-				"on this door a declared size is a ceiling, not a default; raise it in the "+
-				"file's [resources] if the machine is meant to have more", a.CPUs, cfg.Vcpus, cfg.Path)
+			return opts, denial.CeilingToolLegacy.Err(denial.V{
+				"field": "cpus", "value": strconv.Itoa(a.CPUs), "key": "vcpus",
+				"limit": strconv.Itoa(cfg.Vcpus), "file": cfg.Path})
 		}
 		opts.VcpuCount = a.CPUs
 	}
@@ -357,11 +383,12 @@ func (s *hostServer) resolve(a *runArgs) (sandbox.Options, error) {
 		// one it is a ceiling too (audit 2026-09-01, A8). The tool schema
 		// promises "at most what the policy allows", and a client naming its
 		// own size over a default the project declared contradicts that
-		// whichever key spells the default.
+		// whichever key spells the default. A catalog refusal now, the same as
+		// vcpus above (audit 2026-09-01, M2a).
 		if cfg.ResMemMiB == 0 && cfg.MemMiB > 0 && n > cfg.MemMiB {
-			return opts, fmt.Errorf("mem %s exceeds the ceiling mem_mib = %d set at %s — "+
-				"on this door a declared size is a ceiling, not a default; raise it in the "+
-				"file's [resources] if the machine is meant to have more", a.Mem, cfg.MemMiB, cfg.Path)
+			return opts, denial.CeilingToolLegacy.Err(denial.V{
+				"field": "mem", "value": a.Mem, "key": "mem_mib",
+				"limit": fmt.Sprintf("%d MiB", cfg.MemMiB), "file": cfg.Path})
 		}
 		opts.MemMiB = n
 	}
@@ -377,6 +404,15 @@ func (s *hostServer) resolve(a *runArgs) (sandbox.Options, error) {
 			}
 		}
 		opts.Allow = a.Allow
+	}
+
+	// The host's own ceilings, before the scratch check (audit 2026-09-01, M1):
+	// capToHost may clamp a default mem down to what the host can carry, and the
+	// scratch check below sizes the tmpfs against opts.MemMiB — so it must see
+	// the clamped figure, not the one the policy declared. A size the client
+	// named over the host is refused here; the policy's own default is clamped.
+	if err := s.capToHost(&opts, a.CPUs > 0, a.Mem != ""); err != nil {
+		return opts, err
 	}
 
 	opts.ScratchBytes = cfg.ResScratchByte
@@ -396,9 +432,6 @@ func (s *hostServer) resolve(a *runArgs) (sandbox.Options, error) {
 	opts.IO = sandbox.IOLimits{
 		NetMbpsRx: cfg.ResNetMbpsRx, NetMbpsTx: cfg.ResNetMbpsTx,
 		DiskIOPS: cfg.ResDiskIOPS, DiskMbps: cfg.ResDiskMbps,
-	}
-	if err := s.capToHost(opts); err != nil {
-		return opts, err
 	}
 	return opts, nil
 }
@@ -593,6 +626,17 @@ func (s *hostServer) toolExec(raw json.RawMessage) *mcp.CallToolResult {
 	if err := json.Unmarshal(raw, &a); err != nil {
 		return mcp.Errorf("sandbox_exec: %v", err)
 	}
+	// A negative timeout_ms is refused by name (audit 2026-09-01, L1): it is
+	// not the default and it is not a duration — time.Duration(neg) is a kill
+	// in the past, the same silent ten-second grace kill the large-positive
+	// case reached from the other side. Zero is the one non-positive value that
+	// means something here, and it stays the default; anything below it names
+	// both the value and the range it is outside of.
+	if a.TimeoutMS < 0 {
+		return mcp.Errorf("sandbox_exec: timeout_ms %d is negative; a timeout is a count of "+
+			"milliseconds from 1 to %d (24 hours), or omit it (or pass 0) for the one-minute default",
+			a.TimeoutMS, int64(sandbox.MaxExecTimeout/time.Millisecond))
+	}
 	// Refused before anything is resolved: a timeout_ms near the largest
 	// signed integer multiplied out to a negative Duration, which the guest
 	// path absorbed into a silent ten-second kill — the asked behaviour and
@@ -625,7 +669,7 @@ func (s *hostServer) toolExec(raw json.RawMessage) *mcp.CallToolResult {
 		Type: recorder.TypeCommandStart, Call: call, Cmd: argv, Cwd: a.Cwd, Via: "serve-mcp",
 	})
 	started := time.Now()
-	res, err := sandbox.Exec(b.sb.State.UDSPath, argv, []byte(a.Stdin), timeout)
+	res, err := s.execUnlessStopping(b, argv, []byte(a.Stdin), timeout)
 	if err != nil {
 		_ = b.rec.Append(recorder.Event{
 			Type: recorder.TypeCommandExit, Call: call, DurationMS: time.Since(started).Milliseconds(),
@@ -651,6 +695,40 @@ func (s *hostServer) toolExec(raw json.RawMessage) *mcp.CallToolResult {
 		StructuredContent: map[string]any{
 			"exit_code": res.Code, "stdout": string(res.Stdout), "stderr": string(res.Stderr),
 		},
+	}
+}
+
+// execUnlessStopping runs one command, but abandons the wait the moment the
+// server is stopping (audit 2026-09-01, M10).
+//
+// A sandbox_exec at the 24-hour ceiling would otherwise hold its goroutine —
+// and, because the read loop takes the dispatch cap before it reads the next
+// frame, the whole door — for the full timeout after the operator has asked
+// the server to stop. So Exec runs on its own goroutine and whichever of its
+// result or the stop signal arrives first is what this returns. When stop wins,
+// the command is left to the machine's own teardown, which kills it with the
+// VM, and the caller records command.exit with errServerStopping — the record
+// says the call was cut short rather than that it returned nothing.
+//
+// s.stopping may be nil on a path that never went through serve (a direct unit
+// test of toolExec); a receive on a nil channel blocks for ever, so the select
+// simply waits on the Exec, which is the behaviour that path had before.
+func (s *hostServer) execUnlessStopping(b *servedBox, argv []string, stdin []byte,
+	timeout time.Duration) (*sandbox.ExecResult, error) {
+	type outcome struct {
+		res *sandbox.ExecResult
+		err error
+	}
+	ch := make(chan outcome, 1)
+	go func() {
+		res, err := sandbox.Exec(b.sb.State.UDSPath, argv, stdin, timeout)
+		ch <- outcome{res, err}
+	}()
+	select {
+	case o := <-ch:
+		return o.res, o.err
+	case <-s.stopping:
+		return nil, errServerStopping
 	}
 }
 

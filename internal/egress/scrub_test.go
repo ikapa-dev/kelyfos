@@ -157,12 +157,13 @@ func TestEachResponseThatEchoesACredentialIsReportedOnce(t *testing.T) {
 	}
 }
 
-// The audit of 2026-09-01's A4. A credential-bound origin that ignores the
-// proxy's identity request and compresses its reply used to pass through in
-// silence — gzip of a credential does not contain the credential, so the
-// guest decompressed and had the value. Now the response is recorded as
-// secret.unscrubbable instead of silence, and nothing pretends it was scrubbed.
-func TestACompressedResponseIsRecordedAsUnscrubbable(t *testing.T) {
+// The audit of 2026-09-01's A4/H4. A credential-bound origin that ignores the
+// proxy's identity request and compresses its reply used to pass through — gzip
+// of a credential does not contain the credential, so the guest decompressed
+// and had the value. Now scrubResponse reports the refused encoding, the header
+// echo is still scrubbed, and the caller refuses the body: nothing is
+// delivered and the event records it.
+func TestACompressedResponseIsRefusedAndRecorded(t *testing.T) {
 	const token = "ghp_averyrealtokenvalue"
 	p := &Proxy{Policy: Policy{Secrets: []*Secret{
 		{Name: "GITHUB_TOKEN", Domain: "api.example.com", Scheme: "Bearer", value: token},
@@ -180,14 +181,18 @@ func TestACompressedResponseIsRecordedAsUnscrubbable(t *testing.T) {
 	_, _ = w.Write([]byte("Bearer " + token))
 	_ = w.Close()
 	resp := &http.Response{
+		StatusCode: 200,
 		Header: http.Header{
 			"Content-Encoding": []string{"gzip"},
 			"X-echo":           []string{"Bearer " + token},
 		},
 		Body: io.NopCloser(&buf),
 	}
-	p.scrubResponse(resp, "api.example.com")
+	enc := p.scrubResponse(resp, "api.example.com")
 
+	if enc != "gzip" {
+		t.Fatalf("scrubResponse did not report the refused encoding: %q", enc)
+	}
 	if len(encodings) != 1 || encodings[0] != "api.example.com|gzip" {
 		t.Fatalf("the compressed response was not recorded: %v", encodings)
 	}
@@ -199,10 +204,66 @@ func TestACompressedResponseIsRecordedAsUnscrubbable(t *testing.T) {
 	}
 }
 
-// The identity request: a credential-bound leg asks the origin not to compress.
-// The terminated leg sets it per request on the connection; the plain-HTTP leg
-// sets it with the withheld check. Both go through Policy.secretsFor, so a
-// host with no bound credential is untouched and compression passes as before.
+// unscrubbableEncoding looks at EVERY Content-Encoding line and every
+// comma-separated coding within each, case-insensitively (L12). Header.Get's
+// first value only was the hole: "identity" followed by a second "gzip" line
+// read as identity, and the body went through unread.
+func TestEveryContentEncodingIsChecked(t *testing.T) {
+	cases := []struct {
+		name    string
+		header  http.Header
+		wantEnc string
+	}{
+		{"identity alone", http.Header{"Content-Encoding": {"identity"}}, ""},
+		{"no header", http.Header{}, ""},
+		{"whitespace around identity", http.Header{"Content-Encoding": {"  identity  "}}, ""},
+		{"a second line after identity", http.Header{"Content-Encoding": {"identity", "gzip"}}, "gzip"},
+		{"a comma list hiding br", http.Header{"Content-Encoding": {"identity, br"}}, "br"},
+		{"uppercase is still an encoding", http.Header{"Content-Encoding": {"GZIP"}}, "GZIP"},
+	}
+	for _, c := range cases {
+		if got := unscrubbableEncoding(c.header); got != c.wantEnc {
+			t.Errorf("%s: unscrubbableEncoding = %q, want %q", c.name, got, c.wantEnc)
+		}
+	}
+}
+
+// A body-less response — HEAD, 204, 304, http.NoBody — leaks no credential
+// however it is encoded, so scrubResponse delivers it: "" back, no event, even
+// with Content-Encoding: gzip on the wire.
+func TestABodylessCompressedResponseIsDelivered(t *testing.T) {
+	const token = "ghp_averyrealtokenvalue"
+	p := &Proxy{Policy: Policy{Secrets: []*Secret{
+		{Name: "T", Domain: "api.example.com", Scheme: "Bearer", value: token},
+	}}}
+	events := 0
+	p.OnUnscrubbable = func(string, string) { events++ }
+
+	cases := []struct {
+		name string
+		resp *http.Response
+	}{
+		{"304", &http.Response{StatusCode: http.StatusNotModified,
+			Header: http.Header{"Content-Encoding": {"gzip"}}, Body: http.NoBody}},
+		{"204", &http.Response{StatusCode: http.StatusNoContent,
+			Header: http.Header{"Content-Encoding": {"gzip"}}, Body: http.NoBody}},
+		{"HEAD", &http.Response{StatusCode: 200, Request: &http.Request{Method: http.MethodHead},
+			Header: http.Header{"Content-Encoding": {"gzip"}}, Body: io.NopCloser(strings.NewReader(""))}},
+	}
+	for _, c := range cases {
+		if enc := p.scrubResponse(c.resp, "api.example.com"); enc != "" {
+			t.Errorf("%s: a body-less response was refused with %q", c.name, enc)
+		}
+	}
+	if events != 0 {
+		t.Errorf("a body-less response fired %d unscrubbable events, want 0", events)
+	}
+}
+
+// The identity request: a credential-bound leg asks the origin not to compress,
+// through the production askForIdentity — the terminated leg and the plain-HTTP
+// leg both call it. It goes through Policy.secretsFor, so a host with no bound
+// credential is untouched and compression passes as before.
 func TestACredentialBoundRequestAsksForIdentity(t *testing.T) {
 	const token = "ghp_averyrealtokenvalue"
 	p := &Proxy{Policy: Policy{Secrets: []*Secret{
@@ -215,7 +276,7 @@ func TestACredentialBoundRequestAsksForIdentity(t *testing.T) {
 	}
 	req.Header.Set("Accept-Encoding", "gzip") // what the guest's client sent
 	if bound := p.Policy.secretsFor("api.example.com"); len(bound) > 0 {
-		req.Header.Set("Accept-Encoding", "identity")
+		askForIdentity(req)
 	}
 	if got := req.Header.Get("Accept-Encoding"); got != "identity" {
 		t.Errorf("a credential-bound request still asked for %q", got)
@@ -229,7 +290,7 @@ func TestACredentialBoundRequestAsksForIdentity(t *testing.T) {
 	}
 	req2.Header.Set("Accept-Encoding", "gzip")
 	if bound := p.Policy.secretsFor("unbound.example.com"); len(bound) > 0 {
-		req2.Header.Set("Accept-Encoding", "identity")
+		askForIdentity(req2)
 	}
 	if got := req2.Header.Get("Accept-Encoding"); got != "gzip" {
 		t.Errorf("an unbound host's encoding preference was overridden: %q", got)

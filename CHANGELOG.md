@@ -21,12 +21,16 @@ reference described in the README and re-measured per release.
 - **The guest's accepted read residuals, named in one place** (independent
   audit 2026-09-01, A19): `/dev/kmsg` readable (the guest's own kernel ring),
   raw block-device reads (`/dev/vdb` — the root image is not secret and the
-  workspace is the agent's own), read-only device ioctls (`BLKGETSIZE` and its
-  kind), and `/proc/1/environ` (PID 1's environment carries no proxy address,
-  no CA material and no credential). Each is verified reachable from a
-  confined process and accepted with its reason in docs/threat-model.md. The
-  stale per-architecture syscall counts the audit flagged were replaced by a
-  pointer to the resolution test and probe battery that cannot go stale.
+  workspace is the agent's own), and read-only device ioctls (`BLKGETSIZE` and
+  its kind). Each is verified reachable from a confined process and accepted
+  with its reason in docs/threat-model.md. `/proc/1/environ` is named there
+  too, but as a residual that is closed rather than accepted: it is EPERM from
+  a confined process (Landlock, not the dumpable flag — adversarial review
+  2026-09-01, M7 corrected the first cut, which called it readable), and PID
+  1's environment carries no proxy address, no CA material and no credential in
+  any case. The stale per-architecture syscall counts the audit flagged were
+  replaced by a pointer to the resolution test and probe battery that cannot go
+  stale.
 
 ### Fixed
 - **`proto.SafeText` quotes strings that are not valid UTF-8** (adversarial
@@ -42,7 +46,11 @@ reference described in the README and re-measured per release.
   a plugin could write escape sequences — or a line that reads as the
   supervisor's own — onto the console a person is reading. Every line now goes
   through the sanitiser, which quotes a line carrying any control character
-  whole: the diagnostic survives, the escape does not.
+  whole: the diagnostic survives, the escape does not. A line that is not valid
+  UTF-8 is quoted too, since a raw C1 byte such as 0x9b is CSI on an 8-bit
+  terminal and the rune-wise predicate never saw it; and a stderr line over
+  64 KiB is dropped with a notice instead of wedging the plugin's next write
+  (adversarial review 2026-09-01, L10).
 - **The one-hostile-name sync-back trade is documented** (independent audit
   2026-09-01, A16; D100). A workspace containing a single entry this host will
   not extract — a control character in a filename, for example — fails the
@@ -62,42 +70,85 @@ reference described in the README and re-measured per release.
   --verify` compares the two — a wholesale rewrite that does not also update
   the anchor is detected. This narrows the documented keyless truncation
   limit; a writer that rewrites chain and anchor together still passes, so a
-  signed export (D93) remains the answer that survives.
+  signed export (D93) remains the answer that survives. The adversarial review
+  of 2026-09-01 (H6, H7, M9, L8, L9) hardened the anchor: `kelyfos log
+  --verify` now reads chain and anchor together under the chain's shared lock,
+  so an append landing between the two reads no longer reports an honest live
+  session as rewritten (it did, 21 verifies in 21 at ~20k events/s); an anchor
+  exactly one event behind the chain carrying that event's digest — what a
+  crash between an append's line and its anchor rename leaves — is an
+  observation, not a tamper verdict; `--verify` always prints what the anchor
+  said (`anchor matches event N`, `one event behind …`, `none — … this check
+  cannot rule out a rewrite`), so a removed or corrupted anchor is never silent
+  and never a verdict; `sessions erase` checks the anchor before rewriting and
+  refuses by name when the two disagree instead of writing a fresh anchor over
+  the disagreement; a failed anchor write removes its temp file and is said
+  once per session. `channel.refused` documents its `agent`, and
+  `secret.unscrubbable`'s `mode` is the origin's Content-Encoding normalised to
+  gzip/deflate/br/compress/zstd/other, so the field is again the fixed
+  enumeration its erasure exemption claims.
 - **Each egress proxy owns its upstream transports** (independent audit
   2026-09-01, A13). The transports were package-global, so their connection
   pools were shared by every proxy in the process: a connection dialled and
   resolved-address-vetted under one sandbox's policy could serve another
   sandbox's request, skipping the per-dial re-check that reuse makes
   unnecessary from the transport's point of view and mandatory from this one's.
-  The pools are cheap; the isolation is the point.
-- **CONNECT tunnels and plain-HTTP body copies are clocked and bounded**
-  (independent audit 2026-09-01, A12). A tunnel had no clock at all: 128 idle
-  CONNECTs pinned the proxy's whole egress semaphore for the sandbox's life,
-  and a guest dribbling one byte a minute defeated idle-timeout reaping at the
-  same time. Tunnels now carry a stall clock per direction (5 minutes of
-  silence closes one — generous for interactive keepalives) with every arm
-  clamped by the one-hour connection ceiling, and the plain-HTTP leg's body
-  copy gets the same write-side clock plus a context-bounded ceiling.
+  The pools are cheap; the isolation is the point. `Proxy.Close` now also drops
+  the transports' idle origin connections, so a stopped sandbox no longer
+  leaves up to a hundred vetted origin sockets open for the transports' 90 s
+  idle timer (adversarial review 2026-09-01, M11).
+- **A tunnelled CONNECT is on a clock, and the clock spans the tunnel**
+  (independent audit 2026-09-01, A12; adversarial review 2026-09-01, H3/M4). A
+  tunnel had no clock at all: 128 idle CONNECTs pinned the sandbox's egress
+  semaphore for its whole life, and a guest dribbling one byte a minute
+  defeated idle-timeout reaping while it held the slot. A tunnel now closes
+  after five minutes with no bytes in either direction — one clock for the
+  whole tunnel, re-armed by a byte moving either way, so a keepalive in one
+  direction keeps it open and a one-way transfer of any length (a long
+  download, an upload to an origin that answers only at the end) is never cut
+  while it is making progress; the first cut of this clock was per direction
+  and cut exactly those. Every arm is clamped to the one-hour connection
+  ceiling the terminated leg already had. The plain-HTTP leg's request body
+  carries the same rolling ten-second bound the terminated leg's has had since
+  F16 — a guest that declares a body and stops sending it is answered `408` —
+  beside the write-side bound and the hour's ceiling it already had. When the
+  proxy itself ends a connection the `egress.attempt` now says so: `reason` is
+  `stalled` or `ceiling_reached`; the tunnel's copy errors used to be discarded
+  and a mid-body ceiling cut read as a transfer the guest finished.
 - **The host's own VMM-API actions are recorded** (independent audit 2026-09-01,
   A11). Pause, resume, snapshot create and load, and drive patch were invisible
   to the transcript; each is now a `vmm.api` event in the session's chain. The
   API socket's reachability by same-uid processes is documented as a residual
   with the reasoning for not moving it (docs/hardening.md §2.1) — the jailed
   VMM creates its socket inside the chroot, so a root-owned subdirectory is a
-  jailer-layout change, recorded for the maintainer's decision.
+  jailer-layout change, recorded for the maintainer's decision. The first cut
+  wired the recorder at only some doors; the adversarial review of 2026-09-01
+  (H8) found `kelyfos snapshot save`, `sessions pause` and the MCP
+  `sandbox_snapshot` tool taking their pause/create/resume through an
+  unobserved API client, so those three are now wired too.
 - **`sandbox_exec` refuses an absurd `timeout_ms` instead of silently killing
   the command at ten seconds** (independent audit 2026-09-01, A15). A
   timeout_ms near the largest signed integer multiplied out to a negative
   Duration, which the guest path absorbed into its grace path: the command
   was killed at ten seconds while the record said nothing of it. The door now
   refuses above a documented 24-hour ceiling, naming the bound, and the exec
-  library clamps the deadline arithmetic so no caller can make it wrap.
+  library clamps the deadline arithmetic so no caller can make it wrap. A
+  negative `timeout_ms`, which was silently the one-minute default, is refused
+  by name as well (adversarial review 2026-09-01, L1); the tool's `timeout_ms`
+  description and docs/mcp-surface.md state the ceiling.
 - **`serve-mcp` bounds concurrent tool calls** (independent audit 2026-09-01,
   A10). Calls were dispatched on unbounded goroutines — every other listener
   in the product has a semaphore; this door had none, and a pipelined stream
   was an N-goroutine, N×16 MiB amplification. Dispatch is now capped at 128 in
-  flight, and a call past the cap meets backpressure (a slower read) rather
-  than a refusal or an amplification. docs/mcp-surface.md §2.3 states it.
+  flight, and the cap is taken on the read loop: at the cap the server reads
+  nothing — no `ping`, no `tools/list`, no `sandbox_stop` — until a call in
+  flight finishes, and a `sandbox_exec` finishes when its command does;
+  docs/mcp-surface.md §2.3 states that bound exactly (adversarial review
+  2026-09-01, M10). The exit no longer waits behind it: a signal stops the
+  server even when its read loop is parked at the cap, and on any stop a
+  `sandbox_exec` in flight is cut short and its `command.exit` says so, rather
+  than holding the process for up to the 24-hour command ceiling after the
+  client is gone.
 - **The E2B shim's sandbox cap is enforced at registration, not before a
   multi-second boot** (independent audit 2026-09-01, A9). A burst of
   concurrent `POST /sandboxes` censused the fleet, released the lock, booted,
@@ -106,17 +157,25 @@ reference described in the README and re-measured per release.
   registration now re-checks under the lock (the pattern serve-mcp's adopt
   already used); a lost race tears down one machine.
 - **`serve-mcp`'s door cannot name a machine bigger than the host** (independent
-  audit 2026-09-01, A8). A client launched from a directory with no
-  kelyfos.toml above it named its own cpus and mem, and a request for
-  262144 MiB or 4096 vcpu went to Firecracker verbatim. Absolute host ceilings
-  now apply on every path — cores cannot exceed the machine's, memory cannot
-  exceed what the host can carry with a quarter (never less than 2 GiB) kept
-  for the host — refused with the new `[ceiling.host]` catalog entry. The
+  audit 2026-09-01, A8; adversarial review 2026-09-01, M1/M2). A client launched
+  from a directory with no kelyfos.toml above it named its own cpus and mem, and
+  a request for 262144 MiB or 4096 vcpu went to Firecracker verbatim. The host's
+  own ceilings now apply on every path of this door — `sandbox_run` with or
+  without a policy, and what a snapshot holds through `sandbox_restore` and
+  `sandbox_fork`: cores cannot exceed the machine's, and memory cannot exceed
+  what the host can carry with a quarter of its RAM reserved for itself (below
+  about 2.5 GiB of total RAM the 512 MiB machine floor wins and less is kept).
+  Only an explicit ask above a ceiling is refused, as `[ceiling.host]` or, for
+  a snapshot, `[ceiling.host_snapshot]`; a size nobody asked for — the door's
+  own 2 vcpu / 512 MiB, or a policy's default — is clamped to the machine
+  instead, so a one-core or cpuset-pinned host still boots the default machine.
+  (The first cut refused the default, so a one-CPU host booted nothing.) The
   legacy `[sandbox]` `mem_mib`/`vcpus` keys, which behaved as overridable
-  defaults on this door, are now ceilings there too — both of them, on the
-  policy-less and policy paths alike — matching what the tool schema has
-  always promised ("at most what the policy allows"); the tool description
-  states the real defaults and the host limits.
+  defaults on this door, are ceilings there too — both of them, on the
+  policy-less and policy paths alike — refused as `[ceiling.tool_legacy]`; the
+  tool description states the real defaults and that they are clamped. **This
+  changes behaviour on the serve-mcp door for projects that declare the legacy
+  keys** — see docs/upgrading.md §10.
 - **A restored snapshot's recorded network addressing is validated like a
   state file's** (independent audit 2026-09-01, A7). A snapshot's meta.json
   went to `ip link` with no gate at all — the audit's scenario, a meta.json
@@ -134,7 +193,14 @@ reference described in the README and re-measured per release.
   a team agent's list), and `--secret TOKEN@org` are now refused at parse time
   with the new `[allow.single_label]` catalog entry naming what to type
   instead. Multi-label entries are unchanged: the suffix rule remains correct
-  for `example.org` and its subdomains.
+  for `example.org` and its subdomains. The refusal is raised at every door —
+  `--allow`, `allow = [...]`, `--secret NAME@domain`, the shim, `serve-mcp`'s
+  policy-less state and `snapshot restore` — and its text reads correctly from
+  each; an IP literal is one host, not a label, and is accepted as the exact
+  match it always was (the first cut refused every IPv6 literal as a bare TLD).
+  It stops at bare TLDs by design: `co.uk`, `github.io`, `s3.amazonaws.com`
+  remain whole-suffix grants, and docs/networking.md names the hosts to type
+  instead (adversarial review 2026-09-01, M3).
 - **The seccomp refusal list covers the fd-based mount API and the
   cross-memory/fd-theft family** (independent audit 2026-09-01, A5/A17b).
   `open_tree`, `fsopen` and friends reach the same ends as `mount` without
@@ -144,25 +210,43 @@ reference described in the README and re-measured per release.
   `process_vm_readv`, `process_vm_writev`, `pidfd_open`, `pidfd_getfd` and
   `pidfd_send_signal`. A supervisor unit test fails CI when a policy name is
   missing from a per-arch number map (the exact silent-drop that let this
-  drift), and the confinement suite probes every one of them from a confined
-  child. The audit's report misnumbered this API — it named `fsmount` 431,
-  which is `fsconfig`'s slot — and the first probe run against the corrected
-  filter came back EINVAL, the kernel's answer, rather than the filter's
-  EPERM; that is how `fsconfig` joined the list. The guest image must be
-  rebuilt (`make image FLAVOR=dev`) for this to take effect; the profile line
-  at boot now reports 38 syscalls refused on the dev flavor.
+  drift), and the confinement suite probes every one of the twelve from a
+  confined child, each on its own number with arguments the kernel would refuse
+  differently, so the filter's EPERM cannot be a kernel error in its clothes
+  (adversarial review 2026-09-01, M8: the battery had probed ten, and
+  `pidfd_getfd` behind a `pidfd_open` the same filter refuses). The drift test
+  reads both per-architecture maps from disk, so an omission on the
+  architecture CI does not run fails CI anyway. The audit's report misnumbered
+  this API — it named `fsmount` 431, which is `fsconfig`'s slot — and the first
+  probe run against the corrected filter came back EINVAL, the kernel's answer,
+  rather than the filter's EPERM; that is how `fsconfig` joined the list. The
+  guest image must be rebuilt (`make image FLAVOR=dev`) for this to take
+  effect; the refusal list now holds forty names, of which the profile line at
+  boot reports 39 refused on the dev flavor on x86_64 and 38 on aarch64, which
+  has no `settimeofday` to refuse.
 - **`--cpu-quota` no longer hangs the boot when the machine cannot honour
   it** (independent audit 2026-09-01, A17). On a host with cgroup v2 but no
   delegation and no working user systemd session, the boot sat after
   session.start with no refusal and no output. A boot-path preflight now
   proves `systemd-run --user` works before anything is built and refuses
-  within its bound, naming the fix:
-  `cannot apply a CPU quota on this machine: systemd-run --user did not
-  complete within 4s ...` — reproduced on the audit's own test VM.
+  within its bound, naming which failure it saw: `systemd-run --user failed:
+  Failed to connect to bus` for a manager that answers at once, `did not
+  complete within 4s` for one that hangs (adversarial review 2026-09-01, L11 —
+  the bound used to be blamed for both). The preflight now runs before the run
+  directory is claimed, so a refusal leaves nothing behind. Reproduced on the
+  audit's own test VM.
 - **The supervisor is no longer dumpable** (independent audit 2026-09-01,
-  A17b). PID 1 sets `PR_SET_DUMPABLE 0` before anything else, so the safety of
-  its memory — the channel credential most of all — no longer rests on the
-  kernel's ACL alone.
+  A17b). PID 1 sets `PR_SET_DUMPABLE 0` before anything else. What actually
+  refuses a guest process reading the supervisor's memory — the channel
+  credential most of all — is Landlock's ptrace scoping: a Landlocked task may
+  not trace or read a task outside its domain, and PID 1 has no domain, so
+  `PTRACE_ATTACH`, `/proc/1/mem` and `process_vm_readv` are refused on both
+  flavors, and seccomp refuses `process_vm_readv` and the pidfd family on
+  `base` as well (adversarial review 2026-09-01, M7 corrected the first cut,
+  which credited the flag: `PR_SET_DUMPABLE 0` is bypassed by a
+  `CAP_SYS_PTRACE` holder, which every confined guest process is, so it is
+  defence in depth against a process that has dropped that capability, not the
+  wall). docs/threat-model.md §4 states which control does the refusing.
 - **A bound secret's value can no longer reach the guest through a compressed
   origin response** (independent audit 2026-09-01, A4). The response scrubber
   is byte-based, so an allowlisted origin that echoes the Authorization header
@@ -170,13 +254,22 @@ reference described in the README and re-measured per release.
   the proxy saw only compressed bytes. Where a credential is bound, the proxy
   now asks the origin not to compress (`Accept-Encoding: identity` on the
   terminated and plain-HTTP legs), so the scrubber reads what comes back; a
-  response that arrives compressed anyway is passed through unread and
-  recorded as a new `secret.unscrubbable` event instead of silently. Response
-  trailers are scrubbed like headers — a chunked response's trailer values
-  used to reach the guest unexamined — and `--secret` warns at parse time when
-  the value is under the eight-byte scrubbing floor, where the user can still
-  choose a longer credential. The echo-suppression guarantee in
-  docs/networking.md states all of this explicitly.
+  response that arrives with any other `Content-Encoding` anyway — every header
+  line and coding is checked, br and gzip alike — is refused rather than
+  delivered: the guest reads a `502` naming the encoding and the host, the
+  connection closes, and a new `secret.unscrubbable` event records the refusal.
+  The first version of this fix passed such a body through and recorded it,
+  which the adversarial review of 2026-09-01 (H4) priced as recording a leak
+  rather than stopping one — httpbin's `/gzip`, the audit's own repro,
+  compresses whatever the request asked for. Responses with no body (HEAD, 204,
+  304) are delivered with no event; an origin serving pre-compressed objects
+  (an object store with `Content-Encoding` in the object's metadata) is refused
+  on every fetch while a credential is bound. Response trailers are scrubbed
+  like headers — a chunked response's trailer values used to reach the guest
+  unexamined — and `--secret` warns at parse time when the value is under the
+  eight-byte scrubbing floor, where the user can still choose a longer
+  credential. The echo-suppression guarantee in docs/networking.md states all
+  of this explicitly.
 - **The guest-initiated vsock channels now require a per-session credential;
   guest-attributed record content can no longer be forged** (independent audit
   2026-09-01, A2/A3; D99). Any same-uid host process could connect to the
@@ -188,7 +281,18 @@ reference described in the README and re-measured per release.
   refuses — recording a `channel.refused` event for — every connection whose
   first frame does not carry it, compared in constant time; a `SO_PEERCRED`
   uid check refuses peers from other accounts as well. Restores mint a fresh
-  credential and push it before `resync`.
+  credential and push it before `resync`. The adversarial review of 2026-09-01
+  found and fixed four things in the first cut: the events and ready listeners
+  set a ten-second first-frame deadline and never cleared it once the
+  credential was in, so those channels were cut every ten seconds for the
+  machine's life (H1); the guest dialled ready and events before the credential
+  could have crossed control, so five boots in eight paid a ~5s heartbeat wait
+  and every chain opened with two refusals — the guest now holds its first dial
+  until the credential lands (H2); an image too old to take a credential is
+  refused the moment the guest says so rather than after the whole ready
+  timeout (M5); and the `SO_PEERCRED` check runs before the credential compare,
+  so a peer from another account is refused as such before a frame of it is
+  read (L4).
   **This narrows a surface deliberately** (docs/compatibility.md §3's
   exception): a supervisor that predates the handshake cannot present a
   credential, so an image older than this CLI is refused at boot with a named
@@ -206,7 +310,12 @@ reference described in the README and re-measured per release.
   proven ceiling, and every tool call is dispatched behind a panic net that
   returns a structured refusal and completes the call's audit record instead
   of dying. The same bound applies to `kelyfos fork -n`. Refusals name the
-  new `fork.count` catalog entry.
+  new `fork.count` catalog entry. The net now covers the per-fork worker
+  goroutines too (adversarial review 2026-09-01, L2): a panic on one becomes
+  that fork's error, with its record ended as `session.end`/`error`, and the
+  batch still answers — the same recover guards `kelyfos fork`'s workers. A
+  call that leaves through `runtime.Goexit` is recorded with an error outcome,
+  not as a success.
 
 ## v1.2.0 — 2026-09-01
 

@@ -34,7 +34,16 @@ var Version = "dev"
 
 const (
 	heartbeatInterval = 5 * time.Second
-	shutdownGrace     = 2 * time.Second
+
+	// credentialWaitFallback bounds how long the ready and events pumps hold
+	// their first dial for the host's channel credential before proceeding
+	// anyway (audit 2026-09-01, A2/A3). It is comfortably longer than a
+	// credential's sub-second arrival over control on any real boot, and
+	// shorter than nothing: a host that never sends one is an unsupported
+	// pairing, and after this the pump falls back to the refused-and-retried
+	// dial it always took, rather than waiting forever.
+	credentialWaitFallback = 15 * time.Second
+	shutdownGrace          = 2 * time.Second
 
 	// Retry backoff for the guest-initiated channels. The first attempts are
 	// deliberately aggressive: the virtio-vsock device is not always ready the
@@ -249,6 +258,12 @@ func reportGuestEvent(ev proto.GuestEvent) {
 }
 
 func pumpEvents(queue <-chan proto.GuestEvent) {
+	// Hold the first dial until the host's credential has landed (audit
+	// 2026-09-01, A2/A3; adversarial review 2026-09-01): a dial before it can
+	// only be refused, and a refused events dial that carried queued reports
+	// would burn them on the retry. The fallback lets an unsupported pairing
+	// fall through to the same refused-and-retried path it took before.
+	waitCredentialArrived(credentialWaitFallback)
 	var pending *proto.GuestEvent
 	backoff := dialBackoffMin
 	for {
@@ -308,6 +323,14 @@ func serveExec(ln net.Listener, rp *reaper) {
 // because the host may not have bound its end yet and because every connection
 // is severed by a snapshot restore (docs/protocol.md §1.6).
 func announceReady(start time.Duration) {
+	// The ready frame is the definition of boot-to-ready, so it must not be
+	// dialled before the host's credential has landed (audit 2026-09-01,
+	// A2/A3): a refused ready dial used to sit until the next heartbeat tick
+	// noticed the broken pipe, adding a heartbeat interval to every boot and
+	// making the host time the interval into its measurement (adversarial
+	// review 2026-09-01). The fallback preserves the old behaviour for a host
+	// that never sends a credential.
+	waitCredentialArrived(credentialWaitFallback)
 	bootID := newBootID()
 	backoff := dialBackoffMin
 	for {

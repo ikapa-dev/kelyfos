@@ -83,7 +83,7 @@ func TestSnapshotRestoreRealVMWiresAuditBeforeResume(t *testing.T) {
 	t.Cleanup(sourceNet.Down)
 	t.Cleanup(sourceProxy.Close)
 	t.Cleanup(func() { _ = source.Shutdown(5 * time.Second) })
-	if _, _, err := sandbox.SnapshotRunning(&source.State, dir); err != nil {
+	if _, _, err := sandbox.SnapshotRunning(&source.State, dir, nil); err != nil {
 		t.Fatalf("snapshot the source sandbox: %v", err)
 	}
 	// Shut the source down and its network with it before either restore

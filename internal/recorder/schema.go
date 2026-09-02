@@ -131,6 +131,7 @@ func Types() []EventType {
 				{Name: "mode", Type: "string", Doc: "how much the proxy could read: tunnelled (a CONNECT it relayed unopened), terminated (a secret-bound domain it decrypted), plain (ordinary HTTP, which it necessarily read in full), or direct_tls (an absolute-form https request reaching the proxy without a CONNECT, fetched itself over a real TLS connection)", When: "allowed"},
 				{Name: "bytes_in", Type: "integer", Doc: "bytes read from upstream"},
 				{Name: "bytes_out", Type: "integer", Doc: "bytes written upstream"},
+				{Name: "error", Type: "object", Doc: "kind and message, when the reason is a category rather than an explanation — a refused connection, a timeout, a name that resolved to nothing, a TLS failure, all of which share reason upstream_unreachable and until this left the operator with none of the detail", When: "reason is upstream_unreachable"},
 				{Name: "peer", Type: "string", Doc: "who connected — the address a connection refused as foreign_peer came from; the request was never parsed, so host and port are absent on those", When: "reason is foreign_peer"},
 				{Name: "resolved_addr", Type: "string", Doc: "where the requested host actually resolved to. Recorded because the 403 the guest reads names no address: telling a sandbox which address an allowlisted name resolves to hands it a DNS lookup it has no resolver to perform", When: "reason is unsafe_resolved_address"},
 				agentField(),
@@ -171,13 +172,14 @@ func Types() []EventType {
 			}},
 		{Type: TypeSecretUnscrubbable, Source: SourceHost,
 			Doc: "a response from a credential-bound origin arrived compressed, and the echo " +
-				"suppression cannot match inside an encoding — the guest received a body the " +
-				"proxy cannot vouch for (audit 2026-09-01, A4). The proxy asks credentialed " +
-				"origins not to compress; this event is what an origin that ignored that costs, " +
-				"recorded instead of the silence that used to sit here",
+				"suppression cannot match inside an encoding, so the proxy refused the response " +
+				"rather than deliver a body it cannot vouch for: the guest read a 502 in its place " +
+				"(audit 2026-09-01, A4; refusal per review H4). The proxy asks credentialed origins " +
+				"not to compress; this event is what an origin that ignored that costs, recorded " +
+				"instead of the silence that used to sit here",
 			Fields: []Field{
-				{Name: "host", Type: "string", Doc: "the domain whose response was compressed"},
-				{Name: "mode", Type: "string", Doc: "the Content-Encoding the response named — gzip, deflate, br, whatever the origin sent"},
+				{Name: "host", Type: "string", Doc: "the domain whose compressed response was refused"},
+				{Name: "mode", Type: "string", Doc: "the response's Content-Encoding, normalised to one of gzip, deflate, br, compress, zstd or other — so origin-chosen text never lands in the record"},
 				agentField(),
 			}},
 		{Type: TypeResourceOOM, Source: SourceGuest,
@@ -426,7 +428,8 @@ func Types() []EventType {
 				"written before anything the peer sent could reach the chain",
 			Fields: []Field{
 				{Name: "port", Type: "integer", Doc: "the channel that refused the connection: 10100, 10101 or 10102"},
-				{Name: "reason", Type: "string", Doc: "why — no credential was presented, the credential presented was not this session's, or the peer was not this user"},
+				{Name: "reason", Type: "string", Doc: "why — no credential was minted for this session, no credential was presented, the credential presented is not this session's, or the peer is not this user"},
+				agentField(),
 			}},
 		{Type: TypeVMMAction, Source: SourceHost,
 			Doc: "a state-changing Firecracker API call the host itself made — pause, resume, " +

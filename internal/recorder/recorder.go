@@ -13,6 +13,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -55,11 +56,12 @@ const (
 	TypeSecretScrubbed = "secret.scrubbed"
 	// TypeSecretUnscrubbable is the audit of 2026-09-01's A4: a response from
 	// a credential-bound origin arrived with a Content-Encoding, so the
-	// byte-based echo suppression could not read the body — and the guest
-	// received a body the proxy cannot vouch for. The proxy asks origins not
-	// to compress (identity on credentialed requests); this event is what an
-	// origin that ignored that costs, recorded instead of the silence that
-	// used to sit here.
+	// byte-based echo suppression could not read the body — the proxy refused
+	// the response rather than hand the guest a body it cannot vouch for (the
+	// refusal is the adversarial review of 2026-09-01's H4; the first fix
+	// delivered the body and only recorded it). The proxy asks origins not to
+	// compress (identity on credentialed requests); an origin that ignored
+	// that gets a 502 to the guest, recorded here.
 	TypeSecretUnscrubbable = "secret.unscrubbable"
 	TypeResourceOOM        = "resource.oom"
 	TypeResourceTimeout    = "resource.timeout"
@@ -502,6 +504,16 @@ type Recorder struct {
 	failure  error
 	failedAt int
 	epitaph  bool // whether that session.end reached the chain
+
+	// anchorWarned latches the one stderr line a failed anchor write earns.
+	// The anchor is a canary, not the record — a failed write of it does not
+	// fail the append (the chain is what must not be lost) — but a persistent
+	// failure that said nothing would let a session run to the end with an
+	// anchor the next verify reports as missing, and no clue why. Said once
+	// per Recorder, not once per append, for the reason blockedOnce says a
+	// refusal is one thing to fix rather than forty. Guarded by r.mu, which
+	// appendLocked already holds when it sets this.
+	anchorWarned bool
 }
 
 // SessionsDir is where session records live — deliberately outside the run
@@ -555,60 +567,218 @@ func writeHeadFile(dir string, h headDoc) error {
 		os.Remove(name)
 		return err
 	}
-	return os.Rename(name, HeadFile(dir))
+	// Remove the temp on a rename failure too (review L9): without this, a
+	// persistent rename failure — the target's directory gone, a read-only
+	// filesystem, the anchor path taken by a directory — left one
+	// head.json.tmp-* behind per append, a slow leak in the one directory
+	// that is meant to hold exactly two files.
+	if err := os.Rename(name, HeadFile(dir)); err != nil {
+		os.Remove(name)
+		return err
+	}
+	return nil
 }
 
-// CheckHead compares the anchor against a verified chain. A missing anchor is
-// not an error — chains written before the anchor existed, and sessions whose
-// anchor write failed, are records this check simply cannot speak about; the
-// error is reserved for the case the anchor exists to catch, a chain whose
-// head disagrees with what was last written here.
+// warnf says something on the terminal the caller did not ask about — modelled
+// on internal/sandbox/warn.go, and used for the same narrow reason: a failed
+// anchor write (appendLocked, Erase) is a weaker-posture warning, never
+// progress and never anything a caller could have asked for. This package
+// otherwise leaves the terminal to the CLI.
+func warnf(format string, args ...any) {
+	fmt.Fprintf(os.Stderr, "kelyfos: "+format+"\n", args...)
+}
+
+// Snapshot is a chain and its out-of-band anchor read as one consistent pair.
 //
-// A mismatch is confirmed once more against a fresh read of both files before
-// it is reported: an append lands its line and its anchor under one lock, and
-// a verify that read the chain between those two would otherwise report the
-// benign ordering as tampering — the loudest false alarm this product can
-// produce, and the reason the confirmation pass exists.
-func CheckHead(root, sandboxID string, events int, head string) error {
-	if err := checkHeadOnce(root, sandboxID, events, head); err == nil {
-		return nil
-	}
-	time.Sleep(50 * time.Millisecond)
-	n2, h2, verr := verifyFile(Path(root, sandboxID))
-	if verr != nil {
-		return verr
-	}
-	return checkHeadOnce(root, sandboxID, n2, h2)
+// The pair matters. An append writes its line and its anchor (head.json) under
+// one exclusive lock (appendLocked); a reader that took the chain between those
+// two writes would see the anchor one ahead of the chain and report the benign
+// ordering as tampering — the loudest false alarm this product can produce
+// (review H6). ReadSnapshot closes that window by reading both under a shared
+// lock the writer's exclusive lock excludes, so there is no moment a reader can
+// observe a half-written pair.
+type Snapshot struct {
+	// Chain is the events.jsonl bytes as read under the lock, ready for Verify.
+	Chain []byte
+
+	anchor    []byte // head.json bytes, nil when the read failed
+	anchorErr error  // why the anchor could not be read, nil when it was
 }
 
-func checkHeadOnce(root, sandboxID string, events int, head string) error {
-	blob, err := os.ReadFile(HeadPath(root, sandboxID))
+// ReadSnapshot reads a session's chain and its anchor as one consistent pair.
+//
+// It takes flock(LOCK_SH) on events.jsonl — the shared counterpart of the
+// LOCK_EX every appendLocked and Erase holds across line-plus-anchor — so while
+// this reads the chain and then the anchor, no writer is between its own two
+// writes. Released before it returns; the caller works from the bytes.
+func ReadSnapshot(root, sandboxID string) (*Snapshot, error) {
+	f, err := os.Open(Path(root, sandboxID))
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
+		return nil, err
+	}
+	defer f.Close()
+	if err := unix.Flock(int(f.Fd()), unix.LOCK_SH); err != nil {
+		return nil, fmt.Errorf("lock flight recorder: %w", err)
+	}
+	defer unix.Flock(int(f.Fd()), unix.LOCK_UN)
+
+	chain, err := io.ReadAll(f)
+	if err != nil {
+		return nil, err
+	}
+	// Under the same held lock: a writer cannot be mid-append, so this anchor
+	// is the one that belongs to the chain just read, not one from a write that
+	// landed between the two reads.
+	anchor, aerr := os.ReadFile(HeadPath(root, sandboxID))
+	return &Snapshot{Chain: chain, anchor: anchor, anchorErr: aerr}, nil
+}
+
+// AnchorState is what CheckAnchor concluded about the anchor beside a chain.
+type AnchorState int
+
+const (
+	// AnchorMatches: the anchor records exactly the chain's own end.
+	AnchorMatches AnchorState = iota
+	// AnchorBehindByOne: the anchor is one event back, at the chain's
+	// prev-of-head. An append writes its line and then renames its anchor into
+	// place; a crash, OOM-kill or power loss between the two leaves the chain
+	// one ahead of a perfectly honest anchor (review H7). Reported as an
+	// observation — an interrupted append — never as a tamper verdict.
+	AnchorBehindByOne
+	// AnchorMissing: there is no anchor. Records written before the anchor
+	// existed have none, and so do sessions whose anchor write failed; nothing
+	// here contradicts the chain, so nothing is claimed about it.
+	AnchorMissing
+	// AnchorUnreadable: the anchor is present but could not be read or parsed.
+	// Reported exactly like a missing one and never as tampering: an attacker
+	// who can corrupt the anchor can delete it just as easily, so a corrupt
+	// anchor proves no more than an absent one, and treating it as a verdict
+	// would hand that attacker a way to make an honest chain read as tampered.
+	AnchorUnreadable
+	// AnchorMismatch: the anchor names an end the chain does not have and is
+	// not one behind it either — the case the anchor exists to catch, a
+	// wholesale rewrite that did not also update the anchor. CheckAnchor
+	// returns a wrapped ErrAnchorMismatch alongside this.
+	AnchorMismatch
+)
+
+// ErrAnchorMismatch is the sentinel a chain-versus-anchor disagreement wraps,
+// so a caller (host/log.go's --verify, Erase's pre-rewrite guard) can test for
+// it with errors.Is rather than by matching message text.
+var ErrAnchorMismatch = errors.New("the chain does not end where its anchor says it does")
+
+// AnchorReport is CheckAnchor's finding, with the numbers a reader quotes.
+type AnchorReport struct {
+	State      AnchorState
+	AnchorSeq  int
+	AnchorHash string
+	ChainSeq   int
+	ChainHead  string
+}
+
+// String renders the report for the one line --verify prints beside the chain
+// head. Every shape reads as an observation about one file, because that is
+// what each of them is — even the mismatch, whose verdict is carried by the
+// error CheckAnchor returns, not by this text.
+func (r AnchorReport) String() string {
+	switch r.State {
+	case AnchorMatches:
+		return fmt.Sprintf("matches the chain head (event %d)", r.ChainSeq)
+	case AnchorBehindByOne:
+		return fmt.Sprintf("one behind the chain head (anchor at event %d, chain at %d) — an append was "+
+			"interrupted between the line and the anchor; an observation, not a rewrite", r.AnchorSeq, r.ChainSeq)
+	case AnchorMissing:
+		return "not present — this record predates the anchor, or its write failed; nothing to compare against"
+	case AnchorUnreadable:
+		return "unreadable — reported like a missing anchor, because whoever can corrupt it can delete it just as easily"
+	case AnchorMismatch:
+		return fmt.Sprintf("disagrees with the chain: anchor records event %d (head %s), chain holds %d events (head %s)",
+			r.AnchorSeq, short(r.AnchorHash), r.ChainSeq, short(r.ChainHead))
+	default:
+		return "unknown"
+	}
+}
+
+// CheckAnchor compares this snapshot's anchor against its own verified chain
+// end. events and head are what Verify returned for Snapshot.Chain; the report
+// distinguishes a match, an interrupted append (one behind), a missing or
+// unreadable anchor, and a genuine disagreement — the last carrying a wrapped
+// ErrAnchorMismatch. No error on any of the first four: they are observations,
+// not faults.
+func (s *Snapshot) CheckAnchor(events int, head string) (AnchorReport, error) {
+	return checkAnchor(s.anchor, s.anchorErr, events, head, prevOfHead(s.Chain))
+}
+
+// checkAnchor is the shared core of Snapshot.CheckAnchor and Erase's
+// pre-rewrite guard: both hold a locked read of the same two files and ask the
+// same question of them, so the answer lives in one place. prevOfHead is the
+// hash of event n-1 — the current chain's last event's `prev` — which is what
+// an anchor left one behind by an interrupted append still points at.
+func checkAnchor(anchorBlob []byte, anchorErr error, events int, head, prevOfHead string) (AnchorReport, error) {
+	r := AnchorReport{ChainSeq: events, ChainHead: head}
+	h, state := readAnchor(anchorBlob, anchorErr)
+	if state != anchorPresent {
+		r.State = state
+		return r, nil
+	}
+	r.AnchorSeq, r.AnchorHash = h.Seq, h.Hash
+	switch {
+	case h.Seq == events && h.Hash == head:
+		r.State = AnchorMatches
+		return r, nil
+	case h.Seq == events-1 && prevOfHead != "" && h.Hash == prevOfHead:
+		r.State = AnchorBehindByOne
+		return r, nil
+	default:
+		r.State = AnchorMismatch
+		return r, fmt.Errorf("%w: the anchor records event %d (head %s), the chain holds %d events "+
+			"(head %s) — the chain has been rewritten since the last write this file recorded. A signed "+
+			"export is the answer that survives this", ErrAnchorMismatch, h.Seq, short(h.Hash), events, short(head))
+	}
+}
+
+// anchorPresent is readAnchor's fourth outcome: the anchor was read and parsed.
+// It is not an AnchorReport state — a present anchor is compared against the
+// chain to become one of Matches/BehindByOne/Mismatch — so it sits apart from
+// the exported states, out of iota's way.
+const anchorPresent AnchorState = -1
+
+// readAnchor parses the anchor bytes, telling a missing anchor from an
+// unreadable one. A read error that is ENOENT is missing; any other read error
+// or a parse failure is unreadable, reported like missing for the reason
+// AnchorUnreadable's own comment gives.
+func readAnchor(blob []byte, readErr error) (headDoc, AnchorState) {
+	if readErr != nil {
+		if os.IsNotExist(readErr) {
+			return headDoc{}, AnchorMissing
 		}
-		return fmt.Errorf("read the chain anchor: %w", err)
+		return headDoc{}, AnchorUnreadable
 	}
 	var h headDoc
 	if err := json.Unmarshal(blob, &h); err != nil {
-		return fmt.Errorf("the chain anchor at %s is corrupt: %w", HeadPath(root, sandboxID), err)
+		return headDoc{}, AnchorUnreadable
 	}
-	if h.Seq == events && h.Hash == head {
-		return nil
-	}
-	return fmt.Errorf("the chain does not end where its anchor says it does: the anchor records "+
-		"event %d (head %s), the chain holds %d events (head %s) — the chain has been rewritten "+
-		"since the last write this file recorded. A signed export is the answer that survives this",
-		h.Seq, short(h.Hash), events, short(head))
+	return h, anchorPresent
 }
 
-// verifyFile verifies the chain at path, for CheckHead's confirmation pass.
-func verifyFile(path string) (int, string, error) {
-	blob, err := os.ReadFile(path)
-	if err != nil {
-		return 0, "", err
+// prevOfHead is the `prev` of the chain's last event — the hash of event n-1.
+// It is what an anchor one behind an interrupted append still records, and the
+// callers reach it only after Verify has accepted the chain, so a malformed
+// last line here would already have been refused; on an empty chain it is "".
+func prevOfHead(chain []byte) string {
+	trimmed := bytes.TrimRight(chain, "\n")
+	if len(trimmed) == 0 {
+		return ""
 	}
-	return Verify(bytes.NewReader(blob))
+	last := trimmed
+	if i := bytes.LastIndexByte(trimmed, '\n'); i >= 0 {
+		last = trimmed[i+1:]
+	}
+	var e Event
+	if err := json.Unmarshal(last, &e); err != nil {
+		return ""
+	}
+	return e.Prev
 }
 
 // Open creates or reopens a session's recorder.
@@ -855,11 +1025,19 @@ func (r *Recorder) appendLocked(e Event) error {
 	// and update this file leaves the two disagreeing, and CheckHead says so.
 	// It is a canary, not a wall: the same uid can rewrite both, which is why
 	// the signed export exists. A failed anchor write removes the stale file
-	// rather than leaving one that would cry wolf at the next verify.
+	// rather than leaving one that would cry wolf at the next verify, and says
+	// so on stderr once (review L9) — a run whose anchor silently stopped
+	// updating would otherwise end with the next verify reporting the anchor
+	// missing and no clue that a write had been failing all along.
 	if err := writeHeadFile(filepath.Dir(r.f.Name()), headDoc{
 		Sandbox: r.sandbox, Seq: r.seq, Hash: r.prev, TS: e.TS,
 	}); err != nil {
 		_ = os.Remove(HeadFile(filepath.Dir(r.f.Name())))
+		if !r.anchorWarned {
+			r.anchorWarned = true
+			warnf("session %s: the chain anchor could not be updated (%v); the next verify will "+
+				"report the anchor missing, not a rewrite", r.sandbox, err)
+		}
 		return nil
 	}
 	return nil
@@ -1673,6 +1851,17 @@ func clipUTF8(s string, n int) string {
 // to end and recompute every digest. What the chain catches is the *selective*
 // edit — removing one blocked-egress event, softening one command — which is
 // the edit someone covering their tracks actually wants to make.
+//
+// The out-of-band anchor (head.json) narrows even the wholesale rewrite. A
+// same-uid writer who rebuilds the chain from event 1 produces one that
+// verifies here — that is the documented keyless limit — but unless they also
+// find and update the anchor, the two disagree, and ReadSnapshot +
+// Snapshot.CheckAnchor says so (audit 2026-09-01, A14). It is a canary, not a
+// wall: the same writer can rewrite both files, which is why a signed export
+// remains the record to keep. CheckAnchor is deliberately quiet about the
+// benign edges — a missing or unreadable anchor, and an anchor left one behind
+// by an interrupted append — so the one thing it ever calls tampering is a
+// present anchor that genuinely disagrees.
 //
 // The head is the digest of the last event, and it is returned by the walk
 // rather than read off the last line afterwards. The two would be the same

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ikapa-dev/kelyfos/internal/proto"
 	"golang.org/x/sys/unix"
 )
 
@@ -27,7 +28,7 @@ const cpuPeriodUS = 100000
 const DefaultCPUWeight = 100
 
 // systemdScopePreflightTimeout bounds the boot-path check that systemd-run
-// actually works (audit 2026-09-01, A17b). In an environment with no cgroup
+// actually works (audit 2026-09-01, A17). In an environment with no cgroup
 // delegation and no working user systemd session, the boot used to sit after
 // session.start with no refusal and no output — the scope request blocked on a
 // D-Bus call with no timeout while the caller waited for a machine that was
@@ -271,12 +272,12 @@ func NewCPUSlice(id string, percent int) (*Slice, error) {
 	}
 	sl := &Slice{Percent: percent, name: "kelyfos-" + id, mode: m}
 	if m == modeSystemd {
-		// The preflight (audit 2026-09-01, A17b): pickMode chose the systemd
+		// The preflight (audit 2026-09-01, A17): pickMode chose the systemd
 		// path because the binary exists, which is not the same as a working
 		// user session for it to talk to. Everything after this point waits
 		// on the scope it requests, so what cannot be answered now is
-		// refused now — before any machine, TAP or run directory exists —
-		// with the fix in the message.
+		// refused now — before any machine or TAP exists, and in kelyfos run
+		// before the run directory is claimed — with the fix in the message.
 		if err := preflightSystemdScope(sl.name + "-preflight"); err != nil {
 			return nil, err
 		}
@@ -290,7 +291,7 @@ func NewCPUSlice(id string, percent int) (*Slice, error) {
 }
 
 // preflightSystemdScope proves the systemd path works before a boot depends
-// on it (audit 2026-09-01, A17b): one throwaway transient scope that runs
+// on it (audit 2026-09-01, A17): one throwaway transient scope that runs
 // true. A scope that cannot be started — no user session, no bus, a hung
 // dbus call — fails or times out inside systemdScopePreflightTimeout, and the
 // refusal says what is broken and what to do, where before there was a boot
@@ -309,14 +310,33 @@ func preflightSystemdScope(unit string) error {
 	if err == nil {
 		return nil
 	}
-	detail := strings.TrimSpace(string(out))
+	// Two failures wear the same non-zero exit and must not wear the same
+	// diagnosis. A systemd-run that answered and said no — no bus, no user
+	// session — comes back in milliseconds; the D-Bus hang this preflight
+	// exists to catch never comes back at all and is killed at the deadline.
+	// The context is what tells them apart, and it has to, because "did not
+	// complete within 4s" told against a slow-but-working user manager under
+	// load is the wrong diagnosis for a system that is merely busy.
+	hint := "\n    Run under a systemd user session with a working bus, as root with a delegated " +
+		"cgroup, or drop --cpu-quota."
+	if ctx.Err() == context.DeadlineExceeded {
+		return fmt.Errorf("cannot apply a CPU quota on this machine: systemd-run --user did not "+
+			"complete within %s and this boot will not hang waiting for it.%s",
+			systemdScopePreflightTimeout, hint)
+	}
+	detail := string(out)
+	if i := strings.IndexByte(detail, '\n'); i >= 0 {
+		detail = detail[:i]
+	}
+	detail = strings.TrimRight(detail, "\r")
 	if detail == "" {
 		detail = err.Error()
 	}
-	return fmt.Errorf("cannot apply a CPU quota on this machine: systemd-run --user did not "+
-		"complete within %s and this boot will not hang waiting for it (%s).\n"+
-		"    Run under a systemd user session with a working bus, as root with a delegated "+
-		"cgroup, or drop --cpu-quota.", systemdScopePreflightTimeout, detail)
+	// SafeText because the first stderr line is systemd-run's to choose and it
+	// lands on the operator's terminal: a bus-error line carrying a CSI escape
+	// (Failed to connect to bus\x1b[K) is quoted, not replayed raw.
+	return fmt.Errorf("cannot apply a CPU quota on this machine: systemd-run --user failed: %s.%s",
+		proto.SafeText(detail), hint)
 }
 
 // prepareDirect creates and configures one sandbox's cgroup under root.

@@ -316,11 +316,11 @@ func (p *Proxy) terminate(client net.Conn, host string, port int, bound []*Secre
 		// gzip of a credential does not contain the credential, which is the
 		// hole the audit demonstrated with an origin that echoes rejected
 		// Authorization headers inside a gzipped body. identity is what the
-		// echo suppression can read; scrubResponse records a response that
+		// echo suppression can read; scrubResponse refuses a response that
 		// arrives compressed anyway. Set for every request on this
 		// connection: the binding is per host, not per request.
 		if len(bound) > 0 {
-			req.Header.Set("Accept-Encoding", "identity")
+			askForIdentity(req)
 		}
 		secret, why := pick(bound, req, host)
 		if secret != nil {
@@ -385,12 +385,22 @@ func (p *Proxy) terminate(client net.Conn, host string, port int, bound []*Secre
 			p.reportDialFailure(clock, host, port, err)
 			return
 		}
-		p.scrubResponse(resp, host)
-		// A chunked body reports -1, which is not a byte count. Adding it
-		// walked the receipt backwards; an unknown length contributes nothing
-		// rather than subtracting (F-D33).
+		// The request went out and the credential with it, so its bytes are
+		// counted regardless of what comes back (F-D33: a chunked -1 is not a
+		// byte count and contributes nothing).
 		if req.ContentLength > 0 {
 			out += req.ContentLength
+		}
+		// A response the echo suppression cannot read — compressed, where a
+		// credential is bound — is refused, not delivered (audit 2026-09-01,
+		// H4). The guest gets a 502 that names the host and the encoding and no
+		// byte of the body, Connection: close ends the keep-alive loop, and
+		// this response adds nothing to BytesIn because nothing reached the
+		// guest. The event is on scrubResponse's OnUnscrubbable.
+		if enc := p.scrubResponse(resp, host); enc != "" {
+			resp.Body.Close()
+			writeStatus(clock, http.StatusBadGateway, unscrubbableRefusal(host, enc))
+			break
 		}
 		if resp.ContentLength > 0 {
 			in += resp.ContentLength

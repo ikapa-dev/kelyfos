@@ -772,6 +772,15 @@ silently in is worse than one that is openly out.
   They are outside the promise anyway.
 - **Timing figures.** The boot and restore numbers are measurements, not
   contracts. They are re-measured per release and reported as measured.
+- **A guest image is paired with the CLI that built it, in both directions.**
+  [`upgrading.md`](https://raw.githubusercontent.com/ikapa-dev/kelyfos/main/docs/upgrading.md) §9 covers the forward case — an image older
+  than the CLI is refused at boot, because it cannot present the channel
+  credential the CLI now requires (D99). The reverse — a *newer* image run
+  against an *older* CLI — is not supported either: the new supervisor presents
+  a credential frame the old CLI's channels do not expect, and the team channel
+  in particular reads it as an off-by-one request. The pairing is the unit;
+  rebuild the image for the CLI you run, rather than mixing a build of one with
+  a build of the other.
 
 ---
 
@@ -1198,7 +1207,38 @@ about — and D99 records the reasoning.
 
 ---
 
-## 10. What has never broken
+## 10. On the `serve-mcp` door, a declared size is a ceiling (2026-09-01)
+
+**`[sandbox] vcpus` and `mem_mib` are ceilings on the `serve-mcp` door** (the
+independent audit's A8; docs/mcp-surface.md §1). On the command line they keep
+their v0.3 meaning — a default any flag overrides (F-D10). On the MCP door the
+tool schema has always promised *at most what the policy allows*, and a client
+raising `cpus` or `mem` over a size the project declared contradicted that
+whichever key spelled it. A call above the declared size is now refused:
+
+```
+mem 1024M exceeds the ceiling mem_mib = 512 set at ./kelyfos.toml — on this door a declared size is a ceiling, not a default [ceiling.tool_legacy]
+    ask for less — or declare the size under [resources] in ./kelyfos.toml and raise it there, which is a change a person makes to a file and not something a tool here can do
+```
+
+**What to do:** if a project's agents legitimately asked for more than the
+legacy key declared, raise the key, or move the size to `[resources]`, which is
+the section that means "limit" on every door. Nothing changes for a project
+that declares `[resources]`, or for `kelyfos run`.
+
+**The host is a ceiling too, and it applies with no policy at all.** A
+`sandbox_run`, `sandbox_restore` or `sandbox_fork` that would make a machine
+with more cores than this host has, or more memory than it can carry with room
+left for itself, is refused as `[ceiling.host]` / `[ceiling.host_snapshot]`. A
+size nobody asked for — the door's 2 vcpu / 512 MiB default, or a policy's own
+default — is clamped to the machine rather than refused, so a small host still
+boots the default machine; the session's `session.policy` records the size it
+got. A snapshot larger than the host it is restored on has to be re-taken from
+a smaller machine.
+
+---
+
+## 11. What has never broken
 
 Stated because "nothing changed" is only useful if somebody checked:
 
@@ -1439,6 +1479,19 @@ ends in a `session.end`, and `kelyfos verify` prints its absence as an
 observation rather than a verdict, because a record with no `session.end` is a
 session still open as often as it is one that was cut.
 
+On the machine that wrote the record there is one more check, narrower than it
+sounds. Every append also writes `head.json` beside the chain — the head as the
+recorder last saw it — and `kelyfos log --verify` reads chain and anchor
+together under the recorder's own lock and says whether they agree: `anchor
+matches event N`. A chain rewritten or cut short by someone who did not know to
+update the anchor is caught. A same-uid writer who rewrites both is not, and
+one who removes or corrupts the anchor reduces the check to `anchor none — …
+this check cannot rule out a rewrite`, printed rather than treated as a verdict
+because it is the attacker's cheapest move and also exactly what an older
+session or a failed anchor write looks like. The anchor narrows the keyless
+truncation limit; it does not close it. An export carries no anchor, so off the
+machine only the signature answers.
+
 Signing answers both, and only for a reader who already holds the key.
 `kelyfos log --export ... --sign-key` signs an export with an ed25519 key of
 yours, and `kelyfos verify --key` checks the signature against one the reader
@@ -1643,8 +1696,10 @@ fails when a policy name has no number on an architecture, and in the
 confinement suite's probe battery, which fails when a listed name stops being
 refused.
 
-**The read residuals the audit's A19 confirmed, named in one place.** Each is
-verified reachable from a confined process and accepted, with the reason:
+**The read residuals the audit's A19 confirmed, named in one place.** The first
+three are verified reachable from a confined process and accepted, with the
+reason; the fourth the audit named as a residual and this review found already
+closed:
 
 - **`/dev/kmsg` is readable.** The supervisor reads it to report OOM kills
   (E1-4); nothing fences a confined process reading the same kernel ring, so
@@ -1656,12 +1711,24 @@ verified reachable from a confined process and accepted, with the reason:
   without transferring data; `LANDLOCK_ACCESS_FS_IOCTL_DEV` is deliberately
   unhandled (§5.2) because refusing it would refuse the terminal ioctls every
   interactive program makes.
-- **`/proc/1/environ` is readable** — PID 1's environment, which carries no
-  proxy address, no CA material and no credential: the egress environment
-  reaches commands as their own default environment, and the channel
-  credential (A2/A3) lives in the supervisor's memory only, never in its
-  environment. After the same audit's A17b the supervisor is non-dumpable, so
-  this file is the residual's floor rather than an invitation.
+**`/proc/1/environ` is *not* readable from a confined process, and the reason
+is worth stating precisely** (the adversarial review of 2026-09-01, M7,
+corrected a first draft of this list that called it readable). `cat
+/proc/1/environ` from a confined command answers `Permission denied`, as do
+`/proc/1/maps`, `/proc/1/mem` and `PTRACE_ATTACH` to PID 1. What refuses them
+is **Landlock's ptrace scoping**: a Landlocked task may not trace or read a
+task outside its own domain hierarchy, and PID 1 has no Landlock domain, so
+none of the guest's confined processes may reach into it — on both flavors,
+`dev` included, where the seccomp filter permits `ptrace`. On `base` the
+seccomp refusal list refuses `process_vm_readv`, `pidfd_getfd` and the rest of
+that family as a second, independent wall. `PR_SET_DUMPABLE 0` on the
+supervisor (A17b) is defence in depth behind those two, not the wall itself: it
+is bypassed by a `CAP_SYS_PTRACE` holder, which every confined process is, so
+it protects only against a process that has dropped that capability. Were the
+file readable, it would carry nothing anyway — no proxy address (that reaches
+commands as their own default environment), no CA material (installed at
+`/etc/ssl/certs`), and no channel credential (A2/A3, in the supervisor's memory
+only).
 
 These are the residuals of a profile that fences writes and refuses syscalls,
 not of a sandbox that pretends the guest's own kernel view is secret.
@@ -2245,7 +2312,8 @@ assertion's subject.
 | the secret never enters the guest (env, PID 1 environ, /etc, /tmp, /work) | `accept-security-secrets.sh` absence battery | CHECKED |
 | attaches only on terminated TLS, to the bound host | secrets suite | CHECKED |
 | response reflections scrubbed to same-length asterisks; the scrub recorded | secrets suite | CHECKED |
-| the reflection survives compression: a credential-bound leg asks the origin for identity, a compressed response from a defiant origin is recorded (`secret.unscrubbable`) rather than silent, and trailers are scrubbed like headers (audit A4; the trailers half is the audit's A5b) | `internal/egress/a4_test.go` end-to-end against a local TLS origin (compliant and defiant), `scrub_test.go` trailer + encoding units, `a4_secret_test.go` parse-time warning | CHECKED |
+| the reflection survives compression: both legs ask a credential-bound origin for identity; a compressed response from a defiant origin is refused — a `502` in its place, the value nowhere in what the guest receives — and recorded (`secret.unscrubbable`); body-less responses pass with no event; trailers are scrubbed like headers (audit A4; trailers half A5b; refusal per review H4) | `internal/egress/a4_test.go` end-to-end against a local TLS origin (terminated leg, compliant and defiant) and a local plain origin (identity forcing, refusal, HEAD, unbound host untouched); `scrub_test.go` encoding units (every header line and coding; body-less); `a4_secret_test.go` parse-time warning | CHECKED |
+| a tunnel is closed after five minutes with no bytes in either direction, never while bytes move one way, and always by the one-hour ceiling; the plain leg's request body is on the same rolling bound; a proxy-ended connection is recorded with `reason` `stalled`/`ceiling_reached` (audit A12; review H3/M4) | `internal/egress/a12_test.go` (idle, active-then-silent, ceiling — each asserting the proxy's EOF and the reason; the two H3 one-way streams), `a12_plain_test.go` (request-body stall → 408 + `stalled`; mid-body ceiling → `ceiling_reached`) | CHECKED |
 | plain HTTP → withheld `not_encrypted` | secrets suite | CHECKED |
 | forged Host on a tunnel → withheld `host_mismatch`, nothing at the origin | secrets suite | CHECKED |
 | a credential bound to a host covers its subdomains (IA-I1, pinned as-is) | secrets suite | CHECKED — pinned |
@@ -2258,8 +2326,9 @@ assertion's subject.
 | an exported report verifies clean; a flipped byte is named | `accept-security-record.sh` tamper battery | CHECKED |
 | marker removal is refused | record suite | CHECKED |
 | rendered output escapes hostile strings (RENDER) | record suite | CHECKED |
-| a connection to a guest channel without the session's credential is refused, logged and recorded — the audit's A2/A3 forgery paths (same-uid host process on the events socket; raw `AF_VSOCK` dial from inside the guest) are dead | `internal/sandbox/channelauth_test.go` (absent, wrong and un-minted credentials on all three channels, refusal reported); verified live in the test VM against the audit's own repro shape (`local/audit/a2a3_verify.sh`, not committed) | CHECKED |
-| a wholesale rewrite of the chain that does not also update its out-of-band anchor (`head.json`, written per append) is detected by `kelyfos log --verify` — the anchor narrows the keyless limit; a writer that rewrites both still passes, so the signed export remains the strong answer (audit A14) | `internal/recorder/a14_test.go` (forged tail latched, not extended; anchor detects truncation; missing anchor is not an error) | CHECKED |
+| a connection to a guest channel without the session's credential is refused, logged and recorded — the audit's A2/A3 forgery paths (same-uid host process on the events socket; raw `AF_VSOCK` dial from inside the guest) are dead; the events and ready channels are not cut once authenticated, an ordinary boot records no refusals, and an old image is refused the moment the guest says so (audit A2/A3; review H1/H2/M5/L4) | `internal/sandbox/channelauth_test.go` (absent, wrong and un-minted credentials on all three channels, the peer-uid refusal ordered before the credential read; under `-race`); verified live in the test VM: 6 boots at ~1.2s with zero `channel.refused` and no channel cut over a 26s hold | CHECKED |
+| a wholesale rewrite of the chain that does not also update its out-of-band anchor (`head.json`, written under the append lock) is detected by `kelyfos log --verify`; chain and anchor are read together under that lock so a live session is never reported rewritten by its own append; an anchor one event behind with that event's digest (an interrupted append) is an observation; a missing or unreadable anchor is printed (`anchor none …`) and is not a verdict — the same uid can remove or corrupt it, so the anchor is a canary, not a wall (audit A14; review H6/H7/M9) | `internal/recorder/a14_test.go`; `internal/recorder/anchor_test.go` (verify under a live writer never sees a torn pair; behind-by-one accepted, ahead / behind-by-two / wrong digest refused; missing and corrupt anchors reported; failed anchor write leaves no temp file and warns once) | CHECKED |
+| `kelyfos sessions erase` cannot launder an anchor mismatch: the anchor is checked under the lock before the rewrite and a disagreement refuses with `ErrAnchorMismatch`; missing or one-behind anchors are rewritten with the chain (review M9) | `anchor_test.go` `TestReview_EraseRefusesAChainWhoseAnchorDisagrees`, `…ProceedsOverAMissingOrOneBehindAnchor` | CHECKED |
 | truncation with recomputed claims verifies — the documented keyless limit (IA-M2) | record suite, EXPECTED-CURRENT with TODO(IA-M2); narrowed by the head anchor above, not closed | UNCHECKED — accepted, flagged |
 | a SIGNED export detects the truncation attack | record suite signed battery (D93) | CHECKED |
 | erasure redacts payloads while the chain verifies; refuses a live session | `docs/exam/2026-08-31-security-erase.md` (survived one attempt) | PARTIALLY CHECKED — one attempt, no suite |
@@ -2283,11 +2352,11 @@ assertion's subject.
 | --- | --- | --- |
 | Landlock fences /etc and /proc/sys writes | `accept-security-confinement.sh` | CHECKED |
 | seccomp refuses mount, mknod, setns, unshare, bpf, add_key, open_by_handle_at | confinement battery | CHECKED |
-| seccomp refuses the fd-based mount API (open_tree, fsopen, fsconfig, fsmount, fspick, move_mount, mount_setattr) and the cross-memory/fd-theft family (process_vm_readv, pidfd_getfd) — the audit's A5, probed from a confined child so map drift fails CI (audit A5/A17b) | confinement battery; `supervisor/profile_policy_test.go` fails at build time when a policy name is missing from a per-arch map | CHECKED |
-| the supervisor is non-dumpable, so ptrace-shaped attacks are refused by the policy and the flag, not only the kernel ACL (audit A17b) | confinement battery (process_vm/pidfd probes EPERM); prctl failure would log at boot | CHECKED |
+| seccomp refuses the fd-based mount API (open_tree, move_mount, fsopen, fsconfig, fsmount, fspick, mount_setattr) and the cross-memory/fd-theft family (process_vm_readv, process_vm_writev, pidfd_open, pidfd_getfd, pidfd_send_signal) — the audit's A5 — and map drift fails CI on either architecture (audit A5/A17b; review M8) | confinement battery: twelve `seccomp.<name>: ERRNO 1` probes, each on its own number with kernel-distinguishable arguments; `supervisor/profile_policy_test.go` parses both `profile_<arch>.go` maps from disk and fails when a policy name is missing from either or bound to another name's constant | CHECKED |
+| ptrace-shaped reads of the supervisor are refused by Landlock's ptrace scoping (a Landlocked task cannot reach PID 1, which has no domain) and, on `base`, by seccomp; `PR_SET_DUMPABLE 0` is defence in depth behind those, not the wall — a `CAP_SYS_PTRACE` holder bypasses the flag, which every confined process is (audit A17b; review M7) | confinement battery (`PTRACE_ATTACH`, `/proc/1/mem`, `process_vm_readv`, `pidfd_getfd` all EPERM on `dev` and `base`); docs/threat-model.md §4 names the control that refuses | CHECKED |
 | the host's own VMM-API actions (pause, resume, snapshot create/load, drive patch) are recorded as `vmm.api` events (audit A11); the socket's same-uid reachability is documented as a residual with the layout reasoning | `internal/sandbox` api instrumentation + `host/plugins.go` vmmActionRecorder, wired at the recording doors (run, fork, restore, snapshot save/restore, sessions, team, serve-mcp — the serve-mcp batch fork included); `kelyfos bench` opens no recorder at all, which predates this work and is unchanged | CHECKED |
-| plugin stderr is sanitised at the console boundary (audit A18) | `supervisor/pluginhost_sanitize_test.go` — escape sequences quoted whole, clean lines untouched, and a structural check pins the call site | CHECKED |
-| the accepted read residuals (/dev/kmsg, raw device reads, read-only ioctls, /proc/1/environ) are named with their reasons, and the refusal-list counts live in tests rather than prose (audit A19) | docs/threat-model.md §4's residual list; the counts are enforced by `supervisor/profile_policy_test.go` and the confinement battery | CHECKED — documented |
+| plugin stderr is sanitised at the console boundary, including invalid UTF-8, and an overlong line cannot wedge the plugin (audit A18; review L10) | `supervisor/pluginhost_sanitize_test.go` — escape sequences and a raw 0x9b quoted whole, clean lines untouched, a 70 KiB line dropped with a notice while the next line still arrives, and a structural check pins the call site | CHECKED |
+| the accepted read residuals (/dev/kmsg, raw device reads, read-only ioctls) are named with their reasons; `/proc/1/environ` is EPERM from a confined process (Landlock), named as a closed residual not an accepted one; the refusal-list counts live in tests rather than prose (audit A19; review M7) | docs/threat-model.md §4's residual list; the counts are enforced by `supervisor/profile_policy_test.go` and the confinement battery | CHECKED — documented |
 | PTRACE_ATTACH to PID 1 is EPERM even on the dev flavor that permits ptrace | confinement battery | CHECKED |
 | io_uring, abstract unix sockets are allowed by the filter and fenced by namespaces | confinement battery — documented, not lied about | CHECKED — documented |
 | the profile is per-flavor and per-architecture; the docs state the policy, the dump resolves the machine | profiles page + `--dump-profile` (see §6.2 correction) | CHECKED |
@@ -2301,8 +2370,8 @@ assertion's subject.
 | shim: minted per-process token required, static help-text key rejected (IA-L1a), loopback bind | surfaces suite | CHECKED |
 | the shim's sandbox cap is enforced at registration: a burst of racing registrations never exceeds MaxSandboxes (audit A9) | `shim/a9_test.go` — 32 goroutines racing for one slot, exactly one wins; raced under `-race` | CHECKED |
 | team: edges enforced before effect; refusals recorded; spawn budget; peers leak nothing; exactly 6+7 tools | `accept-security-team.sh` | CHECKED |
-| serve-mcp's client-facing door bounds concurrent tool calls at 128 — a pipelined stream cannot amplify into unbounded dispatch (audit A10) | `host/a10_test.go` — pipelined calls against a cap of 2 under `-race`, max in flight asserted | CHECKED |
-| an absurd `timeout_ms` is refused by name, not silently converted to a grace-kill (audit A15) | `host/a15_test.go` — the audit's MaxInt64 frame refused with the bound named; the ms↔Duration round-trip asserted | CHECKED |
+| serve-mcp bounds concurrent tool calls at 128, taken on the read loop — a pipelined stream cannot amplify into unbounded dispatch, and a stop gets through a loop parked at the cap (audit A10; review M10) | `host/a10_test.go` — pipelined calls against a cap of 2 under `-race`, max in flight asserted; `TestM10_*` — a stop releases a loop parked at a cap of 1, and an in-flight exec against a guest that never answers returns within 5 s of a stop with `command.exit` saying so; both under `-race` | CHECKED |
+| an absurd `timeout_ms` — above the 24-hour ceiling or negative — is refused by name, not silently converted (audit A15; review L1) | `host/a15_test.go` — the audit's MaxInt64 frame and `-1` each refused naming `timeout_ms` and the bound; zero is still the default; the ms↔Duration round-trip and the schema's stated ceiling asserted | CHECKED |
 | shim / E2B SDK: command execution is not supported — a REST subset only | documented (`docs/e2b-shim.md`); not suite-checked | UNCHECKED — documented |
 
 ## Lifecycle
@@ -2314,7 +2383,7 @@ assertion's subject.
 | SIGTERM to the run pid tears down cleanly, with and without a trailing command (IA-M1's second trigger) | lifecycle suite signal battery | CHECKED |
 | a second restore of the same snapshot works after cleanup | lifecycle suite | CHECKED |
 | ceilings: flag-over-policy refused pre-boot; guest sees the capped machine; max-runtime exits 124; disk ceiling pre-boot | `accept-security-caps.sh` | CHECKED |
-| the policy-less serve-mcp door has absolute ceilings: cores ≤ the host's, mem ≤ what the host can carry, and a legacy `mem_mib` acts as a ceiling there (audit A8) | `host/a8_test.go` (the audit's exact 262144 MiB repro refused; a reasonable ask passes) | CHECKED |
+| the serve-mcp door has absolute ceilings on every path: cores ≤ the host's, mem ≤ what the host can carry, for `sandbox_run` with or without a policy and for what a snapshot holds through `sandbox_restore`/`sandbox_fork`; the legacy `mem_mib`/`vcpus` are ceilings there; a default is clamped, an explicit ask is refused by name (audit A8; review M1/M2) | `host/a8_test.go` — the audit's 262144 MiB repro refused; `TestM1_*` on a seamed one-core host (the default boots with 1, an explicit 2 is refused `[ceiling.host]`, an ask under the host passes as asked); `TestM2_*` (`[ceiling.tool_legacy]` by ID; a 4-vcpu `meta.json` refused `[ceiling.host_snapshot]` through both tools); reproduced in Lima under `taskset -c 0` | CHECKED |
 | a snapshot's recorded network addressing goes through the same derivation gate a state file's does: a poisoned meta.json (loopback, metadata /30, non-/30 pair) is refused by name on restore (audit A7) | `internal/sandbox/a7_test.go` (gate units incl. the audit's loopback scenario); verified live — a snapshot with a poisoned meta.json refuses on restore | CHECKED |
 
 ## The supply chain
@@ -2377,11 +2446,16 @@ with limits nobody asked for and the command line would still read `--cpus 8`.
 > policy file that declared *preferences*; it is the wrong behaviour for one that
 > declares *limits*. A policy you can override from the command line is not a
 > limit, it is a suggestion. `[sandbox] vcpus` / `mem_mib` keep the old
-> defaults-only meaning for compatibility (F-D10) — use `[resources]` for
-> anything you actually want enforced.
+> defaults-only meaning for compatibility (F-D10) on the command line — use
+> `[resources]` for anything you actually want enforced. On the `serve-mcp`
+> door they are ceilings, not overridable defaults (`[ceiling.tool_legacy]`;
+> docs/mcp-surface.md §1), because that door's schema promises at most what the
+> policy allows.
 
-With no `[resources]` section there are no ceilings, and flags behave exactly as
-they did in v0.3.
+With no `[resources]` section there are no ceilings of the policy's, and flags
+behave exactly as they did in v0.3 — but on the `serve-mcp` door the host's own
+ceilings still apply (cores ≤ the machine's, memory ≤ what it can carry),
+because a machine bigger than the host is never a machine any door should boot.
 
 ## Units
 
@@ -3409,12 +3483,20 @@ the proxy either way.
   `Accept-Encoding: identity` on the terminated and plain-HTTP legs' requests —
   so a compliant origin's response is matchable end to end, and the guest's own
   encoding preference is overridden for exactly those requests. An origin that
-  compresses anyway gets its body passed through unread — gzip of a credential
-  does not contain the credential — and a `secret.unscrubbable` event records
-  it, replacing the silence that sat here until the independent audit of
-  2026-09-01 (A4) demonstrated the echo end to end. The proxy still does not
-  decompress to scrub and re-compress after: that would break the byte-for-byte
-  framing it deliberately preserves. **A value under eight bytes is not
+  compresses anyway — every `Content-Encoding` line and coding is checked, gzip
+  and br alike — gets its response **refused**, not delivered: the guest reads a
+  `502` naming the encoding and the host in the body's place, and a
+  `secret.unscrubbable` event records the refusal. The first fix passed the
+  body through unread and only recorded it; the adversarial review of
+  2026-09-01 (H4) priced that as recording the leak rather than stopping it —
+  httpbin's `/gzip`, the audit's own repro, compresses whatever the request
+  asked for — so the compressed response is now refused. A response with no
+  body (HEAD, 204, 304) is delivered with no event. An origin serving
+  pre-compressed objects — an object store with `Content-Encoding` in the
+  object's own metadata — is refused on every fetch of such an object while a
+  credential is bound. The proxy does not decompress to scrub and re-compress:
+  that would break the byte-for-byte framing it deliberately preserves. **A
+  value under eight bytes is not
   scrubbed**, because replacing a short string everywhere it appears would
   corrupt far more than it protects — and `--secret` warns about that at parse
   time now, where the user can still choose a longer credential. Trailers are
@@ -3429,14 +3511,22 @@ the proxy either way.
   response, so a keep-alive connection whose five responses each echo the same
   token produces five events.
 
-- **Every tunnelled and forwarded byte is on a clock.** The audit of
-  2026-09-01 (A12) found tunnels carrying nothing at all: 128 idle CONNECTs
-  pinned the egress semaphore for the sandbox's life. A tunnel now closes
-  after five minutes of silence in either direction — generous for
-  interactive keepalives — and no arm of its clock can outrun the one-hour
-  connection ceiling the terminated leg already had, so a dribbling guest is
-  bounded too. The plain-HTTP leg's body copy carries the same write-side
-  clock and a context-bounded ceiling.
+- **Every tunnelled and forwarded byte is on a clock, and the tunnel's clock
+  spans the whole tunnel.** The audit of 2026-09-01 (A12) found tunnels
+  carrying nothing at all: 128 idle CONNECTs pinned the egress semaphore for
+  the sandbox's life. A tunnel now closes after five minutes with **no bytes in
+  either direction** — one clock for the whole tunnel, re-armed by a byte moving
+  either way, so a keepalive or a one-way transfer of any length (a long
+  download, an upload to an origin that answers only at the end) keeps it open
+  while it is making progress. The first cut of this clock was per direction and
+  cut exactly those one-way transfers; that is the adversarial review of
+  2026-09-01's H3. No arm can outrun the one-hour connection ceiling the
+  terminated leg already had, so a dribbling guest is bounded too. The
+  plain-HTTP leg's request body carries the same rolling stall clock (a guest
+  that declares a body and stops sending it is answered `408`) beside the
+  write-side clock and the hour's ceiling. When the proxy itself ends a
+  connection the `egress.attempt` records `reason` `stalled` or
+  `ceiling_reached`, on an allowed attempt if the transfer had begun.
 
 - **Certificate pinning breaks for a secret-bound domain, by construction.**
   This is the cost D6 accepted, and it belongs here as well as in the threat
@@ -5168,12 +5258,14 @@ One outbound connection attempt. Written from P2-5.
 | `host` | string | Requested host. |
 | `port` | integer | Requested port. |
 | `allowed` | boolean | Whether policy permitted it. |
-| `reason` | string | Why it did not go through. See below. |
+| `reason` | string | Why it did not go through — or, on an allowed attempt, why the proxy ended it. See below. |
 | `mode` | string | How much the proxy could read: `tunnelled` (a `CONNECT` it relayed unopened), `terminated` (a secret-bound domain it decrypted), `plain` (ordinary HTTP, which it necessarily read in full), or `direct_tls` (an absolute-form `https://` request sent straight to the proxy with no `CONNECT`, fetched over a real TLS connection the proxy performed itself). **Required whenever `allowed` is true.** |
 | `bytes_in`, `bytes_out` | integer | Transferred, when the connection closed. |
+| `error` | object | `{kind, message}` when `reason` is `upstream_unreachable` and the transport said why — a dial timeout, a name that resolved to nothing, a TLS failure. Redacted by an erasure like every other free-text field. |
 | `agent` | string | Present inside a team: which agent's proxy this was. |
 
-`reason` is one of five, and only the first is a policy refusal:
+`reason` is one of seven, and only the first is a policy refusal; the last two
+are the only ones that can sit beside `allowed: true`:
 
 | `reason` | Meaning |
 | --- | --- |
@@ -5182,6 +5274,8 @@ One outbound connection attempt. Written from P2-5.
 | `bad_request` | The proxy could not parse the request or its target, or could not mint a certificate for a secret-bound domain. `host` and `port` may be absent. |
 | `upstream_unreachable` | Policy allowed it and the dial failed. |
 | `tls_pinning_rejected_our_ca` | A secret-bound domain was terminated and the TLS handshake with the guest failed. Pinning is the common cause and the one worth naming — a pinned client refusing the run's CA is behaving correctly — but any handshake failure on a terminated domain lands here (`docs/networking.md` §6). |
+| `stalled` | The proxy closed it: no bytes in either direction of a tunnel for five minutes, or a plain request's body idle for ten seconds. On an allowed attempt the transfer had begun; on a refused one the guest's own request never completed. |
+| `ceiling_reached` | The proxy closed it at the one-hour connection ceiling, whatever the time was spent on. Same allowed/refused reading as `stalled`. |
 
 `mode` exists because of decision D6, and answers exactly one question: how much
 of this connection could the host read? `tunnelled` means nothing — a `CONNECT`
@@ -5289,26 +5383,30 @@ proxy whose record understates what the host did — the same reasoning that mad
 answers "how much could it see"; this answers "did it change anything".
 
 ### `secret.unscrubbable`
-A response from a credential-bound origin arrived compressed, and the echo
-suppression cannot match inside an encoding — so the guest received a body the
-proxy cannot vouch for. Written from the independent audit of 2026-09-01 (A4),
-which demonstrated the leak end to end: an origin that echoes rejected
-Authorization headers inside a gzipped body used to hand the guest the
-credential while the proxy's record showed only `secret.scrubbed` events from
-its plain-echo checks.
+A response from a credential-bound origin arrived compressed, the echo
+suppression cannot match inside an encoding — and the response was **refused**:
+the guest read a `502` naming the encoding and the host in the body's place,
+the connection closed, and nothing of the origin's answer was delivered.
+Written from the independent audit of 2026-09-01 (A4), which demonstrated the
+leak end to end: an origin that echoes rejected Authorization headers inside a
+gzipped body used to hand the guest the credential while the proxy's record
+showed only `secret.scrubbed` events from its plain-echo checks. The first fix
+delivered the body and recorded this event; the adversarial review of
+2026-09-01 (H4) is why it now means "refused, not delivered".
 
 The proxy asks credentialed origins not to compress — `Accept-Encoding:
-identity` on the terminated and plain-HTTP legs — so a compliant origin never
-triggers this. An origin that ignores that gets its body passed through
-unread, and this event is what that costs: recorded instead of the silence
-that used to sit here. It is the one event in this file that says "the value
-may have reached the guest and nothing could be done", which is precisely a
-fact a reader of the record needs.
+identity` on the terminated and plain-HTTP legs — so an origin that negotiates
+never triggers this. Two kinds do: one that compresses regardless of the
+request (httpbin's `/gzip`), and one serving pre-compressed objects with
+`Content-Encoding` in the object's own metadata (an object store), which is
+refused on every fetch of such an object while a credential is bound. Every
+`Content-Encoding` line and coding is checked; responses that carry no body —
+HEAD, 204, 304 — are delivered with no event.
 
 | Field | Type | Meaning |
 | --- | --- | --- |
-| `host` | string | The domain whose response was compressed. |
-| `mode` | string | The `Content-Encoding` the response named — gzip, deflate, br, whatever the origin sent. |
+| `host` | string | The domain whose compressed response was refused. |
+| `mode` | string | The content codings the response named that the scrubber cannot see through, normalised to gzip, deflate, br, compress, zstd — or other; `identity` omitted. |
 | `agent` | string | Present inside a team: whose credential was bound. |
 
 ### `team.message` and `team.refused`
@@ -5647,16 +5745,19 @@ refusal is the host's own act — `"source": "host"` — made before anything th
 peer sent past the credential frame could reach the chain, so the event is
 evidence of an attempt, never a record of what the attempt carried.
 
-The first frames of every boot usually show one or two of these at low
-sequence numbers: the supervisor dials the moment its listeners are bound, and
-the credential arrives over `control` a moment later. What matters is the
-pattern — a steady stream of refusals from boot to teardown is something
-trying to forge the record, and everything it sent died at the gate.
+An ordinary boot shows none of these: the supervisor holds its first ready and
+events dial until the host's credential has landed over `control` (adversarial
+review 2026-09-01), so the dials it makes are the ones it can authenticate. A
+refusal here is therefore something worth reading — a same-uid host process or
+an in-guest process that dialled a guest channel without the session's
+credential — and a steady stream of them from boot to teardown is something
+trying to forge the record, everything it sent dead at the gate.
 
 | Field | Type | Meaning |
 | --- | --- | --- |
 | `port` | integer | The channel that refused the connection: 10100, 10101 or 10102. |
-| `reason` | string | Why — no credential was presented, the credential presented was not this session's, or the peer was not this user. |
+| `reason` | string | Why — no credential was minted for this session, no credential was presented, the credential presented is not this session's, or the peer is not this user. |
+| `agent` | string | Present inside a team: whose machine's channel refused the connection. |
 
 ### `vmm.api`
 A state-changing Firecracker API call the host itself made — pause, resume,
@@ -7053,9 +7154,17 @@ max_sandboxes = 4
 **Which policy file is a decision, not a default.** The server searches upward
 from its working directory for `kelyfos.toml`, which is right on a command line
 and a trap under a client: the working directory belongs to the client, and one
-launched from outside the project finds no policy and runs with no ceiling at
-all. `--policy <path>` names the file, and a `--policy` that does not exist is
-an error rather than a quiet fall back to the search. The `initialize`
+launched from outside the project finds no policy and runs with no ceiling of
+the policy's — only the host's own, which apply on every path of this door: a
+machine with more cores than the host has, or more memory than it can carry
+with room left for itself, is refused as `[ceiling.host]` (a snapshot's frozen
+size, through `sandbox_restore` and `sandbox_fork`, as `[ceiling.host_snapshot]`).
+A size nobody asked for — the door's 2 vcpu / 512 MiB default — is clamped to
+the machine rather than refused, and a `[sandbox] vcpus` or `mem_mib` declared
+without a `[resources]` section is a ceiling here, not an overridable default
+(`[ceiling.tool_legacy]`; docs/upgrading.md §10). `--policy <path>` names the
+file, and a `--policy` that does not exist is an error rather than a quiet fall
+back to the search. The `initialize`
 instructions name the policy in force, or say plainly that none was found —
 because the banner naming it goes to stderr, and clients bury stderr.
 
@@ -7078,11 +7187,19 @@ Concurrency is bounded, and the bound is the server's, not the client's to
 discover by racing it. Calls are dispatched on their own goroutines up to
 **128 in flight** — the same ceiling as every other listener in the product;
 the audit of 2026-09-01 (A10) found this door dispatching without one, which
-made a pipelined stream an N-goroutine, N×16 MiB amplification. A call past
-the cap is not refused: the server reads more slowly, which a client sees as
-backpressure and nothing else. Answers still arrive keyed by their own ids and
-may still come back out of order — two overlapping calls race each other by
-design; the ceiling bounds how many can race at once.
+made a pipelined stream an N-goroutine, N×16 MiB amplification. The cap is
+taken on the read loop, so its effect at the cap is precise and worth stating
+(adversarial review 2026-09-01, M10): with 128 calls in flight the server reads
+nothing more — no `ping`, no `tools/list`, no `sandbox_stop`, and a
+`notifications/cancelled` is not seen — until one of them finishes, and a
+`sandbox_exec` finishes when its command does. Only a shutdown gets through:
+a signal stops the server even when the read loop is parked at the cap, and an
+in-flight `sandbox_exec` is then cut short with its `command.exit` saying so,
+rather than the process being held up to the 24-hour command ceiling after the
+client is gone. A bare stdin EOF at the cap is noticed once a slot frees.
+Answers still arrive keyed by their own ids and may still come back out of
+order — two overlapping calls race each other by design; the ceiling bounds how
+many can race at once.
 
 When the server exits, every sandbox it created is stopped. A client that
 disconnects without calling `sandbox_stop` does not leave microVMs behind.
@@ -7958,13 +8075,14 @@ unprivileged. It is not the only jailer flag left unpassed — `--netns` and
 reach the whole syscall surface the seccomp profile permits. Landlock restricts
 the filesystem; it does not make the kernel smaller. *After P5-3:* the profile is
 a refusal list, not an allowlist, so the surface it leaves is everything a
-kernel offers root minus the names on that list — thirty-nine of them since the
+kernel offers root minus the names on that list — forty of them since the
 audit of 2026-09-01 added the fd-based mount API (`open_tree`, `move_mount`,
 `fsopen`, `fsconfig`, `fsmount`, `fspick`, `mount_setattr`) and the
 cross-memory and fd-theft family (`process_vm_readv`, `process_vm_writev`,
 `pidfd_open`, `pidfd_getfd`, `pidfd_send_signal`), of which `dev`, the flavor a
-release publishes, takes `ptrace` back out, and aarch64 drops `settimeofday`
-because it has no such syscall to refuse. A real reduction
+release publishes, takes `ptrace` back out (thirty-nine), and aarch64 drops
+`settimeofday` because it has no such syscall to refuse (thirty-nine on `base`,
+thirty-eight on `dev`). A real reduction
 at exactly the places that matter (no module loading, no mount, no clock, no
 keyrings) and not a small surface. Landlock also cannot restrict `chdir`,
 `stat`, `chmod`, `chown`, `access` or `fcntl` at all, by its own documentation,
@@ -8486,7 +8604,11 @@ of its own.
 `cpus`, `mem`, `cpu_quota`, `scratch` and the four I/O rates cap every sandbox
 it creates, and `allow` and `secrets` decide what those sandboxes may reach, but
 the **time budgets `max_runtime` and `idle_timeout` are not applied here**. A
-shim sandbox lives until it is killed or the shim stops. `workspace`,
+shim sandbox lives until it is killed or the shim stops. Unlike the `serve-mcp`
+door, the shim boots the size its policy declares and does not additionally
+check it against the host's own ceiling: the size comes from the project's
+`kelyfos.toml` rather than from a request, so there is no client ask to bound.
+`workspace`,
 `[[plugin]]` and `[[forward]]` are not read here either: a shim sandbox gets no
 workspace device — `/work` is the guest's own and nothing written there comes
 back to the host — no plugin device, so the guest advertises none of the
@@ -13169,7 +13291,19 @@ the hash of a string of English text. The refusal a chain with nothing
 left to redact already gets ("nothing to erase") now correctly fires on
 the second run instead of on neither.
 
-### 5.3 The pre-erasure anchor
+### 5.3 The pre-erasure head — `session.erasure`'s own `sha256`
+
+This "anchor" is `session.erasure`'s own `sha256` field, and it is a different
+thing from `head.json`, the out-of-band chain anchor every append writes beside
+the record (docs/threat-model.md §4; audit 2026-09-01 A14). This one is
+recorded *inside* the erased chain and proves the erased chain is the honest
+successor of the one a reader already holds; `head.json` sits *outside* the
+chain and catches a rewrite that did not also update it. Erasure keeps both
+consistent: it rewrites `head.json` to the erased chain's new head under the
+same lock, and — since the adversarial review of 2026-09-01 — it reads the
+anchor first and **refuses** the erasure if the chain and `head.json` already
+disagree, rather than writing a fresh anchor over the evidence of that
+disagreement. A signed export of the session is then the record to keep.
 
 `session.erasure`'s own `sha256` field carries the chain head — the last
 event's own `hash` — immediately before the rewrite began. Without it,
@@ -15130,7 +15264,7 @@ them can widen it (`docs/mcp-surface.md`).
 
 ### `sandbox_run`
 
-Boot a hardware-isolated microVM and return its id. Anything run inside it cannot reach this machine. It has no network at all unless the project's policy grants one. Every argument here may ask for less than the policy allows and never for more; a request above a ceiling is refused and names the ceiling. The host's own limits apply regardless: cores cannot exceed the machine's, and memory cannot exceed what the host can carry with room left for itself. When no policy is found, defaults are 2 vcpu and 512 MiB with no network, and those host limits are the only ceilings.
+Boot a hardware-isolated microVM and return its id. Anything run inside it cannot reach this machine. It has no network at all unless the project's policy grants one. Every argument here may ask for less than the policy allows and never for more; a request above a ceiling is refused and names the ceiling. The host's own limits apply regardless: the 2-vcpu default is clamped to the machine rather than refused, and only an explicit ask above the host — more cores than the machine has, or more memory than it can carry with room left for itself — is refused, naming the host as the ceiling. When no policy is found, defaults are 2 vcpu and 512 MiB with no network.
 
 | Parameter | Type | Required | Meaning |
 | --- | --- | --- | --- |
@@ -15151,7 +15285,7 @@ Run a command inside a sandbox and return its output and exit code. Give `comman
 | `cwd` | string | no | Working directory inside the guest. Defaults to /. |
 | `sandbox` | string | **yes** | The sandbox id from sandbox_run. |
 | `stdin` | string | no | Text written to the command's standard input. |
-| `timeout_ms` | integer | no | Kill the command after this many milliseconds. |
+| `timeout_ms` | integer | no | Kill the command after this many milliseconds, from 1 to 86400000 (a documented 24-hour ceiling). Omit it, or pass 0, for the one-minute default; a negative value is refused by name. |
 
 ### `sandbox_read_file`
 
@@ -15211,7 +15345,7 @@ Restore one snapshot into several sandboxes at once. Each fork resumes from the 
 
 | Parameter | Type | Required | Meaning |
 | --- | --- | --- | --- |
-| `count` | integer | **yes** | How many forks to make. At least 1. |
+| `count` | integer | **yes** | How many forks to make. At least 1 and at most 256 in one call; [mcp] max_sandboxes still bounds how many run at once. |
 | `name` | string | **yes** | The snapshot name. |
 | `traceparent` | string | no | An inbound W3C traceparent header, for a caller that wants each fork's record to carry it. Recorded verbatim; not required and not parsed. |
 
@@ -15366,6 +15500,7 @@ One outbound connection attempt, permitted or not. Written by the **host**.
 | `mode` | string | how much the proxy could read: tunnelled (a CONNECT it relayed unopened), terminated (a secret-bound domain it decrypted), plain (ordinary HTTP, which it necessarily read in full), or direct_tls (an absolute-form https request reaching the proxy without a CONNECT, fetched itself over a real TLS connection) *(allowed)* |
 | `bytes_in` | integer | bytes read from upstream |
 | `bytes_out` | integer | bytes written upstream |
+| `error` | object | kind and message, when the reason is a category rather than an explanation — a refused connection, a timeout, a name that resolved to nothing, a TLS failure, all of which share reason upstream_unreachable and until this left the operator with none of the detail *(reason is upstream_unreachable)* |
 | `peer` | string | who connected — the address a connection refused as foreign_peer came from; the request was never parsed, so host and port are absent on those *(reason is foreign_peer)* |
 | `resolved_addr` | string | where the requested host actually resolved to. Recorded because the 403 the guest reads names no address: telling a sandbox which address an allowlisted name resolves to hands it a DNS lookup it has no resolver to perform *(reason is unsafe_resolved_address)* |
 | `agent` | string | which machine produced it; present inside a team *(in a team)* |
@@ -15403,12 +15538,12 @@ A response echoed a bound credential back and the proxy replaced it before the g
 
 ## `secret.unscrubbable`
 
-A response from a credential-bound origin arrived compressed, and the echo suppression cannot match inside an encoding — the guest received a body the proxy cannot vouch for (audit 2026-09-01, A4). The proxy asks credentialed origins not to compress; this event is what an origin that ignored that costs, recorded instead of the silence that used to sit here. Written by the **host**.
+A response from a credential-bound origin arrived compressed, and the echo suppression cannot match inside an encoding, so the proxy refused the response rather than deliver a body it cannot vouch for: the guest read a 502 in its place (audit 2026-09-01, A4; refusal per review H4). The proxy asks credentialed origins not to compress; this event is what an origin that ignored that costs, recorded instead of the silence that used to sit here. Written by the **host**.
 
 | Field | Type | Meaning |
 | --- | --- | --- |
-| `host` | string | the domain whose response was compressed |
-| `mode` | string | the Content-Encoding the response named — gzip, deflate, br, whatever the origin sent |
+| `host` | string | the domain whose compressed response was refused |
+| `mode` | string | the response's Content-Encoding, normalised to one of gzip, deflate, br, compress, zstd or other — so origin-chosen text never lands in the record |
 | `agent` | string | which machine produced it; present inside a team *(in a team)* |
 
 ## `resource.oom`
@@ -15678,7 +15813,8 @@ A connection to one of the guest-initiated channels — ready (10100), events (1
 | Field | Type | Meaning |
 | --- | --- | --- |
 | `port` | integer | the channel that refused the connection: 10100, 10101 or 10102 |
-| `reason` | string | why — no credential was presented, the credential presented was not this session's, or the peer was not this user |
+| `reason` | string | why — no credential was minted for this session, no credential was presented, the credential presented is not this session's, or the peer is not this user |
+| `agent` | string | which machine produced it; present inside a team *(in a team)* |
 
 ## `vmm.api`
 
@@ -15815,6 +15951,17 @@ mem 262144 MiB exceeds what this host can run (8192 MiB) [ceiling.host]
 
 Named: `asked`, `field`, `limit`. The values above are an example.
 
+## `ceiling.host_snapshot`
+
+A snapshot holds a machine larger than the physical host itself — more cores or RAM than the machine has — and a restore cannot resize it (audit 2026-09-01, A8).
+
+```
+snapshot before-the-migration holds a 8 vcpu machine, over what this host can run (4), and a restore cannot resize it [ceiling.host_snapshot]
+    restore it on a larger host, or take the snapshot again from a machine that fits this one — this is the physical host's ceiling, which no policy raises
+```
+
+Named: `held`, `limit`, `name`. The values above are an example.
+
 ## `ceiling.resume`
 
 A paused session's frozen policy asks for more than the current policy's ceiling, and a resume runs the frozen one.
@@ -15858,6 +16005,17 @@ cpus 8 exceeds the ceiling cpus = 4 set at /home/you/project/kelyfos.toml:12 [ce
 ```
 
 Named: `asked`, `field`, `file`, `key`, `limit`, `line`. The values above are an example.
+
+## `ceiling.tool_legacy`
+
+An MCP tool call asked for more than a legacy [sandbox] size key — vcpus or mem_mib — which on this door is a ceiling and not merely a default (audit 2026-09-01, A8).
+
+```
+cpus 4 exceeds the ceiling vcpus = 2 set at /home/you/project/kelyfos.toml — on this door a declared size is a ceiling, not a default [ceiling.tool_legacy]
+    ask for less, or move the size into /home/you/project/kelyfos.toml's [resources] and raise it there if the machine is meant to have more
+```
+
+Named: `field`, `file`, `key`, `limit`, `value`. The values above are an example.
 
 ## `egress.host`
 

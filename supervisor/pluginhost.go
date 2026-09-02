@@ -415,6 +415,12 @@ func describeExit(ws syscall.WaitStatus) string {
 	}
 }
 
+// maxPluginStderrLine bounds one console line from a plugin's stderr. A line
+// longer than this is dropped with a note rather than kept: the console is a
+// diagnostic surface, not a data channel, and a plugin cannot be allowed to
+// wedge it — see prefixedLog.
+const maxPluginStderrLine = 64 << 10
+
 // prefixedLog turns a plugin's stderr into console lines that say whose they
 // are, so a plugin complaining is distinguishable from the supervisor doing so.
 //
@@ -424,16 +430,46 @@ func describeExit(ws syscall.WaitStatus) string {
 // reads as the supervisor's own — onto the console the operator is reading.
 // SafeText quotes a line carrying any control character whole, which is the
 // right shape: the diagnostic survives, the escape does not.
+//
+// A stderr line longer than maxPluginStderrLine used to end the scanner for
+// good (bufio.ErrTooLong is terminal) without draining the pipe, so the
+// plugin's next stderr Write blocked on a reader that had gone away and the
+// plugin wedged (audit 2026-09-01, L10). One shared bufio.Reader is the fix:
+// the overlong line is noted and its tail skipped through its newline, a fresh
+// scanner picks up from there, and every later line still reaches the console.
 func prefixedLog(prefix string) io.Writer {
 	r, w := io.Pipe()
 	go func() {
-		sc := bufio.NewScanner(r)
-		sc.Buffer(make([]byte, 0, 4<<10), 64<<10)
-		for sc.Scan() {
-			logf("%s: %s", prefix, sanitizeConsoleLine(sc.Text()))
+		br := bufio.NewReader(r)
+		for {
+			sc := bufio.NewScanner(br)
+			sc.Buffer(make([]byte, 0, 4<<10), maxPluginStderrLine)
+			for sc.Scan() {
+				logf("%s: %s", prefix, sanitizeConsoleLine(sc.Text()))
+			}
+			if !errors.Is(sc.Err(), bufio.ErrTooLong) {
+				return
+			}
+			logf("%s: a stderr line longer than %d bytes was dropped", prefix, maxPluginStderrLine)
+			if err := skipRestOfLine(br); err != nil {
+				return
+			}
 		}
 	}()
 	return w
+}
+
+// skipRestOfLine drains br up to and including the next newline. The scanner
+// that hit maxPluginStderrLine consumed only the head of the overlong line;
+// its tail is still in the pipe, and the plugin is blocked writing the rest of
+// it, so it has to be read out before the next line can be — otherwise the
+// recovery would rebuild the scanner onto a pipe that never moves.
+func skipRestOfLine(br *bufio.Reader) error {
+	for {
+		if _, err := br.ReadSlice('\n'); err != bufio.ErrBufferFull {
+			return err
+		}
+	}
 }
 
 // sanitizeConsoleLine is the one place a plugin's own words reach the

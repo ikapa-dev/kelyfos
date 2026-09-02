@@ -324,7 +324,38 @@ about — and D99 records the reasoning.
 
 ---
 
-## 10. What has never broken
+## 10. On the `serve-mcp` door, a declared size is a ceiling (2026-09-01)
+
+**`[sandbox] vcpus` and `mem_mib` are ceilings on the `serve-mcp` door** (the
+independent audit's A8; docs/mcp-surface.md §1). On the command line they keep
+their v0.3 meaning — a default any flag overrides (F-D10). On the MCP door the
+tool schema has always promised *at most what the policy allows*, and a client
+raising `cpus` or `mem` over a size the project declared contradicted that
+whichever key spelled it. A call above the declared size is now refused:
+
+```
+mem 1024M exceeds the ceiling mem_mib = 512 set at ./kelyfos.toml — on this door a declared size is a ceiling, not a default [ceiling.tool_legacy]
+    ask for less — or declare the size under [resources] in ./kelyfos.toml and raise it there, which is a change a person makes to a file and not something a tool here can do
+```
+
+**What to do:** if a project's agents legitimately asked for more than the
+legacy key declared, raise the key, or move the size to `[resources]`, which is
+the section that means "limit" on every door. Nothing changes for a project
+that declares `[resources]`, or for `kelyfos run`.
+
+**The host is a ceiling too, and it applies with no policy at all.** A
+`sandbox_run`, `sandbox_restore` or `sandbox_fork` that would make a machine
+with more cores than this host has, or more memory than it can carry with room
+left for itself, is refused as `[ceiling.host]` / `[ceiling.host_snapshot]`. A
+size nobody asked for — the door's 2 vcpu / 512 MiB default, or a policy's own
+default — is clamped to the machine rather than refused, so a small host still
+boots the default machine; the session's `session.policy` records the size it
+got. A snapshot larger than the host it is restored on has to be re-taken from
+a smaller machine.
+
+---
+
+## 11. What has never broken
 
 Stated because "nothing changed" is only useful if somebody checked:
 

@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"net"
 	"sync"
+	"time"
 
 	"github.com/ikapa-dev/kelyfos/internal/proto"
 )
@@ -36,7 +37,31 @@ var (
 	// later one, because a restore hands this supervisor a fresh value and
 	// the frozen one belonged to a session that is over.
 	channelCredential string
+
+	// credentialArrived is closed the first time a credential is stored, so
+	// the ready and events pumps can hold their first dial until they have
+	// something the host will accept. Before the adversarial review of
+	// 2026-09-01 they dialled the instant they started — microseconds into
+	// boot, before the host's auth op could have crossed control — and every
+	// one of those dials was refused; the ready pump then waited a full
+	// heartbeat interval to notice and re-dial, adding ~5s to boot-to-ready
+	// and opening every chain with refused connections that are the
+	// supervisor's own. Waiting costs nothing a refused-and-retried dial did
+	// not already cost, and it costs the refusals.
+	credentialArrivedOnce sync.Once
+	credentialArrived     = make(chan struct{})
 )
+
+// waitCredentialArrived blocks until the host's first auth op has landed, or
+// the fallback passes. The fallback exists so a host that never sends one — an
+// unsupported pairing rather than the ordinary boot — still ends in the
+// refused-dial path it took before, rather than a pump that waits forever.
+func waitCredentialArrived(fallback time.Duration) {
+	select {
+	case <-credentialArrived:
+	case <-time.After(fallback):
+	}
+}
 
 // setChannelCredential stores what the host sent. A malformed token is
 // refused rather than stored: the host is the only legitimate sender, so a
@@ -53,6 +78,7 @@ func setChannelCredential(token string) error {
 	credentialMu.Lock()
 	channelCredential = token
 	credentialMu.Unlock()
+	credentialArrivedOnce.Do(func() { close(credentialArrived) })
 	return nil
 }
 

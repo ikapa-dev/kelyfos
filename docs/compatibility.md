@@ -125,6 +125,15 @@ silently in is worse than one that is openly out.
   They are outside the promise anyway.
 - **Timing figures.** The boot and restore numbers are measurements, not
   contracts. They are re-measured per release and reported as measured.
+- **A guest image is paired with the CLI that built it, in both directions.**
+  [`upgrading.md`](upgrading.md) §9 covers the forward case — an image older
+  than the CLI is refused at boot, because it cannot present the channel
+  credential the CLI now requires (D99). The reverse — a *newer* image run
+  against an *older* CLI — is not supported either: the new supervisor presents
+  a credential frame the old CLI's channels do not expect, and the team channel
+  in particular reads it as an off-by-one request. The pairing is the unit;
+  rebuild the image for the CLI you run, rather than mixing a build of one with
+  a build of the other.
 
 ---
 

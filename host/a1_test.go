@@ -179,6 +179,73 @@ func TestRunCallPanicNetHolds(t *testing.T) {
 	}
 }
 
+// L2: the A1 net covers the call goroutine; a fork spawns worker goroutines of
+// its own, and a panic in one of them used to take the whole server down. Each
+// worker now recovers its own panic, files it as that fork's error, and the
+// server keeps serving. The crashFork seam fires after the fork's session.start.
+func TestL2_AForkWorkerPanicIsThatForksErrorNotTheProcess(t *testing.T) {
+	t.Setenv("KELYFOS_CACHE", t.TempDir())
+	withHostSeams(t, 8, 8192) // large enough that checkSnapshotFits does not refuse first
+	s := serverWith(t, policy)
+	s.errw = &bytes.Buffer{} // keep the operator line off the test's stderr
+	writeSnapshot(t, "quiet", sandbox.SnapshotMeta{Arch: "x86_64", Flavor: "dev", VcpuCount: 2, MemMiB: 512})
+	s.crashFork = func(i int) bool { return true }
+
+	res := s.toolFork(json.RawMessage(`{"name":"quiet","count":1}`))
+	if !res.IsError {
+		t.Fatal("a fork whose only worker panicked came back as success")
+	}
+	if !strings.Contains(res.Content[0].Text, "panicked") {
+		t.Errorf("the failure does not say the fork panicked:\n%s", res.Content[0].Text)
+	}
+	// The server survived: it still answers.
+	if res := s.toolList(); res.IsError {
+		t.Errorf("the server did not survive a fork worker panic: %s", res.Content[0].Text)
+	}
+}
+
+// L2: a runtime.Goexit through the panic net — a t.Fatal in a seam, say — is not
+// a panic recover() can see, so dispatchTool returns no result. A nil result
+// recorded as "ok" would be a phantom success; it is made an error outcome
+// instead. The seam is fired because no tool reaches a Goexit on its own.
+func TestL2_AGoexitThroughTheNetIsAnErrorOutcome(t *testing.T) {
+	root := t.TempDir()
+	audit, err := recorder.Open(root, "l2goexit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = audit.Close() }()
+	s := &hostServer{arch: "x86_64", max: defaultMaxSandboxes,
+		boxes: map[string]*servedBox{}, audit: audit}
+	s.exitTool = func(tool string) bool { return tool == "sandbox_list" }
+
+	// A Goexit ends the calling goroutine (running its deferred funcs, which is
+	// what records the result), so callTool must run on its own goroutine or it
+	// would end the test's.
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		s.callTool(&mcp.CallToolParams{Name: "sandbox_list"})
+	}()
+	<-done
+
+	var calls, results int
+	for _, ev := range readRecord(t, root, "l2goexit") {
+		switch ev.Type {
+		case recorder.TypeMCPHostCall:
+			calls++
+		case recorder.TypeMCPHostResult:
+			results++
+			if ev.Outcome != "error" {
+				t.Errorf("a call that Goexited was recorded as %q, want error", ev.Outcome)
+			}
+		}
+	}
+	if calls != 1 || results != 1 {
+		t.Errorf("the record has %d call(s) and %d result(s), want one of each", calls, results)
+	}
+}
+
 // readRecord reads a closed session's chain back as events.
 func readRecord(t *testing.T, root, id string) []recorder.Event {
 	t.Helper()

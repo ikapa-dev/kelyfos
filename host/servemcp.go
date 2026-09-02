@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"runtime"
 	"sync"
 	"syscall"
 	"time"
@@ -97,8 +98,14 @@ silent fall back to no ceiling.
 	defer stop()
 	go func() {
 		<-ctx.Done()
-		// Closing stdin ends the read loop, which unwinds through closeAll and
-		// stops every sandbox this server made.
+		// stop() first (audit 2026-09-01, M10): closing stdin ends the read
+		// loop only once it is reading again, and a loop parked on a full
+		// dispatch cap is not — so stop() is what wakes it, and what cuts short
+		// a sandbox_exec that would otherwise hold its slot for its whole
+		// timeout. Then stdin is closed, which ends the loop the ordinary way
+		// on the next Read, and the unwind through closeAll stops every sandbox
+		// this server made.
+		srv.stop()
 		_ = os.Stdin.Close()
 	}()
 
@@ -168,6 +175,18 @@ type hostServer struct {
 	// made to fire, and no tool left after the A1 fixes panics on its own
 	// (that was the finding).
 	crashTool func(tool string) bool
+	// exitTool makes the named tool's dispatch end in a runtime.Goexit — a
+	// test seam, nil in every real run. A Goexit (a t.Fatal, say, or a Goexit
+	// a tool reached some other way) unwinds through the panic net without
+	// being a panic recover() can see, so dispatchTool never returns a result;
+	// this seam is how the property that a nil result becomes an error outcome
+	// rather than a phantom "ok" is made observable (audit 2026-09-01, L2).
+	exitTool func(tool string) bool
+	// crashFork makes fork worker i panic after its session.start — a test
+	// seam, nil in every real run. It is what proves the per-worker recover in
+	// toolFork files the panic as that fork's error and ends its record,
+	// instead of taking the whole server down (audit 2026-09-01, L2).
+	crashFork func(i int) bool
 
 	// toolSem bounds how many tool calls are dispatched at once. Every
 	// network listener in this product has had one since F5; this door, the
@@ -180,8 +199,35 @@ type hostServer struct {
 	// lazily in serve; a test may set a smaller one to watch the bound hold.
 	toolSem chan struct{}
 
+	// stopping is closed by stop() when the server is shutting down. It is the
+	// one thing that breaks the read loop out of a full toolSem (audit
+	// 2026-09-01, M10): at the cap the loop reads nothing further — no ping, no
+	// tools/list, no sandbox_stop — so without a signal here an in-flight batch
+	// of long execs would hold the door for their whole timeout. stopOnce makes
+	// stop() idempotent, because the signal handler and serve's own defer both
+	// reach it. Built in newHostServer, and lazily in serve for a test that
+	// calls serve on a bare server.
+	stopping chan struct{}
+	stopOnce sync.Once
+
 	wmu sync.Mutex // one writer, because tool calls may be concurrent
 	out *json.Encoder
+}
+
+// errServerStopping is what an in-flight sandbox_exec is cut short with when
+// stop() fires: recorded in that command's command.exit, and returned to the
+// client as the tool's error (audit 2026-09-01, M10).
+var errServerStopping = errors.New("the server is stopping")
+
+// stop signals every part of the server that watches s.stopping — the read
+// loop parked on the dispatch cap, and any sandbox_exec waiting on a command —
+// to wind down. Idempotent, and safe to call from the signal handler and from
+// serve's own teardown.
+func (s *hostServer) stop() {
+	if s.stopping == nil {
+		return
+	}
+	s.stopOnce.Do(func() { close(s.stopping) })
 }
 
 // maxConcurrentToolCalls is toolSem's capacity. Same number as the guest
@@ -367,6 +413,7 @@ func newHostServer(arch, policyPath string, pluginPaths []string, argv []string)
 		pluginPaths: pluginPaths,
 		max:         defaultMaxSandboxes,
 		boxes:       map[string]*servedBox{},
+		stopping:    make(chan struct{}),
 	}
 	if cfg != nil {
 		if cfg.Arch != "" {
@@ -488,9 +535,16 @@ func (s *hostServer) serve(in io.Reader, out io.Writer) error {
 	if s.toolSem == nil {
 		s.toolSem = make(chan struct{}, maxConcurrentToolCalls)
 	}
+	if s.stopping == nil {
+		s.stopping = make(chan struct{})
+	}
 	r := proto.NewReaderLimit(in, proto.MaxMCPLine)
 	var wg sync.WaitGroup
+	// stop() before wg.Wait() (LIFO): when serve returns — a client EOF, a
+	// parse error — the in-flight execs are told to abandon first, then their
+	// goroutines are waited on (audit 2026-09-01, M10).
 	defer wg.Wait()
+	defer s.stop()
 
 	for {
 		var req mcp.Request
@@ -513,7 +567,26 @@ func (s *hostServer) serve(in io.Reader, out io.Writer) error {
 		// more calls than the cap is throttled rather than amplified: the
 		// reads wait, the answers still come, and the floor of the pipeline
 		// is the bound (audit 2026-09-01, A10).
-		s.toolSem <- struct{}{}
+		//
+		// Taking the cap here is what parks this loop, and at the cap NOTHING
+		// ELSE is read — not a ping, not tools/list, not a sandbox_stop — and a
+		// notifications/cancelled a client sends is never seen (audit
+		// 2026-09-01, M10). The one thing that breaks the park is stop(), closed
+		// by the signal handler: the select then returns without dispatching. A
+		// client at the cap that sent no signal reaches the bare stdin EOF only
+		// when a slot frees and the next Read runs. The non-blocking check comes
+		// first so a stop already signalled wins over a slot that also happens
+		// to be free.
+		select {
+		case <-s.stopping:
+			return nil
+		default:
+		}
+		select {
+		case s.toolSem <- struct{}{}:
+		case <-s.stopping:
+			return nil
+		}
 		wg.Add(1)
 		go func(req mcp.Request) {
 			// The outer panic net: one call's crash is an error frame to the
@@ -639,6 +712,15 @@ func (s *hostServer) runCall(p *mcp.CallToolParams) (res *mcp.CallToolResult) {
 				"is still serving", p.Name, r)
 			fmt.Fprintf(s.stderr(), "kelyfos: tool %s panicked: %v\n", p.Name, r)
 		}
+		if res == nil {
+			// A runtime.Goexit unwound through here without being a panic
+			// recover() can see, so dispatchTool never returned a result and
+			// res is still its zero value. An mcp.host.result of "ok" for a
+			// call that produced nothing is the phantom success the audit lane
+			// must never write (audit 2026-09-01, L2), so a nil result is made
+			// an error outcome before done records it.
+			res = mcp.Errorf("%s: the call did not complete", p.Name)
+		}
 		done(res)
 	}()
 	res = s.dispatchTool(p)
@@ -651,6 +733,12 @@ func (s *hostServer) dispatchTool(p *mcp.CallToolParams) *mcp.CallToolResult {
 	}
 	if s.crashTool != nil && s.crashTool(p.Name) {
 		panic("dispatch crash (test seam)")
+	}
+	if s.exitTool != nil && s.exitTool(p.Name) {
+		// A Goexit, not a panic: it unwinds the stack running deferred funcs
+		// (so runCall's done still records) but recover() never sees it, which
+		// is precisely the L2 case the outer nil-result guard is for.
+		runtime.Goexit()
 	}
 	args := p.Arguments
 	if len(args) == 0 {

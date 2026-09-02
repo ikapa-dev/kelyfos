@@ -36,11 +36,16 @@ with limits nobody asked for and the command line would still read `--cpus 8`.
 > policy file that declared *preferences*; it is the wrong behaviour for one that
 > declares *limits*. A policy you can override from the command line is not a
 > limit, it is a suggestion. `[sandbox] vcpus` / `mem_mib` keep the old
-> defaults-only meaning for compatibility (F-D10) — use `[resources]` for
-> anything you actually want enforced.
+> defaults-only meaning for compatibility (F-D10) on the command line — use
+> `[resources]` for anything you actually want enforced. On the `serve-mcp`
+> door they are ceilings, not overridable defaults (`[ceiling.tool_legacy]`;
+> docs/mcp-surface.md §1), because that door's schema promises at most what the
+> policy allows.
 
-With no `[resources]` section there are no ceilings, and flags behave exactly as
-they did in v0.3.
+With no `[resources]` section there are no ceilings of the policy's, and flags
+behave exactly as they did in v0.3 — but on the `serve-mcp` door the host's own
+ceilings still apply (cores ≤ the machine's, memory ≤ what it can carry),
+because a machine bigger than the host is never a machine any door should boot.
 
 ## Units
 

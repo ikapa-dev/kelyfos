@@ -2,6 +2,7 @@ package egress
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"strings"
 
@@ -207,6 +208,15 @@ func ParseSecretSpec(spec string) (SecretSpec, error) {
 // character rule the proxy applies to a request target — and must carry at
 // least one letter or digit, which is what ".", "-" and ":" lack.
 func validDomain(d string) bool {
+	// An IP literal is the exact host it always matched before the audit of
+	// 2026-09-01's A6 added the bare-TLD refusal (M3/L13). validDomain splits
+	// on ".", so an IPv6 literal like 2001:db8::1 is one "label" and the
+	// len(labels) < 2 rule below would refuse it as a whole-TLD grant — which
+	// it is not. Exempted here so it is accepted as the host it names, exactly
+	// as it was accepted before A6.
+	if ipLiteral(d) {
+		return true
+	}
 	if !plausibleHost(d) {
 		return false
 	}
@@ -244,6 +254,18 @@ func validDomain(d string) bool {
 	return true
 }
 
+// ipLiteral reports whether a normalised domain is actually an IP address
+// literal — "192.0.2.1" or "2001:db8::1", the latter optionally bracketed. An
+// IP literal has no labels: splitting "2001:db8::1" on "." yields a single
+// group, which the bare-TLD refusals read as a one-label whole-TLD grant and
+// reject. It is neither; it is the exact host it named. net.ParseIP is the
+// authority on what is and is not an address, so the brackets are stripped and
+// the rest is handed to it rather than pattern-matched (audit 2026-09-01,
+// M3/L13).
+func ipLiteral(d string) bool {
+	return net.ParseIP(strings.TrimSuffix(strings.TrimPrefix(d, "["), "]")) != nil
+}
+
 func NormaliseDomain(s string) string {
 	// TrimRight rather than TrimSuffix: one trailing dot is the fully-qualified
 	// form, but two is not a name at all, and stripping only one left a domain
@@ -266,6 +288,12 @@ func CheckAllowList(list []string) error {
 	for _, a := range list {
 		d := NormaliseDomain(a)
 		if d == "" {
+			continue
+		}
+		// An IP literal is not a bare TLD (M3/L13): it has no labels to count,
+		// and it was accepted here before A6's bare-TLD refusal split on "."
+		// and read an IPv6 literal's single "." group as a whole-TLD grant.
+		if ipLiteral(d) {
 			continue
 		}
 		if len(strings.Split(d, ".")) < 2 {

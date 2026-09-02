@@ -304,22 +304,13 @@ status. This is how you hand an agent a sandbox and nothing else:
 	if err != nil {
 		return err
 	}
-	// The run directory is claimed the moment the id exists, not when the
-	// machine is created (ST-5.3 review finding 1): the TAP and nft table go
-	// up below, and the workspace pack can take seconds — a doctor running in
-	// that window saw network residue with no run dir to claim it, and
-	// --reap-orphaned would have taken a peer-booting machine down from
-	// inside its own boot. The claim marker is the run directory itself.
-	if err := os.MkdirAll(sandbox.RunDirOf(sandboxID), 0o755); err != nil {
-		return fmt.Errorf("claim run dir: %w", err)
-	}
 
+	// The CPU slice is prepared before the run directory is claimed: on the
+	// systemd path NewCPUSlice runs a preflight that can refuse the boot
+	// (audit 2026-09-01, A17), and a refusal must leave nothing behind — no
+	// run directory for a doctor or --reap-orphaned to find, since at this
+	// point there is no machine to reap.
 	var cpuSlice *sandbox.Slice
-	var consoleOut io.Writer
-	if *console || *verbose {
-		consoleOut = prefixWriter{os.Stderr, "[guest] "}
-	}
-
 	if cpuQuota > 0 {
 		slice, err := sandbox.NewCPUSlice(sandboxID, cpuQuota)
 		if err != nil {
@@ -327,6 +318,22 @@ status. This is how you hand an agent a sandbox and nothing else:
 		}
 		defer slice.Close()
 		cpuSlice = slice
+	}
+
+	// The run directory is claimed once the boot is committed to — after the
+	// quota preflight, before the machine is created (ST-5.3 review finding 1):
+	// the TAP and nft table go up below, and the workspace pack can take
+	// seconds — a doctor running in that window saw network residue with no run
+	// dir to claim it, and --reap-orphaned would have taken a peer-booting
+	// machine down from inside its own boot. The claim marker is the run
+	// directory itself.
+	if err := os.MkdirAll(sandbox.RunDirOf(sandboxID), 0o755); err != nil {
+		return fmt.Errorf("claim run dir: %w", err)
+	}
+
+	var consoleOut io.Writer
+	if *console || *verbose {
+		consoleOut = prefixWriter{os.Stderr, "[guest] "}
 	}
 
 	// The guest reports; the host records. onGuestEvent is late-bound because

@@ -15,27 +15,37 @@ import (
 // The headroom is deliberate and stated: the host itself — the CLI, the VMM,
 // the proxy, everything else running on it — needs memory that no sandbox
 // accounts for, and a machine that hands its last gigabyte to a guest is a
-// machine that OOM-kills unpredictably. A quarter of total RAM, never less
-// than 2 GiB where the machine allows, with a floor of 512 MiB so a small
-// host still boots the default machine.
+// machine that OOM-kills unpredictably. A quarter of total RAM is kept, or
+// 2 GiB where that is larger — but only as far as the 512 MiB guest floor
+// below permits. Below roughly 2.5 GiB of total RAM the 2 GiB reservation
+// would leave the guest under that floor, the floor wins, and less than 2 GiB
+// ends up kept: "never less than 2 GiB kept" holds only on a host large enough
+// to afford it, and is not a second guarantee alongside the floor.
 
 // hostHeadroomMiB is the memory kept for the host itself, or the floor of
 // what is kept when the machine is small.
 const hostHeadroomMiB = 2048
 
 // hostMinMachineMiB is the smallest machine this door will still boot, so a
-// small host refuses gracefully instead of arithmetically.
+// small host refuses gracefully instead of arithmetically. On a small host
+// this floor overrides the 2 GiB headroom above (see the block comment).
 const hostMinMachineMiB = 512
 
 // hostCPUCeiling is the most vcpu a guest may be given: the cores this
 // machine actually has. A guest seeing more cores than exist is a guest
 // scheduling onto cores that do not.
-func hostCPUCeiling() int {
+//
+// A var, not a func, so a test can pin the ceiling to a known value rather
+// than to whatever the machine running it happens to have — the clamp/refuse
+// split M1 turns on the exact number, and a test cannot assert against
+// runtime.NumCPU().
+var hostCPUCeiling = func() int {
 	return runtime.NumCPU()
 }
 
-// hostMemCeilingMiB is the largest guest RAM this host can carry.
-func hostMemCeilingMiB() int {
+// hostMemCeilingMiB is the largest guest RAM this host can carry. A var for
+// the same reason hostCPUCeiling is.
+var hostMemCeilingMiB = func() int {
 	total, ok := hostTotalMemMiB()
 	if !ok {
 		// Cannot read the machine's memory: do not pretend to know. The
