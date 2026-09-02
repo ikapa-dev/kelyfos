@@ -57,6 +57,10 @@ is running; `make docs` is Linux-only.
   workflow runs recipes as root inside a checkout owned by another uid, and a
   bare `kelyfos run` from the checkout is refused by the policy-ownership
   check.
+- Host-side pipelines never use `head -N` or `grep -q`: under `pipefail` a
+  consumer that exits early sends the producer SIGPIPE and the recipe fails
+  with exit 141, intermittently. Use `sed -n '1,Np'` and
+  `grep pattern >/dev/null`.
 - The count in the cookbook's first sentence is checked by its extractor; the
   same word appears twice in `docs/README.md` and in its inventory heading.
 - Run the one recipe in Lima the way the workflow does:

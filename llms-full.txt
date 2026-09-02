@@ -8544,9 +8544,9 @@ echo "== what the host wrote down =="
 # it relayed bytes it could not read.
 kelyfos log | grep -E '^[0-9:.]+ +(secret|egress)'
 
-kelyfos log | grep -q 'secret .*GITHUB_TOKEN -> api.github.com'
-kelyfos log | grep -q 'egress allowed api.github.com:443 *mode=terminated'
-kelyfos log | grep -q 'egress BLOCKED example.com:443'
+kelyfos log | grep 'secret .*GITHUB_TOKEN -> api.github.com' >/dev/null
+kelyfos log | grep 'egress allowed api.github.com:443 *mode=terminated' >/dev/null
+kelyfos log | grep 'egress BLOCKED example.com:443' >/dev/null
 kelyfos log --verify
 ```
 
@@ -8922,7 +8922,7 @@ echo
 echo "== editing the page's timeline does not change the record it carries =="
 sed 's/a result/a different result/g' report.html > doctored.html
 kelyfos verify doctored.html
-kelyfos verify --replay doctored.html | grep -q "a result"
+kelyfos verify --replay doctored.html | grep "a result" >/dev/null
 echo "the record still says what it always said"
 
 # The numbers the page states about the record are a different matter: those are
@@ -8950,7 +8950,7 @@ if command -v openssl >/dev/null; then
   # Checked against the key the reader already has, which is the only version of
   # the question worth asking: the key inside the file proves only that whoever
   # made the file had one.
-  kelyfos verify signed.html --key signing.pub | grep -q "signed by the key you named"
+  kelyfos verify signed.html --key signing.pub | grep "signed by the key you named" >/dev/null
   echo "the signature checks against the key held separately"
 
   # A different key is a mismatch, not a footnote.
@@ -8964,7 +8964,7 @@ if command -v openssl >/dev/null; then
 
   # An unsigned report is still a report: the signature is optional by
   # construction and never becomes required by accident.
-  kelyfos verify report.html | grep -q "not signed, which is not a fault"
+  kelyfos verify report.html | grep "not signed, which is not a fault" >/dev/null
   echo "an unsigned report still verifies"
 else
   echo "(openssl absent; skipping the signing half)"
@@ -9417,7 +9417,7 @@ cmp first.json .mcp.json
 echo "a second run is byte-identical"
 
 # And the check is a real handshake against the server the file names.
-kelyfos connect claude-code --check 2>&1 | grep -q "speaks MCP"
+kelyfos connect claude-code --check 2>&1 | grep "speaks MCP" >/dev/null
 echo "the server the configuration names started and spoke MCP"
 
 # --remove takes out exactly one entry.
@@ -10094,7 +10094,7 @@ TOML
 # is exempt), then the message is checked as its own, separate, successful
 # pipeline.
 refusal="$(kelyfos team graph --policy refused.toml 2>&1)" && { echo "expected a refusal, got:"; echo "$refusal"; exit 1; }
-echo "$refusal" | grep -q '\[\[plugin\]\] has no effect inside a team'
+echo "$refusal" | grep '\[\[plugin\]\] has no effect inside a team' >/dev/null
 
 echo
 echo "== boot it, and confirm the running team draws the same topology =="
@@ -10885,7 +10885,7 @@ kelyfos doctor 2>&1 | sed -n '/orphaned/,/reap/p' | sed -n '1,8p'
 # The opt-in: stop it, remove its TAP, its table, its jail dir — and then a
 # plain doctor is clean again, which is the assertion.
 kelyfos doctor --reap-orphaned 2>&1 | sed -n '/\[reap\]/p' | sed -n "1,4p"
-if kelyfos doctor 2>&1 | grep -q "orphaned instances     none"; then
+if kelyfos doctor 2>&1 | grep "orphaned instances     none" >/dev/null; then
   echo "orphan $id reaped; doctor is clean"
 else
   echo "doctor still reports orphans after the reap"; exit 1
@@ -10911,7 +10911,9 @@ thing that goes stale the moment somebody adds one — and did.
 
 One shell detail worth copying rather than rediscovering: wherever the pipeline
 runs on the host, these truncate output with `sed -n '1,Np'` rather than
-`head -N`. Under `set -o pipefail`, `head` exiting early sends SIGPIPE to
+`head -N`, and test for a line with `grep pattern >/dev/null` rather than
+`grep -q`, which exits at the first match the same way. Under `set -o
+pipefail`, `head` exiting early sends SIGPIPE to
 whatever is feeding it and fails the whole pipeline — so a recipe written with
 `head` passes while its output is short and starts failing, for a reason
 unrelated to what it teaches, the day it is not.
