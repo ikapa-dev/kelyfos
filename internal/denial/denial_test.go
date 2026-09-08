@@ -112,3 +112,16 @@ func TestLookupByPrintedID(t *testing.T) {
 		t.Error("Lookup invented an entry")
 	}
 }
+
+// Values are the things it named.
+func (r *Refusal) Values() V { return r.v }
+
+// Lookup finds a catalog entry by ID.
+func Lookup(id string) (Denial, bool) {
+	for _, d := range All() {
+		if d.ID == id {
+			return d, true
+		}
+	}
+	return Denial{}, false
+}

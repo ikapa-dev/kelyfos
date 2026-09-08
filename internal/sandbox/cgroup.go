@@ -316,10 +316,7 @@ func preflightSystemdScope(unit string) error {
 			"complete within %s and this boot will not hang waiting for it.%s",
 			systemdScopePreflightTimeout, hint)
 	}
-	detail := string(out)
-	if i := strings.IndexByte(detail, '\n'); i >= 0 {
-		detail = detail[:i]
-	}
+	detail, _, _ := strings.Cut(string(out), "\n")
 	detail = strings.TrimRight(detail, "\r")
 	if detail == "" {
 		detail = err.Error()

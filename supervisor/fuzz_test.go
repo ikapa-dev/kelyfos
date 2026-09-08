@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"github.com/ikapa-dev/kelyfos/internal/argsummary"
 	"strings"
 	"testing"
 )
@@ -71,14 +72,14 @@ func FuzzSummarisePluginArgsNeverEchoesContent(f *testing.F) {
 	f.Add("data", "0123456789abcdef0123456789abcdef")
 
 	f.Fuzz(func(t *testing.T, key, payload string) {
-		if len(payload) < 16 || !contentKeys[key] {
+		if len(payload) < 16 || !argsummary.ContentKeys[key] {
 			t.Skip()
 		}
 		raw, err := json.Marshal(map[string]any{key: payload, "other": 1})
 		if err != nil {
 			t.Skip()
 		}
-		out := summarisePluginArgs(raw)
+		out := argsummary.Summarise(raw)
 		if strings.Contains(out, payload) {
 			t.Fatalf("summarisePluginArgs wrote a %d-byte %q argument into the record verbatim:\n%s",
 				len(payload), key, out)
@@ -96,7 +97,7 @@ func FuzzSummarisePluginArgs(f *testing.F) {
 	f.Add([]byte(``))
 
 	f.Fuzz(func(t *testing.T, raw []byte) {
-		out := summarisePluginArgs(json.RawMessage(raw))
+		out := argsummary.Summarise(json.RawMessage(raw))
 		if strings.ContainsAny(out, "\n\r") {
 			t.Fatalf("summarisePluginArgs produced a multi-line summary from %q:\n%q", raw, out)
 		}

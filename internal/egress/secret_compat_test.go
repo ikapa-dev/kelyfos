@@ -1,6 +1,9 @@
 package egress
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // The `--secret` grammar as it stands, pinned before it is extended.
 //
@@ -98,4 +101,17 @@ func TestABoundDomainCoversItsSubdomainsAndNothingElse(t *testing.T) {
 			t.Errorf("a credential bound to github.com matched %q, which is not it or a subdomain of it", host)
 		}
 	}
+}
+
+// secretFor returns the credential bound to a host, if any. Matching follows
+// the allowlist rule: a bound domain covers its subdomains.
+func (p *Policy) secretFor(host string) *Secret {
+	host = strings.ToLower(strings.TrimSuffix(host, "."))
+	// Domains are normalised once, when the secret is parsed.
+	for _, s := range p.Secrets {
+		if s.bindsHost(host) {
+			return s
+		}
+	}
+	return nil
 }

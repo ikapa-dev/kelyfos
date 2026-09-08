@@ -1714,13 +1714,9 @@ func (s *Sandbox) Shutdown(grace time.Duration) error {
 		// would go unnoticed.
 		return fmt.Errorf("write the workspace back out of the jail: %w", syncErr)
 	}
-	if s.waitErr != nil {
-		// A VM killed on purpose is not a failure worth reporting upward.
-		var ee *exec.ExitError
-		if errors.As(s.waitErr, &ee) {
-			return nil
-		}
-	}
+	// A VM killed on purpose is not a failure worth reporting upward, and by
+	// here every other exit of the VMM's has already been reported where it
+	// happened.
 	return nil
 }
 

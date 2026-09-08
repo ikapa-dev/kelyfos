@@ -28,6 +28,7 @@ package otlp
 
 import (
 	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"strconv"
 	"strings"
@@ -182,26 +183,6 @@ func idBytes(n int, parts ...string) []byte {
 func traceIDHex(parts ...string) string { return fmt.Sprintf("%x", idBytes(16, parts...)) }
 func spanIDHex(parts ...string) string  { return fmt.Sprintf("%x", idBytes(8, parts...)) }
 
-// isHex reports whether every byte of s is a hex digit — used only to
-// validate an inbound, untrusted traceparent header before touching it.
-func isHex(s string) bool {
-	for _, r := range s {
-		if !(r >= '0' && r <= '9' || r >= 'a' && r <= 'f' || r >= 'A' && r <= 'F') {
-			return false
-		}
-	}
-	return true
-}
-
-func allZero(s string) bool {
-	for _, r := range s {
-		if r != '0' {
-			return false
-		}
-	}
-	return true
-}
-
 // parseTraceparent is a minimal, defensive parser for the W3C traceparent
 // header (https://www.w3.org/TR/trace-context/#traceparent-header):
 // "{2-hex version}-{32-hex trace-id}-{16-hex parent-id}-{2-hex flags}". The
@@ -221,10 +202,15 @@ func parseTraceparent(tp string) (traceID, parentID string, ok bool) {
 	if len(version) != 2 || len(trace) != 32 || len(parent) != 16 || len(flags) != 2 {
 		return "", "", false
 	}
-	if !isHex(version) || !isHex(trace) || !isHex(parent) || !isHex(flags) {
-		return "", "", false
+	// Every part is an even number of hex digits, or the header is not one:
+	// hex.DecodeString refuses anything else. An all-zero trace or parent id
+	// is the spec's "invalid" value.
+	for _, part := range parts {
+		if _, err := hex.DecodeString(part); err != nil {
+			return "", "", false
+		}
 	}
-	if allZero(trace) || allZero(parent) {
+	if strings.Trim(trace, "0") == "" || strings.Trim(parent, "0") == "" {
 		return "", "", false
 	}
 	return strings.ToLower(trace), strings.ToLower(parent), true

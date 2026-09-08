@@ -2,7 +2,6 @@ package team
 
 import (
 	"fmt"
-	"sort"
 	"strings"
 	"sync"
 
@@ -34,7 +33,6 @@ type Store struct {
 	bytes int
 
 	record func(Event)
-	agents []string
 }
 
 // Rule grants access to the keys its Name matches. Name, Read and Write all
@@ -112,7 +110,7 @@ func NewStore(topo *Topology, rules []Rule, record func(Event)) (*Store, error) 
 			}
 		}
 	}
-	return &Store{rules: rules, data: map[string][]byte{}, record: record, agents: agents}, nil
+	return &Store{rules: rules, data: map[string][]byte{}, record: record}, nil
 }
 
 // Get reads a key.
@@ -227,20 +225,6 @@ func (s *Store) Put(agent, key string, value []byte) error {
 	s.record(Event{Type: TypeStore, From: agent, To: key, Kind: KindPut,
 		Bytes: len(value), Outcome: OutcomeDelivered})
 	return nil
-}
-
-// Keys lists what the store holds. For `team ps` and the transcript, not for an
-// agent: nothing in the tool surface enumerates keys, because a key name can
-// itself be information one agent has and another does not.
-func (s *Store) Keys() []string {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	out := make([]string, 0, len(s.data))
-	for k := range s.data {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
 }
 
 func (s *Store) mayRead(agent, key string) bool  { return s.may(agent, key, false) }

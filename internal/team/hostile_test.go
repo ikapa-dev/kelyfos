@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -401,4 +402,18 @@ func TestHostileAgentNameIsRefusedAtTheTopology(t *testing.T) {
 			t.Errorf("the ordinary agent name %q was refused: %v", name, err)
 		}
 	}
+}
+
+// Keys lists what the store holds. For `team ps` and the transcript, not for an
+// agent: nothing in the tool surface enumerates keys, because a key name can
+// itself be information one agent has and another does not.
+func (s *Store) Keys() []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]string, 0, len(s.data))
+	for k := range s.data {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }

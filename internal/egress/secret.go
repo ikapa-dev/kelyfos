@@ -342,19 +342,6 @@ func numericLabels(d string) bool {
 	return true
 }
 
-// secretFor returns the credential bound to a host, if any. Matching follows
-// the allowlist rule: a bound domain covers its subdomains.
-func (p *Policy) secretFor(host string) *Secret {
-	host = strings.ToLower(strings.TrimSuffix(host, "."))
-	// Domains are normalised once, when the secret is parsed.
-	for _, s := range p.Secrets {
-		if s.bindsHost(host) {
-			return s
-		}
-	}
-	return nil
-}
-
 // bindsHost reports whether this secret is bound to a host at all — the
 // question that decides whether the proxy terminates, before any request has
 // been read.
