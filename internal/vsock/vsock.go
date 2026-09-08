@@ -20,7 +20,6 @@ import (
 	"net"
 	"os"
 	"sync/atomic"
-	"time"
 
 	"golang.org/x/sys/unix"
 )
@@ -238,11 +237,8 @@ type conn struct {
 	remote *Addr
 }
 
-func (c *conn) LocalAddr() net.Addr                { return &Addr{CID: unix.VMADDR_CID_ANY, Port: c.remote.Port} }
-func (c *conn) RemoteAddr() net.Addr               { return c.remote }
-func (c *conn) SetDeadline(t time.Time) error      { return c.File.SetDeadline(t) }
-func (c *conn) SetReadDeadline(t time.Time) error  { return c.File.SetReadDeadline(t) }
-func (c *conn) SetWriteDeadline(t time.Time) error { return c.File.SetWriteDeadline(t) }
+func (c *conn) LocalAddr() net.Addr  { return &Addr{CID: unix.VMADDR_CID_ANY, Port: c.remote.Port} }
+func (c *conn) RemoteAddr() net.Addr { return c.remote }
 
 func newConn(fd int, remote *Addr) (net.Conn, error) {
 	if err := unix.SetNonblock(fd, true); err != nil {

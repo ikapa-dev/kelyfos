@@ -1051,17 +1051,17 @@ func bootAgent(ctx context.Context, a plannedAgent, broker *team.Broker, rec *re
 // a real agent's name for a narrower reason — the guest lists its team tools at
 // all only when `kelyfos.agent` is set, and a fork must come up with them.
 func bootTemplate(ctx context.Context, a plannedAgent, sessionID, arch string,
-	timeout time.Duration) (tmpl *sandbox.Sandbox, snapDir string, boot, snap time.Duration, err error) {
+	timeout time.Duration) (tmpl *sandbox.Sandbox, snapDir string, err error) {
 
 	// Structural rather than incidental: forkable() already excludes an agent
 	// with a workspace, and if that ever changes this is where the damage would
 	// start — every fork would get a copy of one agent's files.
 	if a.workspace != "" {
-		return nil, "", 0, 0, fmt.Errorf("internal: %s has a workspace and cannot be a fork template", a.name)
+		return nil, "", fmt.Errorf("internal: %s has a workspace and cannot be a fork template", a.name)
 	}
 	id, err := sandbox.NewID()
 	if err != nil {
-		return nil, "", 0, 0, err
+		return nil, "", err
 	}
 	sb, err := sandbox.New(sandbox.Options{
 		ID: id, Arch: arch, Flavor: a.image, Agent: a.name, MaySpawn: a.spawn != nil,
@@ -1071,25 +1071,22 @@ func bootTemplate(ctx context.Context, a plannedAgent, sessionID, arch string,
 		Quiet: true,
 	})
 	if err != nil {
-		return nil, "", 0, 0, err
+		return nil, "", err
 	}
 	// Stopped synchronously only on the paths that fail, where correctness
 	// matters and nothing is waiting. On the path that works the caller stops
 	// it, off the critical path — see below.
 	stopNow := func() { _ = sb.Shutdown(5 * time.Second) }
-	started := time.Now()
 	if err := sb.Start(ctx); err != nil {
 		stopNow()
-		return nil, "", 0, 0, err
+		return nil, "", err
 	}
 	readyCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	if _, err := sb.WaitReady(readyCtx); err != nil {
 		stopNow()
-		return nil, "", 0, 0, fmt.Errorf("the fork template never became ready: %w", err)
+		return nil, "", fmt.Errorf("the fork template never became ready: %w", err)
 	}
-	boot = time.Since(started)
-	snapped := time.Now()
 	// Through snapshotDir like every other snapshot path, rather than joining
 	// the directory by hand — which is what this line did until P7-17/F7, and
 	// is the shape the finding is about. Every component here is host-minted
@@ -1099,12 +1096,12 @@ func bootTemplate(ctx context.Context, a plannedAgent, sessionID, arch string,
 	snapDir, err = snapshotDir("team-" + sessionID + "-" + id)
 	if err != nil {
 		stopNow()
-		return nil, "", 0, 0, err
+		return nil, "", err
 	}
 	if _, _, err := sb.Snapshot(snapDir); err != nil {
 		stopNow()
 		_ = os.RemoveAll(snapDir)
-		return nil, "", 0, 0, fmt.Errorf("snapshot the fork template: %w", err)
+		return nil, "", fmt.Errorf("snapshot the fork template: %w", err)
 	}
 	if err := sandbox.WriteSnapshotMeta(snapDir, sandbox.SnapshotMeta{
 		Arch: arch, Flavor: a.image,
@@ -1120,14 +1117,14 @@ func bootTemplate(ctx context.Context, a plannedAgent, sessionID, arch string,
 	}); err != nil {
 		stopNow()
 		_ = os.RemoveAll(snapDir)
-		return nil, "", 0, 0, err
+		return nil, "", err
 	}
 	// The template is handed back running. Everything the forks need is now on
 	// disk, and asking a machine to power itself off takes as long as it takes:
 	// on the reference runner it was five seconds, and it was five seconds
 	// spent between "the image exists" and "the first fork starts" — the whole
 	// team's spawn time paying for a machine nobody is waiting for (E2-9).
-	return sb, snapDir, boot, time.Since(snapped), nil
+	return sb, snapDir, nil
 }
 
 // forkAgent restores one member from a template's snapshot.

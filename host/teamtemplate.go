@@ -85,7 +85,7 @@ func storeTemplate(ctx context.Context, a plannedAgent, sessionID, arch, key str
 	if _, ok := lookupTemplate(key); ok {
 		return nil
 	}
-	tmpl, snapDir, _, _, err := bootTemplate(ctx, a, sessionID, arch, timeout)
+	tmpl, snapDir, err := bootTemplate(ctx, a, sessionID, arch, timeout)
 	if err != nil {
 		return err
 	}

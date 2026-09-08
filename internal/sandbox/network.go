@@ -408,18 +408,6 @@ func (n *Network) BlockedPackets() int64 {
 	return n.countDrops(func(chain string) bool { return chain != "input" })
 }
 
-// ForeignPacketsDropped is the F9 rule's own counter: packets addressed to this
-// sandbox's host address that did not arrive on its TAP, and were dropped.
-//
-// Separate from BlockedPackets because it is a fact about the host rather than
-// about the guest, and nothing may add the two together. It has no caller in
-// the product yet; it exists so the counter the ruleset keeps is readable from
-// Go at all, and so the test that proves the drop rule is what refused a
-// connection can read that rule rather than the table's total.
-func (n *Network) ForeignPacketsDropped() int64 {
-	return n.countDrops(func(chain string) bool { return chain == "input" })
-}
-
 // countDrops sums the counters on rules in the chains want accepts.
 //
 // It decodes rather than scanning the JSON for `"packets":`, which is what this

@@ -89,6 +89,22 @@ reference described in the README and re-measured per release.
   narrow.
 
 ### Removed
+- What the over-engineering audit of 2026-09-08 found dead or test-only in
+  product files: `internal/sandbox/hostile.go` (a test fixture, now a test
+  file, and its `HostileWorkspace` was `AdoptWorkspace`), the test-only
+  `Closure.Reaches`/`ReachableFrom`, `denial.Lookup`, `Refusal.Values`,
+  `Policy.secretFor`, `IOLimits.Set`, `jailDir`, `Network.ForeignPacketsDropped`,
+  `Broker.Spawned` and `Store.Keys` (all moved beside their tests), the
+  uncalled `Refusal.Denial`, `Proxy.DialTimeout` (nothing set it;
+  `upstreamDialTimeout` already bounded the same dial), `Budget.Resources`,
+  `SpawnRequest.Budget`, `Store.agents`, `TeamSlice.root` and `plugin.dir`
+  (written, never read), `bootTemplate`'s two timings its caller discarded,
+  `Shutdown`'s branch that returned nil either way, the vsock deadline methods
+  the embedded `*os.File` already promotes, the `min`/`max` shadowing Go's
+  builtins, and the three package-local alias blocks over
+  `internal/argsummary`. Two 1 MB and one 2 MB fuzz corpus files of repeated
+  bytes are the `f.Add` expressions they always were.
+
 - Dead code the review's `deadcode` pass found: `Slice.CPUStat`,
   `TeamSlice.CPUStat`, `TeamSlice.Unit`, `sessionpolicy.PluginNames`, and two
   unused struct fields. Four byte-identical helpers were merged into one each

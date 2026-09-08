@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -170,7 +171,9 @@ func Erase(root, sandboxID, reason string) (redacted int, err error) {
 				sandboxID, e.Seq, e.V, Version)
 		}
 	}
-	if !hasSessionEnd(events) {
+	// Any session.end, not only the last event: an already-erased chain's last
+	// event is session.erasure instead (host/verify.go's endsCleanly, B5).
+	if !slices.ContainsFunc(events, func(e Event) bool { return e.Type == TypeSessionEnd }) {
 		return 0, fmt.Errorf("%s: this chain has no session.end anywhere in it — it may still be "+
 			"open, or a live process may still be writing to it, and erasing it would risk racing "+
 			"that writer (a session paused with `kelyfos pause`, or one whose sandbox is still up, "+
@@ -725,19 +728,6 @@ func applyRedactionToSlice(obj *rawObject, name string, before, after reflect.Va
 	}
 	obj.set(name, v)
 	return changed, nil
-}
-
-// hasSessionEnd reports whether any event in the chain is a session.end —
-// not only the last one, because an already-erased chain's last event is
-// session.erasure instead (see also host/verify.go's endsCleanly, fixed for
-// the identical reason under B5).
-func hasSessionEnd(events []Event) bool {
-	for _, e := range events {
-		if e.Type == TypeSessionEnd {
-			return true
-		}
-	}
-	return false
 }
 
 // eraseExempt is every field Erase leaves alone, keyed the way

@@ -31,7 +31,6 @@ type TeamSlice struct {
 	unit string // systemd unit name, "kelyfos-team-<x>.slice"
 	name string // directory name on the direct path, "kelyfos-team-<x>"
 	mode mode
-	root string // what pickMode chose, direct path only
 	dir  *os.File
 
 	// reverted records that a systemd runtime property was set and has to be
@@ -65,7 +64,7 @@ func NewTeamSlice(team, instance string, percent int) (*TeamSlice, error) {
 		return nil, err
 	}
 	name := teamSliceName(team, instance)
-	t := &TeamSlice{Percent: percent, name: name, unit: name + ".slice", mode: m, root: root}
+	t := &TeamSlice{Percent: percent, name: name, unit: name + ".slice", mode: m}
 
 	if m == modeSystemd {
 		if percent > 0 {

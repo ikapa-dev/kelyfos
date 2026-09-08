@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"flag"
 	"fmt"
 	"os"
@@ -97,7 +98,7 @@ themselves rather than from a separate history — so it cannot disagree with
 		}
 		fmt.Printf("%-8s  %-16s  %-*s  %-*s  %-*s  %s\n",
 			r.Session, r.When.Format("2006-01-02 15:04"),
-			w.image, or(r.Image, "—"), w.exit, exitCell(r),
+			w.image, cmp.Or(r.Image, "—"), w.exit, exitCell(r),
 			w.dur, durationCell(r.Duration), cmd)
 	}
 	return nil
@@ -136,13 +137,6 @@ func oneLine(s string, n int) string {
 	s = strings.Join(strings.Fields(s), " ")
 	if len(s) > n {
 		return s[:n-1] + "…"
-	}
-	return s
-}
-
-func or(s, fallback string) string {
-	if s == "" {
-		return fallback
 	}
 	return s
 }

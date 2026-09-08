@@ -300,3 +300,32 @@ func TestSharedResourcesIncludesStoreKeysToo(t *testing.T) {
 		t.Errorf("SharedResources(a,b) = %v, want [plan]", got)
 	}
 }
+
+// Reaches and ReachableFrom are the tests' own readings of Closure.Hops;
+// nothing in the product asks these questions of a closure.
+// Reaches reports whether from can reach to, directly or through a chain of
+// edges and shared store keys. Always false when from == to, and false for
+// any AgentID this Closure was not computed with.
+func (c Closure) Reaches(from, to AgentID) bool {
+	hops, ok := c.HopsBetween(from, to)
+	return ok && hops > 0
+}
+
+// ReachableFrom lists every agent from can reach, sorted, excluding from
+// itself.
+func (c Closure) ReachableFrom(from AgentID) []AgentID {
+	i, ok := c.idx[from]
+	if !ok {
+		return nil
+	}
+	var out []AgentID
+	for j, agent := range c.Agents {
+		if j == i {
+			continue
+		}
+		if c.Hops[i][j] >= 0 {
+			out = append(out, agent)
+		}
+	}
+	return out
+}

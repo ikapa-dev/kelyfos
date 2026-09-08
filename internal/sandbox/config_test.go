@@ -450,3 +450,7 @@ func TestF19_ARewrittenStateFileIsRefusedRatherThanObeyed(t *testing.T) {
 		}
 	})
 }
+
+// jailDir is the directory to remove when the sandbox is gone — the level
+// above the chroot, so nothing of the jail is left behind.
+func jailDir(id string) string { return filepath.Join(JailBase(), "firecracker", id) }

@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 	"syscall"
@@ -304,7 +303,6 @@ func toolListDir(raw json.RawMessage) *mcp.CallToolResult {
 		}
 		rows = append(rows, r)
 	}
-	sort.Slice(rows, func(i, j int) bool { return rows[i].Name < rows[j].Name })
 
 	var text strings.Builder
 	for _, r := range rows {

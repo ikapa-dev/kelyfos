@@ -57,10 +57,6 @@ func jailRunDir(id string) string {
 	return filepath.Join(JailBase(), "firecracker", id, "root")
 }
 
-// jailDir is the directory to remove when the sandbox is gone — the level
-// above the chroot, so nothing of the jail is left behind.
-func jailDir(id string) string { return filepath.Join(JailBase(), "firecracker", id) }
-
 // ErrNoJailer is returned when this machine cannot run the jailer. The caller
 // turns it into the refusal a person reads, with the sudoers line in it.
 var ErrNoJailer = errors.New("the jailer needs passwordless sudo")
@@ -77,16 +73,10 @@ func JailAvailable() error {
 	cmd := exec.Command("sudo", "-n", "jailer", "--version")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("%w: %s", ErrNoJailer, strings.TrimSpace(firstLineOf(string(out))))
+		first, _, _ := strings.Cut(string(out), "\n")
+		return fmt.Errorf("%w: %s", ErrNoJailer, strings.TrimSpace(first))
 	}
 	return nil
-}
-
-func firstLineOf(s string) string {
-	if i := strings.IndexByte(s, '\n'); i >= 0 {
-		return s[:i]
-	}
-	return s
 }
 
 // SudoersLine is the line a person adds to make the jailer usable. Exported so

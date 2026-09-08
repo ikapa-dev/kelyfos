@@ -387,9 +387,6 @@ type Proxy struct {
 	// tests can point it at a local server.
 	Upstream http.RoundTripper
 
-	// DialTimeout bounds how long an upstream connection may take to establish.
-	DialTimeout time.Duration
-
 	// terminatedIdleBudget overrides maxTerminatedIdleTotal for this proxy;
 	// zero means the constant. Unexported, so it is not API — the same shape
 	// Upstream above already uses for the same reason.
@@ -677,9 +674,6 @@ func (p *Proxy) Listen(addr string) (int, error) {
 		return 0, fmt.Errorf("bind egress proxy on %s: %w", addr, err)
 	}
 	p.ln = ln
-	if p.DialTimeout == 0 {
-		p.DialTimeout = 15 * time.Second
-	}
 	return ln.Addr().(*net.TCPAddr).Port, nil
 }
 
@@ -970,7 +964,7 @@ func (p *Proxy) tunnel(client net.Conn, host string, port int) {
 	// dialerFor is what checks the address host actually resolves to before
 	// this connects to it (F2): allowsHost above only ever looked at the
 	// hostname string a guest's CONNECT named, never at where DNS sends it.
-	upstream, err := dialerFor(host, p.DialTimeout).Dial("tcp", net.JoinHostPort(host, strconv.Itoa(port)))
+	upstream, err := dialerFor(host, upstreamDialTimeout).Dial("tcp", net.JoinHostPort(host, strconv.Itoa(port)))
 	if err != nil {
 		p.reportDialFailure(client, host, port, err)
 		return

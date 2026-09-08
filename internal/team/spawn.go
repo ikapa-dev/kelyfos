@@ -2,6 +2,7 @@ package team
 
 import (
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -17,10 +18,9 @@ import (
 // that decides to spawn a hundred of something is doing its job badly. The
 // budget is what makes the second harmless.
 type Budget struct {
-	Max       int
-	Images    []string
-	Lifetime  time.Duration
-	Resources any // opaque here; the host knows what a resource cap is
+	Max      int
+	Images   []string
+	Lifetime time.Duration
 }
 
 // SpawnRequest is what the host is asked to boot. The broker has already
@@ -30,7 +30,6 @@ type SpawnRequest struct {
 	Spawner  string
 	Image    string
 	Lifetime time.Duration
-	Budget   *Budget
 }
 
 // Spawn types for the record.
@@ -82,7 +81,10 @@ func (b *Broker) Spawn(spawner, image string) (SpawnRequest, error) {
 	if image == "" && len(budget.Images) > 0 {
 		image = budget.Images[0]
 	}
-	if !allowedImage(budget.Images, image) {
+	// A spawn budget is a whitelist, and an empty whitelist is empty rather
+	// than universal — the other reading turns a half-written policy into an
+	// open door.
+	if !slices.Contains(budget.Images, image) {
 		b.mu.Unlock()
 		b.record(Event{Type: TypeSpawn, From: spawner, Kind: KindSpawn,
 			Outcome: OutcomeRefused, Reason: "image_not_permitted"})
@@ -127,7 +129,7 @@ func (b *Broker) Spawn(spawner, image string) (SpawnRequest, error) {
 	b.record(Event{Type: TypeSpawn, From: spawner, To: name, Kind: KindSpawn,
 		Outcome: OutcomeDelivered})
 	return SpawnRequest{Name: name, Spawner: spawner, Image: image,
-		Lifetime: budget.Lifetime, Budget: &budget}, nil
+		Lifetime: budget.Lifetime}, nil
 }
 
 // Despawn removes a spawned worker, freeing its place in its spawner's budget.
@@ -163,26 +165,4 @@ func (b *Broker) Despawn(name string) {
 	b.topo.detach(name)
 	b.record(Event{Type: TypeSpawn, From: spawner, To: name, Kind: KindDespawn,
 		Outcome: OutcomeDelivered})
-}
-
-// Spawned lists the workers an agent currently has running, for `team ps`.
-func (b *Broker) Spawned(agent string) []string {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return append([]string(nil), b.spawnedBy[agent]...)
-}
-
-func allowedImage(permitted []string, image string) bool {
-	if len(permitted) == 0 {
-		// A budget that names no image permits none. A spawn budget is a
-		// whitelist, and an empty whitelist is empty rather than universal —
-		// the other reading turns a half-written policy into an open door.
-		return false
-	}
-	for _, p := range permitted {
-		if p == image {
-			return true
-		}
-	}
-	return false
 }

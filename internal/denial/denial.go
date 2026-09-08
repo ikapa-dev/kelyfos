@@ -92,12 +92,6 @@ func (r *Refusal) Error() string { return r.text }
 // ID is which refusal this was.
 func (r *Refusal) ID() string { return r.d.ID }
 
-// Denial is the catalog entry this refusal came from.
-func (r *Refusal) Denial() Denial { return r.d }
-
-// Values are the things it named.
-func (r *Refusal) Values() V { return r.v }
-
 // Of reports whether err is a refusal, and which one.
 func Of(err error) (*Refusal, bool) {
 	var r *Refusal
@@ -453,16 +447,6 @@ func All() []Denial {
 	}
 	sort.Slice(all, func(i, j int) bool { return all[i].ID < all[j].ID })
 	return all
-}
-
-// Lookup finds a catalog entry by ID.
-func Lookup(id string) (Denial, bool) {
-	for _, d := range All() {
-		if d.ID == id {
-			return d, true
-		}
-	}
-	return Denial{}, false
 }
 
 // Placeholders are the <names> a denial's message and fix between them use, in

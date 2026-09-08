@@ -3,11 +3,11 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/ikapa-dev/kelyfos/internal/argsummary"
 	"math"
 	"os"
 	"strings"
 	"testing"
-	"unicode/utf8"
 
 	"github.com/ikapa-dev/kelyfos/internal/mcp"
 	"github.com/ikapa-dev/kelyfos/internal/recorder"
@@ -21,7 +21,7 @@ import (
 // summariser walks what it is given rather than knowing the tools.
 func TestArgumentSummaryNeverCarriesContent(t *testing.T) {
 	body := strings.Repeat("secret", 200)
-	got := summariseArgs(json.RawMessage(`{"sandbox":"abc123","path":"/work/x","content":"` + body + `"}`))
+	got := argsummary.Summarise(json.RawMessage(`{"sandbox":"abc123","path":"/work/x","content":"` + body + `"}`))
 	if strings.Contains(got, "secret") {
 		t.Errorf("the record holds the file's content:\n%s", got)
 	}
@@ -32,7 +32,7 @@ func TestArgumentSummaryNeverCarriesContent(t *testing.T) {
 	}
 
 	// stdin is the same kind of thing on a different tool.
-	got = summariseArgs(json.RawMessage(`{"sandbox":"a","command":"cat","stdin":"hunter2"}`))
+	got = argsummary.Summarise(json.RawMessage(`{"sandbox":"a","command":"cat","stdin":"hunter2"}`))
 	if strings.Contains(got, "hunter2") {
 		t.Errorf("the record holds what was typed into a command:\n%s", got)
 	}
@@ -44,7 +44,7 @@ func TestArgumentSummaryNeverCarriesContent(t *testing.T) {
 // An argument nobody wrote a rule for still appears, because a log that only
 // shows the arguments someone remembered is a log that hides the new one.
 func TestArgumentSummaryShowsWhatItDoesNotKnow(t *testing.T) {
-	got := summariseArgs(json.RawMessage(`{"count":3,"allow":["a.example","b.example"],"deep":{"x":1}}`))
+	got := argsummary.Summarise(json.RawMessage(`{"count":3,"allow":["a.example","b.example"],"deep":{"x":1}}`))
 	for _, want := range []string{"count=3", "allow=[a.example,b.example]", `deep={"x":1}`} {
 		if !strings.Contains(got, want) {
 			t.Errorf("the summary does not say %q:\n%s", want, got)
@@ -56,12 +56,12 @@ func TestArgumentSummaryShowsWhatItDoesNotKnow(t *testing.T) {
 // iteration would otherwise make the transcript's wording depend on nothing.
 func TestArgumentSummaryIsStable(t *testing.T) {
 	raw := json.RawMessage(`{"z":1,"a":2,"m":3}`)
-	first := summariseArgs(raw)
+	first := argsummary.Summarise(raw)
 	if first != "a=2 m=3 z=1" {
 		t.Errorf("got %q, want the keys in order", first)
 	}
 	for i := 0; i < 20; i++ {
-		if got := summariseArgs(raw); got != first {
+		if got := argsummary.Summarise(raw); got != first {
 			t.Fatalf("the same call rendered two ways: %q then %q", first, got)
 		}
 	}
@@ -70,7 +70,7 @@ func TestArgumentSummaryIsStable(t *testing.T) {
 // A long argument is truncated and says what it was cut from, so a line stays a
 // line without the record quietly claiming the value was short.
 func TestArgumentSummaryTruncatesHonestly(t *testing.T) {
-	got := summariseArgs(json.RawMessage(`{"path":"` + strings.Repeat("d/", 200) + `"}`))
+	got := argsummary.Summarise(json.RawMessage(`{"path":"` + strings.Repeat("d/", 200) + `"}`))
 	if !strings.Contains(got, "(400 bytes)") {
 		t.Errorf("the truncation does not name the full length:\n%s", got)
 	}
@@ -81,7 +81,7 @@ func TestArgumentSummaryTruncatesHonestly(t *testing.T) {
 
 // Malformed arguments are a fact about the call, and the call is still recorded.
 func TestArgumentSummarySurvivesGarbage(t *testing.T) {
-	got := summariseArgs(json.RawMessage(`{"unclosed":`))
+	got := argsummary.Summarise(json.RawMessage(`{"unclosed":`))
 	if !strings.Contains(got, "unparseable") {
 		t.Errorf("garbage arguments were not reported as such: %q", got)
 	}
@@ -146,7 +146,7 @@ func readSource(t *testing.T, name string) string {
 // that does not exist, so nothing upstream has checked the shape either (F-D49).
 func TestArgumentSummarySizesContentWhateverShapeItArrivesIn(t *testing.T) {
 	body := strings.Repeat("secret", 200)
-	got := summariseArgs(json.RawMessage(`{"content":{"smuggled":"` + body + `"}}`))
+	got := argsummary.Summarise(json.RawMessage(`{"content":{"smuggled":"` + body + `"}}`))
 	if strings.Contains(got, "secret") {
 		t.Errorf("an object under content was written into the record verbatim:\n%s", got)
 	}
@@ -155,7 +155,7 @@ func TestArgumentSummarySizesContentWhateverShapeItArrivesIn(t *testing.T) {
 		t.Errorf("got %q, want the object recorded by its size", got)
 	}
 
-	got = summariseArgs(json.RawMessage(`{"stdin":["one","two"]}`))
+	got = argsummary.Summarise(json.RawMessage(`{"stdin":["one","two"]}`))
 	if strings.Contains(got, "one") {
 		t.Errorf("an array under stdin was written into the record verbatim:\n%s", got)
 	}
@@ -166,7 +166,7 @@ func TestArgumentSummarySizesContentWhateverShapeItArrivesIn(t *testing.T) {
 	// A number is not content in any useful sense, but the rule is about the
 	// key: a reader who sees `data=` in a record is told a size, always, rather
 	// than being told a size on the calls where the caller happened to send one.
-	if got := summariseArgs(json.RawMessage(`{"data":12345}`)); got != "data=<5 bytes>" {
+	if got := argsummary.Summarise(json.RawMessage(`{"data":12345}`)); got != "data=<5 bytes>" {
 		t.Errorf("got %q, want the number recorded by its size", got)
 	}
 }
@@ -234,8 +234,8 @@ func TestOneCallCannotWriteALineTheChainsReadersRefuse(t *testing.T) {
 func TestNoOneArgumentCanFillTheLine(t *testing.T) {
 	// The default branch. A value the caller wrapped in an object was
 	// marshalled whole, with no length to stop at.
-	got := summariseArgs(json.RawMessage(`{"x":{"a":"` + strings.Repeat("A", 300) + `"}}`))
-	if strings.Count(got, "A") > maxArgBytes {
+	got := argsummary.Summarise(json.RawMessage(`{"x":{"a":"` + strings.Repeat("A", 300) + `"}}`))
+	if strings.Count(got, "A") > argsummary.MaxArgBytes {
 		t.Errorf("an object argument was written out whole:\n%s", got)
 	}
 	// 300 bytes of body inside {"a":"…"}, which is 8 bytes of JSON.
@@ -244,7 +244,7 @@ func TestNoOneArgumentCanFillTheLine(t *testing.T) {
 	}
 
 	// The array branch, which grows without any one element being long. Bounded
-	// by maxArrayBytes rather than maxArgBytes: an array here is usually the
+	// by argsummary.MaxArrayBytes rather than argsummary.MaxArgBytes: an array here is usually the
 	// egress allowlist, which is recorded nowhere else, so the budget is
 	// deliberately generous and the joined line's own cap is what keeps the
 	// record a record (P6-28).
@@ -252,8 +252,8 @@ func TestNoOneArgumentCanFillTheLine(t *testing.T) {
 	for i := range elems {
 		elems[i] = `"a"`
 	}
-	got = summariseArgs(json.RawMessage(`{"argv":[` + strings.Join(elems, ",") + `]}`))
-	if len(got) > maxArrayBytes+64 {
+	got = argsummary.Summarise(json.RawMessage(`{"argv":[` + strings.Join(elems, ",") + `]}`))
+	if len(got) > argsummary.MaxArrayBytes+64 {
 		t.Errorf("a 2000-element array rendered %d characters, which is not a log line:\n%s", len(got), got)
 	}
 	if !strings.Contains(got, "more)") {
@@ -265,7 +265,7 @@ func TestNoOneArgumentCanFillTheLine(t *testing.T) {
 	// of a domain the agent asked to reach.
 	allow := `{"allow":["registry.npmjs.org","github.com","objects.githubusercontent.com",` +
 		`"proxy.golang.org","sum.golang.org","pypi.org","files.pythonhosted.org","deb.debian.org"]}`
-	if got := summariseArgs(json.RawMessage(allow)); strings.Contains(got, "more)") {
+	if got := argsummary.Summarise(json.RawMessage(allow)); strings.Contains(got, "more)") {
 		t.Errorf("an eight-domain allowlist was cut short:\n%s", got)
 	} else if !strings.Contains(got, "deb.debian.org") {
 		t.Errorf("the allowlist lost its last entry:\n%s", got)
@@ -280,8 +280,8 @@ func TestTheWholeSummaryStaysALine(t *testing.T) {
 	for i := range parts {
 		parts[i] = fmt.Sprintf(`"k%04d":"v"`, i)
 	}
-	got := summariseArgs(json.RawMessage("{" + strings.Join(parts, ",") + "}"))
-	if len(got) > maxArgsBytes+64 {
+	got := argsummary.Summarise(json.RawMessage("{" + strings.Join(parts, ",") + "}"))
+	if len(got) > argsummary.MaxArgsBytes+64 {
 		t.Errorf("2000 short arguments rendered %d characters:\n%.200s…", len(got), got)
 	}
 	if !strings.Contains(got, "bytes)") {
@@ -289,31 +289,9 @@ func TestTheWholeSummaryStaysALine(t *testing.T) {
 	}
 
 	// One long key is the same hole with one argument in it.
-	got = summariseArgs(json.RawMessage(`{"` + strings.Repeat("k", 1<<20) + `":1}`))
-	if len(got) > maxArgsBytes+64 {
+	got = argsummary.Summarise(json.RawMessage(`{"` + strings.Repeat("k", 1<<20) + `":1}`))
+	if len(got) > argsummary.MaxArgsBytes+64 {
 		t.Errorf("a one-megabyte key rendered %d characters", len(got))
-	}
-}
-
-// Clipping happens on a rune boundary. The summary is marshalled into the line
-// that gets hashed and printed to somebody's terminal, and half a character is
-// neither — json.Marshal would substitute U+FFFD in the record while the
-// terminal showed something else.
-func TestClippingNeverLeavesHalfARune(t *testing.T) {
-	s := strings.Repeat("€", 10) // three bytes each
-	for n := 0; n <= len(s); n++ {
-		got := clipUTF8(s, n)
-		if !utf8.ValidString(got) {
-			t.Fatalf("clipping %d bytes of a multi-byte string left %q, which is not valid UTF-8", n, got)
-		}
-		if len(got) > n {
-			t.Fatalf("clipping to %d bytes returned %d", n, len(got))
-		}
-	}
-	// A replacement character the JSON decoder already substituted is a
-	// character, and survives the clip like any other.
-	if got := clipUTF8("ab�cd", 5); got != "ab�" {
-		t.Errorf("got %q, want the replacement character kept", got)
 	}
 }
 
