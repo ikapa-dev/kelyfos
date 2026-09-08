@@ -15,7 +15,7 @@ reference described in the README and re-measured per release.
 
 ---
 
-## Unreleased
+## v1.4.0 — 2026-09-08
 
 ### Security
 - **aarch64 guests now refuse `settimeofday` like every other clock setter**

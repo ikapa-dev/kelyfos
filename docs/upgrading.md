@@ -355,7 +355,7 @@ a smaller machine.
 
 ---
 
-## 11. A discovered policy file's secrets need a one-time approval (unreleased)
+## 11. A discovered policy file's secrets need a one-time approval (v1.4.0)
 
 **What changed.** A `kelyfos.toml` that kelyfos finds by walking up from the
 working directory, and that declares `secrets` — on `[sandbox]` or on any
