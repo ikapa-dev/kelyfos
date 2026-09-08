@@ -1,6 +1,6 @@
 # KelyfOS cookbook
 
-Twenty-five recipes, each one complete, each one runnable as it stands.
+Twenty-six recipes, each one complete, each one runnable as it stands.
 
 These are not illustrations. `bash dev/cookbook.sh` extracts every script below
 and runs it on a real machine. Every commit checks that each recipe still
@@ -2479,6 +2479,82 @@ if kelyfos doctor 2>&1 | grep "orphaned instances     none" >/dev/null; then
 else
   echo "doctor still reports orphans after the reap"; exit 1
 fi
+```
+
+---
+
+## 25. Approve a repository's policy secrets, once
+
+A `kelyfos.toml` that kelyfos finds by walking up from the working directory —
+the one a cloned repository carries — may name your environment variables and
+the domains they are sent to. Since D101 such a file is not believed about that
+on its own say-so: the most ordinary way to come by one is `git clone`, and the
+clone is owned by whoever cloned it, so ownership vouches for nothing. Its
+secrets are bound only once you have approved the file for its current
+contents — `kelyfos run` asks at a terminal, and with nobody to ask it refuses
+and names the two ways to say yes. A file that binds nothing is not asked
+about, and a file you name with `--policy` is the same decision made on the
+command line.
+
+<!-- recipe: trust-policy-secrets -->
+
+```bash
+set -euo pipefail
+work="$(mktemp -d)"
+trap 'rm -rf "$work"; kelyfos trust --revoke "$work/kelyfos.toml" >/dev/null 2>&1 || true' EXIT
+cd "$work"
+
+# A stranger's file: it names one of your environment variables and the domain
+# to send it to. The value lives in your environment and never in the file.
+export DEMO_TOKEN="not-a-real-token-0123"
+cat > kelyfos.toml <<'TOML'
+[sandbox]
+image   = "dev"
+allow   = ["api.github.com"]
+secrets = ["DEMO_TOKEN@api.github.com"]
+
+[resources]
+cpus = 1
+mem  = "512M"
+TOML
+
+# With nobody at a terminal to ask, a bare run refuses before anything boots,
+# lists what the file would bind — the variable's name and the host, never a
+# value — and names both ways to approve it.
+if kelyfos run -- true >refused.log 2>&1 </dev/null; then
+  echo "expected the unapproved file's secrets to be refused"; cat refused.log; exit 1
+fi
+grep "DEMO_TOKEN" refused.log >/dev/null
+grep "kelyfos trust" refused.log >/dev/null
+grep -- "--policy" refused.log >/dev/null
+if grep "not-a-real-token" refused.log >/dev/null; then
+  echo "the value reached the terminal"; exit 1
+fi
+echo "refused, and said how to approve it:"
+sed -n '1,3p' refused.log
+
+# Approve it once. What is recorded is the file's path and the digest of its
+# contents — never a value, never a variable's name.
+kelyfos trust kelyfos.toml
+kelyfos trust --list | grep "$work/kelyfos.toml" >/dev/null
+
+# The same run now boots, with the credential bound at the proxy.
+kelyfos run -- true </dev/null 2>&1 | tee approved.log
+grep "DEMO_TOKEN" approved.log >/dev/null
+
+# The approval is bound to the contents: a changed file asks again.
+sed -i 's/"api.github.com"\]$/"api.github.com", "pypi.org"]/' kelyfos.toml
+if kelyfos run -- true >changed.log 2>&1 </dev/null; then
+  echo "expected the changed file to need a fresh approval"; cat changed.log; exit 1
+fi
+grep "kelyfos trust" changed.log >/dev/null
+
+# Forget it. --revoke takes the entry out; the file itself is untouched.
+kelyfos trust --revoke kelyfos.toml
+if kelyfos trust --list | grep "$work/kelyfos.toml" >/dev/null; then
+  echo "the revoked entry is still listed"; exit 1
+fi
+echo "approved once for one version of the file, asked again when it changed, and forgotten"
 ```
 
 ---

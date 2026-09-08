@@ -46,10 +46,7 @@ func newNetwork(sandboxID, user string) (*Network, error) {
 	}
 	base := binary.BigEndian.Uint16(seed[:2]) % 16384 // 169.254.0.0/16 as /30s
 
-	tap := "kelyfos" + sandboxID
-	if len(tap) > 15 { // IFNAMSIZ - 1
-		tap = tap[:15]
-	}
+	tap := tapName(sandboxID)
 
 	var lastErr error
 	for attempt := 0; attempt < 32; attempt++ {
@@ -193,10 +190,7 @@ func newNetworkAt(sandboxID, user, hostIP, guestIP, netmask, hostMACAddr string)
 	if h == nil || g == nil {
 		return nil, fmt.Errorf("snapshot recorded an unusable address pair (host %q, guest %q)", hostIP, guestIP)
 	}
-	tap := "kelyfos" + sandboxID
-	if len(tap) > 15 { // IFNAMSIZ - 1
-		tap = tap[:15]
-	}
+	tap := tapName(sandboxID)
 	if netmask == "" {
 		netmask = "255.255.255.252"
 	}
@@ -343,10 +337,7 @@ func (n *Network) Down() {
 // The returned string says what was removed, so the reaper can report actions
 // rather than imply them.
 func RemoveNetworkResidue(id string) string {
-	tap := "kelyfos" + id
-	if len(tap) > 15 { // IFNAMSIZ - 1, the same bound newNetwork applies
-		tap = tap[:15]
-	}
+	tap := tapName(id)
 	var removed []string
 	if linkExists(tap) {
 		if _, err := sudo("ip", "link", "del", tap); err == nil {

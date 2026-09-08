@@ -1524,7 +1524,7 @@ func teamPS(argv []string) error {
 				if m.MemMiB > 0 {
 					mem += fmt.Sprintf("/%dM", m.MemMiB)
 				}
-				disk = humanBytes(m.DiskBytes)
+				disk = report.HumanBytes(m.DiskBytes)
 			}
 			out = "none"
 			if len(m.Allow) > 0 {

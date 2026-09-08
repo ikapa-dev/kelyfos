@@ -48,7 +48,7 @@ bash dev/install-firecracker.sh    # Firecracker and its jailer
 bash dev/install-kelyfos.sh        # the static CLI, into ./bin
 bash dev/fetch-image.sh            # the guest image, into ~/.cache/kelyfos
 
-# The jailer needs root. Grant it for the jailer alone:
+# The jailer needs root. This grants it without a password prompt:
 echo "$USER ALL=(root) NOPASSWD: $(command -v jailer)" | sudo tee /etc/sudoers.d/kelyfos-jailer
 sudo chmod 0440 /etc/sudoers.d/kelyfos-jailer
 
@@ -66,6 +66,8 @@ sudo chmod 0440 /etc/sudoers.d/kelyfos-jailer
 ```
 
 `kelyfos run --no-jail` works without the sudoers grant. It says what is not enforced on every run, and so does the session record.
+
+**Read that sudoers line for what it is.** The jailer accepts any uid, any exec file and any chroot base and drops no capabilities, so a passwordless `jailer` is a passwordless root shell for anything running as your account — not a narrow grant, whatever the file's name suggests. `--allow` needs passwordless `ip`, `nft` and `rm` on top of it, and `ip netns exec` is a root shell outright. Use KelyfOS on a machine where that is acceptable: one whose account is already the trust boundary, as a developer laptop's is. [`docs/threat-model.md`](docs/threat-model.md) §4 says what follows.
 
 ## Attaching an agent
 

@@ -219,14 +219,46 @@ type outputRecorder struct {
 	agent  string
 	stream string
 	buf    []byte
+	// recorded is how many bytes of this command's output have reached the
+	// chain, and capped says the ceiling was reached and noted. The terminal
+	// keeps receiving everything; it is the record that stops growing.
+	recorded int
+	capped   bool
 }
 
 const outputFlushAt = 8 << 10
 
+// maxRecordedOutput bounds how much of ONE command's output the flight
+// recorder keeps (security review 2026-09-03). `kelyfos exec` streams to a
+// terminal a person can interrupt, but it also appended every byte to the
+// session's chain with no bound at all — so `yes` inside the guest, or an
+// agent's exec tool run with no timeout, grew a file on the host's disk for as
+// long as it ran, one event per 8 KiB, until the disk was full and the
+// recorder latched. The library door (sandbox.Exec) refuses past MaxExecOutput;
+// this is the same ceiling on the two doors that stream, applied to what is
+// recorded rather than to what is delivered. Past it, one in-band note says so
+// — the same shape recorder's own clip note takes — and nothing more of that
+// command's output enters the chain.
+const maxRecordedOutput = sandbox.MaxExecOutput
+
 func (o *outputRecorder) add(stream string, data []byte) {
+	if o.capped {
+		return
+	}
 	if stream != o.stream {
 		o.flush()
 		o.stream = stream
+	}
+	if room := maxRecordedOutput - o.recorded - len(o.buf); len(data) > room {
+		if room > 0 {
+			o.buf = append(o.buf, data[:room]...)
+		}
+		o.flush()
+		o.capped = true
+		o.buf = []byte(fmt.Sprintf("\n[kelyfos: this command's output passed %d MiB; the terminal "+
+			"received all of it and the record keeps no more]\n", maxRecordedOutput>>20))
+		o.flush()
+		return
 	}
 	o.buf = append(o.buf, data...)
 	if len(o.buf) >= outputFlushAt {
@@ -243,5 +275,6 @@ func (o *outputRecorder) flush() {
 		Data: base64.StdEncoding.EncodeToString(o.buf), Bytes: len(o.buf),
 		Agent: o.agent,
 	})
+	o.recorded += len(o.buf)
 	o.buf = o.buf[:0]
 }

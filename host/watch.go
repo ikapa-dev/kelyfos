@@ -1119,11 +1119,11 @@ func (m *watchModel) resourceLane() string {
 		if st.MemMiB > 0 {
 			mem += fmt.Sprintf(", machine %d MiB", st.MemMiB)
 		}
-		net := fmt.Sprintf("net %s in / %s out", humanBytes(u.NetInBytes), humanBytes(u.NetOutBytes))
+		net := fmt.Sprintf("net %s in / %s out", report.HumanBytes(u.NetInBytes), report.HumanBytes(u.NetOutBytes))
 		if st.NetMbpsRx > 0 || st.NetMbpsTx > 0 {
 			net += fmt.Sprintf(" (cap %d/%d Mbps)", st.NetMbpsRx, st.NetMbpsTx)
 		}
-		disk := fmt.Sprintf("disk %s written", humanBytes(u.DiskWriteBytes))
+		disk := fmt.Sprintf("disk %s written", report.HumanBytes(u.DiskWriteBytes))
 		if st.DiskMbps > 0 || st.DiskIOPS > 0 {
 			disk += " (capped)"
 		}
@@ -1133,8 +1133,8 @@ func (m *watchModel) resourceLane() string {
 		e := m.d.Receipt
 		return barStyle.Render(fmt.Sprintf(
 			"final · %.2f CPU-seconds%s · peak RSS %s (VMM)%s · net %s in / %s out · disk %s written",
-			e.CPUSeconds, quotaSuffix(*e), report.HumanKiB(e.PeakRSSKiB), capSuffix(e.MemMiB),
-			humanBytes(e.NetInBytes), humanBytes(e.NetOutBytes), humanBytes(e.DiskWriteBytes)))
+			e.CPUSeconds, report.QuotaNote(*e), report.HumanKiB(e.PeakRSSKiB), capSuffix(e.MemMiB),
+			report.HumanBytes(e.NetInBytes), report.HumanBytes(e.NetOutBytes), report.HumanBytes(e.DiskWriteBytes)))
 	}
 	return dim.Render("  resources: waiting for the first sample…")
 }

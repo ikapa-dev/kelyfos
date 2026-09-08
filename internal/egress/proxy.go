@@ -244,12 +244,35 @@ type Policy struct {
 func (p *Policy) allowsHost(host string) bool {
 	host = strings.ToLower(strings.TrimSuffix(host, "."))
 	for _, a := range p.Allow {
-		a = NormaliseDomain(a)
-		if host == a || strings.HasSuffix(host, "."+a) {
+		if domainCovers(NormaliseDomain(a), host) {
 			return true
 		}
 	}
 	return false
+}
+
+// domainCovers is the one suffix rule, applied to a normalised allowlist or
+// binding entry and a normalised host: the entry itself, or a name beneath it
+// on a label boundary.
+//
+// An IP literal is matched exactly and never by suffix (security review
+// 2026-09-03). The suffix rule is about DNS labels — api.github.com is beneath
+// github.com — and an address has none: 127.0.0.1 is not "beneath" 0.0.1, and
+// an entry of `0.1` is not a domain at all but a fragment that ends every
+// address in 10.0.0.1, 192.168.0.1 and the loopback. The two doors that
+// refuse a bare TLD accepted such an entry because its labels are alphanumeric,
+// and the dialer skips the resolved-address table for a literal because there
+// is nothing to resolve — so `allow = ["0.1"]` in a cloned kelyfos.toml was a
+// grant of every host-local service on the machine. A literal in the allowlist
+// still works, and only for the address it names.
+func domainCovers(entry, host string) bool {
+	if host == entry {
+		return true
+	}
+	if ipLiteral(host) || ipLiteral(entry) {
+		return false
+	}
+	return strings.HasSuffix(host, "."+entry)
 }
 
 // EffectivePorts is what this Policy actually enforces: Ports when the policy

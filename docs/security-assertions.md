@@ -22,6 +22,7 @@ assertion's subject.
 | ports 80/443 globally; no key, flag or trick widens them | egress suite (`[egress.port]` over raw sockets on 22/8080/8443) | CHECKED |
 | CONNECT, absolute-URI and origin-form decided on the same target string | egress suite parser matrix (8 shapes) | CHECKED |
 | the resolved-address check refuses metadata and RFC1918 addresses (DNS hijack) | egress suite via nip.io, `[egress.resolved_addr]` | CHECKED |
+| an IP literal in the allowlist or a credential binding is matched exactly and never by suffix, and an entry whose labels are all numbers is refused at both doors (security review 2026-09-03) | `internal/egress/review_2026_09_03_test.go` | CHECKED |
 | a foreign peer — another sandbox's guest, or a VM-side process — is dropped silently | egress suite peer probes (guest→guest, VM→proxy) | CHECKED |
 | every attempt recorded with mode, reason and byte counts | egress suite record assertions | CHECKED |
 | each proxy owns its upstream transports — a connection pooled under one sandbox's policy cannot serve another's, so the per-dial resolved-address re-check cannot be skipped by cross-proxy reuse (audit A13) | `internal/egress/a13_test.go` — two proxies hold two transports, one proxy holds one | CHECKED |
@@ -42,6 +43,7 @@ assertion's subject.
 | forged Host on a tunnel → withheld `host_mismatch`, nothing at the origin | secrets suite | CHECKED |
 | a credential bound to a host covers its subdomains (IA-I1, pinned as-is) | secrets suite | CHECKED — pinned |
 | python in the guest cannot use the CA store (no `_ssl`; IA-I3) | documented in `docs/networking.md`; not suite-checked | UNCHECKED — documented |
+| a discovered policy file's secrets are bound only once the file is approved for its current contents; a named file is not asked; a file binding nothing is not asked; a team agent's secrets count; an interactive yes is recorded and consumes one line of stdin, a no or nobody-to-ask refuses naming `kelyfos trust` and `--policy` (D101, security review 2026-09-03) | `host/policytrust_test.go`; `internal/config/trust_record_test.go` (the record binds path and digest, is 0600, and an unreadable record is an error rather than a no) | CHECKED |
 
 ## The record
 
@@ -56,6 +58,7 @@ assertion's subject.
 | truncation with recomputed claims verifies — the documented keyless limit (IA-M2) | record suite, EXPECTED-CURRENT with TODO(IA-M2); narrowed by the head anchor above, not closed | UNCHECKED — accepted, flagged |
 | a SIGNED export detects the truncation attack | record suite signed battery (D93) | CHECKED |
 | erasure redacts payloads while the chain verifies; refuses a live session | `docs/exam/2026-08-31-security-erase.md` (survived one attempt) | PARTIALLY CHECKED — one attempt, no suite |
+| one command's output puts at most 16 MiB into the chain through `kelyfos exec` and the MCP bridge, with one in-band note at the cut (security review 2026-09-03) | `host/review_2026_09_03_test.go` | CHECKED |
 
 ## The workspace
 
@@ -69,6 +72,7 @@ assertion's subject.
 | a 40-deep path lands; the refusal threshold is 128 | workspace suite | CHECKED |
 | one hostile-but-legal name fails the whole write-back, naming the entry — the availability trade the audit's A16 named is kept and documented rather than quarantined (D100) | workspace suite (the refusal battery); docs/hardening.md §5 and D100 carry the trade and the deferral reasoning | CHECKED — documented |
 | plain entries land with their modes | workspace suite | CHECKED |
+| an image whose entries declare more bytes than the image holds — a sparse file the host would materialise — is refused, naming the entry (security review 2026-09-03) | `internal/sandbox/review_2026_09_03_test.go` | CHECKED |
 
 ## Confinement
 

@@ -10,6 +10,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/ikapa-dev/kelyfos/internal/report"
 	"github.com/ikapa-dev/kelyfos/internal/sandbox"
 )
 
@@ -162,7 +163,7 @@ func pruneTemplates(maxBytes int64) {
 		// Said out loud. A cache that silently throws work away is a cache that
 		// gets blamed for the next slow boot.
 		fmt.Fprintf(os.Stderr, "kelyfos: fork template cache is over its %s bound; evicted %s (%s)\n",
-			humanBytes(maxBytes), filepath.Base(h.dir), humanBytes(h.size))
+			report.HumanBytes(maxBytes), filepath.Base(h.dir), report.HumanBytes(h.size))
 	}
 }
 

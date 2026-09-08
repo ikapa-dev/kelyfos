@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"sort"
 	"strings"
@@ -318,8 +319,20 @@ func (o *observer) fromGuest(line []byte) {
 // is a chain (S1). recorder.Append now also guards this unconditionally, but
 // chunking here is the fix that keeps a legible log rather than one giant
 // line that merely survives.
+//
+// And bounded (security review 2026-09-03): a guest's stdout is the guest's
+// to size, and the MCP exec tool's answer carries the whole of it, so one
+// command could put an unbounded number of events on the host's disk. The
+// same ceiling `kelyfos exec` applies to what it records — maxRecordedOutput,
+// the library door's MaxExecOutput — applies here, per stream, with one in-band
+// note where the cut is.
 func (o *observer) appendCommandOutput(call, stream, text string) {
 	data := []byte(text)
+	if len(data) > maxRecordedOutput {
+		data = append(data[:maxRecordedOutput:maxRecordedOutput], fmt.Sprintf(
+			"\n[kelyfos: this command's %s passed %d MiB; the client received all of it and the "+
+				"record keeps no more]\n", stream, maxRecordedOutput>>20)...)
+	}
 	for len(data) > 0 {
 		n := outputFlushAt
 		if n > len(data) {

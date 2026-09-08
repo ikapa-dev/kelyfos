@@ -33,6 +33,7 @@ Go's `flag` accepts one dash or two, so `-image` and `--image` are the same flag
 | [`kelyfos log`](#kelyfos-log) | replay, follow (-f) or verify a session's record (kelyfos logs is the same command) |
 | [`kelyfos verify`](#kelyfos-verify) | check the record an exported report carries, offline and with no key |
 | [`kelyfos connect`](#kelyfos-connect) | write a client's own MCP configuration, and check it by starting the server it names |
+| [`kelyfos trust`](#kelyfos-trust) | approve a discovered policy file's secret bindings, once, for its current contents |
 | [`kelyfos watch`](#kelyfos-watch) | live view of a sandbox (reads the record only) |
 | [`kelyfos view`](#kelyfos-view) | serve a session's report live, over HTTP, loopback-only and token-required (D60) |
 | [`kelyfos bench`](#kelyfos-bench) | measure cold boot-to-ready over several runs |
@@ -416,6 +417,19 @@ kelyfos connect <client>
 | `--policy` | string | the one in the project | the kelyfos.toml to hold the server to |
 | `--project` | string | "." | the project the configuration is written for |
 | `--remove` | boolean | — | take KelyfOS out of this client's configuration |
+
+## kelyfos trust
+
+Approve a discovered policy file's secret bindings, once, for its current contents.
+
+```
+kelyfos trust <kelyfos.toml>
+```
+
+| Flag | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `--list` | boolean | — | print every approved file, with the digest each approval is bound to |
+| `--revoke` | boolean | — | forget an approval |
 
 ## kelyfos watch
 

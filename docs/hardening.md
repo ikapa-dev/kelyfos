@@ -148,6 +148,21 @@ target uid. KelyfOS passes its own `--api-sock`, so the API socket is
 `<chroot>/fc.sock`, and the host keeps its own absolute path to the same file in
 `State.APIPath`.
 
+**What the sudoers grant grants** (security review 2026-09-03). The same
+documentation says the jailer "requires a more restricted set of capabilities,
+but that's to be determined" — it runs as root and drops nothing but the uid,
+and every one of `--uid`, `--exec-file` and `--chroot-base-dir` is the caller's
+to choose. So `NOPASSWD: /usr/local/bin/jailer` is not a grant of "the jailer":
+it is root, for any process running as the invoking account, through an exec
+file named `firecracker` that the caller wrote. The README and
+docs/threat-model.md §4 say so now rather than calling the line narrow. The
+narrow form is a privileged helper of this project's own with a fixed argument
+shape — uid and gid from `SUDO_UID`/`SUDO_GID`, the exec file the installed
+VMM, the chroot base under the cache root, an id matched against the shape
+`newID` mints, and for egress the `ip` and `nft` invocations `network.go`
+makes and no others — which the sudoers line names instead. That is a decision
+with its own task; nothing here pretends it exists.
+
 **The API socket's reachability, stated plainly** (the audit of 2026-09-01's
 A11): `fc.sock` lives in the run directory, which is 0700 — a wall against
 *other users*, and no wall at all against a process running as this one, which
