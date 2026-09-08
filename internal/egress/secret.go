@@ -232,6 +232,15 @@ func validDomain(d string) bool {
 	if len(labels) < 2 {
 		return false
 	}
+	// A name whose every label is a number is not a name either: no DNS
+	// top-level domain is numeric, and what such an entry actually is — `0.1`,
+	// `168.0.1` — is the tail of an address. domainCovers refuses to suffix-
+	// match an address, so the entry could never match anything; it is
+	// refused here so the person who typed it learns that at the door rather
+	// than from a 403 (security review 2026-09-03).
+	if numericLabels(d) {
+		return false
+	}
 	// Labels, because a name with an empty one — "..github.com", "a..b" — passes
 	// every character test and still matches no host that exists. Enumerating
 	// malformed shapes one at a time does not converge; requiring the shape of a
@@ -300,8 +309,37 @@ func CheckAllowList(list []string) error {
 			return denial.AllowSingleLabel.Err(denial.V{
 				"domain": d, "example": "example." + d})
 		}
+		// The same shape one door over: an all-numeric name is the tail of an
+		// address, not a domain, and the suffix rule does not apply to
+		// addresses (domainCovers). Before this it was accepted as two
+		// alphanumeric labels and, being a suffix of every address ending in
+		// it, admitted 127.0.0.1 and every private host-local service — all of
+		// which the dialer's resolved-address table never sees, because a
+		// literal is not resolved (security review 2026-09-03).
+		if numericLabels(d) {
+			return fmt.Errorf("allow %q is not a domain: every label is a number, which is the "+
+				"tail of an address rather than a name. Name the host, or name the whole "+
+				"address if a literal is what you mean", d)
+		}
 	}
 	return nil
+}
+
+// numericLabels reports whether every dot-separated label of a normalised
+// domain is made of digits only — the shape of a partial IPv4 address, which
+// no DNS name has (a top-level domain is never numeric).
+func numericLabels(d string) bool {
+	for _, label := range strings.Split(d, ".") {
+		if label == "" {
+			return false
+		}
+		for i := 0; i < len(label); i++ {
+			if label[i] < '0' || label[i] > '9' {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // secretFor returns the credential bound to a host, if any. Matching follows
@@ -328,7 +366,7 @@ func (s *Secret) bindsHost(host string) bool {
 	if s.Scope.Path != "" {
 		return host == s.Domain
 	}
-	return host == s.Domain || strings.HasSuffix(host, "."+s.Domain)
+	return domainCovers(s.Domain, host)
 }
 
 // secretsFor is every secret bound to a host, in declaration order. The proxy

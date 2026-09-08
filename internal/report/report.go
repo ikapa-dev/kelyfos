@@ -473,7 +473,7 @@ func timelineRows(d *digest.Digest) []Row {
 			if en.Agent != "" {
 				rows = append(rows, Row{ts, "session", "usage receipt · " + en.Agent,
 					fmt.Sprintf("%.2f CPU-seconds%s · peak RSS %s · net %s in / %s out · disk %s written",
-						en.CPUSeconds, quotaNote(en.Event), HumanKiB(en.PeakRSSKiB),
+						en.CPUSeconds, QuotaNote(en.Event), HumanKiB(en.PeakRSSKiB),
 						HumanBytes(en.NetInBytes), HumanBytes(en.NetOutBytes),
 						HumanBytes(en.DiskWriteBytes)), "", false})
 			}
@@ -729,9 +729,10 @@ func bootPath(via string) string {
 	return via
 }
 
-// quotaNote says what a receipt's CPU number was measured against, when there
-// was something to measure it against.
-func quotaNote(e recorder.Event) string {
+// QuotaNote says what a receipt's CPU number was measured against, when there
+// was something to measure it against. Exported because `kelyfos log` prints
+// the same receipt and used to carry its own copy (security review 2026-09-03).
+func QuotaNote(e recorder.Event) string {
 	switch {
 	case e.CPUQuota > 0:
 		return fmt.Sprintf(" (quota %d%% of one core)", e.CPUQuota)

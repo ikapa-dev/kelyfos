@@ -26,6 +26,8 @@ import (
 	"unicode/utf8"
 
 	"golang.org/x/sys/unix"
+
+	"github.com/ikapa-dev/kelyfos/internal/argsummary"
 )
 
 // Version is the schema version stamped on every event.
@@ -1819,29 +1821,20 @@ func stringsBytes(s []string) int {
 }
 
 // clipUTF8 cuts s to at most n bytes without leaving half a rune at the end —
-// the same rule, for the same reason, as host/servemcpaudit.go's clipUTF8: a
-// trailing fragment of a multi-byte character would be replaced with U+FFFD by
+// argsummary.ClipUTF8, the one implementation every summariser shares, rather
+// than the copy that lived here until the review of 2026-09-03: a trailing
+// fragment of a multi-byte character would be replaced with U+FFFD by
 // json.Marshal, which is not the byte sequence hashOf would then be hashing
 // against what a reader sees.
 func clipUTF8(s string, n int) string {
 	// joinLimit guards its own n and capForBudget clamps at zero, so no caller
 	// reaches here with a negative one today. The guard is here anyway because
-	// this is the function that actually indexes, and s[:n] on a negative n
-	// panics inside the flight recorder's own last line of defense.
+	// the function that actually indexes would panic on a negative n, inside
+	// the flight recorder's own last line of defense.
 	if n < 0 {
 		n = 0
 	}
-	if len(s) <= n {
-		return s
-	}
-	s = s[:n]
-	for len(s) > 0 {
-		if r, size := utf8.DecodeLastRuneInString(s); r != utf8.RuneError || size > 1 {
-			break
-		}
-		s = s[:len(s)-1]
-	}
-	return s
+	return argsummary.ClipUTF8(s, n)
 }
 
 // Verify walks a flight recorder and reports the first place the chain breaks.

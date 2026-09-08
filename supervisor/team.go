@@ -31,12 +31,11 @@ type teamClient struct {
 	// tool is listed only where it can work (E2-5).
 	maySpawn bool
 
-	mu      sync.Mutex
-	conn    net.Conn
-	w       *proto.Writer
-	r       *proto.Reader
-	nextID  int
-	dialErr error
+	mu     sync.Mutex
+	conn   net.Conn
+	w      *proto.Writer
+	r      *proto.Reader
+	nextID int
 }
 
 // newTeamClient reports nil when this sandbox is not part of a team, which is

@@ -46,19 +46,6 @@ func Ports(allow []string) []int {
 	return egress.DefaultPorts()
 }
 
-// PluginNames is the configured plugin names, and nothing else about them —
-// no path, no command, no args (docs/policy-record.md §8.2).
-func PluginNames(plugins []config.Plugin) []string {
-	if len(plugins) == 0 {
-		return nil
-	}
-	out := make([]string, len(plugins))
-	for i, p := range plugins {
-		out[i] = p.Name
-	}
-	return out
-}
-
 // Forwards formats each [[forward]] entry as "<host-port>:<guest-port>", the
 // same shorthand kelyfos run's own -p flag already uses.
 func Forwards(forwards []config.Forward) []string {

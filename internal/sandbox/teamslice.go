@@ -211,16 +211,6 @@ func (t *TeamSlice) Confirm() error {
 	return nil
 }
 
-// CPUStat is the team's collective consumption — the number the E2 acceptance
-// test measures. It is the parent's own accounting, which includes every child,
-// so it cannot disagree with the sum of the agents.
-func (t *TeamSlice) CPUStat() (map[string]int64, error) {
-	if t == nil {
-		return nil, fmt.Errorf("no team slice")
-	}
-	return CPUStatAt(t.Path)
-}
-
 // Close takes the parent away, after every child is gone.
 //
 // It returns its error, unlike Slice.Close, because the failure mode here is
@@ -270,15 +260,6 @@ func (t *TeamSlice) Close() error {
 		return fmt.Errorf("remove the team cgroup %s: %w", t.Path, err)
 	}
 	return nil
-}
-
-// Unit is the systemd slice this team's scopes are placed in, or "" on the
-// direct path.
-func (t *TeamSlice) Unit() string {
-	if t == nil || t.mode != modeSystemd {
-		return ""
-	}
-	return t.unit
 }
 
 // teamSliceName turns a team's name and this run of it into exactly one systemd

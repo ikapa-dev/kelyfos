@@ -97,7 +97,6 @@ type imageEntry struct {
 	path string // validated, slash-separated, relative to the image root
 	mode os.FileMode
 	kind entryKind
-	link string // the target, for a symlink
 	// size is what the inode says it holds, straight out of `ls -l -p`. It is
 	// the only independent statement about a file the host has, and it is what
 	// makes a short dump detectable: `debugfs dump` opens its destination
@@ -1007,6 +1006,21 @@ func dumpFiles(imagePath string, entries []imageEntry) (map[string]string, func(
 	}
 	total := stagingBytes(entries)
 
+	// What the entries declare against what the disk could hold (security
+	// review 2026-09-03). Every byte a regular file holds is a block on the
+	// image, so the sum of the declared sizes cannot exceed the image's own
+	// size unless some file is sparse — and a sparse file is exactly what
+	// `dump` materialises as zeros: `truncate -s 100G /work/000` inside the
+	// guest becomes a hundred gigabytes of staging on the person's disk, and
+	// then a hundred gigabytes in their project, bounded by nothing but what
+	// checkFreeSpace finds free. The size check below still guards the fit;
+	// this refuses the image that could only fit by writing what was never
+	// there.
+	if err := declaredSizeFits(entries, total, imagePath); err != nil {
+		cleanup()
+		return nil, func() {}, err
+	}
+
 	// Before a byte is written rather than after the disk is full. checkFreeSpace
 	// says nothing when it cannot tell, which is the right silence: an
 	// unanswerable statfs is not evidence of a full disk, and the size check in
@@ -1041,6 +1055,28 @@ func dumpFiles(imagePath string, entries []imageEntry) (map[string]string, func(
 		}
 	}
 	return staged, cleanup, nil
+}
+
+// declaredSizeFits refuses an image whose entries declare more bytes than the
+// image file itself holds, naming the largest entry, which is where a sparse
+// file will be. A total that fits is not proof there is no hole — a small
+// sparse file among ordinary ones is invisible here and is materialised as it
+// always was — but it bounds what the guest can make the host write to the
+// size of the disk it was given.
+func declaredSizeFits(entries []imageEntry, total int64, imagePath string) error {
+	info, err := os.Stat(imagePath)
+	if err != nil || total <= info.Size() {
+		return nil
+	}
+	var largest imageEntry
+	for _, e := range entries {
+		if e.kind != kindDir && e.size > largest.size {
+			largest = e
+		}
+	}
+	return refuse("the entries declare %d bytes of content on a %d byte disk, which can only be "+
+		"true of a file with holes in it — %s says it holds %d bytes — and this host does not "+
+		"materialise a guest's holes as data", total, info.Size(), largest.path, largest.size)
 }
 
 func copyThrough(root *os.Root, e imageEntry, from string) error {
