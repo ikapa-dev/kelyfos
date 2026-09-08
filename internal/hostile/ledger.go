@@ -43,7 +43,6 @@ var (
 	once   sync.Once
 	broken map[string]string
 	source string
-	loadFn = load // swapped in this package's own tests
 
 	// startDir is the working directory when the process began, which for
 	// `go test` is the package's own directory.
@@ -64,7 +63,7 @@ var (
 // in the output, so somebody reading a green build can see what is still open.
 func Holds(t T, key, problem string) {
 	t.Helper()
-	once.Do(func() { broken, source = loadFn() })
+	once.Do(func() { broken, source = load() })
 	why, listed := broken[key]
 	switch {
 	case problem != "" && !listed:

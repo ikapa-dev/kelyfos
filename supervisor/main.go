@@ -14,6 +14,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"os/signal"
 	"runtime"
 	"time"
 
@@ -100,7 +101,22 @@ func main() {
 	start := monotonic()
 
 	if isPID1 {
-		// Non-dumpable, first (audit 2026-09-01, A17b): everything this
+		// The terminating signals are ignored, first (security review
+		// 2026-09-03). The kernel refuses to deliver a signal to PID 1 unless
+		// PID 1 installed a handler for it — and the Go runtime installs one
+		// for SIGTERM, SIGINT, SIGHUP and SIGQUIT on every program, whose
+		// default action is to exit. So a confined process could `kill -TERM 1`
+		// and take the machine down: PID 1 exiting is a kernel panic, which
+		// ends the session with no shutdown handshake and no workspace flush —
+		// the crash door IA-H1 named, opened on purpose from inside. Ignoring
+		// them sets SIG_IGN at the kernel, after which the special case for
+		// init applies and the signal is not queued at all. Nothing legitimate
+		// signals this process: the host speaks over the control channel, and
+		// halt sends to every process but this one (kill(-1) never reaches the
+		// caller).
+		signal.Ignore(unix.SIGTERM, unix.SIGINT, unix.SIGHUP, unix.SIGQUIT,
+			unix.SIGUSR1, unix.SIGUSR2)
+		// Non-dumpable, next (audit 2026-09-01, A17b): everything this
 		// process holds — the channel credential most of all (credential.go)
 		// — is exactly what a guest-side process would want to read out of
 		// its memory. The kernel's own ACL on /proc/1/mem and ptrace held

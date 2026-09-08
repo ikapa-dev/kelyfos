@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"github.com/ikapa-dev/kelyfos/internal/argsummary"
 	"strings"
 	"testing"
 )
@@ -34,7 +35,7 @@ func FuzzSummariseArgsNeverEchoesContent(f *testing.F) {
 		if len(payload) < 16 {
 			t.Skip()
 		}
-		if !contentKeys[key] {
+		if !argsummary.ContentKeys[key] {
 			t.Skip()
 		}
 		raw, err := json.Marshal(map[string]any{key: payload, "other": 1})
@@ -42,7 +43,7 @@ func FuzzSummariseArgsNeverEchoesContent(f *testing.F) {
 			t.Skip()
 		}
 
-		out := summariseArgs(raw)
+		out := argsummary.Summarise(raw)
 		if strings.Contains(out, payload) {
 			t.Fatalf("summariseArgs wrote a %d-byte %q argument into the record verbatim:\n%s",
 				len(payload), key, out)
@@ -63,7 +64,7 @@ func FuzzSummariseArgs(f *testing.F) {
 	f.Add([]byte(``))
 
 	f.Fuzz(func(t *testing.T, raw []byte) {
-		out := summariseArgs(json.RawMessage(raw))
+		out := argsummary.Summarise(json.RawMessage(raw))
 		// A record line is a line. A summariser that emits a newline would let
 		// a caller forge an extra entry in anything that reads the transcript
 		// by line.

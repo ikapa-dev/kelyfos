@@ -42,6 +42,8 @@ usage:
                                    offline and with no key
   kelyfos connect <client>         write a client's own MCP configuration, and
                                    check it by starting the server it names
+  kelyfos trust <kelyfos.toml>     approve a discovered policy file's secret
+                                   bindings, once, for its current contents
   kelyfos watch [flags]            live view of a sandbox (reads the record only)
   kelyfos view [flags]             serve a session's report live, over HTTP,
                                    loopback-only and token-required (D60)
@@ -104,6 +106,8 @@ func main() {
 		err = verifyCmd(os.Args[2:])
 	case "connect":
 		err = connectCmd(os.Args[2:])
+	case "trust":
+		err = trustCmd(os.Args[2:])
 	case "team":
 		err = teamCmd(os.Args[2:])
 	case "watch":

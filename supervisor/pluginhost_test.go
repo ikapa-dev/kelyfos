@@ -2,10 +2,10 @@ package main
 
 import (
 	"fmt"
+	"github.com/ikapa-dev/kelyfos/internal/argsummary"
 	"io"
 	"strings"
 	"testing"
-	"unicode/utf8"
 
 	"github.com/ikapa-dev/kelyfos/internal/mcp"
 	"github.com/ikapa-dev/kelyfos/internal/proto"
@@ -145,7 +145,7 @@ func TestTheTeamToolsCountAsBuiltInEverywhere(t *testing.T) {
 // which plugin was asked for which tool, and not with what, answers half the
 // question a reader has (F-D49).
 func TestPluginArgumentsAreRecordedAndRedacted(t *testing.T) {
-	got := summarisePluginArgs([]byte(`{"url":"https://example.com","depth":2}`))
+	got := argsummary.Summarise([]byte(`{"url":"https://example.com","depth":2}`))
 	if got != "depth=2 url=https://example.com" {
 		t.Errorf("got %q, want the keys in order", got)
 	}
@@ -153,7 +153,7 @@ func TestPluginArgumentsAreRecordedAndRedacted(t *testing.T) {
 	// Content never enters the record, on any tool, including one nobody here
 	// has seen.
 	body := strings.Repeat("secret", 100)
-	got = summarisePluginArgs([]byte(`{"path":"/x","content":"` + body + `"}`))
+	got = argsummary.Summarise([]byte(`{"path":"/x","content":"` + body + `"}`))
 	if strings.Contains(got, "secret") {
 		t.Errorf("the record holds a plugin call's content:\n%s", got)
 	}
@@ -162,10 +162,10 @@ func TestPluginArgumentsAreRecordedAndRedacted(t *testing.T) {
 	}
 
 	// And nothing at all is not an error.
-	if summarisePluginArgs(nil) != "" {
+	if argsummary.Summarise(nil) != "" {
 		t.Error("a call with no arguments produced a summary")
 	}
-	if !strings.Contains(summarisePluginArgs([]byte(`{"broken":`)), "unparseable") {
+	if !strings.Contains(argsummary.Summarise([]byte(`{"broken":`)), "unparseable") {
 		t.Error("malformed arguments were not reported as such")
 	}
 }
@@ -177,7 +177,7 @@ func TestPluginArgumentsAreRecordedAndRedacted(t *testing.T) {
 // the key this code promises to hold by size (F-D49).
 func TestPluginContentIsSizedWhateverShapeItArrivesIn(t *testing.T) {
 	body := strings.Repeat("secret", 100)
-	got := summarisePluginArgs([]byte(`{"content":{"smuggled":"` + body + `"}}`))
+	got := argsummary.Summarise([]byte(`{"content":{"smuggled":"` + body + `"}}`))
 	if strings.Contains(got, "secret") {
 		t.Errorf("an object under content was written into the record verbatim:\n%s", got)
 	}
@@ -186,7 +186,7 @@ func TestPluginContentIsSizedWhateverShapeItArrivesIn(t *testing.T) {
 		t.Errorf("got %q, want the object recorded by its size", got)
 	}
 
-	got = summarisePluginArgs([]byte(`{"stdin":["one","two"]}`))
+	got = argsummary.Summarise([]byte(`{"stdin":["one","two"]}`))
 	if strings.Contains(got, "one") {
 		t.Errorf("an array under stdin was written into the record verbatim:\n%s", got)
 	}
@@ -197,7 +197,7 @@ func TestPluginContentIsSizedWhateverShapeItArrivesIn(t *testing.T) {
 	// A number is not content in any useful sense, but the rule is about the
 	// key: a reader who sees `data=` is told a size, always, rather than being
 	// told one on the calls where the caller happened to send a string.
-	if got := summarisePluginArgs([]byte(`{"data":12345}`)); got != "data=<5 bytes>" {
+	if got := argsummary.Summarise([]byte(`{"data":12345}`)); got != "data=<5 bytes>" {
 		t.Errorf("got %q, want the number recorded by its size", got)
 	}
 }
@@ -232,7 +232,7 @@ func TestAPluginCallSummaryAlwaysFitsTheEventsChannel(t *testing.T) {
 			ev := proto.GuestEvent{
 				V: proto.Version, Type: proto.GuestEventPluginCall,
 				Name: "browser", Tool: "navigate", Outcome: "ok",
-				Args: summarisePluginArgs([]byte(tc.raw)),
+				Args: argsummary.Summarise([]byte(tc.raw)),
 			}
 			if err := proto.NewWriter(io.Discard).Write(ev); err != nil {
 				t.Fatalf("the report of a call carrying megabytes %s cannot be sent: %v", tc.where, err)
@@ -246,8 +246,8 @@ func TestAPluginCallSummaryAlwaysFitsTheEventsChannel(t *testing.T) {
 // of the call.
 func TestNoOnePluginArgumentCanFillTheLine(t *testing.T) {
 	// The default branch, which marshalled an object with no length to stop at.
-	got := summarisePluginArgs([]byte(`{"x":{"a":"` + strings.Repeat("A", 300) + `"}}`))
-	if strings.Count(got, "A") > maxArgBytes {
+	got := argsummary.Summarise([]byte(`{"x":{"a":"` + strings.Repeat("A", 300) + `"}}`))
+	if strings.Count(got, "A") > argsummary.MaxArgBytes {
 		t.Errorf("an object argument was written out whole:\n%s", got)
 	}
 	// 300 bytes of body inside {"a":"…"}, which is 8 bytes of JSON.
@@ -256,7 +256,7 @@ func TestNoOnePluginArgumentCanFillTheLine(t *testing.T) {
 	}
 
 	// The array branch, which grows without any one element being long. Bounded
-	// by maxArrayBytes rather than maxArgBytes: an array here is usually the
+	// by argsummary.MaxArrayBytes rather than argsummary.MaxArgBytes: an array here is usually the
 	// egress allowlist, which is recorded nowhere else, so the budget is
 	// deliberately generous and the joined line's own cap is what keeps the
 	// record a record (P6-28).
@@ -264,8 +264,8 @@ func TestNoOnePluginArgumentCanFillTheLine(t *testing.T) {
 	for i := range elems {
 		elems[i] = `"a"`
 	}
-	got = summarisePluginArgs([]byte(`{"argv":[` + strings.Join(elems, ",") + `]}`))
-	if len(got) > maxArrayBytes+64 {
+	got = argsummary.Summarise([]byte(`{"argv":[` + strings.Join(elems, ",") + `]}`))
+	if len(got) > argsummary.MaxArrayBytes+64 {
 		t.Errorf("a 2000-element array rendered %d characters, which is not a log line:\n%s", len(got), got)
 	}
 	if !strings.Contains(got, "more)") {
@@ -277,7 +277,7 @@ func TestNoOnePluginArgumentCanFillTheLine(t *testing.T) {
 	// losing the only record of what the agent asked to reach.
 	allow := `{"allow":["registry.npmjs.org","github.com","objects.githubusercontent.com",` +
 		`"proxy.golang.org","sum.golang.org","pypi.org","files.pythonhosted.org","deb.debian.org"]}`
-	if got := summarisePluginArgs([]byte(allow)); strings.Contains(got, "more)") {
+	if got := argsummary.Summarise([]byte(allow)); strings.Contains(got, "more)") {
 		t.Errorf("an eight-domain allowlist was cut short:\n%s", got)
 	} else if !strings.Contains(got, "deb.debian.org") {
 		t.Errorf("the allowlist lost its last entry:\n%s", got)
@@ -285,7 +285,7 @@ func TestNoOnePluginArgumentCanFillTheLine(t *testing.T) {
 
 	// And a plugin's declared arguments are its own business, so the shapes the
 	// built-in tools never send are exactly the ones that must stay bounded.
-	if got := summarisePluginArgs([]byte(`{"count":3,"allow":["a.example","b.example"],"deep":{"x":1}}`)); got != `allow=[a.example,b.example] count=3 deep={"x":1}` {
+	if got := argsummary.Summarise([]byte(`{"count":3,"allow":["a.example","b.example"],"deep":{"x":1}}`)); got != `allow=[a.example,b.example] count=3 deep={"x":1}` {
 		t.Errorf("got %q, want a small call rendered whole", got)
 	}
 }
@@ -297,8 +297,8 @@ func TestTheWholePluginSummaryStaysALine(t *testing.T) {
 	for i := range parts {
 		parts[i] = fmt.Sprintf(`"k%04d":"v"`, i)
 	}
-	got := summarisePluginArgs([]byte("{" + strings.Join(parts, ",") + "}"))
-	if len(got) > maxArgsBytes+64 {
+	got := argsummary.Summarise([]byte("{" + strings.Join(parts, ",") + "}"))
+	if len(got) > argsummary.MaxArgsBytes+64 {
 		t.Errorf("2000 short arguments rendered %d characters:\n%.200s…", len(got), got)
 	}
 	if !strings.Contains(got, "bytes)") {
@@ -306,28 +306,7 @@ func TestTheWholePluginSummaryStaysALine(t *testing.T) {
 	}
 
 	// One long key is the same hole with one argument in it.
-	if got := summarisePluginArgs([]byte(`{"` + strings.Repeat("k", 1<<20) + `":1}`)); len(got) > maxArgsBytes+64 {
+	if got := argsummary.Summarise([]byte(`{"` + strings.Repeat("k", 1<<20) + `":1}`)); len(got) > argsummary.MaxArgsBytes+64 {
 		t.Errorf("a one-megabyte key rendered %d characters", len(got))
-	}
-}
-
-// Clipping happens on a rune boundary. The summary is marshalled onto the
-// events channel and printed to somebody's terminal, and half a character is
-// neither.
-func TestPluginSummaryClippingNeverLeavesHalfARune(t *testing.T) {
-	s := strings.Repeat("€", 10) // three bytes each
-	for n := 0; n <= len(s); n++ {
-		got := clipUTF8(s, n)
-		if !utf8.ValidString(got) {
-			t.Fatalf("clipping %d bytes of a multi-byte string left %q, which is not valid UTF-8", n, got)
-		}
-		if len(got) > n {
-			t.Fatalf("clipping to %d bytes returned %d", n, len(got))
-		}
-	}
-	// A replacement character the JSON decoder already substituted is a
-	// character, and survives the clip like any other.
-	if got := clipUTF8("ab�cd", 5); got != "ab�" {
-		t.Errorf("got %q, want the replacement character kept", got)
 	}
 }

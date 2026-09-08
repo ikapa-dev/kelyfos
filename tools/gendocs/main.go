@@ -754,11 +754,9 @@ func profilesPage(sup string) (string, error) {
 		"**seccomp** refuses the listed syscalls with `EPERM` \u2014 a refusal list rather than\n" +
 		"an allowlist, because an allowlist for an arbitrary agent command is a crash waiting\n" +
 		"to be mistaken for a security feature.\n\n")
-	b.WriteString("The policy is the same on every architecture KelyfOS builds for. A name that is\n" +
-		"not a syscall on some architecture \u2014 `settimeofday` has none on aarch64, which has\n" +
-		"only `clock_settime` \u2014 is absent from that build's filter rather than faked, and\n" +
-		"`kelyfos-supervisor --dump-profile` prints the resolved numbers for the machine it\n" +
-		"runs on.\n")
+	b.WriteString("The policy is the same on every architecture KelyfOS builds for, and every name\n" +
+		"on it resolves to a syscall on each; `kelyfos-supervisor --dump-profile` prints the\n" +
+		"resolved numbers for the machine it runs on.\n")
 
 	for _, p := range profiles {
 		fmt.Fprintf(&b, "\n## `%s`\n\n", p.name)

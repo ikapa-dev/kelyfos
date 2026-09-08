@@ -4,122 +4,94 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"runtime"
 	"strconv"
 	"strings"
 	"testing"
 )
 
 // The audit of 2026-09-01's A5/M8: the refusal policy is name-keyed against a
-// hand-maintained per-architecture map, and a name absent from the map is
-// silently dropped from the compiled filter — which is exactly how open_tree
-// and fsopen came to reach the kernel. The failure was not that a map was
-// wrong; it was that nothing failed when a map went stale.
+// hand-maintained map, and a name absent from the map is a syscall reaching
+// the kernel — which is exactly how open_tree and fsopen came to reach it. The
+// failure was not that a map was wrong; it was that nothing failed when a map
+// went stale.
 //
-// The old drift gate checked only the map the test was compiled against, and
-// hosted CI's checks job runs linux/amd64 alone — so an arm64-only omission
-// (a name dropped from profile_arm64.go but kept on amd64) passed CI green and
-// shipped in a guest. This gate closes that: it parses profile_amd64.go *and*
-// profile_arm64.go from disk, regardless of the arch it runs on, and asserts
-// every policy name resolves in both. A name dropped from either map fails the
-// commit that dropped it, on whichever arch CI happens to be.
-func TestEveryPolicyNameResolvesOnEveryArchitecture(t *testing.T) {
-	amd64 := parseSyscallMap(t, "profile_amd64.go")
-	arm64 := parseSyscallMap(t, "profile_arm64.go")
+// Since D102 there is one map for every architecture (profile_syscalls.go), so
+// an omission cannot be architecture-specific any more: the compiler refuses a
+// selector the running architecture lacks, and this gate refuses a name the
+// map lacks. It parses the file from disk, because the property "the value for
+// `mount` is unix.SYS_MOUNT and not a neighbour's constant" is one the compiled
+// map cannot state about itself.
+func TestEveryPolicyNameResolves(t *testing.T) {
+	onDisk := parseSyscallMap(t, "profile_syscalls.go")
 
 	// A parse that silently found nothing would make every "is a key" check
-	// below pass vacuously, so guard the maps are non-empty first.
-	if len(amd64) == 0 || len(arm64) == 0 {
-		t.Fatalf("parsed an empty syscallNumbers map (amd64 %d, arm64 %d) — the parser found no map to check",
-			len(amd64), len(arm64))
+	// below pass vacuously, so guard the map is non-empty first.
+	if len(onDisk) == 0 {
+		t.Fatal("parsed an empty syscallNumbers map — the parser found no map to check")
 	}
 
-	// Policy names that genuinely do not exist on an arch, keyed by GOARCH,
-	// each with the reason. aarch64 has no settimeofday — clock_settime is its
-	// only clock setter — so the policy name is dropped from that filter, not
-	// faked. A name here must stay accurate: if the arch gains the syscall,
-	// this entry would mask a silent drop, so the absence is asserted below
-	// rather than merely skipped.
-	archAbsent := map[string]map[string]string{
-		"arm64": {"settimeofday": "aarch64 has no settimeofday; clock_settime is the only clock setter"},
-	}
-
-	check := func(arch string, m map[string]string) {
-		for _, name := range refusalPolicy {
-			if reason, absent := archAbsent[arch][name]; absent {
-				if _, present := m[name]; present {
-					t.Errorf("%s: %q is documented arch-absent (%s) but profile_%s.go has it — "+
-						"remove the archAbsent entry or the map key", arch, name, reason, arch)
-				}
-				continue
-			}
-			sel, ok := m[name]
-			if !ok {
-				t.Errorf("%s: policy name %q is not a key in profile_%s.go — a name absent from the map "+
-					"is dropped from the compiled filter and the syscall reaches the kernel", arch, name, arch)
-				continue
-			}
-			// Each value is unix.SYS_<UPPER(name)>: the number is resolved by
-			// the compiler from the kernel's own constant, so the only way it
-			// can be wrong is a copy-paste of the wrong SYS_ name onto a key.
-			if want := "SYS_" + strings.ToUpper(name); sel != want {
-				t.Errorf("%s: %q maps to unix.%s in profile_%s.go, expected unix.%s", arch, name, sel, arch, want)
-			}
+	for _, name := range refusalPolicy {
+		sel, ok := onDisk[name]
+		if !ok {
+			t.Errorf("policy name %q is not a key in profile_syscalls.go — a name absent from the map "+
+				"is a filter deniedSyscalls refuses to build", name)
+			continue
+		}
+		// Each value is unix.SYS_<UPPER(name)>: the number is resolved by the
+		// compiler from the kernel's own constant, so the only way it can be
+		// wrong is a copy-paste of the wrong SYS_ name onto a key.
+		if want := "SYS_" + strings.ToUpper(name); sel != want {
+			t.Errorf("%q maps to unix.%s in profile_syscalls.go, expected unix.%s", name, sel, want)
 		}
 	}
-	check("amd64", amd64)
-	check("arm64", arm64)
 
-	// The twelve names the 2026-09-01 audit added, asserted by name in both
-	// maps: the fd-based mount API and the cross-memory / fd-theft family were
-	// exactly what reached the kernel because a name was missing, so their
-	// presence is pinned directly rather than left to the mass loop above.
+	// The twelve names the 2026-09-01 audit added, asserted by name: the
+	// fd-based mount API and the cross-memory / fd-theft family were exactly
+	// what reached the kernel because a name was missing, so their presence is
+	// pinned directly rather than left to the loop above.
 	for _, name := range []string{
 		"open_tree", "move_mount", "fsopen", "fsconfig", "fsmount", "fspick", "mount_setattr",
 		"process_vm_readv", "process_vm_writev", "pidfd_open", "pidfd_getfd", "pidfd_send_signal",
 	} {
-		for arch, m := range map[string]map[string]string{"amd64": amd64, "arm64": arm64} {
-			if _, ok := m[name]; !ok {
-				t.Errorf("%s: audit name %q is missing from profile_%s.go; the fd-based mount API and the "+
-					"cross-memory family must be refused on every architecture", arch, name, arch)
-			}
+		if _, ok := onDisk[name]; !ok {
+			t.Errorf("audit name %q is missing from profile_syscalls.go; the fd-based mount API and the "+
+				"cross-memory family must be refused on every architecture", name)
 		}
 	}
-
-	// Tie the on-disk parse for the arch this test is compiled for back to the
-	// map the compiler actually built: if the parse and the compiled map
-	// disagree on the set of keys, the parse is not reading what runs, and
-	// every assertion above would be checking a file the filter never used.
-	onDisk := map[string]map[string]string{"amd64": amd64, "arm64": arm64}[runtime.GOARCH]
-	if onDisk == nil {
-		t.Fatalf("no parsed map for the running arch %q — add profile_%s.go to the parse set",
-			runtime.GOARCH, runtime.GOARCH)
+	// settimeofday, asserted by name because it is the one the aarch64 map
+	// used to omit on a false belief about the architecture (D102).
+	if _, ok := onDisk["settimeofday"]; !ok {
+		t.Error("settimeofday is missing from profile_syscalls.go")
 	}
+
+	// Tie the on-disk parse back to the map the compiler actually built: if
+	// the two disagree on the set of keys, the parse is not reading what runs,
+	// and every assertion above would be checking a file the filter never used.
 	for name := range syscallNumbers {
 		if _, ok := onDisk[name]; !ok {
-			t.Errorf("compiled syscallNumbers has %q but profile_%s.go as parsed does not — the parse is stale",
-				name, runtime.GOARCH)
+			t.Errorf("compiled syscallNumbers has %q but profile_syscalls.go as parsed does not — the parse is stale", name)
 		}
 	}
 	for name := range onDisk {
 		if _, ok := syscallNumbers[name]; !ok {
-			t.Errorf("profile_%s.go lists %q but the compiled syscallNumbers does not", runtime.GOARCH, name)
+			t.Errorf("profile_syscalls.go lists %q but the compiled syscallNumbers does not", name)
 		}
 	}
 	// Every compiled value resolves to a real syscall number on this arch.
 	for name, nr := range syscallNumbers {
 		if nr < 0 {
-			t.Errorf("compiled syscallNumbers[%q] is %d on %s — a policy name resolved to no syscall",
-				name, nr, runtime.GOARCH)
+			t.Errorf("compiled syscallNumbers[%q] is %d — a policy name resolved to no syscall", name, nr)
 		}
+	}
+	// And the filter the policy compiles to refuses every name, none dropped.
+	if got, want := len(profileFor("base").Refused()), len(refusalPolicy); got != want {
+		t.Errorf("the base profile refuses %d syscalls, the policy names %d", got, want)
 	}
 }
 
-// parseSyscallMap reads the syscallNumbers composite literal out of a
-// profile_<arch>.go source file and returns name -> unix selector (e.g.
-// "init_module" -> "SYS_INIT_MODULE"). It parses the file as text, so it works
-// for the arch the test is *not* compiled for — which is the whole point, since
-// CI compiles one arch and has to check both.
+// parseSyscallMap reads the syscallNumbers composite literal out of a source
+// file and returns name -> unix selector (e.g. "init_module" ->
+// "SYS_INIT_MODULE"), so the test can state which constant a name was given.
 func parseSyscallMap(t *testing.T, path string) map[string]string {
 	t.Helper()
 	fset := token.NewFileSet()

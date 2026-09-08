@@ -355,7 +355,43 @@ a smaller machine.
 
 ---
 
-## 11. What has never broken
+## 11. A discovered policy file's secrets need a one-time approval (v1.4.0)
+
+**What changed.** A `kelyfos.toml` that kelyfos finds by walking up from the
+working directory, and that declares `secrets` — on `[sandbox]` or on any
+`[[team.agent]]` — is no longer honoured for those secrets on ownership alone
+(D101). `kelyfos run`, `team up`, `fork`, `snapshot restore`, `shim` and
+`serve-mcp` all reach the file through the same gate, so all of them ask.
+
+**What you see.** At a terminal, once per file version:
+
+```
+kelyfos found /home/you/proj/kelyfos.toml by walking up from this directory, and it binds environment
+variables of yours to domains:
+    $GITHUB_TOKEN of your environment, attached to requests to api.github.com
+Bind these from /home/you/proj/kelyfos.toml? The approval is recorded for this file's current contents,
+so you are not asked again until it changes. [y/N]
+```
+
+With nobody to ask — a script, a CI job, a client launching `serve-mcp` — the
+run refuses and names the two ways to say yes.
+
+**What to do.** Any one of:
+
+- answer `y` once; the approval is recorded in
+  `~/.cache/kelyfos/trust/policy-secrets.json` (path and digest, never a value)
+  and lapses when the file changes;
+- `kelyfos trust kelyfos.toml`, which does the same non-interactively — the
+  right form for a machine you provision;
+- name the file: `--policy kelyfos.toml`. Naming it is the decision, so a
+  named file is not asked about. `kelyfos connect` already writes the path
+  absolutely into every client configuration, so a `serve-mcp` it configured
+  is unaffected.
+
+A file that binds no secrets is not asked about, and nothing about workspace
+or plugin scoping changed.
+
+## 12. What has never broken
 
 Stated because "nothing changed" is only useful if somebody checked:
 

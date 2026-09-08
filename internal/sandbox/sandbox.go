@@ -1714,13 +1714,9 @@ func (s *Sandbox) Shutdown(grace time.Duration) error {
 		// would go unnoticed.
 		return fmt.Errorf("write the workspace back out of the jail: %w", syncErr)
 	}
-	if s.waitErr != nil {
-		// A VM killed on purpose is not a failure worth reporting upward.
-		var ee *exec.ExitError
-		if errors.As(s.waitErr, &ee) {
-			return nil
-		}
-	}
+	// A VM killed on purpose is not a failure worth reporting upward, and by
+	// here every other exit of the VMM's has already been reported where it
+	// happened.
 	return nil
 }
 
@@ -2228,13 +2224,11 @@ func (st *State) validate(runDir string) error {
 	return st.validateNetwork(bad)
 }
 
-// tapName is the interface a sandbox id produces.
-//
-// It mirrors the derivation newNetwork and newNetworkAt each do inline, and it
-// is written out a third time here rather than shared because network.go is
-// mid-merge in another workstream. That is a drift risk and is recorded as one:
-// the two constructors should call this. The bound is IFNAMSIZ-1, and for a real
-// id — eight hex characters — nothing is ever cut.
+// tapName is the interface a sandbox id produces: the one derivation, used by
+// newNetwork, newNetworkAt, RemoveNetworkResidue and the state-file check
+// alike (it was written out four times until the review of 2026-09-03). The
+// bound is IFNAMSIZ-1, and for a real id — eight hex characters — nothing is
+// ever cut.
 func tapName(id string) string {
 	tap := "kelyfos" + id
 	if len(tap) > 15 {

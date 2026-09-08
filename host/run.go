@@ -1213,7 +1213,21 @@ func loadPolicyAt(named string) (*config.Config, error) {
 	if err := config.Trust(path, discovered); err != nil {
 		return nil, err
 	}
-	return config.Load(path)
+	cfg, err := config.Load(path)
+	if err != nil {
+		return nil, err
+	}
+	// The second gate, for the one thing ownership cannot vouch for (D101):
+	// a discovered file's secrets are bound only once the person has approved
+	// that file. Here, for the reason the first gate is here — every door
+	// reaches a policy file through this function, so this is the place a
+	// rule applies to all of them.
+	if discovered {
+		if err := approvePolicySecrets(cfg, path); err != nil {
+			return nil, err
+		}
+	}
+	return cfg, nil
 }
 
 // ceiling applies one [resources] limit: with no flag it becomes the value,

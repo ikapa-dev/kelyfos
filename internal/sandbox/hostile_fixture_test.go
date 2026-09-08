@@ -1,16 +1,10 @@
 package sandbox
 
-// HostileImage builds a workspace image of the kind a guest can write, for the
-// tests that check what the host does when it reads one.
-//
-// It lives beside the product rather than in a test file because two packages
-// need it — the extraction is here and the CLI's own tests want the same images
-// — and because a helper that manufactures the attack is worth reading next to
-// the code that has to survive it.
-//
-// Nothing in the product calls it. It is here, exported, and unused by anything
-// that ships: the alternative is a copy in each test package, and two copies of
-// an attack drift into two different attacks.
+// A workspace image of the kind a guest can write, for the tests that check
+// what the host does when it reads one. Nothing in the product calls any of
+// this, and since 2026-09-08 nothing outside this package's tests does either,
+// so it is a test file: a helper that manufactures the attack, kept next to
+// the tests that have to survive it.
 
 import (
 	"fmt"
@@ -142,11 +136,4 @@ func patchName(imagePath, from, to string) error {
 	copy(img[i:], to)
 	img[i-2] = byte(len(to)) // name_len
 	return os.WriteFile(imagePath, img, 0o600)
-}
-
-// HostileWorkspace wires an image into the type the extraction path takes, so a
-// test can drive Stage exactly as a finished sandbox does.
-func HostileWorkspace(hostDir, imagePath string) *Workspace {
-	fp, _ := Fingerprint(hostDir)
-	return &Workspace{HostDir: hostDir, ImagePath: imagePath, fingerprint: fp}
 }

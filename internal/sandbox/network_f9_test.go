@@ -174,3 +174,14 @@ func TestF9_UpRefusesANetworkWhoseGuestAddressCannotArmTheCheck(t *testing.T) {
 		t.Errorf("up() refused for some other reason, so this test proves nothing: %v", err)
 	}
 }
+
+// ForeignPacketsDropped is the F9 rule's own counter: packets addressed to this
+// sandbox's host address that did not arrive on its TAP, and were dropped.
+//
+// Separate from BlockedPackets because it is a fact about the host rather than
+// about the guest, and nothing may add the two together. Nothing in the
+// product reads it; it exists so the test that proves the drop rule is what
+// refused a connection can read that rule rather than the table's total.
+func (n *Network) ForeignPacketsDropped() int64 {
+	return n.countDrops(func(chain string) bool { return chain == "input" })
+}

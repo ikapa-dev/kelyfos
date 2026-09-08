@@ -46,10 +46,7 @@ func newNetwork(sandboxID, user string) (*Network, error) {
 	}
 	base := binary.BigEndian.Uint16(seed[:2]) % 16384 // 169.254.0.0/16 as /30s
 
-	tap := "kelyfos" + sandboxID
-	if len(tap) > 15 { // IFNAMSIZ - 1
-		tap = tap[:15]
-	}
+	tap := tapName(sandboxID)
 
 	var lastErr error
 	for attempt := 0; attempt < 32; attempt++ {
@@ -193,10 +190,7 @@ func newNetworkAt(sandboxID, user, hostIP, guestIP, netmask, hostMACAddr string)
 	if h == nil || g == nil {
 		return nil, fmt.Errorf("snapshot recorded an unusable address pair (host %q, guest %q)", hostIP, guestIP)
 	}
-	tap := "kelyfos" + sandboxID
-	if len(tap) > 15 { // IFNAMSIZ - 1
-		tap = tap[:15]
-	}
+	tap := tapName(sandboxID)
 	if netmask == "" {
 		netmask = "255.255.255.252"
 	}
@@ -343,10 +337,7 @@ func (n *Network) Down() {
 // The returned string says what was removed, so the reaper can report actions
 // rather than imply them.
 func RemoveNetworkResidue(id string) string {
-	tap := "kelyfos" + id
-	if len(tap) > 15 { // IFNAMSIZ - 1, the same bound newNetwork applies
-		tap = tap[:15]
-	}
+	tap := tapName(id)
 	var removed []string
 	if linkExists(tap) {
 		if _, err := sudo("ip", "link", "del", tap); err == nil {
@@ -415,18 +406,6 @@ func tableExists(name string) bool {
 // where it is, in `nft list table`.
 func (n *Network) BlockedPackets() int64 {
 	return n.countDrops(func(chain string) bool { return chain != "input" })
-}
-
-// ForeignPacketsDropped is the F9 rule's own counter: packets addressed to this
-// sandbox's host address that did not arrive on its TAP, and were dropped.
-//
-// Separate from BlockedPackets because it is a fact about the host rather than
-// about the guest, and nothing may add the two together. It has no caller in
-// the product yet; it exists so the counter the ruleset keeps is readable from
-// Go at all, and so the test that proves the drop rule is what refused a
-// connection can read that rule rather than the table's total.
-func (n *Network) ForeignPacketsDropped() int64 {
-	return n.countDrops(func(chain string) bool { return chain == "input" })
 }
 
 // countDrops sums the counters on rules in the chains want accepts.

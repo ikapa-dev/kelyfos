@@ -61,11 +61,6 @@ type IOLimits struct {
 	DiskMbps  int // megabytes per second
 }
 
-// Set reports whether any limit at all is configured.
-func (l IOLimits) Set() bool {
-	return l.NetMbpsRx > 0 || l.NetMbpsTx > 0 || l.DiskIOPS > 0 || l.DiskMbps > 0
-}
-
 // Rates are decimal — a megabit is a million bits and a megabyte a million
 // bytes — because that is how a rate is quoted everywhere else. Sizes stay
 // powers of two, because that is what a size means. docs/resources.md states

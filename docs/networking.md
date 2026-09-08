@@ -604,7 +604,10 @@ network.
 The VMM runs under the jailer unless `--no-jail` is passed, and the jailer needs
 passwordless sudo as well, alongside `ip` and `nft` — and so does the `rm` that
 removes the jail directory afterwards, whose contents the jailer left owned by
-root. The network is already up before the VMM starts: the TAP
+root. Read that for what it is: `ip netns exec <ns> /bin/sh` is a root shell,
+so a machine set up for egress has handed any process running as you root
+(security review 2026-09-03; docs/threat-model.md §4 says what follows). The
+network is already up before the VMM starts: the TAP
 first, then the proxy bound on it, then the nftables table that makes the proxy
 the only reachable destination, and only then a machine that can send a packet.
 Which posture a machine ran under is recorded as `jailed` on the session

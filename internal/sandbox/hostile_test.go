@@ -72,7 +72,7 @@ func TestHostileDirentCannotEscapeTheExtractionTree(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			w := HostileWorkspace(hostDir, img)
+			w := AdoptWorkspace(hostDir, img)
 			s, err := w.Stage()
 			if err == nil {
 				defer s.Discard()
@@ -149,7 +149,7 @@ func TestGuestChosenModesDoNotSurviveOntoTheHost(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			w := HostileWorkspace(hostDir, img)
+			w := AdoptWorkspace(hostDir, img)
 			s, err := w.Stage()
 			if err != nil {
 				t.Fatalf("stage: %v", err)
@@ -192,7 +192,7 @@ func TestTheWorkspaceRootKeepsTheHostsMode(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	w := HostileWorkspace(hostDir, img)
+	w := AdoptWorkspace(hostDir, img)
 	s, err := w.Stage()
 	if err != nil {
 		t.Fatalf("stage: %v", err)

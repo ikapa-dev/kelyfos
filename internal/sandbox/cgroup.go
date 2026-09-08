@@ -144,19 +144,11 @@ func (s *Slice) FD() int {
 	return int(s.dir.Fd())
 }
 
-// CPUStat reports cumulative CPU time and throttling for this slice, which is
+// CPUStatAt reads cpu.stat from a cgroup directory named by path, which is
 // what makes "the limit held" a measurement rather than a claim (E1-7, E1-8).
-func (s *Slice) CPUStat() (map[string]int64, error) {
-	if s == nil {
-		return nil, fmt.Errorf("no cgroup slice")
-	}
-	return CPUStatAt(s.Path)
-}
-
-// CPUStatAt reads cpu.stat from a cgroup directory named by path. Exported
-// separately because a team's collective figures are read by a *different
-// process* — `kelyfos team ps` has the path out of the team state file and no
-// Slice to ask.
+// A team's collective figures are read by a *different process* — `kelyfos
+// team ps` has the path out of the team state file and no Slice to ask — so
+// the path is the argument and there is no method form.
 func CPUStatAt(dir string) (map[string]int64, error) {
 	if dir == "" {
 		return nil, fmt.Errorf("no cgroup path")
@@ -324,10 +316,7 @@ func preflightSystemdScope(unit string) error {
 			"complete within %s and this boot will not hang waiting for it.%s",
 			systemdScopePreflightTimeout, hint)
 	}
-	detail := string(out)
-	if i := strings.IndexByte(detail, '\n'); i >= 0 {
-		detail = detail[:i]
-	}
+	detail, _, _ := strings.Cut(string(out), "\n")
 	detail = strings.TrimRight(detail, "\r")
 	if detail == "" {
 		detail = err.Error()

@@ -31,28 +31,12 @@ import (
 // was reached — `via: serve-mcp` on its events, and the server's session id in
 // its session.start — so a reader can go from either to the other.
 
-// contentKeys, the size/line bounds, summariseArgs and clipUTF8 all used to be
-// declared here in full, byte-for-byte duplicated in
-// supervisor/pluginhost.go's summarisePluginArgs and its own copy of every
-// helper underneath it. They now live once, in internal/argsummary, which
-// both this file and that one call — so an edit to the redaction or bounding
-// rules can no longer land in one door's record and not the other's (F12).
-var contentKeys = argsummary.ContentKeys
-
-const (
-	maxArgBytes   = argsummary.MaxArgBytes
-	maxArgsBytes  = argsummary.MaxArgsBytes
-	maxArrayBytes = argsummary.MaxArrayBytes
-)
-
-// summariseArgs renders a call's arguments for the record. The logic lives in
-// internal/argsummary now; this is the name the rest of this file calls.
-func summariseArgs(raw json.RawMessage) string { return argsummary.Summarise(raw) }
-
-// clipUTF8 cuts s to at most n bytes without leaving half a rune at the end.
-// Also internal/argsummary's now — kept as a local name because clipField
-// below uses it on fields argsummary has no reason to know about.
-func clipUTF8(s string, n int) string { return argsummary.ClipUTF8(s, n) }
+// The argument summary and its bounds are internal/argsummary's, shared with
+// supervisor/pluginhost.go so an edit to the redaction or bounding rules
+// cannot land in one door's record and not the other's (F12). maxArgBytes is
+// named here because clipField below applies it to fields argsummary has no
+// reason to know about.
+const maxArgBytes = argsummary.MaxArgBytes
 
 // clipField bounds one of the record's identifier fields.
 //
@@ -67,7 +51,7 @@ func clipField(s string) string {
 	if len(s) <= maxArgBytes {
 		return s
 	}
-	return fmt.Sprintf("%s…(%d bytes)", clipUTF8(s, maxArgBytes), len(s))
+	return fmt.Sprintf("%s…(%d bytes)", argsummary.ClipUTF8(s, maxArgBytes), len(s))
 }
 
 // argSandbox is the sandbox a call names, when it names one. It is a lane in
@@ -293,7 +277,7 @@ func (s *hostServer) auditCall(p *mcp.CallToolParams) func(*mcp.CallToolResult) 
 	name := clipField(p.Name)
 	_ = s.audit.Append(recorder.Event{
 		Type: recorder.TypeMCPHostCall, Call: call, Name: name,
-		Agent: box, Args: summariseArgs(p.Arguments),
+		Agent: box, Args: argsummary.Summarise(p.Arguments),
 	})
 	started := time.Now()
 	return func(res *mcp.CallToolResult) {

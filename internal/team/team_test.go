@@ -825,3 +825,10 @@ func TestDespawningANameNobodySpawnedTakesNothingWithIt(t *testing.T) {
 		t.Errorf("a despawn of a name nobody spawned left no trace: %+v", c.all())
 	}
 }
+
+// Spawned lists the workers an agent currently has running, for `team ps`.
+func (b *Broker) Spawned(agent string) []string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return append([]string(nil), b.spawnedBy[agent]...)
+}

@@ -195,3 +195,8 @@ func TestUnlimitedConfigHasNoLimiterFields(t *testing.T) {
 		}
 	}
 }
+
+// Set reports whether any limit at all is configured.
+func (l IOLimits) Set() bool {
+	return l.NetMbpsRx > 0 || l.NetMbpsTx > 0 || l.DiskIOPS > 0 || l.DiskMbps > 0
+}

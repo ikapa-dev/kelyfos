@@ -343,13 +343,8 @@ const (
 //	refuse: ret ERRNO(EPERM)
 func seccompProgram(p Profile) []unix.SockFilter {
 	var denied []int
-	for _, s := range p.DenySyscalls {
-		if s.name == "ptrace" && p.AllowPtrace {
-			continue
-		}
-		if s.nr >= 0 {
-			denied = append(denied, s.nr)
-		}
+	for _, s := range p.Refused() {
+		denied = append(denied, s.nr)
 	}
 	if len(denied) == 0 {
 		return nil
@@ -394,9 +389,7 @@ func (p Profile) Refused() []syscallRef {
 		if s.name == "ptrace" && p.AllowPtrace {
 			continue
 		}
-		if s.nr >= 0 {
-			out = append(out, s)
-		}
+		out = append(out, s)
 	}
 	return out
 }
@@ -443,18 +436,8 @@ func DumpProfile(w io.Writer, flavors []string) error {
 		for _, d := range writableDevices {
 			fmt.Fprintf(w, "  write-device %s\n", d)
 		}
-		// Every entry the policy names, including any this architecture does
-		// not have — printed as "-" rather than omitted, so the difference
-		// between "not refused" and "not a syscall here" is visible.
-		for _, sc := range p.DenySyscalls {
-			if sc.name == "ptrace" && p.AllowPtrace {
-				continue
-			}
-			nr := "-"
-			if sc.nr >= 0 {
-				nr = fmt.Sprint(sc.nr)
-			}
-			fmt.Fprintf(w, "  refuse %s %s\n", sc.name, nr)
+		for _, sc := range p.Refused() {
+			fmt.Fprintf(w, "  refuse %s %d\n", sc.name, sc.nr)
 		}
 	}
 	return nil

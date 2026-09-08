@@ -32,6 +32,10 @@ func FuzzExtractChain(f *testing.F) {
 	f.Add([]byte(`{"data":"</pre><pre id=\"kelyfos-chain\">"}`+"\n"), []byte("<h1>report</h1>"))
 	f.Add([]byte{0x00, 0xff, '\n'}, []byte("<!-- comment -->"))
 	f.Add(bytes.Repeat([]byte("a"), 1000), []byte(chainOpen+chainClose))
+	// The 2026-08-31 security lab's large-input seed (its sec-lab-04), as an
+	// expression rather than 1.1 MB of corpus file: a 100 KB record inside a
+	// 1 MB page.
+	f.Add([]byte(`{"seq":1,"pad":"`+strings.Repeat("a", 100000)+`"}`+"\n"), bytes.Repeat([]byte("x"), 1000000))
 
 	f.Fuzz(func(t *testing.T, record, around []byte) {
 		// A page is the island with arbitrary bytes on either side of it, which
@@ -64,6 +68,12 @@ func FuzzExtractChainRefusesRatherThanPanics(f *testing.F) {
 	f.Add(chainOpen + "!!!!" + chainClose)
 	f.Add(chainOpen + "AAAA" + chainClose + chainOpen + "BBBB" + chainClose)
 	f.Add(chainClose + chainOpen)
+	// The 2026-08-31 security lab's large-input seeds (its sec-lab-03 and
+	// sec-lab-04), as expressions rather than 2.8 MB of corpus files: an
+	// empty island between two megabytes of filler, and an island of 100,000
+	// two-byte runes.
+	f.Add(strings.Repeat("z", 1000000) + chainOpen + chainClose + strings.Repeat("z", 1000000))
+	f.Add(chainOpen + strings.Repeat("\u00ff", 100000) + chainClose)
 
 	f.Fuzz(func(t *testing.T, page string) {
 		got, err := ExtractChain([]byte(page))

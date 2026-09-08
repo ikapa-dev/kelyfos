@@ -55,7 +55,6 @@ const pluginCallTimeout = 120 * time.Second
 
 type plugin struct {
 	entry PluginEntry
-	dir   string
 
 	// One call at a time. MCP allows a client to have several in flight, and a
 	// plugin is under no obligation to: serialising here is what makes every
@@ -107,7 +106,7 @@ func startPlugins(entries []PluginEntry, rp *reaper, report func(proto.GuestEven
 
 func startPlugin(e PluginEntry, rp *reaper) (*plugin, error) {
 	dir := filepath.Join("/plugins", e.Name)
-	p := &plugin{entry: e, dir: dir}
+	p := &plugin{entry: e}
 
 	cmd := exec.Command(e.Command, e.Args...)
 	cmd.Dir = dir
@@ -335,14 +334,10 @@ func pluginTools() []mcp.Tool {
 	defer pluginsMu.RUnlock()
 	var out []mcp.Tool
 	for _, p := range running {
-		p.mu.Lock()
-		dead := p.dead
-		p.mu.Unlock()
 		// A dead plugin's tools stay listed and fail with a reason. Removing
 		// them would leave an agent that had already read the list calling
 		// something that no longer exists, told only "unknown tool" — which is
 		// what a typo looks like, not what a crash looks like.
-		_ = dead
 		out = append(out, p.tools...)
 	}
 	return out
@@ -392,7 +387,18 @@ func callPluginTool(p *plugin, tool string, args json.RawMessage, report func(pr
 		V: proto.Version, Type: proto.GuestEventPluginCall,
 		Name: p.entry.Name, Tool: tool, Outcome: outcome,
 		DurationMS: time.Since(started).Milliseconds(),
-		Args:       summarisePluginArgs(args),
+		// The summary is internal/argsummary's, shared with host/servemcpaudit.go
+		// so an edit to the redaction or bounding rules cannot land in one
+		// door's record and not the other's (F12). The bound matters here for
+		// its own reason: the agent's arguments arrive on the MCP channel,
+		// whose frame limit is proto.MaxMCPLine — 16 MiB — and this summary
+		// leaves on the events channel, whose limit is proto.MaxLine, 1 MiB.
+		// proto.Writer.Write measures before it writes, so an oversized report
+		// is refused with ErrLineTooLong, and pumpEvents (supervisor/main.go)
+		// keeps a refused event as `pending` and sends it first on the next
+		// connection — where it is refused again, for as long as the machine
+		// runs.
+		Args: argsummary.Summarise(args),
 	})
 	if err != nil {
 		return mcp.Errorf("plugin %s failed to answer %s: %v", p.entry.Name, tool, err)
@@ -498,29 +504,3 @@ func builtinTool(name string) bool {
 	}
 	return false
 }
-
-// contentKeys, the size/line bounds, summarisePluginArgs and clipUTF8 all used
-// to be declared here in full, byte-for-byte duplicated in
-// host/servemcpaudit.go's summariseArgs and its own copy of every helper
-// underneath it. They now live once, in internal/argsummary, which both this
-// file and that one call — so an edit to the redaction or bounding rules can
-// no longer land in one door's record and not the other's (F12).
-//
-// The bound still matters here for its own reason: the agent's arguments
-// arrive on the MCP channel, whose frame limit is proto.MaxMCPLine — 16 MiB —
-// and this summary leaves on the events channel, whose limit is proto.MaxLine,
-// 1 MiB. proto.Writer.Write measures before it writes, so an oversized report
-// is refused with ErrLineTooLong, and pumpEvents (supervisor/main.go) keeps a
-// refused event as `pending` and sends it first on the next connection — where
-// it is refused again, for as long as the machine runs.
-var contentKeys = argsummary.ContentKeys
-
-const (
-	maxArgBytes   = argsummary.MaxArgBytes
-	maxArgsBytes  = argsummary.MaxArgsBytes
-	maxArrayBytes = argsummary.MaxArrayBytes
-)
-
-func summarisePluginArgs(raw json.RawMessage) string { return argsummary.Summarise(raw) }
-
-func clipUTF8(s string, n int) string { return argsummary.ClipUTF8(s, n) }

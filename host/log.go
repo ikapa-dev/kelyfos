@@ -895,9 +895,9 @@ func printEvent(line []byte, asJSON bool) {
 		}
 	case recorder.TypeResourceSummary:
 		fmt.Printf("%s  usage           %s%.2f CPU-seconds%s · peak RSS %s (VMM)%s · net %s in / %s out · disk %s written\n",
-			ts, who, e.CPUSeconds, quotaSuffix(e), report.HumanKiB(e.PeakRSSKiB),
-			capSuffix(e.MemMiB), humanBytes(e.NetInBytes), humanBytes(e.NetOutBytes),
-			humanBytes(e.DiskWriteBytes))
+			ts, who, e.CPUSeconds, report.QuotaNote(e), report.HumanKiB(e.PeakRSSKiB),
+			capSuffix(e.MemMiB), report.HumanBytes(e.NetInBytes), report.HumanBytes(e.NetOutBytes),
+			report.HumanBytes(e.DiskWriteBytes))
 	case recorder.TypeResourceTimeout:
 		fmt.Printf("%s  timed out       %sthe %s budget of %s expired after %s\n",
 			ts, who, e.Budget, time.Duration(e.BudgetMS)*time.Millisecond,
@@ -998,19 +998,12 @@ func printEvent(line []byte, asJSON bool) {
 	}
 }
 
-// quotaSuffix and capSuffix say what a number was measured against, when there
-// was something to measure it against. A receipt that reports consumption
-// without the cap it was consumed under is half a receipt.
-func quotaSuffix(e recorder.Event) string {
-	switch {
-	case e.CPUQuota > 0:
-		return fmt.Sprintf(" (quota %d%% of one core)", e.CPUQuota)
-	case e.VcpuCount > 0:
-		return fmt.Sprintf(" across %d core(s), no quota", e.VcpuCount)
-	}
-	return ""
-}
-
+// capSuffix says what a number was measured against, when there was
+// something to measure it against — report.QuotaNote is its counterpart for
+// the CPU figure, shared with the HTML report rather than copied here. A
+// receipt that reports consumption without the cap it was consumed under is
+// half a receipt.
+//
 // capSuffix names the machine's RAM beside the VMM's peak resident set without
 // claiming the second is a share of the first. It is not: the figure is the
 // Firecracker process's own high-water mark, which covers the guest's memory
@@ -1022,19 +1015,6 @@ func capSuffix(memMiB int) string {
 		return ""
 	}
 	return fmt.Sprintf(" · machine %d MiB", memMiB)
-}
-
-func humanBytes(n int64) string {
-	switch {
-	case n >= 1<<30:
-		return fmt.Sprintf("%.1f GiB", float64(n)/(1<<30))
-	case n >= 1<<20:
-		return fmt.Sprintf("%.1f MiB", float64(n)/(1<<20))
-	case n >= 1<<10:
-		return fmt.Sprintf("%d KiB", n>>10)
-	default:
-		return fmt.Sprintf("%d B", n)
-	}
 }
 
 func shortHash(h string) string {
