@@ -18,11 +18,9 @@ narrower: read, write and truncate that file, and nothing else.
 an allowlist, because an allowlist for an arbitrary agent command is a crash waiting
 to be mistaken for a security feature.
 
-The policy is the same on every architecture KelyfOS builds for. A name that is
-not a syscall on some architecture — `settimeofday` has none on aarch64, which has
-only `clock_settime` — is absent from that build's filter rather than faked, and
-`kelyfos-supervisor --dump-profile` prints the resolved numbers for the machine it
-runs on.
+The policy is the same on every architecture KelyfOS builds for, and every name
+on it resolves to a syscall on each; `kelyfos-supervisor --dump-profile` prints the
+resolved numbers for the machine it runs on.
 
 ## `base`
 
