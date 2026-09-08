@@ -18,6 +18,17 @@ reference described in the README and re-measured per release.
 ## Unreleased
 
 ### Security
+- **aarch64 guests now refuse `settimeofday` like every other clock setter**
+  (D102). The guest's refusal policy was resolved against a map kept once per
+  architecture, and the aarch64 copy left `settimeofday` out on the belief
+  that the architecture has no such syscall. It has — number 170 in the
+  asm-generic table, which `golang.org/x/sys` has always defined for arm64 —
+  so on aarch64 the one legacy clock setter reached the kernel while
+  `clock_settime`, `clock_adjtime` and `adjtimex` were refused. One map now
+  serves both architectures, a name it lacks is a compile error rather than a
+  quiet hole, and the profile line at boot reports the same count on both:
+  40 refused on `base`, 39 on `dev`. The guest image must be rebuilt
+  (`make image FLAVOR=dev`) for this to take effect.
 - **A discovered `kelyfos.toml` binds secrets only once you have approved it**
   (security review 2026-09-03; D101). A policy file found by walking up from
   the working directory — the one a cloned repository carries — was trusted

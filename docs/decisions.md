@@ -2039,3 +2039,46 @@ gate behind them, not a change to them.
 **Why:** a stranger's file must not be able to spend the operator's
 credentials with no act of the operator's between the clone and the send.
 
+
+## D102
+
+*2026-09-08*
+
+**The guest's seccomp refusal policy resolves against one syscall map for
+every architecture, and a name the map lacks is a compile error or a refusal
+to build the filter — never a name quietly dropped.**
+
+Until now the numbers lived in `profile_amd64.go` and `profile_arm64.go`, one
+map each, and the policy allowed for a name that "is not a syscall on some
+architecture": such a name was recorded with `-1`, skipped by the filter and
+printed as `-` by `--dump-profile`. The only name ever treated that way was
+`settimeofday` on aarch64, and the belief behind it — that aarch64 has only
+`clock_settime` — was wrong. `settimeofday` is 170 in the asm-generic table
+the architecture uses; `golang.org/x/sys/unix` has defined
+`SYS_SETTIMEOFDAY` for arm64 all along. So the aarch64 filter was one clock
+setter short, the reference page and `docs/hardening.md` stated the shortfall
+as a fact about the architecture, and the drift gate
+(`TestEveryPolicyNameResolvesOnEveryArchitecture`) asserted the absence
+rather than catching it: the exception was the one thing the mechanism could
+not see, because the mechanism was built around it.
+
+What was weighed:
+
+| option | why not |
+| --- | --- |
+| add `settimeofday` to the arm64 map and keep two maps | keeps the "absent on this architecture" concept, and with it the possibility of the same mistake for the next name; the two maps had no other difference |
+| resolve names at runtime from a table this project keeps | the compiler already resolves them from the kernel's own constants, which is the property the maps were built for (A5) |
+
+One map, `profile_syscalls.go`, built for `linux` without an architecture
+tag. A selector the running architecture lacks fails to compile, so an
+omission can no longer be architecture-specific; a policy name the map lacks
+makes `deniedSyscalls` panic rather than build a filter with a hole in it,
+and the unit test catches that before a guest ever does. The `-1`/`-`
+plumbing goes with the concept it served. `Refused()` is now the one place
+the ptrace exception is applied, and the filter, the dump and the count on
+the profile line all read from it.
+
+**Why:** a refusal list is only as good as the mechanism that notices a
+missing name, and a mechanism with a documented exception is a mechanism with
+a documented hole. The audit of 2026-09-01 added twelve names because absence
+was silent; this closes the last way absence could still be quiet.

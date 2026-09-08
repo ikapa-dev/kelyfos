@@ -9,11 +9,12 @@ package main
 // page generated from resolved numbers would differ between the dev machine and
 // the runner and fail its own diff check for ever.
 //
-// The numbers live in profile_<arch>.go, which maps the names this architecture
-// actually has. A name with no syscall here — settimeofday on aarch64, which
-// has only clock_settime — is dropped from the compiled filter rather than
-// faked, and `--dump-profile` prints it as absent so the difference is visible
-// rather than silent.
+// The numbers live in profile_syscalls.go, one map for every architecture,
+// resolved by the compiler from the kernel's constants. Every name here has a
+// number there: a name that did not would be a syscall reaching the kernel
+// unrefused, which is the failure the 2026-09-01 audit found (A5), so
+// deniedSyscalls refuses to build a filter with a hole in it rather than
+// building one quietly (D102).
 //
 // Nothing on this list is on an ordinary program's path. A compiler, a package
 // manager and a test runner call none of them, which is what makes a refusal
@@ -80,16 +81,15 @@ var refusalPolicy = []string{
 	"ptrace",
 }
 
-// deniedSyscalls resolves the policy against this architecture.
+// deniedSyscalls resolves the policy against this architecture. A name the
+// map lacks is a programming error, and the one the unit test exists to catch
+// before it gets here; failing closed is what is left if it ever does.
 func deniedSyscalls() []syscallRef {
 	out := make([]syscallRef, 0, len(refusalPolicy))
 	for _, name := range refusalPolicy {
 		nr, ok := syscallNumbers[name]
 		if !ok {
-			// Not a syscall on this architecture. Recorded with -1 so the dump
-			// can say so; the filter skips it.
-			out = append(out, syscallRef{name: name, nr: -1})
-			continue
+			panic("refusal policy names " + name + ", which profile_syscalls.go does not map")
 		}
 		out = append(out, syscallRef{name: name, nr: nr})
 	}
